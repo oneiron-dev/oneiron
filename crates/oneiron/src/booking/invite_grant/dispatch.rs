@@ -3,16 +3,17 @@
 use super::authorization::{booking_page_invites_authorizes, confirmed_booking_binding};
 use super::codec::{calendar_wrap, engine_failure, refused};
 use super::mint::live_page_invite_grant;
-use super::types::{BookingPageInviteContext, CONFIRM_INVITE_TZ_LABEL, ConfirmedBookingInvite};
+use super::types::{BookingPageInviteContext, ConfirmedBookingInvite};
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::blob_artifact::BlobVersionProvenance;
 use crate::booking::constraint::BookingError;
-use crate::booking::lifecycle::{ConfirmReceipt, hex_lower};
+use crate::booking::lifecycle::{ConfirmReceipt, booking_confirmation_context, hex_lower};
+use crate::calendar::ics::emit_imip_ics_with_organizer_zones;
 use crate::calendar::{
     CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarInviteAdmission, CalendarInviteMethod,
     CalendarInvitePayload, ImipEmitRequest, admit_calendar_invite, decode_frozen_calendar_invite,
-    emit_imip_ics, persist_imip_blob,
+    persist_imip_blob,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -199,18 +200,26 @@ pub(in crate::booking) fn dispatch_confirm_booking_invite(
         ));
     };
     let occurrence = booking_occurrence(vault, &booking_ref)?;
-    let ics = emit_imip_ics(&ImipEmitRequest {
-        method: CalendarInviteMethod::Request,
-        uid: receipt.calendar.uid.clone(),
-        sequence: receipt.calendar.sequence,
-        organizer,
-        attendees: vec![binding.recipient.clone()],
-        summary: binding.event_type,
-        starts_at_utc: occurrence.start,
-        ends_at_utc: occurrence.end,
-        tz_label: CONFIRM_INVITE_TZ_LABEL.to_owned(),
-        dtstamp_utc: now,
-    })
+    let context = booking_confirmation_context(vault, &booking_ref)?
+        .ok_or_else(|| refused("booking carries no confirmed party zones"))?;
+    if context.host_zones.len() != context.owner_refs.len() || context.host_zones.is_empty() {
+        return Err(refused("booking carries no selected host zones"));
+    }
+    let ics = emit_imip_ics_with_organizer_zones(
+        &ImipEmitRequest {
+            method: CalendarInviteMethod::Request,
+            uid: receipt.calendar.uid.clone(),
+            sequence: receipt.calendar.sequence,
+            organizer,
+            attendees: vec![binding.recipient.clone()],
+            summary: binding.event_type,
+            starts_at_utc: occurrence.start,
+            ends_at_utc: occurrence.end,
+            tz_label: context.visitor_tz,
+            dtstamp_utc: now,
+        },
+        &context.host_zones,
+    )
     .map_err(calendar_wrap)?;
     // Persisted exactly the way CAL-04 persists an invite document: the
     // artifact id is derived from `(booking, sequence)`, so a confirm replay

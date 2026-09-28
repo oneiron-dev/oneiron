@@ -30,6 +30,7 @@ use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPoli
 use super::resolution::{
     DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
 };
+use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -87,7 +88,18 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),
+        (
+            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::Map(vec![
+                (Value::from("ask_minutes"), Value::from(1)),
+                (Value::from("max_context_bytes"), Value::from(512)),
+            ]),
+        ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        (
+            Value::from(super::voice_serving::KEY),
+            super::voice_serving::VoiceServingRows::seeded(),
+        ),
         (
             Value::from(POLICY_WEAVE_CORRECTION_POLICY_KEY),
             Value::Map(vec![
@@ -140,6 +152,25 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from(super::carry_forward_policy::KEY),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (
+                            Value::from("ordinary"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_ORDINARY),
+                        ),
+                        (
+                            Value::from("care"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_CARE),
+                        ),
+                    ]),
+                ),
+            ]),
+        ),
+        (
             Value::from(POLICY_DEFAULTS_KEY),
             Value::Map(vec![
                 (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
@@ -176,6 +207,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from("goal_limits"),
+            crate::workspace_roster::GoalLimits::default().encode(),
+        ),
+        (
             Value::from(POLICY_RULES_KEY),
             Value::Array(vec![
                 Value::Map(vec![
@@ -208,6 +243,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     (
                         Value::from(RULE_PREFIX_KEY),
                         Value::from(crate::commitment::PREDICATE_COMMITMENT_RECORD),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // A goal-intake candidate still needs a human-authenticated
+                // write door; the ordinary claim gate must not strand that
+                // confirmed interview at the unrelated critical-consent floor.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from("project.goal_intake"),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -571,6 +623,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from(RETRIEVAL_RETENTION_ROWS_KEY),
+            default_retrieval_retention_rows(),
+        ),
+        (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
             Value::Map(vec![
                 (
@@ -637,6 +693,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             default_docedit_resource_row(),
         ),
         (
+            Value::from("experiment_selection"),
+            default_experiment_selection_rows(),
+        ),
+        (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
@@ -649,6 +709,20 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             crate::llm::decision::SlideReviewPolicy::default_rows(),
         ),
         super::docx_budget::default_entry(),
+        (
+            Value::from("booking_conversion"),
+            Value::Array(vec![
+                rmpv::ext::to_value(
+                    serde_json::to_value(crate::booking::BookingConversionPolicyRow {
+                        scope: crate::booking::BookingPolicyScope::Vault,
+                        holder_ref: None,
+                        policy: crate::booking::BookingConversionPolicy::default(),
+                    })
+                    .expect("default booking conversion row encodes"),
+                )
+                .expect("default booking conversion JSON becomes MessagePack"),
+            ]),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
@@ -760,4 +834,17 @@ fn compilation_route(
         (Value::from("from_not_prefix"), Value::from(from_not_prefix)),
         (Value::from("style_atom"), Value::Boolean(style_atom)),
     ])
+}
+
+/// The vault-wide search policy ships as data, not a Rust threshold or
+/// hard-coded stagnation branch. The manifest resolver composes edits by scope.
+fn default_experiment_selection_rows() -> Value {
+    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+        serde_json::from_str(include_str!(
+            "../autoreason_campaign/selection_defaults.json"
+        ))
+        .expect("valid shipped experiment selection rows");
+    let bytes = rmp_serde::to_vec_named(&rows).expect("encode shipped experiment selection rows");
+    rmpv::decode::read_value(&mut bytes.as_slice())
+        .expect("decode shipped experiment selection rows")
 }

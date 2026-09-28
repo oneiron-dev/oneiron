@@ -60,13 +60,18 @@ pub trait MicroVmBackend: Send + Sync {
         self.run(vm, image, budget)
     }
 
-    /// Diffs the overlay upper against the base into write proposals.
+    /// Collects the guest delta as typed review proposals (writes, deletes,
+    /// renames or opaque directories). The backend never commits them.
     ///
     /// # Errors
     ///
     /// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) when the overlay cannot be read
-    /// or contains an entry that is not a plain file.
+    /// or contains an unsupported filesystem entry.
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>>;
+
+    /// Releases backend custody after collection or on any run/arming failure.
+    /// Clones of the handle keep the scratch directory alive until their last drop.
+    fn cleanup(&self, vm: &MicroVmHandle);
 
     /// Binds `resolver` into the VM's egress transport.
     ///
@@ -123,6 +128,10 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
         resolver: &dyn CredentialResolver,
     ) -> Result<()> {
         (**self).proxy_credentials(vm, resolver)
+    }
+
+    fn cleanup(&self, vm: &MicroVmHandle) {
+        (**self).cleanup(vm);
     }
 }
 
@@ -188,7 +197,7 @@ pub const DEV_BACKEND_NAME: &str = "dev-process-isolation";
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 pub struct DevProcessBackend {
     root: PathBuf,
-    prepared: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    prepared: std::sync::Mutex<std::collections::BTreeMap<String, MicroVmHandle>>,
 }
 
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
@@ -198,7 +207,7 @@ impl DevProcessBackend {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
-            prepared: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            prepared: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
@@ -213,7 +222,7 @@ impl DevProcessBackend {
             .prepared
             .lock()
             .map_err(|_| backend_error(DEV_BACKEND_NAME, "backend state is poisoned"))?;
-        if prepared.contains(vm.id()) {
+        if prepared.get(vm.id()) == Some(vm) {
             return Ok(());
         }
         Err(backend_error(
@@ -238,7 +247,7 @@ impl MicroVmBackend for DevProcessBackend {
         self.prepared
             .lock()
             .map_err(|_| backend_error(DEV_BACKEND_NAME, "backend state is poisoned"))?
-            .insert(handle.id().to_owned());
+            .insert(handle.id().to_owned(), handle.clone());
         Ok(handle)
     }
 
@@ -274,6 +283,14 @@ impl MicroVmBackend for DevProcessBackend {
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {
         self.ensure_prepared(vm)?;
         collect_overlay_writes(vm.overlay_upper(), SandboxMount::Workspace)
+    }
+
+    fn cleanup(&self, vm: &MicroVmHandle) {
+        if let Ok(mut prepared) = self.prepared.lock()
+            && prepared.get(vm.id()) == Some(vm)
+        {
+            prepared.remove(vm.id());
+        }
     }
 
     fn proxy_credentials(

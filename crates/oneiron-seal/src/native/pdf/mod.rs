@@ -5,9 +5,11 @@
 //! preserved and all changes are appended revisions.
 
 mod incremental;
+mod lex;
 mod objects;
 mod parse;
 mod revision_chain;
+mod revision_facts;
 #[cfg(test)]
 mod tests;
 
@@ -26,3 +28,5 @@ pub(crate) use self::revision_chain::{
 
 #[cfg(test)]
 use self::parse::*;
+
+pub(crate) use self::revision_facts::{RevisionFacts, analyze as analyze_revision_facts};

@@ -1,5 +1,6 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
+use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
 };
@@ -181,6 +182,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) linear_sync: Option<LinearSyncBudget>,
     pub(super) wave_handoff: Option<WaveHandoffPolicy>,
     pub(super) operational_precedence: Option<PolicyPrecedence>,
+    pub(crate) retrieval_retention: crate::gate::retrieval_retention::RetrievalRetentionPolicy,
+    pub(crate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
     pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
@@ -195,6 +198,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
+    pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
+    pub(super) carry_forward_authored: bool,
+    pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
@@ -218,9 +225,11 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(super) voice_serving: Vec<crate::gate::voice_serving::VoiceServingRows>,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
+    pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
     pub(super) hosted_tts: HostedTtsPolicy,
     pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
     pub(crate) connector_class_precedence: ConnectorClassPrecedence,

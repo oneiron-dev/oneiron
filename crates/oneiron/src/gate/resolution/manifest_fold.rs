@@ -53,6 +53,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut vault_precedence: Option<ConnectorClassPrecedence> = None;
     let mut shipped_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
     let mut owner_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
+    let mut authored_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> =
+        None;
+    let mut seeded_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> = None;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -112,6 +115,9 @@ pub(crate) fn resolve_policy_manifest(
                     merge_teacher_probe_row(&mut resolution, row);
                 }
                 resolution.source_trust.merge(decoded.source_trust);
+                resolution
+                    .experiment_selection
+                    .extend(decoded.experiment_selection);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
@@ -203,12 +209,18 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(voice_serving) = decoded.voice_serving {
+                    resolution.voice_serving.push(voice_serving);
+                }
                 if let Some(policy) = decoded.pack_install_policy {
                     if let Some(existing) = &mut resolution.pack_install_policy {
                         existing.restrict(policy);
                     } else {
                         resolution.pack_install_policy = Some(policy);
                     }
+                }
+                if let Some(rows) = decoded.retrieval_retention {
+                    resolution.retrieval_retention.narrow(rows);
                 }
                 if let Some(settings) = decoded.room_thread {
                     resolution.room_thread = match resolution.room_thread.take() {
@@ -233,6 +245,9 @@ pub(crate) fn resolve_policy_manifest(
                     };
                     *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
                 }
+                resolution
+                    .booking_conversion_rows
+                    .extend(decoded.booking_conversion_rows);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
                     let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
@@ -320,6 +335,13 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                if let Some(limits) = decoded.goal_limits {
+                    resolution.goal_limits = Some(
+                        resolution
+                            .goal_limits
+                            .map_or(limits, |old| old.restrict(limits)),
+                    );
+                }
                 if let Some(limits) = decoded.voice_ref_limits {
                     if id == crate::gate::default_policy_manifest_id()? {
                         resolution.voice_ref_defaults = Some(limits);
@@ -345,6 +367,33 @@ pub(crate) fn resolve_policy_manifest(
                     .extend(decoded.retry_source_policy);
                 if let Some(policy) = decoded.compilation_policy {
                     resolution.compilation_policies.push(policy);
+                }
+                if let Some(confidence) = decoded.carry_forward_confidence {
+                    // Trust answers WHO may author; this body-bound local marker
+                    // answers whether the bytes are still the untouched seed.
+                    // ID and pack name are document identity, never origin.
+                    let seeded = crate::gate::manifest_authenticity::manifest_is_seeded_default(
+                        store, txn, &id, body,
+                    )?;
+                    let target = if seeded {
+                        &mut seeded_confidence
+                    } else {
+                        &mut authored_confidence
+                    };
+                    if let Some(existing) = target {
+                        if !existing.restrict(confidence) {
+                            resolution.diagnostics.malformed_manifest_seen = true;
+                        }
+                    } else {
+                        *target = Some(confidence);
+                    }
+                }
+                if let Some(policy) = decoded.judge_calibration {
+                    resolution.judge_calibration = Some(
+                        resolution
+                            .judge_calibration
+                            .map_or(policy, |old| old.restrict(policy)),
+                    );
                 }
                 resolution.packs.push(decoded.pack);
             }
@@ -378,6 +427,10 @@ pub(crate) fn resolve_policy_manifest(
     resolution.connector_class_carry = class_policy_named.then_some(carry);
 
     resolution.pptx_comment_limits = owner_pptx_limits.or(shipped_pptx_limits);
+    resolution.carry_forward_authored = authored_confidence.is_some();
+    resolution.carry_forward_confidence = authored_confidence
+        .or(seeded_confidence)
+        .unwrap_or_default();
 
     resolution.untrusted_sheet_answer_limits = untrusted_sheet_limits;
     for contribution in untrusted_source_rows {
@@ -411,7 +464,9 @@ pub(crate) fn resolve_policy_manifest(
     if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
+    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
+        || resolution.booking_conversion_rows.len() > 128
+    {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
 

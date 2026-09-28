@@ -504,14 +504,7 @@ impl Vault {
         code_artifact_id: &EntityId,
     ) -> Result<Option<CodebaseSnapshot>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &codebase_snapshot_key(code_artifact_id))?
-        else {
-            return Ok(None);
-        };
-        decode_codebase_snapshot(&raw).map(Some)
+        self.get_codebase_snapshot_in_txn(&rtxn, code_artifact_id)
     }
 
     /// Reads the value-free custody report stored beside a filtered snapshot.
@@ -548,8 +541,7 @@ impl Vault {
         fork_hash: &CodebaseForkHash,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = codebase_fork_index_prefix(fork_hash);
-        codebase_ids_by_index_prefix(&self.store, &rtxn, &prefix)
+        self.codebase_snapshots_by_fork_hash_in_txn(&rtxn, fork_hash)
     }
 
     pub fn mount_codebase_snapshot(
@@ -601,7 +593,7 @@ pub(crate) fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Re
     ))
 }
 
-fn codebase_snapshot_key(id: &EntityId) -> Vec<u8> {
+pub(super) fn codebase_snapshot_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(CODEBASE_SNAPSHOT_KEY_PREFIX.len() + id.as_bytes().len());
     key.extend_from_slice(CODEBASE_SNAPSHOT_KEY_PREFIX);
     key.extend_from_slice(id.as_bytes());
@@ -619,7 +611,7 @@ fn codebase_project_index_prefix(project_id: &str) -> Vec<u8> {
     scoped_index_prefix(CODEBASE_PROJECT_INDEX_KEY_PREFIX, project_id.as_bytes())
 }
 
-fn codebase_fork_index_prefix(fork_hash: &CodebaseForkHash) -> Vec<u8> {
+pub(super) fn codebase_fork_index_prefix(fork_hash: &CodebaseForkHash) -> Vec<u8> {
     scoped_index_prefix(CODEBASE_FORK_INDEX_KEY_PREFIX, fork_hash)
 }
 
@@ -763,7 +755,7 @@ fn delete_index_rows_for_id(
     Ok(())
 }
 
-fn codebase_ids_by_index_prefix(
+pub(super) fn codebase_ids_by_index_prefix(
     store: &Store,
     rtxn: &RoTxn<'_>,
     prefix: &[u8],

@@ -45,6 +45,9 @@ mod actor_fork;
 mod ask_policy;
 mod auto_checker;
 mod budget_policy;
+mod carry_forward;
+#[cfg(feature = "sync")]
+mod carry_forward_sync;
 mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
@@ -74,6 +77,7 @@ mod support;
 mod tracker_limits;
 mod trust_boundary;
 mod vad_vetting;
+mod voice_serving;
 mod witness_message;
 
 mod auto_signals;

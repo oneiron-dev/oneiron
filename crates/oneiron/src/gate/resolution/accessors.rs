@@ -1,5 +1,6 @@
 //! Read-only resolved-field accessors plus the frontier-hash entry.
 
+use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
 use sha2::{Digest, Sha256};
 
 use crate::EntityId;
@@ -165,6 +166,35 @@ impl PolicyManifestResolution {
             .effective(actor))
     }
 
+    /// One snapshot supplies the same carry-forward floor to typed, raw and Gate doors.
+    #[must_use]
+    pub(crate) fn carry_forward_floor(
+        &self,
+        kind: crate::write_envelope::carry_forward::CarryForwardKind,
+        actor: Option<crate::EntityId>,
+    ) -> f32 {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return 1.0;
+        }
+        self.carry_forward_confidence.floor(kind, actor)
+    }
+
+    #[must_use]
+    pub(crate) fn goal_limits(&self) -> crate::workspace_roster::GoalLimits {
+        self.goal_limits.unwrap_or_default()
+    }
+
+    #[must_use]
+    pub(crate) fn judge_calibration_policy(
+        &self,
+    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.judge_calibration.unwrap_or_default())
+        }
+    }
+
     #[must_use]
     pub(in crate::gate) fn linear_mirror(&self) -> crate::gate::LinearMirrorPolicy {
         self.linear_mirror.unwrap_or_default()
@@ -236,6 +266,75 @@ impl PolicyManifestResolution {
         crate::llm::manifest::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
     }
 
+    /// Conversion UI/notification choices from trusted, resolved manifest
+    /// rows. A malformed policy cannot silently become shipped defaults.
+    pub(crate) fn booking_conversion_policy(
+        &self,
+        holder_ref: Option<&str>,
+    ) -> Option<crate::booking::BookingConversionPolicy> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        crate::booking::resolve_booking_conversion_rows(&self.booking_conversion_rows, holder_ref)
+            .ok()
+    }
+
+    /// Compose trusted vault, campaign and holder rows in the shared manifest
+    /// resolver. The vault row selects precedence; equal-scope rows intersect
+    /// regardless of scan order, and every holder result remains vault-capped.
+    /// An absent vault row or malformed manifest supplies no search permission.
+    #[must_use]
+    pub(crate) fn experiment_selection_policy(
+        &self,
+        campaign_id: &str,
+        holder_id: Option<&str>,
+    ) -> Option<SelectionPolicy> {
+        if self.is_fail_closed() {
+            return None;
+        }
+        let mut vault = None;
+        let mut precedence = None;
+        let mut campaign = None;
+        let mut holder = None;
+        for row in &self.experiment_selection {
+            match (
+                row.scope.campaign_id.as_deref(),
+                row.scope.holder_id.as_deref(),
+            ) {
+                (None, None) => {
+                    if precedence.is_some_and(|old| old != row.precedence) {
+                        return None;
+                    }
+                    precedence = Some(row.precedence);
+                    vault = Some(
+                        vault.map_or(row.policy, |old: SelectionPolicy| old.narrow(row.policy)),
+                    );
+                }
+                (Some(id), None) if id == campaign_id => {
+                    campaign = Some(
+                        campaign.map_or(row.policy, |old: SelectionPolicy| old.narrow(row.policy)),
+                    );
+                }
+                (Some(id), Some(actor)) if id == campaign_id && Some(actor) == holder_id => {
+                    holder = Some(
+                        holder.map_or(row.policy, |old: SelectionPolicy| old.narrow(row.policy)),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let vault = vault?;
+        match (holder, precedence.unwrap_or_default()) {
+            (Some(holder), SelectionPrecedence::HolderUnderVault) => Some(vault.narrow(holder)),
+            _ => Some(match (campaign, holder) {
+                (Some(campaign), Some(holder)) => vault.narrow(campaign).narrow(holder),
+                (Some(campaign), None) => vault.narrow(campaign),
+                (None, Some(holder)) => vault.narrow(holder),
+                (None, None) => vault,
+            }),
+        }
+    }
+
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
     /// forces fail-closed (malformed, unsupported schema, engine-version
     /// floor, unknown axis, row-count overflow) exposes no usable table, and
@@ -249,6 +348,30 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    /// Retention may erase published telemetry only when the loaded manifest
+    /// is usable. An absent manifest keeps the shipped bootstrap posture;
+    /// malformed or unsupported loaded policy grants no deletion authority.
+    #[must_use]
+    pub(crate) fn retrieval_retention_policy(
+        &self,
+    ) -> Option<crate::gate::retrieval_retention::RetrievalRetentionPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.retrieval_retention)
+    }
+
+    /// The trusted, nested-narrow voice limits. A malformed or absent policy
+    /// never falls back to compiled operational allowances.
+    pub(crate) fn voice_serving_limits(
+        &self,
+        holder: Option<crate::EntityId>,
+    ) -> Result<crate::gate::VoiceServingLimits> {
+        if self.diagnostics.is_fail_closed() {
+            return Err(crate::error::Error::InvalidConfig(
+                "voice serving policy unavailable".into(),
+            ));
+        }
+        crate::gate::voice_serving::resolve(&self.voice_serving, holder)
     }
 
     /// Effective trusted per-vault limits. Malformed loaded policy refuses
