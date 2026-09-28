@@ -1,3 +1,4 @@
+pub(in crate::gate) mod decode_docedit_resource;
 mod decode_manifest;
 mod decode_map_util;
 mod decode_policy_tables;
