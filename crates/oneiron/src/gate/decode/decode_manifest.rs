@@ -99,6 +99,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
     pub(in crate::gate) sheet_answer_precedence:
@@ -170,6 +171,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "livequery_tracker_limits"
                 | "proposal_check_threshold"
+                | "goal_limits"
                 | "voice_ref_limits"
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
                 | POLICY_SHEET_ANSWER_PRECEDENCE_KEY
@@ -423,6 +425,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let goal_limits = match single_map_value(&entries, "goal_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::workspace_roster::GoalLimits::decode(value)?),
+    };
     let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -538,6 +545,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         diagnostic_bounds,
         livequery_tracker_limits,
         proposal_check_threshold,
+        goal_limits,
         voice_ref_limits,
         sheet_answer_limits,
         sheet_answer_precedence,
