@@ -149,6 +149,18 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.pack_install_policy = Some(policy);
                     }
                 }
+                if let Some(settings) = decoded.room_thread {
+                    resolution.room_thread = match resolution.room_thread.take() {
+                        None => Some(settings),
+                        Some(current) => match current.restrict(settings) {
+                            Some(folded) => Some(folded),
+                            None => {
+                                resolution.diagnostics.malformed_manifest_seen = true;
+                                None
+                            }
+                        },
+                    };
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
                 if let Some(limits) = decoded.livequery_tracker_limits {
