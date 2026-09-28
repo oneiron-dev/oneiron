@@ -1447,7 +1447,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 4
      }
     },
@@ -10775,7 +10775,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "struct": 5
      }
     },
@@ -11517,7 +11517,7 @@
      "path": "src/context_board/hydration.rs",
      "purpose": "The assembled context one hydration call returns: session prefix material (counts, last activity…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 5
      }
     },
@@ -11582,7 +11582,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 6,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -11813,6 +11813,37 @@
      "surface": {
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BriefPlacement",
+      "BriefSkillRow",
+      "ClassLimit",
+      "ClassVerdict",
+      "CommunicationLimits",
+      "PlacedSelfBrief",
+      "SelfBrief",
+      "SelfBriefInput",
+      "SelfBriefSession",
+      "SelfBriefState"
+     ],
+     "path": "src/context_board/self_brief.rs",
+     "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/self_brief/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -18131,7 +18162,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -18196,8 +18227,24 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 39,
       "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearMirrorPolicy",
+      "LinearSyncBudget",
+      "WaveHandoffPolicy"
+     ],
+     "path": "src/gate/operational_policy.rs",
+     "purpose": "Vault-resident operational schedules and per-pass limits (DEC-0005)",
+     "surface": {
+      "crate-vis": 14,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -18254,7 +18301,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 49
+      "crate-vis": 52
      }
     },
     {
@@ -18627,6 +18674,14 @@
      "notable": [],
      "path": "src/gate/tests/mod.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/operational_policy.rs",
+     "purpose": "Manifest-resident scheduler policy: defaults, restrictive fold and holder cap",
      "surface": {}
     },
     {
@@ -21227,6 +21282,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LinearEffectKind",
+      "LinearEffectRequest"
+     ],
+     "path": "src/linear_sync/effect.rs",
+     "purpose": "External-effect admission for Linear mirror mutations",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "LinearSyncAdapter"
      ],
      "path": "src/linear_sync/engine.rs",
@@ -21244,7 +21314,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -21264,6 +21334,7 @@
       "LinearSyncError",
       "LinearSyncRegistration",
       "LinearTaskStore",
+      "LinearWriteActor",
       "MirroredTaskFields",
       "TaskIssueLink",
       "TaskMirrorSnapshot"
@@ -21275,7 +21346,7 @@
       "crate-vis": 7,
       "enum": 3,
       "fn": 5,
-      "struct": 10,
+      "struct": 11,
       "trait": 3,
       "type": 2
      }
@@ -24901,7 +24972,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/checkout_tests.rs",
@@ -34763,8 +34834,8 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 2,
-      "fn": 4,
+      "crate-vis": 6,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -34820,7 +34891,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/production_ports_tests.rs",
@@ -35132,13 +35203,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "VaultWaveTaskPort"
+      "VaultWaveTaskPort",
+      "WaveDispatchGeneration",
+      "WaveDispatchPage"
      ],
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -38109,7 +38183,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 49,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38368,7 +38442,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 104,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38480,8 +38554,8 @@
      "purpose": "—"
     },
     "linear_sync": {
-     "files": 6,
-     "impl_vault": false,
+     "files": 7,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
@@ -39056,8 +39130,8 @@
    },
    "over_bar": 14,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2313,
-   "test_files": 805
+   "source_files": 2316,
+   "test_files": 807
   },
   "oneiron-android": {
    "files": [
@@ -40511,7 +40585,7 @@
      "path": "src/lib.rs",
      "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
      "surface": {
-      "re-export": 3
+      "re-export": 5
      }
     },
     {
@@ -40578,7 +40652,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsolidationExecutorFactory",
@@ -40587,13 +40661,14 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1,
-      "trait": 1
+      "trait": 1,
+      "type": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/supervisor/factory_tests.rs",
@@ -40611,7 +40686,7 @@
      "purpose": "Biased-select supervisor loop with panic containment and backoff",
      "surface": {
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -40800,6 +40875,46 @@
       "fn": 6,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WaveHost"
+     ],
+     "path": "src/wave.rs",
+     "purpose": "Host-side consumption of a queued planning attempt and live TASK dispatch",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/wave/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WaveDispatchCandidate",
+      "WaveDispatchLimits",
+      "WaveDispatchRoute",
+      "WaveHandoffOutcome",
+      "WaveHandoffReceipt"
+     ],
+     "path": "src/wave_dispatch.rs",
+     "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 3,
+      "fn": 1,
+      "struct": 2
+     }
     }
    ],
    "modules": {
@@ -40823,12 +40938,26 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)"
+    },
+    "wave": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "Host-side consumption of a queued planning attempt and live TASK dispatch"
+    },
+    "wave_dispatch": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher"
     }
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 15,
-   "test_files": 10
+   "source_files": 17,
+   "test_files": 11
   },
   "oneiron-ffi": {
    "files": [
@@ -43645,7 +43774,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -44551,7 +44680,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/context_board_standing.rs",
@@ -44789,7 +44918,7 @@
      "path": "src/api/tests/support_mcp_credentials.rs",
      "purpose": "Paired MCP fixture credentials",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -45528,6 +45657,24 @@
       "mod": 15,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_host.rs",
+     "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/linear_host/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -46344,8 +46491,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 8,
-      "fn": 5,
+      "crate-vis": 9,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -46888,6 +47035,13 @@
      "layout": "file+dir",
      "purpose": "—"
     },
+    "linear_host": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
+    },
     "livequery": {
      "files": 19,
      "impl_vault": false,
@@ -46982,8 +47136,8 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 239,
-   "test_files": 100
+   "source_files": 240,
+   "test_files": 101
   },
   "oneiron-uniffi": {
    "files": [
