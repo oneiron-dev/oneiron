@@ -17,7 +17,10 @@ mod validation;
 
 use self::edge::{apply_edge_op, edge_op_endpoints};
 use self::indexes::{apply_text_index_update, finalize_batch_indexes};
-use self::validation::{birth_stamp_target, take_lapse_decisions, validate_put_type};
+use self::validation::{
+    birth_stamp_target, consume_preflight_decisions, mark_unapplied_preflight_decisions,
+    take_lapse_decisions, validate_put_type,
+};
 
 // Holds promotion's independent journal clone until apply completes. The
 // iterator retains every unconsumed op on early return; per-op payloads that
@@ -207,6 +210,9 @@ pub(super) fn apply_ops_with_origin(
     let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
     #[cfg(feature = "sync")]
     let mut pending_embedding_enqueue_priorities = HashMap::<EntityId, u8>::new();
+    // Preflight precedes every operation. Protect only future receipts from
+    // earlier deletes; successful nested applies consume their own markers.
+    mark_unapplied_preflight_decisions(store, wtxn, &preflight_gate_decision_ids)?;
     let iter = ReplayIter {
         remaining: std::mem::take(&mut ops.ops).into_iter(),
         replay,
@@ -334,6 +340,7 @@ pub(super) fn apply_ops_with_origin(
                     preflight_decision_id,
                     origin,
                 )?;
+                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
                         store,
@@ -478,6 +485,7 @@ pub(super) fn apply_ops_with_origin(
                     claim_gate_prechecked,
                     preflight_decision_id,
                 )?;
+                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if !internal_lexical_query_hint {
                     claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
                 }
@@ -592,9 +600,9 @@ pub(super) fn apply_ops_with_origin(
                 envelope,
                 learned_at,
             } => {
-                // Hand each id its own preflight receipt identity, in the
-                // order the preflight recorded them, so the unconsumed-identity
-                // invariant below stays exact.
+                // Hand each id its preflight identity in recorded order. The
+                // nested ClaimCandidate applies consume its marker, not this
+                // outer arm; consuming here a second time aborts the lapse.
                 let lapse_decision_ids =
                     take_lapse_decisions(&mut preflight_gate_decision_ids, &ids);
                 crate::commitment::lapse_commitments_in_txn(

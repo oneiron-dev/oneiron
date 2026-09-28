@@ -52,7 +52,7 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-    ) -> Result<(bool, bool)> {
+    ) -> Result<(bool, bool, bool)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
@@ -60,6 +60,11 @@ impl Vault {
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
+        let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
+            wtxn,
+            id.as_bytes(),
+            self.store.clock.now_recorded_at(),
+        )?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;
         if room_had_graph {
@@ -113,7 +118,11 @@ impl Vault {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
                 ppr::increment_graph_version(&self.store, wtxn)?;
             }
-            return Ok((had_refinement || had_merge_receipt, had_vector));
+            return Ok((
+                had_refinement || had_merge_receipt,
+                had_vector,
+                ledger_changed,
+            ));
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
@@ -176,6 +185,6 @@ impl Vault {
                 },
             )?;
         }
-        Ok((true, had_vector))
+        Ok((true, had_vector, ledger_changed))
     }
 }

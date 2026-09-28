@@ -10,14 +10,15 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::constants::{
-    POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
-    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
-    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
-    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
-    POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_AUTO_CHECKER_KEY,
+    POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DELEGATED_GRANTS_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
+    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
+    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
+    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
     POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
@@ -26,6 +27,7 @@ use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 
 use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
 use super::decode_map_util::{
     MapValue, parse_signature_value, parse_signatures, required_string, required_value,
@@ -47,6 +49,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) source_trust: SourceTrustCeiling,
     pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
+    pub(in crate::gate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
     pub(in crate::gate) owner_policy_enabled: bool,
@@ -62,11 +65,19 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
+    pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) livequery_tracker_limits:
+        Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(in crate::gate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
+    pub(in crate::gate) retry_source_policy:
+        Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
+    pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -96,6 +107,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SOURCE_TRUST_KEY
                 | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
+                | crate::federation::grant_policy::ROWS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
@@ -111,11 +123,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
+                | "room_thread"
                 | POLICY_HOSTED_TTS_KEY
 
                 | "diagnostic_bounds"
+                | "livequery_tracker_limits"
                 | "proposal_check_threshold"
+                | "voice_ref_limits"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
+                | POLICY_ASK_POLICY_KEY
+                | "retry_source_policy"
+                | "compilation_policy"
         ) {
             return None;
         }
@@ -157,6 +175,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_scoped_grants(value)?,
     };
+    let federation_grant_rows =
+        match single_map_value(&entries, crate::federation::grant_policy::ROWS_KEY) {
+            MapValue::Missing => Vec::new(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => crate::federation::grant_policy::parse_rows(value)?,
+        };
     let owner_policy_enabled = match single_map_value(&entries, POLICY_OWNER_POLICY_ENABLED_KEY) {
         MapValue::Missing => false,
         MapValue::Duplicate => return None,
@@ -242,10 +266,22 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let room_thread = match single_map_value(&entries, "room_thread") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::gate::RoomThreadManifest::decode(value)?),
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => HostedTtsPolicy::parse(value)?,
+    };
+    let livequery_tracker_limits = match single_map_value(&entries, "livequery_tracker_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::gate::tracker_limits::PolicyTrackerLimits::decode(
+            value,
+        )?),
     };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
@@ -261,12 +297,41 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(VoiceRefLimitPolicy::decode(value)?),
+    };
     let weave_correction_policy =
         match single_map_value(&entries, POLICY_WEAVE_CORRECTION_POLICY_KEY) {
             MapValue::Missing => None,
             MapValue::Duplicate => return None,
             MapValue::Present(value) => Some(crate::gate::WeaveCorrectionPolicy::parse(value)?),
         };
+    let retry_source_policy = match single_map_value(&entries, "retry_source_policy") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => rows
+            .iter()
+            .map(crate::gate::retry_source_policy::RetrySourcePolicyRow::parse)
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
+    };
+    let compilation_policy = match single_map_value(&entries, "compilation_policy") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::edit_distance::miner::CompilationPolicy::decode(
+            value,
+        )?),
+    };
+
+    let ask_policy = match single_map_value(&entries, POLICY_ASK_POLICY_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::gate::ask_policy::AskOperationalPolicy::decode(
+            value,
+        )?),
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -283,6 +348,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         delegated_grants,
         source_trust,
         scoped_grants,
+        federation_grant_rows,
         single_valued_predicates,
         owner_policy_rows,
         owner_policy_rows_dropped,
@@ -297,11 +363,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         pack_install_policy,
+        room_thread,
         hosted_tts,
 
         diagnostic_bounds,
+        livequery_tracker_limits,
         proposal_check_threshold,
+        voice_ref_limits,
         weave_correction_policy,
+        ask_policy,
+        retry_source_policy,
+        compilation_policy,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

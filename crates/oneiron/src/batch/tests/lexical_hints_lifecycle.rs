@@ -677,3 +677,99 @@ fn claim_candidate_lexical_hint_ids_are_order_stable() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn parent_delete_redacts_lexical_hint_claim_decisions_and_bundle_refs() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let subject = EntityId::now();
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"actor",
+    )?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    let claim = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(subject),
+                Value::from("sencha"),
+                0.9,
+            ),
+            &test_write_envelope(actor)?,
+            test_time_range(10, 10),
+            11,
+            &["nested erasure fixture"],
+        )
+        .commit()?;
+    let hint = lexical_query_hint_claim_id(&claim, "nested erasure fixture")?;
+    assert!(vault.get_claim(&hint)?.is_some());
+    let decision = crate::store::GateDecisionRecord {
+        version: crate::store::GATE_DECISION_LEDGER_VERSION,
+        decision_id: crate::store::GateDecisionId::now(),
+        created_at: 11,
+        outcome: "approved".to_owned(),
+        reason_codes: vec!["gate.allow".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "agent".to_owned(),
+        actor_ref: Some("sensitive actor".to_owned()),
+        content_kind: "claim".to_owned(),
+        policy_manifest_version: "v0".to_owned(),
+        claim_id: Some(*hint.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![0xAA],
+        read_frontier_hash: [0; 32],
+        redacted_at: None,
+    };
+    let bundle = crate::store::GateDecisionRecord {
+        decision_id: crate::store::GateDecisionId::now(),
+        claim_id: None,
+        content_kind: "inbox_bundle".to_owned(),
+        ..decision.clone()
+    };
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        vault.store.append_gate_decision_with_claim_refs_in_txn(
+            wtxn,
+            &bundle,
+            &[*hint.as_bytes(), *claim.as_bytes()],
+        )
+    })?;
+    vault.batch().delete(&claim).commit()?;
+    assert!(vault.get_claim(&hint)?.is_none());
+    let rtxn = vault.store.env.read_txn()?;
+    for decision_id in [decision.decision_id, bundle.decision_id] {
+        let row = vault
+            .store
+            .gate_decision_in_txn(&rtxn, decision_id)?
+            .expect("redacted decision skeleton");
+        assert!(row.redacted_at.is_some());
+        assert!(row.diff_handle.is_empty());
+    }
+    assert!(
+        vault
+            .store
+            .bundle_gate_decisions_for_claim_in_txn(&rtxn, claim.as_bytes())?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, hint.as_bytes())?
+            .is_empty()
+    );
+    Ok(())
+}

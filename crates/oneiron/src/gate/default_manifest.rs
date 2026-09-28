@@ -41,6 +41,18 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_SCHEMA_VERSION),
         ),
         (
+            Value::from(super::constants::POLICY_ASK_POLICY_KEY),
+            super::ask_policy::AskOperationalPolicy::default_manifest_value(),
+        ),
+        (
+            Value::from("retry_source_policy"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("selector"), Value::from("vault")),
+                (Value::from("max_sources"), Value::from(1_024_u64)),
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+            ])]),
+        ),
+        (
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),
@@ -62,10 +74,74 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(env!("CARGO_PKG_VERSION")),
         ),
         (
+            Value::from("room_thread"),
+            Value::Map(vec![
+                (
+                    Value::from("base"),
+                    Value::Map(vec![
+                        (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
+                        (Value::from("rows_per_list"), Value::from(8)),
+                        (Value::from("tokens_per_list"), Value::from(512)),
+                        (Value::from("fill"), Value::from("stage")),
+                        (Value::from("waits_per_thread"), Value::from(8)),
+                    ]),
+                ),
+                (
+                    Value::from("vault_ceiling"),
+                    Value::Map(vec![
+                        (Value::from("fresh_for_secs"), Value::from(30 * 86_400_u64)),
+                        (Value::from("rows_per_list"), Value::from(1_000)),
+                        (Value::from("tokens_per_list"), Value::from(65_536)),
+                        (Value::from("fill"), Value::from("stage")),
+                        (Value::from("waits_per_thread"), Value::from(128)),
+                    ]),
+                ),
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("allowed_fills"),
+                    Value::Array(vec![
+                        Value::from("recency"),
+                        Value::from("nudge_due"),
+                        Value::from("stage"),
+                    ]),
+                ),
+                (Value::from("holder_rows"), Value::Array(Vec::new())),
+            ]),
+        ),
+        (
             Value::from(POLICY_DEFAULTS_KEY),
             Value::Map(vec![
                 (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
                 (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+            ]),
+        ),
+        // Shipped voice-reference limits are editable policy data. Owner packs
+        // replace named defaults; the default precedence keeps holders under
+        // the vault ceiling and narrows multiple trusted contributions.
+        (
+            Value::from("voice_ref_limits"),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (Value::from("max_clips_per_pack"), Value::from(32u64)),
+                        (
+                            Value::from("max_audio_bytes_per_pack"),
+                            Value::from(16u64 * 1024 * 1024),
+                        ),
+                        (Value::from("max_register_bytes"), Value::from(128u64)),
+                        (Value::from("max_transcript_bytes"), Value::from(16_384u64)),
+                        (
+                            Value::from("max_design_vendor_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                        (
+                            Value::from("max_vendor_voice_id_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                    ]),
+                ),
             ]),
         ),
         (
@@ -401,6 +477,49 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(PACK_INSTALL_POLICY_KEY),
             PackInstallPolicy::shipped().encode(),
         ),
+        // OF-379 compilation is policy, not a Rust-owned language heuristic.
+        // A holder row can narrow this vault row, never widen it.
+        (
+            Value::from("compilation_policy"),
+            Value::Map(vec![
+                (
+                    Value::from("precedence"),
+                    Value::from("nested_narrowing_holder_capped_at_vault"),
+                ),
+                (
+                    Value::from("order"),
+                    Value::Array(vec![
+                        Value::from("style_rule"),
+                        Value::from("charter_line"),
+                        Value::from("brief_update"),
+                        Value::from("ban"),
+                    ]),
+                ),
+                (
+                    Value::from("rows"),
+                    Value::Array(vec![Value::Map(vec![(
+                        Value::from("routes"),
+                        Value::Array(vec![
+                            compilation_route(
+                                "style_rule",
+                                "expression.style:",
+                                true,
+                                "",
+                                "",
+                                true,
+                            ),
+                            compilation_route("charter_line", "charter:", true, "", "", false),
+                            compilation_route("brief_update", "brief:", true, "", "", false),
+                            compilation_route("ban", "", false, "never ", "never ", false),
+                        ]),
+                    )])]),
+                ),
+            ]),
+        ),
+        (
+            Value::from(crate::federation::grant_policy::ROWS_KEY),
+            federation_grant_default_rows(),
+        ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
@@ -431,4 +550,89 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// Engine-authored vault policy DATA for grant creation. The grant codec and
+/// write gate do not consult this list; they resolve the stored manifest rows
+/// in the same writer that mints each membership grant.
+fn federation_grant_default_rows() -> Value {
+    use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
+    use crate::federation::{FederationGrantRole as Role, Scope, ScopeAxis};
+    let scope = |verbs: &[&str]| {
+        let mut scope = Scope::top();
+        scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
+        scope
+    };
+    Value::Array(
+        [
+            Row::PrecedenceNestedNarrowing,
+            Row::RoleDefault {
+                role: Role::Owner,
+                scope: Scope::top(),
+            },
+            Row::RoleDefault {
+                role: Role::Admin,
+                scope: scope(&[
+                    "read",
+                    "write",
+                    "admin",
+                    "org:add-member",
+                    "org:remove-member",
+                    "org:assign-role",
+                    "org:reset-shared-project-access",
+                ]),
+            },
+            Row::RoleDefault {
+                role: Role::Member,
+                scope: scope(&["read", "write"]),
+            },
+            Row::RoleDefault {
+                role: Role::Viewer,
+                scope: scope(&["read"]),
+            },
+            Row::RoleDefault {
+                role: Role::Delegate,
+                scope: scope(&["read"]),
+            },
+        ]
+        .iter()
+        .map(|row| encode_row(row).expect("default grant policy row"))
+        .collect(),
+    )
+}
+
+/// Shipped OF-379 row data. Engines read these selectors through the same
+/// validated manifest path as owner-edited rows.
+fn compilation_route(
+    family: &str,
+    scope_prefix: &str,
+    require_scope_suffix: bool,
+    to_prefix: &str,
+    from_not_prefix: &str,
+    style_atom: bool,
+) -> Value {
+    Value::Map(vec![
+        (Value::from("family"), Value::from(family)),
+        (Value::from("enabled"), Value::Boolean(true)),
+        (Value::from("scope_prefix"), Value::from(scope_prefix)),
+        (
+            Value::from("scope_not_prefixes"),
+            Value::Array(if family == "ban" {
+                vec![
+                    Value::from("expression.style:"),
+                    Value::from("charter:"),
+                    Value::from("brief:"),
+                ]
+            } else {
+                Vec::new()
+            }),
+        ),
+        (
+            Value::from("require_scope_suffix"),
+            Value::Boolean(require_scope_suffix),
+        ),
+        (Value::from("to_prefix"), Value::from(to_prefix)),
+        (Value::from("from_not_prefix"), Value::from(from_not_prefix)),
+        (Value::from("style_atom"), Value::Boolean(style_atom)),
+    ])
 }

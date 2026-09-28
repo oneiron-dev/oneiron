@@ -115,7 +115,8 @@ impl Vault {
                 .entities
                 .get(&*wtxn, id.as_bytes())?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
+            let (existed, had_vector, ledger_changed) =
+                self.soft_erase_active_store_in_txn(wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;
             }
@@ -131,7 +132,8 @@ impl Vault {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
-                changed: had_body
+                changed: ledger_changed
+                    || had_body
                     || had_vector
                     || had_birth_sources
                     || had_sources
