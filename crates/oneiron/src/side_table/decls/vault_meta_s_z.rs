@@ -28,6 +28,9 @@ side_tables! {
     SCOPE_POLICY_SWEEP_DONE: VaultMeta b"scope:policy-manifest:v1.2" Raw;
     /// Record-scope revision counter (u64 little-endian), bumped on every stamp change. Key: ().
     SCOPE_RECORD_REVISION: VaultMeta b"scope:record:revision:v1" Raw;
+    /// Retired digest-bound record-scope stamp. #1224 moved stamps to `scope:record:v2:` and no longer
+    /// reads these rows; a vault stamped before it still holds them. Key: id16.
+    SCOPE_RECORD_V1: VaultMeta b"scope:record:v1:" LegacyJson;
     /// Birth-position scope stamp (kind, birth facet, worlds/facets/bands/audience/sensitivity) for
     /// one stored record, used by scoped read/export/delete. Key: id16.
     SCOPE_RECORD: VaultMeta b"scope:record:v2:" LegacyJson;
