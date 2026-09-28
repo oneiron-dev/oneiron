@@ -6,6 +6,45 @@ use super::*;
 // The verdict ledger
 // ---------------------------------------------------------------------------
 
+fn validate_tradeoff_verdict(
+    disposition: SkillEditDisposition,
+    axes: &BTreeMap<String, GoalAxisScore>,
+    resolution: Option<&TradeoffResolution>,
+) -> Result<()> {
+    if let Some(resolution) = resolution {
+        if !matches!(
+            disposition,
+            SkillEditDisposition::AcceptedTradeoff
+                | SkillEditDisposition::RejectedTradeoff
+                | SkillEditDisposition::RefusedStaleTarget
+                | SkillEditDisposition::RefusedProtectedTier
+                | SkillEditDisposition::RefusedBindingMismatch
+                | SkillEditDisposition::RefusedSourceLoss
+                | SkillEditDisposition::RefusedSourceMalformed
+        ) || resolution.authentication.is_empty()
+            || resolution.evidence.is_empty()
+            || resolution.evidence.len() > 256
+            || floor_regressed(axes)
+            || !is_tradeoff(axes)
+        {
+            return Err(invalid("invalid tradeoff decision or scored vector"));
+        }
+    } else if matches!(
+        disposition,
+        SkillEditDisposition::AcceptedTradeoff | SkillEditDisposition::RejectedTradeoff
+    ) {
+        return Err(invalid(
+            "resolved tradeoff requires authenticated decision evidence",
+        ));
+    }
+    if disposition == SkillEditDisposition::Accepted && !dominates(axes) {
+        return Err(invalid(
+            "an automatic acceptance must dominate on every goal axis",
+        ));
+    }
+    Ok(())
+}
+
 fn verdict_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(VERDICT_PREFIX.len() + ENTITY_ID_LEN);
     key.extend_from_slice(VERDICT_PREFIX);
@@ -20,6 +59,23 @@ pub(super) fn record_verdict_in_txn(
 ) -> Result<()> {
     if verdict.measurements.is_some() != verdict.judge_revision.is_some() {
         return Err(invalid("judged verdict requires a judge revision"));
+    }
+    if verdict.measurements.is_some() {
+        if verdict.goal_revision.is_empty() || verdict.goal_id.is_none() {
+            return Err(invalid("judged verdict has no goal revision"));
+        }
+        validate_goal_vector(&verdict.goal_axes)?;
+        validate_tradeoff_verdict(
+            verdict.disposition,
+            &verdict.goal_axes,
+            verdict.tradeoff_resolution.as_ref(),
+        )?;
+    } else if !verdict.goal_axes.is_empty()
+        || !verdict.goal_revision.is_empty()
+        || verdict.goal_id.is_some()
+        || verdict.tradeoff_resolution.is_some()
+    {
+        return Err(invalid("an unscored verdict cannot carry goal axes"));
     }
     if let Some(measurements) = &verdict.measurements {
         validate_measurements(measurements, verdict.held_out_count)?;
@@ -42,6 +98,33 @@ pub(super) fn record_verdict_in_txn(
         (Value::from(KEY_SKILL), Value::from(verdict.skill.to_hex())),
         (Value::from(KEY_BEFORE), Value::F32(verdict.before)),
         (Value::from(KEY_AFTER), Value::F32(verdict.after)),
+        (
+            Value::from(KEY_GOAL_REVISION),
+            Value::from(verdict.goal_revision.as_str()),
+        ),
+        (
+            Value::from(KEY_GOAL_ID),
+            verdict
+                .goal_id
+                .map_or(Value::Nil, |id| Value::from(id.to_hex())),
+        ),
+        (
+            Value::from(KEY_TRADEOFF_RESOLUTION),
+            match &verdict.tradeoff_resolution {
+                Some(resolution) => Value::from(
+                    serde_json::to_string(resolution)
+                        .map_err(|_| invalid("tradeoff decision encode failed"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
+        (
+            Value::from(KEY_GOAL_AXES),
+            Value::from(
+                serde_json::to_string(&verdict.goal_axes)
+                    .map_err(|_| invalid("goal vector encode failed"))?,
+            ),
+        ),
         (
             Value::from(KEY_DISPOSITION),
             Value::from(verdict.disposition.as_str()),
@@ -210,8 +293,66 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
     {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
+    let goal_axes: BTreeMap<String, GoalAxisScore> = serde_json::from_str(
+        field(KEY_GOAL_AXES)
+            .and_then(Value::as_str)
+            .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+    )
+    .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+    if measurements.is_some() {
+        if field(KEY_GOAL_REVISION)
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+        }
+        validate_goal_vector(&goal_axes).map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+        // The resolution is validated below, together with the vector.
+        let headline = goal_axes
+            .values()
+            .find(|axis| axis.kind == GoalAxisKind::Primary)
+            .expect("validated primary axis");
+        if score(KEY_BEFORE)? != headline.before || score(KEY_AFTER)? != headline.after {
+            return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+        }
+    } else if !goal_axes.is_empty() || field(KEY_GOAL_REVISION).and_then(Value::as_str) != Some("")
+    {
+        return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+    }
+    let goal_id = match field(KEY_GOAL_ID) {
+        Some(Value::Nil) if measurements.is_none() => None,
+        Some(value) if measurements.is_some() => Some(
+            value
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        ),
+        _ => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
+    let tradeoff_resolution: Option<TradeoffResolution> = match field(KEY_TRADEOFF_RESOLUTION) {
+        Some(Value::Nil) => None,
+        Some(value) => Some(
+            serde_json::from_str(
+                value
+                    .as_str()
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+            )
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        ),
+        None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
+    if measurements.is_some() {
+        validate_tradeoff_verdict(disposition, &goal_axes, tradeoff_resolution.as_ref())
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+    } else if tradeoff_resolution.is_some() {
+        return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+    }
     let scored = measurements.is_some();
     Ok(HeldOutVerdict {
+        goal_id,
+        tradeoff_resolution,
+        goal_axes,
+        goal_revision: text(KEY_GOAL_REVISION)?,
         before: score(KEY_BEFORE)?,
         after: score(KEY_AFTER)?,
         measurements,
@@ -484,6 +625,18 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
             verdict.held_out_digest.clone(),
         ),
     ]);
+    if let Some(resolution) = &verdict.tradeoff_resolution {
+        fields.insert(
+            FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION.to_owned(),
+            serde_json::to_string(resolution).expect("validated tradeoff decision serializes"),
+        );
+    }
+    if !verdict.goal_axes.is_empty() {
+        fields.insert(
+            FIELD_SKILL_EDIT_GOAL_AXES.to_owned(),
+            serde_json::to_string(&verdict.goal_axes).expect("validated goal vector serializes"),
+        );
+    }
     if let Some(judge) = &verdict.judge_revision {
         fields.insert(FIELD_SKILL_EDIT_JUDGE_REVISION.to_owned(), judge.clone());
     }

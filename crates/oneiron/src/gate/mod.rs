@@ -28,7 +28,10 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+mod operational_policy;
+mod owner_policy_mutation;
 mod pack_install_policy;
+pub(crate) mod policy_values;
 pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
 mod repair;
@@ -43,8 +46,10 @@ mod room_thread;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
+mod skill_edit_goal_policy;
 pub(crate) mod voice_serving;
 mod weave_correction_policy;
+pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
@@ -67,6 +72,7 @@ pub use self::confirm::{
 pub(crate) use self::confirm::{
     critical_write_confirm_binding, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
+pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
     FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
@@ -107,8 +113,9 @@ use self::dreamer_precommit::{
     validate_dreamer_precommit,
 };
 pub(crate) use self::effect::{
-    ExternalEffectGovernance, check_external_effect_policy, evaluate_external_effect_policy,
-    external_effect_approval_digest, record_external_effect_policy,
+    ExternalEffectGovernance, check_external_effect_policy, check_external_effect_policy_pair,
+    evaluate_external_effect_policy, external_effect_approval_digest,
+    record_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
@@ -119,11 +126,20 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
+#[cfg(test)]
+pub(crate) use self::operational_policy::default_manifest_with_linear_sync_pages_for_test;
+pub(crate) use self::operational_policy::{
+    LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
+};
+pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
+pub use self::owner_policy_mutation::{
+    PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
+};
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
     GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
-    resolve_gate_decision_retention, resolve_policy_manifest, resolve_project_depth_max,
-    retention_edit_target,
+    resolve_credential_lifetimes, resolve_gate_decision_retention, resolve_policy_manifest,
+    resolve_project_depth_max, retention_edit_target,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
@@ -133,6 +149,7 @@ pub(crate) use self::room_policy::{RoomAction, allows as room_policy_allows};
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;
+pub(crate) use self::skill_edit_goal_policy::SkillEditGoalPolicy;
 pub(crate) use self::voice_serving::VoiceServingLimits;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;

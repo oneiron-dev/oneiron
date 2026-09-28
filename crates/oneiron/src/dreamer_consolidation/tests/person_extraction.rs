@@ -110,6 +110,7 @@ fn expired_mint_transaction_does_not_publish_extracted_people() -> Result<()> {
             &[turn],
             &source_scope(&vault, &[turn])?,
             20,
+            None,
             Some(&deadline),
         )
         .is_err()
@@ -151,6 +152,7 @@ fn extraction_provenance_rechecks_role_and_liveness_even_for_working_set_ids() -
         &[user, tool, deleted],
         &source_scope(&vault, &[user, tool, deleted])?,
         20,
+        None,
         None,
     )?;
     assert_eq!(
@@ -208,6 +210,7 @@ fn extraction_requires_a_normalized_name_span_not_an_embedded_word() -> Result<(
         &working_set,
         &source_scope(&vault, &working_set)?,
         20,
+        None,
         None,
     )?;
     for (person, name, text, should_mint) in expected {

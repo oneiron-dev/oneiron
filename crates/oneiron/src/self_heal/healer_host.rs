@@ -470,7 +470,8 @@ impl HealerRegistration<'_> {
             // Persist authority attribution, not the runner's claimed actor/source.
             proposal.actor = reviewed.invocation().actor().clone();
             proposal.source = reviewed.invocation().source();
-            let threshold = policy.proposal_check_threshold();
+            let policy_source = policy.proposal_check_threshold_source(&Default::default());
+            let threshold = policy_source.threshold;
 
             let pk = key(b"healer:proposal:", proposal.proposal_id.as_bytes());
             if self.vault.store.vault_meta.get(txn, &pk)?.is_some() {
@@ -535,7 +536,7 @@ impl HealerRegistration<'_> {
                 txn,
                 actor,
                 &format!("healer:{}", proposal_id.to_hex()),
-                threshold,
+                policy_source,
                 true,
             )?;
             Ok(bundle)

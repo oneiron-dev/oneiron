@@ -36,6 +36,25 @@ pub(crate) fn resolve_project_depth_max(store: &Store, txn: &heed::RoTxn<'_>) ->
     Ok(policy.project_depth_max.unwrap_or(ceiling).min(ceiling))
 }
 
+/// Resolve in the caller's mint/issuance transaction so policy and the
+/// resulting log or pending link observe one LMDB snapshot.
+pub(crate) fn resolve_credential_lifetimes(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<super::manifest_types::CredentialLifetimePolicy> {
+    let resolved = resolve_policy_manifest(store, txn)?;
+    if resolved.is_fail_closed() {
+        return Err(Error::InvalidConfig(
+            "credential lifetime policy is unavailable".into(),
+        ));
+    }
+    resolved.credential_lifetimes.ok_or_else(|| {
+        Error::InvalidConfig(
+            "credential lifetime policy missing from trusted vault manifests".into(),
+        )
+    })
+}
+
 pub(crate) fn resolve_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -146,6 +165,13 @@ pub(crate) fn resolve_policy_manifest(
                     resolution.teacher_probe_trusted = true;
                     merge_teacher_probe_row(&mut resolution, row);
                 }
+                if let Some(lifetimes) = decoded.credential_lifetimes {
+                    if let Some(resolved) = &mut resolution.credential_lifetimes {
+                        resolved.restrict(lifetimes);
+                    } else {
+                        resolution.credential_lifetimes = Some(lifetimes);
+                    }
+                }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution
                     .experiment_selection
@@ -153,7 +179,18 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
+                if let Some(goal) = decoded.skill_edit_goal {
+                    resolution.skill_edit_goal.push(goal);
+                }
                 resolution.room_policy_rows.extend(decoded.room_policy_rows);
+                resolution
+                    .weave_report_policy
+                    .extend(decoded.weave_report_policy);
+                resolution.weave_report_policy_empty |= decoded.weave_report_policy_empty;
+                // The most restrictive authored order wins across trusted packs.
+                resolution.weave_report_precedence = resolution
+                    .weave_report_precedence
+                    .max(decoded.weave_report_precedence);
                 resolution
                     .federation_grant_rows
                     .extend(decoded.federation_grant_rows);
@@ -161,6 +198,13 @@ pub(crate) fn resolve_policy_manifest(
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
                 resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;
+                resolution.owner_policy_precedence = if resolution.packs.is_empty() {
+                    decoded.owner_policy_precedence
+                } else {
+                    resolution
+                        .owner_policy_precedence
+                        .restrict(decoded.owner_policy_precedence)
+                };
                 resolution.owner_policy_enabled |= decoded.owner_policy_enabled;
                 resolution
                     .owner_policy_patterns
@@ -223,18 +267,6 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
-                // Unlike `on_budget_exhausted`, disagreement here is NOT
-                // malformed: the posture has a restrictive pole, so two packs
-                // that disagree have a deterministic, safe answer — hold the
-                // send. Marking that malformed would fail the whole vault
-                // closed over a question the axis can answer itself.
-                if let Some(posture) = decoded.comm_opt_out_posture {
-                    resolution.comm_opt_out_posture = Some(
-                        resolution
-                            .comm_opt_out_posture
-                            .map_or(posture, |existing| existing.restrict(posture)),
-                    );
-                }
                 // One checker per vault (ONE-1296), folded exactly like the
                 // budget policy above: the first value wins, a second manifest
                 // stating the SAME ref is one configuration written twice, and
@@ -280,6 +312,9 @@ pub(crate) fn resolve_policy_manifest(
                 if let Some(voice_serving) = decoded.voice_serving {
                     resolution.voice_serving.push(voice_serving);
                 }
+                resolution
+                    .failure_signal_policy
+                    .extend(decoded.failure_signal_policy);
                 if let Some(policy) = decoded.pack_install_policy {
                     if let Some(existing) = &mut resolution.pack_install_policy {
                         existing.restrict(policy);
@@ -316,6 +351,16 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .booking_conversion_rows
                     .extend(decoded.booking_conversion_rows);
+                resolution
+                    .dreamer_failure_rules
+                    .extend(decoded.dreamer_failure_rules);
+                if let Some(precedence) = decoded.dreamer_failure_precedence {
+                    resolution.dreamer_failure_precedence = Some(
+                        resolution
+                            .dreamer_failure_precedence
+                            .map_or(precedence, |prior| prior.restrict(precedence)),
+                    );
+                }
                 // Resolve class policy restrictively across trusted manifests.
                 resolution.wait_policy.extend_rows(decoded.wait_policy);
                 resolution.act_policy.extend_rows(decoded.act_policy);
@@ -354,6 +399,7 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                resolution.policy_values.extend(decoded.policy_values);
                 if let Some(ask_policy) = decoded.ask_policy {
                     match &mut resolution.ask_policy {
                         Some(current) => {
@@ -364,8 +410,6 @@ pub(crate) fn resolve_policy_manifest(
                         None => resolution.ask_policy = Some(ask_policy),
                     }
                 }
-                // Advisory threshold composition is deterministic and never
-                // authorizes or refuses a write. The earliest question wins.
                 if let Some(limits) = decoded.attribution_limits {
                     if resolution.attribution_limits_set {
                         resolution.attribution_limits.restrict(limits);
@@ -377,13 +421,6 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .sheet_answer_limits
                     .extend(decoded.sheet_answer_limits);
-                if let Some(threshold) = decoded.proposal_check_threshold {
-                    resolution.proposal_check_threshold = Some(
-                        resolution
-                            .proposal_check_threshold
-                            .map_or(threshold, |old| old.min(threshold)),
-                    );
-                }
                 if let Some(limits) = decoded.goal_limits {
                     resolution.goal_limits = Some(
                         resolution
@@ -403,6 +440,28 @@ pub(crate) fn resolve_policy_manifest(
                             }
                         }
                         resolution.voice_ref_limits.narrow(limits);
+                    }
+                }
+                if let Some(row) = decoded.linear_mirror {
+                    resolution.linear_mirror = Some(
+                        resolution
+                            .linear_mirror
+                            .map_or(row, |old| old.restrict(row)),
+                    );
+                }
+                if let Some(row) = decoded.linear_sync {
+                    resolution.linear_sync =
+                        Some(resolution.linear_sync.map_or(row, |old| old.restrict(row)));
+                }
+                if let Some(row) = decoded.wave_handoff {
+                    resolution.wave_handoff =
+                        Some(resolution.wave_handoff.map_or(row, |old| old.restrict(row)));
+                }
+                if let Some(precedence) = decoded.operational_precedence {
+                    match resolution.operational_precedence {
+                        None => resolution.operational_precedence = Some(precedence),
+                        Some(existing) if existing == precedence => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
                 if let Some(quota) = decoded.weave_correction_policy {
@@ -499,11 +558,36 @@ pub(crate) fn resolve_policy_manifest(
         merge_teacher_probe_row(&mut resolution, row);
     }
 
+    // Two manifests carrying the identical row (a copy of the shipped defaults,
+    // say) state one value and keep one copy. Different rows for one key/scope
+    // slot cannot silently depend on entity scan order, and a stored row at a
+    // level its key's door cannot resolve fails closed.
+    let mut value_slots = std::collections::BTreeMap::new();
+    let mut value_rows = Vec::with_capacity(resolution.policy_values.len());
+    for row in std::mem::take(&mut resolution.policy_values) {
+        match value_slots.get(&(row.key, row.scope)) {
+            Some(&index) if value_rows[index] == row => {}
+            Some(_) => {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                value_rows.push(row);
+            }
+            None => {
+                value_slots.insert((row.key, row.scope), value_rows.len());
+                value_rows.push(row);
+            }
+        }
+    }
+    resolution.policy_values = value_rows;
+    if crate::gate::policy_values::unadmitted_row(&resolution.policy_values).is_some() {
+        resolution.diagnostics.malformed_manifest_seen = true;
+    }
+
     // Duplicate owner rows are refused per manifest by
     // `parse_owner_policy_rows`, but the RESOLVED table is the concatenation
-    // of every manifest's rows and `active_owner_policy_rows` first-matches
-    // over that concatenation. Two manifests naming the same `(row_ref,
-    // world_ref)` pair once each are individually well formed and still shadow
+    // of every manifest's rows and scope selection first-matches over that
+    // concatenation. Two manifests naming the same
+    // `(row_ref, world_ref, project_ref)` triple once each are individually
+    // well formed and still shadow
     // one another here — the same rule that can never fire, however strict its
     // action, only assembled across entities instead of inside one. So the
     // question is asked again of the resolved set, and answered the same way:
@@ -637,11 +721,10 @@ fn merge_single_owner_string(
 }
 
 /// Whether any two rows that could be in force TOGETHER claim the same
-/// `(row_ref, world_ref)` pair.
+/// `(row_ref, world_ref, project_ref)` triple.
 ///
-/// The PAIR, not the ref alone: one ref written under two worlds is the
-/// scoped-override shape `active_owner_policy_rows` exists to resolve, and only
-/// rows that would land in the same rubric together can shadow each other.
+/// The TRIPLE, not the ref alone: one ref written under separate scopes is a
+/// scoped override, and only rows in the same exact slot shadow each other.
 /// Same key as the per-manifest check in `parse_owner_policy_rows`.
 ///
 /// And only ACTIVE rows, for exactly the reason the sentence above gives.
@@ -653,9 +736,13 @@ fn merge_single_owner_string(
 /// question that was never ambiguous.
 fn has_duplicate_owner_policy_row(rows: &[PolicyOwnerPolicyRow]) -> bool {
     let mut seen = BTreeSet::new();
-    rows.iter()
-        .filter(|row| row.active)
-        .any(|row| !seen.insert((row.row_ref.as_str(), row.world_ref.as_deref())))
+    rows.iter().filter(|row| row.active).any(|row| {
+        !seen.insert((
+            row.row_ref.as_str(),
+            row.world_ref.as_deref(),
+            row.project_ref.as_deref(),
+        ))
+    })
 }
 
 impl Vault {
