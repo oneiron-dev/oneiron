@@ -196,6 +196,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         base_edges: Vec::new(),
         tombstones: Vec::new(),
         doc_snapshots: Vec::new(),
+        entity_documents: Vec::new(),
         document_heads: Vec::new(),
         head_move_receipts: Vec::new(),
         note_forks: Vec::new(),
@@ -215,6 +216,14 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
             return Err(invalid("document carrier key"));
         }
         snapshot.doc_snapshots.push(value);
+    }
+    for (key, bytes) in super::canonical::binary_rows(doc, "entity_documents")? {
+        let value: super::CanonicalEntityDocument =
+            rmp_serde::from_slice(&bytes).map_err(|_| invalid("entity document carrier"))?;
+        if parse_id(&key)? != value.entity_id || pack(&value)? != bytes {
+            return Err(invalid("entity document carrier key"));
+        }
+        snapshot.entity_documents.push(value);
     }
     for (key, bytes) in super::canonical::binary_rows(doc, "document_heads")? {
         let value: CanonicalHead =
@@ -253,6 +262,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         .iter()
         .map(|row| row.entity_id)
         .chain(snapshot.document_heads.iter().map(|row| row.entity_id))
+        .chain(snapshot.entity_documents.iter().map(|row| row.entity_id))
         .chain(snapshot.head_move_receipts.iter().map(|row| row.entity_id))
         .chain(snapshot.note_forks.iter().map(|row| *row.note.as_bytes()))
         .chain(
@@ -286,6 +296,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         .doc_snapshots
         .sort_by_key(|row| (row.entity_id, row.head));
     super::validation::validate_documents(&snapshot)?;
+    super::validation::validate_entity_documents(&snapshot)?;
     Ok(snapshot)
 }
 
