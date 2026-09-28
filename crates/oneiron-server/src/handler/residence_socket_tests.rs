@@ -434,6 +434,23 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
     )
     .await
     .unwrap();
+    // The refetched A stays editable on the same canonical copy.
+    let edited =
+        rmp_serde::to_vec_named(&serde_json::json!({"title":"reopened device edit"})).unwrap();
+    conn.edit_opened_item(
+        &window,
+        item,
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &edited,
+    )
+    .await
+    .unwrap();
+    assert!(client.thin_item(item).unwrap().is_none());
     let loaded = manager.open_window(&window).unwrap();
     let proof = transport::encode_window_sync(
         window.as_str(),

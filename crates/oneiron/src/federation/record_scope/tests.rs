@@ -80,6 +80,7 @@ fn claim_birth_facet_remains_visible_after_value_edit() {
         .put_entity(&id, ENTITY_TYPE_CLAIM, time, at, &changed)
         .unwrap();
     assert_eq!(vault.record_scope(&id).unwrap(), Some(born));
+}
 
 fn person(vault: &Vault) -> EntityId {
     let id = EntityId::now();
