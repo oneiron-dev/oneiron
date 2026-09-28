@@ -19,6 +19,9 @@ use super::super::rendezvous::{
 use super::super::tombstone::{
     DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
 };
+use super::super::topology_delete_intent::{
+    TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
+};
 use super::{DeleteEntityOptions, DeleteEntityOutcome};
 use crate::error::RegistryError;
 
@@ -133,11 +136,15 @@ impl Vault {
             crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
-        // Hold the entire key partition before a hard tombstone can publish.
+        // Hold the entire key partition, and refuse an unsafe explicit hard
+        // purge, before any tombstone can be published. The plain
+        // `delete_entity` door now defaults to a soft tombstone; an explicitly
+        // requested purge is never downgraded.
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
             self.store
                 .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
+            self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
@@ -147,6 +154,22 @@ impl Vault {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,
             )));
+        }
+        if reason == DeleteReason::UserDelete {
+            let rtxn = self.store.env.read_txn()?;
+            if crate::deletion::topology_delete_reservation_in_txn(&self.store, &rtxn, id)?
+                .is_some()
+                && self
+                    .store
+                    .entities
+                    .get(&rtxn, id.as_bytes())?
+                    .is_some_and(|raw| raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN)
+            {
+                // A previous soft scrub already committed its propagation
+                // marker and request-bound reservation. A second UserDelete
+                // must not mint a conflicting request or withdraw that intent.
+                return Ok(DeleteEntityOutcome::missing());
+            }
         }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed
@@ -196,6 +219,16 @@ impl Vault {
             // arm publishes its tombstone after the scrub, so the re-fold below
             // in the publish txn is the decision that binds.
             reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
+            // This scrub is the first destructive commit. The intent rides
+            // the same transaction as the pt: propagation marker.
+            reserve_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone,
+                header.learned_at,
+                TopologyDeletePhase::Committed,
+            )?;
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
@@ -226,6 +259,15 @@ impl Vault {
                     self.store
                         .append_gate_decision_in_txn(&mut wtxn, decision)?;
                 }
+            }
+            if !existed || !reason.publishes_crdt_tombstone() {
+                clear_own_topology_delete_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    id,
+                    &tombstone.request_id,
+                    false,
+                )?;
             }
             wtxn.commit()?;
             if existed {
@@ -268,7 +310,7 @@ impl Vault {
                 )?;
                 signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
                 if crdt_persisted {
-                    self.clear_pending_tombstone(&window_label, id)?;
+                    self.finish_published_topology_delete(&window_label, id, &tombstone)?;
                 }
             }
             return Ok(DeleteEntityOutcome {
@@ -344,6 +386,17 @@ impl Vault {
             self.store
                 .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
+            if !authority_settled {
+                self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
+            }
+            reserve_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone,
+                header.learned_at,
+                TopologyDeletePhase::Committed,
+            )?;
             let scrub_is_the_linearization_point = !authority_settled;
             crate::note::erase_citations_in_txn(self, &mut wtxn, id)?;
             let (existed, had_vector, _ledger_changed) =
@@ -436,6 +489,17 @@ impl Vault {
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
         self.store
             .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+        if !authority_settled {
+            self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
+        }
+        reserve_topology_delete_in_txn(
+            &self.store,
+            &mut wtxn,
+            id,
+            &tombstone,
+            header.learned_at,
+            TopologyDeletePhase::Committed,
+        )?;
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
@@ -463,6 +527,16 @@ impl Vault {
             {
                 return Err(Error::CorruptedIndex("pending deletion gate decision"));
             }
+            // No local work remains and there is no cfg-off pt: marker.
+            // A published tombstone is durable; an unpublished empty commit
+            // carries no deletion intent to hold an interlock for.
+            clear_own_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone.request_id,
+                false,
+            )?;
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
@@ -489,7 +563,8 @@ impl Vault {
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        let existed =
+            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
@@ -545,7 +620,7 @@ impl Vault {
         // STAYS: it is the deletion's only propagation intent until a
         // sync-enabled boot replays it.
         if crdt_persisted {
-            self.clear_pending_tombstone(&window_label, id)?;
+            self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
         Ok(DeleteEntityOutcome {
             existed,
