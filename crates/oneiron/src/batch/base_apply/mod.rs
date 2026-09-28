@@ -1,4 +1,5 @@
 use super::claim_materialization::consume_claim_materialization;
+use super::verified_claim_transition::consume_next;
 use super::*;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -267,11 +268,7 @@ pub(super) fn apply_ops_with_origin(
         // membership is judged — before the arm can stage a byte.
         let materialization =
             prepare_replay_op(store, &*wtxn, &mut claim_materializations, &mut op, origin)?;
-        let transition = super::verified_claim_transition::consume_next(
-            &mut claim_transitions,
-            &op,
-            iter.remaining.as_slice(),
-        )?;
+        let transition = consume_next(&mut claim_transitions, &op, iter.remaining.as_slice())?;
         match op {
             BatchOp::Put {
                 id,
