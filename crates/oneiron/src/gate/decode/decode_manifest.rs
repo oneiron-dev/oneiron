@@ -38,6 +38,9 @@ use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 use crate::gate::resolution::{
     AttributionLimits, CommOptOutPosture, ConnectorClassPrecedence, TeacherProbeRow,
 };
+use crate::gate::retrieval_retention::{
+    RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
+};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
@@ -83,6 +86,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) voice_serving: Option<crate::gate::voice_serving::VoiceServingRows>,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) pptx_comment_limits:
@@ -101,6 +105,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
     pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
@@ -114,6 +119,10 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
     pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(in crate::gate) carry_forward_confidence:
+        Option<crate::gate::carry_forward_policy::CarryForwardPolicy>,
+    pub(in crate::gate) judge_calibration:
+        Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -158,6 +167,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | crate::gate::voice_serving::KEY
                 | PACK_INSTALL_POLICY_KEY
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
@@ -174,6 +184,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "livequery_tracker_limits"
                 | "proposal_check_threshold"
+                | RETRIEVAL_RETENTION_ROWS_KEY
                 | "goal_limits"
                 | "voice_ref_limits"
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
@@ -185,6 +196,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "compilation_policy"
                 | POLICY_TEACHER_PROBE_KEY
                 | "experiment_selection"
+                | crate::gate::carry_forward_policy::KEY
+                | crate::skill_optimize::policy::MANIFEST_KEY
         ) {
             return None;
         }
@@ -317,6 +330,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let voice_serving = match single_map_value(&entries, crate::gate::voice_serving::KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::gate::voice_serving::VoiceServingRows::decode(value)?)
+        }
+    };
     let room_thread = match single_map_value(&entries, "room_thread") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -429,6 +449,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let retrieval_retention = match single_map_value(&entries, RETRIEVAL_RETENTION_ROWS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_retrieval_retention_rows(value)?),
+    };
     let goal_limits = match single_map_value(&entries, "goal_limits") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -511,6 +536,23 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(parse_teacher_probe_row(value)?),
     };
 
+    let carry_forward_confidence =
+        match single_map_value(&entries, crate::gate::carry_forward_policy::KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::gate::carry_forward_policy::CarryForwardPolicy::parse(value)?)
+            }
+        };
+    let judge_calibration =
+        match single_map_value(&entries, crate::skill_optimize::policy::MANIFEST_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::skill_optimize::policy::JudgeCalibrationPolicy::decode(value)?)
+            }
+        };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -540,6 +582,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        voice_serving,
         pack_install_policy,
         room_thread,
         pptx_comment_limits,
@@ -554,6 +597,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         diagnostic_bounds,
         livequery_tracker_limits,
         proposal_check_threshold,
+        retrieval_retention,
         goal_limits,
         voice_ref_limits,
         sheet_answer_limits,
@@ -565,6 +609,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         compilation_policy,
         teacher_probe,
         experiment_selection,
+        carry_forward_confidence,
+        judge_calibration,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

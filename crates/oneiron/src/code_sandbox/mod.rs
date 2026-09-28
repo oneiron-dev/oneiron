@@ -45,8 +45,9 @@ pub use self::paths::{
     SANDBOX_WORKSPACE_ROOT, SandboxMount, SandboxMountTable, SandboxVirtualPath,
 };
 pub use self::proposal::{
-    SandboxClaimProposal, SandboxFileEditProposal, SandboxFileWriteProposal, SandboxProposalDelta,
-    SandboxProposalKind, SandboxProposalWrite,
+    SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal,
+    SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal,
+    SandboxProposalDelta, SandboxProposalKind, SandboxProposalWrite,
 };
 
 #[cfg(test)]

@@ -1804,3 +1804,70 @@ fn paired_connection_verifies_publicly_and_spends_nonce_without_a_host_secret() 
             .is_err()
     );
 }
+
+#[test]
+fn signed_withdrawals_cross_rejected_enrollment_without_granting_its_key() {
+    for consume in [false, true] {
+        let (_dir, vault, issuer, root) = fixture();
+        let (_, mint) = rooted_log(&vault, &root);
+        let binding = SigningKey::from_bytes(&[202; 32]);
+        let client_key = AuthorityKey::Ed25519(binding.verifying_key().to_bytes());
+        let enroll = issuer
+            .sign_entry(
+                Some(root.claims.vault_id),
+                2,
+                vec![authority_entry_hash(&mint).unwrap()],
+                AuthorityOp::EnrollDevice {
+                    device: DeviceAuthority {
+                        key: client_key.clone(),
+                        transport_key_binding: binding.verifying_key().to_bytes(),
+                        attestation: AuthorityAttestation {
+                            kind: "software".into(),
+                            evidence: Vec::new(),
+                        },
+                        tier: AuthorityTier::Software,
+                        roles: ROLE_AGENT,
+                    },
+                },
+                root.claims.issued_at,
+            )
+            .unwrap();
+        let enroll_hash = authority_entry_hash(&enroll).unwrap();
+        let op = if consume {
+            AuthorityOp::SlipConsume {
+                slip_id: root.claims.slip_id,
+            }
+        } else {
+            AuthorityOp::SlipRevoke {
+                slip_id: root.claims.slip_id,
+            }
+        };
+        let withdrawal = issuer
+            .sign_entry(
+                Some(root.claims.vault_id),
+                3,
+                vec![enroll_hash],
+                op,
+                root.claims.issued_at,
+            )
+            .unwrap();
+        let withdrawal_hash = authority_entry_hash(&withdrawal).unwrap();
+        let at = crate::TimeRange {
+            start: root.claims.issued_at,
+            end: root.claims.issued_at,
+        };
+        vault
+            .put_authority_log_entries(&[(enroll, at, at.start), (withdrawal, at, at.start)])
+            .unwrap();
+        let fold = vault.authority_fold().unwrap();
+        assert!(!fold.valid_entries.contains(&enroll_hash));
+        assert!(!fold.roster.contains_key(&client_key));
+        assert!(fold.valid_entries.contains(&withdrawal_hash));
+        assert!(!fold.slip_is_live(&root.claims.slip_id));
+        assert!(
+            !vault
+                .capability_slip_id_is_live(&root.claims.slip_id)
+                .unwrap()
+        );
+    }
+}

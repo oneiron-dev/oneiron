@@ -166,11 +166,36 @@ impl PolicyManifestResolution {
             .effective(actor))
     }
 
+    /// One snapshot supplies the same carry-forward floor to typed, raw and Gate doors.
+    #[must_use]
+    pub(crate) fn carry_forward_floor(
+        &self,
+        kind: crate::write_envelope::carry_forward::CarryForwardKind,
+        actor: Option<crate::EntityId>,
+    ) -> f32 {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return 1.0;
+        }
+        self.carry_forward_confidence.floor(kind, actor)
+    }
+
     #[must_use]
     pub(crate) fn goal_limits(&self) -> crate::workspace_roster::GoalLimits {
         self.goal_limits.unwrap_or_default()
     }
 
+    #[must_use]
+    pub(crate) fn judge_calibration_policy(
+        &self,
+    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.judge_calibration.unwrap_or_default())
+        }
+    }
+
+    #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
@@ -313,6 +338,30 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    /// Retention may erase published telemetry only when the loaded manifest
+    /// is usable. An absent manifest keeps the shipped bootstrap posture;
+    /// malformed or unsupported loaded policy grants no deletion authority.
+    #[must_use]
+    pub(crate) fn retrieval_retention_policy(
+        &self,
+    ) -> Option<crate::gate::retrieval_retention::RetrievalRetentionPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.retrieval_retention)
+    }
+
+    /// The trusted, nested-narrow voice limits. A malformed or absent policy
+    /// never falls back to compiled operational allowances.
+    pub(crate) fn voice_serving_limits(
+        &self,
+        holder: Option<crate::EntityId>,
+    ) -> Result<crate::gate::VoiceServingLimits> {
+        if self.diagnostics.is_fail_closed() {
+            return Err(crate::error::Error::InvalidConfig(
+                "voice serving policy unavailable".into(),
+            ));
+        }
+        crate::gate::voice_serving::resolve(&self.voice_serving, holder)
     }
 
     /// Effective trusted per-vault limits. Malformed loaded policy refuses

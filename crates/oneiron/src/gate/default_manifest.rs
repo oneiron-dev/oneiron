@@ -27,6 +27,7 @@ use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPoli
 use super::resolution::{
     DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
 };
+use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -84,7 +85,18 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
         ),
+        (
+            Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
+            Value::Map(vec![
+                (Value::from("ask_minutes"), Value::from(1)),
+                (Value::from("max_context_bytes"), Value::from(512)),
+            ]),
+        ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        (
+            Value::from(super::voice_serving::KEY),
+            super::voice_serving::VoiceServingRows::seeded(),
+        ),
         (
             Value::from(POLICY_WEAVE_CORRECTION_POLICY_KEY),
             Value::Map(vec![
@@ -134,6 +146,25 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ]),
                 ),
                 (Value::from("holder_rows"), Value::Array(Vec::new())),
+            ]),
+        ),
+        (
+            Value::from(super::carry_forward_policy::KEY),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (
+                            Value::from("ordinary"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_ORDINARY),
+                        ),
+                        (
+                            Value::from("care"),
+                            Value::F32(super::carry_forward_policy::DEFAULT_CARE),
+                        ),
+                    ]),
+                ),
             ]),
         ),
         (
@@ -564,6 +595,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     )])]),
                 ),
             ]),
+        ),
+        (
+            Value::from(RETRIEVAL_RETENTION_ROWS_KEY),
+            default_retrieval_retention_rows(),
         ),
         (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
