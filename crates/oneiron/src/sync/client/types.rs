@@ -84,11 +84,49 @@ impl SyncTransportCredential {
     pub fn new(token: String, key: ed25519_dalek::SigningKey) -> Self {
         Self { token, key }
     }
-    pub(in crate::sync) fn token(&self) -> &str {
-        &self.token
-    }
-    pub(in crate::sync) fn key(&self) -> &ed25519_dalek::SigningKey {
-        &self.key
+
+    /// Proves the slip on a WebSocket upgrade with a fresh holder signature.
+    /// Each upgrade has its own nonce, so a proof cannot be replayed.
+    pub(in crate::sync) fn sign_upgrade(
+        &self,
+        timestamp: u64,
+        request: &mut tokio_tungstenite::tungstenite::handshake::client::Request,
+    ) -> Result<(), &'static str> {
+        use ed25519_dalek::Signer;
+        use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+
+        let slip = crate::authority::CapabilitySlip::from_token(&self.token)
+            .map_err(|_| "Sync transport slip is invalid")?;
+        if slip.claims.binding_key != self.key.verifying_key().to_bytes() {
+            return Err("Sync transport holder key does not match slip");
+        }
+        let nonce = crate::EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+        let signature: String = self
+            .key
+            .sign(
+                &slip
+                    .binding_transcript(challenge.as_bytes())
+                    .map_err(|_| "Sync transport binding transcript is invalid")?,
+            )
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            format!("Bearer {}", self.token)
+                .parse()
+                .map_err(|_| "Sync transport token is not a valid header")?,
+        );
+        request.headers_mut().insert(
+            "x-oneiron-binding",
+            serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature})
+                .to_string()
+                .parse()
+                .map_err(|_| "Sync transport proof is not a valid header")?,
+        );
+        Ok(())
     }
 }
 impl std::fmt::Debug for SyncTransportCredential {

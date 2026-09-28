@@ -3,7 +3,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use ed25519_dalek::Signer;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -197,38 +196,9 @@ impl SyncConnection {
             .into_client_request()
             .map_err(|e| format!("WS connect failed: {e}"))?;
         if let Some(credential) = &self.config.client_config.transport_credential {
-            let slip = crate::authority::CapabilitySlip::from_token(credential.token())
-                .map_err(|_| "Sync transport slip is invalid".to_string())?;
-            if slip.claims.binding_key != credential.key().verifying_key().to_bytes() {
-                return Err("Sync transport holder key does not match slip".to_string());
-            }
-            let timestamp = self.manager.vault().now_recorded_at();
-            let nonce = crate::EntityId::now().to_hex();
-            let challenge = format!("oneiron-request:{timestamp}:{nonce}");
-            let signature: String = credential
-                .key()
-                .sign(
-                    &slip
-                        .binding_transcript(challenge.as_bytes())
-                        .map_err(|_| "Sync transport binding transcript is invalid".to_string())?,
-                )
-                .to_bytes()
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            request.headers_mut().insert(
-                AUTHORIZATION,
-                format!("Bearer {}", credential.token())
-                    .parse()
-                    .map_err(|_| "Sync transport token is not a valid header".to_string())?,
-            );
-            request.headers_mut().insert(
-                "x-oneiron-binding",
-                serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature})
-                    .to_string()
-                    .parse()
-                    .map_err(|_| "Sync transport proof is not a valid header".to_string())?,
-            );
+            credential
+                .sign_upgrade(self.manager.vault().now_recorded_at(), &mut request)
+                .map_err(str::to_owned)?;
         } else if !self.config.client_config.auth_token.is_empty() {
             let header_value = format!("Bearer {}", self.config.client_config.auth_token)
                 .parse()

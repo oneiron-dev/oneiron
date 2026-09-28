@@ -325,6 +325,23 @@ impl SyncClient {
         }
     }
 
+    /// Whether this opened-item device promoted `key` to a canonical copy.
+    pub(crate) fn opened_window_promoted(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<bool, TransportError> {
+        if self.config.residence_mode != super::SyncResidenceMode::Opened
+            || self.config.federation_peer.is_some()
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .vault
+            .sync_state_get(&format!("rp:w:{key}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some())
+    }
+
     /// Returns the list of window keys from the root doc (set by server).
     pub fn server_windows(&self) -> Vec<String> {
         // `meta.windows` is encoded by the schema helpers (`create_root_doc` /

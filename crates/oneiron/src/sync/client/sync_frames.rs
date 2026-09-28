@@ -327,8 +327,8 @@ impl SyncClient {
         let effective_worlds = self.effective_worlds()?;
         // Opened residence exchanges full VVs only for promoted windows; the
         // deferred set holds only those, so an advertised key never enrolls.
-        let opened =
-            self.config.residence_mode == SyncResidenceMode::Opened && self.config.federation_peer.is_none();
+        let opened = self.config.residence_mode == SyncResidenceMode::Opened
+            && self.config.federation_peer.is_none();
         let mut discovered = if opened {
             Vec::new()
         } else {
@@ -354,7 +354,14 @@ impl SyncClient {
                     .map_err(|error| TransportError::Storage(error.to_string()))?,
             );
         }
-        let mut keys = Self::selected_discovered_windows(discovered, &effective_worlds);
+        // A promoted world window is requested alone: the device opened it,
+        // whether or not its world is followed, and its base month is not
+        // promoted, so the home would refuse that month's full exchange.
+        let mut keys = if opened {
+            discovered
+        } else {
+            Self::selected_discovered_windows(discovered, &effective_worlds)
+        };
         keys.sort_by(|left, right| {
             left.world()
                 .is_some()

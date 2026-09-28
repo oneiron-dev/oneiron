@@ -129,6 +129,7 @@ impl ResidenceRpc {
     /// `None` is only a transport outage. A refused bind or malformed reply
     /// is an error, not permission to label the search local-only.
     async fn connect(
+        vault: &crate::Vault,
         config: &SyncClientConfig,
         budgets: ResidenceOperationBudgets,
     ) -> Result<Option<Self>, TransportError> {
@@ -141,7 +142,13 @@ impl ResidenceRpc {
             .as_str()
             .into_client_request()
             .map_err(|_| refused())?;
-        if !config.auth_token.is_empty() {
+        // The upgrade proves the device's transport slip, as the sync
+        // socket does; the bind below then attenuates it to the actor.
+        if let Some(credential) = &config.transport_credential {
+            credential
+                .sign_upgrade(vault.now_recorded_at(), &mut request)
+                .map_err(|_| refused())?;
+        } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
                 .parse()
                 .map_err(|_| refused())?;
@@ -313,7 +320,7 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.config, budgets).await? else {
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
         let reply: TouchReply = serde_json::from_value(
@@ -425,7 +432,7 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.config, budgets).await? else {
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
         let reply: PromotionReply = serde_json::from_value(
@@ -578,7 +585,7 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        match ResidenceRpc::connect(&self.config, budgets).await? {
+        match ResidenceRpc::connect(&self.vault, &self.config, budgets).await? {
             Some(mut rpc) => {
                 let reply: SearchReply = serde_json::from_value(
                     rpc.request(

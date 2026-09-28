@@ -198,8 +198,11 @@ impl SyncClient {
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // A device syncs what it opened (ARCH-0023b): a window this device
+        // promoted is resident whether or not its world is followed.
         if self.config.federation_peer.is_none()
             && !Self::follows_window(&key, &self.effective_worlds()?)
+            && !self.opened_window_promoted(&key)?
         {
             return Err(TransportError::InvalidPayload("unfollowed world window"));
         }

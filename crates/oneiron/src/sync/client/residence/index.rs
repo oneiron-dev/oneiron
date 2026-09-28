@@ -37,7 +37,7 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector_bytes = encode_sync_selector(selector).map_err(|_| refused())?;
         let selector = base64::engine::general_purpose::STANDARD.encode(selector_bytes);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.config, budgets).await? else {
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
         let mut eligible = HashSet::new();
@@ -47,12 +47,18 @@ impl SyncClient {
             next = key.previous_month();
             eligible.insert(key);
         }
+        // A current month's world windows are indexed for the worlds this
+        // device follows; any other world item is still opened by id.
+        let worlds = self.effective_worlds()?;
         let mut total = 0;
         for key in self.server_windows() {
             let Some(window) = WindowKey::try_new(&key) else {
                 continue;
             };
-            if !eligible.contains(&window) {
+            let month = window.start_timestamp().map(WindowKey::from_timestamp);
+            if !month.is_some_and(|month| eligible.contains(&month))
+                || !Self::follows_window(&window, &worlds)
+            {
                 continue;
             }
             let mut complete = None;
