@@ -577,7 +577,6 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
-                crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
