@@ -32,6 +32,7 @@ pub(super) fn read_result(
                 .iter()
                 .map(|member| ask_record::entity(&member.actor))
                 .collect::<Result<BTreeSet<_>>>()?;
+            ask_record::verify_link_settlement(&group, result)?;
             if result.settlement.requested != group.requested
                 || result.settlement.effective != group.effective
                 || result.settlement.electorate != who
@@ -168,6 +169,7 @@ pub(super) fn settle_in(
             unmet_sources,
             outcome_answer_ref: None,
             policy_surface: group.policy_surface,
+            link_result_proof: None,
         },
     };
     if result.coverage.met
@@ -228,6 +230,8 @@ pub(super) fn settle_in(
             result.settlement.outcome_answer_ref = Some(bound.claim);
         }
     }
+    let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
+    result.settlement.link_result_proof = proof;
     ask_record::put(vault, txn, reference, SETTLEMENT, &result, now)?;
     super::ask_facade::signal_waiters(vault, txn, id, now.saturating_mul(1000))
         .map_err(|_| ask_record::invalid())?;
@@ -256,7 +260,7 @@ pub(super) fn question_digest(
     Ok(Some(*hash.finalize().as_bytes()))
 }
 
-fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -> Result<bool> {
+pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -> Result<bool> {
     if question_digest(vault, txn, &group.effective.what)? != Some(group.question_digest) {
         return Ok(true);
     }
@@ -343,7 +347,10 @@ fn reduce(
     let mut human = BTreeMap::new();
     let mut delegated = BTreeMap::new();
     for entry in evidence.iter() {
-        if entry.source == TaskAskSource::Human {
+        if matches!(
+            entry.source,
+            TaskAskSource::Human | TaskAskSource::ForeignStated
+        ) {
             human.insert(entry.person_ref, entry.answer.word_ref);
         } else if entry.source == TaskAskSource::Companion && entry.delegation_grant_ref.is_some() {
             delegated.insert(entry.person_ref, entry.answer.word_ref);
@@ -376,25 +383,27 @@ fn reduce(
             TaskAskSource::Companion if entry.delegation_grant_ref.is_none() => {
                 TaskAskEvidenceReason::CompanionHint
             }
-            TaskAskSource::Human | TaskAskSource::Companion
+            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion
                 if latest.get(&entry.person_ref) != Some(&entry.answer.word_ref) =>
             {
                 TaskAskEvidenceReason::Superseded
             }
-            TaskAskSource::Human | TaskAskSource::Companion
+            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion
                 if !need.contains(&entry.person_ref)
                     && !decision_seats.contains(&entry.person_ref)
                     && !required.contains(&entry.person_ref) =>
             {
                 TaskAskEvidenceReason::OutsideElectorate
             }
-            TaskAskSource::Human | TaskAskSource::Companion
+            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion
                 if !sources.is_subset(&entry.word.provenance_refs) =>
             {
                 unmet_sources.extend(sources.difference(&entry.word.provenance_refs).copied());
                 TaskAskEvidenceReason::MissingSource
             }
-            TaskAskSource::Human | TaskAskSource::Companion => TaskAskEvidenceReason::Counted,
+            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion => {
+                TaskAskEvidenceReason::Counted
+            }
         };
         entry.ladder_changed = if entry.reason == TaskAskEvidenceReason::Counted
             && entry.source == TaskAskSource::Human

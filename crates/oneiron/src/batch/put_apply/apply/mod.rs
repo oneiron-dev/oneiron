@@ -370,8 +370,7 @@ pub(in crate::batch) fn apply_put(
     let escalated_skill_body;
     let data = match new_skill_record.as_mut() {
         Some(updated) if !replicated && !hub_sync_imported => {
-            if crate::skill_scan::escalate_activation_approval_in_txn(store, &*wtxn, &id, updated)?
-            {
+            if crate::skill_hub::scan_skill_admission(store, &*wtxn, &id, updated, hub_admission)? {
                 escalated_skill_body = crate::skill::encode_skill_record(updated)?;
                 &escalated_skill_body[..]
             } else {
