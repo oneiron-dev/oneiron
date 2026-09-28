@@ -87,6 +87,7 @@ mod feedback;
 mod influence;
 mod mining;
 mod model;
+mod policy;
 mod store;
 mod target;
 mod win;
@@ -107,6 +108,7 @@ pub use self::model::{
     MinedOutcome, MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerRun,
     MinerWatermark, SubstitutionClass, SubstitutionCluster,
 };
+pub(crate) use self::policy::CompilationPolicy;
 pub use self::store::{
     mined_skill_edit, miner_watermark, pending_substitution_skill_edits, resolve_mined_skill_edit,
 };

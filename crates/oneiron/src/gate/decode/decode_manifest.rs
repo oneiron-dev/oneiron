@@ -71,6 +71,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(in crate::gate) retry_source_policy:
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
+    pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -122,6 +123,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "voice_ref_limits"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
                 | "retry_source_policy"
+                | "compilation_policy"
         ) {
             return None;
         }
@@ -287,6 +289,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             .collect::<Option<Vec<_>>>()?,
         MapValue::Present(_) => return None,
     };
+    let compilation_policy = match single_map_value(&entries, "compilation_policy") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::edit_distance::miner::CompilationPolicy::decode(
+            value,
+        )?),
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -324,6 +333,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         voice_ref_limits,
         weave_correction_policy,
         retry_source_policy,
+        compilation_policy,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
