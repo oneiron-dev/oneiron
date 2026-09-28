@@ -1284,7 +1284,7 @@ fn saved_edge_claim_is_withheld_after_exact_pair_revocation_with_readable_endpoi
     assert!(has_claim(&saved.report.value.sections[0].items));
 
     bm.revoke_diary_coreference_grant(b_grant).unwrap();
-    let mut links = recipe.clone();
+    let mut links = recipe;
     links[0].edge_kinds = vec![EdgeKind::SameAs];
     let live = read.weave_report(WeaveReader::Owner(&owner), &links)?;
     let items = &live.value.sections[0].items;
@@ -1396,7 +1396,7 @@ fn authored_row_ceiling_governs_predicate_scan_past_index_default() -> Result<()
             reader: WeaveDigestReader::Agent(agent),
             cadence: WeaveDigestCadence::Daily,
             next_due_at: 1,
-            recipe: recipe.clone(),
+            recipe,
         },
     )?;
     let stored = read

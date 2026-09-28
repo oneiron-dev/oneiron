@@ -507,40 +507,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         // A holder row can narrow this vault row, never widen it.
         (
             Value::from("compilation_policy"),
-            Value::Map(vec![
-                (
-                    Value::from("precedence"),
-                    Value::from("nested_narrowing_holder_capped_at_vault"),
-                ),
-                (
-                    Value::from("order"),
-                    Value::Array(vec![
-                        Value::from("style_rule"),
-                        Value::from("charter_line"),
-                        Value::from("brief_update"),
-                        Value::from("ban"),
-                    ]),
-                ),
-                (
-                    Value::from("rows"),
-                    Value::Array(vec![Value::Map(vec![(
-                        Value::from("routes"),
-                        Value::Array(vec![
-                            compilation_route(
-                                "style_rule",
-                                "expression.style:",
-                                true,
-                                "",
-                                "",
-                                true,
-                            ),
-                            compilation_route("charter_line", "charter:", true, "", "", false),
-                            compilation_route("brief_update", "brief:", true, "", "", false),
-                            compilation_route("ban", "", false, "never ", "never ", false),
-                        ]),
-                    )])]),
-                ),
-            ]),
+            default_compilation_policy(),
         ),
         (
             Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
@@ -688,6 +655,37 @@ fn federation_grant_default_rows() -> Value {
         .map(|row| encode_row(row).expect("default grant policy row"))
         .collect(),
     )
+}
+
+/// Shipped OF-379 compilation row: ordered families under nested narrowing.
+fn default_compilation_policy() -> Value {
+    Value::Map(vec![
+        (
+            Value::from("precedence"),
+            Value::from("nested_narrowing_holder_capped_at_vault"),
+        ),
+        (
+            Value::from("order"),
+            Value::Array(vec![
+                Value::from("style_rule"),
+                Value::from("charter_line"),
+                Value::from("brief_update"),
+                Value::from("ban"),
+            ]),
+        ),
+        (
+            Value::from("rows"),
+            Value::Array(vec![Value::Map(vec![(
+                Value::from("routes"),
+                Value::Array(vec![
+                    compilation_route("style_rule", "expression.style:", true, "", "", true),
+                    compilation_route("charter_line", "charter:", true, "", "", false),
+                    compilation_route("brief_update", "brief:", true, "", "", false),
+                    compilation_route("ban", "", false, "never ", "never ", false),
+                ]),
+            )])]),
+        ),
+    ])
 }
 
 /// Shipped OF-379 row data. Engines read these selectors through the same
