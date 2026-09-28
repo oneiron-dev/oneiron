@@ -138,6 +138,10 @@ side_tables! {
     SHARE_BRIEF_DELETE_RESERVATION: VaultMeta b"share:brief:deleting:v1:" Raw;
     /// One-time record of the initial membership/policy defaults applied when a shared vault was
     /// created. Key: ().
+    /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
+    SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw;
+    /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
+    SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
