@@ -15,7 +15,7 @@ use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::EntityId;
 
 /// Pinned MessagePack key set for device-local outbound intent rows.
-pub const INTENT_LEDGER_VALUE_KEYS: [&str; 21] = [
+pub const INTENT_LEDGER_VALUE_KEYS: [&str; 22] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -32,6 +32,7 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 21] = [
     "capability_provenance",
     "budget_accounting",
     "recorded_outcome",
+    "delivery_uncertain",
     "state",
     "created_ms",
     "updated_ms",
@@ -86,18 +87,21 @@ pub(super) const KEY_BUDGET_ACCOUNTING: &str = INTENT_LEDGER_VALUE_KEYS[14];
 
 pub(super) const KEY_RECORDED_OUTCOME: &str = INTENT_LEDGER_VALUE_KEYS[15];
 
-pub(super) const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[16];
+pub(super) const KEY_DELIVERY_UNCERTAIN: &str = INTENT_LEDGER_VALUE_KEYS[16];
 
-pub(super) const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[17];
+pub(super) const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[17];
 
-pub(super) const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[18];
+pub(super) const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[18];
 
-pub(super) const KEY_ADMITTED_APPROVAL: &str = INTENT_LEDGER_VALUE_KEYS[19];
-pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[20];
+pub(super) const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[19];
+
+pub(super) const KEY_ADMITTED_APPROVAL: &str = INTENT_LEDGER_VALUE_KEYS[20];
+
+pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[21];
 
 /// The canonical intent body used as the digest preimage.
 ///
-/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..20]`, in that order, with
+/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..21]`, in that order, with
 /// `KEY_CONTENT_DIGEST` absent. This is the single source of every stored body
 /// value — raw payload, authorization binding, nested budget accounting, typed
 /// capability provenance, recorded outcome, state, and timestamps — so the
@@ -225,6 +229,10 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
         ),
         (Value::from(KEY_BUDGET_ACCOUNTING), budget_accounting),
         (Value::from(KEY_RECORDED_OUTCOME), recorded_outcome),
+        (
+            Value::from(KEY_DELIVERY_UNCERTAIN),
+            Value::Boolean(record.delivery_uncertain),
+        ),
         (Value::from(KEY_STATE), Value::from(record.state.as_str())),
         (Value::from(KEY_CREATED_MS), Value::from(record.created_ms)),
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
@@ -248,7 +256,7 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
 
 /// Encodes `Value::Map(record_entries_without_digest(record))`.
 ///
-/// The 19-entry MessagePack map header is part of the preimage, and so are the
+/// The 21-entry MessagePack map header is part of the preimage, and so are the
 /// raw `payload` bytes: the preimage is definitionally the stored body minus
 /// the digest key, and carving `payload` out would reintroduce a second body
 /// representation. The O(payload) cost per encode/decode is accepted;
@@ -293,7 +301,7 @@ pub(super) fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
     key[INTENT_LEDGER_PRIVATE_PREFIX.len()..].try_into().ok()
 }
 
-/// Encodes the canonical 20-entry row: the digest preimage body plus the
+/// Encodes the canonical 22-entry row: the digest preimage body plus the
 /// content digest computed over exactly those bytes, appended as the final
 /// `content_digest` entry.
 pub(super) fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
@@ -338,6 +346,7 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
     let mut capability_provenance = None;
     let mut budget_accounting = None;
     let mut recorded_outcome = None;
+    let mut delivery_uncertain = None;
     let mut state = None;
     let mut created_ms = None;
     let mut updated_ms = None;
@@ -405,6 +414,12 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             KEY_RECORDED_OUTCOME => {
                 recorded_outcome = Some(decode_recorded_outcome(&value)?);
             }
+            KEY_DELIVERY_UNCERTAIN => {
+                delivery_uncertain =
+                    Some(value.as_bool().ok_or(IntentLedgerError::InvalidRecord(
+                        "outbound intent delivery_uncertain must be boolean",
+                    ))?);
+            }
             KEY_STATE => {
                 state = Some(
                     IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
@@ -470,6 +485,10 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             "missing outbound intent budget_accounting",
         )?,
         recorded_outcome: required(recorded_outcome, "missing outbound intent recorded_outcome")?,
+        delivery_uncertain: required(
+            delivery_uncertain,
+            "missing outbound intent delivery_uncertain",
+        )?,
         state: required(state, "missing outbound intent state")?,
         created_ms: required(created_ms, "missing outbound intent created_ms")?,
         updated_ms: required(updated_ms, "missing outbound intent updated_ms")?,

@@ -501,6 +501,9 @@ pub struct IntentLedgerRecord {
     pub(super) capability_provenance: Option<ScopedCapabilityProvenance>,
     pub budget_accounting: BudgetChargeMarker,
     pub recorded_outcome: Option<RecordedOutboundOutcome>,
+    /// Sticky evidence that some attempt of this logical send may have delivered.
+    /// A later definite non-delivery describes only that later attempt.
+    pub delivery_uncertain: bool,
     pub state: IntentState,
     pub created_ms: u64,
     pub updated_ms: u64,
@@ -557,6 +560,7 @@ impl IntentLedgerRecord {
             capability_provenance: request.capability_provenance,
             budget_accounting,
             recorded_outcome: None,
+            delivery_uncertain: false,
             state: IntentState::Pending,
             created_ms: request.now_ms,
             updated_ms: request.now_ms,
@@ -629,6 +633,7 @@ impl fmt::Debug for IntentLedgerRecord {
             .field("capability_provenance", &self.capability_provenance)
             .field("budget_accounting", &self.budget_accounting)
             .field("recorded_outcome", &self.recorded_outcome)
+            .field("delivery_uncertain", &self.delivery_uncertain)
             .field("state", &self.state)
             .field("created_ms", &self.created_ms)
             .field("updated_ms", &self.updated_ms)

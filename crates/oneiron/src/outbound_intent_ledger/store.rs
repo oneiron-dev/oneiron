@@ -149,7 +149,10 @@ pub(crate) fn insert_pending_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     pending: &IntentLedgerRecord,
 ) -> IntentLedgerResult<()> {
-    if pending.state != IntentState::Pending || pending.recorded_outcome.is_some() {
+    if pending.state != IntentState::Pending
+        || pending.recorded_outcome.is_some()
+        || pending.delivery_uncertain
+    {
         return Err(IntentLedgerError::InvalidRecord(
             "only outcome-free Pending may be inserted",
         ));
@@ -262,6 +265,79 @@ pub(crate) fn abandon_record(
         RecordedOutboundOutcome::Abandoned(reason),
         now_ms,
     )
+}
+
+/// Persist positive uncertainty before a later attempt can replace the
+/// current attempt's outcome with definite non-delivery. Never reset this bit
+/// on retry; only confirmed Done or an explicit reconciliation can resolve it.
+pub(crate) fn record_possible_delivery(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let key = intent_ledger_key(&id);
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &key)?
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "possible delivery target is missing",
+        ))?;
+    let mut record = decode_record(&key, &raw)?;
+    if record.state != IntentState::Pending || record.recorded_outcome.is_some() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "possible delivery requires outcome-free Pending",
+        ));
+    }
+    if !record.delivery_uncertain {
+        record.delivery_uncertain = true;
+        record.updated_ms = now_ms.max(record.created_ms);
+        vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, &key, &encode_record(&record)?)?;
+        wtxn.commit().map_err(Error::from)?;
+    } else {
+        drop(wtxn);
+    }
+    force_sync(vault)?;
+    Ok(record)
+}
+
+/// Resolve a scheduled TASK's exact frozen logical send under the same writer
+/// that publishes its terminal receipt/TASK/queue. `stop` only forbids a
+/// future attempt; it never changes the meaning of a prior ACK.
+pub(crate) fn reconcile_connector_intent_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+    binding: &super::resolution::ConnectorIntentBinding<'_>,
+    stop: Option<IntentEscalationReason>,
+    now_ms: u64,
+) -> IntentLedgerResult<Option<super::resolution::IntentResolution>> {
+    let Some(mut record) = read_intent_for_attempt_in_txn(vault, &*wtxn, attempt_id, 0)? else {
+        return Ok(None);
+    };
+    binding.verify(&record)?;
+    if let Some(reason) = stop
+        && record.state == IntentState::Pending
+    {
+        // A pre-send authority refusal cannot negate a prior in-flight call.
+        // Pending/None is durable admission and may have crossed the wire.
+        record.delivery_uncertain |= record.recorded_outcome.is_none();
+        record.state = IntentState::Abandoned;
+        record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
+        record.updated_ms = now_ms.max(record.created_ms);
+        vault.store.vault_meta.put(
+            wtxn,
+            &intent_ledger_key(&record.id),
+            &encode_record(&record)?,
+        )?;
+    }
+    Ok(Some(super::resolution::IntentResolution::from_record(
+        &record,
+    )?))
 }
 
 pub(crate) fn record_definite_non_delivery(
