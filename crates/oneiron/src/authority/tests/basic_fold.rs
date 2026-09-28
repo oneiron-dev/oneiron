@@ -121,7 +121,7 @@ fn delayed_rotation_that_would_leave_no_authority_consent_is_not_pending() {
     let rotate_hash = authority_entry_hash(&rotate).unwrap();
     let first_seen = BTreeMap::from([(rotate_hash, 10)]);
 
-    let fold = fold_authority_log_with_seen_times(&[genesis, rotate], &first_seen, 10);
+    let fold = fold_legacy_authority_log_with_seen_times(&[genesis, rotate], &first_seen, 10);
 
     assert!(!fold.pending_widens.contains_key(&rotate_hash));
     assert!(!fold.roster.contains_key(&agent_key));
@@ -197,7 +197,7 @@ fn dangling_sibling_does_not_block_valid_ancestor() {
     let ready_hash = authority_entry_hash(&ready).unwrap();
     let dangling_hash = authority_entry_hash(&dangling).unwrap();
 
-    let fold = fold_authority_log(&[dangling, ready, genesis]);
+    let fold = fold_legacy_authority_log(&[dangling, ready, genesis]);
     assert!(fold.valid_entries.contains(&ready_hash));
     assert!(!fold.valid_entries.contains(&dangling_hash));
     assert_eq!(fold.tier_floor, Some(AuthorityTier::Hardware));

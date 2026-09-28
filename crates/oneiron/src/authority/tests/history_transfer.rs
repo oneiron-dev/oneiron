@@ -184,3 +184,320 @@ fn account_auth_migrates_managed_root_without_widening() {
     assert!(!fold.roster[&authority_key_from_ed(&new)].revoked);
     assert!(fold.pending_widens.is_empty());
 }
+
+#[test]
+fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let target_dir = tempfile::tempdir().unwrap();
+    let source = Vault::open(source_dir.path(), VaultConfig::default()).unwrap();
+    let hosted = VaultConfig {
+        privacy: crate::config::VaultPrivacyConfig {
+            posture: crate::HostingPrivacyPosture::Hosted,
+            data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+                key_ref: "handoff-test".into(),
+            },
+        },
+        ..VaultConfig::default()
+    };
+    let target = Vault::open(target_dir.path(), hosted).unwrap();
+    let old = ed_key(115);
+    let next = ed_key(116);
+    let old_key = authority_key_from_ed(&old);
+    let next_key = authority_key_from_ed(&next);
+    let host = HostSlipIssuer::from_secret(b"handoff-root-for-one-2276").unwrap();
+    let genesis = genesis_entry(115, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &old, old_key.clone(), 116, 1);
+    store(&source, &genesis);
+    store(&source, &rotation);
+    let before = source.authority_fold().unwrap();
+    assert!(!before.roster.contains_key(&next_key));
+    mature_observed_widen(&source, &rotation);
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![authority_entry_hash(&rotation).unwrap()],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host.public_key(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            next_key.clone(),
+            3,
+        ),
+        &next,
+    );
+    source.apply_signed_re_root(&handoff).unwrap();
+    target
+        .import_signed_authority_history(&source.export_signed_authority_history().unwrap())
+        .unwrap();
+    mature_observed_widen(&target, &rotation);
+    let migrated = target.authority_fold().unwrap();
+    assert!(
+        migrated
+            .valid_entries
+            .contains(&authority_entry_hash(&handoff).unwrap())
+    );
+    assert!(migrated.roster[&old_key].revoked);
+    assert!(migrated.roster[&next_key].revoked);
+    assert!(!migrated.roster[&host.public_key()].revoked);
+    let root_slip = target.ensure_host_root_slip(&host).unwrap();
+    assert!(
+        target
+            .capability_slip_id_is_live(&root_slip.claims.slip_id)
+            .unwrap()
+    );
+    let minted = target.authority_fold().unwrap();
+    let parent = minted.slips.mints[&root_slip.claims.slip_id].entry_hash;
+    let new_key = authority_key_from_ed(&ed_key(117));
+    let enroll = host
+        .sign_entry(
+            Some(id),
+            1,
+            vec![parent],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    new_key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Hardware,
+                ),
+            },
+            4,
+        )
+        .unwrap();
+    store(&target, &enroll);
+    let rejected = target.authority_fold().unwrap();
+    assert!(
+        !rejected
+            .valid_entries
+            .contains(&authority_entry_hash(&enroll).unwrap())
+    );
+    assert!(!rejected.roster.contains_key(&new_key));
+    assert!(rejected.roster[&old_key].revoked);
+    assert!(rejected.slip_is_live(&root_slip.claims.slip_id));
+
+    // A validly signed sibling floor is not an ancestor of the handoff.
+    // Even its unrestricted probe must not restore the old root.
+    let floor = sign_ed(
+        unsigned_entry(
+            Some(id),
+            2,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::SetTierFloor {
+                tier_floor: AuthorityTier::Hardware,
+            },
+            old_key.clone(),
+            5,
+        ),
+        &old,
+    );
+    let floor_hash = authority_entry_hash(&floor).unwrap();
+    for entries in [
+        vec![
+            genesis.clone(),
+            rotation.clone(),
+            handoff.clone(),
+            floor.clone(),
+        ],
+        vec![floor.clone(), handoff.clone(), rotation.clone(), genesis],
+    ] {
+        let folded = fold_authority_log_for_posture(
+            &entries,
+            &BTreeMap::from([
+                (authority_entry_hash(&rotation).unwrap(), 0),
+                (floor_hash, 0),
+            ]),
+            DEFAULT_PENDING_WIDEN_DELAY_SECS,
+            &BTreeMap::new(),
+            crate::HostingPrivacyPosture::Hosted,
+        );
+        assert!(!folded.valid_entries.contains(&floor_hash));
+        assert!(
+            folded
+                .valid_entries
+                .contains(&authority_entry_hash(&handoff).unwrap())
+        );
+        assert!(folded.roster[&old_key].revoked);
+        assert!(folded.roster[&next_key].revoked);
+        assert!(!folded.roster[&host.public_key()].revoked);
+    }
+    store(&target, &floor);
+    let after_floor = target.authority_fold().unwrap();
+    assert!(!after_floor.valid_entries.contains(&floor_hash));
+    assert!(
+        after_floor
+            .valid_entries
+            .contains(&authority_entry_hash(&handoff).unwrap())
+    );
+    assert!(after_floor.roster[&old_key].revoked);
+    assert!(after_floor.roster[&next_key].revoked);
+    assert!(!after_floor.roster[&host.public_key()].revoked);
+    assert!(
+        target
+            .capability_slip_id_is_live(&root_slip.claims.slip_id)
+            .unwrap()
+    );
+}
+
+#[test]
+fn handoff_only_preserves_its_valid_pre_handoff_ancestors() {
+    let old = ed_key(118);
+    let next = ed_key(119);
+    let host = ed_key(120);
+    let client = ed_key(121);
+    let successor = ed_key(122);
+    let old_key = authority_key_from_ed(&old);
+    let next_key = authority_key_from_ed(&next);
+    let host_key = authority_key_from_ed(&host);
+    let client_key = authority_key_from_ed(&client);
+    let successor_key = authority_key_from_ed(&successor);
+    let genesis = genesis_entry(118, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &old, old_key.clone(), 119, 1);
+    let rotation_hash = authority_entry_hash(&rotation).unwrap();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![rotation_hash],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host_key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            next_key.clone(),
+            3,
+        ),
+        &next,
+    );
+    let mut invalid_device = device(
+        host_key.clone(),
+        ROLE_OWNER | ROLE_ADMIN | ROLE_AGENT,
+        AuthorityTier::Software,
+    );
+    invalid_device.attestation.kind = "HostRoot".into();
+    let invalid_handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![rotation_hash],
+            AuthorityOp::ReRoot {
+                new_device: invalid_device,
+            },
+            next_key.clone(),
+            3,
+        ),
+        &next,
+    );
+    let sibling = enroll_device_entry(
+        id,
+        &genesis,
+        &old,
+        EnrollSpec {
+            seed: 121,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Hardware,
+            seq: 2,
+            ts: 2,
+        },
+    );
+    let post_handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![authority_entry_hash(&handoff).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    client_key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Hardware,
+                ),
+            },
+            host_key.clone(),
+            4,
+        ),
+        &host,
+    );
+    let second_handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![authority_entry_hash(&post_handoff).unwrap()],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    successor_key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            client_key.clone(),
+            5,
+        ),
+        &client,
+    );
+    let seen = [
+        rotation_hash,
+        authority_entry_hash(&sibling).unwrap(),
+        authority_entry_hash(&post_handoff).unwrap(),
+    ]
+    .into_iter()
+    .map(|hash| (hash, 1))
+    .collect::<BTreeMap<_, _>>();
+    for posture in [
+        crate::HostingPrivacyPosture::Hosted,
+        crate::HostingPrivacyPosture::SelfHostLocal,
+        crate::HostingPrivacyPosture::Relay,
+    ] {
+        let no_handoff = fold_authority_log_for_posture(
+            &[genesis.clone(), rotation.clone(), invalid_handoff.clone()],
+            &seen,
+            1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+            &BTreeMap::new(),
+            posture,
+        );
+        assert!(
+            !no_handoff.valid_entries.contains(&rotation_hash),
+            "{posture:?}"
+        );
+        let entries = [
+            genesis.clone(),
+            rotation.clone(),
+            handoff.clone(),
+            sibling.clone(),
+            post_handoff.clone(),
+            second_handoff.clone(),
+        ];
+        for ordered in [entries.to_vec(), entries.iter().rev().cloned().collect()] {
+            let folded = fold_authority_log_for_posture(
+                &ordered,
+                &seen,
+                1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                &BTreeMap::new(),
+                posture,
+            );
+            assert!(folded.valid_entries.contains(&rotation_hash), "{posture:?}");
+            assert!(
+                folded
+                    .valid_entries
+                    .contains(&authority_entry_hash(&handoff).unwrap())
+            );
+            for rejected in [&sibling, &post_handoff, &second_handoff] {
+                assert!(
+                    !folded
+                        .valid_entries
+                        .contains(&authority_entry_hash(rejected).unwrap())
+                );
+            }
+            assert!(!folded.roster[&host_key].revoked);
+            assert!(folded.roster[&old_key].revoked);
+            assert!(folded.roster[&next_key].revoked);
+            assert!(!folded.roster.contains_key(&client_key));
+            assert!(!folded.roster.contains_key(&successor_key));
+        }
+    }
+}

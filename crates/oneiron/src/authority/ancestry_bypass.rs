@@ -66,8 +66,46 @@ fn nearest_unfrozen_ancestor_state(
             continue;
         }
         let entry = by_hash.get(&hash)?;
-        if !pending.contains(&hash)
-            || entry.parent_hashes.is_empty()
+        if entry.parent_hashes.is_empty() {
+            return None;
+        }
+        // Retiring a client-key op does not erase an independently authorized
+        // withdrawal signed by its old root. Check the rejected row's OWN
+        // signature, signer, quorum and ancestry under the historical rule,
+        // but use only its *parents'* folded states for the withdrawal. Never
+        // install the rejected operation's granted key or changed floor.
+        let retired = context.pre_handoff_entries.is_some_and(|permitted| {
+            !permitted.contains(&hash)
+                && matches!(
+                    entry.op,
+                    AuthorityOp::EnrollDevice { .. }
+                        | AuthorityOp::RotateKey { .. }
+                        | AuthorityOp::SetTierFloor { .. }
+                        | AuthorityOp::VetoPendingWiden { .. }
+                )
+        });
+        if retired && !pending.contains(&hash) {
+            if !entry
+                .parent_hashes
+                .iter()
+                .all(|parent| states.contains_key(parent))
+                || !matches!(
+                    fold_entry_state(
+                        entry,
+                        hash,
+                        states,
+                        FoldContext {
+                            pre_handoff_entries: None,
+                            deadline_observer: None,
+                            ..context
+                        },
+                    ),
+                    EntryFold::Ready(_)
+                )
+            {
+                return None;
+            }
+        } else if !pending.contains(&hash)
             || !entry_is_frozen_by_pending_widen(entry, by_hash, states, pending, context)
         {
             return None;

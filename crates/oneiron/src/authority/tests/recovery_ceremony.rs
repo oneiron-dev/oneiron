@@ -24,7 +24,7 @@ fn genesis_secret_step_cannot_be_skipped_and_dismissal_is_visible() {
     let mut skipped = Vec::new();
     rmpv::encode::write_value(&mut skipped, &value).unwrap();
     assert!(decode_authority_log_entry_body(&skipped).is_err());
-    let fold = fold_authority_log(&[genesis.clone()]);
+    let fold = fold_legacy_authority_log(&[genesis.clone()]);
     assert!(fold.genesis_fragile);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll = enroll_device_entry(
@@ -42,10 +42,14 @@ fn genesis_secret_step_cannot_be_skipped_and_dismissal_is_visible() {
     let hash = authority_entry_hash(&enroll).unwrap();
     let entries = [genesis, enroll];
     let seen = BTreeMap::from([(hash, 10)]);
-    assert!(fold_authority_log_with_seen_times(&entries, &seen, 10).genesis_fragile);
+    assert!(fold_legacy_authority_log_with_seen_times(&entries, &seen, 10).genesis_fragile);
     assert!(
-        !fold_authority_log_with_seen_times(&entries, &seen, 10 + DEFAULT_PENDING_WIDEN_DELAY_SECS)
-            .genesis_fragile
+        !fold_legacy_authority_log_with_seen_times(
+            &entries,
+            &seen,
+            10 + DEFAULT_PENDING_WIDEN_DELAY_SECS
+        )
+        .genesis_fragile
     );
 }
 
@@ -74,7 +78,7 @@ fn migration_preserves_genesis_and_does_not_restore_instant_widen_authority() {
     );
     let bytes = encode_authority_log_entry_body(&reroot).unwrap();
     assert_eq!(decode_authority_log_entry_body(&bytes).unwrap(), reroot);
-    let migrated = fold_authority_log(&[genesis.clone(), reroot.clone()]);
+    let migrated = fold_legacy_authority_log(&[genesis.clone(), reroot.clone()]);
     assert_eq!(migrated.vault_id, Some(vault_id));
     assert!(migrated.roster[&authority_key_from_ed(&old)].revoked);
     assert!(!migrated.roster[&authority_key_from_ed(&new)].revoked);
@@ -94,10 +98,13 @@ fn migration_preserves_genesis_and_does_not_restore_instant_widen_authority() {
     let hash = authority_entry_hash(&enroll).unwrap();
     let seen = BTreeMap::from([(hash, 10)]);
     let entries = [genesis, reroot, enroll];
-    let pending = fold_authority_log_with_seen_times(&entries, &seen, 10);
+    let pending = fold_legacy_authority_log_with_seen_times(&entries, &seen, 10);
     assert!(pending.pending_widens.contains_key(&hash));
-    let cleared =
-        fold_authority_log_with_seen_times(&entries, &seen, 10 + DEFAULT_PENDING_WIDEN_DELAY_SECS);
+    let cleared = fold_legacy_authority_log_with_seen_times(
+        &entries,
+        &seen,
+        10 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    );
     assert!(!cleared.roster[&authority_key_from_ed(&ed_key(77))].revoked);
     assert_eq!(cleared.vault_id, Some(vault_id));
 }

@@ -485,7 +485,7 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
         (authority_entry_hash(&enroll_second).unwrap(), 1_000),
         (authority_entry_hash(&enroll_peer).unwrap(), 1_000),
     ]);
-    let fold = fold_authority_log_with_seen_times(
+    let fold = fold_legacy_authority_log_with_seen_times(
         &[genesis, enroll_second, enroll_peer, revoke, confirm.clone()],
         &seen,
         1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
@@ -533,7 +533,7 @@ fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
     );
     let mut seen = BTreeMap::new();
     seen.insert(authority_entry_hash(&enroll).unwrap(), 1_000);
-    let fold = fold_authority_log_with_seen_times(
+    let fold = fold_legacy_authority_log_with_seen_times(
         &[genesis, enroll, confirm.clone()],
         &seen,
         1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,

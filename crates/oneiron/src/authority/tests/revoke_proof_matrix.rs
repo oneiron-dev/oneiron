@@ -237,7 +237,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     first_seen.insert(hash, if deferred.contains(&hash) { now } else { 1 });
                 }
                 first_seen.insert(authority_entry_hash(&sibling).unwrap(), 1);
-                let before = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+                let before = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, now);
                 assert_eq!(
                     folded_status(&before, &consent_key),
                     Some(ActorBindingStatus::Revoked),
@@ -245,7 +245,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     before.issues
                 );
                 entries.push(sibling);
-                let after = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+                let after = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, now);
                 assert_eq!(
                     after.valid_entries.contains(&loser_hash),
                     matches!(loss, Loss::Equivocation),
@@ -278,7 +278,8 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     } else {
                         tampered[revoke_index].cosigns[0].signature[0] ^= 1;
                     }
-                    let invalid = fold_authority_log_with_seen_times(&tampered, &first_seen, now);
+                    let invalid =
+                        fold_legacy_authority_log_with_seen_times(&tampered, &first_seen, now);
                     assert_eq!(
                         folded_status(&invalid, &consent_key),
                         Some(ActorBindingStatus::Active),
@@ -292,7 +293,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     .collect();
                 assert_eq!(
                     folded_status(
-                        &fold_authority_log_with_seen_times(&missing, &first_seen, now),
+                        &fold_legacy_authority_log_with_seen_times(&missing, &first_seen, now),
                         &consent_key
                     ),
                     Some(ActorBindingStatus::Active),
@@ -319,7 +320,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                 wrong[revoke_index] = wrong_vault;
                 assert_eq!(
                     folded_status(
-                        &fold_authority_log_with_seen_times(&wrong, &first_seen, now),
+                        &fold_legacy_authority_log_with_seen_times(&wrong, &first_seen, now),
                         &consent_key
                     ),
                     Some(ActorBindingStatus::Active),
@@ -342,7 +343,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                 wrong_signer[revoke_index] = unauthorized;
                 assert_eq!(
                     folded_status(
-                        &fold_authority_log_with_seen_times(&wrong_signer, &first_seen, now),
+                        &fold_legacy_authority_log_with_seen_times(&wrong_signer, &first_seen, now),
                         &consent_key
                     ),
                     Some(ActorBindingStatus::Active),
@@ -350,7 +351,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                 );
                 entries.reverse();
                 assert_eq!(
-                    fold_authority_log_with_seen_times(&entries, &first_seen, now),
+                    fold_legacy_authority_log_with_seen_times(&entries, &first_seen, now),
                     after,
                     "{label}"
                 );
@@ -359,7 +360,8 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     // chain, become intrinsically invalid). Neither transition
                     // can erase the revoke fact in the complete signed log.
                     let matured = now + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-                    let later = fold_authority_log_with_seen_times(&entries, &first_seen, matured);
+                    let later =
+                        fold_legacy_authority_log_with_seen_times(&entries, &first_seen, matured);
                     assert_eq!(
                         folded_status(&later, &consent_key),
                         Some(ActorBindingStatus::Revoked),
@@ -378,7 +380,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                     );
                     entries.reverse();
                     assert_eq!(
-                        fold_authority_log_with_seen_times(&entries, &first_seen, matured),
+                        fold_legacy_authority_log_with_seen_times(&entries, &first_seen, matured),
                         later,
                         "matured order {label}"
                     );

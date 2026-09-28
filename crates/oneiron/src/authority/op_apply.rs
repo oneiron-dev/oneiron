@@ -87,7 +87,6 @@ pub(super) fn apply_op(
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
-            state.migrated_roots.insert(new_device.key.clone());
             upsert_device(state, new_device);
         }
         AuthorityOp::VetoPendingWiden { .. } => {}
