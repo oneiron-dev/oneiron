@@ -50,6 +50,10 @@ pub(crate) fn validate_project_edge_put(
     let target_project = is_project_entity(store, txn, tgt)?;
     // No provisional hub link to an absent endpoint: it could later become
     // a CLAIM. Sync defers such rows before reaching this writer.
+    let admitted_goal = target_project
+        && kind == EdgeKind::ClaimOf
+        && entity_type(store, txn, src)? == Some(ENTITY_TYPE_CLAIM)
+        && super::admitted_claim_of_project(store, txn, src, tgt)?;
     if (source_project
         && matches!(
             entity_type(store, txn, tgt)?,
@@ -59,7 +63,8 @@ pub(crate) fn validate_project_edge_put(
             && matches!(
                 entity_type(store, txn, src)?,
                 None | Some(ENTITY_TYPE_CLAIM)
-            ))
+            )
+            && !admitted_goal)
     {
         return Err(invalid());
     }

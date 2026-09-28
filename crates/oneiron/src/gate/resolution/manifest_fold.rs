@@ -298,6 +298,13 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(limits) = decoded.goal_limits {
+                    resolution.goal_limits = Some(
+                        resolution
+                            .goal_limits
+                            .map_or(limits, |old| old.restrict(limits)),
+                    );
+                }
                 if let Some(limits) = decoded.voice_ref_limits {
                     if id == crate::gate::default_policy_manifest_id()? {
                         resolution.voice_ref_defaults = Some(limits);

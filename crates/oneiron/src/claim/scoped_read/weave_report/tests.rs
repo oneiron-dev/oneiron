@@ -71,9 +71,7 @@ fn person_sees_only_self_and_member_project_rows_and_touching_live_links() -> Re
     for (id, member) in [(project, person), (outsider_project, stranger)] {
         let mut row = ProjectRecord::new(id, Some(root), root, leader);
         row.roster.push(member.to_hex());
-        if id == project {
-            row.goal = Some(entity(0x67).to_hex());
-        } // no such row
+        // No goal pointer: only the goal-intake interview may set one.
         vault.put_project(id, &row, 2)?;
     }
     let own = put(&vault, 0x61, "report.change", ClaimSubject::Entity(person))?;
