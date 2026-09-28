@@ -97,9 +97,25 @@ pub(crate) const TASK_ASK_SOFT_CONFIRM: &[u8] = b"oneiron.tasks.ask.soft_confirm
 /// person.
 pub(crate) const TASK_ASK_GUEST_GRANT: &[u8] = b"oneiron.tasks.ask.guest.v1";
 
+/// The CONNECTOR_SEND event a delivered connector receipt projects
+/// (`comm::projector`). Parts: task.
+pub(crate) const COMM_CONNECTOR_SEND_EVENT: &[u8] = b"oneiron.comm.connector_send_event.v1\0";
+
+/// The terminal RECEIPT_RECORD of one outbound intent (`receipt::record`). Parts:
+/// intent id.
+pub(crate) const OUTBOUND_RECEIPT_RECORD: &[u8] = b"oneiron.outbound.receipt_record.v1\0";
+
+/// The first-party library hub every vault shares (`skill_hub::default_hub`). No
+/// parts.
+pub(crate) const FIRST_PARTY_SKILL_HUB: &[u8] = b"oneiron/first-party-skill-hub/v1";
+
+/// The engine hub of the built-in connector packs
+/// (`skill_hub::pack_catalog::builtin`). No parts.
+pub(crate) const BUILTIN_CONNECTOR_PACK_HUB: &[u8] = b"oneiron/built-in-connector-packs/v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 25] = [
+pub(crate) const ALL: [&[u8]; 29] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -125,4 +141,8 @@ pub(crate) const ALL: [&[u8]; 25] = [
     TASK_ASK_SETTLEMENT,
     TASK_ASK_SOFT_CONFIRM,
     TASK_ASK_GUEST_GRANT,
+    COMM_CONNECTOR_SEND_EVENT,
+    OUTBOUND_RECEIPT_RECORD,
+    FIRST_PARTY_SKILL_HUB,
+    BUILTIN_CONNECTOR_PACK_HUB,
 ];

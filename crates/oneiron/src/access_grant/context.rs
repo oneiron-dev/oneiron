@@ -418,7 +418,8 @@ mod tests {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ).unwrap();
+            )
+            .unwrap();
             body.rel = Some(space);
             body.scope_project = project;
             vault.put_claim(&id, &body, when, 1)?;

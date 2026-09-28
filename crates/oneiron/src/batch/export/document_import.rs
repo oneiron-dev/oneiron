@@ -489,9 +489,20 @@ pub(super) fn import_edge(
         if same {
             return Ok(());
         }
-        // A newly imported claim's typed door creates its own ClaimOf link.
-        // Restoring this exported public link's original timestamp is safe.
-        if kind != EdgeKind::ClaimOf || !inserted.contains(&source) {
+        // A newly imported claim's typed door creates its own ClaimOf link, and
+        // a newly imported project's projector its damped parent membership.
+        // Restoring this exported link's original timestamp is safe.
+        let door_minted = inserted.contains(&source)
+            && match kind {
+                EdgeKind::ClaimOf => true,
+                EdgeKind::BelongsTo => {
+                    existing.weight == edge.weight
+                        && crate::workspace_roster::is_project_entity(&vault.store, wtxn, source)?
+                        && crate::workspace_roster::is_project_entity(&vault.store, wtxn, target)?
+                }
+                _ => false,
+            };
+        if !door_minted {
             return Err(invalid(
                 "import edge collides with different stored metadata",
             ));

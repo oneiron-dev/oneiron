@@ -284,7 +284,8 @@ fn mint_fixture(
         Some(vault.root_project()?),
         vault.root_project()?,
         person,
-    ).unwrap();
+    )
+    .unwrap();
     vault.put_project(staging, &staging_project, 20)?;
     let room = EntityId::from_hex(&staging_project.home_room)?;
     vault
@@ -693,7 +694,8 @@ fn stored_claim(vault: &Vault) -> Result<EntityId> {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        ).unwrap(),
+        )
+        .unwrap(),
         TimeRange { start: 2, end: 2 },
         2,
     )?;

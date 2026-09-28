@@ -12,8 +12,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    FederationDirectionScope, ScopeAxis, ScopeId, SelectorRange,
-    selector_range_of,
+    FederationDirectionScope, ScopeAxis, ScopeId, SelectorRange, selector_range_of,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::sync::bridge::parse_edge_key;

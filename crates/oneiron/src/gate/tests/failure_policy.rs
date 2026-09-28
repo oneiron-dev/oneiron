@@ -144,7 +144,8 @@ fn shipped_rows_default_to_no_failed_output_and_nested_narrowing() -> Result<()>
         &default_policy_manifest().unwrap(),
     )?;
     let resolved = resolve(&vault)?;
-    let decoded = decode_policy_manifest(&default_policy_manifest().unwrap()).expect("shipped policy");
+    let decoded =
+        decode_policy_manifest(&default_policy_manifest().unwrap()).expect("shipped policy");
     assert_eq!(decoded.dreamer_failure_rules.len(), 3);
     assert_eq!(
         decoded.dreamer_failure_precedence,

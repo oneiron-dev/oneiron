@@ -167,7 +167,8 @@ fn scoped_claim(principal: EntityId, subject: EntityId) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     body.scope = Some(Value::Map(vec![(
         Value::from("typed_question_principal"),
         Value::from(principal.to_hex()),

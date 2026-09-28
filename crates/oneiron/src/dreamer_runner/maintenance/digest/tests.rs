@@ -196,7 +196,8 @@ fn policy_row_rejects_invalid_templates_and_disables_unpicked_breakthrough() -> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let wake = UrgentDigestWake {
@@ -249,7 +250,8 @@ fn repeated_urgent_groups_do_not_postpone_the_ordinary_group() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let urgent = UrgentDigestWake {

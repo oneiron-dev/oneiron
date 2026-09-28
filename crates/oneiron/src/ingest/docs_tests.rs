@@ -836,7 +836,8 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     vault.put_claim(&default_claim, &body, TimeRange { start: 4, end: 4 }, 4)?;
     // Import also writes consent/owner control claims in the default project.
     // Restrict this retrieval to the three fixture audiences under test.

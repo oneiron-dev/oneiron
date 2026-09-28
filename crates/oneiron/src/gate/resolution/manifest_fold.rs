@@ -48,10 +48,10 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     // The shipped manifest supplies bootstrap policy even when a replacement
     // omits optional count rows; a peer cannot replace these trusted defaults.
-    let shipped = decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?)
-        .ok_or(Error::InvariantViolation(
-            "shipped sheet-answer policy manifest invalid",
-        ))?;
+    let shipped =
+        decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?).ok_or(
+            Error::InvariantViolation("shipped sheet-answer policy manifest invalid"),
+        )?;
     resolution.sheet_answer_default_max_count = shipped
         .sheet_answer_limits
         .iter()

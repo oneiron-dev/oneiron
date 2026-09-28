@@ -530,6 +530,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "VAULT_CLEANUP_ATTEMPT_ARCHIVE",
         "VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE",
         "VAULT_CLEANUP_TEST_BLOCKERS_CLOSED",
+        "VAULT_IDENTITY_LOCAL",
         "VOICE_OWNER_REF",
         "VOICE_OWNER_REF_OWNER_INDEX",
         "VOICE_REF_IDENTITY",

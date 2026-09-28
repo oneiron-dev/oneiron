@@ -91,7 +91,10 @@ impl Vault {
         let outcome = match crate::human_task::resolve_native_human_route(self, person) {
             Err(_) => TaskAskSoftConfirmDelivery::PendingRoute,
             Ok(route) => {
-                let content = crate::EntityId::derive(crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM, &[group.as_bytes(), person.as_bytes()])?;
+                let content = crate::EntityId::derive(
+                    crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM,
+                    &[group.as_bytes(), person.as_bytes()],
+                )?;
                 let idempotency =
                     format!("ask-soft-confirm/{}/{}", group.to_hex(), person.to_hex());
                 let draft = crate::memory::OutboundDraftInput {

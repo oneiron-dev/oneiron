@@ -645,7 +645,8 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
     vault.batch().text(&id, &[("body", "l2needle")]).commit()?;
     let builder = || vault.context_pack().search_text("l2needle", 10);

@@ -174,7 +174,8 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         body.evidence = Some(encode_consolidation_evidence(
             &ConsolidationEvidenceEnvelope {
                 refs,

@@ -1366,7 +1366,8 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
     bind_room_owner(&server, owner);
     let root = server.vault.root_project().unwrap();
     let project = seeded_test_entity_id(0x2094_0202);
-    let record = oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    let record =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
     server.vault.put_project(project, &record, 1).unwrap();
     let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
     let private = seed_text_turn(&server, "owner alone private2094");

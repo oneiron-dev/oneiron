@@ -296,7 +296,8 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap(),
+        )
+        .unwrap(),
         time(),
         130,
     )?;

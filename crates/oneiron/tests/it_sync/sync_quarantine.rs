@@ -2010,7 +2010,8 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
                 0.9,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ).unwrap(),
+            )
+            .unwrap(),
             valid_time_range(),
             LEARNED_AT,
         )

@@ -1,8 +1,7 @@
 use super::*;
 use crate::federation::{
     Ceiling, FederationDirectionScope, FederationPactScope, Position, ScopeAxis,
-    decode_federation_pact_scope,
-    encode_federation_pact_scope,
+    decode_federation_pact_scope, encode_federation_pact_scope,
 };
 use crate::registry::ENTITY_TYPE_REGISTRY;
 

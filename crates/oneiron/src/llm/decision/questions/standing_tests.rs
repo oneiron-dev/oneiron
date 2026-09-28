@@ -412,7 +412,8 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
         1.0,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     fact.source = Some(crate::claim::ClaimSource::Imported);
     vault.put_claim(&evidence, &fact, TimeRange { start: 1, end: 1 }, 1)?;
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
@@ -556,7 +557,8 @@ fn supplemental_claim_evidence_taint_scope_and_revisions_are_preserved() -> Test
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         body.source = Some(kind);
         body
     };
@@ -633,7 +635,8 @@ fn note_unit_and_evidence_require_record_project_and_sensitivity_grants() -> Tes
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     body.source = Some(ClaimSource::UserStated);
     body.scope_project = other_project;
     vault.put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)?;
@@ -690,7 +693,8 @@ fn mixed_source_sensitivity_never_downgrades_a_kept_answer() -> TestResult {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ).unwrap();
+            )
+            .unwrap();
             claim.source = Some(ClaimSource::UserStated);
             claim.scope = Some(rmpv::Value::Map(vec![(
                 rmpv::Value::from("sensitivity"),

@@ -724,7 +724,8 @@ async fn board_host_pack_install_is_changed_line_and_live_section_next_render() 
                 0.9,
                 oneiron::ClaimApprovalStatus::Auto,
                 oneiron::ClaimLifecycleStatus::Active,
-            ).unwrap(),
+            )
+            .unwrap(),
             oneiron::TimeRange { start: 5, end: 5 },
             5,
         )
@@ -792,7 +793,8 @@ async fn board_host_pack_install_is_changed_line_and_live_section_next_render() 
                 0.9,
                 oneiron::ClaimApprovalStatus::Auto,
                 oneiron::ClaimLifecycleStatus::Active,
-            ).unwrap(),
+            )
+            .unwrap(),
             oneiron::TimeRange { start: 7, end: 7 },
             7,
         )

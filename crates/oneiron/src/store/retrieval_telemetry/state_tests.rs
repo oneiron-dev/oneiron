@@ -702,8 +702,9 @@ fn shipped_manifest_declares_default_retention_and_precedence() -> crate::Result
         resolved.retrieval_retention.effective(),
         (DEFAULT_RETRIEVAL_AGE_SECS, DEFAULT_RETRIEVAL_MAX_RUNS)
     );
-    let default = rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
-        .expect("shipped manifest decodes");
+    let default =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .expect("shipped manifest decodes");
     assert!(
         default
             .as_map()

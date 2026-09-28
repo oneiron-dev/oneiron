@@ -274,7 +274,8 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    ).unwrap();
+    )
+    .unwrap();
     record.roster.push(agent.to_hex());
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
@@ -511,7 +512,8 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         1.0,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     claim.world = Some(foreign_world);
     vault
         .batch()
@@ -614,7 +616,8 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    ).unwrap();
+    )
+    .unwrap();
     record.roster.extend([asker.to_hex(), peer.to_hex()]);
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
@@ -732,7 +735,8 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    ).unwrap();
+    )
+    .unwrap();
     record.roster.push(peer.to_hex());
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
@@ -817,7 +821,8 @@ fn settled_multi_recipient_ask_drops_unanswered_sibling_wait() -> Result<()> {
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    ).unwrap();
+    )
+    .unwrap();
     record
         .roster
         .extend(responders.iter().map(EntityId::to_hex));
@@ -890,7 +895,8 @@ fn room_manifest_changes_selected_rows_and_cannot_be_widened_by_caller() -> Resu
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    ).unwrap();
+    )
+    .unwrap();
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
     let memory = vault.memory(owner, EdgeActorClass::Human);

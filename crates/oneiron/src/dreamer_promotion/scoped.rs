@@ -90,7 +90,8 @@ fn attach_evidence(
             .clone()
             .with_scope(scope_with_taint(original.scope.clone(), source))
             .with_evidence(evidence.envelope(Vec::new()));
-        let gate_body = gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
+        let gate_body =
+            gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
         crate::gate::check_claim_policy_for_write(
             &vault.store,

@@ -88,7 +88,8 @@ fn world_grant_recall_returns_only_admitted_claims_and_worlds_with_receipt() {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         body.world = Some(world);
         body.source = Some(ClaimSource::UserStated);
         vault

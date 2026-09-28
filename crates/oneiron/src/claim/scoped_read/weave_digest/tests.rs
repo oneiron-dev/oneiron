@@ -69,7 +69,8 @@ fn due_rows_store_exact_live_lens_and_advance_each_reader_independently() -> Res
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ).unwrap(),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )?;
@@ -272,7 +273,8 @@ fn hard_delete_scrubs_copied_digest_bytes_and_saved_read_refuses_erased_source()
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ).unwrap(),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )?;
@@ -342,7 +344,8 @@ fn deletion_between_projection_and_commit_cannot_republish_erased_body() -> Resu
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap(),
+        )
+        .unwrap(),
         TimeRange { start: 1, end: 1 },
         1,
     )?;
@@ -465,7 +468,8 @@ fn erased_upstream_source_scrubs_derived_claim_digest_even_after_regeneration() 
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap()
+        )
+        .unwrap()
     };
     vault.put_claim(
         &claim_id,
@@ -590,7 +594,8 @@ fn configurable_manifest_sections_and_ceilings_narrow_per_holder_without_expandi
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let mut project =
-        crate::workspace_roster::ProjectRecord::new(entity(0xBD), Some(root), root, leader).unwrap();
+        crate::workspace_roster::ProjectRecord::new(entity(0xBD), Some(root), root, leader)
+            .unwrap();
     project.roster.push(agent.to_hex());
     vault.put_project(entity(0xBD), &project, 2)?;
     let row = WeaveDigestSchedule {
@@ -806,7 +811,8 @@ fn non_claim_rows_and_edge_endpoints_are_rechecked_at_publication() -> Result<()
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ).unwrap(),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )?;
@@ -895,7 +901,8 @@ fn saved_digest_is_reader_bound_and_revocation_hides_every_saved_byte() -> Resul
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap(),
+        )
+        .unwrap(),
         TimeRange { start: 1, end: 1 },
         1,
     )?;
@@ -960,7 +967,8 @@ fn saved_private_claim_cannot_be_authorized_by_a_new_public_revision() -> Result
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     old.world = Some(world);
     vault.put_claim(&claim_id, &old, TimeRange { start: 1, end: 1 }, 1)?;
     crate::test_util::authorize_readers(&vault, &[&person_id.to_hex()]);
@@ -985,7 +993,8 @@ fn saved_private_claim_cannot_be_authorized_by_a_new_public_revision() -> Result
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     vault.with_write_txn(|txn| {
         let record = EntityRecord {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
@@ -1249,7 +1258,8 @@ fn saved_edge_claim_is_withheld_after_exact_pair_revocation_with_readable_endpoi
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap(),
+        )
+        .unwrap(),
         TimeRange { start: 1, end: 1 },
         1,
     )?;
@@ -1340,7 +1350,8 @@ fn authored_row_ceiling_governs_predicate_scan_past_index_default() -> Result<()
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ).unwrap(),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )?;

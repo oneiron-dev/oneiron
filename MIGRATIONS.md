@@ -365,7 +365,9 @@ framing and version bits are not, so every id derived before (the embedded owner
 PERSON, substrate facets, bootstrap skills, supersession companions, code-symbol
 entities, consolidation claims, home rooms, projected `comm.*` claims, connector,
 commitment and calendar actors, commitment instances, lead-source entities and
-claims, ask records) differs from what this engine derives.
+claims, ask records, ask soft-confirm notices and guest grants, connector send
+events, outbound receipt records, the first-party skill hub and the built-in
+connector pack hub) differs from what this engine derives.
 
 The same version gives each federation pact scope one spelling per lattice point
 (T51): a world set holding only the base world is written `{"kind":"base"}`, where

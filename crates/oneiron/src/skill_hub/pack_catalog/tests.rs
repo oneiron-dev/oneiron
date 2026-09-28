@@ -449,7 +449,8 @@ fn agent_knowledge_files() -> Result<(Vec<HubFile>, crate::batch::export::Export
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     let body = crate::claim::encode_claim_body(&claim)?;
     Ok((
         files,

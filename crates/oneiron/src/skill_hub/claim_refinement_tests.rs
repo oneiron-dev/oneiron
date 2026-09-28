@@ -69,7 +69,8 @@ impl Fixture {
             0.8,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         original.source = Some(ClaimSource::Inferred);
         vault.put_claim(&base, &original, at(2), 2)?;
         let label = EntityId::now();
@@ -80,7 +81,8 @@ impl Fixture {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         evidence.source = Some(ClaimSource::UserStated);
         vault.put_claim(&label, &evidence, at(3), 3)?;
         vault.reserve_claim_refinement_holdout(&owner, base, &[label])?;
@@ -101,7 +103,8 @@ impl Fixture {
             0.9,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         body.source = Some(ClaimSource::Inferred);
         body.session_tag = Some("session:claim-refine".to_owned());
         body

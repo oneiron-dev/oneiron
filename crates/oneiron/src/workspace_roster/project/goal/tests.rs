@@ -229,7 +229,8 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     forged_raw.source = Some(ClaimSource::UserStated);
     assert!(
         vault
@@ -356,7 +357,8 @@ fn intake_does_not_supersede_a_claim_named_by_a_corrupt_project_pointer() -> Res
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     body.source = Some(ClaimSource::UserStated);
     vault
         .batch()
@@ -503,7 +505,8 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
                 Some(root),
                 root,
                 EntityId::from_hex(&root_record.leader)?,
-            ).unwrap(),
+            )
+            .unwrap(),
             1,
         )?;
         let owner = vault.authenticate_owner(

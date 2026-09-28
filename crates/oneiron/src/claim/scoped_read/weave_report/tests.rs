@@ -13,7 +13,8 @@ fn put(vault: &Vault, id: u8, predicate: &str, subject: ClaimSubject) -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ).unwrap();
+    )
+    .unwrap();
     if let ClaimSubject::Entity(target) = subject
         && vault.get_entity_type(&target)? == Some(vault.project_type_byte()?)
     {
@@ -291,7 +292,8 @@ fn report_cannot_widen_world_scoped_grant_or_count_hidden_rows() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         body.world = Some(world);
         vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
         Ok(id)
@@ -487,7 +489,8 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ).unwrap();
+        )
+        .unwrap();
         overlay.put(
             OverlayKeyspace::Entities,
             id.as_bytes(),

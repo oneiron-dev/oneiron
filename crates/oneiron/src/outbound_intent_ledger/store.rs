@@ -373,10 +373,9 @@ pub(crate) fn record_possible_delivery(
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    let mut record =
-        get_ledger_record(vault, &wtxn, &id)?.ok_or(IntentLedgerError::InvalidRecord(
-            "possible delivery target is missing",
-        ))?;
+    let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("possible delivery target is missing"),
+    )?;
     if record.state != IntentState::Pending || record.recorded_outcome.is_some() {
         return Err(IntentLedgerError::InvalidRecord(
             "possible delivery requires outcome-free Pending",

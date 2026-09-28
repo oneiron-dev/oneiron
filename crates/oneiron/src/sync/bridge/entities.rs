@@ -121,9 +121,10 @@ pub(super) fn materialize_entities_with_changes(
                 }
             }
         }
-        let facts: Vec<_> = applied_ops.iter().map(|(id, _)| {
-            crate::conversation_dag::topology::Dependency::Entity(*id)
-        }).collect();
+        let facts: Vec<_> = applied_ops
+            .iter()
+            .map(|(id, _)| crate::conversation_dag::topology::Dependency::Entity(*id))
+            .collect();
         super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
