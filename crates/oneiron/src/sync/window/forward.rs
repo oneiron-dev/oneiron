@@ -77,6 +77,7 @@ fn forward_with_recovery(
     if trusted.is_none() && !native_notes {
         for name in [
             "documents",
+            "entity_documents",
             "document_heads",
             "head_move_receipts",
             "note_forks",

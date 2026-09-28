@@ -39,6 +39,7 @@ impl RecoveryManifest {
         add("entities", pack(&snapshot.entity_blobs)?);
         add("edges", pack(&snapshot.base_edges)?);
         add("tombstones", pack(&snapshot.tombstones)?);
+        add("entity_documents", pack(&snapshot.entity_documents)?);
         add("document_heads", pack(&snapshot.document_heads)?);
         add("head_move_receipts", pack(&snapshot.head_move_receipts)?);
         add("note_forks", pack(&snapshot.note_forks)?);

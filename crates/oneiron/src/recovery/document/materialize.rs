@@ -355,5 +355,8 @@ pub(crate) fn run_in_txn(
             .vault_meta
             .put(txn, &workflow::bundle_key(bundle), &pack(bundle)?)?;
     }
+    for row in &snapshot.entity_documents {
+        crate::entity_doc::restore_canonical(vault, txn, row)?;
+    }
     Ok(())
 }

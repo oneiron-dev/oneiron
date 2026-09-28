@@ -53,6 +53,19 @@ pub struct CanonicalTombstone {
     pub value: Vec<u8>,
 }
 
+/// Current generic EntityDoc value, independent of the document's Loro op log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalEntityDocument {
+    pub entity_id: [u8; 16],
+    pub document_id: [u8; 16],
+    /// None is the legacy UTF-8 body; Some is the moved MessagePack text field.
+    pub field: Option<String>,
+    pub text: String,
+    pub birth_actor: [u8; 16],
+    pub birth_at: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalContainerManifest {
@@ -81,6 +94,7 @@ pub struct CanonicalSnapshot {
     pub base_edges: Vec<CanonicalBaseEdge>,
     pub tombstones: Vec<CanonicalTombstone>,
     pub doc_snapshots: Vec<CanonicalDocument>,
+    pub entity_documents: Vec<CanonicalEntityDocument>,
     pub document_heads: Vec<CanonicalHead>,
     pub head_move_receipts: Vec<CanonicalHeadMove>,
     /// Durable workflows, with value-based merge bases instead of old frontiers.
@@ -130,6 +144,7 @@ impl CanonicalSnapshot {
             "edges",
             "tombstones",
             "documents",
+            "entity_documents",
             "document_heads",
             "head_move_receipts",
             "note_forks",
@@ -140,6 +155,17 @@ impl CanonicalSnapshot {
                 container_kind: "map".to_owned(),
                 schema_version: 1,
                 source_entity_id: None,
+            });
+        }
+        for doc in &self.entity_documents {
+            rows.push(CanonicalContainerManifest {
+                container_id: format!(
+                    "entity_doc/{}/body",
+                    crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
+                ),
+                container_kind: "text".to_owned(),
+                schema_version: 1,
+                source_entity_id: Some(doc.entity_id),
             });
         }
         for doc in &self.doc_snapshots {
@@ -173,6 +199,7 @@ pub fn capture_canonical_window(
             "edges",
             "tombstones",
             "documents",
+            "entity_documents",
             "document_heads",
             "head_move_receipts",
             "note_forks",
@@ -188,6 +215,7 @@ pub fn capture_canonical_window(
         base_edges: Vec::new(),
         tombstones: Vec::new(),
         doc_snapshots: Vec::new(),
+        entity_documents: Vec::new(),
         document_heads: Vec::new(),
         head_move_receipts: Vec::new(),
         note_forks: Vec::new(),
@@ -391,6 +419,16 @@ pub fn capture_canonical_window(
         }
     }
     document::capture(vault, &txn, &mut snapshot)?;
+    #[cfg(feature = "sync")]
+    for entity in &snapshot.entity_blobs {
+        if crate::batch::EntityMetadataHeader::parse(&entity.blob)
+            .is_some_and(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
+            && let Some(row) = crate::entity_doc::capture_canonical(vault, &txn, entity.id)?
+        {
+            snapshot.entity_documents.push(row);
+        }
+    }
+    snapshot.entity_documents.sort_by_key(|row| row.entity_id);
     snapshot.entity_blobs.sort_by_key(|row| row.id);
     snapshot
         .base_edges
@@ -443,6 +481,14 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     // into its own fresh LoroDoc by the ordinary forward document pass.
     for document in &snapshot.doc_snapshots {
         insert(&doc, "documents", &document.key(), &pack(document)?)?;
+    }
+    for row in &snapshot.entity_documents {
+        insert(
+            &doc,
+            "entity_documents",
+            &id(row.entity_id)?.to_hex(),
+            &pack(row)?,
+        )?;
     }
     for head in &snapshot.document_heads {
         insert(
