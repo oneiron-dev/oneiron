@@ -15,6 +15,7 @@ use crate::gate::ceiling::{
     PolicyOwnerPolicyRow, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn hash_policy_frontier_v0(
     hasher: &mut Sha256,
     resolution: &PolicyManifestResolution,
