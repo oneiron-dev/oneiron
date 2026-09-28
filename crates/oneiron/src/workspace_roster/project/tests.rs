@@ -21,7 +21,7 @@ fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
     child.tasks = vec![EntityId::now().to_hex()];
     child.branches = vec![EntityId::now().to_hex()];
     child.skill_forks = vec![EntityId::now().to_hex()];
-    child.goal = Some(EntityId::now().to_hex());
+    // Goals are installed only by the authenticated goal-intake door.
     child.budget = Some(EntityId::now().to_hex());
     child.asks = vec![EntityId::now().to_hex()];
     vault.put_project(child_id, &child, 10)?;

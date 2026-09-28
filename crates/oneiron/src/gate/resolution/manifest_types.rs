@@ -150,6 +150,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
     pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
     pub(crate) proposal_check_threshold: Option<u64>,
+    pub(crate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
     pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
