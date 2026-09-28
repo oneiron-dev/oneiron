@@ -378,6 +378,8 @@ pub(crate) struct PolicyManifestResolution {
     /// rides the write door's own options, so no host object is ever reachable
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
+    pub(crate) project_depth_default: Option<u8>,
+    pub(crate) project_depth_max: Option<u8>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) connector_admission: crate::gate::connector_admission::ConnectorAdmissionPolicy,
     pub(super) voice_serving: Vec<crate::gate::voice_serving::VoiceServingRows>,

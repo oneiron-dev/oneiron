@@ -51,11 +51,10 @@ pub use self::codec::{
 pub use self::dispatch::AgentDispatcher;
 pub use self::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
-    AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY,
-    AGENT_DISPATCH_ROOT_DEPTH_REMAINING, AgentDispatchInput, AgentDispatchOutcome,
-    AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext, AttenuatedDispatchTarget,
-    DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer, HealerSlot, HealerSlotOutcome,
-    KillOutcome, KillProposal, restrict_agent_ceiling,
+    AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput,
+    AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext,
+    AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer, HealerSlot,
+    HealerSlotOutcome, KillOutcome, KillProposal, restrict_agent_ceiling,
 };
 
 #[cfg(test)]
@@ -81,7 +80,7 @@ use crate::attempt_queue::{
 #[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 #[cfg(test)]
-use crate::context_projection::{CONTEXT_PROJECTION_MAX_ANCESTORS, ContextSpec};
+use crate::context_projection::ContextSpec;
 #[cfg(test)]
 use crate::dreamer_runner::{DreamerAttemptPayload, DreamerRunnerStore};
 #[cfg(test)]

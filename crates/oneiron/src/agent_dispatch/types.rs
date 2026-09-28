@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 10] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 12] = [
     "schema_version",
     "target",
     "agent_def",
@@ -39,6 +39,8 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 10] = [
     "context_spec",
     "context_from",
     "depth_remaining",
+    "project_ref",
+    "spawn_intent",
     "scope",
     "healer_case",
 ];
@@ -59,14 +61,9 @@ pub(super) const KEY_CONTEXT_FROM: &str = AGENT_DISPATCH_INPUT_KEYS[6];
 
 pub(super) const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 
-pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[8];
-
-/// Recursion budget every NEW ROOT dispatch persists when the caller names
-/// none. Structural, not policy: the ceiling lattice bounds authority, this
-/// bounds how many levels of it can exist at all. Admission additionally
-/// CLAMPS the persisted root budget to [`CONTEXT_PROJECTION_MAX_ANCESTORS`](crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS),
-/// so no stored lineage can exceed the ancestor-projection walk.
-pub const AGENT_DISPATCH_ROOT_DEPTH_REMAINING: u8 = 8;
+pub(super) const KEY_PROJECT_REF: &str = AGENT_DISPATCH_INPUT_KEYS[8];
+pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
+pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -125,6 +122,10 @@ pub struct AgentDispatchInput {
     /// LOAD-BEARING: [`AgentDispatcher::dispatch`](crate::agent_dispatch::AgentDispatcher::dispatch) refuses to enqueue a child
     /// under a parent whose stored value is `Some(0)`.
     pub depth_remaining: Option<u8>,
+    /// The responsibility space whose live depth row bounds this spawn.
+    pub project_ref: Option<EntityId>,
+    /// Hash of the normalized caller request, separate from the live depth snapshot.
+    pub spawn_intent: Option<String>,
     /// Exact branch-resource restriction, never a replacement for live authority.
     /// An absent value grants no branch-resource access.
     pub scope: Option<crate::llm::Scope>,
@@ -141,6 +142,8 @@ impl AgentDispatchInput {
             context_spec: None,
             context_from: Vec::new(),
             depth_remaining: None,
+            project_ref: None,
+            spawn_intent: None,
             scope: None,
         }
     }
@@ -159,6 +162,7 @@ pub struct AgentSpawnContext {
     pub context_spec: Option<ContextSpec>,
     pub context_from: Vec<EntityId>,
     pub depth_remaining: Option<u8>,
+    pub project_ref: Option<EntityId>,
     /// None inherits the stored parent's resource restriction. A root with
     /// None has deny-all resource scope; ordinary non-resource calls still run.
     pub scope: Option<crate::llm::Scope>,
@@ -178,6 +182,11 @@ impl AgentSpawnContext {
     }
 
     #[must_use]
+    pub fn with_project(mut self, project_ref: EntityId) -> Self {
+        self.project_ref = Some(project_ref);
+        self
+    }
+
     pub const fn with_depth_remaining(mut self, depth_remaining: u8) -> Self {
         self.depth_remaining = Some(depth_remaining);
         self

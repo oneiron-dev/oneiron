@@ -42,6 +42,7 @@ fn dependency(
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body.schema_version != 1
+        || usize::from(body.depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
         || body.home_room != home_room_id(id).to_hex()
         || body.roster.is_empty()
     {
@@ -98,6 +99,30 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     Ok(ids)
+}
+
+/// Project membership carries a birth-depth cache, not authority. Replacing
+/// members with an older view must not roll back the policy contribution set.
+pub(crate) fn normalize_project_body(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    bytes: &[u8],
+    posture: crate::HostingPrivacyPosture,
+) -> Result<Vec<u8>> {
+    validate_project_body(id, bytes)?;
+    let mut body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
+    if body.parents.contains(&id.to_hex()) {
+        return Err(invalid());
+    }
+    body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
+        Some((_, birth)) => birth.depth,
+        None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {
+            crate::gate::project_depth::canonical_birth(id)?.depth
+        }
+        None => return Err(RecordError::ProjectDependencyPending.into()),
+    };
+    encode(&body)
 }
 
 pub(crate) fn reconcile_project_rooms(

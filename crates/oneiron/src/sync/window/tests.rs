@@ -4271,6 +4271,795 @@ fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let root = vault.root_project()?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB2)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB2)?;
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    let (edit, mut forged) = crate::gate::project_depth::contributions_for_test(&vault, root)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed edit");
+    forged.push(0x01);
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    let stamp = window_key.start_timestamp().expect("window start") + 60;
+    doc.get_map("entities")
+        .insert(
+            edit.to_hex().as_str(),
+            make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &forged)
+                .as_slice(),
+        )
+        .expect("forged manifest");
+    doc.commit();
+    assert_eq!(
+        forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?,
+        0
+    );
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    assert!(
+        quarantine::quarantined_records(&vault)?
+            .iter()
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<()> {
+    let (_a_dir, a) = test_vault();
+    let root_a = a.root_project()?;
+    let lead = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+    let project = EntityId::now();
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB6)?;
+    crate::workspace_roster::create_project_signed_for_test(
+        &a, project, root_a, lead, &owner, 1, 0xB6,
+    )?;
+    let history = a.export_signed_authority_history()?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB6)?;
+    assert_eq!(a.project(project)?.unwrap().depth, 2);
+    let contributions = crate::gate::project_depth::contributions_for_test(&a, project)?;
+    assert_eq!(contributions.len(), 2); // immutable birth + signed edit
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window timestamp") + 60;
+    let body = rmp_serde::to_vec_named(&a.project(project)?.unwrap()).expect("member body");
+
+    let prepare = |b: &Vault, existing: bool| -> Result<()> {
+        let root_b = b.root_project()?;
+        let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+        b.put_project(
+            root_a,
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader),
+            1,
+        )?;
+        b.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        b.import_signed_authority_history(&history)?;
+        if existing {
+            let (birth_id, birth_bytes) = contributions
+                .iter()
+                .find(|(_, bytes)| {
+                    matches!(
+                        crate::gate::project_depth::decode_contribution(bytes).ok(),
+                        Some(crate::gate::project_depth::ProjectDepthContribution::Birth(
+                            _
+                        ))
+                    )
+                })
+                .ok_or(Error::EntityNotFound)?;
+            b.with_write_txn(|txn| {
+                b.batch_in()
+                    .put_replicated(
+                        birth_id,
+                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                        TimeRange { start: 1, end: 1 },
+                        1,
+                        birth_bytes,
+                    )
+                    .apply(txn)
+            })?;
+            b.put_project(
+                project,
+                &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader),
+                1,
+            )?;
+        }
+        Ok(())
+    };
+    for existing in [true, false] {
+        let (dir, b) = test_vault();
+        prepare(&b, existing)?;
+        let doc = create_window_doc("owner-edit", &key);
+        for (id, bytes) in &contributions {
+            doc.get_map("entities")
+                .insert(
+                    id.to_hex().as_str(),
+                    make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, bytes)
+                        .as_slice(),
+                )
+                .expect("policy fact");
+        }
+        doc.get_map("entities")
+            .insert(
+                project.to_hex().as_str(),
+                make_entity_blob(b.project_type_byte()?, stamp, &body).as_slice(),
+            )
+            .expect("project membership");
+        doc.commit();
+        let materializer = Materializer::new();
+        forward_rematerialize(&b, &doc, &materializer, &key)?;
+        forward_rematerialize(&b, &doc, &materializer, &key)?; // dependency order is immaterial
+        assert_eq!(b.project(project)?.unwrap().depth, 2);
+        drop(b);
+        let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+        forward_rematerialize(&reopened, &doc, &Materializer::new(), &key)?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+        // The immutable birth and edit survive deletion of the mutable
+        // membership row. The unchanged synchronized window can restore it.
+        reopened.batch().delete(&project).commit()?;
+        assert!(reopened.project(project)?.is_none());
+        forward_rematerialize(&reopened, &doc, &Materializer::new(), &key)?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+    }
+    let (_forged_dir, forged_vault) = test_vault();
+    prepare(&forged_vault, false)?;
+    let tampered_doc = create_window_doc("tampered-owner-edit", &key);
+    for (id, bytes) in &contributions {
+        let mut raw = bytes.clone();
+        if id == &contributions[1].0 {
+            raw.push(0x01);
+        } // content id/codec cannot change
+        tampered_doc
+            .get_map("entities")
+            .insert(
+                id.to_hex().as_str(),
+                make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &raw)
+                    .as_slice(),
+            )
+            .expect("tampered policy fact");
+    }
+    tampered_doc
+        .get_map("entities")
+        .insert(
+            project.to_hex().as_str(),
+            make_entity_blob(forged_vault.project_type_byte()?, stamp, &body).as_slice(),
+        )
+        .expect("project membership");
+    tampered_doc.commit();
+    forward_rematerialize(&forged_vault, &tampered_doc, &Materializer::new(), &key)?;
+    assert_ne!(
+        forged_vault.project(project)?.map(|body| body.depth),
+        Some(2)
+    );
+    assert!(
+        quarantine::quarantined_records(&forged_vault)?
+            .iter()
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()> {
+    let (_source_dir, source) = test_vault();
+    let source_root = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(source_root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    source.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(id, Some(source_root), source_root, leader),
+        1,
+    )?;
+    let human = EntityId::now();
+    source.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(human, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xBA)?;
+    let history = source.export_signed_authority_history()?;
+    assert_eq!(history.len(), 2);
+    crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 2, &writer, 2, 0xBA)?;
+    let (edit, body) = crate::gate::project_depth::contributions_for_test(&source, id)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed depth contribution");
+
+    let (_target_dir, target) = test_vault();
+    let target_root = target.root_project()?;
+    let target_leader = EntityId::from_hex(&target.project(target_root)?.unwrap().leader)?;
+    target.put_project(
+        source_root,
+        &crate::workspace_roster::ProjectRecord::new(
+            source_root,
+            Some(target_root),
+            target_root,
+            target_leader,
+        ),
+        1,
+    )?;
+    target.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(
+            id,
+            Some(source_root),
+            source_root,
+            target_leader,
+        ),
+        1,
+    )?;
+    target.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    target.import_signed_authority_history(&history[..1])?; // rooted, but no BindActor
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window start") + 60;
+    let doc = create_window_doc("project-first", &key);
+    doc.get_map("entities")
+        .insert(
+            edit.to_hex().as_str(),
+            make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &body).as_slice(),
+        )
+        .expect("insert signed depth fact");
+    doc.commit();
+    let materializer = Materializer::new();
+    forward_rematerialize(&target, &doc, &materializer, &key)?;
+    assert_eq!(target.project(id)?.unwrap().depth, 0);
+    assert!(
+        target.get(&edit)?.is_some(),
+        "contribution persists while signer dependency is missing"
+    );
+    forward_rematerialize(&target, &doc, &materializer, &key)?;
+    assert_eq!(target.project(id)?.unwrap().depth, 0);
+    target.import_signed_authority_history(&history[1..])?;
+    assert_eq!(target.project(id)?.unwrap().depth, 2);
+    Ok(())
+}
+
+#[test]
+fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_order() -> Result<()>
+{
+    // The Loro winner is now the union of independent manifest keys, NOT one
+    // whole-project blob. Equal/unequal offline edit counts must fold alike.
+    for unequal in [false, true] {
+        for reverse in [false, true] {
+            let (_a_dir, a) = test_vault();
+            let (_b_dir, b) = test_vault();
+            let root_a = a.root_project()?;
+            let root_b = b.root_project()?;
+            let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+            let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+            b.put_project(
+                root_a,
+                &crate::workspace_roster::ProjectRecord::new(
+                    root_a,
+                    Some(root_b),
+                    root_b,
+                    leader_b,
+                ),
+                1,
+            )?;
+            let project = EntityId::now();
+            let base =
+                crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader);
+            let owner_id = EntityId::now();
+            let writer = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+            for vault in [&a, &b] {
+                vault.put_entity(
+                    &owner_id,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"owner",
+                )?;
+            }
+            crate::subject_model::tests::authorization::root_owner(&a, writer, 0xBC)?;
+            let authority = a.export_signed_authority_history()?;
+            b.import_signed_authority_history(&authority)?;
+            crate::workspace_roster::create_project_signed_for_test(
+                &a, project, root_a, leader, &writer, 1, 0xBC,
+            )?;
+            crate::workspace_roster::create_project_signed_for_test(
+                &b, project, root_a, leader_b, &writer, 1, 0xBC,
+            )?;
+            crate::workspace_roster::set_project_depth_signed_for_test(
+                &a, project, 2, &writer, 2, 0xBC,
+            )?;
+            if unequal {
+                crate::workspace_roster::set_project_depth_signed_for_test(
+                    &a, project, 6, &writer, 3, 0xBC,
+                )?;
+            }
+            crate::workspace_roster::set_project_depth_signed_for_test(
+                &b, project, 0, &writer, 2, 0xBC,
+            )?;
+            assert_eq!(
+                a.project(project)?.unwrap().depth,
+                if unequal { 6 } else { 2 }
+            );
+            assert_eq!(b.project(project)?.unwrap().depth, 0);
+            let from_a = crate::gate::project_depth::contributions_for_test(&a, project)?;
+            let from_b = crate::gate::project_depth::contributions_for_test(&b, project)?;
+            assert_eq!(from_a.len(), if unequal { 3 } else { 2 });
+            assert_eq!(from_b.len(), 2);
+            let window = WindowKey::new("2026-03");
+            let stamp = window.start_timestamp().expect("window start") + 60;
+            let doc_a = create_window_doc("offline-a", &window);
+            let doc_b = create_window_doc("offline-b", &window);
+            doc_a.set_peer_id(1).expect("peer A");
+            doc_b.set_peer_id(2).expect("peer B");
+            for (doc, entries) in [(&doc_a, &from_a), (&doc_b, &from_b)] {
+                for (id, bytes) in entries {
+                    doc.get_map("entities")
+                        .insert(
+                            id.to_hex().as_str(),
+                            make_entity_blob(
+                                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                                stamp,
+                                bytes,
+                            )
+                            .as_slice(),
+                        )
+                        .expect("immutable contribution");
+                }
+                doc.get_map("entities")
+                    .insert(
+                        project.to_hex().as_str(),
+                        make_entity_blob(
+                            a.project_type_byte()?,
+                            stamp,
+                            &rmp_serde::to_vec_named(&base).expect("project members"),
+                        )
+                        .as_slice(),
+                    )
+                    .expect("mutable membership");
+                doc.commit();
+            }
+            let update_a = loro_support::export_all_updates(&doc_a)?;
+            let update_b = loro_support::export_all_updates(&doc_b)?;
+            let first = create_window_doc("first-merge", &window);
+            let second = create_window_doc("second-merge", &window);
+            if reverse {
+                import_doc(&first, &update_b)?;
+                import_doc(&first, &update_a)?;
+                import_doc(&second, &update_a)?;
+                import_doc(&second, &update_b)?;
+            } else {
+                import_doc(&first, &update_a)?;
+                import_doc(&first, &update_b)?;
+                import_doc(&second, &update_b)?;
+                import_doc(&second, &update_a)?;
+            }
+            let mut ids = std::collections::BTreeSet::new();
+            for (id, _) in from_a.iter().chain(from_b.iter()) {
+                ids.insert(*id);
+            }
+            for id in ids {
+                let first_body =
+                    loro_support::map_get_bytes(&first.get_map("entities"), &id.to_hex());
+                let second_body =
+                    loro_support::map_get_bytes(&second.get_map("entities"), &id.to_hex());
+                assert!(first_body.is_some());
+                assert_eq!(
+                    first_body, second_body,
+                    "every immutable fact survives both Loro orders"
+                );
+            }
+            // Observer B applies the merged map to A while it still holds its
+            // permissive local branch. Forward materialization applies it to B.
+            let observer_doc = create_window_doc("observer", &window);
+            let materializer = std::sync::Arc::new(Materializer::new());
+            let _subscriptions =
+                bridge::register_observer_b(&observer_doc, &a, &materializer, window.as_str());
+            import_doc(&observer_doc, &update_a)?;
+            import_doc(&observer_doc, &update_b)?;
+            forward_rematerialize(&a, &observer_doc, &Materializer::new(), &window)?;
+            forward_rematerialize(&b, &second, &Materializer::new(), &window)?;
+            assert_eq!(a.project(project)?.unwrap().depth, 0);
+            assert_eq!(b.project(project)?.unwrap().depth, 0);
+            // A third replica first sees the already-merged contribution set.
+            let (dir, fresh) = test_vault();
+            let root_f = fresh.root_project()?;
+            let lead_f = EntityId::from_hex(&fresh.project(root_f)?.unwrap().leader)?;
+            fresh.put_project(
+                root_a,
+                &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_f), root_f, lead_f),
+                1,
+            )?;
+            fresh.put_entity(
+                &owner_id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"owner",
+            )?;
+            fresh.import_signed_authority_history(&authority)?;
+            for _ in 0..2 {
+                forward_rematerialize(&fresh, &first, &Materializer::new(), &window)?;
+            }
+            assert_eq!(fresh.project(project)?.unwrap().depth, 0);
+            drop(fresh);
+            let fresh = Vault::open(dir.path(), VaultConfig::device())?;
+            assert_eq!(fresh.project(project)?.unwrap().depth, 0);
+            let agent = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+            for (vault, local_root) in [(&*a, root_a), (&*b, root_b), (&fresh, root_f)] {
+                let dispatcher = crate::agent_dispatch::AgentDispatcher::new(vault);
+                let root = dispatcher.dispatch(crate::agent_dispatch::DispatchAgent {
+                    target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                    parent_attempt: None,
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 4,
+                })?;
+                let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(root) = root else {
+                    panic!("root")
+                };
+                let parent = if local_root == root_a {
+                    root.attempt.id
+                } else {
+                    let intermediate = dispatcher.dispatch_with_context(
+                        crate::agent_dispatch::DispatchAgent {
+                            target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                            parent_attempt: Some(root.attempt.id),
+                            dedupe_key: None,
+                            run_id: None,
+                            now: 5,
+                        },
+                        crate::agent_dispatch::AgentSpawnContext::default().with_project(root_a),
+                    )?;
+                    let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(intermediate) =
+                        intermediate
+                    else {
+                        panic!("ancestor")
+                    };
+                    intermediate.attempt.id
+                };
+                let child = dispatcher.dispatch_with_context(
+                    crate::agent_dispatch::DispatchAgent {
+                        target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                        parent_attempt: Some(parent),
+                        dedupe_key: None,
+                        run_id: None,
+                        now: 6,
+                    },
+                    crate::agent_dispatch::AgentSpawnContext::default().with_project(project),
+                )?;
+                let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(child) = child else {
+                    panic!("child")
+                };
+                assert_eq!(child.input.depth_remaining, Some(0));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// ARCH-0040's revoke-then-regrant window: an edit signed before the owner's
+/// revoke stays non-authorizing after the regrant on a replica, through the
+/// forward pass and through Observer B, until an edit that observed the
+/// regrant supersedes it.
+#[test]
+fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()> {
+    use ed25519_dalek::Signer;
+    let (_a_dir, a) = test_vault();
+    let root_a = a.root_project()?;
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xC7)?;
+    // The root's birth is implicit, so the pre-revoke edit is its only fact.
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, root_a, 12, &owner, 2, 0xC7)?;
+    let stale = crate::gate::project_depth::contributions_for_test(&a, root_a)?;
+    assert_eq!(stale.len(), 1);
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[0xC7; 32]);
+    let bind: crate::authority::AuthorityLogEntry =
+        crate::authority::decode_authority_log_entry_body(
+            &a.export_signed_authority_history()?[1],
+        )?;
+    let mut revoke = crate::authority::AuthorityLogEntry {
+        schema_version: bind.schema_version,
+        vault_id: bind.vault_id,
+        seq: 2,
+        parent_hashes: vec![crate::authority::authority_entry_hash(&bind)?],
+        op: crate::authority::AuthorityOp::RevokeActor {
+            authority_key: bind.signer.public_key.clone(),
+            epoch: 1,
+        },
+        signer: bind.signer.clone(),
+        cosigns: Vec::new(),
+        ts: 102,
+    };
+    revoke.signer.signature = signing
+        .sign(&crate::authority::authority_transcript(&revoke)?)
+        .to_bytes()
+        .to_vec();
+    a.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    let mut regrant = crate::authority::AuthorityLogEntry {
+        schema_version: bind.schema_version,
+        vault_id: bind.vault_id,
+        seq: 3,
+        parent_hashes: vec![crate::authority::authority_entry_hash(&revoke)?],
+        op: crate::authority::AuthorityOp::BindActor {
+            authority_key: bind.signer.public_key.clone(),
+            actor_ref: owner_id,
+            actor_class: "human".into(),
+            epoch: 2,
+        },
+        signer: bind.signer,
+        cosigns: Vec::new(),
+        ts: 103,
+    };
+    regrant.signer.signature = signing
+        .sign(&crate::authority::authority_transcript(&regrant)?)
+        .to_bytes()
+        .to_vec();
+    a.put_authority_log_entry(
+        &regrant,
+        TimeRange {
+            start: 103,
+            end: 103,
+        },
+        103,
+    )?;
+    let history = a.export_signed_authority_history()?;
+    assert_eq!(a.project(root_a)?.unwrap().depth, 0);
+    let current = a.observed_write_actor(owner)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, root_a, 5, &current, 4, 0xC7)?;
+    assert_eq!(a.project(root_a)?.unwrap().depth, 5);
+    let observed: Vec<_> = crate::gate::project_depth::contributions_for_test(&a, root_a)?
+        .into_iter()
+        .filter(|(id, _)| !stale.iter().any(|(old, _)| old == id))
+        .collect();
+    assert_eq!(observed.len(), 1);
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window timestamp") + 60;
+    let source = create_window_doc("regrant-source", &key);
+    let insert = |facts: &[(EntityId, Vec<u8>)]| {
+        for (id, bytes) in facts {
+            source
+                .get_map("entities")
+                .insert(
+                    id.to_hex().as_str(),
+                    make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, bytes)
+                        .as_slice(),
+                )
+                .expect("policy fact");
+        }
+        source.commit();
+    };
+    insert(&stale);
+    let stage_stale = loro_support::export_all_updates(&source)?;
+    insert(&observed);
+    let stage_observed = loro_support::export_all_updates(&source)?;
+    for observer in [false, true] {
+        let (_b_dir, b) = test_vault();
+        let root_b = b.root_project()?;
+        let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+        b.put_project(
+            root_a,
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader),
+            1,
+        )?;
+        b.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        b.import_signed_authority_history(&history)?;
+        assert_eq!(b.project(root_a)?.unwrap().depth, 10);
+        let live = create_window_doc("regrant-live", &key);
+        let materializer = Arc::new(Materializer::new());
+        let _subscriptions =
+            observer.then(|| bridge::register_observer_b(&live, &b, &materializer, key.as_str()));
+        for (stage, depth) in [(&stage_stale, 0), (&stage_observed, 5)] {
+            import_doc(&live, stage)?;
+            if !observer {
+                forward_rematerialize(&b, &live, &materializer, &key)?;
+            }
+            assert_eq!(
+                b.project(root_a)?.unwrap().depth,
+                depth,
+                "observer={observer}: a regrant never blesses a pre-regrant edit"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Result<()> {
+    let (_source_dir, source) = test_vault();
+    let root = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(root)?.unwrap().leader)?;
+    let person = EntityId::now();
+    source.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xC2)?;
+    let project = EntityId::now();
+    crate::workspace_roster::create_project_signed_for_test(
+        &source, project, root, leader, &writer, 1, 0xC2,
+    )?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &source, project, 2, &writer, 2, 0xC2,
+    )?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &source, project, 12, &writer, 3, 0xC2,
+    )?;
+    let mut birth = None;
+    let mut first = None;
+    let mut second = None;
+    for (id, body) in crate::gate::project_depth::contributions_for_test(&source, project)? {
+        match crate::gate::project_depth::decode_contribution(&body)? {
+            crate::gate::project_depth::ProjectDepthContribution::Birth(_) => {
+                birth = Some((id, body));
+            }
+            crate::gate::project_depth::ProjectDepthContribution::Edit(edit) if edit.depth == 2 => {
+                first = Some((id, body));
+            }
+            crate::gate::project_depth::ProjectDepthContribution::Edit(edit)
+                if edit.depth == 12 =>
+            {
+                second = Some((id, body));
+            }
+            _ => return Err(Error::InvalidConfig("project predecessor fixture".into())),
+        }
+    }
+    let (birth, first, second) = (
+        birth.ok_or(Error::EntityNotFound)?,
+        first.ok_or(Error::EntityNotFound)?,
+        second.ok_or(Error::EntityNotFound)?,
+    );
+    let (_target_dir, target) = test_vault();
+    let local_root = target.root_project()?;
+    let local_leader = EntityId::from_hex(&target.project(local_root)?.unwrap().leader)?;
+    target.put_project(
+        root,
+        &crate::workspace_roster::ProjectRecord::new(
+            root,
+            Some(local_root),
+            local_root,
+            local_leader,
+        ),
+        1,
+    )?;
+    target.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    target.import_signed_authority_history(&source.export_signed_authority_history()?)?;
+    let window = WindowKey::new("2026-03");
+    let stamp = window.start_timestamp().expect("window start") + 60;
+    let doc = create_window_doc("out-of-order-project-policy", &window);
+    let manifest_blob =
+        |body: &[u8]| make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, body);
+    doc.get_map("entities")
+        .insert(
+            birth.0.to_hex().as_str(),
+            manifest_blob(&birth.1).as_slice(),
+        )
+        .expect("birth");
+    doc.get_map("entities")
+        .insert(
+            project.to_hex().as_str(),
+            make_entity_blob(
+                target.project_type_byte()?,
+                stamp,
+                &rmp_serde::to_vec_named(&source.project(project)?.unwrap()).expect("member body"),
+            )
+            .as_slice(),
+        )
+        .expect("member row");
+    doc.commit();
+    let materializer = Materializer::new();
+    for _ in 0..2 {
+        forward_rematerialize(&target, &doc, &materializer, &window)?;
+    }
+    assert_eq!(target.project(project)?.unwrap().depth, 10);
+    doc.get_map("entities")
+        .insert(
+            second.0.to_hex().as_str(),
+            manifest_blob(&second.1).as_slice(),
+        )
+        .expect("later edit arrives first");
+    doc.commit();
+    forward_rematerialize(&target, &doc, &materializer, &window)?;
+    assert_eq!(target.project(project)?.unwrap().depth, 0);
+    forward_rematerialize(&target, &doc, &materializer, &window)?; // retry drain before predecessor
+    assert_eq!(target.project(project)?.unwrap().depth, 0);
+    assert!(
+        target.get(&second.0)?.is_some(),
+        "dependency-pending fact remains stored"
+    );
+    doc.get_map("entities")
+        .insert(
+            first.0.to_hex().as_str(),
+            manifest_blob(&first.1).as_slice(),
+        )
+        .expect("predecessor arrives later");
+    doc.commit();
+    forward_rematerialize(&target, &doc, &materializer, &window)?;
+    assert_eq!(target.project(project)?.unwrap().depth, 12);
+    Ok(())
+}
+
 /// An erased author is absent from LMDB, revisions, live CRDT state, and both
 /// empty/populated outbound snapshots. The immutable topology decision stays.
 #[test]

@@ -25,6 +25,7 @@ pub(super) struct AppliedClaimCandidate {
 )]
 pub(super) fn apply_claim_candidate(
     store: &Store,
+    posture: crate::HostingPrivacyPosture,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     candidate: ClaimCandidate,
@@ -125,6 +126,7 @@ pub(super) fn apply_claim_candidate(
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.
         BaseWriteOrigin::Ordinary,
+        posture,
     )?;
 
     let subject_id = match subject {
