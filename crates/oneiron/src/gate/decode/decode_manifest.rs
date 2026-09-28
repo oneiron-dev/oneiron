@@ -101,6 +101,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) owner_policy_patterns_dropped: bool,
     pub(in crate::gate) signatures: Vec<PolicySignature>,
     pub(in crate::gate) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    pub(in crate::gate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
@@ -207,6 +208,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
+                | crate::gate::mail_policy::MANIFEST_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | POLICY_CONNECTOR_ADMISSION_KEY
@@ -403,6 +405,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
     };
+    let native_mail_policy =
+        match single_map_value(&entries, crate::gate::mail_policy::MANIFEST_KEY) {
+            MapValue::Missing => Vec::new(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => crate::gate::mail_policy::decode_rows(value)?,
+        };
     // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
     // asks only that it be one non-blank, bounded string. A duplicate row is
     // the same ambiguity `on_budget_exhausted` refuses, and a blank or
@@ -756,6 +764,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         owner_policy_patterns_dropped,
         signatures,
         on_budget_exhausted,
+        native_mail_policy,
         auto_checker,
         budget_policy,
         connector_admission,

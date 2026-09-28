@@ -40,6 +40,7 @@ pub(super) fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
+    policy: &crate::gate::PolicyManifestResolution,
 ) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>)> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
@@ -67,6 +68,37 @@ pub(super) fn hydrate_external_effect_contact(
             hydrated.counterparty_opt_out_receipt_reason = record
                 .opt_out
                 .map(crate::counterparty_contact::CounterpartyOptOut::receipt_reason);
+        }
+    }
+
+    // A native-mail sender resolves the vault's recipient-class and initial
+    // posture rows on this SAME Gate transaction as the CID-7 contact facts.
+    // An absent/malformed policy keeps the send in the asking lane.
+    let native_mail = if channel_class == "email" && effect.verb == "send" {
+        effect.channel_identity_ref.map_or(Ok(false), |identity| {
+            crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+                store, txn, identity,
+            )
+        })?
+    } else {
+        false
+    };
+    if native_mail {
+        let mail = policy.native_mail_policy_for(
+            effect.provenance.actor_entity_ref,
+            effect.channel_identity_ref,
+        );
+        if mail
+            .as_ref()
+            .is_none_or(|row| !row.is_known(hydrated.counterparty_first_touch))
+        {
+            let risk = mail.as_ref().map_or(
+                ExternalEffectPolicyRisk::HoldToProposal,
+                crate::gate::mail_policy::MailPolicy::cold_risk,
+            );
+            if risk == ExternalEffectPolicyRisk::HoldToProposal {
+                hydrated.policy_risk = risk;
+            }
         }
     }
 

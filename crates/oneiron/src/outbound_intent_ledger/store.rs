@@ -481,6 +481,20 @@ pub(super) fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> Intent
             "capability-bound intent is missing authorization binding",
         ));
     }
+    if let Some(approval) = record.admitted_approval
+        && (approval.intent_id() != record.id
+            || record.server != "email"
+            || record.tool != "send"
+            || record.resolved_endpoint.is_some()
+            || record.capability_provenance.is_some()
+            || crate::channel_identity_provider::native_mail::approval_digest_from_frozen_payload(
+                record.payload(),
+            ) != Some(approval.effect_digest()))
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "admitted mail approval binding mismatch",
+        ));
+    }
     if record.budget_accounting.key_ref.is_none()
         && (!record.budget_accounting.matched_rows.is_empty()
             || record.budget_accounting.sends_debit != 0)

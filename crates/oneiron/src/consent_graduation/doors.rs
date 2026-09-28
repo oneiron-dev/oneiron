@@ -15,6 +15,40 @@ use crate::error::{Error, GateError, Result};
 use crate::identity_topology::ProposalOutcome;
 use crate::vault::Vault;
 
+/// A cold-mail offer needs both an OF-399 streak and live CID-5 reputation.
+/// This filter is on the general offer list as well as the native-mail pack
+/// read path: a poor-reputation identity must not surface a second offer door.
+fn native_mail_offer_is_earned(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &RampScope,
+) -> Result<bool> {
+    if scope.op_kind != "send" {
+        return Ok(true);
+    }
+    let Some(hex) = scope.target_class.strip_prefix("recipient:cold_external:") else {
+        return Ok(true);
+    };
+    let identity = crate::entity_id::EntityId::from_hex(hex)?;
+    let Some(record) = vault.get_channel_identity_in_txn(txn, &identity)? else {
+        return Ok(false);
+    };
+    if record.channel() != "email"
+        || !record.may_send()
+        || record
+            .binding()
+            .actor_ref()
+            .map(|actor| actor.to_hex())
+            .as_deref()
+            != Some(&scope.actor)
+    {
+        return Ok(false);
+    }
+    crate::channel_identity_provider::native_mail::native_mail_reputation_earned(
+        vault, txn, identity,
+    )
+}
+
 impl Vault {
     /// Resolves the ramp scope handle for one (op kind × target class × actor)
     /// tuple. Identical tuples resolve to the same scope; any difference on any
@@ -104,6 +138,7 @@ impl Vault {
         let mut offers = Vec::new();
         for stats in ramp_stats_in_txn(self, &rtxn)? {
             if stats.state == RampState::Offered
+                && native_mail_offer_is_earned(self, &rtxn, &stats.scope)?
                 && !crate::edit_distance::graduation::asks_are_suppressed_in_txn(
                     &self.store,
                     &rtxn,
@@ -279,7 +314,9 @@ pub(crate) fn accept_graduation_offer_in_txn(
         )));
     }
     let bound = scope.to_grant_bound()?;
-    if !offer_is_standing_in_txn(vault, &*wtxn, scope)? {
+    if !native_mail_offer_is_earned(vault, &*wtxn, scope)?
+        || !offer_is_standing_in_txn(vault, &*wtxn, scope)?
+    {
         return Err(Error::Gate(GateError::InvalidConsentBound(
             "this scope is not offering graduation; a retracted offer cannot be accepted",
         )));

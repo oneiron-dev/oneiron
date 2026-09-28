@@ -133,7 +133,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let bytes = rmp_serde::to_vec_named(&policy_values).expect("encode shipped policy values");
     let policy_values =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("decode shipped policy values");
-    let manifest = Value::Map(vec![
+    let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
             Value::from(crate::failure_signals::policy::POLICY_KEY),
@@ -835,9 +835,20 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ])]),
         ),
-    ]);
+    ];
+    encode_with_native_mail_policy(entries)
+}
+
+/// The shipped native-mail dial is one vault row; hosts narrow it with their
+/// own vault, holder or identity rows in the same manifest key.
+fn encode_with_native_mail_policy(mut entries: Vec<(Value, Value)>) -> Vec<u8> {
+    entries.push((
+        Value::from(super::mail_policy::MANIFEST_KEY),
+        Value::Array(vec![super::mail_policy::default_row()]),
+    ));
     let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .expect("encode default policy manifest");
     data
 }
 

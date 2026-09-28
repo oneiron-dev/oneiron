@@ -52,6 +52,9 @@ pub(crate) struct GateProvenanceHandles {
     pub(crate) substrate_ref: Option<EntityId>,
     pub(crate) source_revision_ref: Option<[u8; ENTITY_ID_LEN]>,
     pub(crate) body_snapshot_ref: Option<[u8; ENTITY_ID_LEN]>,
+    /// Native-mail one-shot content handle, supplied by the frozen intent
+    /// and hashed into the owner-approved effect. Never an authority source.
+    pub(crate) mail_content_ref: Option<String>,
     pub(crate) dreamer_run_id: Option<String>,
 }
 
@@ -224,6 +227,12 @@ pub(crate) struct ExternalEffectGateContext {
     pub(crate) standing_grant_ref: Option<String>,
     pub(crate) scoped_mcp_call: Option<ScopedMcpCallContext>,
     pub(crate) scoped_mcp_grant_authorized: bool,
+    /// Native-mail cold send: the exact owner-accepted OF-399 grant was read
+    /// from storage for this actor and sending identity in the gate txn.
+    pub(crate) mail_graduated: bool,
+    /// Store-attested approve-once for this actor, identity, recipient and
+    /// logical send ref. Set only after cold-mail classification on Gate txn.
+    pub(crate) mail_approve_once: bool,
     /// Store-attested, exact-effect approve-once authorization for the artifact publish door.
     /// Never supplied by an effect caller.
     pub(crate) artifact_publish_approve_once: bool,
@@ -291,6 +300,8 @@ impl ExternalEffectGateInput {
                 standing_grant_ref: self.standing_grant_ref.clone(),
                 scoped_mcp_call: self.scoped_mcp_call.clone(),
                 scoped_mcp_grant_authorized: false,
+                mail_graduated: false,
+                mail_approve_once: false,
                 artifact_publish_approve_once: false,
                 counterparty_first_touch: self.counterparty_first_touch,
                 counterparty_opted_out: self.counterparty_opted_out,

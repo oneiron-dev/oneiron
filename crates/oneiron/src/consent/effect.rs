@@ -120,6 +120,12 @@ pub(crate) struct ApproveOnceAuthorization {
     pub(super) effect_digest: EffectDigest,
 }
 
+impl ApproveOnceAuthorization {
+    pub(crate) const fn digest(&self) -> EffectDigest {
+        self.effect_digest
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Host-owned reversibility classification — invariant 6
 // ---------------------------------------------------------------------------
