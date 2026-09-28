@@ -69,6 +69,10 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// # One autonomous agent is guaranteed a slice but cannot consume the vault.
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
+/// Vault-resident extraction-teacher quality floor, in F1 millionths.
+/// The seeded default is data in `default_policy_manifest`; nested holder
+/// floors only narrow it, and independent trusted packs compose by max.
+pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";

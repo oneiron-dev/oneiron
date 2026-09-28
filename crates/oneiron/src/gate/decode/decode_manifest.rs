@@ -20,13 +20,13 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
     POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 
-use crate::gate::resolution::CommOptOutPosture;
+use crate::gate::resolution::{CommOptOutPosture, TeacherProbeRow};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
@@ -80,6 +80,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) retry_source_policy:
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
+    pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -137,6 +138,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_ASK_POLICY_KEY
                 | "retry_source_policy"
                 | "compilation_policy"
+                | POLICY_TEACHER_PROBE_KEY
         ) {
             return None;
         }
@@ -341,6 +343,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         )?),
     };
 
+    let teacher_probe = match single_map_value(&entries, POLICY_TEACHER_PROBE_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_teacher_probe_row(value)?),
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -383,6 +391,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         ask_policy,
         retry_source_policy,
         compilation_policy,
+        teacher_probe,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
@@ -428,4 +437,59 @@ fn parse_single_valued_predicates(value: &Value) -> Option<std::collections::BTr
         }
     }
     Some(predicates)
+}
+
+/// A teacher-probe floor is a POLICY_MANIFEST row, never a per-run CLI knob.
+/// Holder overrides must be at least as strict as their containing vault row.
+fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    let mut probe_id = None;
+    let mut minimum = None;
+    let mut holders = None;
+    for (key, value) in entries {
+        match key.as_str()? {
+            "probe_id" if probe_id.is_none() => probe_id = Some(value.as_str()?),
+            "min_f1_millionths" if minimum.is_none() => {
+                minimum = Some(u32::try_from(value.as_u64()?).ok()?);
+            }
+            "holders" if holders.is_none() => {
+                let Value::Array(rows) = value else {
+                    return None;
+                };
+                let mut parsed = std::collections::BTreeMap::new();
+                for row in rows {
+                    let Value::Map(fields) = row else {
+                        return None;
+                    };
+                    let holder = required_string(fields, "holder_ref")?;
+                    if !crate::llm::manifest::valid_teacher_probe_holder_ref(&holder) {
+                        return None;
+                    }
+                    let floor =
+                        u32::try_from(required_value(fields, "min_f1_millionths")?.as_u64()?)
+                            .ok()?;
+                    if fields.len() != 2 || parsed.insert(holder, floor).is_some() {
+                        return None;
+                    }
+                }
+                holders = Some(parsed);
+            }
+            _ => return None,
+        }
+    }
+    let minimum = minimum.filter(|floor| (1..=1_000_000).contains(floor))?;
+    let holders = holders.unwrap_or_default();
+    if probe_id != Some(crate::llm::manifest::TEACHER_PROBE_ID)
+        || holders
+            .values()
+            .any(|floor| *floor < minimum || *floor > 1_000_000)
+    {
+        return None;
+    }
+    Some(TeacherProbeRow {
+        min_f1_millionths: minimum,
+        holders,
+    })
 }
