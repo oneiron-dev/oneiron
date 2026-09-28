@@ -293,6 +293,11 @@ fn consolidation_factory(actor: WriteActor) -> ConsolidationExecutorFactory {
         DreamerClaimAuthoringStrategy::SinglePass,
         actor,
         oneiron::ModelId::new("test/model@v1").expect("model id"),
+        oneiron::llm::HostInferenceBinding::Advertised {
+            model: oneiron::ModelId::new("test/model@v1").expect("host model"),
+            locality: oneiron::ModelLocality::OwnServer,
+        },
+        Some(Arc::new(|_: &oneiron::LlmRequest| true)),
         Box::new(UnusedSink),
     )
 }

@@ -1445,12 +1445,10 @@ fn execution_llm_request() -> LlmRequest {
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
-            tier: TierPrecedence {
-                per_seat: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: ModelTierRef("standard".to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AutoCheck,
+                ModelTierRef("standard".into()),
+            ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
         },

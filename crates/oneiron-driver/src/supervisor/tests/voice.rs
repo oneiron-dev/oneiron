@@ -56,6 +56,16 @@ fn fixture() -> (
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+    let mut policy = vault.purpose_default_table().expect("owner policy");
+    policy.extraction_max_locality = oneiron::ModelLocality::OwnServer;
+    policy
+        .purposes
+        .get_mut(&oneiron::CallPurpose::Extraction)
+        .expect("extraction row")
+        .locality = oneiron::ModelLocality::OwnServer;
+    vault
+        .set_purpose_default_table(&policy)
+        .expect("owner-pinned test egress");
     let actor = vault.dreamer_authority().unwrap();
     let (send, calls) = mpsc::unbounded_channel();
     let factory = ConsolidationExecutorFactory::new(
@@ -63,6 +73,11 @@ fn fixture() -> (
         DreamerClaimAuthoringStrategy::SinglePass,
         actor,
         ModelId::new("test/model@v1").unwrap(),
+        oneiron::llm::HostInferenceBinding::Advertised {
+            model: ModelId::new("test/model@v1").expect("host model"),
+            locality: oneiron::ModelLocality::OwnServer,
+        },
+        Some(Arc::new(|_: &oneiron::LlmRequest| true)),
         Box::new(UnusedSink),
     );
     (dir, vault, factory, calls)

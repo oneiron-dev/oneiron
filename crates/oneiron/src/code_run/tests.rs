@@ -107,7 +107,11 @@ fn put_malformed_policy_manifest(vault: &Vault, seed: u8) -> Result<()> {
     put_indexed_manifest_at_two(vault, entity(seed), b"not-msgpack")
 }
 
-fn install_exact_actor_ceiling(vault: &Vault, actor: EntityId, ceiling: &str) -> Result<()> {
+pub(super) fn install_exact_actor_ceiling(
+    vault: &Vault,
+    actor: EntityId,
+    ceiling: &str,
+) -> Result<()> {
     clear_policy_manifests_for_test(vault)?;
     let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor)

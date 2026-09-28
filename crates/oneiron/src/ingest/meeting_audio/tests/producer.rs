@@ -450,3 +450,46 @@ fn incomplete_native_backend_refuses_before_the_decode_port() {
         matches!(produce_meeting_transcript(&file(),&options(),&mut host),Err(AudioError::Host {stage,code}) if stage=="capabilities" && code=="ArtifactBackendUnavailable")
     );
 }
+
+#[test]
+fn resident_batch_asr_row_reaches_host_without_changing_the_pinned_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let mut table = vault.purpose_default_table().unwrap();
+    table
+        .voice
+        .get_mut(&crate::llm::VoiceLane::AsrBatch)
+        .unwrap()
+        .locality = crate::llm::ModelLocality::OnDevice;
+    vault.set_purpose_default_table(&table).unwrap();
+    let batch_options = options().with_vault_policy(&vault).unwrap();
+    let mut host = FixtureHost::small(Fault::None);
+    produce_meeting_transcript(&file(), &batch_options, &mut host).unwrap();
+    assert!(host.requests.iter().any(|request| matches!(request,
+        HostRequest::Route { preferred: ProcessingTier::Local, model, .. }
+            if model == "fixture-asr")));
+    // The explicit privacy toggle beats even an owner-edited hosted default.
+    table
+        .voice
+        .get_mut(&crate::llm::VoiceLane::AsrBatch)
+        .unwrap()
+        .locality = crate::llm::ModelLocality::ThirdParty;
+    vault.set_purpose_default_table(&table).unwrap();
+    let options = ProducerOptions {
+        local_only: true,
+        ..options().with_vault_policy(&vault).unwrap()
+    };
+    let mut host = FixtureHost::small(Fault::RemoteRoute);
+    assert_eq!(
+        produce_meeting_transcript(&file(), &options, &mut host).unwrap_err(),
+        AudioError::InvalidRoute
+    );
+    assert!(host.requests.iter().any(|request| matches!(
+        request,
+        HostRequest::Route {
+            preferred: ProcessingTier::Local,
+            local_only: true,
+            ..
+        }
+    )));
+}

@@ -321,6 +321,8 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
+        "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),
+        "self.inference_defaults.replace" => Ok(SelfEffect::InferenceDefaultsReplace),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }

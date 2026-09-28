@@ -268,16 +268,11 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
-    /// Call-path binding: absent manifest preserves explicit host configuration.
-    pub fn bind_model_role(&self, role: ModelRole, request: &mut LlmRequest) -> Result<()> {
-        let txn = self.store.env.read_txn()?;
-        if let Some(manifest) = read_manifest(&self.store, &txn)? {
-            manifest.bind_request(role, &read_routes(&self.store, &txn)?, request)?;
-        }
-        Ok(())
-    }
 }
-fn read_routes(store: &Store, txn: &heed::RoTxn<'_>) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
+pub(super) fn read_routes(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
     store
         .vault_meta
         .get(txn, ROUTES_KEY)?

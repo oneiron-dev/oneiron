@@ -54,6 +54,10 @@ pub enum SelfCall {
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
+    /// Read the active inference rows through the host-bound resident action.
+    InferenceDefaultsRead,
+    /// Replace validated inference rows under the host's delegated policy gate.
+    InferenceDefaultsReplace(String),
     /// Host-authorized action; a guest request alone carries no owner proof.
     WakePolicyWrite(SelfWakePolicyWriteCall),
 }
@@ -79,6 +83,8 @@ impl SelfCall {
             Self::Think(_) => SelfEffect::Think,
             Self::Express(_) => SelfEffect::Express,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
+            Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
+            Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
         }
     }
@@ -136,6 +142,8 @@ pub enum SelfEffect {
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
     ReportBlocked,
+    InferenceDefaultsRead,
+    InferenceDefaultsReplace,
     WakePolicyWrite,
 }
 
@@ -161,6 +169,8 @@ impl SelfEffect {
             Self::Think => "self.think",
             Self::Express => "self.express",
             Self::ReportBlocked => "self.report_blocked",
+            Self::InferenceDefaultsRead => "self.inference_defaults.read",
+            Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
         }
     }
@@ -191,7 +201,9 @@ impl SelfEffect {
             | Self::TaskDelegate
             | Self::Context
             | Self::ReportBlocked
-            | Self::WakePolicyWrite => None,
+            | Self::InferenceDefaultsRead
+            | Self::InferenceDefaultsReplace => None,
+            Self::WakePolicyWrite => None,
         }
     }
 
@@ -426,6 +438,8 @@ pub enum SelfDispatchOutcome {
     ReportBlocked {
         receipt: EntityId,
     },
+    /// JSON of the effective rows after a read or atomic replacement.
+    InferenceDefaults(String),
     /// The authorized v1 policy row that was persisted in the vault.
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
 }

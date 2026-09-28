@@ -58,6 +58,10 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("tgt", entity_id_value(call.tgt)),
             ("weight", Value::F32(call.weight)),
         ]),
+        SelfCall::InferenceDefaultsRead => request_map(vec![]),
+        SelfCall::InferenceDefaultsReplace(json) => {
+            request_map(vec![("json", Value::from(json.as_str()))])
+        }
         SelfCall::WakePolicyWrite(call) => request_map(vec![(
             "policy",
             Value::from(
@@ -212,6 +216,10 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 context_spec_json(&result.spec).map_or(Value::Nil, Value::from),
             ),
         ]),
+        SelfDispatchOutcome::InferenceDefaults(json) => request_map(vec![
+            ("kind", Value::from("inference_defaults")),
+            ("json", Value::from(json.as_str())),
+        ]),
         SelfDispatchOutcome::WakePolicyWritten(policy) => {
             request_map(vec![
                 ("kind", Value::from("wake_policy_written")),
@@ -241,6 +249,9 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
     let entries = expect_map(value, "dispatch outcome must be a map")?;
     let kind = str_value(map_get(entries, "kind")?)?;
     match kind {
+        "inference_defaults" => Ok(SelfDispatchOutcome::InferenceDefaults(
+            str_value(map_get(entries, "json")?)?.to_owned(),
+        )),
         "wake_policy_written" => {
             let policy: crate::dreamer_wake::DreamerWakePolicy =
                 serde_json::from_str(str_value(map_get(entries, "policy")?)?)
@@ -397,6 +408,8 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
+        "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),
+        "self.inference_defaults.replace" => Ok(SelfEffect::InferenceDefaultsReplace),
         "dreamer.wake_policy.set" => Ok(SelfEffect::WakePolicyWrite),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
