@@ -1028,6 +1028,12 @@ fn failed_policy_push_does_not_stop_an_unrelated_due_human_followup()
                 member_ref: fixture.person,
                 role: Some(FederationGrantRole::Owner),
             },
+            // The TASK's creating agent keeps a writing role, so its own
+            // follow-up passes the shared-vault role gate.
+            InitialSharedMember {
+                member_ref: fixture.owner,
+                role: Some(FederationGrantRole::Member),
+            },
         ],
         NOW,
     )?;

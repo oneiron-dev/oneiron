@@ -69,8 +69,10 @@ fn scope_covers(
 
 /// The same scope-and-target snapshot selects proposal recipients and authorizes
 /// rulings. Owners are unrestricted. Admins and Delegates require BOTH a live
-/// membership whose authority scope admits this row and an Owner-minted named
-/// action grant covering the exact target. A read-only Delegate cannot silently
+/// membership whose stored authority scope admits this row and an Owner-minted
+/// named action grant covering the exact target. That scope is the one the
+/// mint door resolved from the vault's grant rows (met with the parent for a
+/// Delegate), never a role preset, so a read-only Delegate cannot silently
 /// inherit policy-edit authority.
 pub(super) fn holders_for_in_txn(
     vault: &Vault,

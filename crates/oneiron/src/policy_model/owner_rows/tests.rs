@@ -26,6 +26,41 @@ fn person(vault: &Vault, byte: u8) -> Result<AuthenticatedOwner> {
     )?;
     vault.authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
 }
+/// Owner-authored grant rows let `roles` carry the policy-change verb class in
+/// Grants minted from now on. The shipped rows give it to no role.
+fn admit_policy_verb(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    roles: &[FederationGrantRole],
+) -> TestResult {
+    use crate::federation::ScopeAxis;
+    use crate::federation::grant_policy::{GrantPolicyRow, ROWS_KEY, encode_row, parse_rows};
+    let id = crate::gate::default_policy_manifest_id()?;
+    let raw = vault.get_raw(&id)?.ok_or("stored policy manifest")?;
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?
+    else {
+        return Err("policy manifest map".into());
+    };
+    let (_, value) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(ROWS_KEY))
+        .ok_or("grant rows")?;
+    let mut rows = parse_rows(value).ok_or("valid grant rows")?;
+    for row in &mut rows {
+        if let GrantPolicyRow::RoleDefault { role, scope } = row
+            && roles.contains(role)
+            && let ScopeAxis::Some(verbs) = &mut scope.verbs
+        {
+            verbs.insert("policy.change".to_owned());
+        }
+    }
+    *value = rmpv::Value::Array(rows.iter().map(encode_row).collect::<Result<_>>()?);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))?;
+    vault.install_owner_policy_manifest(owner, id, bytes, 1)?;
+    Ok(())
+}
 fn change(
     text: &str,
     action: PolicyRowAction,
@@ -117,6 +152,7 @@ fn admin_without_power_and_agent_both_propose_in_either_direction_first_holder_r
     let admin = person(&vault, 0x35)?;
     let other = person(&vault, 0x36)?;
     let agent = person(&vault, 0x37)?;
+    admit_policy_verb(&vault, &owner, &[FederationGrantRole::Admin])?;
     vault.initialize_shared_vault(
         &owner,
         42,
@@ -133,6 +169,11 @@ fn admin_without_power_and_agent_both_propose_in_either_direction_first_holder_r
             InitialSharedMember {
                 member_ref: admin.actor(),
                 role: Some(FederationGrantRole::Admin),
+            },
+            // A shared vault takes proposals only from a writing role.
+            InitialSharedMember {
+                member_ref: agent.actor(),
+                role: Some(FederationGrantRole::Member),
             },
         ],
         10,
@@ -385,11 +426,10 @@ fn queued_policy_push_enters_the_existing_human_followup_ladder() -> TestResult 
 
 #[test]
 fn expiring_delegate_needs_an_owner_minted_named_policy_grant() -> TestResult {
-    use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
-    use crate::federation::{
-        FederationGrant, decode_federation_grant_body, encode_federation_grant_body,
-    };
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::federation::decode_federation_grant_body;
     let (_dir, vault, owner) = open()?;
+    let read_only = person(&vault, 0x38)?;
     let delegate = person(&vault, 0x39)?;
     let creation = vault.initialize_shared_vault(
         &owner,
@@ -408,54 +448,41 @@ fn expiring_delegate_needs_an_owner_minted_named_policy_grant() -> TestResult {
             let id = EntityId::from_hex(reference).ok()?;
             let raw = vault.get_raw(&id).ok()??;
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).ok()?;
-            (grant.member_ref == owner.actor()).then_some(grant)
+            (grant.member_ref == owner.actor()).then_some(id)
         })
         .expect("stored owner grant");
     let now = vault.store.clock.now_recorded_at();
-    let scoped =
-        FederationGrant::attenuated_delegate(&owner_grant, delegate.actor(), now, now + 3600)?;
-    vault.with_write_txn(|txn| {
-        apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            txn,
-            vec![BatchOp::Put {
-                id: EntityId::now(),
-                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                data: encode_federation_grant_body(&scoped)?,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )
-    })?;
+    // Both Delegates come through the mint door. The shipped Delegate row
+    // resolves to read only; after the owner's row edit the next minted Grant
+    // carries the policy-change verb class.
+    vault.create_federation_delegate(&owner, owner_grant, read_only.actor(), now, now + 3600)?;
+    admit_policy_verb(&vault, &owner, &[FederationGrantRole::Delegate])?;
+    vault.create_federation_delegate(&owner, owner_grant, delegate.actor(), now, now + 3600)?;
     let add = change(
         "Keep this safe",
         PolicyRowAction::Block,
         PolicyRowScope::Project("project-1".into()),
         true,
     );
-    assert!(matches!(
-        vault.submit_policy_row_change(&delegate, add.clone(), now)?,
-        PolicyRowSubmission::Proposed(_)
-    ));
-    let bound = GrantBound::action(
-        ActorBound::new(delegate.actor().to_hex())?.with_actor_class("human")?,
-        ActionClass::new("policy.change")?,
-        ActionEnvelope::new(["owner_policy_rows".to_owned()])?,
-    )?;
-    vault.create_standing_grant(&owner, bound)?;
+    for member in [&read_only, &delegate] {
+        assert!(matches!(
+            vault.submit_policy_row_change(member, add.clone(), now)?,
+            PolicyRowSubmission::Proposed(_)
+        ));
+        let bound = GrantBound::action(
+            ActorBound::new(member.actor().to_hex())?.with_actor_class("human")?,
+            ActionClass::new("policy.change")?,
+            ActionEnvelope::new(["owner_policy_rows".to_owned()])?,
+        )?;
+        vault.create_standing_grant(&owner, bound)?;
+    }
+    assert!(
+        matches!(
+            vault.submit_policy_row_change(&read_only, add.clone(), now)?,
+            PolicyRowSubmission::Proposed(_)
+        ),
+        "a named grant cannot lift a stored read-only Grant into policy power"
+    );
     let PolicyRowSubmission::Landed(receipt) =
         vault.submit_policy_row_change(&delegate, add, now)?
     else {
