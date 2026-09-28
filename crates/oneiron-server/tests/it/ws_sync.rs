@@ -2726,6 +2726,7 @@ async fn run_sync_connection_once(
             server_url,
             auth_token: auth_token.to_string(),
             transport_credential,
+            residence_mode: oneiron::sync::SyncResidenceMode::All,
             ..Default::default()
         },
         auto_reconnect: false,

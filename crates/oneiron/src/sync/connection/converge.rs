@@ -117,6 +117,11 @@ impl SyncConnection {
         client: &mut SyncClient,
         force_resync: &BTreeSet<String>,
     ) -> crate::error::Result<Vec<Vec<u8>>> {
+        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+            return Err(crate::Error::InvariantViolation(
+                "opened-item queue cannot use full-window re-bootstrap",
+            ));
+        }
         self.queue.clear_all()?;
         client
             .generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned())

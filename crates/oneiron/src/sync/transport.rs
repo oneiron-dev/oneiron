@@ -93,6 +93,15 @@ pub const TAG_LFS_CHUNK_SYNC: u8 = 22;
 /// Full-window owner lane with world-month keys and subscribed broadcasts.
 /// v11 rejects v10's month-only decoder at hello; selector v9 stays distinct.
 pub const CHUNK_FULL_WINDOW_PROTOCOL_VERSION: u8 = 11;
+/// Own-device opened-item residence: root, scoped index, point fetch and local writes;
+/// no unsolicited month-window updates or full-window vector exchange.
+pub const RESIDENCE_PROTOCOL_VERSION: u8 = 12;
+// The owner, residence and selector lanes are told apart by the hello byte alone.
+const _: () = assert!(
+    CHUNK_FULL_WINDOW_PROTOCOL_VERSION != RESIDENCE_PROTOCOL_VERSION
+        && CHUNK_FULL_WINDOW_PROTOCOL_VERSION != PROTOCOL_VERSION
+        && RESIDENCE_PROTOCOL_VERSION != PROTOCOL_VERSION
+);
 /// Sync version that introduces app-tier tags and their close codes.
 pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;
 /// Selector-capable sync-only peers retain the v7 wire semantics.
@@ -143,6 +152,18 @@ pub mod window_sub_tags {
     /// Retry a durable selector request under the currently bound principal.
     /// Payload is the 32-byte identity from `SELECTOR_DEFERRED`.
     pub const SELECTOR_RETRY: u8 = 6;
+    /// Opened-item device update: `[queue_seq:8BE][Loro update]`.
+    /// Never answered with a full-window version vector.
+    pub const RESIDENCE_UPDATE: u8 = 7;
+    /// Durable home acknowledgment: `[queue_seq:8BE][blake3(update):32]`.
+    pub const RESIDENCE_ACK: u8 = 8;
+    /// Bind a full causal window to the grant on this opened-item socket.
+    /// Payload is the strict encoded SyncSelector.
+    pub const PROMOTION_REQUEST: u8 = 9;
+    /// The home accepted the grant for this complete window.
+    pub const PROMOTION_GRANTED: u8 = 10;
+    /// A promoted window changed; request a scrubbed VV delta, not raw fan-out.
+    pub const PROMOTED_INVALIDATE: u8 = 11;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).
@@ -241,6 +262,11 @@ pub fn encode_legacy_full_window_protocol_hello() -> Vec<u8> {
 /// Encodes the chunk-capable owner/full-window hello, distinct from selector v9.
 pub fn encode_chunk_full_window_protocol_hello() -> Vec<u8> {
     vec![TAG_PROTOCOL_HELLO, CHUNK_FULL_WINDOW_PROTOCOL_VERSION]
+}
+
+/// Encodes the own-device opened-item residence hello.
+pub fn encode_residence_protocol_hello() -> Vec<u8> {
+    vec![TAG_PROTOCOL_HELLO, RESIDENCE_PROTOCOL_VERSION]
 }
 
 /// Decodes a protocol-version hello frame (the FULL frame, tag included).
@@ -595,6 +621,8 @@ pub fn encode_lfs_chunk_sync(payload: &[u8]) -> EncodedFrame {
 pub enum TransportError {
     InvalidWindowKey,
     InvalidPayload(&'static str),
+    /// A paged, grant-scoped metadata projection changed; restart at page one.
+    IndexRevisionChanged,
     UnknownTag(u8),
     FrameTooLarge {
         size: usize,
@@ -621,6 +649,7 @@ impl std::fmt::Display for TransportError {
         match self {
             Self::InvalidWindowKey => write!(f, "invalid window key"),
             Self::InvalidPayload(msg) => write!(f, "invalid payload: {msg}"),
+            Self::IndexRevisionChanged => write!(f, "window index revision changed"),
             Self::UnknownTag(tag) => write!(f, "unknown tag: {tag}"),
             Self::FrameTooLarge { size, max } => write!(f, "frame too large: {size} (max {max})"),
             Self::VersionVectorDecode => write!(f, "version vector decode failure"),

@@ -81,6 +81,52 @@ pub(super) fn authorize_in_txn(
     })
 }
 
+/// Authorize an exact existing item edit under a promoted canonical window.
+/// Read selection (facet closure) and write authority are independent checks.
+pub(in crate::sync) fn admit_promoted_entity_write_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    new_blob: &[u8],
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    proof: &crate::authority::VerifiedSlip,
+) -> Result<()> {
+    let old = vault.get_raw_in(txn, &id)?.ok_or_else(denied)?;
+    let old_header = EntityMetadataHeader::parse(&old).ok_or_else(denied)?;
+    let new_header = EntityMetadataHeader::parse(new_blob).ok_or_else(denied)?;
+    if old_header.entity_type != new_header.entity_type
+        || old_header.learned_at != new_header.learned_at
+        || proof.claims().holder_ref != selector.member_ref.to_hex()
+        || !proof.allows_verb("write")
+    {
+        return Err(denied());
+    }
+    let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
+    admit_selected_in_txn(vault, txn, id, selector, &admission)?;
+    let mut record = crate::federation::record_scope::scope_for_blob(&vault.store, txn, id, &old)?
+        .ok_or_else(denied)?;
+    record.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["write".to_string()]));
+    if !admission
+        .grant
+        .authority_scope
+        .admits("write", &record, &crate::federation::Scope::top())
+        || !proof
+            .scope()
+            .admits("write", &record, &crate::federation::Scope::top())
+    {
+        return Err(denied());
+    }
+    crate::federation::record_scope::validate_edit_birth_scope(
+        &vault.store,
+        txn,
+        id,
+        new_header.entity_type,
+        &new_blob[ENTITY_METADATA_HEADER_LEN..],
+    )
+}
+
 pub(in crate::sync) fn admit_document_write_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

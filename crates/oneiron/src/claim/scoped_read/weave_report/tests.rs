@@ -444,8 +444,8 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
     project_record.roster.push(person.to_hex());
     let kind = vault.project_type_byte()?;
     let project_body = rmp_serde::to_vec_named(&project_record).expect("project encodes");
-    let scope_key = [b"scope:record:v1:".as_slice(), project.as_bytes()].concat();
-    // Derive the ordinary digest-bound project stamp, but keep it in the
+    let scope_key = [b"scope:record:v2:".as_slice(), project.as_bytes()].concat();
+    // Derive the ordinary identity-bound project stamp, but keep it in the
     // overlay only: a base read must not be able to resolve this project.
     let scope_stamp = vault.with_write_txn(|txn| {
         crate::federation::record_scope::stamp_put(

@@ -45,6 +45,8 @@ pub struct SyncClient {
     /// Unacknowledged cross-month deltas. Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>)>,
     pub(crate) root_bootstrapped: bool,
+    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence.
+    pub(crate) residence_acks: HashMap<u64, [u8; 32]>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -149,6 +151,7 @@ impl SyncClient {
             pending_world_windows: Mutex::new(HashSet::new()),
             staged_world_updates: Vec::new(),
             root_bootstrapped: false,
+            residence_acks: HashMap::new(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
@@ -320,6 +323,23 @@ impl SyncClient {
             (None, _) | (_, None) => true,
             (Some(world), Some(worlds)) => worlds.contains(&world),
         }
+    }
+
+    /// Whether this opened-item device promoted `key` to a canonical copy.
+    pub(crate) fn opened_window_promoted(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<bool, TransportError> {
+        if self.config.residence_mode != super::SyncResidenceMode::Opened
+            || self.config.federation_peer.is_some()
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .vault
+            .sync_state_get(&format!("rp:w:{key}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some())
     }
 
     /// Returns the list of window keys from the root doc (set by server).

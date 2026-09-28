@@ -11,7 +11,7 @@ use oneiron::sync::bridge::Materializer;
 use oneiron::sync::schema::create_root_doc;
 use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::window::{export_window_updates_since, load_window_from_state};
-use oneiron::sync::{SyncClient, SyncClientConfig, WindowKey, WindowManager};
+use oneiron::sync::{SyncClient, SyncClientConfig, SyncResidenceMode, WindowKey, WindowManager};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId,
     TimeRange, Vault, VaultConfig,
@@ -153,6 +153,7 @@ fn fresh_follow_uses_wire_request_order_for_same_and_older_base_edges() {
     let (mut client, _) = SyncClient::new(
         manager(&peer),
         SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
             followed_worlds: Some(vec![selected_world]),
             ..Default::default()
         },
@@ -221,6 +222,7 @@ fn fresh_follow_uses_wire_request_order_for_same_and_older_base_edges() {
     let (home, _) = SyncClient::new(
         source_manager,
         SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
             followed_worlds: None,
             ..Default::default()
         },
@@ -284,6 +286,7 @@ fn cross_month_world_edges_in_both_directions_stage_until_the_other_month_arrive
     let (mut client, _) = SyncClient::new(
         manager(&peer),
         SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
             followed_worlds: Some(vec![world]),
             ..Default::default()
         },
@@ -391,6 +394,7 @@ fn late_follow_accepts_valid_soft_and_hard_deleted_world_history() {
         let (mut client, _) = SyncClient::new(
             manager(&peer),
             SyncClientConfig {
+                residence_mode: SyncResidenceMode::All,
                 followed_worlds: Some(vec![world]),
                 ..Default::default()
             },
@@ -582,6 +586,7 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
         let (mut client, _) = SyncClient::new(
             manager(&third),
             SyncClientConfig {
+                residence_mode: SyncResidenceMode::All,
                 followed_worlds: Some(vec![world]),
                 ..Default::default()
             },
@@ -678,6 +683,7 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
         let (mut fourth_client, _) = SyncClient::new(
             manager(&fourth),
             SyncClientConfig {
+                residence_mode: SyncResidenceMode::All,
                 followed_worlds: Some(vec![world]),
                 ..Default::default()
             },

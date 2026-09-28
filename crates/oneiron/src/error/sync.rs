@@ -179,6 +179,8 @@ pub enum SyncProtocolValidation {
     DocumentAdmissionDenied,
     DocumentPendingUpdate,
     InvalidDocumentKey,
+    PromotionTooLarge,
+    ThinItemRequiresPromotion,
 }
 
 #[cfg(feature = "sync")]
@@ -216,6 +218,12 @@ impl fmt::Display for SyncProtocolValidation {
             Self::DocumentAdmissionDenied => f.write_str("entity document not admitted"),
             Self::DocumentPendingUpdate => f.write_str("document update has missing dependencies"),
             Self::InvalidDocumentKey => f.write_str("invalid entity document persistence key"),
+            Self::PromotionTooLarge => {
+                f.write_str("canonical window exceeds promotion result bound")
+            }
+            Self::ThinItemRequiresPromotion => {
+                f.write_str("thin item requires causal window promotion before write")
+            }
             Self::TombstoneRemovalDelta => {
                 f.write_str("tombstone removal delta (tombstones are permanent)")
             }

@@ -341,6 +341,34 @@ pub fn export_window_updates_since(
     }
 }
 
+/// A promoted device holds the canonical shallow frontier. When the home
+/// sends its VV, ship ONLY the post-frontier tail: re-exporting a shallow
+/// snapshot on every reply can discard the device's later unconfirmed op
+/// during a merge. If a scrub pinned this window to history-free transport,
+/// retain the existing snapshot policy instead.
+pub(in crate::sync) fn export_promoted_window_updates_since(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    remote_vv: &[u8],
+) -> Result<Vec<u8>> {
+    VersionVector::decode(remote_vv).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
+            context: "decode promoted version vector",
+            source,
+        })
+    })?;
+    crate::sync::note::refresh(vault, doc, key)?;
+    let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
+    let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
+    let scrubbed = secret_scrubbed || claims_scrubbed;
+    if scrubbed || history_free_window_required(vault, key)? {
+        export_history_free_window_snapshot(doc)
+    } else {
+        super::loro_support::export_updates_since(doc, remote_vv)
+    }
+}
+
 pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();

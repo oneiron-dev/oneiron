@@ -1,7 +1,8 @@
-//! Digest-bound record-position stamps and scoped read/delete/export doors.
+//! Birth-facet-bound record-position stamps and scoped read/delete/export doors.
 //!
 //! Unstamped rows are never selected. Debug is an explicit read-only view, not
-//! a wildcard selector. Replication does not invent a stamp for opaque peer bytes.
+//! a wildcard selector. A body edit inherits its birth scope; a facet move
+//! requires a new record, never a restamp of the same id.
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::{
@@ -11,6 +12,9 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeView {
@@ -30,25 +34,43 @@ pub struct ScopedRecord {
 #[serde(deny_unknown_fields)]
 struct Stamp {
     version: u8,
-    digest: [u8; 32],
+    kind: u8,
+    birth_facet: [u8; 16],
     scope: Scope,
 }
+const RECORD_SCOPE_REVISION_KEY: &[u8] = b"scope:record:revision:v1";
+
+pub(crate) fn read_scope_revision(store: &impl ManifestDbs, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    match store.vault_meta().get(txn, RECORD_SCOPE_REVISION_KEY)? {
+        None => Ok(0),
+        Some(bytes) => {
+            Ok(u64::from_le_bytes(bytes.as_ref().try_into().map_err(
+                |_| Error::CorruptedIndex("record scope revision"),
+            )?))
+        }
+    }
+}
+
+fn bump_scope_revision(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    let next = read_scope_revision(store, txn)?
+        .checked_add(1)
+        .ok_or(Error::IndexOverflow("record scope revision"))?;
+    store
+        .vault_meta
+        .put(txn, RECORD_SCOPE_REVISION_KEY, &next.to_le_bytes())?;
+    Ok(())
+}
+
 fn key(id: EntityId) -> Vec<u8> {
-    let mut key = b"scope:record:v1:".to_vec();
+    let mut key = b"scope:record:v2:".to_vec();
     key.extend_from_slice(id.as_bytes());
     key
 }
 /// Retire an id's scope sidecar in the same transaction that erases its body.
-/// A later same-id, same-bytes write must not inherit the old scope.
+/// A later same-id write never inherits the deleted record's birth position.
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
     store.vault_meta.delete(txn, &key(id))?;
-    Ok(())
-}
-fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
-    h.update(&[kind]);
-    h.update(data);
-    *h.finalize().as_bytes()
+    bump_scope_revision(store, txn)
 }
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
@@ -92,26 +114,32 @@ pub(crate) fn stamp_put(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
-    let mut scope = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+    bump_scope_revision(store, txn)?;
+    let prior = store
+        .vault_meta
+        .get(txn, &key(id))?
+        .map(|bytes| {
+            serde_json::from_slice::<Stamp>(&bytes)
+                .map_err(|_| Error::CorruptedIndex("record scope stamp"))
+        })
+        .transpose()?;
+    let (mut scope, facet) = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
-        body.record_scope("read")
-    } else if replicated {
-        // Same bytes may retain their locally authored stamp. A changed opaque
-        // replay must not inherit one from an earlier row at the same id.
-        if stored_scope(store, txn, id, kind, data)?.is_none() {
-            store.vault_meta.delete(txn, &key(id))?;
-        }
-        return Ok(());
+        (body.record_scope("read"), body.scope_facet)
     } else if kind == crate::registry::ENTITY_TYPE_FACET {
-        default_stamp(kind, id)
+        (default_stamp(kind, id), id)
     } else if carries_birth_stamp(kind) {
         let Some(facet) = birth_facet(store, txn, id)? else {
-            store.vault_meta.delete(txn, &key(id))?;
+            if prior.is_some() {
+                return Err(Error::InvalidClaimBody("birth facet restamp refused"));
+            }
+            // A birth without its same-transaction FacetOf is not stamped.
             return Ok(());
         };
-        default_stamp(kind, facet)
+        (default_stamp(kind, facet), facet)
     } else {
-        default_stamp(kind, crate::claim::substrate_facet_id(id))
+        let facet = crate::claim::substrate_facet_id(id);
+        (default_stamp(kind, facet), facet)
     };
     // A locally authored RELATIONSHIP may declare its sensitivity just as a
     // FACET does. The resulting digest-bound record position, not a raw body
@@ -145,9 +173,31 @@ pub(crate) fn stamp_put(
         }
     }
     scope.verbs = ScopeAxis::Bottom;
+    if let Some(prior) = prior {
+        // Content is mutable. The type, facet and authority position are NOT.
+        // A changed facet/sensitivity/world/audience is a fork with a new id.
+        if prior.version != 2
+            || prior.kind != kind
+            || prior.birth_facet != *facet.as_bytes()
+            || prior.scope != scope
+        {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        return Ok(());
+    }
+    if replicated
+        && kind != crate::registry::ENTITY_TYPE_CLAIM
+        && !(kind == crate::registry::ENTITY_TYPE_FACET
+            && crate::companion::is_identity_facet_body(data))
+    {
+        // A peer cannot mint a birth position for an opaque row merely by
+        // picking its ID and bytes. Only an existing stamped row inherits.
+        return Ok(());
+    }
     let bytes = serde_json::to_vec(&Stamp {
-        version: 1,
-        digest: digest(kind, data),
+        version: 2,
+        kind,
+        birth_facet: *facet.as_bytes(),
         scope,
     })
     .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
@@ -159,71 +209,104 @@ fn stored_scope(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
-    data: &[u8],
 ) -> Result<Option<Scope>> {
     let Some(bytes) = store.vault_meta().get(txn, &key(id))? else {
         return Ok(None);
     };
     let stamp: Stamp =
         serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
-    if stamp.version != 1 || stamp.digest != digest(kind, data) {
+    if stamp.version != 2 || stamp.kind != kind {
+        return Ok(None);
+    }
+    let facet = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+        // CLAIM carries its immutable facet in its body; `stamp_put` and the
+        // promoted-replay door compare that body to this birth stamp.
+        EntityId::from_bytes(stamp.birth_facet).ok()
+    } else if kind == crate::registry::ENTITY_TYPE_FACET {
+        Some(id)
+    } else if carries_birth_stamp(kind) {
+        birth_facet(store, txn, id)?
+    } else {
+        Some(crate::claim::substrate_facet_id(id))
+    };
+    if facet.is_none_or(|facet| stamp.birth_facet != *facet.as_bytes()) {
         return Ok(None);
     }
     Ok(Some(stamp.scope))
 }
-/// Keep a digest-proved TASK scope when the reducer changes only derived
-/// streak counters. Opaque replay and absent/stale stamps remain unstamped.
-/// This belongs to materialization, not to either check-in facade.
-pub(crate) fn preserve_task_projection_scope(
+/// A promoted edit may change content but cannot re-position the same id.
+/// Read this in the author admission snapshot, before importing peer ops.
+#[cfg(feature = "sync")]
+pub(crate) fn validate_edit_birth_scope(
     store: &Store,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     id: EntityId,
-    before: &[u8],
-    after: &[u8],
+    kind: u8,
+    data: &[u8],
 ) -> Result<()> {
-    if before == after {
-        return Ok(());
+    let raw = store
+        .vault_meta
+        .get(txn, &key(id))?
+        .ok_or(Error::InvalidClaimBody("unstamped promoted edit"))?;
+    let stamp: Stamp =
+        serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
+    if stamp.version != 2 || stamp.kind != kind || stored_scope(store, txn, id, kind)?.is_none() {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
     }
-    let Some(scope) = stored_scope(store, txn, id, crate::registry::ENTITY_TYPE_TASK, before)?
-    else {
-        // A stale stamp cannot become a valid stamp for a new body by accident.
-        store.vault_meta.delete(txn, &key(id))?;
-        return Ok(());
-    };
-    let bytes = serde_json::to_vec(&Stamp {
-        version: 1,
-        digest: digest(crate::registry::ENTITY_TYPE_TASK, after),
-        scope,
-    })
-    .map_err(|_| Error::InvariantViolation("TASK scope restamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
+        let body = crate::claim::decode_claim_body(data, true)?;
+        let mut proposed = body.record_scope("read");
+        proposed.verbs = ScopeAxis::Bottom;
+        if proposed != stamp.scope || stamp.birth_facet != *body.scope_facet.as_bytes() {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+    }
+    if matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
+    ) {
+        let proposed = match rmpv::decode::read_value(&mut &data[..]) {
+            Ok(rmpv::Value::Map(entries)) => {
+                let bands: Vec<_> = entries
+                    .iter()
+                    .filter(|(key, _)| key.as_str() == Some("sensitivity"))
+                    .collect();
+                match bands.as_slice() {
+                    [] => Sensitivity::Sensitive,
+                    [(_, value)] => match value.as_str() {
+                        Some("public") => Sensitivity::Public,
+                        Some("private") => Sensitivity::Private,
+                        Some("sensitive") => Sensitivity::Sensitive,
+                        Some("restricted") => Sensitivity::Restricted,
+                        _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
+                    },
+                    _ => return Err(Error::InvalidClaimBody("duplicate facet sensitivity")),
+                }
+            }
+            _ => Sensitivity::Sensitive,
+        };
+        if stamp.scope.sensitivity != SensitivityCeiling::AtMost(proposed) {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+    }
     Ok(())
 }
 
-/// Preserve an existing, digest-proved scope when a text document replaces only
-/// its row body with a pointer. Do not mint reach for an unstamped or stale row.
+/// Derive only an intrinsic current stamp or a birth-facet-bound persisted stamp.
+/// A text document pointer changes representation, not birth authority.
+/// The birth stamp is body-independent, so there is nothing to restamp.
 #[cfg(feature = "sync")]
 pub(crate) fn restamp_document_pointer(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     kind: u8,
-    original: &[u8],
-    pointer: &[u8],
+    _original: &[u8],
+    _pointer: &[u8],
 ) -> Result<()> {
-    let Some(scope) = stored_scope(store, txn, id, kind, original)? else {
-        return Ok(());
-    };
-    let bytes = serde_json::to_vec(&Stamp {
-        version: 1,
-        digest: digest(kind, pointer),
-        scope,
-    })
-    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    let _ = stored_scope(store, txn, id, kind)?;
     Ok(())
 }
-/// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
 /// This is the sync-export seam; arbitrary remote opaque rows remain unstamped.
 pub(crate) fn scope_for_blob(
     store: &impl ManifestDbs,
@@ -245,7 +328,7 @@ pub(crate) fn scope_for_blob(
             scope
         }));
     }
-    let mut scope = stored_scope(store, txn, id, h.entity_type, data)?;
+    let mut scope = stored_scope(store, txn, id, h.entity_type)?;
     if let Some(scope) = scope.as_mut() {
         scope.verbs = singleton("read".to_owned());
     }
@@ -264,13 +347,7 @@ impl Vault {
             return Ok(None);
         };
         let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-        stored_scope(
-            &self.store,
-            &txn,
-            *id,
-            h.entity_type,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )
+        stored_scope(&self.store, &txn, *id, h.entity_type)
     }
     /// Scoped reads bind a selector, the authenticated slip's Scope and channel.
     /// Debug additionally requires an explicit `debug` class on that slip.
@@ -301,13 +378,7 @@ impl Vault {
             )?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            let scope = stored_scope(
-                &self.store,
-                &txn,
-                id,
-                h.entity_type,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )?;
+            let scope = stored_scope(&self.store, &txn, id, h.entity_type)?;
             let allowed = scope
                 .as_ref()
                 .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
@@ -341,13 +412,8 @@ impl Vault {
             )?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            if let Some(scope) = stored_scope(
-                &self.store,
-                &txn,
-                id,
-                h.entity_type,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )? && admits(&scope, selector, slip, channel, "export")
+            if let Some(scope) = stored_scope(&self.store, &txn, id, h.entity_type)?
+                && admits(&scope, selector, slip, channel, "export")
                 && crate::authority::row_causal_admitted(self, &txn, &raw)?
             {
                 out.push(ScopedRecord {
@@ -378,13 +444,8 @@ impl Vault {
                 )?;
                 let h = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("record header"))?;
-                if let Some(scope) = stored_scope(
-                    &self.store,
-                    txn,
-                    id,
-                    h.entity_type,
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                )? && admits(&scope, selector, slip, channel, "delete")
+                if let Some(scope) = stored_scope(&self.store, txn, id, h.entity_type)?
+                    && admits(&scope, selector, slip, channel, "delete")
                 {
                     ids.push(id);
                 }
@@ -401,7 +462,3 @@ impl Vault {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "record_scope/tests.rs"]
-mod tests;

@@ -33,6 +33,23 @@ impl WindowManager {
         self.documents.open(id)?.export_owner(remote_vv)
     }
 
+    /// Grant-backed text-plane export for a caller-selected window. The
+    /// window is validated by the same selector as the ledger first touch,
+    /// including world-plus-month keys.
+    pub fn export_document_in_window(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        window: &WindowKey,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        remote_vv: &[u8],
+    ) -> Result<Vec<u8>> {
+        selector::authorize_sync_selector(&self.vault, scope, selector)?;
+        let source = self.open_window(window)?;
+        self.documents
+            .export_selected(id, &source.doc, window, scope, selector, remote_vv)
+    }
+
     /// Grant-backed text-plane export. The entity's canonical ledger supplies
     /// all world/facet/band decisions, never a peer-supplied substitute.
     pub fn export_document(

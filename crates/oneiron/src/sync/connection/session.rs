@@ -12,6 +12,21 @@ use crate::sync::queue::QueuedUpdate;
 use crate::sync::transport::TransportError;
 use crate::sync::transport::{self, window_sub_tags};
 
+/// A write on the opened-item lane carries its durable queue sequence;
+/// the home replies only after the Loro import is persisted.
+pub(super) fn residence_update_frame(
+    seq: u64,
+    window: &str,
+    update: &[u8],
+) -> Result<Vec<u8>, TransportError> {
+    if seq == 0 || update.is_empty() {
+        return Err(TransportError::InvalidPayload("invalid residence update"));
+    }
+    let mut payload = seq.to_be_bytes().to_vec();
+    payload.extend_from_slice(update);
+    transport::encode_window_sync(window, window_sub_tags::RESIDENCE_UPDATE, &payload).into_result()
+}
+
 /// Maximum convergence rounds before forcing re-bootstrap
 /// (ARCH-0023b Fig. 2: "Max 5 rounds before force re-bootstrap").
 pub(super) const MAX_CONVERGENCE_ROUNDS: u32 = 5;
