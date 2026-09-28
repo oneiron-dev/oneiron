@@ -737,6 +737,13 @@ fn verdict_payload() -> crate::llm::routing::VerdictPayload {
     }
 }
 
+/// (manifest global, purpose, vault; description global, purpose, vault; holder)
+type Levels = (
+    [Option<ReasoningEffort>; 3],
+    [Option<ReasoningEffort>; 3],
+    Option<ReasoningEffort>,
+);
+
 #[test]
 fn nested_narrowing_refuses_every_widening_level_on_both_routers_before_judgment() -> Result<()> {
     use ReasoningEffort::{High, Low, Medium};
@@ -750,12 +757,6 @@ fn nested_narrowing_refuses_every_widening_level_on_both_routers_before_judgment
         "long-context reasoning",
     )?;
     let tier = verdict_request().envelope.tier;
-    // (manifest global, purpose, vault; description global, purpose, vault; holder)
-    type Levels = (
-        [Option<ReasoningEffort>; 3],
-        [Option<ReasoningEffort>; 3],
-        Option<ReasoningEffort>,
-    );
     let widening: &[Levels] = &[
         // The review's counterexample: every level widens its parent.
         (
@@ -791,7 +792,7 @@ fn nested_narrowing_refuses_every_widening_level_on_both_routers_before_judgment
         task.warm_scope = format!("widening-{case}");
         task.override_effort = holder;
         let judge = Recording::new(&worker, None);
-        let run_id = crate::test_util::entity(0xe0 + u8::try_from(case).unwrap());
+        let run_id = crate::test_util::entity(0xc0 + u8::try_from(case).unwrap());
         assert!(
             vault.birth_model_seat(run_id, &task, &judge).is_err(),
             "case {case}"
@@ -874,7 +875,7 @@ fn seat_override_keeps_every_level_and_router_under_the_vault_ceiling() -> Resul
     policy.precedence = SeatPrecedence::SeatOverride;
     policy.vault_ceiling = Medium;
     policy.global_default = Some(Low);
-    config.seat_policy = Some(policy.clone());
+    config.seat_policy = Some(policy);
     crate::test_util::pin_model_manifest(&vault, &config)?;
     // The most specific level wins, even when it widens its parent.
     vault.set_description_policy(&description_rows(&worker, [Some(Medium), None, None]))?;

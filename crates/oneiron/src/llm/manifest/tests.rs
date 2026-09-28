@@ -294,31 +294,6 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
             .is_err()
     );
     for role in MODEL_ROLES {
-        let local_model =
-            loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice].clone();
-        vault
-            .put_model_registry_row(&super::super::registry::ModelRegistryRow {
-                version: 1,
-                wire: super::super::registry::ModelWireFormat::Local,
-                catalog: super::super::LlmCatalogEntry {
-                    model: local_model.clone(),
-                    display_name: "local fixture".into(),
-                    locality: ModelLocality::OnDevice,
-                    context_window_tokens: 4096,
-                    max_output_tokens: Some(100),
-                    cost: Some(super::super::LlmCatalogCost {
-                        input_per_million: "0".into(),
-                        output_per_million: "0".into(),
-                        cache_read_per_million: None,
-                        cache_write_per_million: None,
-                    }),
-                    capabilities: vec![],
-                    metadata: BTreeMap::new(),
-                },
-                scores: BTreeMap::new(),
-                fetched_at: BTreeMap::new(),
-            })
-            .unwrap();
         let mut request = LlmRequest {
             model: ModelId::new("host/unused@1").unwrap(),
             envelope: CallEnvelope {
