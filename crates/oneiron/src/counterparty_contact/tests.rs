@@ -335,20 +335,14 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
 /// Seeds one ChannelIdentity so a contact recorded through it resolves to a
 /// channel class.
 fn put_identity(vault: &Vault, id: EntityId, channel: &str, address: &str) -> Result<()> {
-    let identity = crate::channel_identity::ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
-        channel: channel.to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
-        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x6F)),
-        state: crate::channel_identity::ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::test_util::self_held_identity_in_state(
+        channel,
+        address,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(entity(0x6F)),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault.create_channel_identity(&id, &identity)
 }
 

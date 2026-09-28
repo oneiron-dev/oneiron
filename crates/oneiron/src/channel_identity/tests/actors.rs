@@ -49,7 +49,7 @@ fn mail_and_enrichment_are_distinct_scoped_actors_with_own_keys_and_priors() -> 
             vault
                 .get_channel_identity(&registered.identity_ref)?
                 .unwrap()
-                .binding
+                .binding()
                 .actor_ref(),
             Some(registered.actor_ref)
         );
