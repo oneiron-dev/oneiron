@@ -18,7 +18,7 @@ use super::records::{
 };
 use super::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT,
-    decode_gate_decision, gate_decision_key,
+    gate_decision_key,
 };
 
 impl Store {
@@ -123,8 +123,8 @@ impl Store {
         else {
             return Err(Error::CorruptedIndex("pending gate consent"));
         };
-        let original = decode_gate_decision(&value)?;
-        if original.decision_id != pending.decision_id {
+        let original = self.decode_gate_decision_value(pending.decision_id, &value)?;
+        if original.decision_id != pending.decision_id || original.redacted_at.is_some() {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
         let record = GateDecisionRecord {

@@ -70,6 +70,9 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
         AccessGrantScope::SharedBrief { .. } => Err(invalid_bound(
             "shared brief scopes require Vault::resolve_share_for_view",
         )),
+        AccessGrantScope::DiaryCoreference { .. } => Err(invalid_bound(
+            "diary coreference requires both resident grants at the scoped read door",
+        )),
     }
 }
 
@@ -146,6 +149,11 @@ pub(super) fn outbound_scope_axes(
                 format!("envelope:{}", envelope_ref.to_hex()),
             ],
             Some(identity_ref.to_hex()),
+        ),
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => (
+            "publish".to_owned(),
+            vec!["verb:publish".to_owned()],
+            Some(artifact.clone()),
         ),
         StandingOutboundGrantScope::Contact { contact_ref } => (
             OUTBOUND_SEND_VERB_CLASS.to_owned(),

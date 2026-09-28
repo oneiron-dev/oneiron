@@ -11,15 +11,15 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
-use crate::federation::{
-    FederationDirectionScope, FederationGrant, FederationGrantRole, FederationGrantScope,
-};
+use crate::federation::{FederationGrant, FederationGrantRole, FederationGrantScope, Position};
 use crate::{EntityId, Vault};
 
 pub(super) struct DocumentGrant {
     pub(super) grant: FederationGrant,
     pub(super) fold: AuthorityFold,
-    pub(super) position: FederationDirectionScope,
+    pub(super) position: Position,
+    /// NOTE reads and peer writes use different verb classes on the same row.
+    verb: &'static str,
 }
 
 pub(super) fn authorize_in_txn(
@@ -38,6 +38,9 @@ pub(super) fn authorize_in_txn(
         return Err(selector_err(SelectorError::GrantWrongType));
     }
     let grant = decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+    if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
+    }
     if grant.scope != scope {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
@@ -49,7 +52,10 @@ pub(super) fn authorize_in_txn(
     if writer.is_some()
         && !matches!(
             grant.role,
-            FederationGrantRole::Owner | FederationGrantRole::Admin | FederationGrantRole::Member
+            FederationGrantRole::Owner
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Member
+                | FederationGrantRole::Delegate
         )
     {
         return Err(denied());
@@ -71,6 +77,7 @@ pub(super) fn authorize_in_txn(
         grant,
         fold,
         position,
+        verb: if writer.is_some() { "write" } else { "read" },
     })
 }
 
@@ -82,7 +89,7 @@ pub(in crate::sync) fn admit_document_write_in_txn(
     selector: &SyncSelector,
 ) -> Result<()> {
     let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
-    admit_selected_in_txn(vault, txn, id, scope, selector, &admission)
+    admit_selected_in_txn(vault, txn, id, selector, &admission)
 }
 
 /// Whether `id` sits in the closed subgraph `admission` resolved, read from
@@ -91,14 +98,12 @@ pub(super) fn admit_selected_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-    scope: FederationGrantScope,
     selector: &SyncSelector,
     admission: &DocumentGrant,
 ) -> Result<()> {
     let selection = StoredSelection {
         vault,
         txn,
-        scope,
         selector,
         admission,
     };
@@ -106,7 +111,7 @@ pub(super) fn admit_selected_in_txn(
     let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
         return Err(denied());
     };
-    if facet_filter(&admission.position).is_none() || visible || seed {
+    if facet_filter(admission.position.as_scope()).is_none() || visible || seed {
         return Ok(());
     }
     // The export's facet closure is ONE hop from a selected seed, never a
@@ -144,7 +149,6 @@ pub(super) fn admit_selected_in_txn(
 struct StoredSelection<'a, 'env> {
     vault: &'a Vault,
     txn: &'a heed::RoTxn<'env>,
-    scope: FederationGrantScope,
     selector: &'a SyncSelector,
     admission: &'a DocumentGrant,
 }
@@ -161,6 +165,32 @@ impl StoredSelection<'_, '_> {
             .local_hard_delete_marker_exists_in_txn(self.txn, &id)?
             || self.vault.store.off_record_sessions.contains_entity(&id)?
         {
+            return Ok(None);
+        }
+        // A selector can only narrow a stored grant. Derive the current
+        // digest-bound record position in this transaction, just as export
+        // does; missing or stale stamps cannot acquire authority from a
+        // matching legacy selector (including via the facet closure below).
+        let Some(mut record) =
+            crate::federation::record_scope::scope_for_blob(&self.vault.store, self.txn, id, &raw)?
+        else {
+            return Ok(None);
+        };
+        // Role verbs gate peer writes on top of the stored authority scope.
+        if self.admission.verb == "write"
+            && !crate::federation::grant_allows_content_write(&self.admission.grant, &record)
+        {
+            return Ok(None);
+        }
+        record.verbs = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([self
+            .admission
+            .verb
+            .to_owned()]));
+        if !self.admission.grant.authority_scope.admits(
+            self.admission.verb,
+            &record,
+            &crate::federation::Scope::top(),
+        ) {
             return Ok(None);
         }
         let coreference = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
@@ -188,16 +218,15 @@ impl StoredSelection<'_, '_> {
         let Some(decision) = entity_selector_decision(
             self.vault,
             (&id, &raw),
-            self.scope,
             self.selector,
             &Default::default(),
-            &self.admission.position,
+            self.admission.position.as_scope(),
             &coreference,
         ) else {
             return Ok(None);
         };
         let mut seed = false;
-        if let Some(facets) = facet_filter(&self.admission.position) {
+        if let Some(facets) = facet_filter(self.admission.position.as_scope()) {
             let prefix = crate::vault::edge_kind_prefix(&id, EdgeKind::FacetOf);
             for row in self.vault.store.edges_out.prefix_iter(self.txn, &prefix)? {
                 spend(budget)?;

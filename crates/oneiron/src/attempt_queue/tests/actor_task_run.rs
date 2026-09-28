@@ -364,7 +364,10 @@ mod one_1695_tests {
             updated_at: 10,
             events: Vec::new(),
             manifest: Vec::new(),
+            executor_model: None,
             cancel_state: AttemptCancelState::default(),
+            signals: Vec::new(),
+            asks: Vec::new(),
             placement: None,
             result_ref: None,
         }

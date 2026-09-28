@@ -215,7 +215,7 @@ fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
         let body = vault.get(&id).unwrap().unwrap();
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 21, &body)
+            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 20, &body)
             .commit()
             .unwrap();
     }
@@ -255,7 +255,7 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
     }
     vault
         .batch()
-        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 21, &original)
+        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 20, &original)
         .commit()
         .unwrap();
     let sentinel = EntityId::now();
@@ -342,4 +342,2573 @@ fn gdpr_delete_after_user_delete_purges_a_dag_record() {
         .delete_entity_with_reason(&id, crate::DeleteReason::GdprDelete)
         .unwrap();
     assert!(vault.get(&id).unwrap().is_none());
+}
+
+#[test]
+fn replayed_thread_edges_and_late_turn_body_rebuild_cached_meta() {
+    let (_dir, source, conv, actor) = fixture();
+    let trunk = source
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let reply = source
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let dir = tempfile::tempdir().unwrap();
+    let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    for id in [conv, actor.entity_ref(), trunk] {
+        let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+        let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                h.entity_type,
+                crate::TimeRange {
+                    start: h.occurred_start,
+                    end: h.occurred_end,
+                },
+                h.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()
+            .unwrap();
+    }
+    peer.batch()
+        .edge_checked(&trunk, &conv, 1.0)
+        .commit()
+        .unwrap();
+    assert_eq!(peer.thread_meta(trunk).unwrap(), None);
+    let raw = source.get_raw_unsealed(&reply).unwrap().unwrap();
+    let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    peer.batch()
+        .put_replicated(
+            &reply,
+            h.entity_type,
+            crate::TimeRange {
+                start: h.occurred_start,
+                end: h.occurred_end,
+            },
+            h.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()
+        .unwrap();
+    peer.batch()
+        .edge_checked(&reply, &conv, 1.0)
+        .edge_with_value_fields(&reply, EdgeKind::Parent, &trunk, super::writes::value(20))
+        .edge_with_value_fields(
+            &reply,
+            EdgeKind::RepliesTo,
+            &trunk,
+            super::writes::value(20),
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(peer.thread(trunk).unwrap().replies, [reply]);
+    let meta = peer.thread_meta(trunk).unwrap().unwrap();
+    assert_eq!((meta.root, meta.count), (reply, 1));
+    assert_eq!(peer.thread_meta(trunk).unwrap(), Some(meta));
+}
+
+#[test]
+fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins() {
+    let (_dir, vault, conv, actor) = fixture();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut direct = input(conv, None, true, actor);
+    direct.address = AddressMode::Direct;
+    direct.recipients = vec![person];
+    let direct = vault.append_dag_record(&direct).unwrap().id;
+    let original = vault.get(&direct).unwrap().unwrap();
+    let mut entries = match rmpv::decode::read_value(&mut original.as_slice()).unwrap() {
+        rmpv::Value::Map(entries) => entries,
+        _ => unreachable!(),
+    };
+    for bad in [
+        ("addr", rmpv::Value::from("private")),
+        ("addr", rmpv::Value::from("broadcast")),
+        ("addr", rmpv::Value::from("reply")),
+        ("to", rmpv::Value::Array(vec![])),
+        (
+            "to",
+            rmpv::Value::Array(vec![rmpv::Value::from(conv.to_hex())]),
+        ),
+        (
+            "to",
+            rmpv::Value::Array(vec![
+                rmpv::Value::from(person.to_hex()),
+                rmpv::Value::from(person.to_hex()),
+            ]),
+        ),
+        (
+            "to",
+            rmpv::Value::Array(vec![rmpv::Value::from("not-an-id")]),
+        ),
+    ] {
+        let (_, value) = entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(bad.0))
+            .unwrap();
+        let prior = std::mem::replace(value, bad.1);
+        let mut payload = Vec::new();
+        rmpv::encode::write_value(&mut payload, &rmpv::Value::Map(entries.clone())).unwrap();
+        entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(bad.0))
+            .unwrap()
+            .1 = prior;
+        for replicated in [false, true] {
+            let id = EntityId::now();
+            let batch = vault.batch();
+            let batch = if replicated {
+                batch.put_replicated(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
+            } else {
+                batch.put(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
+            };
+            assert_eq!(
+                batch.commit().unwrap_err().kind(),
+                ErrorKind::InvalidConversationDag
+            );
+            assert_eq!(vault.get_entity_type(&id).unwrap(), None);
+        }
+    }
+    let opaque = EntityId::now();
+    vault
+        .put_entity(&opaque, ENTITY_TYPE_TURN, time(1), 1, b"opaque turn")
+        .unwrap();
+    assert_eq!(
+        vault.get_entity_type(&opaque).unwrap(),
+        Some(ENTITY_TYPE_TURN)
+    );
+}
+
+#[test]
+fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() {
+    let (_dir, source, conv, actor) = fixture();
+    let person = EntityId::now();
+    source
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("recipient"),
+        )
+        .unwrap();
+    let mut direct = input(conv, None, true, actor);
+    direct.address = AddressMode::Direct;
+    direct.recipients = vec![person];
+    let direct = source.append_dag_record(&direct).unwrap().id;
+    let dir = tempfile::tempdir().unwrap();
+    let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    for id in [conv, direct] {
+        let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+        let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                h.entity_type,
+                time(h.occurred_start),
+                h.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()
+            .unwrap();
+    }
+    peer.batch()
+        .edge_checked(&direct, &conv, 1.0)
+        .commit()
+        .unwrap();
+    assert_eq!(
+        peer.migrate_conversation_dag(&conv).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert!(
+        peer.targets(&direct, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .is_empty()
+    );
+    // A pending recipient must skip only this room during maintenance, not
+    // abort migration of another complete conversation on the same vault.
+    let healthy = EntityId::now();
+    let legacy = EntityId::now();
+    peer.put_entity(
+        &healthy,
+        ENTITY_TYPE_CONVERSATION,
+        time(1),
+        1,
+        &body("healthy"),
+    )
+    .unwrap();
+    peer.batch()
+        .put(&legacy, ENTITY_TYPE_TURN, time(2), 2, &body("legacy"))
+        .edge_checked(&legacy, &healthy, 1.0)
+        .commit()
+        .unwrap();
+    let (migrated, skipped) = peer.migrate_all_conversation_dags().unwrap();
+    assert_eq!(migrated, 1);
+    assert_eq!(skipped, [conv]);
+    assert_eq!(peer.head(&healthy).unwrap(), Some(legacy));
+    let raw = source.get_raw_unsealed(&person).unwrap().unwrap();
+    let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    peer.batch()
+        .put_replicated(
+            &person,
+            h.entity_type,
+            time(h.occurred_start),
+            h.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()
+        .unwrap();
+    assert!(peer.migrate_conversation_dag(&conv).unwrap());
+    assert_eq!(
+        peer.targets(&direct, EdgeKind::AddressedTo, None).unwrap(),
+        [person]
+    );
+    assert_eq!(peer.head(&conv).unwrap(), Some(direct));
+}
+
+#[test]
+fn deleted_recipient_does_not_block_conversation_adoption_or_resurrect_edges() {
+    let (_dir, source, conv, actor) = fixture();
+    let person = EntityId::now();
+    source
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut input = input(conv, None, true, actor);
+    input.address = AddressMode::Direct;
+    input.recipients = vec![person];
+    let record = source.append_dag_record(&input).unwrap().id;
+    for reason in [
+        crate::DeleteReason::UserDelete,
+        crate::DeleteReason::GdprDelete,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        for id in [conv, record, person] {
+            let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+            let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+            peer.batch()
+                .put_replicated(
+                    &id,
+                    h.entity_type,
+                    crate::TimeRange {
+                        start: h.occurred_start,
+                        end: h.occurred_end,
+                    },
+                    h.learned_at,
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                )
+                .commit()
+                .unwrap();
+        }
+        peer.batch()
+            .edge_checked(&record, &conv, 1.0)
+            .commit()
+            .unwrap();
+        peer.delete_entity_with_reason(&person, reason).unwrap();
+        assert!(peer.migrate_conversation_dag(&conv).unwrap());
+        assert_eq!(peer.head(&conv).unwrap(), Some(record));
+        assert!(
+            peer.targets(&record, EdgeKind::AddressedTo, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            peer.get(&record).unwrap().unwrap(),
+            source.get(&record).unwrap().unwrap()
+        );
+    }
+}
+
+#[test]
+fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
+    let (_dir, vault, conv, actor) = fixture();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut input = input(conv, None, true, actor);
+    input.address = AddressMode::Direct;
+    input.recipients = vec![person];
+    let id = vault.append_dag_record(&input).unwrap().id;
+    let original = vault.get_raw_unsealed(&id).unwrap().unwrap();
+    let payload = &original[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    assert_eq!(
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_TURN,
+                input.occurred,
+                input.learned_at + 1,
+                payload
+            )
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(vault.get_raw_unsealed(&id).unwrap().unwrap(), original);
+    assert_eq!(
+        vault.targets(&id, EdgeKind::AddressedTo, None).unwrap(),
+        [person]
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_TURN,
+            input.occurred,
+            input.learned_at,
+            payload,
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(vault.get_raw_unsealed(&id).unwrap().unwrap(), original);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn received_parent_survives_public_window_replay_and_adoption() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-regression", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edge_key = crate::sync::bridge::format_edge_key(&second, EdgeKind::Parent, &first);
+    assert!(doc.get_map("edges").get(&edge_key).is_some());
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.get(&first).unwrap().is_some());
+    assert!(peer.get(&second).unwrap().is_some());
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+
+    // Live first-arrival replay (membership and Parent together) has its own
+    // regression below. A raw removal is never an authorized replay door.
+
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert!(!report.conversation_dags_skipped_invalid.contains(&room));
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
+    let (_dir, source, _unused, actor) = fixture();
+    let delayed = EntityId::from_bytes([1; 16]).unwrap();
+    let healthy = EntityId::from_bytes([254; 16]).unwrap();
+    source
+        .create_conversation(
+            delayed,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(delayed, None, true, actor))
+        .unwrap()
+        .id;
+    let session = source.spawn_dag_sub_session(&first, actor).unwrap();
+    let mut worker_input = input(delayed, Some(first), false, actor);
+    worker_input.session = Some(session);
+    let worker = source.append_dag_record(&worker_input).unwrap().id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-regression", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    assert!(doc.get_map("entities").get(&worker.to_hex()).is_some());
+    assert!(doc.get_map("entities").get(&session.to_hex()).is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.get(&worker).unwrap().is_some());
+    assert!(peer.get(&session).unwrap().is_none());
+    assert_eq!(
+        peer.conversation_last_message_snippet(&delayed)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "missing received SESSION must not grant ChildOf preview fallback"
+    );
+    let root = EntityId::now();
+    peer.batch()
+        .put(
+            &healthy,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("healthy"),
+        )
+        .put(&root, ENTITY_TYPE_TURN, time(1), 1, &body("legacy"))
+        .edge_checked(&root, &healthy, 1.0)
+        .commit()
+        .unwrap();
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert!(report.conversation_dags_skipped_invalid.contains(&delayed));
+    assert_eq!(report.conversation_dags_migrated, 1);
+    assert!(!peer.migrate_conversation_dag(&healthy).unwrap());
+    assert!(peer.get(&worker).unwrap().is_some());
+    assert!(peer.get(&session).unwrap().is_none());
+
+    // Skipping did not set the migration marker: the SESSION and its
+    // SpawnedBy edge can arrive in their later window and adoption can retry.
+    let raw = source.get_raw_unsealed(&session).unwrap().unwrap();
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    let later_key = crate::sync::types::WindowKey::from_timestamp(header.learned_at);
+    let later_doc = crate::sync::schema::create_window_doc("dag-session", &later_key);
+    crate::sync::window::reverse_rematerialize(&source, &later_doc, &later_key).unwrap();
+    assert!(
+        later_doc
+            .get_map("entities")
+            .get(&session.to_hex())
+            .is_some()
+    );
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &later_doc,
+        &crate::sync::bridge::Materializer::new(),
+        &later_key,
+    )
+    .unwrap();
+    assert!(peer.migrate_conversation_dag(&delayed).unwrap());
+}
+
+#[cfg(feature = "sync")]
+fn received_cycle_fixture(kind: &str) -> (tempfile::TempDir, Vault, EntityId, EntityId, EntityId) {
+    let (_source_dir, source, _unused, actor) = fixture();
+    let bad = EntityId::from_bytes([1; 16]).unwrap();
+    let good = EntityId::from_bytes([254; 16]).unwrap();
+    source
+        .create_conversation(
+            bad,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(bad, None, true, actor))
+        .unwrap()
+        .id;
+    let session = (kind == "session").then(|| source.spawn_dag_sub_session(&root, actor).unwrap());
+    let (first, second) = if kind == "thread" {
+        let first = source
+            .reply_in_thread(root, &input(bad, Some(root), false, actor))
+            .unwrap()
+            .id;
+        let second = source
+            .reply_in_thread(root, &input(bad, Some(first), false, actor))
+            .unwrap()
+            .id;
+        (first, second)
+    } else {
+        let mut first_input = input(bad, Some(root), session.is_none(), actor);
+        first_input.session = session;
+        let first = source.append_dag_record(&first_input).unwrap().id;
+        let mut second_input = input(bad, Some(first), session.is_none(), actor);
+        second_input.session = session;
+        let second = source.append_dag_record(&second_input).unwrap().id;
+        (first, second)
+    };
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("received-cycle", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let original = crate::sync::bridge::format_edge_key(&first, EdgeKind::Parent, &root);
+    assert!(edges.get(&original).is_some());
+    edges.delete(&original).unwrap();
+    let forged = crate::sync::bridge::format_edge_key(&first, EdgeKind::Parent, &second);
+    let value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 20, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(&edges, &forged, &value).unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.get(&first).unwrap().is_some());
+    assert!(peer.get(&second).unwrap().is_some());
+    if let Some(session) = session {
+        let raw = source.get_raw_unsealed(&session).unwrap().unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        let later_key = crate::sync::types::WindowKey::from_timestamp(header.learned_at);
+        let later_doc = crate::sync::schema::create_window_doc("received-session", &later_key);
+        crate::sync::window::reverse_rematerialize(&source, &later_doc, &later_key).unwrap();
+        crate::sync::window::forward_rematerialize(
+            &peer,
+            &later_doc,
+            &crate::sync::bridge::Materializer::new(),
+            &later_key,
+        )
+        .unwrap();
+        assert!(
+            peer.edge_exists(&session, EdgeKind::SpawnedBy, &root)
+                .unwrap()
+        );
+    }
+    let healthy_root = EntityId::now();
+    peer.batch()
+        .put(
+            &good,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("healthy"),
+        )
+        .put(&healthy_root, ENTITY_TYPE_TURN, time(1), 1, &body("root"))
+        .edge_checked(&healthy_root, &good, 1.0)
+        .commit()
+        .unwrap();
+    (dir, peer, bad, good, first)
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn received_sub_session_cycle_skips_only_its_conversation() {
+    let (_dir, peer, bad, good, _) = received_cycle_fixture("session");
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_skipped_invalid, [bad]);
+    assert!(!peer.migrate_conversation_dag(&good).unwrap());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn received_thread_cycle_is_not_marked_migrated() {
+    let (_dir, peer, bad, good, first) = received_cycle_fixture("thread");
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_skipped_invalid, [bad]);
+    assert!(!peer.migrate_conversation_dag(&good).unwrap());
+    assert!(peer.migrate_conversation_dag(&bad).is_err());
+    assert!(
+        peer.resolve_dag_scope(&scope(bad, ScopePath::Branch(first), false))
+            .is_err()
+    );
+}
+
+#[cfg(feature = "sync")]
+fn late_parent_cycle_is_rejected(live_delta: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("late-parent", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer = live_delta.then(|| {
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str())
+    });
+    let back_edge = crate::sync::bridge::format_edge_key(&first, EdgeKind::Parent, &second);
+    let value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 20, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(&doc.get_map("edges"), &back_edge, &value).unwrap();
+    doc.commit();
+    if !live_delta {
+        crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    }
+    assert!(!peer.edge_exists(&first, EdgeKind::Parent, &second).unwrap());
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert!(!report.conversation_dags_skipped_invalid.contains(&room));
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn late_parent_cycle_cannot_poison_adopted_main_line_via_observer() {
+    late_parent_cycle_is_rejected(true);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn late_parent_cycle_cannot_poison_adopted_main_line_via_forward_remat() {
+    late_parent_cycle_is_rejected(false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn honest_parent_and_childof_in_one_observer_delta_are_both_received() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-honest-batch", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let mut exported = Vec::new();
+    edges.for_each(|key, value| {
+        if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) = value {
+            exported.push((key.to_string(), bytes.to_vec()));
+        }
+    });
+    for (edge, _) in &exported {
+        edges.delete(edge).unwrap();
+    }
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.get(&first).unwrap().is_some());
+    assert!(peer.get(&second).unwrap().is_some());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    for (edge, value) in exported {
+        crate::sync::loro_support::map_insert_bytes(&edges, &edge, &value).unwrap();
+    }
+    doc.commit();
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn two_parent_candidates_in_one_delta_keep_single_parent() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let third = source
+        .append_dag_record(&input(room, Some(second), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-two-parents", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let original = crate::sync::bridge::format_edge_key(&third, EdgeKind::Parent, &second);
+    doc.get_map("edges").delete(&original).unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.edge_exists(&third, EdgeKind::ChildOf, &room).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    let bytes =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 20, None, None)
+            .unwrap();
+    let other = crate::sync::bridge::format_edge_key(&third, EdgeKind::Parent, &first);
+    let edges = doc.get_map("edges");
+    crate::sync::loro_support::map_insert_bytes(&edges, &original, &bytes).unwrap();
+    crate::sync::loro_support::map_insert_bytes(&edges, &other, &bytes).unwrap();
+    doc.commit();
+    assert_eq!(
+        peer.edges_out(&third)
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Parent)
+            .count(),
+        1
+    );
+    assert!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(third), false))
+            .is_ok()
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn same_delta_parent_cycle_cannot_poison_adopted_branch() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-batched-cycle", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+    let third = source
+        .append_dag_record(&input(room, Some(second), true, actor))
+        .unwrap()
+        .id;
+    let fourth = source
+        .append_dag_record(&input(room, Some(third), true, actor))
+        .unwrap()
+        .id;
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    edges
+        .delete(&crate::sync::bridge::format_edge_key(
+            &third,
+            EdgeKind::Parent,
+            &second,
+        ))
+        .unwrap();
+    edges
+        .delete(&crate::sync::bridge::format_edge_key(
+            &fourth,
+            EdgeKind::Parent,
+            &third,
+        ))
+        .unwrap();
+    doc.commit();
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.edge_exists(&third, EdgeKind::ChildOf, &room).unwrap());
+    assert!(peer.edge_exists(&fourth, EdgeKind::ChildOf, &room).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    let bytes =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 20, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(
+        &edges,
+        &crate::sync::bridge::format_edge_key(&third, EdgeKind::Parent, &fourth),
+        &bytes,
+    )
+    .unwrap();
+    crate::sync::loro_support::map_insert_bytes(
+        &edges,
+        &crate::sync::bridge::format_edge_key(&fourth, EdgeKind::Parent, &third),
+        &bytes,
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        !(peer.edge_exists(&third, EdgeKind::Parent, &fourth).unwrap()
+            && peer.edge_exists(&fourth, EdgeKind::Parent, &third).unwrap())
+    );
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn raw_parent_removal_cannot_truncate_adopted_main_line() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-parent-removal", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    doc.get_map("edges")
+        .delete(&crate::sync::bridge::format_edge_key(
+            &second,
+            EdgeKind::Parent,
+            &first,
+        ))
+        .unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+    // Soft deletion retains ancestry as a shell; the validated hard purge
+    // retires the TURN and its incident edge, without a raw CRDT edge delete.
+    peer.delete_entity_with_reason(&second, crate::DeleteReason::UserDelete)
+        .unwrap();
+    peer.delete_entity_with_reason(&second, crate::DeleteReason::GdprDelete)
+        .unwrap();
+    assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn unchanged_parent_retries_when_its_childof_dependencies_arrive() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("unchanged-parent", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let mut exported = Vec::new();
+    edges.for_each(|key, value| {
+        if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf)) = value {
+            exported.push((key.to_string(), buf.to_vec()));
+        }
+    });
+    for (key, _) in &exported {
+        edges.delete(key).unwrap();
+    }
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    let parent = crate::sync::bridge::format_edge_key(&second, EdgeKind::Parent, &first);
+    let value = &exported.iter().find(|(edge, _)| edge == &parent).unwrap().1;
+    crate::sync::loro_support::map_insert_bytes(&edges, &parent, value).unwrap();
+    doc.commit();
+    assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    for (edge, buf) in &exported {
+        if edge != &parent {
+            crate::sync::loro_support::map_insert_bytes(&edges, edge, buf).unwrap();
+        }
+    }
+    doc.commit();
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn deferred_parent_marker_survives_partial_membership_drain() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("partial-parent", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let mut exported = Vec::new();
+    edges.for_each(|key, value| {
+        if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf)) = value {
+            exported.push((key.to_string(), buf.to_vec()));
+        }
+    });
+    for (edge, _) in &exported {
+        edges.delete(edge).unwrap();
+    }
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    let observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    let parent = crate::sync::bridge::format_edge_key(&second, EdgeKind::Parent, &first);
+    let source_membership = crate::sync::bridge::format_edge_key(&second, EdgeKind::ChildOf, &room);
+    let parent_bytes = &exported.iter().find(|(edge, _)| edge == &parent).unwrap().1;
+    let membership_bytes = &exported
+        .iter()
+        .find(|(edge, _)| edge == &source_membership)
+        .unwrap()
+        .1;
+    crate::sync::loro_support::map_insert_bytes(&edges, &parent, parent_bytes).unwrap();
+    doc.commit();
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+    drop(observer);
+    crate::sync::loro_support::map_insert_bytes(&edges, &source_membership, membership_bytes)
+        .unwrap();
+    doc.commit();
+    let loaded =
+        crate::sync::window::LoadedWindow::from_doc(doc, key.clone(), &peer, &materializer);
+    loaded.persist_state(&peer).unwrap();
+    let report = crate::sync::drain_remat_markers(&peer, "partial-parent", &materializer).unwrap();
+    assert!(peer.edge_exists(&second, EdgeKind::ChildOf, &room).unwrap());
+    assert!(!peer.edge_exists(&first, EdgeKind::ChildOf, &room).unwrap());
+    assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert!(report.still_pending.contains(&key.as_str().to_owned()));
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn soft_deleted_turn_retains_parent_against_raw_removal() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("soft-parent", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    peer.main_line(&room, super::DagPageRequest::default())
+        .unwrap();
+    peer.delete_entity_with_reason(&second, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    doc.get_map("edges")
+        .delete(&crate::sync::bridge::format_edge_key(
+            &second,
+            EdgeKind::Parent,
+            &first,
+        ))
+        .unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn received_parent_respects_full_ancestor_depth() {
+    let (_dir, source, _unused, actor) = fixture();
+    let extra_room = EntityId::now();
+    source
+        .create_conversation(
+            extra_room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let extra = source
+        .append_dag_record(&input(extra_room, None, true, actor))
+        .unwrap()
+        .id;
+    let over_limit = source
+        .append_dag_record(&input(extra_room, Some(extra), true, actor))
+        .unwrap()
+        .id;
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let room = EntityId::now();
+    peer.put_entity(
+        &room,
+        ENTITY_TYPE_CONVERSATION,
+        time(1),
+        1,
+        &body("legacy room"),
+    )
+    .unwrap();
+    let records: Vec<_> = (1u128..crate::limits::MAX_ANCESTOR_DEPTH as u128)
+        .map(|n| EntityId::from_bytes(((0x8100000000000000u128 << 64) | n).to_be_bytes()).unwrap())
+        .collect();
+    for chunk in records.chunks(500) {
+        let mut batch = peer.batch();
+        for id in chunk {
+            let at = u128::from_be_bytes(*id.as_bytes()) as u64;
+            batch = batch
+                .put(id, ENTITY_TYPE_TURN, time(at), 1, &body("legacy"))
+                .edge_checked(id, &room, 1.0);
+        }
+        batch.commit().unwrap();
+    }
+    assert!(peer.migrate_conversation_dag(&room).unwrap());
+    let head = *records.last().unwrap();
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(head), false))
+            .unwrap()
+            .records
+            .len(),
+        crate::limits::MAX_ANCESTOR_DEPTH - 1
+    );
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let exported = crate::sync::schema::create_window_doc("depth-source", &key);
+    crate::sync::window::reverse_rematerialize(&source, &exported, &key).unwrap();
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(raw)) =
+        exported.get_map("entities").get(&extra.to_hex()).unwrap()
+    else {
+        panic!("exported TURN body");
+    };
+    let doc = crate::sync::schema::create_window_doc("depth-receiver", &key);
+    crate::sync::loro_support::map_insert_bytes(&doc.get_map("entities"), &extra.to_hex(), &raw)
+        .unwrap();
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(over_raw)) = exported
+        .get_map("entities")
+        .get(&over_limit.to_hex())
+        .unwrap()
+    else {
+        panic!("exported over-limit TURN body");
+    };
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("entities"),
+        &over_limit.to_hex(),
+        &over_raw,
+    )
+    .unwrap();
+    doc.commit();
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    let child_value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, 1, None, None)
+            .unwrap();
+    let parent_value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 1, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &crate::sync::bridge::format_edge_key(&extra, EdgeKind::ChildOf, &room),
+        &child_value,
+    )
+    .unwrap();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &crate::sync::bridge::format_edge_key(&extra, EdgeKind::Parent, &head),
+        &parent_value,
+    )
+    .unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&extra, EdgeKind::ChildOf, &room).unwrap());
+    assert!(peer.edge_exists(&extra, EdgeKind::Parent, &head).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(extra), false))
+            .unwrap()
+            .records
+            .len(),
+        crate::limits::MAX_ANCESTOR_DEPTH,
+    );
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &crate::sync::bridge::format_edge_key(&over_limit, EdgeKind::ChildOf, &room),
+        &child_value,
+    )
+    .unwrap();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &crate::sync::bridge::format_edge_key(&over_limit, EdgeKind::Parent, &extra),
+        &parent_value,
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        peer.edge_exists(&over_limit, EdgeKind::ChildOf, &room)
+            .unwrap()
+    );
+    assert!(
+        !peer
+            .edge_exists(&over_limit, EdgeKind::Parent, &extra)
+            .unwrap()
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn forged_replies_to_without_pointer_remains_rejected() {
+    let (_dir, source, room, actor) = fixture();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("forged-reply", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    let value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::RepliesTo, 1.0, 1, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &crate::sync::bridge::format_edge_key(&second, EdgeKind::RepliesTo, &first),
+        &value,
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        !peer
+            .edge_exists(&second, EdgeKind::RepliesTo, &first)
+            .unwrap()
+    );
+}
+
+#[cfg(feature = "sync")]
+fn cross_session_parent_is_rejected(live_delta: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("cross-session-parent", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, trunk]
+    );
+    let session_a = source.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let session_b = source.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut a_input = input(room, Some(trunk), false, actor);
+    a_input.session = Some(session_a);
+    let worker_a = source.append_dag_record(&a_input).unwrap().id;
+    let mut b_input = input(room, Some(trunk), false, actor);
+    b_input.session = Some(session_b);
+    let worker_b = source.append_dag_record(&b_input).unwrap().id;
+    let current_key = crate::sync::types::WindowKey::from_timestamp(
+        crate::batch::EntityMetadataHeader::parse(
+            &source.get_raw_unsealed(&session_a).unwrap().unwrap(),
+        )
+        .unwrap()
+        .learned_at,
+    );
+    let sessions = crate::sync::schema::create_window_doc("cross-session-current", &current_key);
+    crate::sync::window::reverse_rematerialize(&source, &sessions, &current_key).unwrap();
+    crate::sync::window::forward_rematerialize(&peer, &sessions, &materializer, &current_key)
+        .unwrap();
+    assert!(
+        peer.edge_exists(&session_a, EdgeKind::SpawnedBy, &trunk)
+            .unwrap()
+    );
+    assert!(
+        peer.edge_exists(&session_b, EdgeKind::SpawnedBy, &trunk)
+            .unwrap()
+    );
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    doc.get_map("edges")
+        .delete(&crate::sync::bridge::format_edge_key(
+            &worker_a,
+            EdgeKind::Parent,
+            &trunk,
+        ))
+        .unwrap();
+    doc.commit();
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    assert!(
+        peer.edge_exists(&worker_b, EdgeKind::Parent, &trunk)
+            .unwrap()
+    );
+    let _observer = live_delta.then(|| {
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str())
+    });
+    let value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 20, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("edges"),
+        &crate::sync::bridge::format_edge_key(&worker_a, EdgeKind::Parent, &worker_b),
+        &value,
+    )
+    .unwrap();
+    doc.commit();
+    if !live_delta {
+        crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    }
+    assert!(
+        !peer
+            .edge_exists(&worker_a, EdgeKind::Parent, &worker_b)
+            .unwrap()
+    );
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::SubSession(session_b), false))
+            .unwrap()
+            .records,
+        [worker_b]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn cross_session_parent_is_rejected_via_observer() {
+    cross_session_parent_is_rejected(true);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn cross_session_parent_is_rejected_via_forward_remat() {
+    cross_session_parent_is_rejected(false);
+}
+
+#[cfg(feature = "sync")]
+fn ordinary_session_trunk_replays(live_delta: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let session = match source.mint_session(1).unwrap() {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        _ => panic!("fresh session"),
+    };
+    let mut member = input(room, Some(second), true, actor);
+    member.session = Some(session);
+    let third = source.append_dag_record(&member).unwrap().id;
+    let fourth = source
+        .append_dag_record(&input(room, Some(third), true, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        source
+            .main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second, third, fourth]
+    );
+    assert!(
+        !source
+            .edges_out(&session)
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == EdgeKind::SpawnedBy)
+    );
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("ordinary-session", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let mut exported = Vec::new();
+    if live_delta {
+        edges.for_each(|key, value| {
+            if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf)) = value {
+                exported.push((key.to_string(), buf.to_vec()));
+            }
+        });
+        for (edge, _) in &exported {
+            edges.delete(edge).unwrap();
+        }
+        doc.commit();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    if live_delta {
+        let _observer =
+            crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+        for (edge, value) in exported {
+            crate::sync::loro_support::map_insert_bytes(&edges, &edge, &value).unwrap();
+        }
+        doc.commit();
+    }
+    assert!(peer.get(&session).unwrap().is_some());
+    assert!(peer.edge_exists(&third, EdgeKind::Parent, &second).unwrap());
+    assert!(peer.edge_exists(&fourth, EdgeKind::Parent, &third).unwrap());
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second, third, fourth]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn ordinary_session_trunk_survives_forward_replay() {
+    ordinary_session_trunk_replays(false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn ordinary_session_trunk_survives_live_replay() {
+    ordinary_session_trunk_replays(true);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn missing_target_body_registers_parent_retry_and_wakes_on_membership() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("late-parent-endpoint", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(body)) =
+        entities.get(&first.to_hex()).unwrap()
+    else {
+        panic!("root body")
+    };
+    let membership_key = crate::sync::bridge::format_edge_key(&first, EdgeKind::ChildOf, &room);
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(membership)) =
+        edges.get(&membership_key).unwrap()
+    else {
+        panic!("root ChildOf")
+    };
+    entities.delete(&first.to_hex()).unwrap();
+    edges.delete(&membership_key).unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    crate::sync::loro_support::map_insert_bytes(&entities, &first.to_hex(), &body).unwrap();
+    crate::sync::loro_support::map_insert_bytes(&edges, &membership_key, &membership).unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn delayed_intermediate_parent_wakes_unchanged_worker_parent() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("late-intermediary", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, trunk]
+    );
+    let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut worker = input(room, Some(trunk), false, actor);
+    worker.session = Some(session);
+    let one = source.append_dag_record(&worker).unwrap().id;
+    worker.parent = Some(one);
+    let two = source.append_dag_record(&worker).unwrap().id;
+    let current = crate::sync::types::WindowKey::from_timestamp(
+        crate::batch::EntityMetadataHeader::parse(
+            &source.get_raw_unsealed(&session).unwrap().unwrap(),
+        )
+        .unwrap()
+        .learned_at,
+    );
+    let sessions = crate::sync::schema::create_window_doc("late-intermediary-session", &current);
+    crate::sync::window::reverse_rematerialize(&source, &sessions, &current).unwrap();
+    crate::sync::window::forward_rematerialize(&peer, &sessions, &materializer, &current).unwrap();
+    assert!(
+        peer.edge_exists(&session, EdgeKind::SpawnedBy, &trunk)
+            .unwrap()
+    );
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let first_key = crate::sync::bridge::format_edge_key(&one, EdgeKind::Parent, &trunk);
+    let second_key = crate::sync::bridge::format_edge_key(&two, EdgeKind::Parent, &one);
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(first_val)) =
+        edges.get(&first_key).unwrap()
+    else {
+        panic!("first Parent")
+    };
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(second_val)) =
+        edges.get(&second_key).unwrap()
+    else {
+        panic!("second Parent")
+    };
+    edges.delete(&first_key).unwrap();
+    edges.delete(&second_key).unwrap();
+    doc.commit();
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    crate::sync::loro_support::map_insert_bytes(&edges, &second_key, &second_val).unwrap();
+    doc.commit();
+    assert!(!peer.edge_exists(&two, EdgeKind::Parent, &one).unwrap());
+    crate::sync::loro_support::map_insert_bytes(&edges, &first_key, &first_val).unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&one, EdgeKind::Parent, &trunk).unwrap());
+    assert!(peer.edge_exists(&two, EdgeKind::Parent, &one).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::SubSession(session), false))
+            .unwrap()
+            .records,
+        [one, two]
+    );
+}
+
+#[cfg(feature = "sync")]
+fn missing_target_in_later_window_recovers(live_delta: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut root_input = input(room, None, true, actor);
+    root_input.occurred = time(now);
+    root_input.learned_at = now;
+    let root = source.append_dag_record(&root_input).unwrap().id;
+    let mut child_input = input(room, Some(root), true, actor);
+    child_input.occurred = time(now + 1);
+    let child = source.append_dag_record(&child_input).unwrap().id;
+    let early_key = crate::sync::types::WindowKey::new("1970-01");
+    let early_doc = crate::sync::schema::create_window_doc("early-child", &early_key);
+    crate::sync::window::reverse_rematerialize(&source, &early_doc, &early_key).unwrap();
+    assert!(early_doc.get_map("entities").get(&child.to_hex()).is_some());
+    assert!(early_doc.get_map("entities").get(&root.to_hex()).is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &early_doc, &materializer, &early_key)
+        .unwrap();
+    assert!(peer.get(&child).unwrap().is_some());
+    assert!(!peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&early_key.as_str().to_owned())
+    );
+    let later_key = crate::sync::types::WindowKey::from_timestamp(now);
+    let later_doc = crate::sync::schema::create_window_doc("late-root", &later_key);
+    crate::sync::window::reverse_rematerialize(&source, &later_doc, &later_key).unwrap();
+    if live_delta {
+        let entities = later_doc.get_map("entities");
+        let edges = later_doc.get_map("edges");
+        let mut exported_entities = Vec::new();
+        let mut exported_edges = Vec::new();
+        entities.for_each(|key, value| {
+            if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf)) = value {
+                exported_entities.push((key.to_string(), buf.to_vec()));
+            }
+        });
+        edges.for_each(|key, value| {
+            if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf)) = value {
+                exported_edges.push((key.to_string(), buf.to_vec()));
+            }
+        });
+        for (key, _) in &exported_entities {
+            entities.delete(key).unwrap();
+        }
+        for (key, _) in &exported_edges {
+            edges.delete(key).unwrap();
+        }
+        later_doc.commit();
+        crate::sync::window::forward_rematerialize(&peer, &later_doc, &materializer, &later_key)
+            .unwrap();
+        let _observer = crate::sync::bridge::register_observer_b(
+            &later_doc,
+            &peer,
+            &materializer,
+            later_key.as_str(),
+        );
+        for (key, value) in exported_entities {
+            crate::sync::loro_support::map_insert_bytes(&entities, &key, &value).unwrap();
+        }
+        for (key, value) in exported_edges {
+            crate::sync::loro_support::map_insert_bytes(&edges, &key, &value).unwrap();
+        }
+        later_doc.commit();
+    } else {
+        crate::sync::window::forward_rematerialize(&peer, &later_doc, &materializer, &later_key)
+            .unwrap();
+    }
+    assert!(peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(child), false))
+            .unwrap()
+            .records,
+        [root, child]
+    );
+    assert!(
+        !crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&early_key.as_str().to_owned())
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn missing_target_in_later_window_recovers_via_forward() {
+    missing_target_in_later_window_recovers(false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn missing_target_in_later_window_recovers_via_observer() {
+    missing_target_in_later_window_recovers(true);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn reverse_parent_delivery_wakes_worker_chain_to_fixed_point() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = source
+        .append_dag_record(&input(room, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("reverse-worker-chain", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    peer.main_line(&room, super::DagPageRequest::default())
+        .unwrap();
+    let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut worker = input(room, Some(trunk), false, actor);
+    worker.session = Some(session);
+    let one = source.append_dag_record(&worker).unwrap().id;
+    worker.parent = Some(one);
+    let two = source.append_dag_record(&worker).unwrap().id;
+    worker.parent = Some(two);
+    let three = source.append_dag_record(&worker).unwrap().id;
+    let current = crate::sync::types::WindowKey::from_timestamp(
+        crate::batch::EntityMetadataHeader::parse(
+            &source.get_raw_unsealed(&session).unwrap().unwrap(),
+        )
+        .unwrap()
+        .learned_at,
+    );
+    let sessions = crate::sync::schema::create_window_doc("reverse-worker-session", &current);
+    crate::sync::window::reverse_rematerialize(&source, &sessions, &current).unwrap();
+    crate::sync::window::forward_rematerialize(&peer, &sessions, &materializer, &current).unwrap();
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let keys = [
+        crate::sync::bridge::format_edge_key(&one, EdgeKind::Parent, &trunk),
+        crate::sync::bridge::format_edge_key(&two, EdgeKind::Parent, &one),
+        crate::sync::bridge::format_edge_key(&three, EdgeKind::Parent, &two),
+    ];
+    let values: Vec<_> = keys
+        .iter()
+        .map(|key| {
+            let loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf)) =
+                edges.get(key).unwrap()
+            else {
+                panic!("exported worker Parent")
+            };
+            buf.to_vec()
+        })
+        .collect();
+    for key in &keys {
+        edges.delete(key).unwrap();
+    }
+    doc.commit();
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    for index in (0..keys.len()).rev() {
+        crate::sync::loro_support::map_insert_bytes(&edges, &keys[index], &values[index]).unwrap();
+        doc.commit();
+    }
+    assert!(peer.edge_exists(&three, EdgeKind::Parent, &two).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::SubSession(session), false))
+            .unwrap()
+            .records,
+        [one, two, three]
+    );
+    assert!(
+        !crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn deferred_parent_resumes_after_vault_reopen() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut root_input = input(room, None, true, actor);
+    root_input.occurred = time(now);
+    root_input.learned_at = now;
+    let root = source.append_dag_record(&root_input).unwrap().id;
+    let mut child_input = input(room, Some(root), true, actor);
+    child_input.occurred = time(now + 1);
+    let child = source.append_dag_record(&child_input).unwrap().id;
+    let early_key = crate::sync::types::WindowKey::new("1970-01");
+    let early_doc = crate::sync::schema::create_window_doc("reopen-early", &early_key);
+    crate::sync::window::reverse_rematerialize(&source, &early_doc, &early_key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    {
+        let peer =
+            std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+        crate::sync::window::forward_rematerialize(&peer, &early_doc, &materializer, &early_key)
+            .unwrap();
+        assert!(!peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+        assert!(
+            crate::sync::pending_remat_windows(&peer)
+                .unwrap()
+                .contains(&early_key.as_str().to_owned())
+        );
+        let loaded = crate::sync::window::LoadedWindow::from_doc(
+            early_doc,
+            early_key.clone(),
+            &peer,
+            &materializer,
+        );
+        loaded.persist_state(&peer).unwrap();
+    }
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&early_key.as_str().to_owned())
+    );
+    let current = crate::sync::types::WindowKey::from_timestamp(now);
+    let later_doc = crate::sync::schema::create_window_doc("reopen-later", &current);
+    crate::sync::window::reverse_rematerialize(&source, &later_doc, &current).unwrap();
+    crate::sync::window::forward_rematerialize(&peer, &later_doc, &materializer, &current).unwrap();
+    assert!(peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(child), false))
+            .unwrap()
+            .records,
+        [root, child]
+    );
+    assert!(
+        !crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&early_key.as_str().to_owned())
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn childof_before_its_turn_body_wakes_unchanged_parent() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let child = source
+        .append_dag_record(&input(room, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("childof-before-body", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let entities = doc.get_map("entities");
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(root_body)) =
+        entities.get(&root.to_hex()).unwrap()
+    else {
+        panic!("writer root")
+    };
+    entities.delete(&root.to_hex()).unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    assert!(!peer.edge_exists(&root, EdgeKind::ChildOf, &room).unwrap());
+    assert!(!peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    crate::sync::loro_support::map_insert_bytes(&entities, &root.to_hex(), &root_body).unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&root, EdgeKind::ChildOf, &room).unwrap());
+    assert!(peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(child), false))
+            .unwrap()
+            .records,
+        [root, child]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn spawned_by_before_its_session_body_wakes_worker_parent() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = source
+        .append_dag_record(&input(room, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut worker_input = input(room, Some(trunk), false, actor);
+    worker_input.session = Some(session);
+    let worker = source.append_dag_record(&worker_input).unwrap().id;
+    let early_key = crate::sync::types::WindowKey::new("1970-01");
+    let early = crate::sync::schema::create_window_doc("spawn-before-session-early", &early_key);
+    crate::sync::window::reverse_rematerialize(&source, &early, &early_key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &early, &materializer, &early_key).unwrap();
+    assert!(!peer.edge_exists(&worker, EdgeKind::Parent, &trunk).unwrap());
+    let current = crate::sync::types::WindowKey::from_timestamp(
+        crate::batch::EntityMetadataHeader::parse(
+            &source.get_raw_unsealed(&session).unwrap().unwrap(),
+        )
+        .unwrap()
+        .learned_at,
+    );
+    let doc = crate::sync::schema::create_window_doc("spawn-before-session-current", &current);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &current).unwrap();
+    let entities = doc.get_map("entities");
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(session_body)) =
+        entities.get(&session.to_hex()).unwrap()
+    else {
+        panic!("writer session")
+    };
+    entities.delete(&session.to_hex()).unwrap();
+    doc.commit();
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &current).unwrap();
+    assert!(
+        !peer
+            .edge_exists(&session, EdgeKind::SpawnedBy, &trunk)
+            .unwrap()
+    );
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, current.as_str());
+    crate::sync::loro_support::map_insert_bytes(&entities, &session.to_hex(), &session_body)
+        .unwrap();
+    doc.commit();
+    assert!(
+        peer.edge_exists(&session, EdgeKind::SpawnedBy, &trunk)
+            .unwrap()
+    );
+    assert!(peer.edge_exists(&worker, EdgeKind::Parent, &trunk).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::SubSession(session), false))
+            .unwrap()
+            .records,
+        [worker]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn malformed_parent_replacement_retires_exact_pending_work() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let child = source
+        .append_dag_record(&input(room, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("malformed-pending-parent", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(root_body)) =
+        entities.get(&root.to_hex()).unwrap()
+    else {
+        panic!("root body")
+    };
+    let childof = crate::sync::bridge::format_edge_key(&root, EdgeKind::ChildOf, &room);
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(membership)) =
+        edges.get(&childof).unwrap()
+    else {
+        panic!("root membership")
+    };
+    entities.delete(&root.to_hex()).unwrap();
+    edges.delete(&childof).unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    let parent = crate::sync::bridge::format_edge_key(&child, EdgeKind::Parent, &root);
+    crate::sync::loro_support::map_insert_bytes(&edges, &parent, &[1, 2, 3]).unwrap();
+    doc.commit();
+    assert!(
+        !crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+    crate::sync::loro_support::map_insert_bytes(&entities, &root.to_hex(), &root_body).unwrap();
+    crate::sync::loro_support::map_insert_bytes(&edges, &childof, &membership).unwrap();
+    doc.commit();
+    assert!(!peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn pending_parent_blocks_adoption_until_root_arrives() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::from_bytes([1; 16]).unwrap();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let child = source
+        .append_dag_record(&input(room, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("pending-adoption", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(root_body)) =
+        entities.get(&root.to_hex()).unwrap()
+    else {
+        panic!("root body")
+    };
+    let childof = crate::sync::bridge::format_edge_key(&root, EdgeKind::ChildOf, &room);
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(membership)) =
+        edges.get(&childof).unwrap()
+    else {
+        panic!("root membership")
+    };
+    entities.delete(&root.to_hex()).unwrap();
+    edges.delete(&childof).unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    assert!(peer.get(&child).unwrap().is_some());
+    assert_eq!(
+        peer.conversation_last_message_snippet(&room)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "pending received Parent must not grant ChildOf preview fallback"
+    );
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+    let healthy = EntityId::from_bytes([254; 16]).unwrap();
+    let healthy_root = EntityId::now();
+    peer.batch()
+        .put(
+            &healthy,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("healthy"),
+        )
+        .put(&healthy_root, ENTITY_TYPE_TURN, time(1), 1, &body("root"))
+        .edge_checked(&healthy_root, &healthy, 1.0)
+        .commit()
+        .unwrap();
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert!(report.conversation_dags_skipped_invalid.contains(&room));
+    assert!(!peer.migrate_conversation_dag(&healthy).unwrap());
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    crate::sync::loro_support::map_insert_bytes(&entities, &root.to_hex(), &root_body).unwrap();
+    crate::sync::loro_support::map_insert_bytes(&edges, &childof, &membership).unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&child, EdgeKind::Parent, &root).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(child), false))
+            .unwrap()
+            .records,
+        [root, child]
+    );
+    assert!(peer.migrate_conversation_dag(&room).is_ok());
+}
+
+#[cfg(feature = "sync")]
+fn cross_window_spawn_anchor_late(live_delta: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = source
+        .append_dag_record(&input(room, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let session = source.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut worker_input = input(room, Some(trunk), false, actor);
+    worker_input.session = Some(session);
+    let worker = source.append_dag_record(&worker_input).unwrap().id;
+    let early_key = crate::sync::types::WindowKey::new("1970-01");
+    let early = crate::sync::schema::create_window_doc("anchor-turns", &early_key);
+    crate::sync::window::reverse_rematerialize(&source, &early, &early_key).unwrap();
+    let current = crate::sync::types::WindowKey::from_timestamp(
+        crate::batch::EntityMetadataHeader::parse(
+            &source.get_raw_unsealed(&session).unwrap().unwrap(),
+        )
+        .unwrap()
+        .learned_at,
+    );
+    let sessions = crate::sync::schema::create_window_doc("anchor-session", &current);
+    crate::sync::window::reverse_rematerialize(&source, &sessions, &current).unwrap();
+    assert!(sessions.get_map("entities").get(&trunk.to_hex()).is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    crate::sync::window::forward_rematerialize(&peer, &sessions, &materializer, &current).unwrap();
+    assert!(
+        !peer
+            .edge_exists(&session, EdgeKind::SpawnedBy, &trunk)
+            .unwrap()
+    );
+    if live_delta {
+        let received = crate::sync::schema::create_window_doc("anchor-turns-live", &early_key);
+        let _observer = crate::sync::bridge::register_observer_b(
+            &received,
+            &peer,
+            &materializer,
+            early_key.as_str(),
+        );
+        for name in ["entities", "edges"] {
+            let dst = received.get_map(name);
+            early.get_map(name).for_each(|key, value| {
+                if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf)) = value {
+                    crate::sync::loro_support::map_insert_bytes(&dst, key, &buf).unwrap();
+                }
+            });
+        }
+        received.commit();
+    } else {
+        crate::sync::window::forward_rematerialize(&peer, &early, &materializer, &early_key)
+            .unwrap();
+    }
+    assert!(peer.get(&worker).unwrap().is_some());
+    assert!(peer.get(&trunk).unwrap().is_some());
+    assert!(
+        peer.edge_exists(&session, EdgeKind::SpawnedBy, &trunk)
+            .unwrap()
+    );
+    assert!(peer.edge_exists(&worker, EdgeKind::Parent, &trunk).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::SubSession(session), false))
+            .unwrap()
+            .records,
+        [worker]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn cross_window_spawned_by_target_late_forward() {
+    cross_window_spawn_anchor_late(false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn cross_window_spawned_by_target_late_observer() {
+    cross_window_spawn_anchor_late(true);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
+    let (_dir, source, room, actor) = fixture();
+    let root = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = source
+        .append_dag_record(&input(room, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let initial = crate::sync::schema::create_window_doc("budget-initial", &key);
+    crate::sync::window::reverse_rematerialize(&source, &initial, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = crate::VaultConfig::device();
+    config.map_size = 8usize << 30;
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    {
+        let peer = std::sync::Arc::new(Vault::open(dir.path(), config.clone()).unwrap());
+        crate::sync::window::forward_rematerialize(&peer, &initial, &materializer, &key).unwrap();
+        assert_eq!(
+            peer.main_line(&room, super::DagPageRequest::default())
+                .unwrap()
+                .main_line,
+            [root, trunk]
+        );
+    }
+    let session = match source.mint_session(1).unwrap() {
+        crate::session_lifecycle::SessionMintOutcome::Minted(id) => id,
+        _ => panic!("fresh ordinary session"),
+    };
+    let mut append = input(room, Some(trunk), false, actor);
+    append.session = Some(session);
+    let mut children = Vec::new();
+    for _ in 0..10_001 {
+        children.push(source.append_dag_record(&append).unwrap().id);
+    }
+    let doc = crate::sync::schema::create_window_doc("budget-children", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let entities = doc.get_map("entities");
+    let loro::ValueOrContainer::Value(loro::LoroValue::Binary(body)) =
+        entities.get(&session.to_hex()).unwrap()
+    else {
+        panic!("session body")
+    };
+    entities.delete(&session.to_hex()).unwrap();
+    doc.commit();
+    {
+        let peer = std::sync::Arc::new(Vault::open(dir.path(), config.clone()).unwrap());
+        crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+        assert!(
+            !peer
+                .edge_exists(children.last().unwrap(), EdgeKind::Parent, &trunk)
+                .unwrap()
+        );
+        let loaded = crate::sync::window::LoadedWindow::from_doc(
+            doc.clone(),
+            key.clone(),
+            &peer,
+            &materializer,
+        );
+        loaded.persist_state(&peer).unwrap();
+    }
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), config).unwrap());
+    assert!(
+        crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+    let _observer =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    crate::sync::loro_support::map_insert_bytes(&entities, &session.to_hex(), &body).unwrap();
+    doc.commit();
+    let received = children
+        .iter()
+        .filter(|id| peer.edge_exists(id, EdgeKind::Parent, &trunk).unwrap())
+        .count();
+    assert_eq!(received, children.len());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(
+            room,
+            ScopePath::Branch(*children.last().unwrap()),
+            false
+        ))
+        .unwrap()
+        .records,
+        [root, trunk, *children.last().unwrap()]
+    );
+    assert!(
+        !crate::sync::pending_remat_windows(&peer)
+            .unwrap()
+            .contains(&key.as_str().to_owned())
+    );
+}
+
+#[cfg(feature = "sync")]
+fn late_conversation_endpoint_replays_cross_window_childof(live_delta: bool, reopen: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let mut first_input = input(room, None, true, actor);
+    first_input.learned_at = 946_684_800;
+    first_input.occurred = time(946_684_800);
+    let first = source.append_dag_record(&first_input).unwrap().id;
+    let mut second_input = input(room, Some(first), true, actor);
+    second_input.learned_at = 946_684_801;
+    second_input.occurred = time(946_684_801);
+    let second = source.append_dag_record(&second_input).unwrap().id;
+    let room_key = crate::sync::types::WindowKey::new("1970-01");
+    let turn_key = crate::sync::types::WindowKey::new("2000-01");
+    let room_doc = crate::sync::schema::create_window_doc("late-room-window", &room_key);
+    let turn_doc = crate::sync::schema::create_window_doc("late-turn-window", &turn_key);
+    crate::sync::window::reverse_rematerialize(&source, &room_doc, &room_key).unwrap();
+    crate::sync::window::reverse_rematerialize(&source, &turn_doc, &turn_key).unwrap();
+    assert!(room_doc.get_map("entities").get(&room.to_hex()).is_some());
+    for id in [first, second] {
+        assert!(turn_doc.get_map("entities").get(&id.to_hex()).is_some());
+        assert!(
+            turn_doc
+                .get_map("edges")
+                .get(&crate::sync::bridge::format_edge_key(
+                    &id,
+                    EdgeKind::ChildOf,
+                    &room
+                ))
+                .is_some()
+        );
+    }
+    assert_eq!(
+        source
+            .resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut peer =
+        std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    if live_delta {
+        let received = crate::sync::schema::create_window_doc("received-turn-window", &turn_key);
+        let _observer = crate::sync::bridge::register_observer_b(
+            &received,
+            &peer,
+            &materializer,
+            turn_key.as_str(),
+        );
+        received
+            .import(&turn_doc.export(loro::ExportMode::all_updates()).unwrap())
+            .unwrap();
+    } else {
+        crate::sync::window::forward_rematerialize(&peer, &turn_doc, &materializer, &turn_key)
+            .unwrap();
+    }
+    assert!(peer.get(&first).unwrap().is_some());
+    assert!(peer.get(&second).unwrap().is_some());
+    assert!(peer.get(&room).unwrap().is_none());
+    assert!(!peer.edge_exists(&first, EdgeKind::ChildOf, &room).unwrap());
+    assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    if reopen {
+        let loaded = crate::sync::window::LoadedWindow::from_doc(
+            turn_doc,
+            turn_key.clone(),
+            &peer,
+            &materializer,
+        );
+        loaded.persist_state(&peer).unwrap();
+        drop(loaded);
+        drop(peer);
+        peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+        let report =
+            crate::sync::drain_remat_markers(&peer, "received-turn-window", &materializer).unwrap();
+        assert!(report.still_pending.contains(&turn_key.as_str().to_owned()));
+    }
+    if live_delta {
+        let received = crate::sync::schema::create_window_doc("received-room-window", &room_key);
+        let _observer = crate::sync::bridge::register_observer_b(
+            &received,
+            &peer,
+            &materializer,
+            room_key.as_str(),
+        );
+        received
+            .import(&room_doc.export(loro::ExportMode::all_updates()).unwrap())
+            .unwrap();
+    } else {
+        crate::sync::window::forward_rematerialize(&peer, &room_doc, &materializer, &room_key)
+            .unwrap();
+    }
+    assert!(peer.get(&room).unwrap().is_some());
+    assert!(peer.edge_exists(&first, EdgeKind::ChildOf, &room).unwrap());
+    assert!(peer.edge_exists(&second, EdgeKind::ChildOf, &room).unwrap());
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn conversation_endpoint_last_cross_window_forward() {
+    late_conversation_endpoint_replays_cross_window_childof(false, false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn conversation_endpoint_last_cross_window_observer() {
+    late_conversation_endpoint_replays_cross_window_childof(true, false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn conversation_endpoint_last_cross_window_after_reopen() {
+    late_conversation_endpoint_replays_cross_window_childof(true, true);
 }

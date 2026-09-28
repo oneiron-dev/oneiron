@@ -21,6 +21,7 @@ fn spec(vault: &Vault, owner: EntityId, key: &str) -> TaskAskSpec {
                 outcome_binding: None,
                 ladder_answer: None,
                 class_key: None,
+                commitment: false,
             },
             Some(u64::MAX),
             crate::task_verb::TaskAskDefault::AskMe,
@@ -77,6 +78,10 @@ fn external_ask_wait_orders_resume_only_the_calling_step_once() -> Result<()> {
         let answer = memory.tasks_answer(&receipt.handle, &TaskAskWord::new(owner))?;
         let result = settled(&memory, receipt.handle);
         assert_eq!(result.decision, TaskAskDecision::First(answer));
+        assert_eq!(
+            result.effect_authorization,
+            TaskAskEffectAuthorization::NotEvaluatedByAsk
+        );
         let expected = TaskAskWait::Ready(Box::new(result));
         for binding in [Some("step"), Some("step"), None] {
             assert_eq!(memory.tasks_wait(receipt.handle, binding)?, expected);
@@ -373,6 +378,8 @@ fn ask_cannot_drop_or_replace_its_task_class_and_defaults_are_policy_bound() -> 
         disclosure: [(owner, [input.what.reference].into())].into(),
         fallback: [TaskAskDefault::Hold].into(),
         remind: vec![5, 10],
+        guest_fact_limit: Some(16),
+        soft_confirm_surface: Some(TaskAskSurface::Card),
     };
     let encoded = rmp_serde::to_vec_named(&class)?;
     let class_value = rmpv::decode::read_value(&mut encoded.as_slice())?;
@@ -601,6 +608,8 @@ impl RuledAskFixture {
                 .into()
             },
             remind: vec![20, 40],
+            guest_fact_limit: Some(16),
+            soft_confirm_surface: Some(TaskAskSurface::Card),
         }
     }
 
@@ -632,6 +641,8 @@ impl RuledAskFixture {
                     result_ref: self.people[seat],
                     option: Some(TaskAskOptionId::new(option)?),
                     inform_for: None,
+                    companion_for: None,
+                    confirmation: None,
                     provenance_refs,
                 },
             )?)
@@ -930,6 +941,79 @@ fn ask_three_replies_one_yes_all_has_coverage_but_no_decision_and_fallback() -> 
 }
 
 #[test]
+fn ask_peek_round_trips_word_companion_and_silent_unknown_with_distinct_attribution() -> Result<()>
+{
+    let fixture = RuledAskFixture::new(3)?;
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Proceed;
+    let handle = fixture.ask(&spec)?;
+    let owner = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    fixture.word(handle, 0, "yes")?;
+    fixture.clock.set(1_010);
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.owner,
+                option: Some(TaskAskOptionId::new("no")?),
+                inform_for: Some(fixture.people[1]),
+                companion_for: None,
+                confirmation: None,
+                provenance_refs: Default::default(),
+            },
+        )?;
+    let partial = owner.tasks_ask_peek(handle)?;
+    assert_eq!(partial.len(), 2);
+    let human = partial
+        .iter()
+        .find(|entry| entry.who == fixture.people[0])
+        .unwrap();
+    assert_eq!(human.kind, TaskAskPersonKind::Word);
+    assert_eq!(human.at, 1_000);
+    assert_eq!(human.source, Some(fixture.people[0]));
+    let companion = partial
+        .iter()
+        .find(|entry| entry.who == fixture.people[1])
+        .unwrap();
+    assert_eq!(companion.kind, TaskAskPersonKind::Companion);
+    assert_eq!(companion.at, 1_010);
+    assert_eq!(companion.source, Some(fixture.owner));
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(
+        result.coverage.unknown,
+        [fixture.people[1], fixture.people[2]].into()
+    );
+    assert_eq!(
+        result.fallback.as_ref().unwrap().branch,
+        TaskAskDefault::Proceed
+    );
+    let evidence = owner.tasks_ask_peek(handle)?;
+    assert_eq!(evidence.len(), 3);
+    let silent = evidence
+        .iter()
+        .find(|entry| entry.who == fixture.people[2])
+        .unwrap();
+    assert_eq!(silent.kind, TaskAskPersonKind::Unknown);
+    assert_eq!(silent.answer, None);
+    assert_eq!(silent.at, 1_101);
+    assert_eq!(silent.source, None);
+    assert!(
+        evidence
+            .iter()
+            .all(|entry| entry.kind != TaskAskPersonKind::Default)
+    );
+    let json = serde_json::to_string(&evidence)?;
+    assert_eq!(
+        serde_json::from_str::<Vec<TaskAskPersonEvidence>>(&json)?,
+        evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn ask_silent_founder_is_unknown_and_default_is_one_aggregate_event() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
     let mut spec = fixture.all();
@@ -1049,6 +1133,8 @@ fn ask_human_no_dominates_companion_inform_yes_in_the_same_revision() -> Result<
                 result_ref: fixture.owner,
                 option: Some(TaskAskOptionId::new("yes")?),
                 inform_for: Some(fixture.people[0]),
+                companion_for: None,
+                confirmation: None,
                 provenance_refs: Default::default(),
             },
         )?;
@@ -1436,6 +1522,102 @@ fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()
 }
 
 #[test]
+fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Result<()> {
+    let (_dir, vault) = super::tests::support::open_vault();
+    let human = vault.ensure_embedded_owner_actor()?;
+    let agent = super::tests::support::own_agent(&vault);
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let input = serde_json::json!({
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
+    });
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST
+    );
+    // An own-auto agent may choose a foreign `owner_ref` at tasks.create,
+    // but that owner proof is not an authenticated human assignment.
+    let forged = agent_memory.tasks_create(
+        &TaskCreateSpec::new(
+            rmpv::Value::from("agent-nominated owner"),
+            None,
+            Some(human),
+            None,
+        )
+        .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(forged.effected);
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
+    // A genuine human assignment to B is not a principal binding for A,
+    // even if a public raw TASK rewrite later retargets its mutable body.
+    let other_agent = EntityId::now();
+    super::tests::support::put_person(&vault, other_agent);
+    let for_other = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("other agent"), None, None, None).with_assignee(
+            TaskAssignee::Peer {
+                actor_ref: other_agent,
+            },
+        ),
+    )?;
+    let other_task = for_other.task_ref.expect("human assignment for B");
+    let mut rewritten =
+        super::wire_decode::task_verb_body(&vault, other_task)?.expect("typed task body");
+    rewritten.assignee = Some(TaskAssignee::Peer { actor_ref: agent });
+    let rewritten_bytes = super::wire_encode::encode_task_verb_body(rewritten);
+    let now = crate::unix_seconds_now() + 5;
+    vault.put_entity(
+        &other_task,
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &rewritten_bytes,
+    )?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, other_task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Peer { actor_ref: agent }),
+    );
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
+    let assignment = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
+            .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(assignment.effected);
+    let receipt = crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input)?;
+    let handle: TaskAskHandle = serde_json::from_value(receipt["handle"].clone())?;
+    let task: EntityId = serde_json::from_value(receipt["task_refs"][0].clone())?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Human { actor_ref: human })
+    );
+    let answer = vault
+        .memory(human, EdgeActorClass::Human)
+        .tasks_answer(&handle, &TaskAskWord::new(human))?;
+    let result = settled(&agent_memory, handle);
+    assert_eq!(result.decision, TaskAskDecision::First(answer));
+    assert_eq!(result.coverage.responded, [human].into());
+    Ok(())
+}
+
+#[test]
 fn ask_receipt_labels_only_counted_human_words_against_pinned_ladder_option() -> Result<()> {
     let fixture = RuledAskFixture::new(3)?;
     let mut spec = fixture.all();
@@ -1691,6 +1873,1154 @@ fn ask_class_band_consumes_42_rubber_stamps_then_30_overrules_once() -> Result<(
     assert_eq!(
         memory.tasks_ask_band("other-question-class")?,
         DecisionBand::default()
+    );
+    Ok(())
+}
+
+/// Owner-stamped grant fixtures: the foreign asker sees one exact fact; an
+/// independent action grant can delegate one answer class to the companion.
+fn guest_fixture(
+    fixture: &RuledAskFixture,
+    person: EntityId,
+    companion: EntityId,
+    delegate: bool,
+) -> Result<TaskAskGuest> {
+    use crate::consent::{
+        ActionClass, ActionEnvelope, ActorBound, AudienceBound, DisclosureClass,
+        DisclosureEnvelope, GrantBound,
+    };
+    let owner = fixture.vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let bound = GrantBound::disclosure(
+        AudienceBound::new([fixture.owner.to_hex(), person.to_hex()])?,
+        DisclosureClass::new("meeting")?,
+        DisclosureEnvelope::new([fixture.question.entity_ref().to_hex()])?,
+    )?;
+    let disclosure_grant_ref = bound.digest().to_hex();
+    fixture.vault.create_standing_grant(&owner, bound)?;
+    if delegate {
+        fixture.vault.create_standing_grant(
+            &owner,
+            GrantBound::action(
+                ActorBound::new(companion.to_hex())?.with_actor_class("agent")?,
+                ActionClass::new("ask.answer.meeting")?,
+                ActionEnvelope::new(["answer".to_owned()])?.with_target(person.to_hex())?,
+            )?,
+        )?;
+    }
+    Ok(TaskAskGuest {
+        companion_ref: companion,
+        disclosure_grant_ref,
+    })
+}
+
+#[test]
+fn guest_answers_are_attributed_hints_or_class_delegated_not_human_words() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let companions: Vec<_> = (0..2).map(|_| EntityId::now()).collect();
+    for companion in &companions {
+        fixture.vault.put_entity(
+            companion,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange {
+                start: 1_000,
+                end: 1_000,
+            },
+            1_000,
+            b"companion",
+        )?;
+    }
+    let guests = fixture
+        .people
+        .iter()
+        .zip(&companions)
+        .enumerate()
+        .map(|(i, (person, companion))| {
+            Ok((
+                *person,
+                guest_fixture(&fixture, *person, *companion, i == 1)?,
+            ))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+    let mut spec = fixture.spec();
+    spec.what.class_key = Some("meeting".into());
+    spec.who = Some(TaskAskTarget::Guests(guests));
+    spec.need.count = 2;
+    spec.decide = Some(TaskAskDecide::AtLeast {
+        count: 2,
+        of: TaskAskElectorate::Any,
+        answer: TaskAskOptionId::new("yes")?,
+    });
+    spec.default = TaskAskDefault::Hold;
+    let handle = fixture.ask(&spec)?;
+    for (i, companion) in companions.iter().enumerate() {
+        fixture
+            .vault
+            .memory(*companion, EdgeActorClass::Agent)
+            .tasks_answer(
+                &handle,
+                &TaskAskWord {
+                    result_ref: fixture.question.entity_ref(),
+                    option: Some(TaskAskOptionId::new("yes")?),
+                    inform_for: None,
+                    companion_for: Some(fixture.people[i]),
+                    confirmation: None,
+                    provenance_refs: Default::default(),
+                },
+            )?;
+    }
+    let evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    assert_eq!(evidence[0].source, TaskAskSource::Companion);
+    assert_eq!(evidence[0].person_ref, fixture.people[0]);
+    assert_eq!(evidence[0].reason, TaskAskEvidenceReason::CompanionHint);
+    assert_eq!(evidence[1].reason, TaskAskEvidenceReason::Counted);
+    assert!(evidence[1].delegation_grant_ref.is_some());
+    assert!(matches!(
+        fixture
+            .vault
+            .memory(fixture.owner, EdgeActorClass::Human)
+            .tasks_ask_status(handle)?,
+        TaskAskStatus::Pending { .. }
+    ));
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(result.coverage.responded.len(), 1);
+    assert!(!result.coverage.met);
+    assert_eq!(result.fallback.unwrap().branch, TaskAskDefault::Hold);
+    assert_eq!(
+        result.effect_authorization,
+        TaskAskEffectAuthorization::NotEvaluatedByAsk
+    );
+    Ok(())
+}
+
+#[test]
+fn companion_commitment_notices_once_and_deadline_holds_without_booking() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, true)?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    spec.what.commitment = true;
+    spec.default = TaskAskDefault::Hold;
+    let handle = fixture.ask(&spec)?;
+    let word = TaskAskWord {
+        result_ref: fixture.question.entity_ref(),
+        option: Some(TaskAskOptionId::new("yes")?),
+        inform_for: None,
+        companion_for: Some(person),
+        confirmation: None,
+        provenance_refs: Default::default(),
+    };
+    let memory = fixture.vault.memory(companion, EdgeActorClass::Agent);
+    let answer = memory.tasks_answer(&handle, &word)?;
+    assert_eq!(memory.tasks_answer(&handle, &word)?, answer);
+    let notice = fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .tasks_ask_soft_confirm_notice(handle, person)?
+        .expect("notice");
+    assert_eq!(notice.revision, spec.what.revision);
+    assert_eq!(notice.companion_answer_ref, answer.word_ref);
+    assert_eq!(notice.option, word.option);
+    assert!(matches!(
+        fixture
+            .vault
+            .memory(fixture.owner, EdgeActorClass::Human)
+            .tasks_ask_status(handle)?,
+        TaskAskStatus::Pending { .. }
+    ));
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(result.fallback.unwrap().branch, TaskAskDefault::Hold);
+    assert_eq!(
+        result.effect_authorization,
+        TaskAskEffectAuthorization::NotEvaluatedByAsk
+    );
+    assert!(result.evidence[0].soft_confirm);
+    Ok(())
+}
+
+#[test]
+fn guest_ask_reuses_only_live_person_disclosure_and_is_not_membership() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, false)?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest.clone())].into()));
+    spec.what.class_key = Some("meeting".into());
+    let second = EntityId::now();
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))?;
+    fixture.vault.put_entity(
+        &second,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        &body,
+    )?;
+    spec.what.context_refs.push(ConsultPayloadRef::Turn(second));
+    assert!(
+        fixture.ask(&spec).is_err(),
+        "undisclosed fact must not be granted"
+    );
+    spec.what.context_refs.clear();
+    let handle = fixture.ask(&spec)?;
+    let txn = fixture.vault.store.env.read_txn()?;
+    let group = super::ask_record::read_group(&fixture.vault, &txn, handle.group_ref)?.unwrap();
+    let id = group.guest_grants[&person];
+    let raw = fixture.vault.get_raw_in(&txn, &id)?.unwrap();
+    let grant = crate::federation::decode_federation_grant_body(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    assert_eq!(grant.role, crate::federation::FederationGrantRole::Guest);
+    assert!(!grant.is_admin());
+    assert!(!grant.allows_ask_fact(
+        EntityId::now(),
+        companion,
+        person,
+        fixture.owner,
+        fixture.question.entity_ref()
+    ));
+    assert!(!grant.allows_ask_fact(handle.group_ref, companion, person, fixture.owner, second));
+    drop(txn);
+    assert!(
+        fixture
+            .vault
+            .memory(companion, EdgeActorClass::Agent)
+            .tasks_answer(
+                &handle,
+                &TaskAskWord {
+                    result_ref: second,
+                    option: Some(TaskAskOptionId::new("yes")?),
+                    inform_for: None,
+                    companion_for: Some(person),
+                    confirmation: None,
+                    provenance_refs: Default::default(),
+                }
+            )
+            .is_err(),
+        "undisclosed answer fact must not pass the ask guest grant"
+    );
+    let owner = fixture.vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    fixture
+        .vault
+        .revoke_consent_grant(&owner, &guest.disclosure_grant_ref)?;
+    assert!(
+        fixture
+            .vault
+            .memory(companion, EdgeActorClass::Agent)
+            .tasks_answer(
+                &handle,
+                &TaskAskWord {
+                    result_ref: fixture.question.entity_ref(),
+                    option: Some(TaskAskOptionId::new("yes")?),
+                    inform_for: None,
+                    companion_for: Some(person),
+                    confirmation: None,
+                    provenance_refs: Default::default(),
+                }
+            )
+            .is_err(),
+        "revocation must stop companion intake"
+    );
+    Ok(())
+}
+
+#[test]
+fn person_word_overrides_companion_hint_without_authorizing_an_effect() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, false)?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    let handle = fixture.ask(&spec)?;
+    fixture
+        .vault
+        .memory(companion, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.question.entity_ref(),
+                option: Some(TaskAskOptionId::new("yes")?),
+                inform_for: None,
+                companion_for: Some(person),
+                confirmation: None,
+                provenance_refs: Default::default(),
+            },
+        )?;
+    assert!(matches!(
+        fixture
+            .vault
+            .memory(fixture.owner, EdgeActorClass::Human)
+            .tasks_ask_status(handle)?,
+        TaskAskStatus::Pending { .. }
+    ));
+    fixture.word(handle, 0, "no")?;
+    let result = fixture.result(handle)?;
+    assert_eq!(result.coverage.responded, [person].into());
+    assert_eq!(result.evidence[0].source, TaskAskSource::Companion);
+    assert_eq!(
+        result.evidence[0].reason,
+        TaskAskEvidenceReason::HumanDominates
+    );
+    assert_eq!(result.evidence[1].source, TaskAskSource::Human);
+    assert_eq!(
+        result.decision,
+        TaskAskDecision::First(result.evidence[1].answer)
+    );
+    assert_eq!(
+        result.effect_authorization,
+        TaskAskEffectAuthorization::NotEvaluatedByAsk
+    );
+    Ok(())
+}
+
+#[test]
+fn human_no_reply_to_soft_confirm_uses_normal_answer_intake() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, true)?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    spec.what.commitment = true;
+    let handle = fixture.ask(&spec)?;
+    fixture
+        .vault
+        .memory(companion, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.question.entity_ref(),
+                option: Some(TaskAskOptionId::new("yes")?),
+                inform_for: None,
+                companion_for: Some(person),
+                confirmation: None,
+                provenance_refs: Default::default(),
+            },
+        )?;
+    let notice = fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .tasks_ask_soft_confirm_notice(handle, person)?
+        .expect("typed notice");
+    assert_eq!(notice.revision, spec.what.revision);
+    let reply = fixture.word(handle, 0, "no")?;
+    assert!(
+        fixture
+            .vault
+            .memory(person, EdgeActorClass::Human)
+            .tasks_ask_soft_confirm_notice(handle, person)?
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .retry_ask_soft_confirm_delivery(handle.group_ref, person)?,
+        TaskAskSoftConfirmDelivery::Closed
+    );
+    let result = fixture.result(handle)?;
+    assert_eq!(result.decision, TaskAskDecision::First(reply));
+    assert_eq!(
+        result.evidence[0].reason,
+        TaskAskEvidenceReason::HumanDominates
+    );
+    assert_eq!(result.evidence[1].source, TaskAskSource::Human);
+    assert_eq!(
+        result.effect_authorization,
+        TaskAskEffectAuthorization::NotEvaluatedByAsk
+    );
+    Ok(())
+}
+
+#[test]
+fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        SelfHeldShape,
+    };
+    use crate::counterparty_contact::CounterpartyContactRecord;
+    use crate::genui::{GrantMintIntent, GrantMintIntentScope};
+    use crate::outbound::{
+        OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
+    };
+    use crate::registry::ENTITY_TYPE_TASK;
+    #[derive(Default)]
+    struct RecordingSink(usize);
+    impl OutboundExecutionSink for RecordingSink {
+        fn execute(&mut self, _: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            self.0 += 1;
+            OutboundExecutionOutcome::delivered_to_channel("unexpected")
+        }
+    }
+    for close_by_human in [true, false] {
+        let fixture = RuledAskFixture::new(0)?;
+        let person =
+            crate::comm::resolve_or_create_comm_party(&fixture.vault, "recipient@example.test")?;
+        let companion = EntityId::now();
+        fixture.vault.put_entity(
+            &companion,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange {
+                start: 1_000,
+                end: 1_000,
+            },
+            1_000,
+            b"companion",
+        )?;
+        let guest = guest_fixture(&fixture, person, companion, false)?;
+        let mut spec = fixture.spec();
+        spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+        spec.what.class_key = Some("meeting".into());
+        spec.what.commitment = true;
+        let handle = fixture.ask(&spec)?;
+        let word = TaskAskWord {
+            result_ref: fixture.question.entity_ref(),
+            option: Some(TaskAskOptionId::new("yes")?),
+            inform_for: None,
+            companion_for: Some(person),
+            confirmation: None,
+            provenance_refs: Default::default(),
+        };
+        {
+            let memory = fixture.vault.memory(companion, EdgeActorClass::Agent);
+            memory.tasks_answer(&handle, &word)?;
+            memory.tasks_answer(&handle, &word)?;
+        }
+        assert_eq!(
+            fixture
+                .vault
+                .ask_soft_confirm_delivery(handle.group_ref, person)?,
+            Some(TaskAskSoftConfirmDelivery::PendingRoute)
+        );
+        // A new vault handle recovers the pending work without replaying the answer.
+        let RuledAskFixture {
+            vault: original,
+            dir,
+            clock,
+            ..
+        } = fixture;
+        drop(original);
+        let mut reopened_config = crate::test_util::embedding_test_config();
+        reopened_config.store_clock = clock.bundle();
+        let reopened = Vault::open(dir.path(), reopened_config)?;
+        assert_eq!(
+            reopened.ask_soft_confirm_delivery(handle.group_ref, person)?,
+            Some(TaskAskSoftConfirmDelivery::PendingRoute)
+        );
+        assert_eq!(reopened.retry_pending_ask_soft_confirms(64)?, 1);
+        let identity_ref = EntityId::now();
+        reopened.create_channel_identity(
+            &identity_ref,
+            &ChannelIdentity::requested(
+                "email",
+                "sender@example.test",
+                SelfHeldShape::DedicatedAddress,
+                ChannelIdentityBinding::vault(1),
+                1_000,
+            ),
+        )?;
+        reopened.transition_channel_identity(
+            &identity_ref,
+            ChannelIdentityState::PendingFulfillment,
+            Some(ChannelIdentityFulfillment::Api),
+            1_000,
+            None,
+        )?;
+        reopened.transition_channel_identity(
+            &identity_ref,
+            ChannelIdentityState::Active,
+            None,
+            1_000,
+            None,
+        )?;
+        reopened.create_counterparty_contact(
+            &EntityId::now(),
+            &CounterpartyContactRecord::user_introduction(
+                identity_ref,
+                "recipient@example.test",
+                1_000,
+            )?,
+        )?;
+        assert_eq!(reopened.retry_pending_ask_soft_confirms(64)?, 1);
+        assert_eq!(
+            reopened.ask_soft_confirm_delivery(handle.group_ref, person)?,
+            Some(TaskAskSoftConfirmDelivery::PendingGate)
+        );
+        reopened.mint_standing_outbound_grant(
+            &EntityId::now(),
+            &GrantMintIntent {
+                principal_ref: companion.to_hex(),
+                origin_component_id: "tasks".into(),
+                origin_action_id: "ask.soft_confirm".into(),
+                origin_receipt_ref: None,
+                scope: GrantMintIntentScope::VerbClass {
+                    verb_class: "send".into(),
+                },
+            },
+            1_000,
+        )?;
+        assert_eq!(reopened.retry_pending_ask_soft_confirms(64)?, 1);
+        assert_eq!(
+            reopened.ask_soft_confirm_delivery(handle.group_ref, person)?,
+            Some(TaskAskSoftConfirmDelivery::PendingGate)
+        );
+        // A remembered send grant cannot upgrade the actor's effect ceiling.
+        // One held outbound attempt is queued, but the effect gate remains pending.
+        assert_eq!(reopened.retry_pending_ask_soft_confirms(64)?, 1);
+        let key = format!(
+            "ask-soft-confirm/{}/{}",
+            handle.group_ref.to_hex(),
+            person.to_hex()
+        );
+        let sends = reopened
+            .entities_by_type(ENTITY_TYPE_TASK)?
+            .into_iter()
+            .filter(|id| {
+                reopened
+                    .connector_send_task(id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|send| {
+                        send.intent.idempotency_key.as_deref() == Some(key.as_str())
+                    })
+            })
+            .count();
+        assert_eq!(sends, 1, "the reachable person gets one scheduled notice");
+        let send_ref = reopened
+            .entities_by_type(ENTITY_TYPE_TASK)?
+            .into_iter()
+            .find(|id| {
+                reopened
+                    .connector_send_task(id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|task| {
+                        task.intent.idempotency_key.as_deref() == Some(key.as_str())
+                    })
+            })
+            .expect("queued connector task");
+        if close_by_human {
+            let notice = reopened
+                .memory(person, EdgeActorClass::Human)
+                .tasks_ask_soft_confirm_notice(handle, person)?
+                .unwrap();
+            reopened
+                .memory(person, EdgeActorClass::Human)
+                .tasks_answer(
+                    &handle,
+                    &TaskAskWord::confirm(
+                        word.result_ref,
+                        &notice,
+                        TaskAskConfirmationDecision::Reject,
+                    ),
+                )?;
+        } else {
+            clock.set(1_101);
+            let status = reopened
+                .memory(
+                    reopened.ensure_embedded_owner_actor()?,
+                    EdgeActorClass::Human,
+                )
+                .tasks_ask_status(handle)?;
+            assert!(matches!(status, TaskAskStatus::Settled(_)));
+        }
+        assert_eq!(
+            reopened.retry_ask_soft_confirm_delivery(handle.group_ref, person)?,
+            TaskAskSoftConfirmDelivery::Closed
+        );
+        let mut sink = RecordingSink::default();
+        assert_eq!(reopened.run_connector_task_executor(&mut sink, 1_102)?, 0);
+        assert_eq!(sink.0, 0, "a closed notice must never reach the provider");
+        assert_eq!(
+            reopened.connector_send_task(&send_ref)?.unwrap().outcome,
+            Some(crate::outbound::ConnectorSendTaskOutcome::Failed)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn opposing_companion_commitments_take_hold_default_not_proceed_disagreement() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let mut guests = std::collections::BTreeMap::new();
+    for person in &fixture.people {
+        let companion = EntityId::now();
+        fixture.vault.put_entity(
+            &companion,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange {
+                start: 1_000,
+                end: 1_000,
+            },
+            1_000,
+            b"companion",
+        )?;
+        guests.insert(*person, guest_fixture(&fixture, *person, companion, true)?);
+    }
+    let mut spec = fixture.all();
+    spec.who = Some(TaskAskTarget::Guests(guests.clone()));
+    spec.what.class_key = Some("meeting".into());
+    spec.what.commitment = true;
+    spec.default = TaskAskDefault::Hold;
+    spec.on_disagree.branch = TaskAskBranch::Proceed;
+    let handle = fixture.ask(&spec)?;
+    for (i, choice) in ["yes", "no"].iter().enumerate() {
+        fixture
+            .vault
+            .memory(
+                guests[&fixture.people[i]].companion_ref,
+                EdgeActorClass::Agent,
+            )
+            .tasks_answer(
+                &handle,
+                &TaskAskWord {
+                    result_ref: fixture.question.entity_ref(),
+                    option: Some(TaskAskOptionId::new(*choice)?),
+                    inform_for: None,
+                    companion_for: Some(fixture.people[i]),
+                    confirmation: None,
+                    provenance_refs: Default::default(),
+                },
+            )?;
+    }
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(result.decision, TaskAskDecision::Conflict);
+    assert_eq!(result.fallback.unwrap().branch, TaskAskDefault::Hold);
+    assert_eq!(
+        result.effect_authorization,
+        TaskAskEffectAuthorization::NotEvaluatedByAsk
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_companion_commitment_requires_new_revision_after_notice() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, true)?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    spec.what.commitment = true;
+    let handle = fixture.ask(&spec)?;
+    let mut word = TaskAskWord {
+        result_ref: fixture.question.entity_ref(),
+        option: Some(TaskAskOptionId::new("yes")?),
+        inform_for: None,
+        companion_for: Some(person),
+        confirmation: None,
+        provenance_refs: Default::default(),
+    };
+    let memory = fixture.vault.memory(companion, EdgeActorClass::Agent);
+    let original = memory.tasks_answer(&handle, &word)?;
+    assert_eq!(memory.tasks_answer(&handle, &word)?, original);
+    word.option = Some(TaskAskOptionId::new("no")?);
+    assert!(memory.tasks_answer(&handle, &word).is_err());
+    let notice = fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .tasks_ask_soft_confirm_notice(handle, person)?
+        .unwrap();
+    assert_eq!(notice.companion_answer_ref, original.word_ref);
+    assert_eq!(notice.option, Some(TaskAskOptionId::new("yes")?));
+    Ok(())
+}
+
+#[test]
+fn commitment_option_ids_are_not_confirmation_response_ids() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let mut spec = fixture.spec();
+    spec.what.options = [
+        (TaskAskOptionId::new("slot-a")?, "early".into()),
+        (TaskAskOptionId::new("slot-b")?, "late".into()),
+    ]
+    .into();
+    spec.what.commitment = true;
+    let handle = fixture.ask(&spec)?;
+    assert!(matches!(
+        fixture
+            .vault
+            .memory(fixture.owner, EdgeActorClass::Human)
+            .tasks_ask_status(handle)?,
+        TaskAskStatus::Pending { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn aggregate_outcome_binding_uses_counted_human_in_either_arrival_order() -> Result<()> {
+    for companion_first in [true, false] {
+        let fixture = RuledAskFixture::new(2)?;
+        super::tests::support::permit_outcome_fixture_predicates(&fixture.vault, fixture.owner)?;
+        let companions: Vec<_> = (0..2).map(|_| EntityId::now()).collect();
+        let mut guests = std::collections::BTreeMap::new();
+        for (person, companion) in fixture.people.iter().zip(&companions) {
+            fixture.vault.put_entity(
+                companion,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange {
+                    start: 1_000,
+                    end: 1_000,
+                },
+                1_000,
+                b"companion",
+            )?;
+            guests.insert(*person, guest_fixture(&fixture, *person, *companion, true)?);
+        }
+        let mut spec = fixture.all();
+        spec.who = Some(TaskAskTarget::Guests(guests));
+        spec.what.class_key = Some("meeting".into());
+        spec.what.outcome_binding = Some(crate::llm::decision::questions::OutcomeBinding {
+            source: crate::llm::decision::questions::OutcomeSource::Claim {
+                predicate: "outcome.earned".into(),
+            },
+            horizon: 60,
+            mapping: [("yes".into(), true), ("no".into(), false)].into(),
+            noise_weight: 1.0,
+            linked_by: None,
+        });
+        let handle = fixture.ask(&spec)?;
+        let companion = || {
+            fixture
+                .vault
+                .memory(companions[0], EdgeActorClass::Agent)
+                .tasks_answer(
+                    &handle,
+                    &TaskAskWord {
+                        result_ref: fixture.question.entity_ref(),
+                        option: Some(TaskAskOptionId::new("yes")?),
+                        inform_for: None,
+                        companion_for: Some(fixture.people[0]),
+                        confirmation: None,
+                        provenance_refs: Default::default(),
+                    },
+                )
+        };
+        if companion_first {
+            companion()?;
+            fixture.word(handle, 1, "yes")?;
+        } else {
+            fixture.word(handle, 1, "yes")?;
+            companion()?;
+        }
+        let result = fixture.result(handle)?;
+        assert_eq!(
+            result.decision,
+            TaskAskDecision::Answer(TaskAskOptionId::new("yes")?)
+        );
+        assert!(
+            result.settlement.outcome_answer_ref.is_some(),
+            "human attribution must bind independently of arrival order"
+        );
+        assert_eq!(
+            result
+                .evidence
+                .iter()
+                .find(|e| e.source == TaskAskSource::Human)
+                .unwrap()
+                .answer
+                .actor_ref,
+            fixture.people[1]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn class_policy_narrows_guest_facts_and_selects_soft_confirm_surface() -> Result<()> {
+    use crate::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let mut guest = guest_fixture(&fixture, person, companion, true)?;
+    let extra = super::tests::support::consult_turn(&fixture.vault, 0xD4);
+    let owner = fixture.vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let bound = GrantBound::disclosure(
+        AudienceBound::new([fixture.owner.to_hex(), person.to_hex()])?,
+        DisclosureClass::new("meeting")?,
+        DisclosureEnvelope::new([
+            fixture.question.entity_ref().to_hex(),
+            extra.entity_ref().to_hex(),
+        ])?,
+    )?;
+    guest.disclosure_grant_ref = bound.digest().to_hex();
+    fixture.vault.create_standing_grant(&owner, bound)?;
+    let mut spec = fixture.spec();
+    spec.intent_key = "guest-class-limit".into();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    spec.what.context_refs.push(extra);
+    let mut class = fixture.policy(false);
+    class.key = "meeting".into();
+    class.guest_fact_limit = Some(1);
+    class.soft_confirm_surface = Some(TaskAskSurface::None);
+    class
+        .disclosure
+        .insert(person, [fixture.question, extra].into());
+    spec.class = Some(class.clone());
+    assert!(
+        fixture.ask(&spec).is_err(),
+        "class may narrow the wire bound"
+    );
+    spec.what.context_refs.clear();
+    spec.intent_key = "guest-class-surface".into();
+    spec.what.commitment = true;
+    spec.on_disagree.surface = TaskAskSurface::Card;
+    spec.class = Some(class);
+    let handle = fixture.ask(&spec)?;
+    fixture
+        .vault
+        .memory(companion, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.question.entity_ref(),
+                option: Some(TaskAskOptionId::new("yes")?),
+                inform_for: None,
+                companion_for: Some(person),
+                confirmation: None,
+                provenance_refs: Default::default(),
+            },
+        )?;
+    fixture.clock.set(1_101);
+    assert_eq!(
+        fixture.result(handle)?.fallback.unwrap().surface,
+        TaskAskSurface::None
+    );
+    Ok(())
+}
+
+#[test]
+fn hint_first_then_delegation_cannot_rewrite_stored_answer_or_notice() -> Result<()> {
+    use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, false)?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    spec.what.commitment = true;
+    let handle = fixture.ask(&spec)?;
+    let word = TaskAskWord {
+        result_ref: fixture.question.entity_ref(),
+        option: Some(TaskAskOptionId::new("yes")?),
+        inform_for: None,
+        companion_for: Some(person),
+        confirmation: None,
+        provenance_refs: Default::default(),
+    };
+    let memory = fixture.vault.memory(companion, EdgeActorClass::Agent);
+    let original = memory.tasks_answer(&handle, &word)?;
+    let owner = fixture.vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    fixture.vault.create_standing_grant(
+        &owner,
+        GrantBound::action(
+            ActorBound::new(companion.to_hex())?.with_actor_class("agent")?,
+            ActionClass::new("ask.answer.meeting")?,
+            ActionEnvelope::new(["answer".to_owned()])?.with_target(person.to_hex())?,
+        )?,
+    )?;
+    assert_eq!(memory.tasks_answer(&handle, &word)?, original);
+    let evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    assert_eq!(evidence[0].reason, TaskAskEvidenceReason::CompanionHint);
+    assert!(evidence[0].delegation_grant_ref.is_none());
+    let notice = fixture
+        .vault
+        .memory(person, EdgeActorClass::Human)
+        .tasks_ask_soft_confirm_notice(handle, person)?
+        .unwrap();
+    assert_eq!(notice.companion_answer_ref, original.word_ref);
+    Ok(())
+}
+
+#[test]
+fn slot_commitment_human_can_approve_or_reject_typed_notice() -> Result<()> {
+    for decision in [
+        TaskAskConfirmationDecision::Approve,
+        TaskAskConfirmationDecision::Reject,
+    ] {
+        let fixture = RuledAskFixture::new(1)?;
+        let person = fixture.people[0];
+        let companion = EntityId::now();
+        fixture.vault.put_entity(
+            &companion,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange {
+                start: 1_000,
+                end: 1_000,
+            },
+            1_000,
+            b"companion",
+        )?;
+        let guest = guest_fixture(&fixture, person, companion, true)?;
+        let mut spec = fixture.spec();
+        spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+        spec.what.class_key = Some("meeting".into());
+        spec.what.commitment = true;
+        spec.what.options = [
+            (TaskAskOptionId::new("slot-a")?, "early".into()),
+            (TaskAskOptionId::new("slot-b")?, "late".into()),
+        ]
+        .into();
+        spec.default = TaskAskDefault::Proceed;
+        let handle = fixture.ask(&spec)?;
+        fixture
+            .vault
+            .memory(companion, EdgeActorClass::Agent)
+            .tasks_answer(
+                &handle,
+                &TaskAskWord {
+                    result_ref: fixture.question.entity_ref(),
+                    option: Some(TaskAskOptionId::new("slot-a")?),
+                    inform_for: None,
+                    companion_for: Some(person),
+                    confirmation: None,
+                    provenance_refs: Default::default(),
+                },
+            )?;
+        let notice = fixture
+            .vault
+            .memory(person, EdgeActorClass::Human)
+            .tasks_ask_soft_confirm_notice(handle, person)?
+            .expect("revision-bound notice");
+        let reply = TaskAskWord::confirm(fixture.question.entity_ref(), &notice, decision);
+        assert_eq!(
+            reply.option.is_some(),
+            decision == TaskAskConfirmationDecision::Approve
+        );
+        let human = fixture.vault.memory(person, EdgeActorClass::Human);
+        let mut forged = reply.clone();
+        forged.confirmation.as_mut().unwrap().revision += 1;
+        assert!(human.tasks_answer(&handle, &forged).is_err());
+        forged = reply.clone();
+        forged.confirmation.as_mut().unwrap().companion_answer_ref = EntityId::now();
+        assert!(human.tasks_answer(&handle, &forged).is_err());
+        let admitted = human.tasks_answer(&handle, &reply)?;
+        let result = fixture.result(handle)?;
+        match decision {
+            TaskAskConfirmationDecision::Approve => {
+                assert_eq!(result.decision, TaskAskDecision::First(admitted));
+                assert!(result.fallback.is_none());
+            }
+            TaskAskConfirmationDecision::Reject => {
+                assert_eq!(result.decision, TaskAskDecision::No);
+                assert_eq!(result.fallback.unwrap().branch, TaskAskDefault::Hold);
+            }
+        }
+        assert_eq!(
+            result.effect_authorization,
+            TaskAskEffectAuthorization::NotEvaluatedByAsk
+        );
+        assert_eq!(
+            result
+                .evidence
+                .iter()
+                .find(|e| e.source == TaskAskSource::Human)
+                .unwrap()
+                .word
+                .confirmation
+                .as_ref()
+                .unwrap()
+                .decision,
+            decision
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let mut bytes = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy manifest map")
+    else {
+        panic!("default policy manifest map")
+    };
+    let (_, rmpv::Value::Map(row)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("ask_policy"))
+        .expect("shipped ask policy row")
+    else {
+        panic!("ask policy map")
+    };
+    row.iter_mut()
+        .find(|(key, _)| key.as_str() == Some("retry_page_limit"))
+        .expect("retry limit")
+        .1 = rmpv::Value::from(1);
+    bytes.clear();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .expect("encode policy manifest");
+    crate::test_util::put_policy_manifest_bytes(
+        &fixture.vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )?;
+    let mut guests = std::collections::BTreeMap::new();
+    let mut companions = Vec::new();
+    for person in &fixture.people {
+        let companion = EntityId::now();
+        fixture.vault.put_entity(
+            &companion,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange {
+                start: 1_000,
+                end: 1_000,
+            },
+            1_000,
+            b"companion",
+        )?;
+        guests.insert(*person, guest_fixture(&fixture, *person, companion, false)?);
+        companions.push(companion);
+    }
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests(guests));
+    spec.what.class_key = Some("meeting".into());
+    spec.what.commitment = true;
+    let handle = fixture.ask(&spec)?;
+    for (index, companion) in companions.iter().enumerate() {
+        fixture
+            .vault
+            .memory(*companion, EdgeActorClass::Agent)
+            .tasks_answer(
+                &handle,
+                &TaskAskWord {
+                    result_ref: fixture.question.entity_ref(),
+                    option: Some(TaskAskOptionId::new("yes")?),
+                    inform_for: None,
+                    companion_for: Some(fixture.people[index]),
+                    confirmation: None,
+                    provenance_refs: Default::default(),
+                },
+            )?;
+    }
+    assert_eq!(
+        fixture
+            .vault
+            .ask_soft_confirm_delivery(handle.group_ref, fixture.people[0])?,
+        Some(TaskAskSoftConfirmDelivery::PendingRoute)
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .ask_soft_confirm_delivery(handle.group_ref, fixture.people[1])?,
+        Some(TaskAskSoftConfirmDelivery::PendingRoute)
+    );
+    assert_eq!(
+        fixture.vault.retry_pending_ask_soft_confirms(usize::MAX)?,
+        1
+    );
+    assert_eq!(
+        fixture.vault.retry_pending_ask_soft_confirms(usize::MAX)?,
+        1
     );
     Ok(())
 }

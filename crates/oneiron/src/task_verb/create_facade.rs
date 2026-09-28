@@ -4,7 +4,7 @@ use rmpv::Value;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
-use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -31,7 +31,7 @@ use super::create_validation::{
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
-use super::verb_kind::TaskAssignee;
+use super::verb_kind::{TaskAssignee, TaskKind};
 use super::wire_encode::{canonical_bytes, encode_task_realization_input, encode_task_verb_body};
 
 /// Canonical bytes of one create-proposal payload with its `created_at`
@@ -116,6 +116,35 @@ impl Memory<'_> {
             // failure rolls the intent back rather than leaving an invisible
             // half-created task behind.
             let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
+            // A caller-chosen owner_ref does not certify who authored the
+            // assignment. This independent witness is minted only after an
+            // authenticated human owner creates an agent-addressed TASK.
+            if validated.kind == TaskKind::Standard
+                && validated.assignee.is_some_and(|assignee| {
+                    matches!(
+                        assignee,
+                        TaskAssignee::Peer { .. }
+                            | TaskAssignee::AgentDef { .. }
+                            | TaskAssignee::Child { .. }
+                    )
+                })
+                && self.actor_class() == crate::EdgeActorClass::Human
+                && owner_ref == self.actor()
+                && crate::memory::verify_owner_actor_binding_in_txn(self.vault(), wtxn, owner_ref)
+                    .is_ok()
+            {
+                put_task_authority_fact_in_txn(
+                    self.vault(),
+                    wtxn,
+                    TaskAuthorityFact {
+                        task_ref,
+                        kind: TaskAuthorityFactKind::HumanAssigned,
+                        actor_ref: owner_ref,
+                        assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
+                        occurred_at: now,
+                    },
+                )?;
+            }
             Ok(Some((task_ref, route)))
         })?;
 
@@ -271,6 +300,7 @@ impl Memory<'_> {
                 task_ref,
                 kind: TaskAuthorityFactKind::Owner,
                 actor_ref: owner_ref,
+                assigned_ref: None,
                 occurred_at: now,
             },
         )?;
@@ -391,7 +421,8 @@ impl Memory<'_> {
         spec: &Value,
         now: u64,
     ) -> MemoryResult<AttemptId> {
-        let outcome = AttemptQueue::new(self.vault()).enqueue_with_task_ref_in_txn(
+        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
+            self.vault(),
             wtxn,
             EnqueueAttempt {
                 kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
@@ -400,7 +431,10 @@ impl Memory<'_> {
                 run_id: None,
                 now,
             },
-            Some(task_ref.to_hex()),
+            crate::ports::JobScope {
+                task_ref: Some(task_ref.to_hex()),
+                dedupe_actor_ref: None,
+            },
         )?;
         let (EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record)) = outcome;
         Ok(record.id)

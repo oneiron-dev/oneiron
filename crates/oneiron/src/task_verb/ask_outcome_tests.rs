@@ -33,6 +33,7 @@ fn spec(vault: &Vault, holder: EntityId) -> TaskAskSpec {
                 }),
                 ladder_answer: None,
                 class_key: None,
+                commitment: false,
             },
             Some(u64::MAX),
             crate::task_verb::TaskAskDefault::AskMe,
@@ -554,5 +555,63 @@ fn linked_event_replay_and_edge_stage_arrivals_use_the_same_projector() -> Resul
     let pairs = facade.tasks_ask_outcomes(&stage_handle)?;
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].outcome.fact, stage_fact);
+    Ok(())
+}
+
+#[test]
+fn settled_task_ask_cannot_accept_standing_graph_backfill() -> Result<()> {
+    use crate::WriteActor;
+    use crate::llm::decision::DecisionAnswer;
+    use crate::llm::decision::questions::{
+        QuestionActivation, StandingAnswer, backfill_standing_answer, standing_source_frontier,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    let holder = EntityId::now();
+    actors(&vault, owner, &[owner, holder])?;
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask(&spec(&vault, holder))?;
+    vault
+        .memory(holder, EdgeActorClass::Human)
+        .tasks_answer(&receipt.handle, &TaskAskWord::new(holder))?;
+    let task = receipt.handle.group_ref;
+    assert!(
+        settled(&vault, owner, receipt.handle)
+            .settlement
+            .outcome_answer_ref
+            .is_some()
+    );
+    assert_eq!(
+        read_question(&vault, owner, task, None)?
+            .expect("bound")
+            .definition
+            .activation,
+        QuestionActivation::OneOff
+    );
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    assert!(standing_source_frontier(&vault, owner, task, 1, actor, holder, &[holder]).is_err());
+    let before = vault.claims_for_subject(&holder)?;
+    assert!(
+        backfill_standing_answer(
+            &vault,
+            owner,
+            task,
+            1,
+            actor,
+            StandingAnswer {
+                unit: holder,
+                answer: DecisionAnswer::Choice(holder.to_hex()),
+                probability: Some(1.0),
+                evidence: vec![holder],
+                providers: vec![],
+                source_frontier: [0; 32]
+            },
+            crate::unix_seconds_now()
+        )
+        .is_err()
+    );
+    assert_eq!(vault.claims_for_subject(&holder)?, before);
     Ok(())
 }

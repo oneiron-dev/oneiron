@@ -58,6 +58,13 @@ world guest {
 
     // First-party-only imports. Foreign components must not import these;
     // their writes are exported as proposals and never linked as host effects.
+    // @js self.json.validate
+    import json-validate: func(
+        // @json
+        schema: string,
+        // @json
+        value: string
+    ) -> result<bool, string>;
     // @js self.memory.search
     import memory-search: func(input: search-input) -> result<search-output, string>;
     // @js self.memory.put_claim
@@ -68,10 +75,8 @@ world guest {
     import memory-put-edge: func(input: edge-input) -> result<edge-output, string>;
     // @js self.report_blocked
     import report-blocked: func(category: string, detail: string) -> result<blocked-output, string>;
-    // @js self.ask_human
-    import ask-human: func(input: prompt-input) -> result<wait-output, string>;
-    // @js self.askHuman
-    import ask-human-camel: func(input: prompt-input) -> result<wait-output, string>;
+    // @js ask
+    import ask: func(input: prompt-input) -> result<wait-output, string>;
     // @js self.speak
     import speak: func(input: text-input) -> result<speech-output, string>;
     // @js self.think

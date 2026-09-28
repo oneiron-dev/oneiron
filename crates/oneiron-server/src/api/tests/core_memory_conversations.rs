@@ -125,6 +125,26 @@ async fn v1_core_memory_timeline_scrubs_filtered_supersession_links() {
         )
         .expect("seed subject");
     seed_active_claim(&server, old, subject, "osaka", 100);
+    // History skips this stale predecessor under the actor's retrieval floor,
+    // and scrubs its id from the visible successor's links.
+    let mut old_body = server
+        .vault
+        .get_claim(&old)
+        .expect("read old")
+        .expect("old");
+    old_body.stale = true;
+    server
+        .vault
+        .put_claim(
+            &old,
+            &old_body,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .expect("stale old");
     seed_active_claim(&server, new, subject, "tokyo", 200);
     server
         .vault
@@ -859,7 +879,7 @@ async fn platform_announcement_turn_never_projects_as_eiri_voice() {
         Value::from(PLATFORM_ANNOUNCEMENT_VOICE)
     );
     assert_eq!(item["platform_voice"], Value::from(true));
-    assert_eq!(item["is_eiri"], Value::from(false));
+    assert_eq!(item["is_companion"], Value::from(false));
 
     let (read_status, read_body) = route_json(
         server,
@@ -1052,4 +1072,433 @@ async fn localized_platform_announcement_exposes_original_text_toggle() {
         Value::from(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE)
     );
     assert_eq!(read_body["show_original"], Value::from(false));
+}
+
+#[tokio::test]
+async fn conversation_list_previews_last_visible_multibyte_message_for_every_row() {
+    let (_dir, server) = test_server();
+    let mut sources = Vec::new();
+    for n in 0..2 {
+        let (status, room) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({"body":{"name":format!("room-{n}")}}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let id = room["id"].as_str().unwrap().to_owned();
+        let source = format!("{n} {}", "漢😀".repeat(40));
+        let (status, _) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/conversations/{id}/turns"),
+                json!({"body":{"txt":source},"learned_at":900+n}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        sources.push((id, source));
+    }
+    // A newer deleted record must not replace the most recent visible one.
+    let (status, hidden) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            &format!("/v1/core/conversations/{}/turns", sources[0].0),
+            json!({"body":{"txt":"deleted newer text"},"learned_at":999_u64}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    server
+        .vault
+        .delete_entity_with_reason(
+            &oneiron::EntityId::from_hex(hidden["id"].as_str().unwrap()).unwrap(),
+            oneiron::DeleteReason::UserDelete,
+        )
+        .unwrap();
+    let (status, empty) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            "/v1/core/conversations",
+            json!({"body":{"name":"empty-room"}}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let empty_id = empty["id"].as_str().unwrap();
+    for path in [
+        "/v1/core/conversations?limit=10",
+        "/v1/core/conversations?kind=direct&limit=10",
+    ] {
+        let (status, response) = route_json(
+            server.clone(),
+            Request::builder().uri(path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let rows = response["items"].as_array().unwrap();
+        for (id, source) in &sources {
+            let row = rows.iter().find(|row| row["id"] == *id).unwrap();
+            let snippet = row["lastMessageSnippet"].as_str().unwrap();
+            assert!(snippet.chars().count() <= 50);
+            assert!(snippet.ends_with('…'));
+            assert!(source.starts_with(snippet.trim_end_matches('…')));
+        }
+        assert!(
+            rows.iter().find(|row| row["id"] == empty_id).unwrap()["lastMessageSnippet"].is_null()
+        );
+    }
+    let (status, standard) = route_json(
+        server,
+        Request::builder()
+            .uri("/v1/core/conversations?view=standard&limit=10")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{standard}");
+    assert_eq!(
+        standard["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["lastMessageSnippet"].is_string())
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn old_conversation_list_row_deserializes_with_absent_preview() {
+    let before = json!({
+        "items": [{"id":"old", "kind":"CONVERSATION", "label":"old room", "updatedAt":1}],
+        "meta": {"countMode":"exact", "total":1}
+    });
+    let response: ConversationsListResponse = serde_json::from_value(before).unwrap();
+    let current = serde_json::to_value(response).unwrap();
+    assert_eq!(current["items"][0]["id"], "old");
+    assert!(current["items"][0]["lastMessageSnippet"].is_null());
+}
+
+#[tokio::test]
+async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
+    let (_dir, server) = test_server();
+    let actor = oneiron::EntityId::now();
+    let conversation = oneiron::EntityId::now();
+    let at = 1234_u64;
+    server
+        .vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: at, end: at },
+            at,
+            b"actor",
+        )
+        .unwrap();
+    let content = "visible witness message content";
+    server
+        .vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .witness(&oneiron::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            messages: vec![oneiron::WitnessMessage {
+                id: None,
+                author: oneiron::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: content.to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: at,
+        })
+        .unwrap();
+    let (status, response) = route_json(
+        server,
+        Request::builder()
+            .uri("/v1/core/conversations?limit=10")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let row = response["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == conversation.to_hex())
+        .unwrap();
+    assert_eq!(row["lastMessageSnippet"], content);
+}
+
+#[tokio::test]
+async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
+    let (_dir, server) = auth_test_server();
+    oneiron::campaign::register_crm_pack(
+        &server.vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .expect("register saved query");
+    let owner = seeded_test_entity_id(0x1261_0900);
+    let old = seeded_test_entity_id(0x1261_0901);
+    let new = seeded_test_entity_id(0x1261_0902);
+    server
+        .vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("owner");
+    crate::test_credentials::bind_owner(&server.vault, "secret", owner);
+    seed_active_claim(&server, old, owner, "before", 100);
+    seed_active_claim(&server, new, owner, "after", 200);
+    let bearer = test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        owner.to_hex()
+    ));
+    let path = format!("/v1/core/memory/{}/watch", old.to_hex());
+    let (status, enabled) = route_json(
+        server.clone(),
+        core_request_with_authz("PUT", &path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{enabled:#}");
+    assert_eq!(enabled["watched"], true);
+    assert!(enabled["query_ref"].is_string());
+    let (status, repeated) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{repeated:#}");
+    assert_eq!(repeated, enabled);
+    let query_ref = enabled["query_ref"].as_str().expect("durable query ref");
+    let query_path = format!("/saved-queries/{query_ref}");
+    let mutation = json!({
+        "expected_definition_version": 1,
+        "filter": {"op": "all", "terms": []},
+        "matcher": {"kind": "hard", "expression": {"op": "all", "terms": []}},
+        "eval": {"mode": "reactive", "max_entities_per_wake": 128,
+                 "max_judges_per_wake": 1}
+    });
+    let (status, refused) = route_json(
+        server.clone(),
+        core_request_with_authz("PATCH", &query_path, bearer.clone(), Some(&mutation)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused:#}");
+    let (status, readable) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &query_path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{readable:#}");
+    assert_eq!(
+        readable["body"]["record"]["definition"]["definition_version"],
+        1
+    );
+    let (status, archive_refused) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            &format!("{query_path}/archive"),
+            bearer.clone(),
+            Some(&json!({"expected_definition_version": 1})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{archive_refused:#}");
+    let (status, denied) = route_json(
+        server.clone(),
+        core_request_with_principal_ref("GET", &path, "core:read", &owner.to_hex(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied:#}");
+    server
+        .vault
+        .supersede_claim(&new, &old, 777)
+        .expect("supersession");
+    let timeline = format!("/v1/core/memory/{}/timeline?view=full", old.to_hex());
+    let (status, result) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &timeline, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result:#}");
+    let records = result["records"].as_array().expect("timeline rows");
+    assert_eq!(records.len(), 2, "{result:#}");
+    assert_eq!(records[0]["state"], "superseded");
+    assert_eq!(records[1]["state"], "live");
+    let change = &records[1]["changes"][0];
+    assert_eq!(change["before_id"], old.to_hex());
+    assert_eq!(change["after_id"], new.to_hex());
+    // The pinned "before" is the original active revision, not the
+    // currently stored closed predecessor with life=superseded and to=777.
+    assert_eq!(change["before"]["val"], "before");
+    assert_eq!(change["before"]["life"], "active");
+    assert_eq!(records[0]["item"]["life"], "superseded");
+    assert_eq!(change["after"], records[1]["item"]);
+    let original_before = change["before"].clone();
+    let original_after = change["after"].clone();
+    // Claim ids are mutable. Later wording edits to either row must not
+    // rewrite the exact A→B revisions captured at supersession time.
+    let mut revised_new = server.vault.get_claim(&new).unwrap().unwrap();
+    revised_new.value = rmpv::Value::from("revised after");
+    server
+        .vault
+        .put_claim(
+            &new,
+            &revised_new,
+            oneiron::TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+        )
+        .unwrap();
+    let mut revised_old = server.vault.get_claim(&old).unwrap().unwrap();
+    revised_old.value = rmpv::Value::from("revised before");
+    server
+        .vault
+        .put_claim(
+            &old,
+            &revised_old,
+            oneiron::TimeRange {
+                start: 100,
+                end: 777,
+            },
+            100,
+        )
+        .unwrap();
+    let (status, revised) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &timeline, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revised:#}");
+    let changed = &revised["records"][1]["changes"][0];
+    assert_ne!(revised["records"][0]["item"], original_before);
+    assert_ne!(revised["records"][1]["item"], original_after);
+    assert_eq!(changed["before"], original_before);
+    assert_eq!(changed["after"], original_after);
+    let (status, disabled) = route_json(
+        server.clone(),
+        core_request_with_authz("DELETE", &path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{disabled:#}");
+    assert_eq!(disabled["watched"], false);
+    let (status, off) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{off:#}");
+    assert_eq!(off["watched"], false);
+    let (status, on_again) =
+        route_json(server, core_request_with_authz("PUT", &path, bearer, None)).await;
+    assert_eq!(status, StatusCode::OK, "{on_again:#}");
+    assert_eq!(on_again["query_ref"], enabled["query_ref"]);
+    assert_eq!(on_again["watched"], true);
+}
+
+#[tokio::test]
+async fn contact_opt_out_family_supersession_retains_original_diff_after_edit() {
+    use oneiron::counterparty_contact::{
+        CounterpartyContactRecord, CounterpartyOptOutReason, PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT,
+    };
+    let (_dir, server) = auth_test_server();
+    let contact = seeded_test_entity_id(0x1261_0a10);
+    let identity = seeded_test_entity_id(0x1261_0a11);
+    let record = CounterpartyContactRecord::user_introduction(identity, "contact@example.com", 10)
+        .expect("contact body");
+    server
+        .vault
+        .create_counterparty_contact(&contact, &record)
+        .expect("create contact");
+    let old = server
+        .vault
+        .claims_for_subject(&contact)
+        .expect("contact claims")
+        .into_iter()
+        .find(|id| {
+            server
+                .vault
+                .get_claim(id)
+                .unwrap()
+                .is_some_and(|body| body.predicate == PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT)
+        })
+        .expect("old opt-out head");
+    server
+        .vault
+        .opt_out_counterparty_contact(&contact, CounterpartyOptOutReason::Unsubscribe, 20)
+        .expect("public opt-out door");
+    let new = server
+        .vault
+        .sources(&old, oneiron::EdgeKind::Supersedes, None)
+        .expect("successor edges")
+        .into_iter()
+        .next()
+        .expect("replacement head");
+    let path = format!("/v1/core/memory/{}/timeline?view=full", new.to_hex());
+    let (status, initial) = route_json_auth(
+        server.clone(),
+        Request::builder()
+            .uri(&path)
+            .body(Body::empty())
+            .expect("timeline request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{initial:#}");
+    let pair = &initial["records"][1]["changes"][0];
+    assert_eq!(pair["before_id"], old.to_hex());
+    assert_eq!(pair["after_id"], new.to_hex());
+    let pinned_before = pair["before"].clone();
+    let pinned_after = pair["after"].clone();
+    assert_ne!(pinned_before, pinned_after);
+
+    // The family replacement's own value changes later. The first
+    // supersession must still render the exact original opt-out revision.
+    let changed = record
+        .opted_out(CounterpartyOptOutReason::Stop, 30)
+        .expect("later contact wording")
+        .claim_bodies(contact)
+        .into_iter()
+        .find(|body| body.predicate == PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT)
+        .expect("replacement value");
+    let mut head = server
+        .vault
+        .get_claim(&new)
+        .expect("read head")
+        .expect("head");
+    head.value = changed.value;
+    server
+        .vault
+        .put_claim(&new, &head, oneiron::TimeRange { start: 20, end: 20 }, 20)
+        .expect("edit head");
+    let (status, later) = route_json_auth(
+        server,
+        Request::builder()
+            .uri(path)
+            .body(Body::empty())
+            .expect("timeline request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{later:#}");
+    assert_ne!(later["records"][1]["item"], pinned_after);
+    assert_eq!(later["records"][1]["changes"][0]["before"], pinned_before);
+    assert_eq!(later["records"][1]["changes"][0]["after"], pinned_after);
 }

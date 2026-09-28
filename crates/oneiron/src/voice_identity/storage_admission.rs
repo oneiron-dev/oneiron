@@ -124,7 +124,7 @@ pub(super) struct VoiceDeletionTally {
     pub(super) sample_rows: usize,
     pub(super) vector_rows: usize,
     pub(super) active_pointer: bool,
-    owner_ref_rows: usize,
+    pub(super) owner_ref_rows: usize,
 }
 
 impl VoiceDeletionTally {
@@ -136,13 +136,10 @@ impl VoiceDeletionTally {
     }
 }
 
-/// The ONE biometric deletion routine.
-///
-/// Explicit withdrawal and retention pruning share it, so both paths delete
-/// exactly the same rows: every print row of the subject (each holding one
-/// centroid), every sample/vector row those prints reference, and the
-/// active-space pointer.
-pub(super) fn delete_voice_biometrics_in_txn(
+/// Delete recognition-print material, not the independent render-reference bank.
+/// Enrollment and retention pruning both replace/remove prints without withdrawing
+/// the subject's separately held voice identity or evicting its render targets.
+pub(super) fn delete_voice_prints_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     subject: &EntityId,
@@ -152,10 +149,7 @@ pub(super) fn delete_voice_biometrics_in_txn(
 
     let mut sample_keys: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut print_keys: Vec<Vec<u8>> = Vec::new();
-    let mut tally = VoiceDeletionTally {
-        owner_ref_rows: super::ref_bank::delete_owner_refs(store, wtxn, subject)?,
-        ..VoiceDeletionTally::default()
-    };
+    let mut tally = VoiceDeletionTally::default();
 
     for (key, value) in rows {
         if key == pointer_key {
@@ -364,6 +358,7 @@ pub(super) struct VoiceMatchCandidate {
     space_id: String,
     centroid: Vec<f32>,
     pub(super) calibration: VoicePrintCalibration,
+    pub(super) print_generation: EntityId,
 }
 
 /// Validates a match request and returns its segments in canonical order,
@@ -446,6 +441,7 @@ pub(super) fn load_match_candidates(
             space_id: record.space.space_id.clone(),
             centroid: l2_normalize(&record.centroid, record.space.dimension)?,
             calibration: record.calibration,
+            print_generation: record.print_generation,
         });
     }
     // Deterministic subject-id tie-break for equal scores.

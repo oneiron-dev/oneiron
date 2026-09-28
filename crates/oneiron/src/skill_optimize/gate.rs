@@ -157,7 +157,7 @@ pub use decision::{
 pub use goal_axis::{GoalAxisKind, GoalAxisScore, GoalAxisSpec, set_skill_edit_goal_axes};
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
-    skill_edit_verdicts_for_proposal,
+    skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
 pub use measurement::{
     AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
@@ -170,7 +170,10 @@ pub(crate) use admission::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
     with_optimized_skill_admission,
 };
-pub(crate) use ledger::skill_edit_verdict_receipts;
+pub(crate) use ledger::{
+    displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_receipts,
+    validate_judge_revision,
+};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;
@@ -238,8 +241,8 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 /// data rather than ordering (the `edit_distance::escalation` posture).
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 
-/// Bumped for the portable goal binding (v6 → v7: explicit goal identity).
-/// ONE-2114 introduced v5 goal vectors and dominance.
+/// Bumped by ONE-2114 (v5 → v6: goal vectors, dominance and the portable
+/// goal identity). ONE-2014 introduced v5 judge revisions.
 /// OF-214 introduced v4 audited measurements and bound world labels.
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance
@@ -249,9 +252,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1/v2/v3/v4/v5/v6 row decodes as
+/// rather than to grow a second code path for it: every v1 through v5 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 7;
+const VERDICT_SCHEMA_VERSION: u64 = 6;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -274,6 +277,9 @@ const KEY_GOAL_AXES: &str = "goal_axes";
 const KEY_GOAL_REVISION: &str = "goal_revision";
 const KEY_GOAL_ID: &str = "goal_id";
 const KEY_TRADEOFF_RESOLUTION: &str = "tradeoff_resolution";
+const KEY_JUDGE_REVISION: &str = "judge_revision";
+const FIELD_SKILL_EDIT_JUDGE_REVISION: &str = "skill_edit_judge_revision";
+const FIELD_SKILL_EDIT_JUDGE_DISPLACED_BY: &str = "skill_edit_judge_displaced_by";
 
 /// Domain separator of the canonical SKILL-body content digest.
 const BODY_DIGEST_DOMAIN: &[u8] = b"skill_optimize:body:v1\0";

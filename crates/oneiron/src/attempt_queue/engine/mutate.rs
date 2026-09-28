@@ -89,6 +89,7 @@ impl AttemptQueue<'_> {
             // A retry is a NEW attempt: its attribution manifest starts empty,
             // the finalized source keeps the prior try's.
             manifest: Vec::new(),
+            executor_model: None,
             // Likewise its cancel lifecycle: the new try inherits neither the
             // source's refusal history nor its spent landing reserve. It DOES
             // inherit the dial's VALUES, so a retried try lands on the same
@@ -105,6 +106,8 @@ impl AttemptQueue<'_> {
             // A retry is a NEW attempt: it has produced nothing yet, and the
             // finalized source keeps sole ownership of the artifact its own
             // try left behind.
+            signals: Vec::new(),
+            asks: Vec::new(),
             placement: source.placement.as_ref().map(|placement| {
                 crate::attempt_queue::AttemptPlacement {
                     worker: placement.worker.clone(),

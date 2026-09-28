@@ -30,8 +30,16 @@
 mod assembly;
 pub(crate) mod branch_scope;
 mod conflict;
+pub(crate) mod evidence;
 mod executor;
 mod extracted_people;
+mod failure_rules;
+#[cfg(test)]
+pub(crate) use failure_rules::PREDICATE as DREAMER_FAILURE_RULES_PREDICATE;
+pub(crate) use failure_rules::{
+    KEY as DREAMER_FAILURE_RULES_KEY, admitted_authored_claim, prepare_authored_claim,
+    resident_record,
+};
 mod gap;
 mod judge_context;
 mod open_conflict;
@@ -43,6 +51,7 @@ pub mod routing;
 pub mod selection;
 mod step_charge;
 mod support;
+mod wake_plan;
 mod watermark;
 
 #[cfg(test)]
@@ -54,8 +63,13 @@ pub use gap::*;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub use provenance::*;
+pub(crate) use provenance::{
+    decode_verified_locators, encode_consolidation_evidence_with_locators,
+};
 pub use resources::ScopedConsolidationWrite;
 pub use support::*;
+pub(crate) use wake_plan::AttemptPreparation;
+pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;
 
 // The flat dreamer_consolidation.rs module used to provide these names to the

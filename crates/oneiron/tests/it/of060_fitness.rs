@@ -322,7 +322,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
             RawHit {
                 path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_vector".to_owned(),
-                line: "pub fn put_vector(&self, id: Buffer, vector: Vec<f64>) -> napi::Result<()> {".to_owned(),
+                line: "pub fn put_vector(&self, id: Buffer, vector: Array<'_>) -> napi::Result<()> {".to_owned(),
             },
             1,
         ),
@@ -343,13 +343,21 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
             1,
         ),
         // Server-plane auth metadata: one empty row per revoked bearer-token
-        // id (ONE-1636). Same class as the idempotency entry above — it writes
-        // no entity, edge, or vector, so no stamper applies to it.
+        // id (ONE-1636). ONE-1939 wraps the row in a single-winner transaction.
+        // Same class as idempotency: no entity, edge, or vector is written.
         (
             RawHit {
                 path: "crates/oneiron-server/src/auth.rs".to_owned(),
-                ident: "sync_state_put".to_owned(),
-                line: "vault.sync_state_put(&key, &[])?;".to_owned(),
+                ident: "with_write_txn".to_owned(),
+                line: "Ok(vault.with_write_txn(|txn| {".to_owned(),
+            },
+            1,
+        ),
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/auth.rs".to_owned(),
+                ident: "sync_state_put_in_write_txn".to_owned(),
+                line: "vault.sync_state_put_in_write_txn(txn, &key, &[])?;".to_owned(),
             },
             1,
         ),
@@ -402,7 +410,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // grounding-read race the ticket closes.
         (
             RawHit {
-                path: "crates/oneiron-server/src/api/mcp_gateway/facade_verbs.rs".to_owned(),
+                path: "crates/oneiron-server/src/api/mcp_gateway/facade_verbs/mod.rs".to_owned(),
                 ident: "with_write_txn".to_owned(),
                 line: ".with_write_txn(|wtxn| {".to_owned(),
             },
@@ -543,8 +551,9 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
                 SelfEffect::MemorySupersedeClaim,
             ),
             ("self.memory.put_edge", SelfEffect::MemoryPutEdge),
+            ("self.report_blocked", SelfEffect::ReportBlocked),
         ]),
-        "OF-060 P3: write imports must map exactly to the authorized memory effects",
+        "OF-060 P3: write imports must map exactly to authorized memory effects and the blocked-report receipt",
     );
 
     for tier in [

@@ -353,6 +353,31 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
 
 #[test]
 fn generic_transports_capture_real_pack_sources_without_installing() -> Result<()> {
+    struct LyingAdapter {
+        hub: EntityId,
+        endpoint: String,
+        source: PackSource,
+    }
+    impl SkillHubAdapter for LyingAdapter {
+        fn hub_id(&self) -> EntityId {
+            self.hub
+        }
+        fn kind(&self) -> SkillHubKind {
+            SkillHubKind::HttpIndex
+        }
+        fn endpoint(&self) -> Option<&str> {
+            Some(&self.endpoint)
+        }
+        fn fetch_package(&self, _: &HubRef) -> Result<HubPackage> {
+            Err(crate::Error::EntityNotFound)
+        }
+    }
+    impl PackSourceAdapter for LyingAdapter {
+        fn fetch_pack_source(&self, _: &HubRef) -> Result<PackSource> {
+            Ok(self.source.clone())
+        }
+    }
+
     use super::pack_catalog::{PackSource, PackSourceAdapter};
     let tree = vec![HubFile::new("PACK.md", b"---\nname: alice.mail\ndescription: fixture\nversion: 1\nkind: connector\nadapter: built-in:email\n---\nReal source bytes\n".to_vec()),
         HubFile::new("knowledge/guide.md", b"Imported content is evidence.\n".to_vec())];
@@ -422,14 +447,164 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
     let publisher = vault.admit_skill_publisher(&owner, "publisher:pack", hub)?;
     let (id, pinned) = vault.fetch_pack_from_adapter(&http, &reference, &publisher, at, 4)?;
     assert_eq!(pinned, reference);
-    assert_eq!(vault.get_pack_source(&id)?, Some(source));
+    assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
     assert!(vault.installed_pack("alice.mail")?.is_none());
+    // A third-party adapter cannot launder B through a requested hash for A.
+    let liar = LyingAdapter {
+        hub,
+        endpoint: server.index_url(),
+        source,
+    };
+    let wrong = HubRef::new(hub, "pack", HubPin::ContentHash("ab".repeat(32)))?;
+    assert!(
+        vault
+            .fetch_pack_from_adapter(&liar, &wrong, &publisher, at, 5)
+            .is_err()
+    );
+    assert_eq!(vault.list_pack_sources()?.len(), 1);
     routes.insert("/knowledge/guide.md".into(), (200, b"drift".to_vec()));
     let drift = StaticHttp::new(routes);
     assert!(
         HttpEndpointSkillHubAdapter::new(hub, &drift.index_url())?
             .fetch_pack_source(&reference)
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> Result<()> {
+    use super::pack_catalog::{
+        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource,
+    };
+    struct Fit;
+    impl PackFitPolicy for Fit {
+        fn evaluate(
+            &self,
+            source: &PackSource,
+            permissions: &PackPermissions,
+        ) -> Result<PackFitVerdict> {
+            assert_eq!(source.manifest().name, "alice.mail");
+            assert_eq!(permissions.grants, ["mail.read"]);
+            Ok(PackFitVerdict {
+                fits: true,
+                rules_hit: false,
+                code_auto_install: true,
+            })
+        }
+    }
+    let tree = vec![
+        HubFile::new("PACK.md", b"---\nname: alice.mail\ndescription: fixture\nversion: 1\nkind: connector\nadapter: built-in:email\ngrants: [\"mail.read\"]\n---\nExact connector source\n"),
+        HubFile::new("skills/compose/SKILL.md", b"---\nname: alice.compose\ndescription: compose\nversion: 1\n---\nWrite a reply\n"),
+    ];
+    let source = PackSource::from_files(tree.clone())?;
+    let repository = tempfile::tempdir()?;
+    git(repository.path(), &["init", "--quiet"]);
+    populate(repository.path(), &tree);
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-qm", "pack"]);
+    let commit = git(repository.path(), &["rev-parse", "HEAD"]);
+    let hub_id = EntityId::now();
+    let endpoint = repository.path().to_str().expect("utf8 repo");
+    let adapter = GitEndpointSkillHubAdapter::new(hub_id, endpoint, &commit)?;
+    // macOS may alias /var to /private/var; configure the canonical endpoint
+    // exposed by the adapter, not the fixture's pre-canonical temp path.
+    let endpoint = adapter.endpoint().expect("configured git endpoint");
+    let reference = HubRef::new(hub_id, "skills/example", HubPin::Commit(commit.clone()))?;
+    let mut config = crate::VaultConfig::device();
+    config.dimensions = 4;
+    config.map_size = 16 * 1024 * 1024;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let owner_id = EntityId::now();
+    let at = crate::temporal::TimeRange { start: 4, end: 4 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        4,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:git-pack",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.configure_skill_hub(
+        &owner,
+        &hub_id,
+        &SkillHubRecord::new(
+            SkillHubKind::Git,
+            endpoint,
+            SkillHubTrustTier::Community,
+            HubSyncPolicy::PinnedCommit,
+        )?,
+        at,
+        4,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:git-pack", hub_id)?;
+    // Install screening reads the seeded pack-install policy and fails closed
+    // without it (ONE-2019). Restore the shipped manifest this legacy fixture
+    // cleared for the install only; the rest keeps its manifest-free Gate.
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        policy_id,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let installed = vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4);
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity_for_test(&vault.store, txn, &policy_id)
+    })?;
+    let PackInstallDisposition::Installed(receipt) = installed? else {
+        panic!("post-fit connector");
+    };
+    assert_eq!(receipt.content_hash, source.content_hash().to_hex());
+    assert_eq!(receipt.hub_ref, "skills/example");
+    assert_eq!(receipt.pin_type, "commit");
+    assert_eq!(receipt.pin_value, commit);
+    assert_eq!(receipt.permissions.grants, ["mail.read"]);
+    assert_eq!(receipt.skills.len(), 1);
+    let skill = EntityId::from_hex(&receipt.skills[0])?;
+    let skill_record = vault.get_skill_record(&skill)?.expect("bundled skill");
+    assert_eq!(
+        skill_record.lifecycle_status,
+        crate::skill::SkillLifecycle::Active
+    );
+    let skill_source = super::pack_catalog::pack_skill_hub_ref(
+        &reference,
+        "compose",
+        skill_record.content_hash.expect("hashed skill"),
+    )?;
+    let skill_receipt = vault
+        .hub_import_receipt(&skill, &skill_source)?
+        .expect("hub source receipt");
+    assert_eq!(
+        skill_receipt.publisher.as_deref(),
+        Some(publisher.identity())
+    );
+    assert_eq!(
+        skill_receipt.content_hash,
+        skill_record.content_hash.unwrap().to_hex()
+    );
+    let standalone = files("alice.plain", "1", "plain knowledge");
+    for file in &standalone {
+        let path = repository.path().join("skills/plain").join(&file.path);
+        std::fs::create_dir_all(path.parent().expect("file parent"))?;
+        std::fs::write(path, &file.content)?;
+    }
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-qm", "skill"]);
+    let new_commit = git(repository.path(), &["rev-parse", "HEAD"]);
+    let new_adapter = GitEndpointSkillHubAdapter::new(hub_id, endpoint, &new_commit)?;
+    let skill_ref = HubRef::new(hub_id, "skills/plain", HubPin::Commit(new_commit))?;
+    let plain = vault.import_skill_from_adapter(&new_adapter, &skill_ref, at, 5)?;
+    assert_eq!(
+        vault
+            .get_skill_record(&plain)?
+            .expect("plain skill")
+            .lifecycle_status,
+        crate::skill::SkillLifecycle::Candidate
     );
     Ok(())
 }

@@ -27,7 +27,7 @@ impl Vault {
     /// Resolves the single principal. First use creates an ordinary actor,
     /// granting it NO ceiling, consent grant, or privilege.
     pub fn dreamer_authority(&self) -> Result<WriteActor> {
-        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, crate::unix_seconds_now()))
+        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, self.now_recorded_at()))
     }
     pub(super) fn dreamer_authority_in_txn(
         &self,
@@ -140,21 +140,30 @@ impl Vault {
         id: crate::attempt_queue::AttemptId,
     ) -> Result<Option<DreamerAuthorityStamp>> {
         let txn = self.store.env.read_txn()?;
+        self.dreamer_attempt_authority_in_txn(&txn, id)
+    }
+
+    /// Validates a queued authority stamp at the SAME wake ledger revision.
+    pub(crate) fn dreamer_attempt_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: crate::attempt_queue::AttemptId,
+    ) -> Result<Option<DreamerAuthorityStamp>> {
         let key = [ATTEMPT_PREFIX, id.as_bytes()].concat();
         self.store
             .vault_meta
-            .get(&txn, &key)?
+            .get(txn, &key)?
             .map(|raw| {
                 let stamp: DreamerAuthorityStamp =
                     serde_json::from_slice(&raw).map_err(|_| invalid())?;
                 if stamp.attempt_id != *id.as_bytes()
                     || stamp.facet.trim().is_empty()
-                    || self.store.vault_meta.get(&txn, ACTOR_KEY)?.as_deref()
+                    || self.store.vault_meta.get(txn, ACTOR_KEY)?.as_deref()
                         != Some(stamp.actor.as_bytes().as_slice())
                     || self
                         .store
                         .entities
-                        .get(&txn, stamp.actor.as_bytes())?
+                        .get(txn, stamp.actor.as_bytes())?
                         .and_then(|raw| EntityMetadataHeader::parse(&raw))
                         .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
                 {
@@ -199,7 +208,7 @@ pub(crate) fn stamp_attempt(
         }
         return Ok(());
     }
-    let receipt_id = GateDecisionId::now();
+    let receipt_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
     let receipt = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: receipt_id,

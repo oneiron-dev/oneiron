@@ -7,6 +7,7 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -75,8 +76,16 @@ impl CommOptOutPosture {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
+    pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(crate) proposal_check_threshold: Option<u64>,
+    pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
+    pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
+    pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
+    pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
@@ -84,6 +93,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(super) scoped_grants: Vec<PolicyScopedGrant>,
     pub(super) skill_edit_goal: Vec<crate::gate::SkillEditGoalPolicy>,
+    pub(crate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,
@@ -100,4 +110,6 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
+    pub(super) hosted_tts: HostedTtsPolicy,
 }

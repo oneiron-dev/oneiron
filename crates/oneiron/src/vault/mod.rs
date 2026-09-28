@@ -7,6 +7,8 @@ mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_revision;
+#[cfg(feature = "sync")]
+pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
@@ -77,6 +79,8 @@ pub struct Vault {
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
     /// outbound callback, no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
+    /// One in-process idle policy timer per open vault, released on wrapper drop.
+    pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,
     pub(crate) conversation_presence:
         std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the

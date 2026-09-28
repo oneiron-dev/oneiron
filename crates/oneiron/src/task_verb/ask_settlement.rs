@@ -36,6 +36,7 @@ pub(super) fn read_result(
                 || result.settlement.effective != group.effective
                 || result.settlement.electorate != who
                 || result.settlement.question_digest != group.question_digest
+                || result.settlement.policy_surface != group.policy_surface
             {
                 return Err(ask_record::invalid());
             }
@@ -91,10 +92,14 @@ pub(super) fn settle_in(
     for member in &group.members {
         let task = ask_record::entity(&member.task)?;
         let person = ask_record::entity(&member.actor)?;
-        if evidence
-            .iter()
-            .any(|entry| entry.person_ref == person && entry.source != TaskAskSource::Inform)
-        {
+        if evidence.iter().any(|entry| {
+            entry.person_ref == person
+                && (entry.source == TaskAskSource::Human
+                    || entry.source == TaskAskSource::Executor
+                    || (entry.source == TaskAskSource::Companion
+                        && entry.delegation_grant_ref.is_some()
+                        && !entry.soft_confirm))
+        }) {
             continue;
         }
         let body = super::create_validation::task_body_in_txn(vault, txn, task)
@@ -115,7 +120,12 @@ pub(super) fn settle_in(
         TaskAskSettlementReason::Stale
     } else if now >= deadline {
         TaskAskSettlementReason::Deadline
-    } else if matches!(decision, TaskAskDecision::First(_)) && coverage.met {
+    } else if matches!(decision, TaskAskDecision::First(_))
+        && coverage.met
+        && !evidence
+            .iter()
+            .any(|entry| entry.reason == TaskAskEvidenceReason::Counted && entry.soft_confirm)
+    {
         TaskAskSettlementReason::FirstWord
     } else if all_responded {
         TaskAskSettlementReason::AllResponded
@@ -127,10 +137,18 @@ pub(super) fn settle_in(
     } else {
         decision
     };
-    let fallback = fallback(&group.effective, &coverage, &decision, stale, &evidence);
+    let fallback = fallback(
+        &group.effective,
+        &coverage,
+        &decision,
+        stale,
+        &evidence,
+        group.policy_surface,
+    );
     let reference = settlement_id(id)?;
     let cutoff_order = evidence.iter().map(|entry| entry.order).max().unwrap_or(0);
     let mut result = TaskAskResult {
+        effect_authorization: TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage,
         decision,
         fallback,
@@ -149,6 +167,7 @@ pub(super) fn settle_in(
             question_digest: group.question_digest,
             unmet_sources,
             outcome_answer_ref: None,
+            policy_surface: group.policy_surface,
         },
     };
     if result.coverage.met
@@ -175,6 +194,7 @@ pub(super) fn settle_in(
                 .iter()
                 .find(|entry| {
                     entry.reason == TaskAskEvidenceReason::Counted
+                        && entry.source == TaskAskSource::Human
                         && entry.word.option.as_ref() == Some(option)
                 })
                 .map(|entry| {
@@ -186,7 +206,9 @@ pub(super) fn settle_in(
                 }),
             _ => None,
         };
-        if let Some((entry, unit, choice)) = selection {
+        if let Some((entry, unit, choice)) = selection
+            && entry.source == TaskAskSource::Human
+        {
             let bound = crate::llm::decision::questions::bind_task_answer_in_txn(
                 vault,
                 txn,
@@ -318,12 +340,17 @@ fn reduce(
         .as_ref()
         .map(|class| class.required_sources.clone())
         .unwrap_or_default();
-    let mut latest = BTreeMap::new();
+    let mut human = BTreeMap::new();
+    let mut delegated = BTreeMap::new();
     for entry in evidence.iter() {
         if entry.source == TaskAskSource::Human {
-            latest.insert(entry.person_ref, entry.answer.word_ref);
+            human.insert(entry.person_ref, entry.answer.word_ref);
+        } else if entry.source == TaskAskSource::Companion && entry.delegation_grant_ref.is_some() {
+            delegated.insert(entry.person_ref, entry.answer.word_ref);
         }
     }
+    let mut latest = delegated;
+    latest.extend(human.iter().map(|(person, word)| (*person, *word)));
     let responded: BTreeSet<_> = latest.keys().copied().collect();
     let unknown = who.difference(&responded).copied().collect();
     let unmet_people: BTreeSet<_> = required.difference(&responded).copied().collect();
@@ -338,30 +365,40 @@ fn reduce(
     unmet_sources.clear();
     for entry in evidence.iter_mut() {
         entry.reason = match entry.source {
-            TaskAskSource::Inform if latest.contains_key(&entry.person_ref) => {
+            TaskAskSource::Inform if human.contains_key(&entry.person_ref) => {
                 TaskAskEvidenceReason::HumanDominates
             }
             TaskAskSource::Inform => TaskAskEvidenceReason::Inform,
             TaskAskSource::Executor => TaskAskEvidenceReason::Executor,
-            TaskAskSource::Human
+            TaskAskSource::Companion if human.contains_key(&entry.person_ref) => {
+                TaskAskEvidenceReason::HumanDominates
+            }
+            TaskAskSource::Companion if entry.delegation_grant_ref.is_none() => {
+                TaskAskEvidenceReason::CompanionHint
+            }
+            TaskAskSource::Human | TaskAskSource::Companion
                 if latest.get(&entry.person_ref) != Some(&entry.answer.word_ref) =>
             {
                 TaskAskEvidenceReason::Superseded
             }
-            TaskAskSource::Human
+            TaskAskSource::Human | TaskAskSource::Companion
                 if !need.contains(&entry.person_ref)
                     && !decision_seats.contains(&entry.person_ref)
                     && !required.contains(&entry.person_ref) =>
             {
                 TaskAskEvidenceReason::OutsideElectorate
             }
-            TaskAskSource::Human if !sources.is_subset(&entry.word.provenance_refs) => {
+            TaskAskSource::Human | TaskAskSource::Companion
+                if !sources.is_subset(&entry.word.provenance_refs) =>
+            {
                 unmet_sources.extend(sources.difference(&entry.word.provenance_refs).copied());
                 TaskAskEvidenceReason::MissingSource
             }
-            TaskAskSource::Human => TaskAskEvidenceReason::Counted,
+            TaskAskSource::Human | TaskAskSource::Companion => TaskAskEvidenceReason::Counted,
         };
-        entry.ladder_changed = if entry.reason == TaskAskEvidenceReason::Counted {
+        entry.ladder_changed = if entry.reason == TaskAskEvidenceReason::Counted
+            && entry.source == TaskAskSource::Human
+        {
             spec.what
                 .ladder_answer
                 .as_ref()
@@ -381,7 +418,13 @@ fn reduce(
     let decision = match &spec.decide {
         None => TaskAskDecision::Collected,
         Some(TaskAskDecide::First) => words.first().map_or(TaskAskDecision::Unknown, |entry| {
-            TaskAskDecision::First(entry.answer)
+            if entry.word.confirmation.as_ref().is_some_and(|response| {
+                response.decision == super::TaskAskConfirmationDecision::Reject
+            }) {
+                TaskAskDecision::No
+            } else {
+                TaskAskDecision::First(entry.answer)
+            }
         }),
         // A tied opposing electorate is surfaced, never broken by arrival order.
         Some(TaskAskDecide::All { answer, .. }) => {
@@ -434,11 +477,43 @@ fn fallback(
     decision: &TaskAskDecision,
     stale: bool,
     evidence: &[TaskAskEvidence],
+    policy_surface: TaskAskSurface,
 ) -> Option<TaskAskFallback> {
     if stale {
         return Some(TaskAskFallback {
             branch: TaskAskDefault::Hold,
-            surface: TaskAskSurface::Card,
+            surface: spec.on_disagree.surface,
+        });
+    }
+    // A companion commitment without the person's word takes the AskSpec
+    // deadline branch even if delegated companions disagree.
+    if spec.what.commitment
+        && evidence.iter().any(|entry| {
+            entry.source == TaskAskSource::Companion
+                && !evidence.iter().any(|human| {
+                    human.source == TaskAskSource::Human && human.person_ref == entry.person_ref
+                })
+        })
+    {
+        return Some(TaskAskFallback {
+            branch: spec.default,
+            surface: policy_surface,
+        });
+    }
+    // An explicit human rejection is a veto, not silence. It never inherits
+    // a permissive deadline/disagreement branch from the original question.
+    if spec.what.commitment
+        && evidence.iter().any(|entry| {
+            entry.source == TaskAskSource::Human
+                && entry.reason == TaskAskEvidenceReason::Counted
+                && entry.word.confirmation.as_ref().is_some_and(|response| {
+                    response.decision == super::TaskAskConfirmationDecision::Reject
+                })
+        })
+    {
+        return Some(TaskAskFallback {
+            branch: TaskAskDefault::Hold,
+            surface: policy_surface,
         });
     }
     let choices: BTreeSet<_> = evidence
@@ -467,7 +542,7 @@ fn fallback(
     }
     Some(TaskAskFallback {
         branch: spec.default,
-        surface: TaskAskSurface::Card,
+        surface: spec.on_disagree.surface,
     })
 }
 
@@ -547,6 +622,7 @@ pub(super) fn validate_result(id: EntityId, result: &TaskAskResult) -> Result<()
             &decision,
             stale,
             &evidence,
+            settlement.policy_surface,
         ) != result.fallback
     {
         return Err(ask_record::invalid());

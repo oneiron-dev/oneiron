@@ -64,7 +64,7 @@ def boundary_type(value, language, wire=False):
         return f'list[{item}]' if language.startswith('py') else f'({item})[]' if ' | ' in item else item + '[]'
     if language == 'napi': return RESULTS[inner][0]
     if language == 'py': return {'String': 'str', 'bool': 'bool'}.get(inner, 'dict[str, Any]')
-    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt'}.get(inner, inner)
+    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt', 'MemoryExport': 'dict[str, Any]'}.get(inner, inner)
     return {'String': 'string', 'bool': 'boolean', 'MemoryReceipt': 'FacadeReceipt', **({'KeyValueItem': 'WireItem'} if wire else {})}.get(inner, inner)
 
 def remote_boundary(row):
@@ -307,6 +307,31 @@ def outputs():
     for r in facade_rows:
         method=r['name'].replace('.','_')
         if r['name'] == 'recall': server += SERVER_RECALL_DOC
+        if r.get('admission', {}).get('owner_grade'):
+            # A full-vault result must carry verifier-produced owner proof into
+            # same-snapshot engine admission, never generic actor-only invoke.
+            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
+                auth.require(CoreScope::{r["scope"]})?;
+                auth.require_unrestricted_record_scope()?;
+                if !auth.is_owner_grade() {{
+                    return Err(FacadeApiError::forbidden("full-vault export requires owner authority", ["Present a verified, unattenuated owner credential."]));
+                }}
+                let value = facade_json(payload)?;
+                oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
+                let input: oneiron::memory::ExportOptions = facade_input(value)?;
+                let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
+                let output = if proof.claims().holder_ref == "host" {{
+                    server.vault.export_with_verified_host_owner(&input, proof)?
+                }} else {{
+                    let (actor, class) = facade_actor(&auth)?;
+                    server.vault.memory(actor, class).export_with_verified_owner(&input, proof)?
+                }};
+                Ok(Json(serde_json::to_value(output).map_err(|_| FacadeApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
+                    "export result encoding failed", ["Report this SDK response mismatch."]
+                ))?))
+            }}\n'''
+            continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
         guard, result = '', f'oneiron::task_verb::sdk::invoke(&server.vault.memory(actor,class), "{r["name"]}", value)?'
@@ -406,7 +431,14 @@ export type TaskAskDecide = "first" | {all: {of: TaskAskElectorate; answer: Task
 export type TaskAskDefault = "proceed" | "hold" | "ask_me";
 export interface TaskAskDisagree {branch: "hold" | "proceed"; surface: "card" | "none"}
 export interface TaskAskClass {key: string; version: number; governance: boolean; deadline_seconds: number; allowed_recipients: string[]; required_people: string[]; minimum_responses: number; required_sources: ConsultPayloadRef[]; decision: TaskAskDecide | null; disclosure: Record<string, ConsultPayloadRef[]>; fallback: TaskAskDefault[]; remind: number[]}
+export type TaskAskWho = TaskAskTarget | string | string[] | null;
+export interface TaskAskShort {who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault}
 export interface TaskAskSpec { intent_key: string; task_ref?: string | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: "inform"; on_disagree?: TaskAskDisagree; remind?: number[] | null }
+export interface TaskCanAskRequest { ask: TaskAskSpec }
+export interface TaskAskPreflightRecipient { who: string; face: string | null; channel: string | null; word_required: boolean }
+export interface TaskAskPreflight { recipients: TaskAskPreflightRecipient[] }
+export type TaskAskPersonKind = "word" | "companion" | "default" | "unknown";
+export interface TaskAskPersonEvidence {who: string; answer: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source: string | null}
 export interface TaskAskHandle { group_ref: string }
 export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
 export interface TaskAskWord {result_ref: string; option?: TaskAskOptionId | null; inform_for?: string | null; provenance_refs?: ConsultPayloadRef[]}
@@ -416,7 +448,8 @@ export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: Ta
 export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
 export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"; ladder_changed: boolean | null}
 export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
-export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
+export type TaskAskEffectAuthorization = "not_evaluated_by_ask";
+export interface TaskAskResult {effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
 export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
 export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
 export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
@@ -430,12 +463,20 @@ export function agentVerbs(invoke: AgentInvoke) {
             fam, _, verb = r['name'].partition('.')
             if fam != family: continue
             method=fam+verb.title()
-            if verb=='ask': decl='spec: TaskAskSpec'; value='spec'; result='TaskAskReceipt'
+            if verb=='ask':
+                ts += ('ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, '
+                       'until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt {\n'
+                       '  const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : '
+                       '{who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]};\n'
+                       '  return invoke("tasksAsk", input) as TaskAskReceipt\n},\n')
+                continue
             elif verb=='wait': decl='handle: TaskAskHandle, stepKey = "sdk.wait"';value='{handle, step_key: stepKey}';result='TaskAskWait'
             elif verb=='answer':decl='handle: TaskAskHandle, word: TaskAskWord';value='{handle, word}';result='TaskAskAnswer'
             elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
             elif verb=='list':decl='';value='{}';result='unknown[]'
-            elif verb=='messages':decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
+            elif verb in ('messages', 'find'):decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
+            elif verb=='render':decl='roomRef: string';value='{room_ref: roomRef}';result='string[]'
+            elif verb in ('get', 'trunk'):decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
             elif verb=='claim':decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
             else: decl='turn: Record<string, unknown>';value='turn';result='unknown'
             ts += f'{verb}({decl}): {result} {{ return invoke("{method}", {value}) as {result} }},\n'
@@ -448,11 +489,22 @@ export function agentVerbs(invoke: AgentInvoke) {
         for r in facade_rows:
             fam, _, verb=r['name'].partition('.')
             if fam!=family:continue
+            if verb=='ask':
+                python += ('    def ask(self, spec_or_who, what=None, until=None, default="ask_me"):\n'
+                           '        if what is None:\n'
+                           '            input = spec_or_who\n'
+                           '        else:\n'
+                           '            who = {"people": [spec_or_who]} if isinstance(spec_or_who, str) else {"people": list(spec_or_who)} if isinstance(spec_or_who, (set, list, tuple)) else spec_or_who\n'
+                           '            input = {"who": who, "what": what, "until": until, "default": default}\n'
+                           '        return self._call("tasks_ask", input)\n')
+                continue
             if verb=='wait':params='handle, step_key="sdk.wait"';value='{"handle": handle, "step_key": step_key}'
             elif verb=='answer':params='handle, word';value='{"handle": handle, "word": word}'
             elif verb=='outcomes':params='handle';value='handle'
             elif verb=='list':params='';value='{}'
-            elif verb=='messages':params='room_ref, after=None, limit=None';value='{"room_ref": room_ref, "after": after, "limit": limit}'
+            elif verb in ('messages', 'find'):params='room_ref, after=None, limit=None';value='{"room_ref": room_ref, "after": after, "limit": limit}'
+            elif verb=='render':params='room_ref';value='{"room_ref": room_ref}'
+            elif verb in ('get', 'trunk'):params='room_ref, turn_ref';value='{"room_ref": room_ref, "turn_ref": turn_ref}'
             elif verb=='claim':params='room_ref, turn_ref';value='{"room_ref": room_ref, "turn_ref": turn_ref}'
             else:params='spec';value='spec'
             comma=', ' if params else ''
@@ -482,15 +534,25 @@ export function agentVerbs(invoke: AgentInvoke) {
             catalog += 'Self::' + variants[r['name']] + ' => Some(&' + json.dumps(list(r.get(field, r['mcp_fields']))) + '),\n'
         catalog += '_ => None, } }\n'
     catalog += '}\n'
-    python_stub = '# Generated by scripts/sdk/generate.py.\nfrom typing import Any\n'
+    python_stub = '# Generated by scripts/sdk/generate.py.\nfrom typing import Any, overload\n'
     for family in dict.fromkeys(r['name'].split('.')[0] for r in facade_rows if '.' in r['name']):
         python_stub += f'class {family.title()}Verbs:\n'
         for row in ROWS:
             fam, _, verb=row['name'].partition('.')
             if fam!=family:continue
+            if verb=='ask':
+                python_stub += ('    @overload\n'
+                                '    def ask(self, spec_or_who: dict[str, Any]) -> Any: ...\n'
+                                '    @overload\n'
+                                '    def ask(self, spec_or_who: str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None, '
+                                'what: dict[str, Any], until: int | None = None, '
+                                'default: str = "ask_me") -> Any: ...\n')
+                continue
             if verb=='wait': args='handle: dict[str, Any], step_key: str = "sdk.wait"'
             elif verb=='answer':args='handle: dict[str, Any], word: dict[str, Any]'
-            elif verb=='messages':args='room_ref: str, after: str | None = None, limit: int | None = None'
+            elif verb in ('messages', 'find'):args='room_ref: str, after: str | None = None, limit: int | None = None'
+            elif verb=='render':args='room_ref: str'
+            elif verb in ('get', 'trunk'):args='room_ref: str, turn_ref: str'
             elif verb=='claim':args='room_ref: str, turn_ref: str'
             elif verb=='outcomes':args='handle: dict[str, Any]'
             elif verb=='list':args=''

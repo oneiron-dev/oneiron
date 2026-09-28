@@ -16,6 +16,7 @@ pub(super) struct BoundSource {
 
 struct CursorDocument {
     doc: LoroDoc,
+    journal: LoroDoc,
     commits: usize,
     current: BTreeMap<String, String>,
     history: super::history::History,
@@ -46,6 +47,7 @@ impl BoundSource {
             document,
             doc: Mutex::new(CursorDocument {
                 doc: LoroDoc::new(),
+                journal: LoroDoc::new(),
                 commits: 0,
                 current: BTreeMap::new(),
                 history: super::history::History::new(session, hub),
@@ -63,6 +65,26 @@ impl BoundSource {
     }
 }
 
+fn owner_feed_principal(
+    auth: &CoreAuth,
+    vault: &oneiron::Vault,
+) -> Result<oneiron::EntityId, AppError> {
+    if !auth.is_owner_grade() || auth.actor_class() != Some("human") {
+        return Err(AppError::forbidden(
+            "owner feed requires a human owner",
+            ["Use an owner-grade human credential."],
+        ));
+    }
+    let principal = auth.principal_ref().ok_or_else(AppError::unauthorized)?;
+    let owner = oneiron::EntityId::from_hex(principal)
+        .map_err(|_| AppError::bad_request("invalid owner principal", Some("principal_ref")))?;
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .verify_owner()
+        .map_err(AppError::from)?;
+    Ok(owner)
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ViewFilter {
@@ -72,6 +94,34 @@ struct ViewFilter {
 }
 
 impl LiveQuerySource for BoundSource {
+    fn pending_at_open(
+        &self,
+        dependencies: &BTreeSet<String>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        let server = self.server()?;
+        let mut missing = Vec::new();
+        for path in dependencies {
+            let Some(entity) = path
+                .strip_prefix("e:")
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+            else {
+                continue;
+            };
+            let live = server
+                .vault()
+                .get_raw(&entity)
+                .map_err(|_| AppError::internal_server_error("live revision read failed"))?;
+            let indexed = server
+                .vault()
+                .get_raw_with_mode(&entity, oneiron::memory::ReadMode::Indexed)
+                .map_err(|_| AppError::internal_server_error("indexed revision read failed"))?;
+            if live != indexed {
+                missing.push(entity);
+            }
+        }
+        Ok(missing)
+    }
+
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError> {
         let server = self.server()?;
         let filter: ViewFilter =
@@ -88,6 +138,17 @@ impl LiveQuerySource for BoundSource {
                 "channel does not support query, facet, kind or predicate",
                 Some("scopedView"),
             ));
+        }
+        // An owner feed is never a route to an agent's board. Reject its
+        // subscription even before deriving or retaining any view state.
+        if channel == Channel::OwnerFeed {
+            owner_feed_principal(&self.auth, server.vault())?;
+            if view.world_ref.is_some() || filter.limit.is_some() {
+                return Err(AppError::bad_request(
+                    "owner feed is vault-wide and unpaged",
+                    Some("scopedView"),
+                ));
+            }
         }
         // The same verified principal/class pair binds RPC and subscription reads.
         let memory = bound_memory(server.vault(), &self.auth)?;
@@ -140,6 +201,44 @@ impl LiveQuerySource for BoundSource {
                 )
                 .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?,
             ),
+            Channel::OwnerFeed => {
+                dependencies.insert("owner-feed".to_owned());
+                let owner = owner_feed_principal(&self.auth, server.vault())?;
+                let mut updates = Vec::new();
+                for watch in oneiron::saved_query::memory_watches(server.vault(), owner)
+                    .map_err(|_| AppError::internal_server_error("memory watches read failed"))?
+                {
+                    // A query definition changing from inactive to active must
+                    // invalidate an already-open feed, not only the watched row.
+                    dependencies.insert(format!("e:{}", watch.query_ref.to_hex()));
+                    let read = crate::api::scoped_read_for_core_auth(server.vault(), &self.auth)
+                        .map_err(AppError::from)?;
+                    let timeline = read.memory_timeline(&watch.anchor).map_err(|_| {
+                        AppError::internal_server_error("watched timeline read failed")
+                    })?;
+                    for record in &timeline.value.records {
+                        dependencies.insert(format!("e:{}", record.id.to_hex()));
+                    }
+                    let response = crate::api::core_memory_timeline_response(
+                        &read,
+                        timeline,
+                        crate::projection::View::Full,
+                    )
+                    .map_err(AppError::from)?;
+                    let response = serde_json::to_value(response).map_err(|_| {
+                        AppError::internal_server_error("watched timeline encoding failed")
+                    })?;
+                    if response["records"]
+                        .as_array()
+                        .is_some_and(|rows| !rows.is_empty())
+                    {
+                        updates.push(
+                            json!({"query_ref":watch.query_ref.to_hex(),"timeline":response}),
+                        );
+                    }
+                }
+                serde_json::to_value(updates)
+            }
             Channel::MemoryBoard | Channel::Gap => {
                 return Err(AppError::not_implemented("reserved subscription channel"));
             }
@@ -149,7 +248,25 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        let encoded = serde_json::to_string(&(view, channel, &value))
+        // A view is pinned to the index publication of every served entity.
+        // A live edit cannot move this cursor while its index is still behind.
+        let indexed = dependencies
+            .iter()
+            .filter(|path| path.starts_with("e:"))
+            .map(|path| {
+                let id = oneiron::EntityId::from_hex(path.strip_prefix("e:").ok_or_else(|| {
+                    AppError::internal_server_error("invalid indexed dependency")
+                })?)
+                .map_err(|_| AppError::internal_server_error("invalid indexed dependency"))?;
+                Ok((
+                    id.to_hex(),
+                    server.vault().indexed_revision(&id).map_err(|_| {
+                        AppError::internal_server_error("indexed position read failed")
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let encoded = serde_json::to_string(&(view, channel, &value, &indexed))
             .map_err(|_| AppError::internal_server_error("view encoding failed"))?;
         if encoded.len() > 8 * 1024 * 1024 {
             return Err(AppError::bad_request(
@@ -170,8 +287,16 @@ impl LiveQuerySource for BoundSource {
                 state.doc = LoroDoc::new();
                 state.current.clear();
                 state.history.clear();
+                state.journal = LoroDoc::new();
                 state.commits = 0;
             }
+            let indexed_bytes = rmp_serde::to_vec(&indexed)
+                .map_err(|_| AppError::internal_server_error("indexed position encoding failed"))?;
+            state
+                .doc
+                .get_map("indexed")
+                .insert(&key, indexed_bytes.as_slice())
+                .map_err(|_| AppError::internal_server_error("indexed position commit failed"))?;
             state
                 .doc
                 .get_map("views")
@@ -256,17 +381,26 @@ impl LiveQuerySource for BoundSource {
         pushes: &[subscriptions::Push],
     ) -> Result<(), AppError> {
         let _server = self.server()?;
+        if channel == Channel::OwnerFeed {
+            // Owner body history cannot be replayed safely after a later
+            // policy change. Keep only the live subscription ring, which is
+            // re-authorized before each delivery, not a retained payload log.
+            return Ok(());
+        }
         let mut state = self
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        let CursorDocument { doc, history, .. } = &mut *state;
-        if !history.record(doc, view, channel, pushes)? {
+        let CursorDocument {
+            journal, history, ..
+        } = &mut *state;
+        if !history.record(journal, view, channel, pushes)? {
             // Expire Loro and payload retention together, so a missing journal
             // is never presented as a retained cursor with a silent gap.
             state.doc = LoroDoc::new();
             state.current.clear();
             state.history.clear();
+            state.journal = LoroDoc::new();
             state.commits = 0;
         }
         Ok(())
@@ -279,11 +413,14 @@ impl LiveQuerySource for BoundSource {
         cursor: &Cursor,
     ) -> Result<Option<Value>, AppError> {
         let _server = self.server()?;
+        if channel == Channel::OwnerFeed {
+            return Ok(None);
+        }
         let state = self
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        super::history::History::value_at(&state.doc, view, channel, cursor)
+        super::history::History::value_at(&state.journal, view, channel, cursor)
     }
 
     fn replay(
@@ -292,6 +429,9 @@ impl LiveQuerySource for BoundSource {
         channel: Channel,
         cursor: &Cursor,
     ) -> Result<Option<Vec<subscriptions::Push>>, AppError> {
+        if channel == Channel::OwnerFeed {
+            return Ok(None);
+        }
         if !self.can_resume(cursor)? {
             return Ok(None);
         }
@@ -299,7 +439,7 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        super::history::History::replay(&state.doc, view, channel, cursor)
+        super::history::History::replay(&state.journal, view, channel, cursor)
     }
 
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {

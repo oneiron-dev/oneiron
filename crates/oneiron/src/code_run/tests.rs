@@ -378,10 +378,10 @@ fn code_run_replay_record_round_trips_and_replays_bridge_log_without_dispatch() 
         kind: EdgeKind::Mentions,
         tgt,
     });
-    let human_call = SelfCall::AskHuman(SelfAskHumanCall::new("continue?"));
+    let human_call = SelfCall::Ask(SelfAskCall::new("continue?"));
     let human_outcome = SelfDispatchOutcome::DurableWait(SelfDurableWait {
         wait_id,
-        effect: SelfEffect::AskHuman,
+        effect: SelfEffect::Ask,
         reason: SelfDurableWaitReason::HumanInput,
         prompt: Some("continue?".to_owned()),
     });
@@ -1198,8 +1198,8 @@ fn code_run_human_destructive_and_outbound_effects_become_durable_waits() -> Res
 
     let cases = [
         (
-            SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
-            SelfEffect::AskHuman,
+            SelfCall::Ask(SelfAskCall::new("continue?")),
+            SelfEffect::Ask,
             SelfDurableWaitReason::HumanInput,
         ),
         (
@@ -1374,7 +1374,7 @@ fn task_delegate_and_peer_result_round_trip_without_disturbing_landed_tokens() {
         SelfEffect::MemoryPutClaim,
         SelfEffect::MemorySupersedeClaim,
         SelfEffect::MemoryPutEdge,
-        SelfEffect::AskHuman,
+        SelfEffect::Ask,
         SelfEffect::DestructiveFixture,
         SelfEffect::OutboundFixture,
         SelfEffect::TaskDelegate,
@@ -1411,7 +1411,7 @@ fn task_delegate_and_peer_result_round_trip_without_disturbing_landed_tokens() {
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
-            "self.ask_human",
+            "ask",
             "self.fixture.destructive",
             "self.fixture.outbound",
             "self.tasks.delegate",
@@ -1609,7 +1609,7 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
         SelfEffect::MemoryPutClaim,
         SelfEffect::MemorySupersedeClaim,
         SelfEffect::MemoryPutEdge,
-        SelfEffect::AskHuman,
+        SelfEffect::Ask,
         SelfEffect::DestructiveFixture,
         SelfEffect::OutboundFixture,
         SelfEffect::TaskDelegate,
@@ -1627,7 +1627,7 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
             SelfEffect::MemoryPutClaim,
             SelfEffect::MemorySupersedeClaim,
             SelfEffect::MemoryPutEdge,
-            SelfEffect::AskHuman,
+            SelfEffect::Ask,
             SelfEffect::DestructiveFixture,
             SelfEffect::OutboundFixture,
             SelfEffect::TaskDelegate,
@@ -1641,7 +1641,7 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
-            "self.ask_human",
+            "ask",
             "self.fixture.destructive",
             "self.fixture.outbound",
             "self.tasks.delegate",
@@ -3086,6 +3086,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
         word_ref: EntityId::now(),
     };
     let ask_result = crate::task_verb::TaskAskResult {
+        effect_authorization: crate::task_verb::TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage: crate::task_verb::TaskAskCoverage {
             met: true,
             required: 1,
@@ -3103,6 +3104,8 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             order: 1,
             reason: crate::task_verb::TaskAskEvidenceReason::Counted,
             ladder_changed: None,
+            soft_confirm: false,
+            delegation_grant_ref: None,
         }],
         settlement: crate::task_verb::TaskAskSettlement {
             group_ref: group,
@@ -3118,6 +3121,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             question_digest: [0; 32],
             unmet_sources: Default::default(),
             outcome_answer_ref: None,
+            policy_surface: crate::task_verb::TaskAskSurface::Card,
         },
     };
     let outcomes = vec![

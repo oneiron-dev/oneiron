@@ -15,6 +15,7 @@ pub(super) const POLICY_ACTOR_CEILINGS_KEY: &str = "actor_ceilings";
 pub(super) const POLICY_DELEGATED_GRANTS_KEY: &str = "delegated_grants";
 pub(super) const MAX_DELEGATION_DEPTH: u8 = 8;
 pub(super) const POLICY_SOURCE_TRUST_KEY: &str = "source_trust";
+pub(super) const POLICY_WEAVE_CORRECTION_POLICY_KEY: &str = "weave_correction_policy";
 pub(super) const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 pub(super) const POLICY_SIGNATURE_KEY: &str = "signature";
 pub(super) const POLICY_SIGNATURES_KEY: &str = "signatures";
@@ -69,6 +70,7 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
@@ -151,3 +153,6 @@ pub(crate) const POLICY_ROW_WORLD_REF_KEY: &str = "world_ref";
 pub(super) const LOCAL_WRITE_ACTOR_CLASS: &str = "first_party";
 pub(super) const LOCAL_WRITE_ACTOR_ENTITY_REF: [u8; ENTITY_ID_LEN] = [0x47; ENTITY_ID_LEN];
 pub(crate) const FIRST_PARTY_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE1; ENTITY_ID_LEN];
+
+/// Trusted policy rows for cross-vault ask limits, surface and retry cadence.
+pub(super) const POLICY_ASK_POLICY_KEY: &str = "ask_policy";
