@@ -18,19 +18,6 @@ pub(super) const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 pub(super) const POLICY_SIGNATURE_KEY: &str = "signature";
 pub(super) const POLICY_SIGNATURES_KEY: &str = "signatures";
 pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
-/// Optional TOP-LEVEL manifest key (never a rule-scoped axis) carrying the
-/// vault's posture toward a send to an opted-out counterparty that carries no
-/// `comm.send_override`: `escalate` (the default when the key is absent
-/// anywhere) holds the send for the owner, `allow_with_receipt` sends it
-/// immediately with the opt-out receipt trail.
-///
-/// It is DEC-0005 policy data, so it resolves restrictively across matching
-/// packs — any pack saying `escalate` wins — and it is hashed into
-/// `hash_policy_frontier_v0`, because a posture change moves gate outcomes and
-/// must invalidate standing grants exactly like every other frontier input. An
-/// unrecognized token fails the whole manifest closed at parse time, in the
-/// same class as an invalid `on_budget_exhausted` token.
-pub(super) const POLICY_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
 /// Optional top-level manifest key naming the HOST's auto checker (ONE-1296).
 ///
 /// The value is an opaque non-empty string the engine never interprets: it
@@ -135,6 +122,13 @@ pub(super) const POLICY_PATTERN_ROLE_KEY: &str = "role";
 /// therefore bricks every pre-existing vault on upgrade. It stays listed, and
 /// nothing reads its value.
 pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
+/// Retired flat top-level keys (ONE-2673). Both values moved to typed
+/// `policy_values` rows, and the engine reads only rows. Decode still accepts
+/// the names, for the same upgrade reason as `legal_floor_rows` above: a
+/// manifest written before the move must not fail the whole gate closed.
+/// Nothing reads their values.
+pub(super) const POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
+pub(super) const POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY: &str = "proposal_check_threshold";
 
 pub(super) const AXIS_CRITICALITY_KEY: &str = "criticality";
 pub(super) const AXIS_SENSITIVITY_KEY: &str = "sensitivity";

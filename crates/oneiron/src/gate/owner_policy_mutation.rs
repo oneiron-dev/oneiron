@@ -155,7 +155,6 @@ fn row_key(row: &Value) -> Result<(&str, PolicyRowScope)> {
                     | PROJECT_REF_KEY
                     | "human"
                     | "why"
-                    | "why_source"
             )
         ) {
             return Err(invalid("malformed owner policy row"));
@@ -249,8 +248,7 @@ fn row_value(
         (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
     ];
     if let Some((text, source)) = why {
-        entries.push((Value::from("why"), Value::from(text)));
-        entries.push((Value::from("why_source"), Value::from(source.as_str())));
+        entries.push((Value::from("why"), why_value(text, source)));
     }
     match scope {
         PolicyRowScope::Vault => {}
@@ -274,28 +272,26 @@ fn row_value(
     Value::Map(entries)
 }
 
+/// The row's `why` in the shared policy-row format: `{text, source}`.
+fn why_value(text: &str, source: PolicyWhySource) -> Value {
+    Value::Map(vec![
+        (Value::from("text"), Value::from(text)),
+        (Value::from("source"), Value::from(source.as_str())),
+    ])
+}
+
 fn set_why(fields: &mut Vec<(Value, Value)>, why: &str, source: PolicyWhySource) -> Result<()> {
     if why.trim().is_empty() {
         return Err(invalid("empty owner policy why"));
     }
+    let existing = super::policy_values::parse_optional_why(fields)
+        .ok_or_else(|| invalid("malformed owner policy why"))?;
     if source == PolicyWhySource::Drafted
-        && matches!(
-            field(fields, "why_source")?.and_then(Value::as_str),
-            Some("owner")
-        )
+        && existing.is_some_and(|why| why.source == super::policy_values::WhySource::Owner)
     {
         return Err(invalid("a draft cannot replace an owner-written why"));
     }
-    // A plain why is owner-authored when the source field was omitted.
-    if source == PolicyWhySource::Drafted
-        && field(fields, "why")?.is_some()
-        && field(fields, "why_source")?.is_none()
-    {
-        return Err(invalid("a draft cannot replace an owner-written why"));
-    }
-    set_field(fields, "why", Value::from(why))?;
-    set_field(fields, "why_source", Value::from(source.as_str()))?;
-    Ok(())
+    set_field(fields, "why", why_value(why, source))
 }
 
 /// Mutate inside the caller's transaction, without committing or issuing a receipt.

@@ -299,8 +299,7 @@ pub(crate) struct PolicyOwnerPolicyRow {
     pub(crate) world_ref: Option<String>,
     pub(crate) project_ref: Option<String>,
     pub(crate) human: Option<String>,
-    pub(crate) why: Option<String>,
-    pub(crate) why_source: Option<String>,
+    pub(crate) why: Option<crate::gate::policy_values::PolicyWhy>,
     pub(crate) action: OwnerRowAction,
 }
 

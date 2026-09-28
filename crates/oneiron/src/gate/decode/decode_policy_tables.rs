@@ -264,8 +264,7 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
                 | "project_ref"
                 | POLICY_ROW_ACTION_KEY
                 | "human"
-                | "why"
-                | "why_source" => {}
+                | "why" => {}
                 _ => return None,
             }
         }
@@ -275,25 +274,10 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
         let project_ref = optional_string(entries, "project_ref")?;
         let human = optional_string(entries, "human")?;
+        let why = super::super::policy_values::parse_optional_why(entries)?;
         if human.as_ref().is_some_and(|name| name.trim().is_empty()) {
             return None;
         }
-        let why = match single_map_value(entries, "why") {
-            MapValue::Missing => None,
-            MapValue::Present(value) => Some(value.as_str().map(str::to_owned)?),
-            MapValue::Duplicate => return None,
-        };
-        let why = why.filter(|value| !value.trim().is_empty());
-        let why_source = match single_map_value(entries, "why_source") {
-            MapValue::Missing if why.is_some() => Some("owner".to_owned()),
-            MapValue::Missing => None,
-            MapValue::Present(value) if why.is_some() => match value.as_str()? {
-                "owner" => Some("owner".to_owned()),
-                "drafted" => Some("drafted".to_owned()),
-                _ => return None,
-            },
-            MapValue::Present(_) | MapValue::Duplicate => return None,
-        };
         let action = match optional_string(entries, POLICY_ROW_ACTION_KEY)? {
             // A row that names no action only wants to be told about, so the
             // gentlest arm is the default: content still ships unchanged.
@@ -323,7 +307,6 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
             project_ref,
             human,
             why,
-            why_source,
             action,
         });
     }

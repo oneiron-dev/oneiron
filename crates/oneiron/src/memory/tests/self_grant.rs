@@ -575,7 +575,30 @@ fn generic_propose_lane_counts_authenticated_actor_and_asks_once_without_rate_re
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map")
     };
-    entries.push((Value::from("proposal_check_threshold"), Value::from(2)));
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        panic!("value rows")
+    };
+    let Value::Map(fields) = rows
+        .iter_mut()
+        .find(|row| match row {
+            Value::Map(fields) => fields.iter().any(|(key, value)| {
+                key.as_str() == Some("key") && value.as_str() == Some("proposal_check_threshold")
+            }),
+            _ => false,
+        })
+        .unwrap()
+    else {
+        panic!("threshold row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from(2);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
     crate::test_util::put_policy_manifest_bytes(&vault, policy_id, &bytes).unwrap();
@@ -629,7 +652,30 @@ fn changed_same_id_proposals_are_new_submissions_but_exact_retries_are_not() {
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map")
     };
-    entries.push((Value::from("proposal_check_threshold"), Value::from(2)));
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        panic!("value rows")
+    };
+    let Value::Map(fields) = rows
+        .iter_mut()
+        .find(|row| match row {
+            Value::Map(fields) => fields.iter().any(|(key, value)| {
+                key.as_str() == Some("key") && value.as_str() == Some("proposal_check_threshold")
+            }),
+            _ => false,
+        })
+        .unwrap()
+    else {
+        panic!("threshold row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from(2);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
     crate::test_util::put_policy_manifest_bytes(&vault, policy_id, &bytes).unwrap();

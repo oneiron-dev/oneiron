@@ -1,4 +1,5 @@
 use super::*;
+use crate::gate::policy_values::{PolicyWhy, WhySource};
 use crate::store::GateDecisionId;
 use crate::{TimeRange, VaultConfig};
 
@@ -277,7 +278,13 @@ fn optional_why_is_stamped_and_draft_never_displaces_owner_reason() -> Result<()
     let Value::Map(drafted) = &rows(&snapshot)[0] else {
         unreachable!()
     };
-    assert_eq!(field(drafted, "why_source")?, Some(&Value::from("drafted")));
+    assert_eq!(
+        crate::gate::policy_values::parse_optional_why(drafted),
+        Some(Some(PolicyWhy {
+            text: "Suggested reason".into(),
+            source: WhySource::Drafted,
+        }))
+    );
     apply(
         &vault,
         &owner,
@@ -306,12 +313,11 @@ fn optional_why_is_stamped_and_draft_never_displaces_owner_reason() -> Result<()
         unreachable!()
     };
     assert_eq!(
-        field(owner_reason, "why")?,
-        Some(&Value::from("Owner's explicit reason"))
-    );
-    assert_eq!(
-        field(owner_reason, "why_source")?,
-        Some(&Value::from("owner"))
+        crate::gate::policy_values::parse_optional_why(owner_reason),
+        Some(Some(PolicyWhy {
+            text: "Owner's explicit reason".into(),
+            source: WhySource::Owner,
+        }))
     );
     apply(
         &vault,

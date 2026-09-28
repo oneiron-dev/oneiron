@@ -1,7 +1,7 @@
 //! Local write-door authentication for manifest contributions. Replay never creates permits.
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
 use crate::{EntityId, Vault};
@@ -173,8 +173,15 @@ impl Vault {
         // An optional notification table is made explicit on admission, so
         // an authenticated install is immediately editable by the owner.
         let data = super::default_manifest::with_default_owner_policy_notifications(data)?;
-        if super::decode::decode_policy_manifest(&data).is_none() {
+        let Some(decoded) = super::decode::decode_policy_manifest(&data) else {
             return Err(Error::InvalidConfig("malformed policy manifest".into()));
+        };
+        if let Some(row) = super::policy_values::unadmitted_row(&decoded.policy_values) {
+            return Err(GateError::PolicyValueLevelNotAdmitted {
+                key: row.key.as_str(),
+                level: row.scope.level(),
+            }
+            .into());
         }
         if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
             let header = EntityMetadataHeader::parse(&raw)
@@ -215,7 +222,8 @@ impl Vault {
     /// attestation or writing a reserved maintenance type through `put_entity`.
     ///
     /// # Errors
-    /// Refuses unauthenticated owners, malformed manifests or IDs owned by another type.
+    /// Refuses unauthenticated owners, malformed manifests, value rows at a level
+    /// their key does not admit, or IDs owned by another type.
     pub fn install_owner_policy_manifest(
         &self,
         owner: &AuthenticatedOwner,
@@ -227,6 +235,43 @@ impl Vault {
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         txn.commit()?;
         Ok(())
+    }
+
+    /// Apply an explanation drafted by a model only to an empty row. An
+    /// authenticated owner may instead write their own why; a draft never
+    /// overwrites that owner text. The engine never invents the prose.
+    pub fn set_policy_value_why(
+        &self,
+        owner: &AuthenticatedOwner,
+        manifest: EntityId,
+        row_ref: &str,
+        text: &str,
+        drafted: bool,
+        now: u64,
+    ) -> Result<bool> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let raw = self
+            .store
+            .entities
+            .get(&txn, manifest.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_POLICY_MANIFEST)
+        {
+            return Err(Error::InvalidConfig("not a policy manifest".into()));
+        }
+        let Some(updated) = super::policy_values::with_policy_why(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            row_ref,
+            text,
+            drafted,
+        ) else {
+            return Ok(false);
+        };
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, manifest, updated, now)?;
+        txn.commit()?;
+        Ok(true)
     }
 
     /// Explicit owner re-authoring, never grandfathering a product-band permit.
