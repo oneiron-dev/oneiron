@@ -3,6 +3,7 @@
 use super::keys::{OUTCOME_DISCARDED, OUTCOME_PROPOSED, OUTCOME_SELECTED};
 use crate::anchored_annotation::{Locator, ReanchorSummary};
 use crate::blob_artifact::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BlobArtifactVersion};
+use crate::edit_roundtrip::{SheetAnswerBundle, SheetCellAnswer};
 use crate::entity_id::EntityId;
 use crate::receipt::ReceiptRecord;
 
@@ -97,7 +98,7 @@ pub struct PptxReviewIdentity {
 
 /// The durable consume-once ledger entry for one settled proposal, and the
 /// substrate the settle receipt projects from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct SettlementRecord {
     /// The agent run ref that produced the proposal — the consume-once key.
@@ -126,10 +127,31 @@ pub struct SettlementRecord {
     pub pptx_slide_creation_id_mints: Vec<(u64, u32)>,
     /// Each exported review comment's asker and answerer, independent of its author name.
     pub pptx_review_identities: Vec<PptxReviewIdentity>,
+    /// Per-unit typed decisions for a comment review, retained with the settle.
+    pub pptx_judgments: Vec<crate::edit_roundtrip::slides_review::SlideJudgment>,
     /// The anchor set that moved on select (empty for a discard).
     pub anchors: Vec<SettledAnchor>,
     /// Why the proposal was discarded (discard only).
     pub reason: Option<String>,
+    /// Per-cell typed answer evidence retained on Keep (also present on a stale proposal).
+    pub sheet_answers: Option<Box<SheetAnswerBundle>>,
+}
+
+/// One cell's kept answer, linked to the file version and consume-once receipt.
+/// Abstentions appear here as such but never write a cell.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct SheetAnswerReceipt {
+    pub artifact_id: EntityId,
+    pub proposal_ref: String,
+    pub version: u64,
+    pub question: String,
+    pub question_version: String,
+    pub principal: String,
+    pub sheet: String,
+    pub answer: SheetCellAnswer,
+    pub kept_by: String,
+    pub kept_at: u64,
 }
 
 /// The tappable-door resolution of a select receipt: the committed

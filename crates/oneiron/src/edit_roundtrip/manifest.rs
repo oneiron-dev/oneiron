@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 /// Serialization version for [`EditManifest`]. Bump on any incompatible change
 /// to the op vocabulary or manifest shape.
-pub const EDIT_MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const EDIT_MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// Whether the pipeline ran in full-edit or minimal-mutation mode. Heavy
 /// pivot/chart/macro workbooks force [`MutationMode::Minimal`].
@@ -63,6 +63,9 @@ pub struct EditManifest {
     /// currently resolved vault policy; it can never raise the vault budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pptx_holder_limits: Option<Box<super::pptx::PptxOperationalLimits>>,
+    /// Typed slide judgments bound to exported modern comments, when present.
+    #[serde(default)]
+    pub slide_judgments: Vec<super::slides_review::SlideJudgment>,
 }
 
 impl EditManifest {
@@ -95,7 +98,14 @@ impl EditManifest {
                 "edit manifest failed to decode",
             ))
         })?;
-        if manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION {
+        // Version 1 predates the native Word op; its durable rows (stranded
+        // proposals, PPTX manifests) stay readable, but never with that op.
+        let legacy_v1 = manifest.schema_version == 1
+            && !manifest
+                .ops
+                .iter()
+                .any(|op| matches!(op, EditOp::DocxRevision { .. }));
+        if manifest.schema_version != EDIT_MANIFEST_SCHEMA_VERSION && !legacy_v1 {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
                 "edit manifest schema version is unsupported",
             )));

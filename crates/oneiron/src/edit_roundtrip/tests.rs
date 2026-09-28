@@ -124,7 +124,7 @@ fn propose(session: &FixtureSession, input: &[u8], plan: &EditPlan, run_ref: &st
     match run_edit_roundtrip(session, input, OfficeFormat::Xlsx, plan, run_ref)
         .expect("pipeline runs")
     {
-        EditOutcome::Proposed(proposal) => proposal,
+        EditOutcome::Proposed(proposal) => *proposal,
         EditOutcome::Rejected { report, .. } => {
             panic!("expected a proposal, got rejection: {report:?}")
         }
@@ -565,6 +565,7 @@ fn manifest_round_trips_through_msgpack() {
         mutation_mode: MutationMode::Full,
         warnings: vec![EditWarning::new(WarningCode::SessionReported, "note")],
         pptx_holder_limits: None,
+        slide_judgments: Vec::new(),
     };
     let bytes = manifest.to_msgpack().unwrap();
     let decoded = EditManifest::from_msgpack(&bytes).unwrap();
@@ -886,6 +887,24 @@ fn minimal_mutation_mode_refuses_structural_ops() {
     let cell = EditPlan::new(vec![set_a1(10.0)]);
     let proposal = propose(&FixtureSession::faithful(), &input, &cell, "run:cell-ok");
     assert_eq!(proposal.manifest.mutation_mode, MutationMode::Minimal);
+}
+
+#[test]
+fn spreadsheet_session_cannot_apply_native_docx_revisions() {
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![EditOp::DocxRevision {
+        transaction: "{}".to_owned(),
+    }]);
+    assert!(matches!(
+        run_edit_roundtrip(
+            &FixtureSession::faithful(),
+            &input,
+            OfficeFormat::Xlsx,
+            &plan,
+            "run"
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
 }
 
 // A real openpyxl 3.1.5 load_workbook(keep_links=True, data_only=False)
@@ -1297,4 +1316,516 @@ fn named_lambda_calls_in_changed_worksheet_pass_formula_gate() {
         report.ok,
         "valid named LAMBDA calls must not be rewritten: {report:?}"
     );
+}
+
+// The typed ask is an agent-computed answer over a selection. The landing
+// adapter writes one retained file copy and Keep consumes it exactly once.
+#[test]
+fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
+    use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use crate::edge::EdgeActorClass;
+    use crate::edit_settle::{SettleConsent, SettleOutcomeKind};
+    use crate::entity_id::EntityId;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::temporal::TimeRange;
+    use crate::write_envelope::WriteActor;
+
+    fn fake_text_bytes(bytes: &[u8], mode: u8) -> Result<Vec<u8>> {
+        let mut pkg = opc::read(bytes)?;
+        if mode == 4 {
+            pkg.upsert(SHEET_PART, br#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Actual</t></r></is></c></row></sheetData></worksheet>"#.to_vec());
+        } else {
+            pkg.upsert(SHEET_PART, br#"<worksheet><sheetData><row r="2"><c r="B2" t="s"><v>0</v></c></row></sheetData></worksheet>"#.to_vec());
+            pkg.upsert(
+                "xl/sharedStrings.xml",
+                br#"<sst><si/><si><t>Wrong</t></si></sst>"#.to_vec(),
+            );
+        }
+        Ok(opc::write(&pkg))
+    }
+    struct TextSession;
+    impl EditSession for TextSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let EditOp::SetCell {
+                after: CellValue::Text(text),
+                ..
+            } = &plan.ops[0]
+            else {
+                panic!("expected text answer");
+            };
+            let mut pkg = opc::read(&doc.bytes)?;
+            pkg.upsert(SHEET_PART, format!(r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><t>{text}</t></is></c></row></sheetData></worksheet>"#).into_bytes());
+            Ok(AppliedEdit {
+                bytes: opc::write(&pkg),
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("fixture", "1").unwrap())
+        }
+    }
+    struct DishonestSession {
+        mode: u8,
+    }
+    impl EditSession for DishonestSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let bytes = if self.mode == 0 {
+                doc.bytes.clone()
+            } else if self.mode >= 4 {
+                fake_text_bytes(&doc.bytes, self.mode)?
+            } else {
+                let mut pkg = opc::read(&doc.bytes)?;
+                let sheet = if self.mode == 1 {
+                    "<worksheet><sheetData><row r=\"2\"><c r=\"C2\"><v>6</v></c></row></sheetData></worksheet>"
+                } else if self.mode == 3 {
+                    r#"<worksheet><sheetData><row r="2"><c r="B2"><extLst><ext uri="urn:example"><x:v xmlns:x="urn:example">6</x:v></ext></extLst></c></row></sheetData></worksheet>"#
+                } else {
+                    "<worksheet><sheetData><row r=\"2\"><c r=\"B2\"><v>5</v></c></row></sheetData></worksheet>"
+                };
+                pkg.upsert(SHEET_PART, sheet.as_bytes().to_vec());
+                opc::write(&pkg)
+            };
+            Ok(AppliedEdit {
+                bytes,
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("fixture", "1").unwrap())
+        }
+    }
+    struct CellSession;
+    impl EditSession for CellSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let mut pkg = opc::read(&doc.bytes)?;
+            let mut writes = String::new();
+            for op in &plan.ops {
+                let EditOp::SetCell {
+                    cell,
+                    after: CellValue::Number(n),
+                    ..
+                } = op
+                else {
+                    panic!("expected number cell");
+                };
+                writes.push_str(&format!(
+                    "<row r=\"{}\"><c r=\"{}\"><v>{n}</v></c></row>",
+                    cell.row,
+                    cell.to_a1()
+                ));
+            }
+            let sheet = String::from_utf8(pkg.part(SHEET_PART).unwrap().to_vec()).unwrap();
+            pkg.upsert(
+                SHEET_PART,
+                sheet
+                    .replace("</sheetData>", &format!("{writes}</sheetData>"))
+                    .into_bytes(),
+            );
+            Ok(AppliedEdit {
+                bytes: opc::write(&pkg),
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("fixture", "1").unwrap())
+        }
+    }
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let time = TimeRange { start: 10, end: 10 };
+    let human = EntityId::now();
+    vault.put_entity(&human, ENTITY_TYPE_PERSON, time, 10, b"human")?;
+    let actor = WriteActor::new(human, EdgeActorClass::Human);
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &BlobArtifactBody::new(
+            "asks.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        time,
+        10,
+    )?;
+    let original = xlsx_bytes(&base_parts());
+    vault.append_blob_artifact_version(
+        &artifact,
+        &original,
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        time,
+        10,
+    )?;
+    let answer = |row, n| SheetCellAnswer {
+        cell: CellRef::new(2, row),
+        before: None,
+        value: Some(CellValue::Number(n)),
+        probability: n / 10.0,
+        confidence: 0.92,
+        rung: "local".into(),
+        model: "fixture-head".into(),
+        revision: "r1".into(),
+        cost_per_thousand: 0.2,
+        evidence_versions: vec!["source@3".into()],
+    };
+    let bundle = SheetAnswerBundle {
+        question: "urgency".into(),
+        question_version: "q1".into(),
+        principal: human.to_hex(),
+        sheet: "Sheet1".into(),
+        range: RangeRef::parse("B2:B3")?,
+        max_count_override: None,
+        answers: vec![answer(2, 6.0), answer(3, 8.0)],
+    };
+    // These two valid OOXML encodings used to yield false receipts: rich
+    // inline text was read as empty, and an empty shared-string item was
+    // skipped so the following item's text was falsely assigned to index 0.
+    for (mode, expected) in [(4, ""), (5, "Wrong")] {
+        let mut text_bundle = bundle.clone();
+        text_bundle.range = RangeRef::parse("B2:B2")?;
+        text_bundle.answers = vec![SheetCellAnswer {
+            cell: CellRef::new(2, 2),
+            before: None,
+            value: Some(CellValue::Text(expected.into())),
+            ..text_bundle.answers[0].clone()
+        }];
+        let refused = vault
+            .propose_sheet_answers(
+                &artifact,
+                &DishonestSession { mode },
+                text_bundle.clone(),
+                "ask:fake-text",
+            )
+            .expect_err("a writer's false text op cannot make a proposal");
+        assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        let EditOutcome::Proposed(mut honest) =
+            vault.propose_sheet_answers(&artifact, &TextSession, text_bundle, "ask:honest-text")?
+        else {
+            panic!("text stages");
+        };
+        honest.new_bytes = fake_text_bytes(&honest.new_bytes, mode)?;
+        let refused = vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &honest,
+                &SettleConsent::OwnerConsent { brief_ref: None },
+                actor,
+                time,
+                11,
+            )
+            .expect_err("Keep must re-read rich and shared string bytes");
+        assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, "ask:honest-text")?
+                .is_none()
+        );
+        assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    }
+    let idempotent = SheetAnswerBundle {
+        question: "unchanged".into(),
+        question_version: "q1".into(),
+        principal: human.to_hex(),
+        sheet: "Sheet1".into(),
+        range: RangeRef::parse("A1:A1")?,
+        max_count_override: None,
+        answers: vec![SheetCellAnswer {
+            cell: CellRef::new(1, 1),
+            before: Some(CellValue::Number(5.0)),
+            value: Some(CellValue::Number(5.0)),
+            probability: 0.5,
+            confidence: 1.0,
+            rung: "rule".into(),
+            model: "fixture".into(),
+            revision: "r1".into(),
+            cost_per_thousand: 0.0,
+            evidence_versions: vec!["base@1".into()],
+        }],
+    };
+    let EditOutcome::Proposed(unchanged) = vault.propose_sheet_answers(
+        &artifact,
+        &DishonestSession { mode: 0 },
+        idempotent,
+        "ask:idempotent",
+    )?
+    else {
+        panic!("idempotent answers should propose");
+    };
+    let unchanged_settle = vault.settle_select_edit_proposal(
+        &artifact,
+        &unchanged,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        time,
+        11,
+    )?;
+    assert_eq!(unchanged_settle.version.version, 1);
+    assert_eq!(
+        vault.sheet_answer_receipts(&artifact, "ask:idempotent")?[0].version,
+        1
+    );
+    for mode in 0..4 {
+        let refused = vault
+            .propose_sheet_answers(
+                &artifact,
+                &DishonestSession { mode },
+                bundle.clone(),
+                "ask:lie",
+            )
+            .expect_err("no-op, wrong-cell, wrong-value and extension-only output must fail before proposal");
+        assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, "ask:lie")?
+                .is_none()
+        );
+        assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    }
+    let mut wrong_before = bundle.clone();
+    wrong_before.answers[0].before = Some(CellValue::Number(99.0));
+    let refused = vault
+        .propose_sheet_answers(&artifact, &CellSession, wrong_before, "ask:before")
+        .expect_err("the before value must be read from the artifact, not trusted");
+    assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+    let mut capped = bundle.clone();
+    capped.max_count_override = Some(1);
+    let refused = vault
+        .propose_sheet_answers(&artifact, &CellSession, capped, "ask:cap")
+        .expect_err("holder cap below answer count refuses proposal");
+    assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+    let EditOutcome::Proposed(proposal) =
+        vault.propose_sheet_answers(&artifact, &CellSession, bundle.clone(), "ask:range")?
+    else {
+        panic!("valid sheet answers must propose");
+    };
+    assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    assert_eq!(
+        vault.read_blob_artifact_version(&artifact, 1)?.unwrap(),
+        original
+    );
+    assert_eq!(proposal.typed_sheet_answers(), Some(&bundle));
+    assert!(
+        vault
+            .sheet_answer_receipts(&artifact, "ask:range")?
+            .is_empty()
+    );
+    let mut policy_forged = proposal.clone();
+    policy_forged
+        .sheet_answers
+        .as_mut()
+        .unwrap()
+        .max_count_override = Some(1);
+    let refused = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &policy_forged,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            time,
+            11,
+        )
+        .expect_err("Keep rechecks effective answer count policy");
+    assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:range")?
+            .is_none()
+    );
+    let mut forged = proposal.clone();
+    forged.manifest.ops.pop();
+    let refusal = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &forged,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            time,
+            11,
+        )
+        .expect_err("a changed manifest cannot get a typed answer receipt");
+    assert_eq!(refusal.kind(), crate::error::ErrorKind::InvalidEditManifest);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:range")?
+            .is_none()
+    );
+    assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    let mut extension = opc::read(&proposal.new_bytes)?;
+    extension.upsert(SHEET_PART, br#"<worksheet><sheetData><row r="2"><c r="B2"><extLst><ext uri="urn:example"><x:v xmlns:x="urn:example">6</x:v></ext></extLst></c></row><row r="3"><c r="B3"><v>8</v></c></row></sheetData></worksheet>"#.to_vec());
+    for replacement in [original, opc::write(&extension), {
+        let mut pkg = opc::read(&proposal.new_bytes)?;
+        let sheet = std::str::from_utf8(pkg.part(SHEET_PART).unwrap())
+            .unwrap()
+            .replace("<c r=\"B3\"><v>8</v></c>", "<c r=\"B3\"><v>7</v></c>");
+        pkg.upsert(SHEET_PART, sheet.into_bytes());
+        opc::write(&pkg)
+    }] {
+        let mut tampered = proposal.clone();
+        tampered.new_bytes = replacement;
+        let refusal = vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &tampered,
+                &SettleConsent::OwnerConsent { brief_ref: None },
+                actor,
+                time,
+                11,
+            )
+            .expect_err("mutating proposal bytes after validation cannot mint a Keep receipt");
+        assert_eq!(refusal.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, "ask:range")?
+                .is_none()
+        );
+        assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    }
+    let out = vault.settle_select_edit_proposal(
+        &artifact,
+        &proposal,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        time,
+        11,
+    )?;
+    assert_eq!(out.version.version, 2);
+    assert_eq!(
+        out.receipt
+            .fields
+            .get("sheet_answer_count")
+            .map(String::as_str),
+        Some("2")
+    );
+    assert_eq!(
+        out.receipt
+            .fields
+            .get("question_version")
+            .map(String::as_str),
+        Some("q1")
+    );
+    let kept = vault
+        .blob_artifact_settlement(&artifact, "ask:range")?
+        .unwrap();
+    assert_eq!(kept.outcome, SettleOutcomeKind::Selected);
+    assert_eq!(kept.sheet_answers.as_deref(), Some(&bundle));
+    assert_eq!(kept.actor_ref.as_deref(), Some(human.to_hex().as_str()));
+    let sheet = opc::read(&vault.read_blob_artifact_version(&artifact, 2)?.unwrap())?;
+    let xml = std::str::from_utf8(sheet.part(SHEET_PART).unwrap()).unwrap();
+    assert!(xml.contains("<c r=\"B2\"><v>6</v></c>"));
+    assert!(xml.contains("<c r=\"B3\"><v>8</v></c>"));
+    let err = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &proposal,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            time,
+            12,
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::EditProposalAlreadySettled
+    );
+    let mut stale = proposal.clone();
+    stale.run_ref = "ask:stale".into();
+    let stale_result = vault.settle_select_edit_proposal(
+        &artifact,
+        &stale,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        time,
+        13,
+    )?;
+    assert!(stale_result.stranded_proposal.is_some());
+    assert!(
+        vault
+            .sheet_answer_receipts(&artifact, "ask:stale")?
+            .is_empty()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:stale")?
+            .unwrap()
+            .outcome,
+        SettleOutcomeKind::Proposed
+    );
+    let mut discarded = proposal;
+    discarded.run_ref = "ask:discard".into();
+    vault.settle_discard_edit_proposal(
+        &artifact,
+        &discarded,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        "no",
+        14,
+    )?;
+    assert!(
+        vault
+            .sheet_answer_receipts(&artifact, "ask:discard")?
+            .is_empty()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:discard")?
+            .unwrap()
+            .outcome,
+        SettleOutcomeKind::Discarded
+    );
+    Ok(())
+}
+
+#[test]
+fn typed_sheet_answers_refuse_invalid_positions_and_forged_manifest() -> Result<()> {
+    let base = SheetAnswerBundle {
+        question: "fit".into(),
+        question_version: "v1".into(),
+        principal: "owner".into(),
+        sheet: "Sheet1".into(),
+        range: RangeRef::parse("B2:B3")?,
+        max_count_override: None,
+        answers: vec![SheetCellAnswer {
+            cell: CellRef::new(2, 2),
+            before: None,
+            value: Some(CellValue::Bool(true)),
+            probability: 0.8,
+            confidence: 0.9,
+            rung: "rule".into(),
+            model: "local".into(),
+            revision: "1".into(),
+            cost_per_thousand: 0.0,
+            evidence_versions: vec![],
+        }],
+    };
+    assert_eq!(base.ops()?.len(), 1);
+    let mut bad = base.clone();
+    bad.answers.push(bad.answers[0].clone());
+    assert!(bad.ops().is_err(), "a duplicated cell cannot land twice");
+    bad = base.clone();
+    bad.answers[0].cell = CellRef::new(3, 2);
+    assert!(bad.ops().is_err(), "out-of-range cell cannot land");
+    bad = base.clone();
+    bad.answers[0].probability = f64::NAN;
+    assert!(
+        bad.ops().is_err(),
+        "nonfinite probabilities cannot be receipted"
+    );
+    bad = base;
+    bad.answers[0].value = None;
+    assert!(
+        bad.ops().is_err(),
+        "an all-abstain bundle cannot create a phantom edit"
+    );
+    Ok(())
 }

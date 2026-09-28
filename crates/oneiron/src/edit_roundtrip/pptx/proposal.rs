@@ -57,13 +57,13 @@ pub(super) fn run_comment_roundtrip_with_limits(
     );
     Ok(EditProposal{
         run_ref:run_ref.to_owned(),format:OfficeFormat::Pptx,new_bytes:effects.new_bytes,
-        manifest:EditManifest{schema_version:EDIT_MANIFEST_SCHEMA_VERSION,format:OfficeFormat::Pptx,ops,touched_parts:effects.touched_parts,mutation_mode:MutationMode::Minimal,warnings:Vec::new(),pptx_holder_limits:holder_limits.map(Box::new)},
+        manifest:EditManifest{schema_version:EDIT_MANIFEST_SCHEMA_VERSION,format:OfficeFormat::Pptx,ops,touched_parts:effects.touched_parts,mutation_mode:MutationMode::Minimal,warnings:Vec::new(),pptx_holder_limits:holder_limits.map(Box::new),slide_judgments:Vec::new()},
         inspection:inspect::inspect(&package,OfficeFormat::Pptx),
         validation:ValidationReport{ok:true,checks:vec![
             ValidationCheck{name:"well_formed_opc",passed:true,detail:"bounded ZIP records and checksums verified".into()},
             ValidationCheck{name:"pptx_comment_links",passed:true,detail:"modern author/comment references and XML verified".into()},
             ValidationCheck{name:"pptx_semantic_write_set",passed:true,detail:"only declared comment, author, extension and relationship insertions; no Office-host proof".into()},
-        ]},recalc:RecalcStatus::NotNeeded,calc_engine:None,base_version:None,base_content_hash:*blake3::hash(input).as_bytes(),
+        ]},recalc:RecalcStatus::NotNeeded,calc_engine:None,base_version:None,base_content_hash:*blake3::hash(input).as_bytes(),sheet_answers:None,
     })
 }
 

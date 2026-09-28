@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-docedit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Retained Open Packaging Conventions document substrate and native DOCX revision writer"
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+flate2 = "1"
+expat-sys = "2.1.6"
+crc32fast = "1"
+thiserror.workspace = true
+stemma = { path = "vendor/stemma-engine", version = "0.6.0" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+sha2 = "0.10"
+roxmltree = "0.21"
+zip = "0.6.6"
+
+[lints]
+workspace = true

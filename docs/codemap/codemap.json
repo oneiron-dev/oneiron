@@ -15533,6 +15533,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/docx.rs",
+     "purpose": "Native DOCX edit entry",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/docx_tests.rs",
+     "purpose": "Native DOCX proposal proofs at the public edit door",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -15561,6 +15580,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SheetAnswerBundle",
+      "SheetCellAnswer"
+     ],
+     "path": "src/edit_roundtrip/judgment.rs",
+     "purpose": "Typed sheet answers: one ask over a bounded range becomes one retained edit",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/judgment_cells.rs",
+     "purpose": "Independent OOXML reads for typed sheet answers",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EditManifest",
       "EditWarning",
       "MutationMode",
@@ -15582,8 +15626,9 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "mod": 1,
-      "re-export": 6
+      "crate-vis": 2,
+      "mod": 2,
+      "re-export": 8
      }
     },
     {
@@ -15593,7 +15638,7 @@
      "path": "src/edit_roundtrip/opc.rs",
      "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -15792,7 +15837,37 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideJudgment",
+      "SlideReviewError",
+      "SlideReviewLabels",
+      "SlideReviewProvider",
+      "SlideReviewRequest",
+      "SlideReviewRun",
+      "SlideReviewUnit"
+     ],
+     "path": "src/edit_roundtrip/slides_review.rs",
+     "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/slides_review/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
@@ -15806,7 +15881,7 @@
      "path": "src/edit_roundtrip/xml.rs",
      "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -15827,7 +15902,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 34
+      "crate-vis": 39
      }
     },
     {
@@ -15862,7 +15937,8 @@
       "SettleReceiptDoor",
       "SettleSelectOutcome",
       "SettledAnchor",
-      "SettlementRecord"
+      "SettlementRecord",
+      "SheetAnswerReceipt"
      ],
      "path": "src/edit_settle/records.rs",
      "purpose": "Consent, outcome and settlement records",
@@ -15870,7 +15946,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -15880,7 +15956,7 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -17337,7 +17413,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 82
+      "crate-vis": 94
      }
     },
     {
@@ -17351,7 +17427,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_docedit_resource.rs",
+     "purpose": "Strict six-field document resource policy row decoder",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/decode/decode_manifest.rs",
@@ -17397,7 +17483,7 @@
      "path": "src/gate/decode/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17425,7 +17511,7 @@
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17434,6 +17520,26 @@
      "notable": [],
      "path": "src/gate/definition_ceiling.rs",
      "purpose": "—",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/docedit_resource.rs",
+     "purpose": "Vault-wide document resource ceilings, decoded from policy manifest data",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/docx_budget.rs",
+     "purpose": "Native DOCX archive workload policy",
      "surface": {
       "crate-vis": 4
      }
@@ -17678,7 +17784,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 39
      }
     },
     {
@@ -17709,7 +17815,7 @@
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -17719,7 +17825,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 15
      }
     },
     {
@@ -17900,6 +18006,22 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/docedit_resource.rs",
+     "purpose": "Docedit resource-policy decode, trusted fold and engine-to-organ factory",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/docx_zip_budget.rs",
+     "purpose": "Archive budgets live in trusted policy, not in the DOCX organ's graph",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -18021,6 +18143,14 @@
      "notable": [],
      "path": "src/gate/tests/scoped_read.rs",
      "purpose": "Scoped read and retrieval filtering: core-read grants, context-pack scrubbing, and facet edges",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/slide_review_policy.rs",
+     "purpose": "Shipped slide-review limits, scoped manifest narrowing, and strict row decode",
      "surface": {}
     },
     {
@@ -21150,7 +21280,7 @@
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -21344,6 +21474,23 @@
      "path": "src/llm/decision/seat/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideReviewLimits",
+      "SlideReviewPolicy",
+      "SlideReviewPrecedence",
+      "SlideReviewRoute"
+     ],
+     "path": "src/llm/decision/slides_policy.rs",
+     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -29819,7 +29966,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 5
      }
     },
@@ -29832,6 +29979,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
+      "crate-vis": 1,
       "fn": 7,
       "struct": 1
      }
@@ -29909,7 +30057,7 @@
      "path": "src/skill_attribution/codec.rs",
      "purpose": "Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -29950,7 +30098,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -29966,7 +30114,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AttributionSweepReport",
@@ -29998,7 +30146,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests/sweep.rs",
@@ -30012,6 +30160,8 @@
       "AttemptOutcome",
       "AttributionJudgment",
       "AttributionVerdict",
+      "DeviationCause",
+      "FollowedState",
       "OutcomeEvidence",
       "SkillEditProposal"
      ],
@@ -30019,8 +30169,8 @@
      "purpose": "Verdict taxonomy and row shapes: evidence in, judgments and edit proposals out",
      "surface": {
       "const": 1,
-      "enum": 2,
-      "fn": 8,
+      "enum": 4,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -30152,7 +30302,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 15
      }
     },
     {
@@ -30173,7 +30323,7 @@
      "path": "src/skill_hub/admission_view.rs",
      "purpose": "Engine-computed install asks: trust changes presentation, never authorization",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -30190,13 +30340,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -30331,17 +30481,22 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "HubImportReceipt"
+      "HubImportReceipt",
+      "MarketplaceFit",
+      "MarketplaceFitDecision",
+      "MarketplaceFitEvaluator"
      ],
      "path": "src/skill_hub/import_receipt.rs",
      "purpose": "Source receipts and admitted-publisher ingress beside content dedup, never in place of it",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -30356,6 +30511,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InstallDisposition",
+      "InstallHoldReason",
+      "InstallLifecycle"
+     ],
+     "path": "src/skill_hub/install_transition.rs",
+     "purpose": "One transaction-local skill install plan and its finalized, loadable result",
+     "surface": {
+      "crate-vis": 11,
+      "enum": 3,
+      "fn": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -30364,7 +30535,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -30403,7 +30574,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -30459,6 +30630,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_hub/pack_catalog/builtin.rs",
+     "purpose": "Engine-embedded connector source and local first-open installation",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/builtin/tests.rs",
+     "purpose": "First-open installed inventory and inert built-in provenance",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Bundled skills traverse the same pinned hub import, scanner and provenance doors",
      "surface": {
@@ -30509,7 +30698,7 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 8
      }
     },
@@ -30839,7 +31028,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/transport_tests.rs",
@@ -32747,7 +32936,7 @@
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -33417,7 +33606,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -33430,6 +33619,29 @@
      "surface": {
       "crate-vis": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TaskAskOptionLink",
+      "TaskAskOptionLinkView"
+     ],
+     "path": "src/task_verb/ask_option_link.rs",
+     "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/ask_option_link/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -33466,7 +33678,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -33476,16 +33688,36 @@
      "path": "src/task_verb/ask_record/guard.rs",
      "purpose": "Shared raw-put and replay validation for immutable ask facts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/link_proof.rs",
+     "purpose": "Replicable admission proof for a locally checked option-link bearer",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_record/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/word_admission.rs",
+     "purpose": "Single answer admission path for authenticated actors and bearer-bound friends",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -33494,7 +33726,7 @@
      "path": "src/task_verb/ask_settlement.rs",
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -33544,7 +33776,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AskAuthorityScope",
@@ -33793,6 +34025,7 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "fn": 6
      }
     },
@@ -33817,9 +34050,9 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 1,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -36309,6 +36542,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/ask_option_link_replication.rs",
+     "purpose": "A real Loro exchange preserves issuer-verified foreign-stated ask evidence",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -37132,8 +37373,8 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 23,
-     "impl_vault": false,
+     "files": 29,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
@@ -37223,9 +37464,9 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 86,
+     "files": 92,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
@@ -37356,7 +37597,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37706,7 +37947,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 62,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37790,7 +38031,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 67,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -37909,10 +38150,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 5,
+   "over_bar": 7,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2251,
-   "test_files": 771
+   "source_files": 2264,
+   "test_files": 779
   },
   "oneiron-android": {
    "files": [
@@ -39202,6 +39443,160 @@
    "purpose": "oneiron-bench — benchmark harness skeleton",
    "source_files": 101,
    "test_files": 20
+  },
+  "oneiron-docedit": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/emit_revision.rs",
+     "purpose": "Produce one deterministic tracked-change sample for the external Word oracle",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/resolve_docx.rs",
+     "purpose": "Resolve a DOCX revision in the pinned fork for an application oracle case",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DoceditError"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
+     "surface": {
+      "enum": 1,
+      "fn": 7,
+      "mod": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/retained_opc/mod.rs",
+     "purpose": "Bounded, retained OPC archives",
+     "surface": {
+      "enum": 1,
+      "re-export": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Editability",
+      "Limits",
+      "Package"
+     ],
+     "path": "src/retained_opc/package.rs",
+     "purpose": "ZIP central-directory reader and copy-through writer",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/xml/ffi.rs",
+     "purpose": "Minimal Expat C ABI",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/xml/mod.rs",
+     "purpose": "Bounded source-indexed XML part, with checked semantic patches",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/xml/patch.rs",
+     "purpose": "Private checked edit authority",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "XmlLimits"
+     ],
+     "path": "src/retained_opc/xml/retained.rs",
+     "purpose": "One authoritative parse",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/adversarial.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/breaker.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/identity.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/revisions.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "retained_opc": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Bounded, retained OPC archives"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
+   "source_files": 9,
+   "test_files": 4
   },
   "oneiron-driver": {
    "files": [

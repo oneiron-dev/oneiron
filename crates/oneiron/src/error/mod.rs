@@ -93,6 +93,7 @@ pub enum ErrorKind {
     ConsentGrantRevoked,
     ConsentApproveOnceSpent,
     InvalidTaskBody,
+    AskDependencyPending,
     CorruptedIndex,
     ContextPackValidation,
     IndexOverflow,
