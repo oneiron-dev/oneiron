@@ -265,16 +265,18 @@ fn batch_fixtures() -> Vec<BatchFixture> {
 }
 
 /// Per fixture: the blake3 digest of the rows its batch changed, pinned on
-/// the two-builder code before the fold (T48) and re-pinned at storage ABI 21,
-/// where the derived ids those rows carry moved onto `EntityId::derive` (T50).
+/// the two-builder code before the fold (T48), re-pinned at storage ABI 21,
+/// where the derived ids those rows carry moved onto `EntityId::derive` (T50),
+/// and re-pinned when #1224 moved every put's record-scope stamp to its v2
+/// birth position with a revision counter.
 const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     (
         "put",
-        "03e2fa48508898f6ea43fead052ef4b622bf37ecd60660a1d8c3216a98179cf0",
+        "6cb17777852134748ad5f30a7f50e019805654f2083b4c29180409da6c8acf39",
     ),
     (
         "put_habit_checkin",
-        "c232b5666acfa85502c2f269daf219e124c08e5b94dc0fb16bd08fc5a03c5e10",
+        "3ce5069cb0a4c97dc90b7ef4b0bdcbcf137fc75db78697dda46ea8d69e37e762",
     ),
     (
         "edges",
@@ -294,30 +296,30 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "delete",
-        "74f913bf0b34726e14504e2adce8d0b128b723dac7a5c52fd47a27968ebb7714",
+        "50e831530cbbc7ab2a9e1d2a4fb7d99133ee69d9ee2f617b05767f860f993b53",
     ),
     ("claim_candidate", CLAIM_CANDIDATE_DIGEST),
     (
         "put_internal",
-        "fb383ce14febca48213e1c93885558bb07042956894a648ec92b19eb0082eb31",
+        "548aa0e92566967fa3fb1590755f8f5e884071372fd00c49f0d14421ab98c823",
     ),
     (
         "put_task_fact",
-        "e6bece060b6fc936d4ff6d68f1610da550ed8262aab7116ded19d9e5a8e60e6b",
+        "ef6f9e1dfd5fc4281333346d2aa98f40f114e2794d0716ad230f79974c1105dc",
     ),
     (
         "put_authored_note",
-        "c1411db395fcf1f23270fa51a7b5e3760dfae8cf87e44de166f75774d3e82a20",
+        "cf906d63603dbebfa5e0b333caa0c18f9c0cc753160439c566d59ecb9a368609",
     ),
 ];
 
 /// A `sync` build also queues the claim's embed job in the same batch.
 #[cfg(feature = "sync")]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "f16d870a0e8d25cfcd0aecf2bd78c50a4dad12223dc40906100323e38784bd12";
+    "6bbf6c09a591620b703eef2f01fedd333661047ef94ae7d0db49a76e4cd7988e";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "13c7aa5a0792c06ba386af50bb9c6f613a4483a6200b1689dbad3f0d7e7caa02";
+    "db000976563ce04e672d24bd074be3cc9d3269b3243535017a844912718ec887";
 
 #[test]
 fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
