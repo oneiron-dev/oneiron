@@ -92,8 +92,8 @@ pub use self::keys::{
 };
 pub(crate) use self::receipts::settle_receipts;
 pub use self::records::{
-    SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome,
-    SettledAnchor, SettlementRecord,
+    PptxReviewIdentity, SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor,
+    SettleSelectOutcome, SettledAnchor, SettlementRecord, SheetAnswerReceipt,
 };
 
 #[cfg(test)]

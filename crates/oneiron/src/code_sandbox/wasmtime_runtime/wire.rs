@@ -316,6 +316,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             crate::task_verb::TaskAskStatus::Pending { hold } => {
                 json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
             }
+            crate::task_verb::TaskAskStatus::Changed { voided, generation } => {
+                json!({"kind":"task_ask_status","state":"changed","voided":voided.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"generation":generation})
+            }
             crate::task_verb::TaskAskStatus::Settled(result) => {
                 json!({"kind":"task_ask_status","state":"settled","result":result})
             }

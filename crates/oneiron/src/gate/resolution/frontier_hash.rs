@@ -27,6 +27,17 @@ pub(super) fn hash_policy_frontier_v0(
     for predicate in &resolution.single_valued_predicates {
         hash_str(hasher, predicate);
     }
+    // Hashed only when a manifest names a class row, so a manifest that never
+    // did keeps its frontier and every consent binding taken against it.
+    if let Some(carry) = resolution.connector_class_carry.as_ref() {
+        hash_str(hasher, "connector_class_policy.v1");
+        hash_str(hasher, resolution.connector_class_precedence.as_str());
+        hash_len(hasher, carry.len());
+        for (from, to) in carry {
+            hash_str(hasher, from);
+            hash_str(hasher, to);
+        }
+    }
     // A teacher floor change changes admission and invalidates approval
     // snapshots; include the resolved row in the policy frontier too.
     if let Some(vault_min) = resolution.teacher_probe_vault_min {
@@ -74,6 +85,46 @@ pub(super) fn hash_policy_frontier_v0(
         let value = policy.encode();
         hash_opt_value(hasher, Some(&value))?;
     }
+    if let Some(limits) = resolution.pptx_comment_limits {
+        hash_str(hasher, "pptx_comment_limits:nested_narrowing");
+        for value in [
+            limits.max_patches,
+            limits.max_author_name_bytes,
+            limits.max_xml_bytes,
+            limits.max_xml_attributes,
+            limits.max_xml_namespaces,
+            limits.max_xml_depth,
+            limits.max_xml_nodes,
+        ] {
+            hash_u64(hasher, value as u64);
+        }
+    }
+    // Behavior-deciding archive policy moves the frontier when vault or exact
+    // holder bounds change. Hash declared rows, not only a selected caller.
+    if !resolution.docx_archive_limits.is_empty() {
+        hash_str(hasher, "docx_archive_limits");
+        hash_len(hasher, resolution.docx_archive_limits.len());
+        for policy in &resolution.docx_archive_limits {
+            for value in [
+                policy.vault.max_entries as u64,
+                policy.vault.max_part_bytes,
+                policy.vault.max_total_bytes,
+            ] {
+                hash_u64(hasher, value);
+            }
+            hash_len(hasher, policy.holders.len());
+            for (actor, limits) in &policy.holders {
+                hash_bytes(hasher, actor.as_bytes());
+                for value in [
+                    limits.max_entries as u64,
+                    limits.max_part_bytes,
+                    limits.max_total_bytes,
+                ] {
+                    hash_u64(hasher, value);
+                }
+            }
+        }
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
@@ -93,6 +144,27 @@ pub(super) fn hash_policy_frontier_v0(
             hash_u64(hasher, row.limits.max_pcm_fragment_bytes as u64);
         }
     }
+    // The shipped row and an absent legacy row resolve identically. Only a
+    // behavior change contributes a new domain tag, preserving existing
+    // no-review-policy consent bindings.
+    if resolution.slide_review_policy != crate::llm::decision::SlideReviewPolicy::default() {
+        let mut slide_policy = Vec::new();
+        rmpv::encode::write_value(&mut slide_policy, &resolution.slide_review_policy.rows())
+            .map_err(|_| Error::InvariantViolation("slide review policy frontier encoding"))?;
+        hash_str(hasher, "slide_review_policy");
+        hash_bytes(hasher, &slide_policy);
+    }
+    // Absent and explicit shipped baseline resolve identically. A stricter
+    // trusted row changes the frontier; its six ceilings are hashed together.
+    if let Some(bounds) = resolution.docedit_resource_policy {
+        let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
+        if bounds != baseline {
+            hash_str(hasher, "docedit_resource_policy");
+            for value in crate::gate::docedit_resource::row_values(bounds) {
+                hash_u64(hasher, value);
+            }
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
@@ -100,9 +172,34 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.actor_writes);
     }
 
+    // Attribution limits bound post-terminal receipt capture, not Gate authority.
+    // Tuning them must not rebind existing consent/grant frontiers.
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);
+    }
+
+    // An absent row and the shipped 4096 vault row have identical effective
+    // policy. Keep their existing frontier hash stable; hash only restrictions
+    // that actually move the default, scoped or otherwise.
+    let nondefault: Vec<_> = resolution
+        .sheet_answer_limits
+        .iter()
+        .chain(resolution.untrusted_sheet_answer_limits.iter())
+        .filter(|row| {
+            row.artifact_ref.is_some()
+                || row.sheet.is_some()
+                || Some(row.max_count) != resolution.sheet_answer_default_max_count
+        })
+        .collect();
+    if !nondefault.is_empty() {
+        hash_str(hasher, "sheet_answer_limits");
+        hash_len(hasher, nondefault.len());
+        for row in nondefault {
+            hash_opt_str(hasher, row.artifact_ref.as_deref());
+            hash_opt_str(hasher, row.sheet.as_deref());
+            hash_u64(hasher, row.max_count);
+        }
     }
 
     if let Some(policy) = &resolution.weave_correction_policy {

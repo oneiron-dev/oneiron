@@ -56,17 +56,25 @@
 //!   the manifest bytes to receipt.
 
 mod address;
+mod docx;
 mod formula;
 mod inspect;
+mod judgment;
+pub(crate) mod judgment_cells;
 mod manifest;
 mod opc;
 mod ops;
 mod pipeline;
+pub mod pptx;
 mod session_validate;
+pub mod slides_review;
 mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
+pub use self::docx::run_docx_revision;
+pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
+pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer};
 pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
 };
@@ -76,6 +84,8 @@ pub use self::session_validate::{
     AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport,
 };
 
+#[cfg(test)]
+mod docx_tests;
 #[cfg(test)]
 mod tests;
 
