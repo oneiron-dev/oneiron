@@ -31,8 +31,8 @@ use crate::error::Result;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepEffectBinding,
-    StepOutcome, TierPrecedence, call_as_step,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepEffectBinding, StepOutcome,
+    TierPrecedence, call_as_step,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
