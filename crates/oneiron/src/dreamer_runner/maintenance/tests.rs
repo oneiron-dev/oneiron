@@ -45,6 +45,7 @@ fn drive(vault: &Vault, now: u64) -> Result<()> {
         budget_total_units: 1000,
         reserve_units: 10,
         now,
+        host_scope: None,
     };
     let cancel = WakeCancellation::new();
     let mut exec = UnusedExecutor;

@@ -1,18 +1,32 @@
-//! Private per-vault owner reference bank. Providers receive clones, never own identity.
+//! Private per-vault voice reference bank. Provider voice IDs are evictable pointers, not identities.
+use std::collections::BTreeSet;
+
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use super::ref_limits::VoiceRefLimits;
+
 const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
-const PREFIX: &[u8] = b"voice:owner_ref:v1:";
-const REVISION_PREFIX: &[u8] = b"voice:owner_ref_revision:v1:";
+const PACK_PREFIX: &[u8] = b"voice:owner_ref:v1:";
+const IDENTITY_PREFIX: &[u8] = b"voice:ref_identity:v1:";
+const TARGET_PREFIX: &[u8] = b"voice:ref_target:v1:";
+const INCARNATION_PREFIX: &[u8] = b"voice:ref_incarnation:v1:";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoiceRefOrigin {
-    OwnerCapture,
-    VendorIdentity { vendor: String },
+    /// The host has obtained the recorded person's consent before capture.
+    Captured,
+    /// Samples captured from a design tool. The captured audio, not its vendor ID, is ours.
+    Designed { vendor: String },
+    /// AI-made audio added to an existing identity; never replaces its source pack.
+    Generated,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceRegisterClip {
@@ -21,65 +35,157 @@ pub struct VoiceRegisterClip {
     pub audio: Vec<u8>,
     pub transcript: String,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OwnerVoiceRefPack {
+pub struct VoiceRefPack {
     pub version: u8,
     pub id: String,
+    pub voice_id: String,
     #[serde(with = "crate::llm::entity_refs")]
     pub owner: EntityId,
     pub origin: VoiceRefOrigin,
     pub clips: Vec<VoiceRegisterClip>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceIdentity {
+    pub version: u8,
+    pub id: String,
+    #[serde(with = "crate::llm::entity_refs")]
+    pub owner: EntityId,
+    /// Source and generated pack IDs are kept separate by their persisted origin tags.
+    pub pack_ids: Vec<String>,
+}
+
+/// The material to submit to one render target. No vendor ID is an input to this request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceTargetClone {
+    pub voice_id: String,
     pub target: String,
-    pub source_pack: String,
-    pub owner: EntityId,
-    /// Unique at every bank insertion, even when identical bytes are re-banked.
-    pub revision: String,
+    pub source_packs: Vec<String>,
     pub clips: Vec<VoiceRegisterClip>,
+    pub ref_digest: [u8; 32],
+    pub include_generated: bool,
 }
+
+/// A cached target pointer, valid only while its selected refs still match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceTargetRecord {
+    pub voice_id: String,
+    pub target: String,
+    pub vendor_voice_id: String,
+    pub source_packs: Vec<String>,
+    pub ref_digest: [u8; 32],
+    pub cloned_at: u64,
+    /// Fresh on every new or replaced record. A hosted binding fences on it, so a
+    /// withdrawn and re-recorded target cannot revive an older binding.
+    pub revision: [u8; 16],
+}
+
+/// A target that uploads the banked refs with every request keeps no provider
+/// record to fence on. It binds to the identity's incarnation, minted when the
+/// identity is born and deleted with it, and to the digest of its selected refs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VoiceRefFence {
+    pub owner: EntityId,
+    pub incarnation: [u8; 16],
+    pub ref_digest: [u8; 32],
+    pub include_generated: bool,
+}
+
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
-fn key(id: &str) -> Result<Vec<u8>> {
+fn valid_id(id: &str) -> Result<()> {
     if id.trim().is_empty() || id.len() > 128 || id.contains('\0') {
         return Err(invalid("invalid voice reference id"));
     }
-    Ok([PREFIX, id.as_bytes()].concat())
+    Ok(())
 }
-fn decode_pack(bytes: &[u8], id: &str) -> Result<OwnerVoiceRefPack> {
-    let pack: OwnerVoiceRefPack =
-        rmp_serde::from_slice(bytes).map_err(|_| invalid("corrupt voice reference pack"))?;
-    pack.validate()?;
-    if pack.id != id {
-        return Err(invalid("voice reference key mismatch"));
+fn key(prefix: &[u8], id: &str) -> Result<Vec<u8>> {
+    valid_id(id)?;
+    Ok([prefix, id.as_bytes()].concat())
+}
+fn target_key(voice_id: &str, target: &str) -> Result<Vec<u8>> {
+    valid_id(voice_id)?;
+    valid_id(target)?;
+    Ok([TARGET_PREFIX, voice_id.as_bytes(), b"\0", target.as_bytes()].concat())
+}
+fn owner_index(owner: &EntityId, key: &[u8]) -> Vec<u8> {
+    [OWNER_PREFIX, owner.as_bytes(), key].concat()
+}
+fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(value).map_err(|e| Error::InvalidConfig(e.to_string()))
+}
+fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8], message: &str) -> Result<T> {
+    rmp_serde::from_slice(bytes).map_err(|_| invalid(message))
+}
+fn limits_for(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<VoiceRefLimits> {
+    crate::gate::resolve_policy_manifest(store, txn)?
+        .voice_ref_limits(owner)
+        .ok_or_else(|| invalid("invalid voice reference policy"))
+}
+
+fn validate_provider_value(value: &str, max_bytes: u64) -> Result<()> {
+    if value.trim().is_empty() || value.contains('\0') || value.len() as u64 > max_bytes {
+        return Err(invalid("invalid voice provider value"));
     }
-    Ok(pack)
+    Ok(())
 }
-impl OwnerVoiceRefPack {
-    pub fn validate(&self) -> Result<()> {
-        key(&self.id)?;
-        if self.version != 1 || self.origin != VoiceRefOrigin::OwnerCapture {
-            return Err(invalid(
-                "voice identity must originate in the owner ref bank",
-            ));
+
+fn validate_target_record(
+    record: &VoiceTargetRecord,
+    voice_id: &str,
+    target: &str,
+    limits: VoiceRefLimits,
+) -> Result<()> {
+    if record.voice_id != voice_id
+        || record.target != target
+        || record.cloned_at == 0
+        || record.source_packs.is_empty()
+        || validate_provider_value(&record.vendor_voice_id, limits.max_vendor_voice_id_bytes)
+            .is_err()
+    {
+        return Err(invalid("corrupt voice target clone"));
+    }
+    Ok(())
+}
+
+impl VoiceRefPack {
+    fn validate(&self, limits: VoiceRefLimits) -> Result<()> {
+        valid_id(&self.id)?;
+        valid_id(&self.voice_id)?;
+        if self.version != 1 {
+            return Err(invalid("unsupported voice reference pack version"));
+        }
+        if let VoiceRefOrigin::Designed { vendor } = &self.origin {
+            validate_provider_value(vendor, limits.max_design_vendor_bytes)?;
         }
         if self.clips.is_empty()
-            || self.clips.len() > 32
-            || self.clips.iter().map(|c| c.audio.len()).sum::<usize>() > 16 * 1024 * 1024
+            || self.clips.len() as u64 > limits.max_clips_per_pack
+            || self
+                .clips
+                .iter()
+                .try_fold(0u64, |total, c| total.checked_add(c.audio.len() as u64))
+                .is_none_or(|bytes| bytes > limits.max_audio_bytes_per_pack)
         {
             return Err(invalid("invalid voice reference pack size"));
         }
-        let mut names = std::collections::BTreeSet::new();
+        let mut names = BTreeSet::new();
         for clip in &self.clips {
             if clip.register.trim().is_empty()
-                || clip.register.len() > 128
+                || clip.register.len() as u64 > limits.max_register_bytes
                 || !names.insert(&clip.register)
                 || !clip.media_type.starts_with("audio/")
                 || clip.audio.is_empty()
-                || clip.transcript.len() > 16_384
+                || clip.transcript.len() as u64 > limits.max_transcript_bytes
             {
                 return Err(invalid("invalid voice reference clip"));
             }
@@ -87,6 +193,7 @@ impl OwnerVoiceRefPack {
         Ok(())
     }
 }
+
 pub(super) fn delete_owner_refs(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -103,131 +210,231 @@ pub(super) fn delete_owner_refs(
         if store.vault_meta.delete(txn, &key)? {
             deleted += 1;
         }
-        let revision_key = [REVISION_PREFIX, &key[PREFIX.len()..]].concat();
-        store.vault_meta.delete(txn, &revision_key)?;
         store.vault_meta.delete(txn, &index)?;
     }
     Ok(deleted)
 }
 
 impl Vault {
-    /// The caller is the authenticated owner capture path. Vendor identities are refused.
-    pub fn store_owner_voice_refs(&self, pack: &OwnerVoiceRefPack) -> Result<()> {
-        let _guard = self
-            .voice_ref_guard
-            .write()
-            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
-        pack.validate()?;
-        let key = key(&pack.id)?;
-        let bytes =
-            rmp_serde::to_vec_named(pack).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+    /// Creates an identity on its first captured/designed pack, then adds immutable packs.
+    /// Generated refs need an existing source identity and remain separate tagged packs.
+    pub fn store_voice_ref_pack(&self, pack: &VoiceRefPack) -> Result<()> {
+        let pack_key = key(PACK_PREFIX, &pack.id)?;
+        let identity_key = key(IDENTITY_PREFIX, &pack.voice_id)?;
+        let bytes = encode(pack)?;
         let mut txn = self.store.env.write_txn()?;
-        let revision_key = [REVISION_PREFIX, pack.id.as_bytes()].concat();
-        if let Some(existing) = self.store.vault_meta.get(&txn, &key)? {
+        pack.validate(limits_for(&self.store, &txn, &pack.owner)?)?;
+        if let Some(existing) = self.store.vault_meta.get(&txn, &pack_key)? {
             if existing != bytes {
-                return Err(invalid("voice reference id already exists"));
+                return Err(invalid("voice reference pack id already exists"));
             }
-            if self.store.vault_meta.get(&txn, &revision_key)?.is_none() {
-                return Err(invalid("voice reference revision missing"));
-            }
-        } else {
-            self.store.vault_meta.put(&mut txn, &key, &bytes)?;
-            // A new insertion always gets a fresh raw UUID revision; both
-            // hosted and local renderers bind to this incarnation.
-            self.store
-                .vault_meta
-                .put(&mut txn, &revision_key, uuid::Uuid::new_v4().as_bytes())?;
-            let index = [OWNER_PREFIX, pack.owner.as_bytes(), pack.id.as_bytes()].concat();
-            self.store.vault_meta.put(&mut txn, &index, &key)?;
+            return Ok(()); // An immutable retry; the original transaction already committed.
         }
+        let mut identity = match read_identity(&self.store, &txn, &pack.voice_id)? {
+            Some(identity) => identity,
+            None if pack.origin == VoiceRefOrigin::Generated => {
+                return Err(invalid("generated refs need an existing source identity"));
+            }
+            None => {
+                // Fresh at every birth, so a withdrawn and identically re-banked
+                // identity never matches a fence taken before the withdrawal.
+                let incarnation_key = key(INCARNATION_PREFIX, &pack.voice_id)?;
+                self.store.vault_meta.put(
+                    &mut txn,
+                    &incarnation_key,
+                    uuid::Uuid::new_v4().as_bytes(),
+                )?;
+                self.store.vault_meta.put(
+                    &mut txn,
+                    &owner_index(&pack.owner, &incarnation_key),
+                    &incarnation_key,
+                )?;
+                VoiceIdentity {
+                    version: 1,
+                    id: pack.voice_id.clone(),
+                    owner: pack.owner,
+                    pack_ids: Vec::new(),
+                }
+            }
+        };
+        if identity.owner != pack.owner {
+            return Err(invalid("voice identity owner mismatch"));
+        }
+        identity.pack_ids.push(pack.id.clone());
+        self.store.vault_meta.put(&mut txn, &pack_key, &bytes)?;
+        self.store
+            .vault_meta
+            .put(&mut txn, &identity_key, &encode(&identity)?)?;
+        self.store
+            .vault_meta
+            .put(&mut txn, &owner_index(&pack.owner, &pack_key), &pack_key)?;
+        self.store.vault_meta.put(
+            &mut txn,
+            &owner_index(&pack.owner, &identity_key),
+            &identity_key,
+        )?;
         txn.commit()?;
         Ok(())
     }
-    pub fn owner_voice_refs(&self, id: &str) -> Result<Option<OwnerVoiceRefPack>> {
-        let key = key(id)?;
+
+    pub fn voice_identity(&self, id: &str) -> Result<Option<VoiceIdentity>> {
         let txn = self.store.env.read_txn()?;
-        let Some(bytes) = self.store.vault_meta.get(&txn, &key)? else {
-            return Ok(None);
-        };
-        Ok(Some(decode_pack(&bytes, id)?))
-    }
-    /// A vault-scoped incarnation marker; withdrawal removes it atomically
-    /// with the ref. No hosted target ID or reference audio is stored here.
-    pub(crate) fn owner_voice_ref_revision(&self, id: &str) -> Result<Option<[u8; 16]>> {
-        key(id)?;
-        let txn = self.store.env.read_txn()?;
-        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
-        let Some(revision) = self.store.vault_meta.get(&txn, &revision_key)? else {
-            return Ok(None);
-        };
-        if self.store.vault_meta.get(&txn, &key(id)?)?.is_none() {
-            return Err(invalid("orphaned voice reference revision"));
-        }
-        Ok(Some(revision.as_ref().try_into().map_err(|_| {
-            invalid("corrupt voice reference revision")
-        })?))
+        read_identity(&self.store, &txn, id)
     }
 
-    /// Serialize the bank check and nonblocking queue admission against the
-    /// withdrawal writer, including writers in other processes. An LMDB read
-    /// snapshot alone would NOT prevent a concurrent withdrawal commit.
-    pub(crate) fn with_live_voice_ref<R>(
+    pub fn voice_ref_pack(&self, id: &str) -> Result<Option<VoiceRefPack>> {
+        let txn = self.store.env.read_txn()?;
+        read_pack(&self.store, &txn, id)
+    }
+
+    /// Builds a clone from selected bank refs. A generated pack is optional, never
+    /// the only source. The digest covers exact audio and metadata, not just pack IDs.
+    pub fn prepare_voice_clone(
         &self,
-        id: &str,
+        voice_id: &str,
+        target: &str,
+        include_generated: bool,
+    ) -> Result<VoiceTargetClone> {
+        let txn = self.store.env.read_txn()?;
+        select_clone(&self.store, &txn, voice_id, target, include_generated)
+    }
+
+    /// Saves the vendor's return value only if this request still matches the bank.
+    pub fn record_voice_target_clone(
+        &self,
+        request: &VoiceTargetClone,
+        vendor_voice_id: &str,
+        cloned_at: u64,
+    ) -> Result<VoiceTargetRecord> {
+        let mut txn = self.store.env.write_txn()?;
+        let selected = select_clone(
+            &self.store,
+            &txn,
+            &request.voice_id,
+            &request.target,
+            request.include_generated,
+        )?;
+        if &selected != request {
+            return Err(invalid("voice clone refs changed"));
+        }
+        let record = VoiceTargetRecord {
+            voice_id: request.voice_id.clone(),
+            target: request.target.clone(),
+            vendor_voice_id: vendor_voice_id.into(),
+            source_packs: request.source_packs.clone(),
+            ref_digest: request.ref_digest,
+            cloned_at,
+            revision: uuid::Uuid::new_v4().into_bytes(),
+        };
+        let target_key = target_key(&request.voice_id, &request.target)?;
+        let owner = read_identity(&self.store, &txn, &request.voice_id)?
+            .ok_or_else(|| invalid("unknown voice identity"))?
+            .owner;
+        let limits = limits_for(&self.store, &txn, &owner)?;
+        validate_target_record(&record, &request.voice_id, &request.target, limits)?;
+        if let Some(raw) = self.store.vault_meta.get(&txn, &target_key)? {
+            let existing: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
+            validate_target_record(&existing, &request.voice_id, &request.target, limits)?;
+            if existing.source_packs == request.source_packs
+                && existing.ref_digest == request.ref_digest
+            {
+                return Ok(existing); // A current target pointer is not replaced without new refs.
+            }
+        }
+        self.store
+            .vault_meta
+            .put(&mut txn, &target_key, &encode(&record)?)?;
+        self.store
+            .vault_meta
+            .put(&mut txn, &owner_index(&owner, &target_key), &target_key)?;
+        txn.commit()?;
+        Ok(record)
+    }
+
+    /// Returns None when a target was evicted or its chosen refs have changed.
+    pub fn voice_target_clone(
+        &self,
+        voice_id: &str,
+        target: &str,
+        include_generated: bool,
+    ) -> Result<Option<VoiceTargetRecord>> {
+        let txn = self.store.env.read_txn()?;
+        current_target(&self.store, &txn, voice_id, target, include_generated)
+    }
+
+    /// Calls `admit` only while the target record at `revision` is still
+    /// current. The write transaction serializes admission against withdrawal
+    /// and eviction, including writers in other processes.
+    pub(crate) fn with_live_voice_target<R>(
+        &self,
+        voice_id: &str,
+        target: &str,
+        include_generated: bool,
         revision: [u8; 16],
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<R>,
     ) -> Result<Option<R>> {
-        let pack_key = key(id)?;
         let txn = self.store.env.write_txn()?;
-        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
-        if self.store.vault_meta.get(&txn, &pack_key)?.is_none()
-            || self
-                .store
-                .vault_meta
-                .get(&txn, &revision_key)?
-                .is_none_or(|current| current.as_ref() != revision.as_slice())
-        {
-            return Ok(None);
+        match current_target(&self.store, &txn, voice_id, target, include_generated)? {
+            Some(record) if record.revision == revision => Ok(Some(admit(&txn)?)),
+            _ => Ok(None),
         }
-        Ok(Some(admit(&txn)?))
-    }
-    /// Each target receives its own owned copy. No target id can be written back
-    /// as the identity's origin. Raw refs remain private, never retrieval entities.
-    pub fn clone_voice_refs_into(&self, id: &str, target: &str) -> Result<VoiceTargetClone> {
-        if target.trim().is_empty() || target.len() > 128 {
-            return Err(invalid("invalid voice render target"));
-        }
-        let key = key(id)?;
-        let txn = self.store.env.read_txn()?;
-        let bytes = self
-            .store
-            .vault_meta
-            .get(&txn, &key)?
-            .ok_or_else(|| invalid("unknown owner voice reference"))?;
-        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
-        let revision = self
-            .store
-            .vault_meta
-            .get(&txn, &revision_key)?
-            .ok_or_else(|| invalid("voice reference revision missing"))?;
-        let raw: [u8; 16] = revision
-            .as_ref()
-            .try_into()
-            .map_err(|_| invalid("corrupt voice reference revision"))?;
-        let revision = uuid::Uuid::from_bytes(raw).simple().to_string();
-        let pack = decode_pack(&bytes, id)?;
-        Ok(VoiceTargetClone {
-            target: target.into(),
-            source_pack: pack.id,
-            owner: pack.owner,
-            revision,
-            clips: pack.clips,
-        })
     }
 
-    /// Best-effort, nonblocking output check. A waiting withdrawal writer makes
-    /// a new read lock unavailable; refuse PCM rather than block the cascade.
-    pub(crate) fn owner_voice_ref_current_now(&self, id: &str, revision: &str) -> Result<bool> {
+    pub fn evict_voice_target(&self, voice_id: &str, target: &str) -> Result<()> {
+        let key = target_key(voice_id, target)?;
+        let identity = self
+            .voice_identity(voice_id)?
+            .ok_or_else(|| invalid("unknown voice identity"))?;
+        let mut txn = self.store.env.write_txn()?;
+        self.store.vault_meta.delete(&mut txn, &key)?;
+        self.store
+            .vault_meta
+            .delete(&mut txn, &owner_index(&identity.owner, &key))?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// The selection and its fence, read from one snapshot.
+    pub(crate) fn prepare_fenced_voice_clone(
+        &self,
+        voice_id: &str,
+        target: &str,
+        include_generated: bool,
+    ) -> Result<(VoiceTargetClone, VoiceRefFence)> {
+        let txn = self.store.env.read_txn()?;
+        fenced_clone(&self.store, &txn, voice_id, target, include_generated)
+    }
+
+    /// Runs `operation` only while `fence` is current. Holds the ref guard, so
+    /// a consent withdrawal cannot commit while the refs are being uploaded.
+    pub(crate) fn with_fenced_voice_clone<T>(
+        &self,
+        voice_id: &str,
+        target: &str,
+        fence: &VoiceRefFence,
+        operation: impl FnOnce(&VoiceTargetClone) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = self
+            .voice_ref_guard
+            .read()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
+        let txn = self.store.env.read_txn()?;
+        let (clone, current) =
+            fenced_clone(&self.store, &txn, voice_id, target, fence.include_generated)?;
+        if &current != fence {
+            return Err(invalid("voice identity withdrawn or its refs changed"));
+        }
+        operation(&clone)
+    }
+
+    /// Nonblocking check for synchronous callers. A waiting withdrawal writer
+    /// makes a new read lock unavailable; report stale rather than block.
+    pub(crate) fn voice_ref_fence_current_now(
+        &self,
+        voice_id: &str,
+        target: &str,
+        fence: &VoiceRefFence,
+    ) -> Result<bool> {
         let _guard = match self.voice_ref_guard.try_read() {
             Ok(guard) => guard,
             Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
@@ -235,96 +442,224 @@ impl Vault {
                 return Err(Error::InvariantViolation("voice reference guard poisoned"));
             }
         };
-        let requested = uuid::Uuid::parse_str(revision)
-            .map_err(|_| invalid("invalid voice reference revision"))?;
-        let key = key(id)?;
-        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
         let txn = self.store.env.read_txn()?;
-        Ok(self.store.vault_meta.get(&txn, &key)?.is_some()
-            && self
-                .store
-                .vault_meta
-                .get(&txn, &revision_key)?
-                .is_some_and(|current| current.as_ref() == requested.as_bytes()))
-    }
-
-    /// Read-guarded dispatch: a committed withdrawal wins before any later upload.
-    /// The guard spans only this vault's voice-ref upload/validation, not its
-    /// ordinary reads or writes. A new insertion never inherits an old revision.
-    pub(crate) fn with_current_owner_voice_ref<T>(
-        &self,
-        id: &str,
-        owner: EntityId,
-        revision: &str,
-        register: &str,
-        target: &str,
-        operation: impl FnOnce(&VoiceRegisterClip) -> Result<T>,
-    ) -> Result<T> {
-        let _guard = self
-            .voice_ref_guard
-            .read()
-            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
-        let cloned = self.clone_voice_refs_into(id, target)?;
-        if cloned.owner != owner || cloned.revision != revision {
-            return Err(invalid("owner voice reference has been replaced"));
-        }
-        let clip = cloned
-            .clips
-            .iter()
-            .find(|clip| clip.register == register)
-            .ok_or_else(|| invalid("owner voice register is absent"))?;
-        operation(clip)
+        Ok(
+            fenced_clone(&self.store, &txn, voice_id, target, fence.include_generated)
+                .is_ok_and(|(_, current)| &current == fence),
+        )
     }
 }
+
+fn fenced_clone(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    voice_id: &str,
+    target: &str,
+    include_generated: bool,
+) -> Result<(VoiceTargetClone, VoiceRefFence)> {
+    let clone = select_clone(store, txn, voice_id, target, include_generated)?;
+    let owner = read_identity(store, txn, voice_id)?
+        .ok_or_else(|| invalid("unknown voice identity"))?
+        .owner;
+    let raw = store
+        .vault_meta
+        .get(txn, &key(INCARNATION_PREFIX, voice_id)?)?
+        .ok_or_else(|| invalid("voice identity incarnation missing"))?;
+    let incarnation = raw
+        .as_ref()
+        .try_into()
+        .map_err(|_| invalid("corrupt voice identity incarnation"))?;
+    let fence = VoiceRefFence {
+        owner,
+        incarnation,
+        ref_digest: clone.ref_digest,
+        include_generated,
+    };
+    Ok((clone, fence))
+}
+
+fn current_target(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    voice_id: &str,
+    target: &str,
+    include_generated: bool,
+) -> Result<Option<VoiceTargetRecord>> {
+    let key = target_key(voice_id, target)?;
+    let Some(raw) = store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    let record: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
+    let selected = select_clone(store, txn, voice_id, target, include_generated)?;
+    let owner = read_identity(store, txn, voice_id)?
+        .ok_or_else(|| invalid("unknown voice identity"))?
+        .owner;
+    validate_target_record(&record, voice_id, target, limits_for(store, txn, &owner)?)?;
+    if record.source_packs != selected.source_packs || record.ref_digest != selected.ref_digest {
+        return Ok(None);
+    }
+    Ok(Some(record))
+}
+
+fn read_identity(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &str,
+) -> Result<Option<VoiceIdentity>> {
+    let identity_key = key(IDENTITY_PREFIX, id)?;
+    let Some(bytes) = store.vault_meta.get(txn, &identity_key)? else {
+        return Ok(None);
+    };
+    let identity: VoiceIdentity = decode(&bytes, "corrupt voice identity")?;
+    if identity.id != id || identity.version != 1 || identity.pack_ids.is_empty() {
+        return Err(invalid("corrupt voice identity"));
+    }
+    let mut seen = BTreeSet::new();
+    let mut source = false;
+    for pack_id in &identity.pack_ids {
+        if !seen.insert(pack_id) {
+            return Err(invalid("duplicate voice pack"));
+        }
+        let pack = read_pack(store, txn, pack_id)?
+            .ok_or_else(|| invalid("voice identity has missing refs"))?;
+        if pack.voice_id != id || pack.owner != identity.owner {
+            return Err(invalid("voice identity pack mismatch"));
+        }
+        source |= pack.origin != VoiceRefOrigin::Generated;
+    }
+    if !source {
+        return Err(invalid("voice identity has no source refs"));
+    }
+    Ok(Some(identity))
+}
+
+fn select_clone(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    voice_id: &str,
+    target: &str,
+    include_generated: bool,
+) -> Result<VoiceTargetClone> {
+    valid_id(target)?;
+    let identity = read_identity(store, txn, voice_id)?
+        .ok_or_else(|| invalid("unknown voice identity or missing refs"))?;
+    let mut packs = Vec::new();
+    for id in &identity.pack_ids {
+        let pack =
+            read_pack(store, txn, id)?.ok_or_else(|| invalid("voice identity has missing refs"))?;
+        if pack.origin != VoiceRefOrigin::Generated || include_generated {
+            packs.push(pack);
+        }
+    }
+    let source_packs = packs.iter().map(|p| p.id.clone()).collect();
+    let clips = packs.iter().flat_map(|p| p.clips.clone()).collect();
+    let digest = Sha256::digest(encode(&packs)?);
+    Ok(VoiceTargetClone {
+        voice_id: voice_id.into(),
+        target: target.into(),
+        source_packs,
+        clips,
+        ref_digest: digest.into(),
+        include_generated,
+    })
+}
+
+fn read_pack(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &str,
+) -> Result<Option<VoiceRefPack>> {
+    let key = key(PACK_PREFIX, id)?;
+    let Some(bytes) = store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    let pack: VoiceRefPack = decode(&bytes, "corrupt voice reference pack")?;
+    pack.validate(limits_for(store, txn, &pack.owner)?)?;
+    if pack.id != id {
+        return Err(invalid("voice reference key mismatch"));
+    }
+    Ok(Some(pack))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn owner_bank_is_private_per_vault_and_clones_into_two_targets() -> Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-        let (_other_dir, other) =
-            crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-        let mut pack = OwnerVoiceRefPack {
+    fn target_reader_and_writer_reject_the_same_corrupt_rows() -> Result<()> {
+        let dir = tempfile::tempdir().expect("ref vault directory");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+        let owner = EntityId::now();
+        vault.store_voice_ref_pack(&VoiceRefPack {
             version: 1,
-            id: "owner-registers".into(),
-            owner: EntityId::now(),
-            origin: VoiceRefOrigin::OwnerCapture,
+            id: "source".into(),
+            voice_id: "our-voice".into(),
+            owner,
+            origin: VoiceRefOrigin::Captured,
             clips: vec![VoiceRegisterClip {
                 register: "neutral".into(),
                 media_type: "audio/wav".into(),
-                audio: vec![1, 2, 3],
-                transcript: "reference".into(),
+                audio: vec![1],
+                transcript: String::new(),
+            }],
+        })?;
+        let request = vault.prepare_voice_clone("our-voice", "host", false)?;
+        let valid = vault.record_voice_target_clone(&request, "provider-id", 42)?;
+        for (case, mut bad) in [valid.clone(), valid.clone(), valid]
+            .into_iter()
+            .enumerate()
+        {
+            match case {
+                0 => bad.cloned_at = 0,
+                1 => bad.vendor_voice_id = " ".into(),
+                _ => bad.vendor_voice_id = "x".repeat(4_097),
+            }
+            // The writer must not silently replace corrupt persisted data either.
+            let key = target_key("our-voice", "host")?;
+            let mut txn = vault.store.env.write_txn()?;
+            vault.store.vault_meta.put(&mut txn, &key, &encode(&bad)?)?;
+            txn.commit()?;
+            assert!(matches!(
+                vault.voice_target_clone("our-voice", "host", false),
+                Err(Error::InvalidConfig(_))
+            ));
+            assert!(matches!(
+                vault.record_voice_target_clone(&request, "replacement", 43),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fence_follows_the_selected_source_refs() -> Result<()> {
+        let dir = tempfile::tempdir().expect("ref vault directory");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+        let owner = EntityId::now();
+        let pack = |id: &str, origin: VoiceRefOrigin| VoiceRefPack {
+            version: 1,
+            id: id.into(),
+            voice_id: "our-voice".into(),
+            owner,
+            origin,
+            clips: vec![VoiceRegisterClip {
+                register: "neutral".into(),
+                media_type: "audio/wav".into(),
+                audio: vec![1],
+                transcript: String::new(),
             }],
         };
-        vault.store_owner_voice_refs(&pack)?;
-        assert!(other.owner_voice_refs(&pack.id)?.is_none());
-        let a = vault.clone_voice_refs_into(&pack.id, "local-target")?;
-        let b = vault.clone_voice_refs_into(&pack.id, "remote-target")?;
-        assert_eq!(a.clips, b.clips);
-        assert_ne!(a.target, b.target);
-        assert_eq!(a.source_pack, b.source_pack);
-        pack.id = "vendor-born".into();
-        pack.origin = VoiceRefOrigin::VendorIdentity {
-            vendor: "test".into(),
-        };
-        assert!(vault.store_owner_voice_refs(&pack).is_err());
-        assert!(vault.owner_voice_refs(&pack.id)?.is_none());
-        let receipt =
-            vault.withdraw_voice_consent(&crate::voice_identity::VoiceWithdrawalRequest {
-                event_id: "withdraw-owner".into(),
-                subject_ref: a.owner,
-                recorded_by_ref: a.owner,
-                occurred_at: 10,
-                purposes: vec![crate::voice_identity::VoicePrintPurpose::LiveInterlocutor],
-                basis: crate::voice_identity::VoiceConsentBasis::ConversationalNotice {
-                    notice: "withdraw".into(),
-                },
-            })?;
-        assert!(!receipt.already_absent);
-        assert!(vault.owner_voice_refs(&a.source_pack)?.is_none());
+        vault.store_voice_ref_pack(&pack("source", VoiceRefOrigin::Captured))?;
+        let (_, fence) = vault.prepare_fenced_voice_clone("our-voice", "local", false)?;
+        assert!(vault.voice_ref_fence_current_now("our-voice", "local", &fence)?);
+        // A generated pack is outside a source-only selection; a new source pack is not.
+        vault.store_voice_ref_pack(&pack("generated", VoiceRefOrigin::Generated))?;
+        assert!(vault.voice_ref_fence_current_now("our-voice", "local", &fence)?);
+        vault.store_voice_ref_pack(&pack("second", VoiceRefOrigin::Captured))?;
+        assert!(!vault.voice_ref_fence_current_now("our-voice", "local", &fence)?);
         assert!(
             vault
-                .clone_voice_refs_into(&a.source_pack, "target")
+                .with_fenced_voice_clone("our-voice", "local", &fence, |_| Ok(()))
                 .is_err()
         );
         Ok(())

@@ -11,7 +11,7 @@ use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSe
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
-    voice_identity::ref_bank::VoiceRegisterClip,
+    voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip},
 };
 
 const TARGET: &str = "voxcpm2";
@@ -51,10 +51,9 @@ impl WarmTarget {
 /// The identity used for both queue admission and callback validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderTarget {
-    pub source_pack: String,
-    pub owner: EntityId,
+    pub voice_id: String,
     pub register: String,
-    pub reference_revision: String,
+    pub fence: VoiceRefFence,
     pub limits: VoiceServingLimits,
     pub warm: WarmTarget,
 }
@@ -65,21 +64,21 @@ impl RenderTarget {
         vault: &Vault,
         operation: impl FnOnce(&VoiceRegisterClip) -> Result<T>,
     ) -> Result<T> {
-        vault.with_current_owner_voice_ref(
-            &self.source_pack,
-            self.owner,
-            &self.reference_revision,
-            &self.register,
-            TARGET,
-            operation,
-        )
+        vault.with_fenced_voice_clone(&self.voice_id, TARGET, &self.fence, |clone| {
+            let clip = clone
+                .clips
+                .iter()
+                .find(|clip| clip.register == self.register)
+                .ok_or_else(|| invalid("register is not banked"))?;
+            operation(clip)
+        })
     }
 
     /// Hosts must recheck at playback, not only on initial PCM admission.
     #[must_use]
     pub fn is_current_in(&self, vault: &Vault) -> bool {
         vault
-            .owner_voice_ref_current_now(&self.source_pack, &self.reference_revision)
+            .voice_ref_fence_current_now(&self.voice_id, TARGET, &self.fence)
             .unwrap_or(false)
     }
 }
@@ -136,12 +135,12 @@ impl VoxCpm2Pcm {
     }
 }
 
-/// One generation, one banked ref, one warm target. Create it at generation
-/// start; the ref is read at Start so withdrawn refs cannot be queued later.
+/// One generation, one banked voice identity, one warm target. The identity's
+/// source refs are fenced at Start; a withdrawal or ref change stops the render.
 pub struct VoxCpm2Adapter<Q> {
     vault: Arc<Vault>,
     limits: VoiceServingLimits,
-    pack_id: String,
+    voice_id: String,
     register: String,
     queue: Q,
     generation: Option<GenerationEpoch>,
@@ -156,26 +155,26 @@ pub struct VoxCpm2Adapter<Q> {
 }
 
 impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
-    pub fn new(vault: Arc<Vault>, pack_id: &str, register: &str, queue: Q) -> Result<Self> {
-        Self::new_for_holder(vault, pack_id, register, None, queue)
+    pub fn new(vault: Arc<Vault>, voice_id: &str, register: &str, queue: Q) -> Result<Self> {
+        Self::new_for_holder(vault, voice_id, register, None, queue)
     }
 
     /// `holder` must come from the authenticated host identity, not speech.
     pub fn new_for_holder(
         vault: Arc<Vault>,
-        pack_id: &str,
+        voice_id: &str,
         register: &str,
         holder: Option<EntityId>,
         queue: Q,
     ) -> Result<Self> {
         let limits = vault.voice_serving_limits(holder)?;
-        if pack_id.trim().is_empty() || register.trim().is_empty() || register.len() > 128 {
+        if voice_id.trim().is_empty() || register.trim().is_empty() || register.len() > 128 {
             return Err(invalid("invalid reference selection"));
         }
         Ok(Self {
             vault,
             limits,
-            pack_id: pack_id.into(),
+            voice_id: voice_id.into(),
             register: register.into(),
             queue,
             generation: None,
@@ -301,7 +300,10 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
             if !self.limits.within(warm.limits) {
                 return Err(invalid("worker serving limits narrower than vault policy"));
             }
-            let cloned = self.vault.clone_voice_refs_into(&self.pack_id, TARGET)?;
+            // Source refs only: generated refs never stand in for the identity.
+            let (cloned, fence) =
+                self.vault
+                    .prepare_fenced_voice_clone(&self.voice_id, TARGET, false)?;
             let reference = cloned
                 .clips
                 .into_iter()
@@ -317,10 +319,9 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
                 return Err(invalid("VoxCPM2 requires a WAV reference and transcript"));
             }
             let target = RenderTarget {
-                source_pack: cloned.source_pack,
-                owner: cloned.owner,
+                voice_id: cloned.voice_id,
                 register: self.register.clone(),
-                reference_revision: cloned.revision,
+                fence,
                 limits: self.limits,
                 warm,
             };

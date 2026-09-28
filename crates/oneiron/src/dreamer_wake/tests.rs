@@ -91,6 +91,7 @@ fn run_input(scope: DreamerConsolidationScope, local_node_id: u64, now: u64) -> 
         budget_total_units: 10_000,
         reserve_units: 100,
         now,
+        host_scope: None,
     }
 }
 
@@ -184,6 +185,62 @@ fn wake_pass_drains_queue_until_empty() -> Result<()> {
         let status = store.status(attempt.attempt.id)?.expect("attempt status");
         assert_eq!(status.attempt.state, AttemptState::Completed);
     }
+    Ok(())
+}
+
+struct EnqueueAfterPin {
+    executed: u32,
+}
+
+impl DreamerAttemptExecutor for EnqueueAfterPin {
+    async fn execute(
+        &mut self,
+        _attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        if self.executed == 0 {
+            enqueue_micro(
+                &DreamerRunnerStore::new(ctx.vault),
+                "post-pin",
+                ctx.now_ms / 1_000,
+            )?;
+        }
+        self.executed += 1;
+        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    }
+}
+
+#[test]
+fn work_queued_after_wake_pin_defers_without_a_new_ledger_read() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "before-pin", 10)?;
+    let node = crate::identity::load_or_mint_client_id(&vault)?;
+    let mut executor = EnqueueAfterPin { executed: 0 };
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let first = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node, 20),
+        &mut executor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(first.completed, 1);
+    assert_eq!(first.deferred, 1);
+    assert_eq!(
+        executor.executed, 1,
+        "post-pin attempt was not run on this wake"
+    );
+    let mut driver = DreamerWakeDriver::new(&vault, "wake-next", frozen_deadline(0, 180_000));
+    let mut executor = CompletingExecutor {
+        completed_units: 0,
+        executed: 0,
+    };
+    let second = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node, 22),
+        &mut executor,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(second.completed, 1);
+    assert_eq!(executor.executed, 1);
     Ok(())
 }
 

@@ -139,8 +139,15 @@ impl VoxCpm2Queue for VoxCpm2HttpQueue {
 }
 
 fn target_json(target: &RenderTarget) -> Value {
-    json!({"source_pack": target.source_pack, "owner": target.owner.to_hex(),
-        "register": target.register, "reference_revision": target.reference_revision,
+    let fence = &target.fence;
+    let revision: String = fence
+        .incarnation
+        .iter()
+        .chain(&fence.ref_digest)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    json!({"voice_id": target.voice_id, "owner": fence.owner.to_hex(),
+        "register": target.register, "reference_revision": revision,
         "limits": target.limits,
         "warm": {"model": target.warm.model, "checkpoint": target.warm.checkpoint,
             "boot_id": target.warm.boot_id, "sample_rate": target.warm.sample_rate,

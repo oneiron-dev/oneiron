@@ -51,7 +51,7 @@ class WorkerTest(unittest.TestCase):
         return response.status, response.read()
 
     def test_banked_ref_render_returns_pcm_and_exact_target_metadata(self):
-        target = {"source_pack": "banked-owner", "owner": "5e" * 16,
+        target = {"voice_id": "owner-voice", "owner": "5e" * 16,
                   "register": "neutral", "reference_revision": "a" * 32,
                   "limits": self.limits, "warm": self.worker.target()}
         wav = b"RIFF0000WAVEfmt "
@@ -73,7 +73,7 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse(__import__("pathlib").Path(call["reference_wav_path"]).exists())
 
     def target(self):
-        return {"source_pack": "banked-owner", "owner": "5e" * 16,
+        return {"voice_id": "owner-voice", "owner": "5e" * 16,
                 "register": "neutral", "reference_revision": "a" * 32,
                 "limits": self.limits, "warm": self.worker.target()}
 
@@ -94,7 +94,7 @@ class WorkerTest(unittest.TestCase):
     def test_refuses_unauthorized_and_stale_targets(self):
         status, _ = self.request("GET", "/ready", authorized=False)
         self.assertEqual(status, 401)
-        target = {"source_pack": "banked-owner", "owner": "5e" * 16,
+        target = {"voice_id": "owner-voice", "owner": "5e" * 16,
                   "register": "neutral", "warm": {**self.worker.target(), "boot_id": "stale"}}
         status, _ = self.request("POST", "/render",
                                  pack({"target": target, "text": "hi", "transcript": "ref"},

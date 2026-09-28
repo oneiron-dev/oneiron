@@ -16,7 +16,7 @@ use super::math_keys::{
 use super::storage_admission::{
     VoiceDeletionTally, active_print_subjects, admit_enrollment_consent, admit_match_segments,
     admit_sample_origin, best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
-    delete_voice_biometrics_in_txn, load_match_candidates, read_active_print,
+    delete_voice_prints_in_txn, load_match_candidates, read_active_print,
     require_counterparty_contact_entity, require_relationship_entity, residual_cluster_ref,
     residual_speaker_label, unambiguous_invite_remainder,
 };
@@ -141,7 +141,7 @@ impl Vault {
             }
 
             let previous = read_active_print(store, wtxn, &subject)?;
-            delete_voice_biometrics_in_txn(store, wtxn, &subject)?;
+            delete_voice_prints_in_txn(store, wtxn, &subject)?;
 
             let record = VoicePrintRecordV1 {
                 subject_ref: subject,
@@ -410,14 +410,10 @@ impl Vault {
 
     /// Hard-deletes every voice print whose retention deadline has passed.
     ///
-    /// Uses the same deletion transaction as explicit withdrawal, so a pruned
-    /// subject and a withdrawn subject are left in exactly the same state.
+    /// Removes only expired recognition prints; render-reference packs and
+    /// target pointers have their own lifetime and remain available.
     /// Returns the pruned subjects in ascending id order.
     pub fn prune_expired_voice_prints(&self, now: u64) -> Result<Vec<EntityId>> {
-        let _guard = self
-            .voice_ref_guard
-            .write()
-            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         self.with_write_txn(|wtxn| {
             let mut expired: Vec<EntityId> = Vec::new();
@@ -431,7 +427,7 @@ impl Vault {
             }
             expired.sort_unstable();
             for subject in &expired {
-                delete_voice_biometrics_in_txn(store, wtxn, subject)?;
+                delete_voice_prints_in_txn(store, wtxn, subject)?;
             }
             Ok(expired)
         })
@@ -472,10 +468,9 @@ impl Vault {
             {
                 return Ok((VoiceDeletionTally::default(), true));
             }
-            Ok((
-                delete_voice_biometrics_in_txn(store, wtxn, &subject)?,
-                false,
-            ))
+            let mut tally = delete_voice_prints_in_txn(store, wtxn, &subject)?;
+            tally.owner_ref_rows = super::ref_bank::delete_owner_refs(store, wtxn, &subject)?;
+            Ok((tally, false))
         })?;
 
         Ok(VoiceWithdrawalReceipt {

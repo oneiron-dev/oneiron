@@ -1,5 +1,5 @@
 use super::*;
-use crate::voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin};
+use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack};
 use std::sync::Arc;
 
 #[derive(Default)]
@@ -40,11 +40,18 @@ fn epoch(value: u64) -> GenerationEpoch {
 }
 fn bank(vault: &Vault) -> Result<EntityId> {
     let owner = EntityId::now();
-    vault.store_owner_voice_refs(&OwnerVoiceRefPack {
+    // Ref admission resolves the voice-ref policy rows: seed them first.
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "banked-owner".into(),
+        voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::OwnerCapture,
+        origin: VoiceRefOrigin::Captured,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -52,17 +59,12 @@ fn bank(vault: &Vault) -> Result<EntityId> {
             transcript: "reference words".into(),
         }],
     })?;
-    crate::test_util::put_policy_manifest_bytes(
-        vault,
-        crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
-    )?;
     Ok(owner)
 }
 fn adapter(vault: &Arc<Vault>) -> Result<VoxCpm2Adapter<Capture>> {
     VoxCpm2Adapter::new(
         Arc::clone(vault),
-        "banked-owner",
+        "owner-voice",
         "neutral",
         Capture {
             ready: true,
@@ -86,8 +88,8 @@ fn banked_ref_renders_pcm_and_target_metadata_through_tts_seam() -> Result<()> {
     })?;
     tts.submit(TtsCommand::End { generation })?;
     let target = tts.target().expect("ready render target").clone();
-    assert_eq!(target.source_pack, "banked-owner");
-    assert_eq!(target.owner, owner);
+    assert_eq!(target.voice_id, "owner-voice");
+    assert_eq!(target.fence.owner, owner);
     assert_eq!(target.register, "neutral");
     assert_eq!(target.warm.model, MODEL);
     assert_eq!(target.warm.sample_rate, 16_000);
@@ -101,10 +103,10 @@ fn banked_ref_renders_pcm_and_target_metadata_through_tts_seam() -> Result<()> {
     };
     assert_eq!(queued_target.as_ref(), &target);
     assert_eq!(
-        target.reference_revision,
+        target.fence,
         vault
-            .clone_voice_refs_into("banked-owner", TARGET)?
-            .revision
+            .prepare_fenced_voice_clone("owner-voice", TARGET, false)?
+            .1
     );
     assert_eq!(
         tts.queue.work[1].operation,
@@ -134,7 +136,7 @@ fn ref_withdrawal_cold_worker_queue_failure_and_forged_pcm_fail_closed() -> Resu
     let generation = epoch(1);
     let mut cold = VoxCpm2Adapter::new(
         Arc::clone(&vault),
-        "banked-owner",
+        "owner-voice",
         "neutral",
         Capture::default(),
     )?;
@@ -160,7 +162,7 @@ fn ref_withdrawal_cold_worker_queue_failure_and_forged_pcm_fail_closed() -> Resu
     );
     let target = tts.target().unwrap().clone();
     let mut forged = target.clone();
-    forged.source_pack = "vendor-born".into();
+    forged.voice_id = "vendor-born".into();
     for (submission, chunk_index, reported_target, bytes) in [
         (1, 0, forged, vec![1, 0]),
         (99, 0, target.clone(), vec![1, 0]),
@@ -213,7 +215,7 @@ fn missing_banked_register_and_withdrawal_refuse_render() -> Result<()> {
         limits: Some(vault.voice_serving_limits(None)?),
         ..Capture::default()
     };
-    let mut missing = VoxCpm2Adapter::new(Arc::clone(&vault), "banked-owner", "not-banked", queue)?;
+    let mut missing = VoxCpm2Adapter::new(Arc::clone(&vault), "owner-voice", "not-banked", queue)?;
     assert!(
         missing
             .submit(TtsCommand::Start {
@@ -288,11 +290,12 @@ fn withdrawal_after_start_revokes_even_identical_rebank() -> Result<()> {
     );
     assert!(!old.is_current_in(&vault));
     // A rebank of IDENTICAL PCM and transcript must not resurrect old work.
-    vault.store_owner_voice_refs(&OwnerVoiceRefPack {
+    vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "banked-owner".into(),
+        voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::OwnerCapture,
+        origin: VoiceRefOrigin::Captured,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -305,10 +308,10 @@ fn withdrawal_after_start_revokes_even_identical_rebank() -> Result<()> {
     fresh.submit(TtsCommand::Start {
         generation: epoch(2),
     })?;
-    assert_ne!(
-        old.reference_revision,
-        fresh.target().unwrap().reference_revision
-    );
+    // Same refs, new incarnation: only the identity's rebirth tells them apart.
+    let fresh = &fresh.target().unwrap().fence;
+    assert_eq!(old.fence.ref_digest, fresh.ref_digest);
+    assert_ne!(old.fence.incarnation, fresh.incarnation);
     Ok(())
 }
 
@@ -365,11 +368,12 @@ fn resolved_serving_row_narrows_and_widening_holder_is_refused() -> Result<()> {
         4096
     );
     let owner = EntityId::now();
-    vault.store_owner_voice_refs(&OwnerVoiceRefPack {
+    vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "banked-owner".into(),
+        voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::OwnerCapture,
+        origin: VoiceRefOrigin::Captured,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -381,7 +385,7 @@ fn resolved_serving_row_narrows_and_widening_holder_is_refused() -> Result<()> {
     let generation = epoch(1);
     let mut tts = VoxCpm2Adapter::new_for_holder(
         Arc::clone(&vault),
-        "banked-owner",
+        "owner-voice",
         "neutral",
         Some(holder),
         Capture {

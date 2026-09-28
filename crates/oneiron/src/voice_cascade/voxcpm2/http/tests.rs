@@ -1,17 +1,23 @@
 use super::*;
-use crate::voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin};
+use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack};
 use std::net::TcpListener;
 
 #[test]
 fn queued_render_after_withdrawal_never_uploads_deleted_reference() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let vault = Arc::new(vault);
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
     let owner = EntityId::now();
-    vault.store_owner_voice_refs(&OwnerVoiceRefPack {
+    vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "queued-ref".into(),
+        voice_id: "queued-voice".into(),
         owner,
-        origin: VoiceRefOrigin::OwnerCapture,
+        origin: VoiceRefOrigin::Captured,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -19,7 +25,7 @@ fn queued_render_after_withdrawal_never_uploads_deleted_reference() -> Result<()
             transcript: "reference".into(),
         }],
     })?;
-    let cloned = vault.clone_voice_refs_into("queued-ref", TARGET)?;
+    let (cloned, fence) = vault.prepare_fenced_voice_clone("queued-voice", TARGET, false)?;
     let limits = crate::gate::voice_serving::VoiceServingRows::decode(
         &crate::gate::voice_serving::VoiceServingRows::seeded(),
     )
@@ -33,10 +39,9 @@ fn queued_render_after_withdrawal_never_uploads_deleted_reference() -> Result<()
         sample_rate: 48_000,
     };
     let target = RenderTarget {
-        source_pack: cloned.source_pack,
-        owner,
+        voice_id: cloned.voice_id,
         register: "neutral".into(),
-        reference_revision: cloned.revision,
+        fence,
         limits,
         warm,
     };

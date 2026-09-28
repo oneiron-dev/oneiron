@@ -12,7 +12,7 @@ use oneiron::{
             VoxCpm2Work, WarmTarget, http::VoxCpm2HttpQueue,
         },
     },
-    voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip},
+    voice_identity::ref_bank::{VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip},
 };
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -53,11 +53,12 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
     let owner = EntityId::now();
-    vault.store_owner_voice_refs(&OwnerVoiceRefPack {
+    vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "owner-ref".into(),
+        voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::OwnerCapture,
+        origin: VoiceRefOrigin::Captured,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -96,7 +97,7 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     };
     let mut tts = VoxCpm2Adapter::new(
         Arc::clone(&vault),
-        "owner-ref",
+        "owner-voice",
         "neutral",
         Capture {
             limits: Some(vault.voice_serving_limits(None)?),
@@ -114,12 +115,17 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     assert_eq!(
         target,
         RenderTarget {
-            source_pack: "owner-ref".into(),
-            owner,
+            voice_id: "owner-voice".into(),
             register: "neutral".into(),
-            reference_revision: vault
-                .clone_voice_refs_into("owner-ref", "voxcpm2")?
-                .revision,
+            fence: VoiceRefFence {
+                owner,
+                // Minted by the bank at identity birth; the digest binds the refs.
+                incarnation: target.fence.incarnation,
+                ref_digest: vault
+                    .prepare_voice_clone("owner-voice", "voxcpm2", false)?
+                    .ref_digest,
+                include_generated: false,
+            },
             limits: vault.voice_serving_limits(None)?,
             warm: WarmTarget {
                 limits: vault.voice_serving_limits(None)?,
@@ -147,7 +153,7 @@ fn one_banked_ref_renders_pcm_with_target_metadata() -> Result<()> {
     // A callback accepted before withdrawal cannot be played afterwards.
     let mut second = VoxCpm2Adapter::new(
         Arc::clone(&vault),
-        "owner-ref",
+        "owner-voice",
         "neutral",
         Capture {
             limits: Some(vault.voice_serving_limits(None)?),
@@ -190,11 +196,12 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
     let owner = EntityId::now();
-    vault.store_owner_voice_refs(&OwnerVoiceRefPack {
+    vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
         id: "owner-ref".into(),
+        voice_id: "owner-voice".into(),
         owner,
-        origin: VoiceRefOrigin::OwnerCapture,
+        origin: VoiceRefOrigin::Captured,
         clips: vec![VoiceRegisterClip {
             register: "neutral".into(),
             media_type: "audio/wav".into(),
@@ -269,7 +276,7 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
                 let meta: serde_json::Value = serde_json::from_slice(&body[4..4 + n]).unwrap();
                 assert_eq!(meta["text"], "render this");
                 assert_eq!(meta["transcript"], "banked sample");
-                assert_eq!(meta["target"]["source_pack"], "owner-ref");
+                assert_eq!(meta["target"]["voice_id"], "owner-voice");
                 assert_eq!(meta["target"]["owner"], owner.to_hex());
                 assert_eq!(&body[4 + n..], b"RIFF0000WAVEfmt ");
                 let header = serde_json::to_vec(&serde_json::json!({
@@ -292,7 +299,7 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
         }
     });
     let queue = VoxCpm2HttpQueue::connect(Arc::clone(&vault), &endpoint, &"t".repeat(32))?;
-    let mut tts = VoxCpm2Adapter::new(Arc::clone(&vault), "owner-ref", "neutral", queue)?;
+    let mut tts = VoxCpm2Adapter::new(Arc::clone(&vault), "owner-voice", "neutral", queue)?;
     let generation = brain.generation;
     tts.submit(TtsCommand::Start { generation })?;
     tts.submit(TtsCommand::Text {
@@ -315,7 +322,7 @@ fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
     let pcm = tts.handle_pcm(event.audio().expect("valid worker audio"))?;
     let (frame, target) = pcm.filter_pcm(&cascade).expect("active PCM");
     assert_eq!(frame.samples, [1, -1]);
-    assert_eq!(target.owner, owner);
+    assert_eq!(target.fence.owner, owner);
     assert_eq!(target.warm.model, MODEL);
     Ok(())
 }

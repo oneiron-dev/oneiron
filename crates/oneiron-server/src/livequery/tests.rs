@@ -78,6 +78,8 @@ fn notify(tier: &LiveQueries, world: &str, by: OriginMark) {
         &MaterializedDiffSummary {
             containers: vec![path.clone()],
             bytes: 1,
+
+            revision_events: Vec::new(),
         },
         &by,
     );
@@ -448,6 +450,8 @@ fn tee_defers_facade_work_until_the_subscription_loop_runs() {
         &MaterializedDiffSummary {
             containers: vec![],
             bytes: 0,
+
+            revision_events: Vec::new(),
         },
         &OriginMark::default(),
     );
@@ -472,6 +476,8 @@ fn deferred_own_write_does_not_hide_a_later_foreign_write() {
             &MaterializedDiffSummary {
                 containers: vec![],
                 bytes: 0,
+
+                revision_events: Vec::new(),
             },
             &OriginMark {
                 conn_id: Some(conn),
@@ -517,6 +523,87 @@ fn bridge_origin_edge_updates_name_both_entity_documents() {
         .filter_map(|path| path.strip_prefix("e:"))
         .collect();
     assert_eq!(deps, std::collections::BTreeSet::from([WORLD_A, WORLD_B]));
+}
+
+#[test]
+fn lost_publication_provenance_gaps_only_the_affected_subscription() {
+    let source = Arc::new(Source::default());
+    let tier = LiveQueries::new(1, source);
+    for (id, world) in [(1, WORLD_A), (2, WORLD_B)] {
+        let opened = tier
+            .open(id, view(world), Channel::View, None, None)
+            .unwrap();
+        tier.ack(id, &opened[0].cursor).unwrap();
+    }
+    let path = format!("world/{WORLD_A}");
+    for _ in 0..1100 {
+        tier.on_materialized(
+            &path,
+            &MaterializedDiffSummary {
+                containers: vec![path.clone()],
+                bytes: 0,
+                revision_events: Vec::new(),
+            },
+            &OriginMark::default(),
+        );
+    }
+    tier.refresh().unwrap();
+    let a = tier.pending(1).unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].kind, "gap");
+    assert!(tier.pending(2).unwrap().is_empty());
+}
+
+#[test]
+fn settled_foreign_revisions_do_not_gap_an_unrelated_healthy_subscription() {
+    use oneiron::memory::{EntityRevisionChange, IndexedPublication, RevisionRef};
+    use oneiron::sync::bridge::RevisionEvent;
+
+    let source = Arc::new(Source::default());
+    let tier = LiveQueries::new(1, source.clone());
+    let opened = tier
+        .open(7, view(WORLD_A), Channel::View, None, None)
+        .unwrap();
+    tier.ack(7, &opened[0].cursor).unwrap();
+    let foreign = oneiron::EntityId::from_bytes([0xEF; 16]).unwrap();
+    let path = format!("e:{}", foreign.to_hex());
+    let revision = |n: u16| {
+        let mut bytes = [0xEF; 16];
+        bytes[14..].copy_from_slice(&n.to_be_bytes());
+        RevisionRef(bytes)
+    };
+    for n in 1..=1300 {
+        tier.on_materialized(
+            &path,
+            &MaterializedDiffSummary {
+                containers: vec![path.clone()],
+                bytes: 0,
+                revision_events: vec![RevisionEvent::Original(EntityRevisionChange {
+                    entity: foreign,
+                    previous_revision: Some(revision(n - 1)),
+                    revision: Some(revision(n)),
+                    indexed_revision: Some(revision(n - 1)),
+                })],
+            },
+            &OriginMark {
+                conn_id: Some(2),
+                origin: Some("conn:2".into()),
+            },
+        );
+        tier.on_indexed_published(IndexedPublication {
+            entity: foreign,
+            previous_indexed: revision(n - 1),
+            indexed: revision(n),
+        });
+        tier.refresh().unwrap();
+    }
+    assert!(tier.pending(7).unwrap().is_empty());
+    source.write(WORLD_A, 1);
+    notify(&tier, WORLD_A, OriginMark::default());
+    let tail = tier.pending(7).unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].kind, "data");
+    assert_eq!(tail[0].result, Some(json!(1)));
 }
 
 #[test]

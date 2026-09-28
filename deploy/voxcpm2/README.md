@@ -28,12 +28,13 @@ python3 deploy/voxcpm2/worker.py --runtime-dir /run/user/$(id -u)/voxcpm2 \
 The revision above is an example full commit. The operator must verify and pin
 it before deployment. The Rust `VoxCpm2HttpQueue::connect("http://127.0.0.1:8769/", token)`
 checks `/ready` outside the session lock. The host supplies `Arc<Vault>` to
-`connect` so each queued render rechecks the exact bank revision under a
-vault-scoped read guard; withdrawal takes its write guard and deletes that
-revision atomically. An old returned PCM fails both `handle_pcm()` and
-`filter_pcm()` after withdrawal; repeat `RenderTarget::is_current_in` just before
-playback. `VoxCpm2Adapter` reads a fresh owner
-ref at Start and submits work through that bounded queue. The host drains
+`connect` so each queued render rechecks the voice identity's fence (its
+incarnation and the digest of its source refs) under a vault-scoped read guard;
+withdrawal takes its write guard and deletes the identity atomically. An old
+returned PCM fails both `handle_pcm()` and `filter_pcm()` after withdrawal;
+repeat `RenderTarget::is_current_in` just before playback. `VoxCpm2Adapter`
+fences the banked voice identity at Start and submits work through that bounded
+queue. The host drains
 `try_recv()` outside the session lock; for each Audio, call `handle_pcm()` and
 then `filter_pcm()` on the active cascade, and recheck its generation at playback.
 A Failed event stops/discards that generation. The host dispatches stop to

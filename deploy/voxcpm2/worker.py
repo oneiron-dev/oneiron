@@ -96,7 +96,7 @@ class Worker:
         if not isinstance(target, dict) or target.get("warm") != self.target():
             raise ValueError("stale or mismatched warm target")
         if not all(isinstance(target.get(k), str) and target[k] for k in
-                   ("source_pack", "owner", "register", "reference_revision")):
+                   ("voice_id", "owner", "register", "reference_revision")):
             raise ValueError("missing reference identity")
         effective = validate_limits(target.get("limits"))
         if any(effective[k] > self.limits[k] for k in FIELDS):

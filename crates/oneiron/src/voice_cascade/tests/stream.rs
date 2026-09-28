@@ -651,7 +651,7 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
     use crate::voice_cascade::hosted_tts::{
         HostedProvider, HostedTransport, HostedTtsAdapter, HostedWork,
     };
-    use crate::voice_identity::ref_bank::{OwnerVoiceRefPack, VoiceRefOrigin, VoiceRegisterClip};
+    use crate::voice_identity::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
     #[derive(Clone)]
     struct Capture(Arc<Mutex<Vec<HostedWork>>>);
     impl HostedTransport for Capture {
@@ -664,11 +664,12 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
         let _dir = tempfile::tempdir().expect("temporary vault");
         let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::device())
             .expect("open seeded vault");
-        let pack = OwnerVoiceRefPack {
+        let pack = VoiceRefPack {
             version: 1,
             id: "owner-stream".into(),
+            voice_id: "owner-stream-voice".into(),
             owner: crate::EntityId::now(),
-            origin: VoiceRefOrigin::OwnerCapture,
+            origin: VoiceRefOrigin::Captured,
             clips: vec![VoiceRegisterClip {
                 register: "neutral".into(),
                 media_type: "audio/wav".into(),
@@ -676,7 +677,9 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
                 transcript: "reference".into(),
             }],
         };
-        vault.store_owner_voice_refs(&pack)?;
+        vault.store_voice_ref_pack(&pack)?;
+        let request = vault.prepare_voice_clone(&pack.voice_id, provider.target(), false)?;
+        vault.record_voice_target_clone(&request, "provisioned", 1)?;
         let generation = GenerationEpoch {
             session: uuid::Uuid::new_v4(),
             value: 1,
@@ -684,9 +687,9 @@ fn both_hosted_adapters_keep_two_chunks_from_one_delta_and_end_while_responses_w
         let queue = Arc::new(Mutex::new(Vec::new()));
         let mut adapter = HostedTtsAdapter::bind(
             &vault,
-            &pack.id,
+            &pack.voice_id,
             provider,
-            "provisioned",
+            false,
             Capture(queue.clone()),
         )?;
         let ledger = Arc::new(Mutex::new(Vec::new()));
