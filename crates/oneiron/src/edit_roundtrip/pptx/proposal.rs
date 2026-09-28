@@ -57,7 +57,7 @@ pub(super) fn run_comment_roundtrip_with_limits(
     );
     Ok(EditProposal{
         run_ref:run_ref.to_owned(),format:OfficeFormat::Pptx,new_bytes:effects.new_bytes,
-        manifest:EditManifest{schema_version:EDIT_MANIFEST_SCHEMA_VERSION,format:OfficeFormat::Pptx,ops,touched_parts:effects.touched_parts,mutation_mode:MutationMode::Minimal,warnings:Vec::new(),pptx_holder_limits:holder_limits.map(Box::new)},
+        manifest:EditManifest{schema_version:EDIT_MANIFEST_SCHEMA_VERSION,format:OfficeFormat::Pptx,ops,touched_parts:effects.touched_parts,mutation_mode:MutationMode::Minimal,warnings:Vec::new(),pptx_holder_limits:holder_limits.map(Box::new),slide_judgments:Vec::new()},
         inspection:inspect::inspect(&package,OfficeFormat::Pptx),
         validation:ValidationReport{ok:true,checks:vec![
             ValidationCheck{name:"well_formed_opc",passed:true,detail:"bounded ZIP records and checksums verified".into()},
