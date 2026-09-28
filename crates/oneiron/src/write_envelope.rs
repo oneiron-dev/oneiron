@@ -12,6 +12,8 @@ use crate::claim::ClaimSubject;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 
+pub mod carry_forward;
+
 /// Actor metadata required by [`WriteEnvelope`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteActor {
@@ -279,6 +281,13 @@ impl WriteEnvelope {
         self.approval
     }
 
+    /// Narrow the approval requested by a typed writer while preserving lineage.
+    #[must_use]
+    pub(crate) fn with_approval(mut self, approval: ClaimApprovalStatus) -> Self {
+        self.approval = approval;
+        self
+    }
+
     /// The source classes this write's history actually drew on.
     #[must_use]
     pub const fn lineage(&self) -> &SourceLineage {
@@ -371,6 +380,12 @@ impl ClaimCandidate {
     pub fn with_evidence(mut self, evidence: Value) -> Self {
         self.evidence = Some(evidence);
         self
+    }
+
+    /// Candidate-local evidence data, before the promotion writer replaces it
+    /// with the sealed evidence envelope.
+    pub(crate) fn evidence(&self) -> Option<&Value> {
+        self.evidence.as_ref()
     }
 
     /// Adds an optional validity window.

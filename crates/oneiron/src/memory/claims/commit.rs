@@ -162,115 +162,127 @@ impl Memory<'_> {
                 start: occurred_at,
                 end: occurred_at,
             };
-            self.vault.with_write_txn(|wtxn| {
-                if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
-                    && let Err(error) = self.verify_public_booking_writer_in_txn(wtxn)
-                {
-                    *publication_refusal.borrow_mut() = Some(error);
-                    return Err(Error::InvalidClaimBody(
-                        "booking publication owner authority refused",
-                    ));
-                }
-                if let Some(raw) = self.vault.get_raw_in(wtxn, &id)?
-                    && crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
-                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                    })
-                    && self
+            self.vault
+                .try_with_actor_content_write_txn(envelope.actor(), |content| {
+                    if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
+                        && let Err(error) = self.verify_public_booking_writer_in_txn(content.read())
+                    {
+                        *publication_refusal.borrow_mut() = Some(error);
+                        return Err(Error::InvalidClaimBody(
+                            "booking publication owner authority refused",
+                        ));
+                    }
+                    if let Some(raw) = self.vault.get_raw_in(content.read(), &id)?
+                        && crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                            header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                        })
+                        && self
+                            .vault
+                            .get_claim_in_txn(content.read(), &id)?
+                            .is_some_and(|existing| {
+                                existing.predicate == super::key_value::PREDICATE
+                            })
+                    {
+                        return Err(Error::InvalidClaimBody(
+                            "keyed claim revisions cannot be overwritten through generic claims",
+                        ));
+                    }
+                    if self
                         .vault
-                        .get_claim_in_txn(wtxn, &id)?
-                        .is_some_and(|existing| existing.predicate == super::key_value::PREDICATE)
-                {
-                    return Err(Error::InvalidClaimBody(
-                        "keyed claim revisions cannot be overwritten through generic claims",
-                    ));
-                }
-                if self
-                    .vault
-                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
-                {
-                    return Ok(true);
-                }
-                super::authorship::guard_existing_claim_in_txn(
-                    self.vault,
-                    wtxn,
-                    envelope.actor(),
-                    id,
-                )?;
-                if let Some(old_id) = prior {
-                    let old = self
-                        .vault
-                        .get_claim_in_txn(wtxn, &old_id)?
-                        .ok_or(Error::EntityNotFound)?;
-                    super::authorship::require_claim_self_grant_in_txn(
+                        .local_hard_delete_marker_exists_in_txn(content.read(), &id)?
+                    {
+                        return Ok(true);
+                    }
+                    super::authorship::guard_existing_claim_in_txn(
                         self.vault,
-                        wtxn,
+                        content.read(),
                         envelope.actor(),
-                        old_id,
-                        &old,
-                        "memory.claim.supersede",
-                    )?;
-                }
-                let publication_write =
-                    input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
-                if publication_write {
-                    super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
-                    if let Some(old_id) = prior {
-                        super::booking_publication::stage_publication_write(
-                            self.vault, wtxn, old_id,
-                        )?;
-                    }
-                }
-                // A replacement is a create-versus-closure proposal even when its
-                // source and actor would qualify for Auto. The later grant is
-                // the only door allowed to close the prior head.
-                if prior.is_some() {
-                    envelope = WriteEnvelope::new(
-                        envelope.actor(),
-                        source,
-                        envelope.provenance().clone(),
-                        ClaimApprovalStatus::Proposed,
-                    );
-                }
-                self.sign_machine_claim_in_txn(wtxn, id, &candidate, &mut envelope)?;
-                let closure_envelope = envelope.clone();
-                apply_ops_with_gate_mode(
-                    &self.vault.store,
-                    &self.vault.config,
-                    &self.vault.analyzer,
-                    wtxn,
-                    vec![BatchOp::ClaimCandidate {
                         id,
-                        candidate: Box::new(candidate),
-                        envelope,
-                        occurred,
-                        learned_at,
-                        internal_lexical_query_hint: false,
-                    }],
-                    self.vault.text_index_trusted.load(Ordering::Acquire),
-                    ApplyOpsGateMode::new(true, true),
-                )?;
-                if let Some(old_id) = prior {
-                    self.vault.stage_claim_supersession_in_txn(
-                        wtxn,
-                        &id,
-                        &old_id,
-                        &closure_envelope,
-                        learned_at,
                     )?;
-                }
-                if publication_write {
-                    crate::booking::publication::index_publication_in_txn(
-                        self.vault, wtxn, subject, id,
-                    )?;
-                    super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
                     if let Some(old_id) = prior {
-                        super::booking_publication::finish_publication_write(
-                            self.vault, wtxn, old_id,
+                        let old = self
+                            .vault
+                            .get_claim_in_txn(content.read(), &old_id)?
+                            .ok_or(Error::EntityNotFound)?;
+                        content.require_claim(old_id)?;
+                        super::authorship::require_claim_self_grant_in_txn(
+                            self.vault,
+                            content.read(),
+                            envelope.actor(),
+                            old_id,
+                            &old,
+                            "memory.claim.supersede",
                         )?;
                     }
-                }
-                Ok(false)
-            })
+                    let publication_write =
+                        input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
+                    if publication_write {
+                        content.stage_claim_support(id, |txn| {
+                            super::booking_publication::stage_publication_write(self.vault, txn, id)
+                        })?;
+                        if let Some(old_id) = prior {
+                            content.update_claim(old_id, |txn| {
+                                super::booking_publication::stage_publication_write(
+                                    self.vault, txn, old_id,
+                                )
+                            })?;
+                        }
+                    }
+                    // A replacement is a create-versus-closure proposal even when its
+                    // source and actor would qualify for Auto. The later grant is
+                    // the only door allowed to close the prior head.
+                    if prior.is_some() {
+                        envelope = WriteEnvelope::new(
+                            envelope.actor(),
+                            source,
+                            envelope.provenance().clone(),
+                            ClaimApprovalStatus::Proposed,
+                        );
+                    }
+                    self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
+                    let closure_envelope = envelope.clone();
+                    content.apply_claim_ops(
+                        vec![BatchOp::ClaimCandidate {
+                            id,
+                            candidate: Box::new(candidate),
+                            envelope,
+                            occurred,
+                            learned_at,
+                            internal_lexical_query_hint: false,
+                        }],
+                        self.vault.text_index_trusted.load(Ordering::Acquire),
+                        ApplyOpsGateMode::new(true, true),
+                    )?;
+                    if let Some(old_id) = prior {
+                        content.update_claim(old_id, |txn| {
+                            self.vault.stage_claim_supersession_in_txn(
+                                txn,
+                                &id,
+                                &old_id,
+                                &closure_envelope,
+                                learned_at,
+                            )
+                        })?;
+                    }
+                    if publication_write {
+                        content.finish_claim_support(id, |txn| {
+                            crate::booking::publication::index_publication_in_txn(
+                                self.vault, txn, subject, id,
+                            )?;
+                            super::booking_publication::finish_publication_write(
+                                self.vault, txn, id,
+                            )
+                        })?;
+                        if let Some(old_id) = prior {
+                            content.update_claim(old_id, |txn| {
+                                super::booking_publication::finish_publication_write(
+                                    self.vault, txn, old_id,
+                                )
+                            })?;
+                        }
+                    }
+                    Ok(false)
+                })
         };
         let refused = match write(approval) {
             Ok(refused) => refused,

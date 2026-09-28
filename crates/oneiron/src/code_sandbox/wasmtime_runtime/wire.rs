@@ -299,6 +299,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             crate::task_verb::TaskAskStatus::Pending { hold } => {
                 json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
             }
+            crate::task_verb::TaskAskStatus::Changed { voided, generation } => {
+                json!({"kind":"task_ask_status","state":"changed","voided":voided.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"generation":generation})
+            }
             crate::task_verb::TaskAskStatus::Settled(result) => {
                 json!({"kind":"task_ask_status","state":"settled","result":result})
             }
@@ -309,6 +312,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::ReportBlocked { receipt } => {
             json!({"receipt":receipt.to_hex()})
         }
+        SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }
@@ -452,6 +456,11 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
     let reply = SelfDispatchResponse {
         outcome: SelfDispatchOutcome::WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy {
             wake_grain_turns: 1,
+            agent_cadence: serde_json::from_str::<crate::dreamer_wake::DreamerWakePolicy>(
+                include_str!("../../dreamer_wake/wake_policy_defaults.json"),
+            )
+            .expect("shipped wake policy")
+            .agent_cadence,
             new_records: 50,
             longest_wait_secs: 28_800,
             nightly_secs: 86_400,

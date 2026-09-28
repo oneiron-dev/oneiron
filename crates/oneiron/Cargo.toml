@@ -21,6 +21,8 @@ doctest = true
 [dependencies]
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
+# Native DOCX revisions: organ crate remains independent of the vault engine.
+oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 lopdf = { version = "=0.44.0", default-features = false }
 qrcode = { version = "=0.14.1", default-features = false }
 wasmtime = { version = "=48.0.2", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
@@ -93,18 +95,12 @@ ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# CAL-01 (ONE-1783): the shared calendar dependency reservation. `chrono` +
-# `chrono-tz` back the IANA conversion border in `src/calendar/tz.rs` and are
-# private to it — no chrono-family type may appear in a public signature. The
-# core index stays pure `u64` UTC. `icalendar` (CAL-02/CAL-04 parse/emit) and
-# `rrule` (CAL-03) land in the same append so the stacked calendar layers never
-# reopen this manifest. `default-features = false` on chrono states this crate's
-# own need — the border converts, it never reads a system clock or a host zone.
-# Note that `rrule` depends on chrono with defaults, so feature unification
-# still resolves chrono with `clock`; the flag is intent, not an achieved
-# tree-wide floor.
+# CAL-01's UTC/IANA border uses embedded 2026c TZif data, including the
+# BC permanent-UTC-7 rule. The parser and database stay private to calendar/tz.
+# `chrono` remains for other calendar/ingest code and the border's range pin.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-chrono-tz = "0.10"
+jiff-tzdb = "=0.1.8"
+tz-rs = "0.7.3"
 icalendar = "0.17"
 rrule = "0.14"
 
@@ -223,6 +219,8 @@ p256 = { workspace = true, features = ["pkcs8"] }
 oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
 proptest = "1"
+# Bounded DOCX fixture probes inspect central-directory sizes in unit tests.
+zip = "0.6.6"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation
 # witness cannot be constructed outside the boundary. Dev-only; no runtime
 # dependency is added.

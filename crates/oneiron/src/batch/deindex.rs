@@ -93,8 +93,17 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
     crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
+    // The shared physical tear is reached by facade deletes, public batch
+    // deletes and lexical-hint cascades. Every one must erase claim decisions
+    // and the pending tray before the entity bytes leave this transaction.
+    store.redact_gate_decisions_for_claim_in_txn(
+        wtxn,
+        id.as_bytes(),
+        store.clock.now_recorded_at(),
+    )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     store
@@ -214,6 +223,12 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store
         .sync_state
         .delete(wtxn, &crate::gate::trusted_manifest_key(id))?;
+    store
+        .sync_state
+        .delete(wtxn, &crate::gate::seeded_manifest_key(id))?;
+    store
+        .sync_state
+        .delete(wtxn, &crate::gate::seeded_manifest_key(id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
     crate::ports::audit_mutation_in_txn(

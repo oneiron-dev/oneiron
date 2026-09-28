@@ -62,8 +62,8 @@ impl Memory<'_> {
         let id = self.resolve_ref(claim_ref)?;
         let now = self.vault.store.clock.now_recorded_at();
         before_txn();
-        let (approval, consent_decision_id) = self.vault.try_with_write_txn(|wtxn| {
-            verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
+        let (approval, consent_decision_id) = self
+            .with_actor_content_write_txn(|content| content.update_claim(id, |wtxn| {
             let body = self
                 .vault
                 .get_claim_in_txn(wtxn, &id)?
@@ -140,7 +140,7 @@ impl Memory<'_> {
                 |body| body.approval.as_str().to_owned(),
             );
             Ok((approval, consent_receipt.map(|record| record.decision_id)))
-        })?;
+        }))?;
         let receipt_ref = match consent_decision_id {
             Some(decision_id) => format!("gate:{}", decision_id.to_hex()),
             None => self

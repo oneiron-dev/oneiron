@@ -3973,6 +3973,90 @@ fn observer_b_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Resu
 }
 
 #[test]
+fn observer_b_emits_committed_revision_and_reverse_mirror_names_its_source() {
+    use crate::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<(Vec<RevisionEvent>, OriginMark)>>);
+    impl LiveQueryTee for Capture {
+        fn on_materialized(&self, _: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+            self.0
+                .lock()
+                .unwrap()
+                .push((diff.revision_events.clone(), by.clone()));
+        }
+    }
+    let vault = test_vault();
+    let at = 1_772_000_000;
+    let window_key = crate::sync::WindowKey::from_timestamp(at);
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let capture = Arc::new(Capture::default());
+    let tee: Arc<dyn LiveQueryTee> = capture.clone();
+    materializer.attach_live_query_tee(&tee);
+    let _subs = register_observer_b(&doc, &vault, &materializer, window_key.as_str());
+    let remote = EntityId::from_bytes([0xD1; 16]).unwrap();
+    let blob = entity_blob(
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: at, end: at },
+        at,
+        b"remote revision",
+    );
+    map_insert_bytes(&doc.get_map("entities"), &remote.to_hex(), &blob).unwrap();
+    doc.commit_with(loro::CommitOptions::new().origin("conn:7"));
+    let observed = capture.0.lock().unwrap();
+    let (events, by) = observed
+        .iter()
+        .find(|(events, _)| !events.is_empty())
+        .unwrap();
+    assert_eq!(by.conn_id, Some(7));
+    let original = events
+        .iter()
+        .find_map(|event| match event {
+            RevisionEvent::Original(change) if change.entity == remote => Some(change),
+            _ => None,
+        })
+        .unwrap();
+    assert!(original.previous_revision.is_none());
+    assert_eq!(original.revision, original.indexed_revision);
+    drop(observed);
+
+    let local = EntityId::from_bytes([0xD2; 16]).unwrap();
+    vault
+        .put_entity(
+            &local,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: at, end: at },
+            at,
+            b"local mirror",
+        )
+        .unwrap();
+    let source = vault.indexed_revision(&local).unwrap().unwrap();
+    let other = EntityId::from_bytes([0xD3; 16]).unwrap();
+    vault
+        .put_entity(
+            &other,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: at, end: at },
+            at,
+            b"second local mirror",
+        )
+        .unwrap();
+    let other_source = vault.indexed_revision(&other).unwrap().unwrap();
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &window_key).unwrap();
+    let observed = capture.0.lock().unwrap();
+    assert!(observed.iter().flat_map(|(events, _)| events).any(
+        |event| matches!(event, RevisionEvent::Mirror { entity, source_revision: Some(revision) }
+            if *entity == local && *revision == source)
+    ));
+    assert!(observed.iter().flat_map(|(events, _)| events).any(
+        |event| matches!(event, RevisionEvent::Mirror { entity, source_revision: Some(revision) }
+            if *entity == other && *revision == other_source)
+    ));
+}
+
+#[test]
 fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commit() -> Result<()> {
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
     let origin = test_vault();

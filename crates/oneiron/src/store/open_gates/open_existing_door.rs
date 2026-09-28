@@ -151,6 +151,8 @@ impl Store {
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
             privacy_posture: config.privacy.posture,
+            #[cfg(target_os = "linux")]
+            retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             authority_fold_cache: Mutex::new(None),
             machine_history_issuer: Mutex::new(None),
@@ -171,7 +173,10 @@ impl Store {
         });
         let owner = StoreOwner {
             core: Arc::downgrade(&core),
+            #[cfg(unix)]
             env,
+            #[cfg(not(unix))]
+            _env: env,
             _registered_path: registered_path,
         };
         Ok(Self {
@@ -230,7 +235,8 @@ impl Store {
         )?;
         self.ensure_receipt_family_indexes_on_open()?;
         self.ensure_gate_claim_index_flag_on_open()?;
-        self.ensure_default_policy_manifest_on_open()
+        self.ensure_default_policy_manifest_on_open()?;
+        self.reconcile_retrieval_telemetry_on_open()
     }
 
     pub(super) fn ensure_default_policy_manifest_on_open(&self) -> Result<()> {

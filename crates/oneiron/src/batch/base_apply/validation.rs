@@ -4,6 +4,28 @@ use crate::secret_custody::validate_replicated_custody_put;
 
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;
 
+pub(super) fn mark_unapplied_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: &PreflightDecisionIds,
+) -> Result<()> {
+    for id in ids.values().flat_map(|queue| queue.iter().flatten()) {
+        store.mark_unapplied_preflight_decision_in_txn(wtxn, *id)?;
+    }
+    Ok(())
+}
+
+pub(super) fn consume_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: impl IntoIterator<Item = Option<crate::store::GateDecisionId>>,
+) -> Result<()> {
+    for id in ids.into_iter().flatten() {
+        store.consume_unapplied_preflight_decision_in_txn(wtxn, id)?;
+    }
+    Ok(())
+}
+
 pub(super) fn take_lapse_decisions(
     preflight: &mut PreflightDecisionIds,
     ids: &[EntityId],
@@ -58,6 +80,16 @@ pub(super) fn validate_put_type(
             entity_type,
             ENTITY_TYPE_ACCESS_GRANT | ENTITY_TYPE_OUTBOUND_GRANT
         )
+    {
+        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+            entity_type,
+        )));
+    }
+    // Connector admission is vault-local authority: peers cannot replace an
+    // indexed Pending key with a self-asserted Active body.
+    if allow_maintenance
+        && allow_reserved_predicate
+        && entity_type == crate::registry::ENTITY_TYPE_CONNECTOR_KEY
     {
         return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
             entity_type,

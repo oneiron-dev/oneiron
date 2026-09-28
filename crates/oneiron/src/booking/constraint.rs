@@ -333,6 +333,9 @@ pub struct SlotHostBinding {
     pub end_utc: u64,
     /// One host for Either, every participating host for Both; canonical hex.
     pub host_refs: Vec<String>,
+    /// IANA zone per host, in the same order as `host_refs`. This travels
+    /// with the solver choice into confirmation, not the public slot mask.
+    pub host_zones: Vec<String>,
 }
 
 /// What the oracle returned. Host bindings belong to this solve, never to a

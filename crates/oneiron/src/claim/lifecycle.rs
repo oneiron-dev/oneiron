@@ -529,13 +529,15 @@ impl Vault {
                 provenance: None,
             },
         ];
-        let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
+        let (binding, transition) =
+            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
         let decision = match (close, binding) {
-            (SupersedeClose::Granted(Some(checker)), Some(binding)) => {
-                self.apply_checked_deferred_closure_in_txn(wtxn, ops, binding, &old_body, checker)?
-            }
+            (SupersedeClose::Granted(Some(checker)), Some(binding)) => self
+                .apply_checked_deferred_closure_in_txn(
+                    wtxn, ops, binding, transition, &old_body, checker,
+                )?,
             (_, binding) => {
-                self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
+                self.apply_lifecycle_materialization(wtxn, ops, binding, transition, true)?;
                 None
             }
         };
@@ -713,7 +715,8 @@ impl Vault {
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }];
-        let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
+        let (binding, transition) =
+            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
 
         let mut write_receipt = None;
         if consent_receipt.is_none() {
@@ -731,6 +734,7 @@ impl Vault {
                     // claim, not a candidate seeking Auto; nothing consults.
                     auto_checker: None,
                     defer_metrics_until_commit: false,
+                    transition: Some(&transition),
                 },
                 &policy,
                 crate::gate::GateWriteMode {
@@ -744,7 +748,7 @@ impl Vault {
             )?;
         }
 
-        self.apply_lifecycle_materialization(wtxn, ops, binding, false)?;
+        self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false)?;
         Ok(consent_receipt
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))
     }

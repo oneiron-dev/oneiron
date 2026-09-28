@@ -5,6 +5,71 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Recovery-only proof for an AddressedTo edge retained by a soft-erased
+/// TURN. Ordinary peer replay never receives this trust: the old `to` bytes
+/// are gone, so only a validated local canonical snapshot of the retained
+/// shell and its BaseEdge can carry the historical structural fact.
+pub(crate) fn trusted_soft_addressing_edge(
+    snapshot: &CanonicalSnapshot,
+    source: &crate::EntityId,
+    target: &crate::EntityId,
+    value: &[u8],
+) -> Result<bool> {
+    let Some(tombstone) = snapshot
+        .tombstones
+        .iter()
+        .find(|row| row.id == *source.as_bytes())
+    else {
+        return Ok(false);
+    };
+    let decoded = crate::deletion::decode_tombstone_value(&tombstone.value);
+    if decoded.reason != Some(crate::deletion::TombstoneReason::UserDelete) {
+        return Err(invalid(
+            "addressing source is not a retained user-delete shell",
+        ));
+    }
+    let source_row = snapshot
+        .entity_blobs
+        .iter()
+        .find(|row| row.id == *source.as_bytes())
+        .ok_or(invalid("missing retained addressing shell"))?;
+    let header = EntityMetadataHeader::parse(&source_row.blob)
+        .ok_or(invalid("invalid retained addressing shell"))?;
+    if source_row.blob.len() != ENTITY_METADATA_HEADER_LEN
+        || header.entity_type != crate::registry::ENTITY_TYPE_TURN
+    {
+        return Err(invalid("addressing shell is not an erased TURN"));
+    }
+    // A canonical window need not contain a recipient from another month.
+    // If it does, validate it here; otherwise the capture/replay doors prove
+    // the PERSON against the vault holding the neighboring window.
+    if let Some(person) = snapshot
+        .entity_blobs
+        .iter()
+        .find(|row| row.id == *target.as_bytes())
+        && EntityMetadataHeader::parse(&person.blob)
+            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+    {
+        return Err(invalid("retained addressing recipient is not a PERSON"));
+    }
+    let fields = crate::edge::decode_edge_value_for_kind(crate::EdgeKind::AddressedTo, value)?;
+    if fields.layout != crate::edge::EdgeValueLayout::Structural
+        || fields.weight != 1.0
+        || fields.created_at != header.learned_at
+        || !snapshot.base_edges.iter().any(|row| {
+            row.source == *source.as_bytes()
+                && row.kind == crate::EdgeKind::AddressedTo as u8
+                && row.target == *target.as_bytes()
+                && row.value == value
+        })
+    {
+        return Err(invalid(
+            "retained addressing edge differs from canonical shell",
+        ));
+    }
+    Ok(true)
+}
+
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     let window = snapshot.window.as_bytes();
     if window.len() != 7
@@ -77,6 +142,16 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         }
         let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(invalid("edge kind"))?;
         crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
+        if kind == crate::EdgeKind::AddressedTo
+            && snapshot.tombstones.iter().any(|row| row.id == edge.source)
+        {
+            trusted_soft_addressing_edge(
+                snapshot,
+                &id(edge.source)?,
+                &id(edge.target)?,
+                &edge.value,
+            )?;
+        }
     }
     for tombstone in &snapshot.tombstones {
         id(tombstone.id)?;
@@ -99,7 +174,8 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             return Err(invalid("tombstone timestamp or encoding"));
         }
     }
-    validate_documents(snapshot)
+    validate_documents(snapshot)?;
+    validate_entity_documents(snapshot)
 }
 
 pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
@@ -215,6 +291,95 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
     }
     super::document::validate_workflows(snapshot)
 }
+
+/// A document pointer in a raw entity row MUST have its value in the artifact.
+/// Do not trust the writer: decoded payloads enter this gate too.
+fn pointer(body: &[u8]) -> Result<Option<String>> {
+    let mut reader = std::io::Cursor::new(body);
+    let Ok(value) = rmpv::decode::read_value(&mut reader) else {
+        return Ok(None);
+    };
+    let rmpv::Value::Map(fields) = value else {
+        return Ok(None);
+    };
+    let refs: Vec<_> = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some("entity_doc_ref"))
+        .collect();
+    if refs.is_empty() {
+        return Ok(None);
+    }
+    if refs.len() != 1 || reader.position() != body.len() as u64 {
+        return Err(invalid("entity document pointer encoding"));
+    }
+    let value = refs[0]
+        .1
+        .as_str()
+        .ok_or(invalid("entity document pointer type"))?;
+    id(super::canonical::parse_id(value)?)?;
+    Ok(Some(value.to_owned()))
+}
+
+pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
+    strict(snapshot.entity_documents.iter().map(|row| row.entity_id))?;
+    let rows: BTreeMap<_, _> = snapshot
+        .entity_documents
+        .iter()
+        .map(|row| (row.entity_id, row))
+        .collect();
+    for entity in &snapshot.entity_blobs {
+        let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            || entity.blob.len() == ENTITY_METADATA_HEADER_LEN
+        {
+            if rows.contains_key(&entity.id) {
+                return Err(invalid("entity document owner cannot be NOTE or shell"));
+            }
+            continue;
+        }
+        let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
+        let ref_id = pointer(body)?;
+        let row = rows.get(&entity.id).copied();
+        match (ref_id, row) {
+            (None, None) => continue,
+            (Some(ref_id), Some(row)) if ref_id == id(row.document_id)?.to_hex() => {
+                id(row.birth_actor)?;
+                if row.birth_at != header.occurred_start {
+                    return Err(invalid("entity document birth timestamp"));
+                }
+                let mut reader = std::io::Cursor::new(body);
+                let value = rmpv::decode::read_value(&mut reader)
+                    .map_err(|_| invalid("entity document pointer row"))?;
+                let rmpv::Value::Map(fields) = value else {
+                    return Err(invalid("entity document pointer row"));
+                };
+                let others: Vec<_> = fields
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != Some("entity_doc_ref"))
+                    .collect();
+                match &row.field {
+                    None if others.is_empty() => {}
+                    Some(field)
+                        if ["body", "text", "txt", "content", "markdown", "title"]
+                            .contains(&field.as_str())
+                            && !others
+                                .iter()
+                                .any(|(key, _)| key.as_str() == Some(field.as_str())) => {}
+                    _ => return Err(invalid("entity document text field")),
+                }
+            }
+            _ => return Err(invalid("entity document coverage or pointer binding")),
+        }
+    }
+    if rows
+        .keys()
+        .any(|entity| !snapshot.entity_blobs.iter().any(|row| &row.id == entity))
+    {
+        return Err(invalid("entity document owner absent"));
+    }
+    Ok(())
+}
+
 pub(super) fn strict<T: Ord>(values: impl IntoIterator<Item = T>) -> Result<()> {
     let mut previous = None;
     for value in values {
