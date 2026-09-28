@@ -63,6 +63,9 @@ pub struct EditManifest {
     /// currently resolved vault policy; it can never raise the vault budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pptx_holder_limits: Option<Box<super::pptx::PptxOperationalLimits>>,
+    /// Typed slide judgments bound to exported modern comments, when present.
+    #[serde(default)]
+    pub slide_judgments: Vec<super::slides_review::SlideJudgment>,
 }
 
 impl EditManifest {

@@ -80,6 +80,8 @@ pub(super) const POLICY_SHEET_ANSWER_LIMITS_KEY: &str = "sheet_answer_limits";
 /// The shipped scope-composition row, distinct from the numeric limit rows.
 pub(super) const POLICY_SHEET_ANSWER_PRECEDENCE_KEY: &str = "sheet_answer_precedence";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
+/// Vault and holder rows for artifact-review operating limits and precedence.
+pub(super) const POLICY_SLIDE_REVIEW_KEY: &str = "slide_review_policy";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

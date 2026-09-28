@@ -89,6 +89,7 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             mutation_mode: MutationMode::Full,
             warnings: Vec::new(),
             pptx_holder_limits: None,
+            slide_judgments: Vec::new(),
         },
         inspection: StructureSummary {
             format: OfficeFormat::Xlsx,
@@ -655,6 +656,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         manifest_ops: 3,
         pptx_slide_creation_id_mints: Vec::new(),
         pptx_review_identities: Vec::new(),
+        pptx_judgments: Vec::new(),
         anchors: vec![
             SettledAnchor {
                 thread_id: EntityId::now(),
@@ -699,6 +701,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         manifest_ops: 0,
         pptx_slide_creation_id_mints: Vec::new(),
         pptx_review_identities: Vec::new(),
+        pptx_judgments: Vec::new(),
         anchors: Vec::new(),
         reason: Some("not wanted".to_owned()),
         sheet_answers: None,

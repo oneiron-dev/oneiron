@@ -65,6 +65,7 @@ mod policy_inputs;
 mod posture_override;
 mod pptx_limits;
 mod scoped_read;
+mod slide_review_policy;
 mod special_doors;
 mod support;
 mod tracker_limits;
