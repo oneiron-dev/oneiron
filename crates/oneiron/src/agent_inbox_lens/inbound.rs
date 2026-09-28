@@ -90,13 +90,13 @@ impl Vault {
             let crate::channel_identity::ChannelIdentityBinding::Actor {
                 actor_ref,
                 facet_ref,
-            } = channel.binding
+            } = channel.binding()
             else {
                 continue;
             };
             let txn = self.store.env.read_txn()?;
             let party =
-                crate::comm::resolve_party_ref_in_txn(self, &txn, &channel.address_or_handle)
+                crate::comm::resolve_party_ref_in_txn(self, &txn, channel.address_or_handle())
                     .map_err(comm_error)?;
             let Some(party) = party else { continue };
             for thread in

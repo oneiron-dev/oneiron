@@ -3553,20 +3553,14 @@ fn gate_holds_for_counterparty_opt_out(vault: &Vault, counterparty: &str) -> Com
 
 /// Seeds one email ChannelIdentity so a contact resolves to a channel class.
 fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<()> {
-    let identity = crate::channel_identity::ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
-        channel: "email".to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
-        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
-        state: crate::channel_identity::ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::test_util::self_held_identity_in_state(
+        "email",
+        address,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault
         .create_channel_identity(&id, &identity)
         .map_err(CommError::Engine)

@@ -3,7 +3,7 @@ use oneiron::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
     DevEmailIdentityAdapterConfig, EmailProviderInbound, Error, InboundSurfaceRouteOutcome, Result,
     Vault, VaultConfig, channel_identity::ChannelIdentityFulfillment,
-    channel_identity::ChannelIdentityState,
+    channel_identity::ChannelIdentityStep,
     channel_identity_lifecycle::ChannelIdentityLifecycleActor,
     channel_identity_lifecycle::ProvisionIntent,
 };
@@ -57,15 +57,13 @@ fn cid3_email_adapter_env_gated_smoke() -> Result<()> {
     let agent_ref = entity(0x52);
     let actor = ChannelIdentityLifecycleActor::agent(agent_ref);
     let identity = adapter.requested_identity(identity_id, agent_ref, 1_800_000_000);
-    let address = identity.address_or_handle.clone();
+    let address = identity.address_or_handle().to_owned();
 
     vault.create_channel_identity(&identity_id, &identity)?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &identity_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_001,
-        None,
     )?;
 
     let provision = adapter.provision(
