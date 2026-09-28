@@ -38,9 +38,13 @@ world guest {
         args: string,
     }
     record file-proposal { path: string, bytes: list<u8> }
+    record file-delete-proposal { path: string }
+    record file-rename-proposal { origin: string, destination: string }
     variant proposal-delta {
         file-write(file-proposal),
         claim-candidate(claim-input),
+        file-delete(file-delete-proposal),
+        file-rename(file-rename-proposal),
     }
     record step-result {
         result-json: string,

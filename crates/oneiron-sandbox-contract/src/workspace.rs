@@ -75,6 +75,36 @@ impl WorkspaceShape {
         self.total_bytes = total;
         Ok(())
     }
+    /// A deletion or rename origin frees its file slot and bytes; its parent
+    /// directories stay, as they do when a file is unlinked.
+    pub fn remove_file(&mut self, path: &WorkspacePath) -> Result<usize> {
+        let bytes = self
+            .files
+            .remove(path.as_str())
+            .ok_or_else(|| refused("workspace file missing"))?;
+        self.total_bytes -= bytes;
+        Ok(bytes)
+    }
+    /// Moves one file. The destination must fit the tree the move leaves: not
+    /// an existing file or directory, not below a file, and not below its own
+    /// origin. A refused move leaves the shape unchanged.
+    pub fn rename_file(&mut self, from: &WorkspacePath, to: &WorkspacePath) -> Result<()> {
+        if from == to
+            || to
+                .as_str()
+                .strip_prefix(from.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        {
+            return Err(refused("workspace rename onto its own origin"));
+        }
+        let bytes = self.remove_file(from)?;
+        if let Err(error) = self.add_file(to, bytes) {
+            self.files.insert(from.as_str().to_owned(), bytes);
+            self.total_bytes += bytes;
+            return Err(error);
+        }
+        Ok(())
+    }
     fn parents(&self, path: &WorkspacePath) -> BTreeSet<String> {
         let mut parents = BTreeSet::new();
         let mut prefix = String::from("/mnt/workspace");
@@ -214,5 +244,38 @@ mod tests {
                 .add_directory(&WorkspacePath::from_relative("a").unwrap())
                 .is_err()
         );
+    }
+    #[test]
+    fn removed_file_frees_its_path_and_bytes_but_keeps_parents() {
+        let mut shape = WorkspaceShape::new();
+        let nested = WorkspacePath::from_relative("d/a").unwrap();
+        shape.add_file(&nested, 3).unwrap();
+        assert_eq!(shape.remove_file(&nested).unwrap(), 3);
+        assert_eq!((shape.file_count(), shape.total_bytes()), (0, 0));
+        assert!(shape.remove_file(&nested).is_err());
+        assert!(
+            shape
+                .add_file(&WorkspacePath::from_relative("d").unwrap(), 1)
+                .is_err()
+        );
+        shape.add_file(&nested, 1).unwrap();
+    }
+    #[test]
+    fn rename_refuses_impossible_destinations_and_keeps_shape() {
+        let path = |relative: &str| WorkspacePath::from_relative(relative).unwrap();
+        let mut shape = WorkspaceShape::new();
+        for file in ["a", "b", "d/child"] {
+            shape.add_file(&path(file), 2).unwrap();
+        }
+        shape.add_directory(&path("empty")).unwrap();
+        let before = shape.clone();
+        for to in ["a", "a/child", "b", "b/child", "d", "empty", "d/child/new"] {
+            assert!(shape.rename_file(&path("a"), &path(to)).is_err(), "{to}");
+            assert_eq!(shape, before, "{to}");
+        }
+        assert!(shape.rename_file(&path("missing"), &path("new")).is_err());
+        shape.rename_file(&path("a"), &path("d/moved")).unwrap();
+        assert!(shape.remove_file(&path("a")).is_err());
+        assert_eq!(shape.remove_file(&path("d/moved")).unwrap(), 2);
     }
 }

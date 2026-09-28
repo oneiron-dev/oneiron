@@ -73,6 +73,8 @@ impl FirecrackerBackend {
 
     pub fn configured(config: FirecrackerHostConfig) -> Result<Self> {
         config.validate()?;
+        #[cfg(unix)]
+        super::microvm::reap_overlay_scratch(&config.scratch_root, FIRECRACKER_BACKEND_NAME)?;
         Ok(Self {
             root: config.scratch_root.clone(),
             config: Some(config),
@@ -215,6 +217,18 @@ impl MicroVmBackend for FirecrackerBackend {
             unreachable!()
         };
         Ok(writes)
+    }
+
+    fn cleanup(&self, vm: &MicroVmHandle) {
+        if let Ok(mut states) = self.state.lock()
+            && states.get(vm.id()).is_some_and(|state| state.handle == *vm)
+            && !matches!(
+                states.get(vm.id()).map(|state| &state.phase),
+                Some(Phase::Running)
+            )
+        {
+            states.remove(vm.id());
+        }
     }
 
     fn proxy_credentials(

@@ -15,8 +15,10 @@ declare namespace OneironCodeRun {
   interface TextInput { text: string; }
   interface CredentialInput { operation: string; credentialHandle: string; args: unknown; }
   interface FileProposal { path: string; bytes: Uint8Array; }
+  interface FileDeleteProposal { path: string; }
+  interface FileRenameProposal { origin: string; destination: string; }
   interface StepResult { resultJson: string; proposals: Array<OneironCodeRun.ProposalDelta>; }
-  type ProposalDelta = { tag: "file-write"; val: OneironCodeRun.FileProposal } | { tag: "claim-candidate"; val: OneironCodeRun.ClaimInput };
+  type ProposalDelta = { tag: "file-write"; val: OneironCodeRun.FileProposal } | { tag: "claim-candidate"; val: OneironCodeRun.ClaimInput } | { tag: "file-delete"; val: OneironCodeRun.FileDeleteProposal } | { tag: "file-rename"; val: OneironCodeRun.FileRenameProposal };
 }
 declare namespace sandbox {
   namespace fs {

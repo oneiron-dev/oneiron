@@ -262,9 +262,7 @@ mod dev_backend {
                     SandboxProposalWrite::FileWrite(write) => {
                         (write.path.as_str().to_owned(), write.bytes.clone())
                     }
-                    SandboxProposalWrite::ClaimCandidate(_) | SandboxProposalWrite::FileEdit(_) => {
-                        unreachable!("file writes only")
-                    }
+                    _ => unreachable!("file writes only"),
                 }
             })
             .collect::<Vec<_>>();
@@ -296,6 +294,40 @@ mod dev_backend {
             .expect_err("overlay collection is one-shot per adapter");
         assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
         assert_eq!(fixture.adapter.proposal_deltas().len(), 2);
+    }
+
+    #[test]
+    fn microvm_contract_delete_and_rename_overlay_preserves_base() {
+        let mut fixture = fixture(SandboxGuestTier::Foreign);
+        let image = guest_image(fixture.base.parent().expect("base parent"));
+        let before = tree_hash(&fixture.base);
+        let upper = fixture.adapter.vm().overlay_upper();
+        // A filesystem rename is a whiteout plus a new file in an OverlayFS
+        // upper. This path-level delta must not silently invent document identity.
+        fs::write(upper.join(".wh.input.txt"), []).expect("whiteout");
+        fs::write(upper.join("renamed.txt"), b"base bytes").expect("destination");
+        assert_eq!(
+            fixture
+                .adapter
+                .run(&image, ExecutionBudget::new(5, 128, 32))
+                .expect("run")
+                .status,
+            0
+        );
+        let proposals = fixture.adapter.collect_overlay_proposals().expect("deltas");
+        assert_eq!(proposals.len(), 2);
+        assert!(proposals.iter().any(|delta| {
+            delta.kind() == SandboxProposalKind::FileDelete
+                && matches!(delta.write(), SandboxProposalWrite::FileDelete(delete)
+                    if delete.path.as_str() == "/mnt/workspace/input.txt")
+        }));
+        assert!(proposals.iter().any(|delta| {
+            delta.kind() == SandboxProposalKind::FileWrite
+                && matches!(delta.write(), SandboxProposalWrite::FileWrite(write)
+                    if write.path.as_str() == "/mnt/workspace/renamed.txt" && write.bytes == b"base bytes")
+        }));
+        assert_eq!(tree_hash(&fixture.base), before);
+        assert!(!fixture.base.join("renamed.txt").exists());
     }
 
     #[test]

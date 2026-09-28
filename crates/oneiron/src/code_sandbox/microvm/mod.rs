@@ -23,6 +23,7 @@ mod backend;
 mod credential;
 mod handle;
 mod overlay;
+mod scratch;
 
 pub use self::adapter::MicroVmSandboxAdapter;
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
@@ -37,6 +38,8 @@ pub use self::credential::{
     SANDBOX_EGRESS_ABI_KEY_SCHEME, egress_destination_from_args,
 };
 pub use self::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
+#[cfg(all(unix, feature = "microvm-firecracker"))]
+pub(in crate::code_sandbox) use self::overlay::reap_overlay_scratch;
 pub use self::overlay::{collect_overlay_writes, prepare_overlay_handle};
 
 // Re-anchors the `super::firecracker` path inside `backend.rs`: the flat

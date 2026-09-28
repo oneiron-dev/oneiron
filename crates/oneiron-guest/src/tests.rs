@@ -342,6 +342,96 @@ fn repeated_snapshot_and_whole_file_replacement_preserve_other_files() {
     );
 }
 
+fn real_foreign_component() -> Vec<u8> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../components/code-run-quickjs/artifacts");
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(dir.join("manifest.json")).expect("pinned manifest"))
+            .expect("manifest JSON");
+    let name = manifest["artifacts"]["foreign"]["file"]
+        .as_str()
+        .expect("foreign component");
+    fs::read(dir.join(name)).expect("pinned foreign component")
+}
+
+#[test]
+fn real_quickjs_guest_sends_delete_and_rename_then_preserves_seeded_base() {
+    let (_temp, root) = scratch();
+    let (mut host, guest) = UnixStream::pair().expect("socketpair");
+    host.set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("deadline");
+    let path = root.clone();
+    let worker = std::thread::spawn(move || serve_localtest(guest, &path));
+    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
+    let component = real_foreign_component();
+    let mut start = start(component.len());
+    start["source"] = "propose.delete('/mnt/workspace/removed'); propose.rename('/mnt/workspace/moved', '/mnt/workspace/destination'); finish('ok');".into();
+    put(&mut host, start);
+    for (index, bytes) in component.chunks(256 * 1024).enumerate() {
+        put(
+            &mut host,
+            json!({"type":"component", "offset":index * 256 * 1024, "bytes":bytes}),
+        );
+    }
+    put(
+        &mut host,
+        json!({"type":"file", "path":"/mnt/workspace/removed", "bytes":b"old"}),
+    );
+    put(
+        &mut host,
+        json!({"type":"file", "path":"/mnt/workspace/moved", "bytes":b"identity"}),
+    );
+    put(&mut host, json!({"type":"ready"}));
+    assert_eq!(
+        get(&mut host),
+        json!({"type":"delete", "path":"/mnt/workspace/removed"})
+    );
+    put(&mut host, json!({"type":"receipt", "accepted":true}));
+    assert_eq!(
+        get(&mut host),
+        json!({"type":"rename", "from":"/mnt/workspace/moved", "to":"/mnt/workspace/destination"})
+    );
+    put(&mut host, json!({"type":"receipt", "accepted":true}));
+    assert_eq!(get(&mut host), json!({"type":"finish", "status":0}));
+    worker.join().expect("guest thread").expect("guest success");
+    assert_eq!(fs::read(root.join("removed")).expect("seeded file"), b"old");
+    assert_eq!(
+        fs::read(root.join("moved")).expect("seeded file"),
+        b"identity"
+    );
+    assert!(!root.join("destination").exists());
+}
+
+#[test]
+fn real_quickjs_guest_invalid_rename_finishes_error_without_effect() {
+    let (_temp, root) = scratch();
+    let (mut host, guest) = UnixStream::pair().expect("socketpair");
+    host.set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("deadline");
+    let path = root.clone();
+    let worker = std::thread::spawn(move || serve_localtest(guest, &path));
+    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
+    let component = real_foreign_component();
+    let mut start = start(component.len());
+    start["source"] =
+        "propose.rename('/mnt/workspace/old', '/mnt/workspace/old/child'); finish('no');".into();
+    put(&mut host, start);
+    for (index, bytes) in component.chunks(256 * 1024).enumerate() {
+        put(
+            &mut host,
+            json!({"type":"component", "offset":index * 256 * 1024, "bytes":bytes}),
+        );
+    }
+    put(
+        &mut host,
+        json!({"type":"file", "path":"/mnt/workspace/old", "bytes":b"old"}),
+    );
+    put(&mut host, json!({"type":"ready"}));
+    assert_eq!(get(&mut host), json!({"type":"finish", "status":1}));
+    assert!(worker.join().expect("guest thread").is_err());
+    assert_eq!(fs::read(root.join("old")).expect("seeded file"), b"old");
+}
+
 /// The checked-in foreign QuickJS component executes real JS in the same
 /// unprivileged guest protocol used inside the isolated production VM. This
 /// proves language behavior, not a Firecracker/KVM boot.

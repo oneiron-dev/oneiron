@@ -104,6 +104,8 @@ for row in schema['imports']:
     for p in row['params']: emit(p['type'])
     emit(row['result'])
 emit('file-proposal')
+emit('file-delete-proposal')
+emit('file-rename-proposal')
 # Claim input is generated in both tiers: the foreign output uses it for proposals.
 emit('claim-input')
 

@@ -8,8 +8,10 @@ use crate::{
         Snapshot,
     },
 };
+use oneiron_sandbox_contract::{ShapeError, WorkspacePath};
 use serde::Deserialize;
 use std::{
+    collections::BTreeSet,
     io::{Read, Write},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -141,11 +143,24 @@ fn run<T: Read + Write + 'static>(
         return Err(Error::Protocol("credential transport failed"));
     }
     let output = output.map_err(|_| Error::Runtime("component returned error"))?;
-    let proposals = proposals(output)?;
-    store.data().workspace.apply(&proposals)?;
+    let proposals = proposals(output, &input.files)?;
+    let mut writes = Snapshot::new();
+    for proposal in &proposals {
+        if let GuestProposal::Write(path, bytes) = proposal {
+            writes.insert(path.clone(), bytes.clone());
+        }
+    }
+    store.data().workspace.apply(&writes)?;
     let changed = store.data().workspace.snapshot()?;
     if input.files.keys().any(|path| !changed.contains_key(path)) {
-        return Err(Error::Filesystem("deletion is unsupported"));
+        return Err(Error::Filesystem("unaccounted guest deletion"));
+    }
+    for proposal in proposals {
+        match proposal {
+            GuestProposal::Delete(path) => store.data_mut().session.delete(&path)?,
+            GuestProposal::Rename(from, to) => store.data_mut().session.rename(&from, &to)?,
+            GuestProposal::Write(_, _) => {}
+        }
     }
     for (path, bytes) in changed {
         if input.files.get(&path) != Some(&bytes) {
@@ -155,27 +170,69 @@ fn run<T: Read + Write + 'static>(
     Ok(())
 }
 
-fn proposals(output: abi::StepResult) -> Result<Snapshot> {
+enum GuestProposal {
+    Write(String, Vec<u8>),
+    Delete(String),
+    Rename(String, String),
+}
+
+fn proposals(output: abi::StepResult, base: &Snapshot) -> Result<Vec<GuestProposal>> {
     if output.result_json.len() > MAX_FILE || output.proposals.len() > MAX_FILES {
         return Err(Error::Runtime("step result bounds"));
     }
     serde_json::from_str::<serde_json::Value>(&output.result_json)
         .map_err(|_| Error::Runtime("result-json is invalid JSON"))?;
-    let mut proposals = Snapshot::new();
+    let mut proposals = Vec::new();
+    // The seeded tree with every accepted proposal applied; one effect per
+    // path, as the host admits them.
+    let mut shape = validate_files(base)?;
+    let mut occupied = BTreeSet::new();
+    let shape_error = |error: ShapeError| Error::Runtime(error.reason());
     for proposal in output.proposals {
         match proposal {
             abi::ProposalDelta::FileWrite(file) => {
-                if proposals.insert(file.path, file.bytes).is_some() {
+                let path = workspace_path(&file.path)?;
+                if !occupied.insert(file.path.clone()) {
                     return Err(Error::Runtime("duplicate file proposal"));
                 }
+                shape
+                    .replace_file(&path, file.bytes.len())
+                    .map_err(shape_error)?;
+                proposals.push(GuestProposal::Write(file.path, file.bytes));
+            }
+            abi::ProposalDelta::FileDelete(delete) => {
+                let path = workspace_path(&delete.path)?;
+                if !base.contains_key(&delete.path) || !occupied.insert(delete.path.clone()) {
+                    return Err(Error::Runtime("invalid delete proposal"));
+                }
+                shape.remove_file(&path).map_err(shape_error)?;
+                proposals.push(GuestProposal::Delete(delete.path));
+            }
+            abi::ProposalDelta::FileRename(rename) => {
+                let origin = workspace_path(&rename.origin)?;
+                let destination = workspace_path(&rename.destination)?;
+                if rename.origin == rename.destination
+                    || !base.contains_key(&rename.origin)
+                    || !occupied.insert(rename.origin.clone())
+                    || !occupied.insert(rename.destination.clone())
+                {
+                    return Err(Error::Runtime("invalid rename proposal"));
+                }
+                shape
+                    .rename_file(&origin, &destination)
+                    .map_err(shape_error)?;
+                proposals.push(GuestProposal::Rename(rename.origin, rename.destination));
             }
             abi::ProposalDelta::ClaimCandidate(_) => {
                 return Err(Error::UnsupportedClaimCandidate);
             }
         }
     }
-    validate_files(&proposals)?;
     Ok(proposals)
+}
+
+fn workspace_path(path: &str) -> Result<WorkspacePath> {
+    WorkspacePath::parse(path).map_err(|error| Error::Filesystem(error.reason()))
 }
 
 fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> wasmtime::Result<()> {
@@ -311,7 +368,7 @@ mod tests {
             })],
         };
         assert!(matches!(
-            proposals(output),
+            proposals(output, &Snapshot::new()),
             Err(Error::UnsupportedClaimCandidate)
         ));
     }

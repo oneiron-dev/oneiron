@@ -22,7 +22,8 @@ pub(crate) fn virtual_relative(path: &str) -> Result<&str> {
         .ok_or(Error::Filesystem("not a workspace file"))
 }
 
-pub(crate) fn validate_files(files: &Snapshot) -> Result<()> {
+/// Checks a file set against the shared tree rules and returns its shape.
+pub(crate) fn validate_files(files: &Snapshot) -> Result<WorkspaceShape> {
     let mut shape = WorkspaceShape::new();
     for (path, bytes) in files {
         let checked =
@@ -31,7 +32,7 @@ pub(crate) fn validate_files(files: &Snapshot) -> Result<()> {
             .add_file(&checked, bytes.len())
             .map_err(|error| Error::Filesystem(error.reason()))?;
     }
-    Ok(())
+    Ok(shape)
 }
 
 pub(crate) struct Workspace {

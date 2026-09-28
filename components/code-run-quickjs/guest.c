@@ -77,6 +77,21 @@ static bool proposals_from_js(JSContext *ctx, JSValueConst value, guest_step_res
             delta->tag = GUEST_PROPOSAL_DELTA_FILE_WRITE;
             ok = from_file_proposal(ctx, val, &delta->val.file_write);
             if (ok && !proposal_path_allowed(&delta->val.file_write.path)) ok = bad_value(ctx);
+        } else if (name && !strcmp(name, "file-delete")) {
+            delta->tag = GUEST_PROPOSAL_DELTA_FILE_DELETE;
+            ok = from_file_delete_proposal(ctx, val, &delta->val.file_delete);
+            if (ok && (!proposal_path_allowed(&delta->val.file_delete.path) ||
+                delta->val.file_delete.path.len <= sizeof("/mnt/workspace/") - 1 ||
+                memcmp(delta->val.file_delete.path.ptr, "/mnt/workspace/", sizeof("/mnt/workspace/") - 1))) ok = bad_value(ctx);
+        } else if (name && !strcmp(name, "file-rename")) {
+            delta->tag = GUEST_PROPOSAL_DELTA_FILE_RENAME;
+            ok = from_file_rename_proposal(ctx, val, &delta->val.file_rename);
+            if (ok && (!proposal_path_allowed(&delta->val.file_rename.origin) ||
+                !proposal_path_allowed(&delta->val.file_rename.destination) ||
+                delta->val.file_rename.origin.len <= sizeof("/mnt/workspace/") - 1 ||
+                delta->val.file_rename.destination.len <= sizeof("/mnt/workspace/") - 1 ||
+                memcmp(delta->val.file_rename.origin.ptr, "/mnt/workspace/", sizeof("/mnt/workspace/") - 1) ||
+                memcmp(delta->val.file_rename.destination.ptr, "/mnt/workspace/", sizeof("/mnt/workspace/") - 1))) ok = bad_value(ctx);
         } else if (name && !strcmp(name, "claim-candidate")) {
             delta->tag = GUEST_PROPOSAL_DELTA_CLAIM_CANDIDATE;
             ok = from_claim_input(ctx, val, &delta->val.claim_candidate);

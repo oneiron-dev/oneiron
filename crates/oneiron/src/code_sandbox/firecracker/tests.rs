@@ -159,6 +159,96 @@ fn firecracker_real_boot_returns_only_proposals() -> Result<()> {
     Ok(())
 }
 
+/// Same host profile as above, booting the checked-in foreign QuickJS
+/// component: a delete and a rename come back typed, an impossible rename
+/// fails the executed guest, and both runs leave the base and no scratch.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires host-provisioned root jailer, KVM, cgroup v2, pinned kernel/rootfs and protocol-v1 guest agent"]
+fn firecracker_real_boot_delete_rename_and_failed_run_preserve_base_and_reclaim_scratch()
+-> Result<()> {
+    use crate::code_sandbox::microvm::{
+        CredentialAllowlist, CredentialDestination, MicroVmSandboxAdapter,
+    };
+    use crate::code_sandbox::{SandboxCredentialHandle, SandboxProposalWrite};
+    use sha2::{Digest, Sha256};
+    struct NoCredential;
+    impl CredentialResolver for NoCredential {
+        fn resolve_for(
+            &self,
+            _: &SandboxCredentialHandle,
+            _: &CredentialDestination,
+        ) -> Result<Vec<u8>> {
+            Err(refused("no credential in this scenario"))
+        }
+    }
+    let profile = std::env::var_os(FIRECRACKER_CONFIG_ENV).expect("host profile");
+    let mut config: FirecrackerHostConfig = serde_json::from_slice(&config::read_regular_bounded(
+        std::path::Path::new(&profile),
+        64 * 1024,
+    )?)
+    .expect("host profile JSON");
+    let component = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../components/code-run-quickjs/artifacts/quickjs-foreign.wasm");
+    config.pins.component = Sha256::digest(std::fs::read(&component).expect("pinned")).into();
+    let image = GuestImage::new(
+        std::env::var_os("ONEIRON_MICROVM_TEST_KERNEL").expect("kernel"),
+        std::env::var_os("ONEIRON_MICROVM_TEST_ROOTFS").expect("rootfs"),
+        component,
+    );
+    let dir = tempfile::tempdir().expect("test fixture");
+    std::fs::write(dir.path().join("old"), b"old").expect("test fixture");
+    std::fs::write(dir.path().join("moved"), b"identity").expect("test fixture");
+    let run = |source: &str| -> Result<(Result<Vec<SandboxProposalWrite>>, PathBuf)> {
+        let mut adapter = MicroVmSandboxAdapter::new(
+            SandboxGuestTier::Foreign,
+            SandboxMountTable::new(dir.path(), dir.path(), dir.path(), dir.path()),
+            Box::new(FirecrackerBackend::configured(config.clone())?),
+            Arc::new(NoCredential),
+            CredentialAllowlist::new(),
+        )?;
+        let scratch = adapter
+            .vm()
+            .overlay_upper()
+            .parent()
+            .expect("VM root")
+            .to_path_buf();
+        let outcome = adapter
+            .run(
+                &image.clone().with_source(source),
+                ExecutionBudget::new(15, 128, 64),
+            )
+            .and_then(|_| adapter.collect_overlay_proposals())
+            .map(|deltas| deltas.iter().map(|delta| delta.write().clone()).collect());
+        drop(adapter);
+        Ok((outcome, scratch))
+    };
+
+    let (proposals, scratch) = run("propose.delete('/mnt/workspace/old'); \
+         propose.rename('/mnt/workspace/moved', '/mnt/workspace/new'); finish('ok');")?;
+    let proposals = proposals?;
+    assert_eq!(proposals.len(), 2);
+    assert!(proposals.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileDelete(delete) if delete.path.as_str() == "/mnt/workspace/old")));
+    assert!(proposals.iter().any(|write| matches!(write,
+        SandboxProposalWrite::FileRename(rename) if rename.from.as_str() == "/mnt/workspace/moved"
+            && rename.to.as_str() == "/mnt/workspace/new")));
+    assert!(!scratch.exists(), "success releases VM scratch");
+
+    let (failed, scratch) =
+        run("propose.rename('/mnt/workspace/old', '/mnt/workspace/moved'); finish('ok');")?;
+    assert!(failed.is_err(), "an impossible rename fails the guest run");
+    assert!(!scratch.exists(), "a failed run releases VM scratch");
+
+    assert_eq!(std::fs::read(dir.path().join("old")).expect("base"), b"old");
+    assert_eq!(
+        std::fs::read(dir.path().join("moved")).expect("base"),
+        b"identity"
+    );
+    assert!(!dir.path().join("new").exists());
+    Ok(())
+}
+
 #[test]
 fn guest_pid_budget_matches_protocol_ceiling_before_boot() {
     for pids in [1, 4096] {
