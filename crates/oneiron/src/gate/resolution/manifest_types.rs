@@ -1,6 +1,7 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use std::collections::BTreeMap;
 
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -73,6 +74,72 @@ impl CommOptOutPosture {
     }
 }
 
+/// The shipped vault-level policy row, composed by nested narrowing.
+/// The attempt manifest's 4,096-entry cap is structural; this work budget
+/// limits receipt pages, not the number of facts one valid receipt may carry.
+pub(crate) const DEFAULT_ATTRIBUTION_REASON_MAX_BYTES: u64 = 4096;
+pub(crate) const DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS: u64 = 32;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AttributionLimits {
+    pub(crate) reason_max_bytes: u64,
+    pub(crate) receipts_per_pass: u64,
+    pub(crate) holder_reason_bytes: std::collections::BTreeMap<crate::EntityId, u64>,
+}
+
+impl Default for AttributionLimits {
+    fn default() -> Self {
+        Self {
+            reason_max_bytes: DEFAULT_ATTRIBUTION_REASON_MAX_BYTES,
+            receipts_per_pass: DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
+            holder_reason_bytes: Default::default(),
+        }
+    }
+}
+
+impl AttributionLimits {
+    pub(crate) fn restrict(&mut self, other: Self) {
+        self.reason_max_bytes = self.reason_max_bytes.min(other.reason_max_bytes);
+        self.receipts_per_pass = self.receipts_per_pass.min(other.receipts_per_pass);
+        for (holder, limit) in other.holder_reason_bytes {
+            self.holder_reason_bytes
+                .entry(holder)
+                .and_modify(|current| *current = (*current).min(limit))
+                .or_insert(limit);
+        }
+    }
+
+    pub(crate) fn reason_bytes_for(&self, holder: &crate::EntityId) -> u64 {
+        self.holder_reason_bytes
+            .get(holder)
+            .copied()
+            .map_or(self.reason_max_bytes, |override_| {
+                override_.min(self.reason_max_bytes)
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::gate) struct TeacherProbeRow {
+    pub(in crate::gate) min_f1_millionths: u32,
+    pub(in crate::gate) holders: BTreeMap<String, u32>,
+}
+
+/// Restrict-only typed sheet answer count for a vault, artifact, or sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SheetAnswerLimitRow {
+    pub(crate) artifact_ref: Option<String>,
+    pub(crate) sheet: Option<String>,
+    pub(crate) max_count: u64,
+}
+
+/// The manifest's explicit scope-composition rule. Other tokens fail decode
+/// until their admission semantics are specified and tested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SheetAnswerPrecedence {
+    NestedNarrowingHolderCappedAtVault,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
@@ -80,10 +147,21 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
+    pub(in crate::gate) teacher_probe_trusted: bool,
+    pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
+    pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) sheet_answer_default_max_count: Option<u64>,
+    pub(crate) sheet_answer_precedence: Option<SheetAnswerPrecedence>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(crate) attribution_limits: AttributionLimits,
+    /// The shipped defaults apply only until a trusted policy row supplies
+    /// a vault limit; later packs narrow that authored limit.
+    pub(crate) attribution_limits_set: bool,
     pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
@@ -111,5 +189,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
+    pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
+    pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) hosted_tts: HostedTtsPolicy,
+    pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) docedit_resource_policy:
+        Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
 }
