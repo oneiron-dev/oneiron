@@ -109,5 +109,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
+    pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
     pub(super) hosted_tts: HostedTtsPolicy,
 }
