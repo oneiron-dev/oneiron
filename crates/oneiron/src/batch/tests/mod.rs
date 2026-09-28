@@ -269,15 +269,15 @@ fn batch_fixtures() -> Vec<BatchFixture> {
 const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     (
         "put",
-        "117cbc0a2caae203fa72c9a46f0ca138b1b6e1be863b751bcdf0a34f52926486",
+        "d19ef0dedc17b7a3d08d92338f38f764501603166499c402b58479e26cc855a7",
     ),
     (
         "put_habit_checkin",
-        "0de5bf55baf8db6b91c14f139b07e4b9b283c18427de9d376f3fecd285eb1de0",
+        "0f1ef0d17c30f8f26b136b20224e80bcb9ebaf672faaa21d5c64e758e707dee7",
     ),
     (
         "edges",
-        "bfc5eb1422faa31e263861b987b38b42c080706637e0094c4b2ae4f05f24684e",
+        "f6eb2b00788648203176d314b0a3d2dd7ae006b1c9c56799606317e9c148a7f1",
     ),
     (
         "text",
@@ -293,20 +293,20 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "delete",
-        "21e3ab16a0ba87a8f3c78bdaeef2dc0c36f77a241bde3d60e5c80a7970d452ad",
+        "db1d13e0a5b3c58da53c4e9d8fd1899f37c668727770302016dad4e46a2585e3",
     ),
     ("claim_candidate", CLAIM_CANDIDATE_DIGEST),
     (
         "put_internal",
-        "3e13d1ee669373eec6ecfca4ed82522d4c8f55fb2c38c2d28c24774424550885",
+        "88be088fff5e49968d84287b02a104aefd2db03208786200bfb85c80dd0f4857",
     ),
     (
         "put_task_fact",
-        "5c00475b47011981ab81e2808bd31497e9e7b0cc6b91c6f2ce79f6de904e281e",
+        "6a8c18ae7bd4da2abd8f2443f37802a3da62ae610aacbde493ad53b3603f0cf9",
     ),
     (
         "put_authored_note",
-        "66336025fc3665bb69b750e84fefe4b3df408def8dc0c8e90a668a7d362e5603",
+        "c1411db395fcf1f23270fa51a7b5e3760dfae8cf87e44de166f75774d3e82a20",
     ),
 ];
 
@@ -316,7 +316,7 @@ const CLAIM_CANDIDATE_DIGEST: &str =
     "d32289a1a7532fce8706b9ad5a50d263bca2b4bb44d7109c6e1e720e826e79f6";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "94a729b304db6fb6d2b4a2377b1e5376a860001c9a40e26f6b17186848bc1eed";
+    "dd443e808094d95f9b88abcdcb077e85cf5773694548ef3eac91d811f0c2ea98";
 
 #[test]
 fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
