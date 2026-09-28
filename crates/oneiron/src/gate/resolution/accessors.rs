@@ -11,7 +11,8 @@ use oneiron_docedit::ArchiveLimits;
 
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
-    CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution, SheetAnswerPrecedence,
+    AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
+    SheetAnswerPrecedence,
 };
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
@@ -112,6 +113,13 @@ impl PolicyManifestResolution {
         self.weave_correction_policy
             .as_ref()
             .map(|policy| policy.limit_for(holder))
+    }
+
+    /// Limits are resolved by nested narrowing across trusted manifests.
+    /// A malformed loaded manifest never gets to relax admission by omission.
+    #[must_use]
+    pub(crate) fn attribution_limits(&self) -> Option<&AttributionLimits> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(&self.attribution_limits)
     }
 
     /// Shipped manifest rows or the same bootstrap default if no ask row
