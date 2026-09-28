@@ -167,6 +167,28 @@ pub(crate) fn pin_model_manifest(
     vault.set_model_manifest_with_teacher_approval(manifest, &approval)
 }
 
+/// Re-appends every live claim-bound gate decision as if created at
+/// `created_at`, so a test can age real receipts past a retention horizon.
+pub(crate) fn backdate_claim_gate_decisions(vault: &Vault, created_at: u64) -> crate::Result<()> {
+    vault.with_write_txn(|txn| {
+        let mut rows = Vec::new();
+        vault.store.for_each_gate_decision_in_txn(txn, |record| {
+            if record.claim_id.is_some() && record.redacted_at.is_none() {
+                rows.push(record);
+            }
+            Ok(())
+        })?;
+        for mut row in rows {
+            vault
+                .store
+                .delete_gate_decision_in_txn(txn, row.decision_id)?;
+            row.created_at = created_at;
+            vault.store.append_gate_decision_in_txn(txn, &row)?;
+        }
+        Ok(())
+    })
+}
+
 /// Copy the shipped teacher-probe policy row into a custom test policy. Tests
 /// that replace the seeded default must preserve this floor before pinning a
 /// teacher, without accidentally replacing their own Gate policy rows.
