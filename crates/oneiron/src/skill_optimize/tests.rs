@@ -6792,7 +6792,7 @@ fn policy_limits_row(holder: &str, authored: u64, learned: Option<u64>) -> Value
 }
 
 fn install_tradeoff_policy(vault: &Vault, rows: Vec<Value>) -> Result<()> {
-    let raw = crate::gate::default_policy_manifest();
+    let raw = crate::gate::default_policy_manifest()?;
     let mut value = rmpv::decode::read_value(&mut raw.as_slice()).expect("shipped policy decodes");
     let Value::Map(ref mut entries) = value else {
         unreachable!()
