@@ -417,6 +417,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) skill_edit_goal: Vec<crate::gate::SkillEditGoalPolicy>,
     pub(crate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(crate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
+    pub(crate) shared_act_policies:
+        Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(super) owner_policy_rows_dropped: bool,
