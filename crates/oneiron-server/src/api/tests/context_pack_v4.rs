@@ -814,8 +814,35 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
     .await;
     assert_eq!(status, StatusCode::OK, "{shed:#}");
     assert!(shed["pack"].get("l2_base").is_none());
-    // Allowlisting never overrides an unstamped/private evidence tier.
-    seed_active_claim(&server, user_claim, person, "now private", 1);
+    // Allowlisting never overrides an unstamped/private evidence tier. A
+    // claim keeps its birth scope: re-putting it without the public scope is
+    // refused, so the private belief is a new claim and the old one retires.
+    let private = oneiron::ClaimBody::new(
+        "profile.route_test",
+        oneiron::ClaimSubject::Entity(person),
+        rmpv::Value::from("now private"),
+        0.9,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    assert!(matches!(
+        server.vault.put_claim(
+            &user_claim,
+            &private,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1
+        ),
+        Err(oneiron::Error::InvalidClaimBody(
+            "record scope restamp refused"
+        ))
+    ));
+    server.vault.retract_claim(&user_claim, 1).unwrap();
+    let private_claim = seeded_test_entity_id(0x236_0008);
+    seed_active_claim(&server, private_claim, person, "now private", 1);
+    server
+        .vault
+        .put_edge(&private_claim, oneiron::EdgeKind::ClaimOf, &person, 1.0)
+        .unwrap();
     let (status, third) = route_json(server.clone(), call()).await;
     assert_eq!(status, StatusCode::OK);
     let rows: Value =
