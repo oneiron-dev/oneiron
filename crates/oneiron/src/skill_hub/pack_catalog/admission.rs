@@ -111,7 +111,10 @@ impl Vault {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
             if let Some(reason) = self.screen_pack_in_txn(
-                txn, &source, &ask.observed_tools, ask.publisher.identity(),
+                txn,
+                &source,
+                &ask.observed_tools,
+                ask.publisher.identity(),
             )? {
                 return Ok(PackInstallDisposition::Blocked { reason });
             }

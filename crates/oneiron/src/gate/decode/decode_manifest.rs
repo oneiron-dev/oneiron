@@ -11,7 +11,10 @@ use crate::gate::ceiling::{
     PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::constants::{
-    POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_AUTO_CHECKER_KEY,
+    ATTRIBUTION_HOLDER_ACTOR_KEY, ATTRIBUTION_HOLDER_MAX_BYTES_KEY,
+    ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
+    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACTOR_CEILINGS_KEY,
+    POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_AUTO_CHECKER_KEY,
     POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY,
     POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
@@ -29,7 +32,7 @@ use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 
-use crate::gate::resolution::{CommOptOutPosture, TeacherProbeRow};
+use crate::gate::resolution::{AttributionLimits, CommOptOutPosture, TeacherProbeRow};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
@@ -87,6 +90,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) sheet_answer_precedence:
         Option<crate::gate::resolution::SheetAnswerPrecedence>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(in crate::gate) attribution_limits: Option<AttributionLimits>,
     pub(in crate::gate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(in crate::gate) retry_source_policy:
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
@@ -152,6 +156,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
                 | POLICY_SHEET_ANSWER_PRECEDENCE_KEY
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
+                | POLICY_ATTRIBUTION_LIMITS_KEY
                 | POLICY_ASK_POLICY_KEY
                 | "retry_source_policy"
                 | "compilation_policy"
@@ -377,6 +382,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => Some(crate::gate::WeaveCorrectionPolicy::parse(value)?),
         };
+    let attribution_limits = match single_map_value(&entries, POLICY_ATTRIBUTION_LIMITS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_attribution_limits(value)?),
+    };
     let retry_source_policy = match single_map_value(&entries, "retry_source_policy") {
         MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
@@ -451,6 +461,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         sheet_answer_limits,
         sheet_answer_precedence,
         weave_correction_policy,
+        attribution_limits,
         ask_policy,
         retry_source_policy,
         compilation_policy,
@@ -459,6 +470,71 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         engine_version_floor,
         unknown_axis_seen,
     })
+}
+
+/// A policy-manifest row. Numeric knobs are positive; unknown/duplicate keys
+/// refuse the row instead of silently widening its meaning. Holder entries
+/// are narrow-only relative to the vault limit and to other packs.
+fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    for (key, _) in entries {
+        if !matches!(
+            key.as_str()?,
+            ATTRIBUTION_REASON_MAX_BYTES_KEY
+                | ATTRIBUTION_RECEIPTS_PER_PASS_KEY
+                | ATTRIBUTION_HOLDER_REASON_BYTES_KEY
+                | ATTRIBUTION_PRECEDENCE_KEY
+        ) {
+            return None;
+        }
+    }
+    if required_string(entries, ATTRIBUTION_PRECEDENCE_KEY)?.as_str() != "nested_narrowing" {
+        return None;
+    }
+    let mut limits = AttributionLimits::default();
+    for (key, target) in [
+        (
+            ATTRIBUTION_REASON_MAX_BYTES_KEY,
+            &mut limits.reason_max_bytes,
+        ),
+        (
+            ATTRIBUTION_RECEIPTS_PER_PASS_KEY,
+            &mut limits.receipts_per_pass,
+        ),
+    ] {
+        match single_map_value(entries, key) {
+            MapValue::Missing => {}
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => *target = value.as_u64().filter(|v| *v > 0)?,
+        }
+    }
+    match single_map_value(entries, ATTRIBUTION_HOLDER_REASON_BYTES_KEY) {
+        MapValue::Missing => {}
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            for row in rows {
+                let Value::Map(fields) = row else { return None };
+                if fields.len() != 2 {
+                    return None;
+                }
+                let actor = required_string(fields, ATTRIBUTION_HOLDER_ACTOR_KEY)?;
+                let holder = crate::EntityId::from_hex(&actor).ok()?;
+                if holder.to_hex() != actor {
+                    return None;
+                }
+                let bytes = required_value(fields, ATTRIBUTION_HOLDER_MAX_BYTES_KEY)?
+                    .as_u64()
+                    .filter(|v| *v > 0)?;
+                if limits.holder_reason_bytes.insert(holder, bytes).is_some() {
+                    return None;
+                }
+            }
+        }
+        MapValue::Present(_) => return None,
+    }
+    Some(limits)
 }
 
 /// Longest owner policy document a manifest may carry, mirroring the bound the
