@@ -6,7 +6,7 @@ use crate::claim::ScopedReadActorKey;
 use crate::error::Result;
 use crate::federation::Scope;
 use crate::gate::{
-    ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
+    ApprovalContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles, PolicyManifestResolution, default_policy_manifest,
     default_policy_manifest_id, evaluate_external_effect_policy, resolve_policy_manifest,
 };
@@ -118,10 +118,16 @@ fn effect_outcome(vault: &Vault, channel: &str) -> Result<GateOutcome> {
     };
     let policy = policy(vault)?;
     vault.with_write_txn(|txn| {
-        Ok(
-            evaluate_external_effect_policy(&vault.store, txn, &effect, &policy, None, None)?
-                .outcome(),
-        )
+        Ok(evaluate_external_effect_policy(
+            &vault.store,
+            txn,
+            &effect,
+            &policy,
+            None,
+            None,
+            ApprovalContext::FirstAdmission,
+        )?
+        .outcome())
     })
 }
 

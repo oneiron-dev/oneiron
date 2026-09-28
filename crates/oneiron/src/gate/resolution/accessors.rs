@@ -329,6 +329,20 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Nested native-mail policy: every trusted vault row caps a holder or
+    /// identity row. A missing/malformed governing policy never invents an
+    /// auto-send or an earned graduation offer.
+    pub(crate) fn native_mail_policy_for(
+        &self,
+        holder: Option<crate::entity_id::EntityId>,
+        identity: Option<crate::entity_id::EntityId>,
+    ) -> Option<crate::gate::mail_policy::MailPolicy> {
+        if self.is_fail_closed() {
+            return None;
+        }
+        crate::gate::mail_policy::resolve_rows(&self.native_mail_policy, holder, identity)
+    }
+
     /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no
     /// manifest names one.
     ///

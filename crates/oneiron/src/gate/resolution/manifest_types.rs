@@ -371,12 +371,14 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) owner_policy_patterns_dropped: bool,
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    pub(crate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
     /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
     /// never stored here — only the manifest's selector for it. Injection
     /// rides the write door's own options, so no host object is ever reachable
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(crate) connector_admission: crate::gate::connector_admission::ConnectorAdmissionPolicy,
     pub(super) voice_serving: Vec<crate::gate::voice_serving::VoiceServingRows>,
     pub(super) gate_decision_retention: Option<GateDecisionRetentionPolicy>,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
