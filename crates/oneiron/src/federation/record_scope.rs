@@ -75,7 +75,7 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
-fn default_stamp(kind: u8, facet: EntityId) -> Scope {
+pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
     Scope {
         worlds: singleton(ScopeId(crate::claim::base_world_id())),
         facets: singleton(ScopeId(facet)),

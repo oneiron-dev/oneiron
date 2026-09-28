@@ -573,6 +573,119 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
     }
 }
 
+#[tokio::test]
+async fn room_facade_refuses_record_channel_and_world_attenuations() {
+    use oneiron::authority::SlipCaveat;
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    use oneiron::workspace_roster::ProjectRecord;
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let project = oneiron::EntityId::now();
+    let record = ProjectRecord::new(
+        project,
+        Some(vault.root_project().unwrap()),
+        vault.root_project().unwrap(),
+        actor,
+    );
+    vault.put_project(project, &record, 1).unwrap();
+    let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("room-facade-narrow".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let recipe = format!(
+        "scope=core:read;principal_ref={};actor_class=human",
+        actor.to_hex()
+    );
+    let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
+    let mut record_slip = slip.clone();
+    record_slip
+        .attenuate(
+            SlipCaveat {
+                records: Some([actor.to_hex()].into()),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .unwrap();
+    let mut channel_slip = slip.clone();
+    channel_slip
+        .attenuate(
+            SlipCaveat {
+                channels: Some(["other-channel".to_owned()].into()),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .unwrap();
+    let mut world_slip = slip.clone();
+    let mut narrow = Scope::top();
+    narrow.worlds = ScopeAxis::Some([ScopeId(actor)].into());
+    world_slip
+        .attenuate(
+            SlipCaveat {
+                scope: Some(narrow),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .unwrap();
+    let app = crate::build_app(Arc::clone(&server));
+    for (verb, payload) in [
+        ("rooms.render", json!({"room_ref":room.to_hex()})),
+        ("rooms.find", json!({"room_ref":room.to_hex()})),
+        (
+            "rooms.get",
+            json!({"room_ref":room.to_hex(),"turn_ref":actor.to_hex()}),
+        ),
+        (
+            "rooms.trunk",
+            json!({"room_ref":room.to_hex(),"turn_ref":actor.to_hex()}),
+        ),
+    ] {
+        for narrowed in [&record_slip, &channel_slip, &world_slip] {
+            let request = Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap();
+            let response = app
+                .clone()
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server, narrowed, &holder, request,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{verb}");
+        }
+        if matches!(verb, "rooms.render" | "rooms.find") {
+            let request = Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap();
+            let response = app
+                .clone()
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server, &slip, &holder, request,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{verb}");
+        }
+    }
+}
+
 /// Actor A holds an unrestricted-record-scope slip, and the policy manifest
 /// gives A one read grant whose entity types exclude TASK. One TASK T exists,
 /// and it has failed. Returns the server, A's recipe, the owner and T.
