@@ -25,11 +25,13 @@ impl Vault {
         Ok(affected.into_iter().collect())
     }
 
+    /// Returns whether local state existed, plus the citing NOTE documents
+    /// whose pins the erasure rewrote, for the caller's post-commit notice.
     pub(in crate::deletion) fn purge_entity_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-    ) -> Result<bool> {
+    ) -> Result<(bool, Vec<EntityId>)> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
@@ -40,7 +42,7 @@ impl Vault {
         // CITED this id, not this id's own rows, and both acts belong to the
         // one transaction that destroys the evidence.
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
-        crate::note::erase_citations_in_txn(self, wtxn, id)?;
+        let citing = crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
@@ -58,7 +60,10 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed || note_removed || had_refinement || had_merge_receipt)
+        Ok((
+            existed || note_removed || had_refinement || had_merge_receipt,
+            citing,
+        ))
     }
 
     pub(in crate::deletion) fn soft_erase_active_store_in_txn(

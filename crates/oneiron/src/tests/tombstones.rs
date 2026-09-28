@@ -65,7 +65,6 @@ fn replayed_hard_tombstone_purges_and_writes_local_receipt_and_sweep_row() -> Re
         erased: true,
         receipt_id: Some(receipt_id),
         sweep_key: Some(sweep_key),
-        scrubbed_events: _,
     } = outcome
     else {
         panic!("hard replay over local state must erase + receipt + sweep, got {outcome:?}");
@@ -117,7 +116,6 @@ fn replayed_hard_tombstone_purges_and_writes_local_receipt_and_sweep_row() -> Re
             erased: false,
             receipt_id: None,
             sweep_key: None,
-            scrubbed_events: Vec::new(),
         }
     );
     assert_eq!(redaction_audit_receipts(&vault)?.len(), 1);
@@ -176,7 +174,6 @@ fn replayed_ambiguous_tombstones_hard_purge_with_fail_closed_receipt() -> Result
             erased: true,
             receipt_id: Some(receipt_id),
             sweep_key: Some(_),
-            scrubbed_events: _,
         } = outcome
         else {
             panic!(

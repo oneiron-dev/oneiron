@@ -1092,3 +1092,304 @@ async fn remote_hard_tombstone_refreshes_redirect_shell_read() {
     );
     assert_eq!(reactive_reads(&other_reads), 1);
 }
+
+/// The NOTE's public document read contains pins. Erasing an unrelated source
+/// changes that NOTE through its reverse pin index, not an incident edge.
+struct ReactiveNotePins {
+    id: oneiron::EntityId,
+    dependencies: [ReactiveDependency; 1],
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ReactiveLocalQuery for ReactiveNotePins {
+    type Output = oneiron::note::NoteDocumentView;
+    fn dependencies(&self) -> &[ReactiveDependency] {
+        &self.dependencies
+    }
+    fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        vault.note_document(self.id)
+    }
+}
+
+fn seed_reactive_citation(
+    server: &Arc<SyncServer>,
+    counter: u128,
+) -> (oneiron::EntityId, oneiron::EntityId, oneiron::EntityId) {
+    let actor = seeded_test_entity_id(counter);
+    server
+        .vault()
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"citation actor",
+        )
+        .unwrap();
+    let claim = seeded_test_entity_id(counter + 1);
+    let memory = server.vault().memory(actor, oneiron::EdgeActorClass::Human);
+    memory
+        .claim_upsert(&oneiron::memory::ClaimInput {
+            id: Some(claim.to_hex()),
+            predicate: "profile.name".into(),
+            subject_ref: actor.to_hex(),
+            value: serde_json::json!("source"),
+            confidence: 0.9,
+            source: "user_stated".into(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+        })
+        .unwrap();
+    memory.bless_brief_kind().unwrap();
+    let source = oneiron::EntityId::from_hex(
+        &memory
+            .author_take(oneiron::note::TakeTarget::Subject(actor), "erased quote")
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    let pin = server.vault().pin_note_span(source, claim, 0, 6).unwrap();
+    let citing =
+        oneiron::EntityId::from_hex(&memory.author_brief("authored text", &[pin]).unwrap().id_hex)
+            .unwrap();
+    let other =
+        oneiron::EntityId::from_hex(&memory.author_brief("unrelated text", &[]).unwrap().id_hex)
+            .unwrap();
+    (source, citing, other)
+}
+
+#[tokio::test]
+async fn local_and_remote_hard_delete_refresh_citing_note_only() {
+    use loro::CommitOptions;
+    for remote in [false, true] {
+        let (_dir, server) = test_server();
+        let (source, citing, other) = seed_reactive_citation(&server, 0x1437_0050);
+        // Drain the document relay from fixture creation before subscribing;
+        // only the subsequent erasure belongs to these retained reads.
+        tokio::task::yield_now().await;
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let other_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut read = open_local_reactive_read(
+            &server,
+            ReactiveNotePins {
+                id: citing,
+                dependencies: [ReactiveDependency::Doc(citing)],
+                reads: reads.clone(),
+            },
+        )
+        .unwrap();
+        let mut other_read = open_local_reactive_read(
+            &server,
+            ReactiveNotePins {
+                id: other,
+                dependencies: [ReactiveDependency::Doc(other)],
+                reads: other_reads.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(read.snapshot().pins.len(), 1);
+        if remote {
+            let window = oneiron::sync::WindowKey::from_timestamp(
+                server.vault().get_learned_at(&source).unwrap(),
+            );
+            let doc = server.get_or_create_window(&window).await.unwrap();
+            let mut tombstone = vec![2u8];
+            tombstone.extend_from_slice(&1_770_000_000u64.to_le_bytes());
+            tombstone.extend_from_slice(&[9u8; 16]);
+            doc.get_map("tombstones")
+                .insert(&source.to_hex(), tombstone.as_slice())
+                .unwrap();
+            doc.commit_with(CommitOptions::new().origin("conn:7"));
+        } else {
+            server
+                .vault()
+                .delete_entity_with_reason(&source, oneiron::DeleteReason::UserHardDelete)
+                .unwrap();
+        }
+        let current =
+            tokio::time::timeout(std::time::Duration::from_secs(5), read.refresh_on_change())
+                .await
+                .expect("citing NOTE notice")
+                .expect("citing read");
+        assert_eq!(current, &server.vault().note_document(citing).unwrap());
+        assert!(current.pins.is_empty());
+        assert_eq!(reactive_reads(&reads), 2);
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                other_read.refresh_on_change()
+            )
+            .await
+            .is_err(),
+            "unrelated NOTE must not re-read"
+        );
+        assert_eq!(reactive_reads(&other_reads), 1);
+    }
+}
+
+struct ReactiveEdgeFlags {
+    id: oneiron::EntityId,
+    incoming: bool,
+    dependencies: [ReactiveDependency; 1],
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ReactiveLocalQuery for ReactiveEdgeFlags {
+    type Output = Vec<(
+        oneiron::EntityId,
+        Option<oneiron::edge::EdgeProvenanceFlags>,
+    )>;
+    fn dependencies(&self) -> &[ReactiveDependency] {
+        &self.dependencies
+    }
+    fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(if self.incoming {
+            vault.edges_in(&self.id)?
+        } else {
+            vault.edges_out(&self.id)?
+        }
+        .into_iter()
+        .filter(|edge| edge.kind == oneiron::EdgeKind::Mentions)
+        .map(|edge| (edge.target, edge.provenance))
+        .collect())
+    }
+}
+
+#[tokio::test]
+async fn local_and_remote_provenance_deletes_refresh_both_edge_endpoints() {
+    use loro::CommitOptions;
+    for remote in [false, true] {
+        for hard in [false, true] {
+            let (_dir, server) = test_server();
+            let source = seeded_test_entity_id(0x1437_0060);
+            let target = seeded_test_entity_id(0x1437_0061);
+            let other = seeded_test_entity_id(0x1437_0062);
+            let other_target = seeded_test_entity_id(0x1437_0063);
+            for id in [source, target, other, other_target] {
+                server
+                    .vault()
+                    .put_entity(
+                        &id,
+                        oneiron::registry::ENTITY_TYPE_PERSON,
+                        oneiron::TimeRange { start: 1, end: 1 },
+                        1,
+                        b"provenance endpoint",
+                    )
+                    .unwrap();
+            }
+            server
+                .vault()
+                .put_edge(&source, oneiron::EdgeKind::Mentions, &target, 0.5)
+                .unwrap();
+            server
+                .vault()
+                .put_edge(&other, oneiron::EdgeKind::Mentions, &other_target, 0.5)
+                .unwrap();
+            let claim = seeded_test_entity_id(0x1437_0064);
+            let subject =
+                oneiron::provenance::EdgeRef::new(source, oneiron::EdgeKind::Mentions, target);
+            server
+                .vault()
+                .put_edge_provenance(
+                    &claim,
+                    &subject,
+                    &oneiron::provenance::EdgeProvenanceClaimBody::new(
+                        source,
+                        0.8,
+                        oneiron::provenance::SupersessionStatus::Confirmed,
+                    ),
+                    oneiron::EdgeActorClass::Human,
+                    100,
+                )
+                .unwrap();
+            let output_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let input_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let other_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let mut out = open_local_reactive_read(
+                &server,
+                ReactiveEdgeFlags {
+                    id: source,
+                    incoming: false,
+                    dependencies: [ReactiveDependency::Doc(source)],
+                    reads: output_reads.clone(),
+                },
+            )
+            .unwrap();
+            let mut inn = open_local_reactive_read(
+                &server,
+                ReactiveEdgeFlags {
+                    id: target,
+                    incoming: true,
+                    dependencies: [ReactiveDependency::Doc(target)],
+                    reads: input_reads.clone(),
+                },
+            )
+            .unwrap();
+            let mut untouched = open_local_reactive_read(
+                &server,
+                ReactiveEdgeFlags {
+                    id: other,
+                    incoming: false,
+                    dependencies: [ReactiveDependency::Doc(other)],
+                    reads: other_reads.clone(),
+                },
+            )
+            .unwrap();
+            assert!(out.snapshot().iter().any(|(_, flags)| flags.is_some()));
+            assert!(inn.snapshot().iter().any(|(_, flags)| flags.is_some()));
+            if remote {
+                let window = oneiron::sync::WindowKey::from_timestamp(
+                    server.vault().get_learned_at(&claim).unwrap(),
+                );
+                let doc = server.get_or_create_window(&window).await.unwrap();
+                let mut tombstone = vec![if hard { 2u8 } else { 1u8 }];
+                tombstone.extend_from_slice(&1_770_000_000u64.to_le_bytes());
+                tombstone.extend_from_slice(&[8u8; 16]);
+                doc.get_map("tombstones")
+                    .insert(&claim.to_hex(), tombstone.as_slice())
+                    .unwrap();
+                doc.commit_with(CommitOptions::new().origin("conn:7"));
+            } else {
+                server
+                    .vault()
+                    .delete_entity_with_reason(
+                        &claim,
+                        if hard {
+                            oneiron::DeleteReason::UserHardDelete
+                        } else {
+                            oneiron::DeleteReason::UserDelete
+                        },
+                    )
+                    .unwrap();
+            }
+            for (read, count) in [(&mut out, &output_reads), (&mut inn, &input_reads)] {
+                let current = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    read.refresh_on_change(),
+                )
+                .await
+                .expect("subject edge endpoint notice")
+                .expect("read");
+                assert!(current.iter().all(|(_, flags)| flags.is_none()));
+                assert_eq!(reactive_reads(count), 2);
+            }
+            assert!(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    untouched.refresh_on_change()
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(reactive_reads(&other_reads), 1);
+        }
+    }
+}

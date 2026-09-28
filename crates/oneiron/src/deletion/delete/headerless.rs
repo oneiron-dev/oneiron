@@ -112,8 +112,9 @@ impl Vault {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
-        let affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
+        let (existed, citing) = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        affected.extend(citing);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(

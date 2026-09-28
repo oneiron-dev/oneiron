@@ -382,11 +382,8 @@ fn apply_tombstone_in_savepoint(
         &work.id,
         &work.raw_value,
     );
-    if let Ok(crate::deletion::ReplayedTombstoneOutcome::HardPurged {
-        scrubbed_events, ..
-    }) = &applied
-    {
-        affected.extend(scrubbed_events);
+    if let Ok((_, changed_documents)) = &applied {
+        affected.extend(changed_documents);
     }
     let item = match applied {
         Ok(_) if work.hard => {

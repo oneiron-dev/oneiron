@@ -193,14 +193,15 @@ impl Vault {
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
+            let mut changed = vec![*id];
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
             if existed && let Some(captured) = &captured {
-                self.refresh_subject_edge_after_claim_delete_in_txn(
+                changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
                     id,
                     &captured.subject,
-                )?;
+                )?);
             }
             if existed {
                 if reason.publishes_crdt_tombstone() {
@@ -221,7 +222,7 @@ impl Vault {
             }
             wtxn.commit()?;
             if existed {
-                self.notify_local_delete_materialized(&[*id]);
+                self.notify_local_delete_materialized(&changed);
                 gate.as_ref()
                     .inspect(|gate| gate.note_soft_scrub_committed());
             }
@@ -335,18 +336,19 @@ impl Vault {
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
             let scrub_is_the_linearization_point = !authority_settled;
-            crate::note::erase_citations_in_txn(self, &mut wtxn, id)?;
+            let mut changed = vec![*id];
+            changed.extend(crate::note::erase_citations_in_txn(self, &mut wtxn, id)?);
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
             if existed && let Some(captured) = &captured {
-                self.refresh_subject_edge_after_claim_delete_in_txn(
+                changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
                     id,
                     &captured.subject,
-                )?;
+                )?);
             }
             // fix-leg 9 P1: on the NON-PUBLISHING path this txn's re-fold made
             // it the linearization point, so the deletion's propagation intent
@@ -395,7 +397,7 @@ impl Vault {
             }
             wtxn.commit()?;
             if existed {
-                self.notify_local_delete_materialized(&[*id]);
+                self.notify_local_delete_materialized(&changed);
             }
             self.store.clock.now_recorded_at()
         } else {
@@ -474,16 +476,17 @@ impl Vault {
         // primary witness — and in this same transaction, so a head can
         // never be erased while a shell of it stays readable.
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
-        let (cascaded_shells, scrubbed_events) =
+        let (cascaded_shells, changed_documents) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
-        affected.extend(scrubbed_events);
+        affected.extend(changed_documents);
         // The shells' historical carriers ride THIS erasure's sweep row:
         // clearing the active store while history keeps the bytes would
         // erase nothing.
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        let (existed, citing) = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        affected.extend(citing);
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
@@ -491,7 +494,11 @@ impl Vault {
         // captured Claim whose record was raced away was already refreshed
         // by the racer's own delete txn.
         if existed && let Some(captured) = &captured {
-            self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
+            affected.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
+                &mut wtxn,
+                id,
+                &captured.subject,
+            )?);
         }
 
         // OWNER-DECISION (cfg-off durability): the pending-tombstone marker
