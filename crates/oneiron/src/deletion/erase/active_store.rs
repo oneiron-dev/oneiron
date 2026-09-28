@@ -122,6 +122,12 @@ impl Vault {
         if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
             crate::conversation_dag::invalidate_thread_meta_for_turn_put(&self.store, wtxn, *id)?;
         }
+        crate::channel_identity::clear_assignment_for_delete(
+            &self.store,
+            wtxn,
+            id,
+            header.entity_type,
+        )?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the

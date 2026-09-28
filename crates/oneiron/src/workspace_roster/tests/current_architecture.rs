@@ -16,7 +16,7 @@ pub(super) fn assert_mailbox_lifecycle_receipt(
     assert_eq!(result.identity.as_ref(), Some(&stored));
     assert!(!stored.may_send());
     if gate_outcome == Some("allow") || gate_outcome.is_none() {
-        assert_eq!(result.outcome, stored.state.as_str());
+        assert_eq!(result.outcome, stored.state().as_str());
     }
     let receipt = vault
         .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::IdentityLifecycle))?
@@ -30,11 +30,11 @@ pub(super) fn assert_mailbox_lifecycle_receipt(
         Some(format!("entity:{}", identity.to_hex()))
     );
     assert_eq!(field("verb"), Some(verb));
-    assert_eq!(field("state"), Some(stored.state.as_str()));
+    assert_eq!(field("state"), Some(stored.state().as_str()));
     assert_eq!(
         field("fulfillment_mode"),
         stored
-            .pending_fulfillment
+            .pending_fulfillment()
             .map(crate::channel_identity::ChannelIdentityFulfillment::as_str)
     );
     assert_eq!(
@@ -626,7 +626,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
         let identity = vault
             .get_channel_identity(&requested.identity_ref)?
             .expect("identity");
-        assert_eq!(identity.state, ChannelIdentityState::Requested);
+        assert_eq!(identity.state(), ChannelIdentityState::Requested);
         for (outcome, gate_outcome) in [("denied", "deny"), ("held", "pending")] {
             let mut request = mailbox_bind_request(requested.identity_ref, &owner);
             if outcome == "denied" {

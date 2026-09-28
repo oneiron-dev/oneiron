@@ -277,6 +277,9 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .booking_conversion_rows
                     .extend(decoded.booking_conversion_rows);
+                // Resolve class policy restrictively across trusted manifests.
+                resolution.wait_policy.extend_rows(decoded.wait_policy);
+                resolution.act_policy.extend_rows(decoded.act_policy);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
                     let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();

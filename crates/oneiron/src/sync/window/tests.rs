@@ -15,6 +15,84 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
+fn delegated_identity_fixture(
+    vault: &Vault,
+    name: &str,
+    address: &str,
+    learned_at: u64,
+) -> Result<(
+    crate::channel_identity::DelegatedGrant,
+    crate::channel_identity::ChannelIdentityBinding,
+)> {
+    use crate::channel_identity::{DelegatedGrant, DelegatedGrantScope, delegated_custody_scopes};
+    use crate::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
+        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    };
+
+    let record = SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: name.to_owned(),
+        class: CustodyClass::CustodyDeviceBound,
+        device_only: true,
+        value_bytes: b"locally-held-oauth-token".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: learned_at,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: "connector:gmail".to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: delegated_custody_scopes("email", address),
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    };
+    vault.register_secret(record)?;
+    let grant = DelegatedGrant::new(name, vec![DelegatedGrantScope::MailRead]);
+    vault.verify_delegated_custody("email", address, &grant)?;
+    Ok((
+        grant,
+        crate::channel_identity::ChannelIdentityBinding::agent(EntityId::from_bytes([0xA1; 16])?),
+    ))
+}
+
+fn release_local_delegated_identity(
+    vault: &Vault,
+    id: EntityId,
+    learned_at: u64,
+    address: &str,
+    grant: crate::channel_identity::DelegatedGrant,
+    binding: crate::channel_identity::ChannelIdentityBinding,
+) -> Result<(
+    crate::channel_identity::ChannelIdentity,
+    crate::channel_identity::ChannelIdentity,
+)> {
+    use crate::channel_identity::{
+        ChannelIdentityFulfillment, ChannelIdentityStep, DelegatedProvisionRequest,
+    };
+
+    vault.provision_delegated_identity(
+        &id,
+        DelegatedProvisionRequest {
+            channel: "email".to_owned(),
+            address_or_handle: address.to_owned(),
+            binding,
+            grant,
+        },
+        learned_at,
+    )?;
+    vault.step_channel_identity(
+        &id,
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
+        learned_at + 1,
+    )?;
+    let active = vault.step_channel_identity(&id, ChannelIdentityStep::Fulfill, learned_at + 2)?;
+    let retired = vault.step_channel_identity(&id, ChannelIdentityStep::Release, learned_at + 3)?;
+    Ok((retired, active))
+}
+
 #[test]
 fn typed_addressing_edge_survives_reverse_and_forward_replay_but_forged_peer_edge_does_not()
 -> Result<()> {
@@ -1809,6 +1887,182 @@ fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() 
         record.payload_hash,
         crate::sync::quarantine::payload_hash(&forged_value)
     );
+    Ok(())
+}
+
+#[test]
+fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityState, encode_channel_identity_body,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let address = "member@example.test";
+    let (grant, binding) =
+        delegated_identity_fixture(&vault, "member-custody", address, learned_at)?;
+    let retired_id = EntityId::from_bytes([0xB1; 16])?;
+    let (retired, peer_identity) = release_local_delegated_identity(
+        &vault,
+        retired_id,
+        learned_at,
+        address,
+        grant.clone(),
+        binding,
+    )?;
+    assert_eq!(retired.state(), ChannelIdentityState::Released);
+    // The local custody record remains active and really covers this mailbox;
+    // it is not missing custody that makes the peer's row invalid.
+    vault.verify_delegated_custody("email", address, &grant)?;
+
+    // A peer can replay the byte-exact ACTIVE body this vault previously held
+    // under a fresh id. It names the freed key and locally valid custody, but
+    // the peer did not perform this vault's provision/bind/fulfillment.
+    let peer_body = encode_channel_identity_body(&peer_identity)?;
+    let peer_id = EntityId::from_bytes([0xB2; 16])?;
+
+    // Self-held identities remain ordinary replicated rows.
+    let self_held_id = EntityId::from_bytes([0xB3; 16])?;
+    let self_held = ChannelIdentity::own_app_home(EntityId::from_bytes([0xB4; 16])?, learned_at);
+    let self_held_body = encode_channel_identity_body(&self_held)?;
+    let doc = create_window_doc("peer-authored", &window_key);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &peer_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+            learned_at + 4,
+            &peer_body,
+        ),
+    )?;
+    map_insert_bytes(
+        &entities,
+        &self_held_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+            learned_at,
+            &self_held_body,
+        ),
+    )?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(count, 1, "the self-held control row still replays");
+    assert!(
+        vault.get_raw_unsealed(&peer_id)?.is_none(),
+        "a peer-authored delegated row must not occupy the freed assignment key"
+    );
+    assert_eq!(
+        vault
+            .get_channel_identity(&self_held_id)?
+            .map(|row| row.state()),
+        Some(ChannelIdentityState::Active),
+        "self-held active identity replication stays supported"
+    );
+    let rejected = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].1.reason_code, "InvalidChannelIdentityBody");
+    Ok(())
+}
+
+#[test]
+fn malformed_channel_identity_carriers_are_scrubbed_before_export() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, DelegatedGrant, DelegatedGrantScope, encode_channel_identity_body,
+    };
+    let (_dir, vault) = test_vault();
+    let window = WindowKey::new("2026-03");
+    let at = window.start_timestamp().expect("window") + 60;
+    let grant = DelegatedGrant::new("oauth/gmail/member", vec![DelegatedGrantScope::MailRead]);
+    let (grant, binding) =
+        delegated_identity_fixture(&vault, &grant.custody_record_ref, "member@example.test", at)?;
+    let id = EntityId::from_bytes([0xD8; 16])?;
+    let (_, active) =
+        release_local_delegated_identity(&vault, id, at, "member@example.test", grant, binding)?;
+    let valid_delegated = encode_channel_identity_body(&active)?;
+    let mut damaged = valid_delegated;
+    // MessagePack fixmap: claim one additional entry but leave all existing
+    // grant-ref/scope bytes intact. Neither strict nor fallback decode succeeds.
+    match damaged[0] {
+        0x80..=0x8e => damaged[0] += 1,
+        0xde => {
+            let count = u16::from_be_bytes([damaged[1], damaged[2]]) + 1;
+            damaged[1..3].copy_from_slice(&count.to_be_bytes());
+        }
+        0xdf => {
+            let count = u32::from_be_bytes(damaged[1..5].try_into().expect("map32 header")) + 1;
+            damaged[1..5].copy_from_slice(&count.to_be_bytes());
+        }
+        other => panic!("identity body is not a MessagePack map: {other:#x}"),
+    }
+    assert!(crate::channel_identity::decode_channel_identity_body(&damaged).is_err());
+    let damaged_blob =
+        make_entity_blob(crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY, at, &damaged);
+    let healthy = ChannelIdentity::own_app_home(EntityId::from_bytes([0xD9; 16])?, at);
+    let healthy_blob = make_entity_blob(
+        crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+        at,
+        &encode_channel_identity_body(&healthy)?,
+    );
+    assert!(!is_delegated_channel_identity_carrier(&healthy_blob));
+    assert!(is_delegated_channel_identity_carrier(&damaged_blob));
+    for (label, key) in [
+        ("canonical", EntityId::from_bytes([0xDA; 16])?.to_hex()),
+        ("noncanonical", "not-an-entity-key".to_owned()),
+    ] {
+        let doc = create_window_doc(label, &window);
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        map_insert_bytes(&entities, &key, &damaged_blob)?;
+        let healthy_id = EntityId::from_bytes([0xDB; 16])?;
+        map_insert_bytes(&entities, &healthy_id.to_hex(), &healthy_blob)?;
+        let edge_key = format_edge_key(
+            &EntityId::from_bytes([0xDA; 16])?,
+            EdgeKind::Mentions,
+            &healthy_id,
+        );
+        if label == "canonical" {
+            map_insert_bytes(
+                &edges,
+                &edge_key,
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 1.0, at, None, None)?,
+            )?;
+        }
+        doc.commit();
+        // Even a peer at the initial frontier receives only a history-free
+        // snapshot. Import it to prove the damaged carrier and incident edge
+        // cannot be reconstructed from the exported bytes.
+        let exported =
+            export_window_updates_since(&vault, &window, &doc, &VersionVector::default().encode())?;
+        let peer = LoroDoc::new();
+        import_doc(&peer, &exported)?;
+        assert!(
+            peer.is_shallow(),
+            "scrubbed history never goes out as raw deltas"
+        );
+        assert!(map_get_bytes(&peer.get_map("entities"), &key).is_none());
+        assert!(map_get_bytes(&peer.get_map("entities"), &healthy_id.to_hex()).is_some());
+        if label == "canonical" {
+            assert!(map_get_bytes(&peer.get_map("edges"), &edge_key).is_none());
+        }
+        assert!(history_free_window_required(&vault, &window)?);
+        assert!(
+            map_get_bytes(&entities, &key).is_none(),
+            "{label} damaged identity removed"
+        );
+        assert!(
+            map_get_bytes(&entities, &healthy_id.to_hex()).is_some(),
+            "valid self-held identity stays portable"
+        );
+        if label == "canonical" {
+            assert!(
+                map_get_bytes(&edges, &edge_key).is_none(),
+                "incident edge removed"
+            );
+        }
+    }
     Ok(())
 }
 

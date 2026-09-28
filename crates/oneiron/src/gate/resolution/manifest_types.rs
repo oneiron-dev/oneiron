@@ -4,6 +4,8 @@ use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use std::collections::BTreeMap;
 
+use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
+
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -333,6 +335,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    /// Vault-resident wait windows keyed by class.
+    pub(super) wait_policy: WaitPolicyTable,
+    /// Vault-resident act postures keyed by act and subject class.
+    pub(super) act_policy: ActPolicyTable,
     pub(super) hosted_tts: HostedTtsPolicy,
     pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
     pub(crate) connector_class_precedence: ConnectorClassPrecedence,
