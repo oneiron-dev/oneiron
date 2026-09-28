@@ -77,6 +77,32 @@ pub(super) fn hash_policy_frontier_v0(
             hash_u64(hasher, value as u64);
         }
     }
+    // Behavior-deciding archive policy moves the frontier when vault or exact
+    // holder bounds change. Hash declared rows, not only a selected caller.
+    if !resolution.docx_archive_limits.is_empty() {
+        hash_str(hasher, "docx_archive_limits");
+        hash_len(hasher, resolution.docx_archive_limits.len());
+        for policy in &resolution.docx_archive_limits {
+            for value in [
+                policy.vault.max_entries as u64,
+                policy.vault.max_part_bytes,
+                policy.vault.max_total_bytes,
+            ] {
+                hash_u64(hasher, value);
+            }
+            hash_len(hasher, policy.holders.len());
+            for (actor, limits) in &policy.holders {
+                hash_bytes(hasher, actor.as_bytes());
+                for value in [
+                    limits.max_entries as u64,
+                    limits.max_part_bytes,
+                    limits.max_total_bytes,
+                ] {
+                    hash_u64(hasher, value);
+                }
+            }
+        }
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
