@@ -7,20 +7,11 @@ use crate::Vault;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::temporal::TimeRange;
 
 /// Schema version of both `vault_meta` row families below.
 pub const VAULT_LFS_SCHEMA_VERSION: u8 = 2;
-
-/// Object family: `prefix ++ 32 raw OID bytes`.
-///
-/// The prefix ends in the version separator `v1:` so a future `v10:` can never
-/// be a prefix-scan of `v1` (`store::short_id_alias` prefix law).
-pub const VAULT_LFS_OBJECT_KEY_PREFIX: &[u8] = b"origin:lfs:object:v1:";
-
-/// Ref-attachment family:
-/// `prefix ++ 16B repo_id ++ 0x00 ++ ref_name ++ 0x00 ++ 32B OID`.
-pub const VAULT_LFS_REF_KEY_PREFIX: &[u8] = b"origin:lfs:ref:v1:";
 
 /// Domain separator for deterministic LFS ASSET ids.
 pub const VAULT_LFS_ASSET_ID_DOMAIN: &[u8] = b"oneiron:origin-lfs-asset:v1";
@@ -34,12 +25,65 @@ pub const LFS_BASIC_TRANSFER: &str = "basic";
 /// The Git-LFS batch API media type.
 pub const LFS_JSON_MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
 
-/// `asset_id(16) ++ size u64 LE(8) ++ created_at u64 LE(8)`.
+/// `asset_id(16) ++ size u64 LE(8) ++ created_at u64 LE(8) ++ ref_owner(16)`.
 const LFS_OBJECT_RECORD_LEN: usize = ENTITY_ID_LEN * 2 + 16;
 
-/// The key separator inside an attachment key. A git ref name can never carry
-/// a NUL, so the repo_id/ref_name/OID fields stay unambiguously framed.
-const LFS_REF_KEY_SEPARATOR: u8 = 0;
+/// Durable LFS object record: asset id, size, created time, ref owner. Key: oid.
+pub(super) const OBJECTS: SideTable<LfsOid, LfsObjectRecord, Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_OBJECT);
+
+/// Attaches one LFS object id to one git ref in one repository (value = learned_at u64 LE). Key:
+/// repo id "\x00" ref_name "\x00" oid. A git ref name can never carry a NUL, so the fields stay
+/// unambiguously framed.
+pub(super) const REFS: SideTable<LfsRefKey, [u8; 8], Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_REF);
+
+/// `origin:lfs:ref:v1:` key shape: repo id, then a NUL-framed ref name, then the OID.
+pub(super) struct LfsRefKey {
+    pub(super) repo_id: EntityId,
+    ref_name: String,
+    pub(super) oid: LfsOid,
+}
+
+impl SideKey for LfsRefKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.repo_id.encode_into(out);
+        out.push(0);
+        out.extend_from_slice(self.ref_name.as_bytes());
+        out.push(0);
+        self.oid.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (repo_bytes, rest) = bytes.split_at_checked(ENTITY_ID_LEN)?;
+        let (&separator, rest) = rest.split_first()?;
+        if separator != 0 {
+            return None;
+        }
+        let oid_start = rest.len().checked_sub(VAULT_LFS_OID_LEN)?;
+        let (name_and_sep, oid_bytes) = rest.split_at(oid_start);
+        let (&separator, name_bytes) = name_and_sep.split_last()?;
+        if separator != 0 {
+            return None;
+        }
+        Some(Self {
+            repo_id: EntityId::from_bytes(repo_bytes.try_into().ok()?).ok()?,
+            ref_name: String::from_utf8(name_bytes.to_vec()).ok()?,
+            oid: LfsOid::decode_key(oid_bytes)?,
+        })
+    }
+}
+
+/// The bytes after `REFS`'s prefix that name every row for one repo+ref, without the trailing
+/// OID.
+fn ref_scan_prefix(repo_id: &EntityId, ref_name: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(ENTITY_ID_LEN + ref_name.len() + 2);
+    out.extend_from_slice(repo_id.as_bytes());
+    out.push(0);
+    out.extend_from_slice(ref_name.as_bytes());
+    out.push(0);
+    out
+}
 
 // ---------------------------------------------------------------------------
 // Records
@@ -141,22 +185,12 @@ impl Vault {
     /// The live object record. Deleted OIDs never resolve even during deferred byte reclamation.
     pub fn lfs_object(&self, oid: LfsOid) -> Result<Option<VaultLfsObject>> {
         let txn = self.store.env.read_txn()?;
-        if self
-            .store
-            .vault_meta
-            .get(
-                &txn,
-                &super::chunks::key(super::lifecycle::DELETED, oid.as_bytes()),
-            )?
-            .is_some()
-        {
+        if super::lifecycle::DELETED.contains(&self.store, &txn, &oid)? {
             return Ok(None);
         }
-        self.store
-            .vault_meta
-            .get(&txn, &lfs_object_key(&oid))?
-            .map(|raw| decode_lfs_object_record(oid, &raw))
-            .transpose()
+        Ok(OBJECTS
+            .get(&self.store, &txn, &oid)?
+            .map(|record| record.with_oid(oid)))
     }
 
     /// Whether a live object has this exact declared size.
@@ -217,29 +251,20 @@ impl Vault {
         oid: LfsOid,
         learned_at: u64,
     ) -> Result<()> {
-        let key = lfs_ref_key(&repo_id, ref_name, &oid);
+        let key = LfsRefKey {
+            repo_id,
+            ref_name: ref_name.to_owned(),
+            oid,
+        };
         self.with_write_txn(|wtxn| {
-            if self
-                .store
-                .vault_meta
-                .get(
-                    wtxn,
-                    &super::chunks::key(super::lifecycle::DELETED, oid.as_bytes()),
-                )?
-                .is_some()
-                || self
-                    .store
-                    .vault_meta
-                    .get(wtxn, &lfs_object_key(&oid))?
-                    .is_none()
+            if super::lifecycle::DELETED.contains(&self.store, wtxn, &oid)?
+                || !OBJECTS.contains(&self.store, wtxn, &oid)?
             {
                 return Err(super::chunks::invalid(
                     "cannot attach missing or deleted lfs object",
                 ));
             }
-            self.store
-                .vault_meta
-                .put(wtxn, &key, &learned_at.to_le_bytes())?;
+            REFS.put(&self.store, wtxn, &key, &learned_at.to_le_bytes())?;
             Ok(())
         })
     }
@@ -254,17 +279,13 @@ impl Vault {
         repo_id: EntityId,
         ref_name: &str,
     ) -> Result<u64> {
-        let prefix = lfs_ref_prefix(&repo_id, ref_name);
+        let prefix = ref_scan_prefix(&repo_id, ref_name);
         self.with_write_txn(|wtxn| {
-            let mut keys = Vec::new();
-            for entry in self.store.vault_meta.prefix_iter(wtxn, &prefix)? {
-                let (key, _) = entry?;
-                keys.push(key.to_vec());
-            }
+            let keys = REFS.scan_keys(&self.store, wtxn, &prefix)?;
             let removed = u64::try_from(keys.len())
                 .map_err(|_| Error::ArithmeticOverflow("lfs ref row count exceeds u64"))?;
-            for key in keys {
-                self.store.vault_meta.delete(wtxn, &key)?;
+            for key in &keys {
+                REFS.delete(&self.store, wtxn, key)?;
             }
             Ok(removed)
         })
@@ -272,22 +293,12 @@ impl Vault {
 
     /// The object ids one git ref currently references.
     pub fn lfs_git_ref_objects(&self, repo_id: EntityId, ref_name: &str) -> Result<Vec<LfsOid>> {
-        let prefix = lfs_ref_prefix(&repo_id, ref_name);
+        let prefix = ref_scan_prefix(&repo_id, ref_name);
         let rtxn = self.store.env.read_txn()?;
         let mut oids = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, _) = entry?;
-            let raw: [u8; VAULT_LFS_OID_LEN] = key
-                .get(key.len().saturating_sub(VAULT_LFS_OID_LEN)..)
-                .and_then(|tail| tail.try_into().ok())
-                .ok_or(Error::CorruptedIndex("vault lfs ref key"))?;
-            if self
-                .store
-                .vault_meta
-                .get(&rtxn, &super::chunks::key(super::lifecycle::DELETED, &raw))?
-                .is_none()
-            {
-                oids.push(LfsOid::from_bytes(raw));
+        for key in REFS.scan_keys(&self.store, &rtxn, &prefix)? {
+            if !super::lifecycle::DELETED.contains(&self.store, &rtxn, &key.oid)? {
+                oids.push(key.oid);
             }
         }
         Ok(oids)
@@ -310,60 +321,69 @@ impl Vault {
     }
 }
 
-pub(super) fn lfs_object_key(oid: &LfsOid) -> Vec<u8> {
-    let mut key = Vec::with_capacity(VAULT_LFS_OBJECT_KEY_PREFIX.len() + VAULT_LFS_OID_LEN);
-    key.extend_from_slice(VAULT_LFS_OBJECT_KEY_PREFIX);
-    key.extend_from_slice(oid.as_bytes());
-    key
+/// The `ORIGIN_LFS_OBJECT` value half of a [`VaultLfsObject`] row: everything except the oid,
+/// which is the row's own key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct LfsObjectRecord {
+    asset_id: EntityId,
+    size_bytes: u64,
+    created_at: u64,
+    pub(super) ref_owner: EntityId,
 }
 
-fn lfs_ref_prefix(repo_id: &EntityId, ref_name: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        VAULT_LFS_REF_KEY_PREFIX.len() + ENTITY_ID_LEN + ref_name.len() + 2 + VAULT_LFS_OID_LEN,
-    );
-    key.extend_from_slice(VAULT_LFS_REF_KEY_PREFIX);
-    key.extend_from_slice(repo_id.as_bytes());
-    key.push(LFS_REF_KEY_SEPARATOR);
-    key.extend_from_slice(ref_name.as_bytes());
-    key.push(LFS_REF_KEY_SEPARATOR);
-    key
-}
-
-fn lfs_ref_key(repo_id: &EntityId, ref_name: &str, oid: &LfsOid) -> Vec<u8> {
-    let mut key = lfs_ref_prefix(repo_id, ref_name);
-    key.extend_from_slice(oid.as_bytes());
-    key
-}
-
-pub(super) fn encode_lfs_object_record(object: &VaultLfsObject) -> [u8; LFS_OBJECT_RECORD_LEN] {
-    let mut value = [0_u8; LFS_OBJECT_RECORD_LEN];
-    value[..ENTITY_ID_LEN].copy_from_slice(object.asset_id.as_bytes());
-    value[ENTITY_ID_LEN..ENTITY_ID_LEN + 8].copy_from_slice(&object.size_bytes.to_le_bytes());
-    value[ENTITY_ID_LEN + 8..ENTITY_ID_LEN + 16].copy_from_slice(&object.created_at.to_le_bytes());
-    value[ENTITY_ID_LEN + 16..].copy_from_slice(object.ref_owner.as_bytes());
-    value
-}
-
-pub(super) fn decode_lfs_object_record(oid: LfsOid, raw: &[u8]) -> Result<VaultLfsObject> {
-    if raw.len() != LFS_OBJECT_RECORD_LEN {
-        return Err(Error::CorruptedIndex("vault lfs object record"));
+impl LfsObjectRecord {
+    pub(super) fn from_object(object: &VaultLfsObject) -> Self {
+        Self {
+            asset_id: object.asset_id,
+            size_bytes: object.size_bytes,
+            created_at: object.created_at,
+            ref_owner: object.ref_owner,
+        }
     }
-    let mut id = [0_u8; ENTITY_ID_LEN];
-    id.copy_from_slice(&raw[..ENTITY_ID_LEN]);
-    let mut size = [0_u8; 8];
-    size.copy_from_slice(&raw[ENTITY_ID_LEN..ENTITY_ID_LEN + 8]);
-    let mut created = [0_u8; 8];
-    created.copy_from_slice(&raw[ENTITY_ID_LEN + 8..ENTITY_ID_LEN + 16]);
-    let owner = raw[ENTITY_ID_LEN + 16..]
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("lfs ref owner"))?;
-    Ok(VaultLfsObject {
-        oid,
-        asset_id: EntityId::from_bytes(id)
-            .map_err(|_| Error::CorruptedIndex("vault lfs object asset id"))?,
-        size_bytes: u64::from_le_bytes(size),
-        created_at: u64::from_le_bytes(created),
-        ref_owner: EntityId::from_bytes(owner)
-            .map_err(|_| Error::CorruptedIndex("lfs ref owner"))?,
-    })
+
+    pub(super) fn with_oid(self, oid: LfsOid) -> VaultLfsObject {
+        VaultLfsObject {
+            oid,
+            asset_id: self.asset_id,
+            size_bytes: self.size_bytes,
+            created_at: self.created_at,
+            ref_owner: self.ref_owner,
+        }
+    }
+}
+
+/// `asset_id(16) ++ size u64 LE(8) ++ created_at u64 LE(8) ++ ref_owner(16)`, unchanged.
+impl RawValue for LfsObjectRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut value = [0_u8; LFS_OBJECT_RECORD_LEN];
+        value[..ENTITY_ID_LEN].copy_from_slice(self.asset_id.as_bytes());
+        value[ENTITY_ID_LEN..ENTITY_ID_LEN + 8].copy_from_slice(&self.size_bytes.to_le_bytes());
+        value[ENTITY_ID_LEN + 8..ENTITY_ID_LEN + 16]
+            .copy_from_slice(&self.created_at.to_le_bytes());
+        value[ENTITY_ID_LEN + 16..].copy_from_slice(self.ref_owner.as_bytes());
+        Ok(value.to_vec())
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        if raw.len() != LFS_OBJECT_RECORD_LEN {
+            return Err(Error::CorruptedIndex("vault lfs object record").into());
+        }
+        let mut id = [0_u8; ENTITY_ID_LEN];
+        id.copy_from_slice(&raw[..ENTITY_ID_LEN]);
+        let mut size = [0_u8; 8];
+        size.copy_from_slice(&raw[ENTITY_ID_LEN..ENTITY_ID_LEN + 8]);
+        let mut created = [0_u8; 8];
+        created.copy_from_slice(&raw[ENTITY_ID_LEN + 8..ENTITY_ID_LEN + 16]);
+        let owner = raw[ENTITY_ID_LEN + 16..]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("lfs ref owner"))?;
+        Ok(Self {
+            asset_id: EntityId::from_bytes(id)
+                .map_err(|_| Error::CorruptedIndex("vault lfs object asset id"))?,
+            size_bytes: u64::from_le_bytes(size),
+            created_at: u64::from_le_bytes(created),
+            ref_owner: EntityId::from_bytes(owner)
+                .map_err(|_| Error::CorruptedIndex("lfs ref owner"))?,
+        })
+    }
 }

@@ -10,7 +10,9 @@ use std::borrow::Cow;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(feature = "sync")]
-use crate::error::{Error, StoreError};
+use crate::error::{Error, SideTableRowProblem, StoreError};
+#[cfg(feature = "sync")]
+use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 
 /// Highest priority: a pending claim surfaced in user-visible retrieval.
 pub const EMBED_PRIORITY_SURFACED_HOT: u8 = 0;
@@ -167,6 +169,42 @@ struct PendingEmbeddingLease {
     token: Vec<u8>,
 }
 
+/// Lease fencing one pending-embedding job against a route/token pair. Key: hex32.
+#[cfg(feature = "sync")]
+const PENDING_EMBEDDING_LEASE: SideTable<HexId, PendingEmbeddingLease, Raw> =
+    SideTable::new(&side_table::PENDING_EMBEDDING_LEASE);
+
+#[cfg(feature = "sync")]
+impl RawValue for PendingEmbeddingLease {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_pending_embedding_lease(
+            self.expires_at_ms,
+            &self.token,
+        ))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        decode_pending_embedding_lease(bytes).ok_or(SideTableRowProblem::Undecodable.into())
+    }
+}
+
+/// Treats a malformed lease row as absent rather than a fatal decode error: a
+/// pending-embedding lease is a best-effort fencing token the drain loop
+/// freely overwrites, so a stray byte must route to "no active lease", never
+/// deny the drain.
+#[cfg(feature = "sync")]
+fn tolerate_undecodable_lease(
+    result: Result<Option<PendingEmbeddingLease>>,
+) -> Result<Option<PendingEmbeddingLease>> {
+    match result {
+        Err(Error::Store(StoreError::SideTableRow {
+            problem: SideTableRowProblem::Undecodable,
+            ..
+        })) => Ok(None),
+        other => other,
+    }
+}
+
 /// Which embedder a leased claim was routed to. Never persisted: the lease
 /// wire format is unchanged and a crashed pass re-decides on re-drain.
 #[cfg(feature = "sync")]
@@ -180,7 +218,7 @@ enum EmbedRoute {
 #[derive(Debug, Clone)]
 struct LeasedPendingEmbedding {
     input: PendingEmbeddingInput,
-    lease_value: Vec<u8>,
+    lease: PendingEmbeddingLease,
     route: EmbedRoute,
 }
 
@@ -459,11 +497,13 @@ impl PendingEmbeddingReconciler {
                     continue;
                 };
 
-                let key = pending_embedding_lease_key(&job.entity_id);
-                if let Some(existing) = self.vault.store.sync_state.get(wtxn, key.as_str())?
-                    && let Some(lease) = decode_pending_embedding_lease(&existing)
-                    && lease.token == input.pending_embedding_token
-                    && lease.expires_at_ms > now_ms
+                let key = HexId(job.entity_id);
+                if let Some(existing) = tolerate_undecodable_lease(PENDING_EMBEDDING_LEASE.get(
+                    &self.vault.store,
+                    wtxn,
+                    &key,
+                ))? && existing.token == input.pending_embedding_token
+                    && existing.expires_at_ms > now_ms
                 {
                     batch.active_leases += 1;
                     continue;
@@ -485,15 +525,14 @@ impl PendingEmbeddingReconciler {
                 };
 
                 let expires_at_ms = now_ms.saturating_add(lease_duration_ms);
-                let lease_value =
-                    encode_pending_embedding_lease(expires_at_ms, &input.pending_embedding_token);
-                self.vault
-                    .store
-                    .sync_state
-                    .put(wtxn, key.as_str(), lease_value.as_slice())?;
+                let lease = PendingEmbeddingLease {
+                    expires_at_ms,
+                    token: input.pending_embedding_token.clone(),
+                };
+                PENDING_EMBEDDING_LEASE.put(&self.vault.store, wtxn, &key, &lease)?;
                 batch.work.push(LeasedPendingEmbedding {
                     input,
-                    lease_value,
+                    lease,
                     route,
                 });
             }
@@ -540,7 +579,7 @@ impl PendingEmbeddingReconciler {
                 &self.vault,
                 wtxn,
                 &work.input.entity_id,
-                &work.lease_value,
+                &work.lease,
             )?;
 
             let token_was_current =
@@ -653,11 +692,6 @@ fn pending_input_in_txn(
 }
 
 #[cfg(feature = "sync")]
-fn pending_embedding_lease_key(id: &EntityId) -> String {
-    format!("pelease:{}", id.to_hex())
-}
-
-#[cfg(feature = "sync")]
 fn encode_pending_embedding_lease(expires_at_ms: u64, token: &[u8]) -> Vec<u8> {
     let mut value = Vec::with_capacity(1 + 8 + token.len());
     value.push(1);
@@ -684,8 +718,7 @@ fn clear_pending_embedding_lease_if_any(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let key = pending_embedding_lease_key(id);
-    vault.store.sync_state.delete(wtxn, key.as_str())
+    PENDING_EMBEDDING_LEASE.delete(&vault.store, wtxn, &HexId(*id))
 }
 
 #[cfg(feature = "sync")]
@@ -693,16 +726,18 @@ fn clear_pending_embedding_lease_if_matches(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    expected: &[u8],
+    expected: &PendingEmbeddingLease,
 ) -> Result<bool> {
-    let key = pending_embedding_lease_key(id);
-    let Some(current) = vault.store.sync_state.get(wtxn, key.as_str())? else {
+    let key = HexId(*id);
+    let Some(current) =
+        tolerate_undecodable_lease(PENDING_EMBEDDING_LEASE.get(&vault.store, wtxn, &key))?
+    else {
         return Ok(false);
     };
-    if current != expected {
+    if current != *expected {
         return Ok(false);
     }
-    vault.store.sync_state.delete(wtxn, key.as_str())
+    PENDING_EMBEDDING_LEASE.delete(&vault.store, wtxn, &key)
 }
 
 #[cfg(feature = "sync")]

@@ -351,10 +351,17 @@ fn campaign_designation_persists_under_the_campaign_key_only() -> Result<()> {
     .expect("a candidate is eligible");
 
     assert_eq!(campaign_home_node_designation(&vault)?, Some(elected));
-    assert!(
-        read_meta(&vault, b"dreamer:home_node_macro:v1")?.is_none(),
-        "the Dreamer's private designation key must be untouched"
-    );
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, b"dreamer:home_node_macro:v1")?
+                .is_none(),
+            "the Dreamer's private designation key must be untouched"
+        );
+    }
 
     // An empty candidate set clears the row rather than freezing a leader
     // that no longer exists.

@@ -682,7 +682,7 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
         assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
         assert_ne!(err.kind(), ErrorKind::InvalidEntityType);
 
-        // TxnBatchBuilder (apply-time gate in apply_put).
+        // BatchBuilder::apply (apply-time gate in apply_put).
         let err = vault
             .with_write_txn(|wtxn| {
                 vault
@@ -1169,7 +1169,7 @@ fn txn_batch_put_with_reversed_occurred_range_rejected_at_apply_time() -> Result
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
-    // TxnBatchBuilder has no eager validation — this exercises the
+    // BatchBuilder::apply skips the commit-only checks — this exercises the
     // authoritative apply-time gate in apply_put. Commit the transaction
     // despite the error to prove the gate rejected before staging any write.
     let mut wtxn = vault.store.env.write_txn()?;

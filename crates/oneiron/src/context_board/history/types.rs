@@ -43,6 +43,9 @@ pub struct BoardTurnReceipt {
     pub turn: EntityId,
     pub source_revision_ref: RevisionRef,
     pub changed_claims: Vec<EntityId>,
+    /// The owner's scoped read of the selected claims, resolved in the
+    /// recording transaction. A claim the owner cannot read refuses the turn.
+    pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
 /// Reconstructed facts, not an opaque stored board snapshot.
@@ -55,6 +58,9 @@ pub struct ReconstructedBoard {
     pub selection: BoardSelection,
     /// Exact body bytes at the frontier recorded by this turn.
     pub documents: BTreeMap<EntityId, Vec<u8>>,
+    /// The owner's scoped read of the reconstructed claims, resolved in the
+    /// reconstruction snapshot. A claim the owner cannot read refuses it.
+    pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
 /// History cannot fall back to the current board or to an older checkpoint.

@@ -1,11 +1,10 @@
 //! Transactional public authority check for all four lifecycle mutations.
 use super::claim::read_booking_facts;
 use super::storage::{
-    booking_writer, confirm_receipt_key, decode_row, hold_key, read_meta_bytes, read_receipt,
-    refused,
+    HOLD, booking_writer, confirm_receipt_key, engine_failure, read_receipt, refused,
 };
-use super::token::{resolve_token_event, token_digest};
-use super::types::{BookingVerbRequest, LifecycleTokenScope, SoftHoldRow};
+use super::token::{hold_digest, resolve_token_event, token_digest};
+use super::types::{BookingVerbRequest, LifecycleTokenScope};
 use crate::Vault;
 use crate::booking::BookingError;
 use crate::booking::publication::PublicBookingAuthority;
@@ -45,9 +44,10 @@ fn check_publication_in_writer(
                 let facts = read_booking_facts(vault, txn, &receipt.event_ref)?;
                 (facts.page_ref, facts.event_type)
             } else {
-                let raw = read_meta_bytes(vault, txn, &hold_key(&spec.session_key))?
+                let hold = HOLD
+                    .get(&vault.store, txn, &hold_digest(&spec.session_key))
+                    .map_err(|error| engine_failure("meta read", error))?
                     .ok_or_else(|| refused("no hold exists for this session"))?;
-                let hold: SoftHoldRow = decode_row(&raw)?;
                 (hold.page_ref, hold.event_type)
             }
         }

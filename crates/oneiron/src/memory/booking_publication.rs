@@ -3,26 +3,24 @@
 use super::support::{verify_actor_binding_in_txn, verify_owner_actor_binding_in_txn};
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::edge::EdgeActorClass;
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
-// These keys are staged and removed inside the owner transaction. They are
-// never committed or accepted from replay. Generic byte and candidate doors
-// cannot mint a publication by copying write-envelope evidence.
-pub(crate) fn publication_write_key(id: EntityId) -> Vec<u8> {
-    let mut key = b"booking.public_write.in_txn/".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+/// Marks an id as inside the owner-authorized booking-publication write
+/// transaction. Staged and removed inside that one transaction only, never
+/// committed or accepted from replay. Key: id16; value: the literal marker
+/// `b"owner"` (presence is all any reader checks). Generic byte and candidate
+/// doors cannot mint a publication by copying write-envelope evidence:
+/// `crate::booking::publication::write_index` checks this row's presence.
+pub(crate) const STAGE: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::BOOKING_PUBLICATION_WRITE_STAGE);
 
 pub(super) fn stage_publication_write(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
 ) -> crate::Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(txn, &publication_write_key(id), b"owner")?;
+    STAGE.put(&vault.store, txn, &id, &b"owner".to_vec())?;
     Ok(())
 }
 
@@ -31,10 +29,7 @@ pub(super) fn finish_publication_write(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
 ) -> crate::Result<()> {
-    vault
-        .store
-        .vault_meta
-        .delete(txn, &publication_write_key(id))?;
+    STAGE.delete(&vault.store, txn, &id)?;
     Ok(())
 }
 

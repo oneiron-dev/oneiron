@@ -1,10 +1,18 @@
 //! Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input.
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 mod refs;
 use super::{FeedbackCategory, decode_feedback_bundle, feedback_bundle_digest};
-const QUEUE: &[u8] = b"feedback:queue:v1:";
-const DIGEST: &[u8] = b"feedback:received:v1:";
+
+/// One review item, keyed by its own id.
+const QUEUE_ITEMS: SideTable<EntityId, FeedbackReviewItem, Named> =
+    SideTable::new(&side_table::FEEDBACK_QUEUE);
+
+/// A received bundle digest's dedup pointer to its queue item, keyed by the digest hex string.
+const RECEIVED_DIGESTS: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::FEEDBACK_RECEIVED_DIGEST);
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FeedbackReviewItem {
     #[serde(with = "refs::one")]
@@ -30,13 +38,9 @@ impl FeedbackDedup {
         Ok(Self { min_similarity })
     }
 }
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| Error::CorruptedIndex("feedback intake"))
-}
-fn decode(key: &[u8], bytes: &[u8]) -> Result<FeedbackReviewItem> {
-    let item: FeedbackReviewItem =
-        rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("feedback intake"))?;
-    if key.strip_prefix(QUEUE) != Some(item.id.as_bytes().as_slice()) {
+/// The row's own `id` field must match the key it was stored under.
+fn validate_item_identity(key: &EntityId, item: FeedbackReviewItem) -> Result<FeedbackReviewItem> {
+    if item.id != *key {
         return Err(Error::CorruptedIndex("feedback review identity"));
     }
     Ok(item)
@@ -103,14 +107,13 @@ impl Vault {
             return Err(Error::InvalidConfig("feedback embedding dimensions".into()));
         }
         let digest = feedback_bundle_digest(bytes);
-        let digest_key = [DIGEST, digest.as_bytes()].concat();
         let id = EntityId::from_bytes(
             blake3::hash(digest.as_bytes()).as_bytes()[..16]
                 .try_into()
                 .expect("digest prefix"),
         )?;
         self.with_write_txn(|txn| {
-            if let Some(review_id) = self.store.vault_meta.get(txn, &digest_key)? {
+            if let Some(review_id) = RECEIVED_DIGESTS.get(&self.store, txn, &digest)? {
                 let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
                     self,
                     txn,
@@ -125,20 +128,14 @@ impl Vault {
                 {
                     return Err(Error::CorruptedIndex("feedback evidence mismatch"));
                 }
-                let key = [QUEUE, review_id.as_ref()].concat();
-                return decode(
-                    &key,
-                    &self
-                        .store
-                        .vault_meta
-                        .get(txn, &key)?
-                        .ok_or(Error::CorruptedIndex("feedback queue reference"))?,
-                );
+                let item = QUEUE_ITEMS
+                    .get(&self.store, txn, &review_id)?
+                    .ok_or(Error::CorruptedIndex("feedback queue reference"))?;
+                return validate_item_identity(&review_id, item);
             }
             let mut best: Option<(f32, FeedbackReviewItem)> = None;
-            for row in self.store.vault_meta.prefix_iter(txn, QUEUE)? {
-                let (key, bytes) = row?;
-                let item = decode(&key, &bytes)?;
+            for (key, item) in QUEUE_ITEMS.scan(&self.store, txn)? {
+                let item = validate_item_identity(&key, item)?;
                 if !item.open
                     || item.category != bundle.category
                     || item.centroid.len() != vector.len()
@@ -185,14 +182,8 @@ impl Vault {
                 )
                 .vector(&id, &vector)
                 .apply(txn)?;
-            self.store.vault_meta.put(
-                txn,
-                &[QUEUE, item.id.as_bytes()].concat(),
-                &encode(&item)?,
-            )?;
-            self.store
-                .vault_meta
-                .put(txn, &digest_key, item.id.as_bytes())?;
+            QUEUE_ITEMS.put(&self.store, txn, &item.id, &item)?;
+            RECEIVED_DIGESTS.put(&self.store, txn, &digest, &item.id)?;
             Ok(item)
         })
     }
@@ -201,9 +192,8 @@ impl Vault {
     pub fn feedback_digest(&self) -> Result<Vec<FeedbackReviewItem>> {
         let txn = self.store.env.read_txn()?;
         let mut items = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(&txn, QUEUE)? {
-            let (key, bytes) = row?;
-            let item = decode(&key, &bytes)?;
+        for (key, item) in QUEUE_ITEMS.scan(&self.store, &txn)? {
+            let item = validate_item_identity(&key, item)?;
             if !item.open {
                 continue;
             }
@@ -224,17 +214,12 @@ impl Vault {
     /// Host-authorized review changes queue state, never deletes evidence.
     pub fn close_feedback_review(&self, id: &EntityId) -> Result<()> {
         self.with_write_txn(|txn| {
-            let key = [QUEUE, id.as_bytes()].concat();
-            let mut item = decode(
-                &key,
-                &self
-                    .store
-                    .vault_meta
-                    .get(txn, &key)?
-                    .ok_or(Error::EntityNotFound)?,
-            )?;
+            let item = QUEUE_ITEMS
+                .get(&self.store, txn, id)?
+                .ok_or(Error::EntityNotFound)?;
+            let mut item = validate_item_identity(id, item)?;
             item.open = false;
-            self.store.vault_meta.put(txn, &key, &encode(&item)?)?;
+            QUEUE_ITEMS.put(&self.store, txn, id, &item)?;
             Ok(())
         })
     }

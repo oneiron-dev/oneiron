@@ -3,14 +3,54 @@
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 
-use super::keys::{deletion_gate_required_key, pending_deletion_gate_decision_key};
 use super::types::{
     GateDecisionId, GateDecisionRecord, PENDING_DELETION_GATE_DECISION_VERSION,
     PendingDeletionGateDecisionRecord,
 };
 use super::vet::vet_gate_decision_record;
+
+/// Codec fixed `Raw` (see the decls.rs note): [`RawValue`] delegates to
+/// [`encode_pending_deletion_gate_decision`]/[`decode_pending_deletion_gate_decision`].
+const PENDING_DELETION: SideTable<GateDecisionId, PendingDeletionGateDecisionRecord, Raw> =
+    SideTable::new(&side_table::GATE_DELETE_PENDING_SIDECAR);
+
+impl RawValue for PendingDeletionGateDecisionRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_pending_deletion_gate_decision(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_pending_deletion_gate_decision(bytes)?)
+    }
+}
+
+/// The deletion-gate-required marker's hand-rolled `version ‖
+/// tombstone_reason ‖ target(16)` layout. Kept as the module's own codec
+/// behind [`Raw`], reusing the existing encode/decode functions verbatim.
+struct DeletionGateRequired {
+    target: [u8; 16],
+    tombstone_reason: u8,
+}
+
+impl RawValue for DeletionGateRequired {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_deletion_gate_required(&self.target, self.tombstone_reason).to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (target, tombstone_reason) = decode_deletion_gate_required(bytes)?;
+        Ok(Self {
+            target,
+            tombstone_reason,
+        })
+    }
+}
+
+const DELETE_REQUIRED: SideTable<GateDecisionId, DeletionGateRequired, Raw> =
+    SideTable::new(&side_table::GATE_DELETE_REQUIRED_MARKER);
 
 impl Store {
     /// Stages the required marker and deletion authority sidecar before a
@@ -32,32 +72,34 @@ impl Store {
             decision: record.clone(),
         };
         vet_pending_deletion_gate_decision_record(&pending)?;
-        let key = pending_deletion_gate_decision_key(record.decision_id);
-        let sidecar_exists = if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
-            let existing = decode_pending_deletion_gate_decision(&existing)?;
-            if existing != pending {
-                return Err(Error::InvariantViolation(
-                    "pending deletion gate decision id collision",
-                ));
-            }
-            true
-        } else {
-            false
-        };
+        let sidecar_exists =
+            if let Some(existing) = PENDING_DELETION.get(self, &*wtxn, &record.decision_id)? {
+                if existing != pending {
+                    return Err(Error::InvariantViolation(
+                        "pending deletion gate decision id collision",
+                    ));
+                }
+                true
+            } else {
+                false
+            };
         if !sidecar_exists {
-            let value = encode_pending_deletion_gate_decision(&pending)?;
-            self.vault_meta.put(wtxn, &key, &value)?;
+            PENDING_DELETION.put(self, wtxn, &record.decision_id, &pending)?;
         }
-        let required_key = deletion_gate_required_key(record.decision_id);
-        let required_value = encode_deletion_gate_required(target, tombstone_reason);
-        if let Some(existing) = self.vault_meta.get(&*wtxn, &required_key)? {
-            if *existing != required_value {
+        let required = DeletionGateRequired {
+            target: *target,
+            tombstone_reason,
+        };
+        if let Some(existing) = DELETE_REQUIRED.get(self, &*wtxn, &record.decision_id)? {
+            if existing.target != required.target
+                || existing.tombstone_reason != required.tombstone_reason
+            {
                 return Err(Error::InvariantViolation(
                     "deletion gate required marker id collision",
                 ));
             }
         } else {
-            self.vault_meta.put(wtxn, &required_key, &required_value)?;
+            DELETE_REQUIRED.put(self, wtxn, &record.decision_id, &required)?;
         }
         Ok(())
     }
@@ -69,11 +111,9 @@ impl Store {
         txn: &RoTxn<'_>,
         request_id: GateDecisionId,
     ) -> Result<Option<GateDecisionRecord>> {
-        let key = pending_deletion_gate_decision_key(request_id);
-        let Some(value) = self.vault_meta.get(txn, &key)? else {
+        let Some(pending) = PENDING_DELETION.get(self, txn, &request_id)? else {
             return Ok(None);
         };
-        let pending = decode_pending_deletion_gate_decision(&value)?;
         if pending.decision.decision_id != request_id {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
@@ -90,19 +130,15 @@ impl Store {
         target: &[u8; 16],
         tombstone_reason: u8,
     ) -> Result<Option<GateDecisionRecord>> {
-        let required_key = deletion_gate_required_key(request_id);
-        let Some(required) = self.vault_meta.get(&*wtxn, &required_key)? else {
+        let Some(required) = DELETE_REQUIRED.get(self, &*wtxn, &request_id)? else {
             return Ok(None);
         };
-        let (required_target, required_reason) = decode_deletion_gate_required(&required)?;
-        if required_target != *target || required_reason != tombstone_reason {
+        if required.target != *target || required.tombstone_reason != tombstone_reason {
             return Ok(None);
         }
-        let key = pending_deletion_gate_decision_key(request_id);
-        let Some(value) = self.vault_meta.get(&*wtxn, &key)? else {
+        let Some(pending) = PENDING_DELETION.get(self, &*wtxn, &request_id)? else {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         };
-        let pending = decode_pending_deletion_gate_decision(&value)?;
         if pending.decision.decision_id != request_id {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
@@ -110,8 +146,8 @@ impl Store {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
         self.append_gate_decision_in_txn(wtxn, &pending.decision)?;
-        self.vault_meta.delete(wtxn, &key)?;
-        self.vault_meta.delete(wtxn, &required_key)?;
+        PENDING_DELETION.delete(self, wtxn, &request_id)?;
+        DELETE_REQUIRED.delete(self, wtxn, &request_id)?;
         Ok(Some(pending.decision))
     }
 
@@ -126,27 +162,23 @@ impl Store {
         target: &[u8; 16],
         tombstone_reason: u8,
     ) -> Result<bool> {
-        let required_key = deletion_gate_required_key(request_id);
-        let Some(required) = self.vault_meta.get(&*wtxn, &required_key)? else {
+        let Some(required) = DELETE_REQUIRED.get(self, &*wtxn, &request_id)? else {
             return Ok(false);
         };
-        let (required_target, required_reason) = decode_deletion_gate_required(&required)?;
-        if required_target != *target || required_reason != tombstone_reason {
+        if required.target != *target || required.tombstone_reason != tombstone_reason {
             return Ok(false);
         }
-        let key = pending_deletion_gate_decision_key(request_id);
-        let Some(value) = self.vault_meta.get(&*wtxn, &key)? else {
+        let Some(pending) = PENDING_DELETION.get(self, &*wtxn, &request_id)? else {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         };
-        let pending = decode_pending_deletion_gate_decision(&value)?;
         if pending.decision.decision_id != request_id {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
         if pending.target != *target || pending.tombstone_reason != tombstone_reason {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
-        self.vault_meta.delete(wtxn, &key)?;
-        self.vault_meta.delete(wtxn, &required_key)?;
+        PENDING_DELETION.delete(self, wtxn, &request_id)?;
+        DELETE_REQUIRED.delete(self, wtxn, &request_id)?;
         Ok(true)
     }
 
@@ -156,8 +188,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         request_id: GateDecisionId,
     ) -> Result<()> {
-        self.vault_meta
-            .delete(wtxn, &pending_deletion_gate_decision_key(request_id))?;
+        PENDING_DELETION.delete(self, wtxn, &request_id)?;
         Ok(())
     }
 }

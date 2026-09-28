@@ -5,6 +5,7 @@ use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
 use crate::llm::decision::{DecisionReceipt, TypedDecision};
+use crate::side_table::SideKey;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
@@ -37,12 +38,16 @@ pub fn refresh_question(
     let (record, head, units, arrival_marker) = {
         let txn = vault.store.env.read_txn()?;
         let head = owned_head(vault, &txn, principal, question)?;
-        let record: QuestionRecord = load(
-            vault,
-            &txn,
-            &key(question, b"version", &head.version.to_be_bytes()),
-        )?
-        .ok_or(Error::EntityNotFound)?;
+        let record = QUESTION_VERSION
+            .get(
+                &vault.store,
+                &txn,
+                &VersionKey {
+                    id: question,
+                    version: head.version,
+                },
+            )?
+            .ok_or(Error::EntityNotFound)?;
         record.definition.validate()?;
         if head.paused {
             return Ok(Vec::new());
@@ -69,11 +74,8 @@ pub fn refresh_question(
                 {
                     return Ok(Vec::new());
                 }
-                arrival_marker = vault
-                    .store
-                    .vault_meta
-                    .get(&txn, &arrival::pending_key(question, unit))?
-                    .map(|raw| raw.to_vec());
+                arrival_marker =
+                    arrival::PENDING.get_bytes(&vault.store, &txn, &(question, unit))?;
                 if arrival_marker.is_none() {
                     return Ok(Vec::new());
                 }
@@ -99,11 +101,7 @@ pub fn refresh_question(
             proposal,
             arrival_marker: {
                 let txn = vault.store.env.read_txn()?;
-                vault
-                    .store
-                    .vault_meta
-                    .get(&txn, &arrival::pending_key(question, unit))?
-                    .map(|raw| raw.to_vec())
+                arrival::PENDING.get_bytes(&vault.store, &txn, &(question, unit))?
             },
         });
     }
@@ -118,12 +116,7 @@ pub fn refresh_question(
             ));
         }
         if let RefreshTrigger::Arrival(unit) = trigger
-            && vault
-                .store
-                .vault_meta
-                .get(txn, &arrival::pending_key(question, unit))?
-                .as_deref()
-                != arrival_marker.as_deref()
+            && arrival::PENDING.get_bytes(&vault.store, txn, &(question, unit))? != arrival_marker
         {
             return Err(Error::ConcurrentWrite("standing question arrival consumed"));
         }
@@ -176,10 +169,13 @@ pub fn refresh_question(
                 answered_at: now,
             };
             land(vault, txn, actor, principal, &answer, &raw)?;
-            put(
-                vault,
+            QUESTION_ANSWER.put(
+                &vault.store,
                 txn,
-                &key(question, b"answer", answer.claim.as_bytes()),
+                &AnswerKey {
+                    question,
+                    claim: answer.claim,
+                },
                 &answer,
             )?;
             answers.push(answer);
@@ -188,21 +184,17 @@ pub fn refresh_question(
             let mut updated = current;
             updated.last_refresh = Some(now);
             for p in &prepared {
-                let pending = arrival::pending_key(question, p.unit);
+                let pending = (question, p.unit);
                 if p.arrival_marker.is_some()
-                    && vault.store.vault_meta.get(txn, &pending)?.as_deref()
-                        == p.arrival_marker.as_deref()
+                    && arrival::PENDING.get_bytes(&vault.store, txn, &pending)? == p.arrival_marker
                 {
-                    vault.store.vault_meta.delete(txn, &pending)?;
+                    arrival::PENDING.delete(&vault.store, txn, &pending)?;
                 }
             }
-            put(vault, txn, &key(question, b"head", &[]), &updated)?;
+            QUESTION_HEAD.put(&vault.store, txn, &HeadKey(question), &updated)?;
         }
         if let RefreshTrigger::Arrival(unit) = trigger {
-            vault
-                .store
-                .vault_meta
-                .delete(txn, &arrival::pending_key(question, unit))?;
+            arrival::PENDING.delete(&vault.store, txn, &(question, unit))?;
         }
         Ok(answers)
     })
@@ -234,29 +226,28 @@ pub fn refresh_due_questions(
     let work = {
         let txn = vault.store.env.read_txn()?;
         let mut work = Vec::new();
-        for row in vault.store.vault_meta.prefix_iter(&txn, PREFIX)? {
-            let (bytes, raw) = row?;
-            if !bytes.ends_with(b":head:") {
+        // Four row families share the declaration; decode only exact head keys.
+        for row in QUESTION_HEAD.iter_raw_from(&vault.store, &txn, &[])? {
+            let (key, _) = row?;
+            let Some(HeadKey(id)) = HeadKey::decode_key(&key) else {
                 continue;
-            }
-            let Some(id_bytes) = bytes.get(PREFIX.len()..PREFIX.len() + 16) else {
-                return Err(Error::CorruptedIndex("question head key"));
             };
-            let id = EntityId::from_bytes(
-                id_bytes
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("question head key"))?,
-            )?;
-            let head: QuestionHead = decode(&raw)?;
+            let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(id))? else {
+                continue;
+            };
             if head.paused {
                 continue;
             }
-            let record: QuestionRecord = load(
-                vault,
-                &txn,
-                &key(id, b"version", &head.version.to_be_bytes()),
-            )?
-            .ok_or(Error::CorruptedIndex("question version"))?;
+            let record = QUESTION_VERSION
+                .get(
+                    &vault.store,
+                    &txn,
+                    &VersionKey {
+                        id,
+                        version: head.version,
+                    },
+                )?
+                .ok_or(Error::CorruptedIndex("question version"))?;
             if let Some(interval) = record.definition.refresh.every_seconds
                 && now
                     >= head
@@ -267,35 +258,21 @@ pub fn refresh_due_questions(
                 work.push((record.principal, id, RefreshTrigger::Schedule));
             }
         }
-        for row in vault.store.vault_meta.prefix_iter(&txn, arrival::PENDING)? {
-            let (bytes, _) = row?;
-            let tail = bytes
-                .get(arrival::PENDING.len()..)
-                .ok_or(Error::CorruptedIndex("question pending key"))?;
-            if tail.len() != 32 {
-                return Err(Error::CorruptedIndex("question pending key"));
-            }
-            let question = EntityId::from_bytes(
-                tail[..16]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("question pending key"))?,
-            )?;
-            let unit = EntityId::from_bytes(
-                tail[16..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("question pending key"))?,
-            )?;
-            let Some(head) = load::<QuestionHead>(vault, &txn, &key(question, b"head", &[]))?
-            else {
+        for row in arrival::PENDING.iter_from(&vault.store, &txn, &[])? {
+            let ((question, unit), _) = row?;
+            let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
                 continue;
             };
             if head.paused {
                 continue;
             }
-            let Some(record) = load::<QuestionRecord>(
-                vault,
+            let Some(record) = QUESTION_VERSION.get(
+                &vault.store,
                 &txn,
-                &key(question, b"version", &head.version.to_be_bytes()),
+                &VersionKey {
+                    id: question,
+                    version: head.version,
+                },
             )?
             else {
                 continue;
@@ -338,7 +315,9 @@ pub fn answer_records(
 ) -> Result<Vec<AnswerRecord>> {
     let txn = vault.store.env.read_txn()?;
     owned_head(vault, &txn, principal, question)?;
-    list(vault, &txn, &key(question, b"answer", &[]))
+    QUESTION_ANSWER
+        .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))
+        .map(|rows| rows.into_iter().map(|(_, answer)| answer).collect())
 }
 
 fn validate_proposal(record: &QuestionRecord, proposal: &AnswerProposal) -> Result<()> {

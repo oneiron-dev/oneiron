@@ -401,7 +401,8 @@ pub(super) fn decode_hot(
 /// restore creates its destination. The image supplies a pointer, not a key;
 /// deleted keys remain absent when an old checkpoint is replayed.
 pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
-    use super::keys::{GATE_DECISION_KEY_PREFIX, gate_decision_id_from_key};
+    use super::keys::GATE_DECISION_KEY_PREFIX;
+    use crate::side_table::SideKey;
     let bound = rows
         .iter()
         .find(|(key, _)| key == CUSTODY_ROOT_KEY)
@@ -410,7 +411,11 @@ pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(
     for (key, value) in rows {
         if key.starts_with(GATE_DECISION_KEY_PREFIX) && is_orcb(value) {
             let root = bound.as_deref().ok_or_else(corrupt)?;
-            decode_hot(root, gate_decision_id_from_key(key)?, value)?;
+            let id = key
+                .strip_prefix(GATE_DECISION_KEY_PREFIX)
+                .and_then(GateDecisionId::decode_key)
+                .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
+            decode_hot(root, id, value)?;
         }
     }
     Ok(())

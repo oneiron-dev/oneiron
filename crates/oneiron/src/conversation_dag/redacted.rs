@@ -1,18 +1,25 @@
 //! Content-free, store-local DAG custody across soft and hard erasure.
 //! The ordinary delete path removes bodies and incident edges; only typed
 //! structural IDs survive here, never a quotation or the erased payload.
-use super::graph::{edge_ids, invalid, key};
+use super::graph::{edge_ids, invalid};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
-const PIN: &[u8] = b"conversation_dag:erased_topology:v1:";
-const SPAWN: &[u8] = b"conversation_dag:erased_spawn:v1:";
-const CHILD: &[u8] = b"conversation_dag:erased_child:v1:";
+/// Content-free topology pin of an erased DAG record, by record id.
+const PINS: SideTable<EntityId, RecordPin, Named> =
+    SideTable::new(&side_table::CONVERSATION_DAG_ERASED_TOPOLOGY);
+/// SpawnedBy anchor of a session whose anchoring record was purged, by session.
+const SPAWNS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_ERASED_SPAWN);
+/// `[1]` reverse Parent witness of a purged record, keyed by `(parent, child)`.
+const CHILDREN: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_ERASED_CHILD);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RecordPin {
@@ -29,13 +36,7 @@ pub(crate) fn read(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<RecordPin>> {
-    store
-        .vault_meta
-        .get(txn, &key(PIN, id))?
-        .map(|bytes| {
-            rmp_serde::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("erased DAG topology"))
-        })
-        .transpose()
+    PINS.get(store, txn, id)
 }
 
 fn author(store: &Store, txn: &heed::RoTxn<'_>, body: &[u8]) -> Result<Option<EntityId>> {
@@ -95,12 +96,7 @@ pub(crate) fn pin_record(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId
             == Some(super::topology::RecordKind::Thread),
         author: author(&vault.store, txn, &row.body)?,
     };
-    vault.store.vault_meta.put(
-        txn,
-        &key(PIN, id),
-        &rmp_serde::to_vec_named(&pin).map_err(|_| Error::CorruptedIndex("erased DAG topology"))?,
-    )?;
-    Ok(())
+    PINS.put(&vault.store, txn, id, &pin)
 }
 
 pub(crate) fn children(
@@ -109,21 +105,16 @@ pub(crate) fn children(
     parent: &EntityId,
     cap: usize,
 ) -> Result<Vec<EntityId>> {
-    let prefix = key(CHILD, parent);
     let mut result = Vec::new();
-    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
+    for row in CHILDREN.iter_from(store, txn, parent.as_bytes())? {
         if result.len() >= cap {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
-        let (key, value) = row?;
-        if key.len() != prefix.len() + 16 || value.as_ref() != [1] {
+        let ((_, child), value) = row?;
+        if value != [1] {
             return Err(Error::CorruptedIndex("erased DAG child"));
         }
-        result.push(EntityId::from_bytes(
-            key[prefix.len()..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("erased DAG child"))?,
-        )?);
+        result.push(child);
     }
     Ok(result)
 }
@@ -140,18 +131,7 @@ pub(crate) fn spawned_by(
         }
         return Ok(Some(*anchor));
     }
-    store
-        .vault_meta
-        .get(txn, &key(SPAWN, session))?
-        .map(|bytes| {
-            EntityId::from_bytes(
-                bytes
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("erased session anchor"))?,
-            )
-        })
-        .transpose()
+    SPAWNS.get(store, txn, session)
 }
 
 /// Runs in the SAME erase txn before `deindex_entity` destroys incident edges.
@@ -182,15 +162,9 @@ pub(crate) fn capture_before_erase(
             super::writes::set_head_in_txn(vault, txn, &pin.room, replacement)?;
         } else {
             for ancestor in old_path {
-                vault
-                    .store
-                    .vault_meta
-                    .delete(txn, &key(super::graph::CANONICAL, &ancestor))?;
+                super::graph::CANONICAL.delete(&vault.store, txn, &ancestor)?;
             }
-            vault
-                .store
-                .vault_meta
-                .delete(txn, &key(super::graph::HEAD, &pin.room))?;
+            super::graph::HEAD.delete(&vault.store, txn, &pin.room)?;
         }
     }
     // This record also loses its own outbound Parent. Keep the reverse
@@ -198,9 +172,7 @@ pub(crate) fn capture_before_erase(
     // The pin was captured while the edge still existed (or at soft erase).
     if let Some(parent) = pin.parent {
         super::graph::require_member(&vault.store, txn, &pin.room, &parent)?;
-        let mut child_key = key(CHILD, &parent);
-        child_key.extend_from_slice(id.as_bytes());
-        vault.store.vault_meta.put(txn, &child_key, &[1])?;
+        CHILDREN.put(&vault.store, txn, &(parent, *id), &[1])?;
     }
     // A live descendant loses its outbound Parent when this ancestor is
     // purged. Preserve that descendant's existing, verified topology first.
@@ -214,9 +186,7 @@ pub(crate) fn capture_before_erase(
         if read(&vault.store, txn, &child)?
             .is_some_and(|child_pin| child_pin.parent == Some(*id) && child_pin.room == pin.room)
         {
-            let mut child_key = key(CHILD, id);
-            child_key.extend_from_slice(child.as_bytes());
-            vault.store.vault_meta.put(txn, &child_key, &[1])?;
+            CHILDREN.put(&vault.store, txn, &(*id, child), &[1])?;
         }
     }
     let sessions: Vec<_> = vault
@@ -225,16 +195,8 @@ pub(crate) fn capture_before_erase(
         .map(|edge| edge.map(|e| e.target))
         .collect::<Result<_>>()?;
     for session in sessions {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &key(SPAWN, &session), id.as_bytes())?;
+        SPAWNS.put(&vault.store, txn, &session, id)?;
     }
     pin.author = None;
-    vault.store.vault_meta.put(
-        txn,
-        &key(PIN, id),
-        &rmp_serde::to_vec_named(&pin).map_err(|_| Error::CorruptedIndex("erased DAG topology"))?,
-    )?;
-    Ok(())
+    PINS.put(&vault.store, txn, id, &pin)
 }

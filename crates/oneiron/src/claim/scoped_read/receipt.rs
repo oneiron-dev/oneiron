@@ -4,7 +4,7 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFi
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadScope {
     pub entity_types: Option<BTreeSet<u8>>,
     pub max_sensitivity_band: u8,
@@ -14,7 +14,21 @@ pub struct ReadScope {
     pub deny_all: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Scalars compare by bit pattern, so a receipt is `Eq` and carriers that
+/// derive `Eq` can hold one. Every scope float is a finite floor from policy.
+impl PartialEq for ReadScope {
+    fn eq(&self, other: &Self) -> bool {
+        self.entity_types == other.entity_types
+            && self.max_sensitivity_band == other.max_sensitivity_band
+            && self.include_stale == other.include_stale
+            && self.min_confidence.to_bits() == other.min_confidence.to_bits()
+            && self.min_salience.to_bits() == other.min_salience.to_bits()
+            && self.deny_all == other.deny_all
+    }
+}
+impl Eq for ReadScope {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopedReadReceipt {
     pub requested: ReadScope,
     pub actor_ceiling: ReadScope,
@@ -45,11 +59,32 @@ pub struct ScopedReadReceipt {
 ///     result.into_iter().collect()
 /// }
 /// ```
+///
+/// On the wire the pair is `{"value": .., "narrowing": ..}`: `narrowing` is the
+/// one name every read result gives its receipt.
 #[must_use = "scoped results include a mandatory narrowing receipt"]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopedReadResult<T> {
     pub value: T,
+    #[serde(rename = "narrowing")]
     pub receipt: ScopedReadReceipt,
+}
+
+impl<T> ScopedReadResult<T> {
+    /// Project the value; the receipt travels with the projection.
+    pub fn map<U>(self, project: impl FnOnce(T) -> U) -> ScopedReadResult<U> {
+        ScopedReadResult {
+            value: project(self.value),
+            receipt: self.receipt,
+        }
+    }
+}
+
+impl<T> ScopedReadResult<Vec<Option<T>>> {
+    /// The first slot of a one-read slice, under the slice's receipt.
+    pub fn single(self) -> ScopedReadResult<Option<T>> {
+        self.map(|slots| slots.into_iter().next().flatten())
+    }
 }
 impl<T> std::ops::Deref for ScopedReadResult<T> {
     type Target = T;
@@ -212,6 +247,18 @@ impl ScopedRead<'_> {
         let (applied, policy) = self.resolve_retrieval_filter(requested)?;
         Ok(self.receipt_for(requested, &policy, &applied, suppressed))
     }
+
+    /// The receipt for a scan that already holds its transaction: the
+    /// authority is resolved in that snapshot, never a newer one.
+    pub(crate) fn read_receipt_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        requested: Option<&RetrievalFilter>,
+        suppressed: usize,
+    ) -> crate::Result<ScopedReadReceipt> {
+        let (applied, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
+        Ok(self.receipt_for(requested, &policy, &applied, suppressed))
+    }
 }
 
 #[cfg(test)]
@@ -227,7 +274,12 @@ mod tests {
         assert_eq!(plain.receipt.suppressed_count, 0);
         let filtered = read.filter_scored_entities(vec![])?;
         assert_eq!(filtered.receipt.requested, filtered.receipt.applied);
-        assert!(read.hydrate_short_id("cl999999", 0)?.value.is_none());
+        assert!(
+            read.read(&[super::super::PointRead::short("cl999999", 0)], None)?
+                .single()
+                .value
+                .is_none()
+        );
         for band in 0..=3 {
             for confidence in [0.0, 0.25, 0.5, 1.0] {
                 let requested = RetrievalFilter {

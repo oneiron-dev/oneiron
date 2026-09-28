@@ -14,6 +14,7 @@ use super::values::{
 use crate::batch::secret_scan::scan_file_content;
 use crate::codebase::RepoRef;
 use crate::error::Error;
+use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::vault::Vault;
 
 pub const ENV_BLUEPRINT_SCHEMA_VERSION: u8 = 1;
@@ -487,25 +488,38 @@ impl<'a> VaultEnvBlueprintStore<'a> {
     }
 }
 
+/// The `checkout:env_blueprint:v1:` row: one versioned blueprint keyed by the domain-separated
+/// BLAKE3 of its commit-stripped canonical repository identity. Key: hash32.
+pub(super) const BLUEPRINT: SideTable<
+    [u8; 32],
+    EnvBlueprintRowV1,
+    VersionedNamed<ENV_BLUEPRINT_SCHEMA_VERSION>,
+> = SideTable::new(&side_table::CHECKOUT_ENV_BLUEPRINT);
+
 impl EnvBlueprintStore for VaultEnvBlueprintStore<'_> {
     fn put(&self, blueprint: &EnvBlueprint) -> EnvBlueprintResult<()> {
         blueprint.validate()?;
-        let key = env_blueprint_key(&blueprint.repo_ref);
-        let row = encode_env_blueprint(blueprint)?;
+        let hash = env_blueprint_repo_hash(&blueprint.repo_ref);
+        let row = EnvBlueprintRowV1 {
+            schema_version: blueprint.schema_version,
+            repo_ref: blueprint.repo_ref.canonical(),
+            light_checkout_materialization: blueprint.light_checkout_materialization,
+            stages: blueprint.stages.clone(),
+        };
         self.vault
             .try_with_write_txn::<_, _, EnvBlueprintError>(|txn| {
-                self.vault.store.vault_meta.put(txn, &key, &row)?;
+                BLUEPRINT.put(&self.vault.store, txn, &hash, &row)?;
                 Ok(())
             })
     }
 
     fn get(&self, repo_ref: &RepoRef) -> EnvBlueprintResult<Option<EnvBlueprint>> {
-        let key = env_blueprint_key(repo_ref);
+        let hash = env_blueprint_repo_hash(repo_ref);
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        let Some(raw) = self.vault.store.vault_meta.get(&txn, &key)? else {
+        let Some(row) = BLUEPRINT.get(&self.vault.store, &txn, &hash)? else {
             return Ok(None);
         };
-        let blueprint = decode_env_blueprint(&raw)?;
+        let blueprint = row_to_blueprint(row, ENV_BLUEPRINT_SCHEMA_VERSION)?;
         let requested = env_blueprint_repo_identity(repo_ref);
         if env_blueprint_repo_identity(&blueprint.repo_ref) != requested {
             return Err(EnvBlueprintError::RepoKeyMismatch);
@@ -539,45 +553,17 @@ pub(super) fn env_blueprint_repo_hash(repo_ref: &RepoRef) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-pub(super) fn env_blueprint_key(repo_ref: &RepoRef) -> Vec<u8> {
-    let hash = env_blueprint_repo_hash(repo_ref);
-    let mut key = Vec::with_capacity(ENV_BLUEPRINT_KEY_PREFIX.len() + hash.len());
-    key.extend_from_slice(ENV_BLUEPRINT_KEY_PREFIX);
-    key.extend_from_slice(&hash);
-    key
-}
-
 /// Corrupt MessagePack and an unparsable persisted canonical repository string
 /// both land in the one typed encoding class.
 fn encode_error(error: impl std::fmt::Display) -> EnvBlueprintError {
     EnvBlueprintError::Encode(error.to_string())
 }
 
-/// Row byte 0 is always [`ENV_BLUEPRINT_SCHEMA_VERSION`]; the remainder is
-/// rmp-serde MessagePack of the private row, whose repeated schema version must
-/// agree with that leading byte.
-fn encode_env_blueprint(blueprint: &EnvBlueprint) -> EnvBlueprintResult<Vec<u8>> {
-    let row = EnvBlueprintRowV1 {
-        schema_version: blueprint.schema_version,
-        repo_ref: blueprint.repo_ref.canonical(),
-        light_checkout_materialization: blueprint.light_checkout_materialization,
-        stages: blueprint.stages.clone(),
-    };
-    let body = rmp_serde::to_vec_named(&row).map_err(encode_error)?;
-    let mut raw = Vec::with_capacity(body.len() + 1);
-    raw.push(ENV_BLUEPRINT_SCHEMA_VERSION);
-    raw.extend_from_slice(&body);
-    Ok(raw)
-}
-
-pub(super) fn decode_env_blueprint(raw: &[u8]) -> EnvBlueprintResult<EnvBlueprint> {
-    let Some((&header, body)) = raw.split_first() else {
-        return Err(EnvBlueprintError::EmptyRow);
-    };
-    if header != ENV_BLUEPRINT_SCHEMA_VERSION {
-        return Err(EnvBlueprintError::UnsupportedSchemaVersion { found: header });
-    }
-    let row: EnvBlueprintRowV1 = rmp_serde::from_slice(body).map_err(encode_error)?;
+/// The post-header validation both [`decode_env_blueprint`] and the typed [`BLUEPRINT`] door's
+/// [`VaultEnvBlueprintStore::get`] apply once the leading version byte is known good: the
+/// repeated schema version inside the body must agree with it, and the persisted canonical
+/// repository string must still parse.
+fn row_to_blueprint(row: EnvBlueprintRowV1, header: u8) -> EnvBlueprintResult<EnvBlueprint> {
     let repo_ref = RepoRef::parse(&row.repo_ref).map_err(encode_error)?;
     if row.schema_version != header {
         return Err(EnvBlueprintError::SchemaVersionMismatch {
@@ -591,6 +577,21 @@ pub(super) fn decode_env_blueprint(raw: &[u8]) -> EnvBlueprintResult<EnvBlueprin
         light_checkout_materialization: row.light_checkout_materialization,
         stages: row.stages,
     })
+}
+
+/// Test-only now: the typed [`BLUEPRINT`] door decodes the leading version byte itself for
+/// [`VaultEnvBlueprintStore::get`], sharing [`row_to_blueprint`] for the rest. Kept standalone
+/// because the empty-row/unknown-version cases below are its own, still directly tested.
+#[cfg(test)]
+pub(super) fn decode_env_blueprint(raw: &[u8]) -> EnvBlueprintResult<EnvBlueprint> {
+    let Some((&header, body)) = raw.split_first() else {
+        return Err(EnvBlueprintError::EmptyRow);
+    };
+    if header != ENV_BLUEPRINT_SCHEMA_VERSION {
+        return Err(EnvBlueprintError::UnsupportedSchemaVersion { found: header });
+    }
+    let row: EnvBlueprintRowV1 = rmp_serde::from_slice(body).map_err(encode_error)?;
+    row_to_blueprint(row, header)
 }
 
 pub type EnvBlueprintResult<T> = Result<T, EnvBlueprintError>;

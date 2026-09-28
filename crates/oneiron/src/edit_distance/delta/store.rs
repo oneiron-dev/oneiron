@@ -7,23 +7,47 @@ use crate::receipt::{
     FIELD_AMENDMENT_DELTA, FIELD_AMENDMENT_DELTA_UNCAPTURED, MAX_RECEIPT_QUERY_SCAN, ReceiptKind,
     ReceiptQuery, ReceiptRecord, proposal_outcome_amended_body,
 };
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::lanes::{DeltaCaptureContext, capture_delta_best};
 use super::schema::AmendmentDelta;
 
-/// `vault_meta` prefix for the Δ side-ledger. Keyed by receipt id, which is
-/// what the reader joins on — deriving the key from the receipt projector's
-/// own id keeps writer and reader from drifting apart.
-const AMENDMENT_DELTA_KEY_PREFIX: &[u8] = b"edit_distance/amendment_delta/v1\0";
+/// Write-once Δ side-ledger row for one receipt, keyed by receipt id — the
+/// same join key the reader uses, so writer and reader cannot drift apart.
+const AMENDMENT_DELTA: SideTable<String, DeltaRow, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_DELTA);
 
-/// Row value standing for "capture was ATTEMPTED here and failed". A Δ row is
-/// canonical JSON, which always opens `{`, so a bare token can never be read
-/// as one.
+/// Row value standing for "capture was ATTEMPTED here and failed". A captured
+/// Δ row is canonical JSON, which always opens `{`, so a bare token can never
+/// be read as one.
 ///
 /// The row is what makes the failure honest: without it, a receipt whose
 /// capture failed is byte-for-byte indistinguishable from one the projection
 /// pass never visited.
-pub(super) const AMENDMENT_DELTA_UNCAPTURED_ROW: &[u8] = b"uncaptured";
+const AMENDMENT_DELTA_UNCAPTURED_ROW: &[u8] = b"uncaptured";
+
+/// The Δ side-ledger's row shape: a captured measurement, or the marker that
+/// capture was attempted and failed.
+pub(super) enum DeltaRow {
+    Captured(AmendmentDelta),
+    Uncaptured,
+}
+
+impl RawValue for DeltaRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        match self {
+            Self::Captured(delta) => Ok(delta.encode()?),
+            Self::Uncaptured => Ok(AMENDMENT_DELTA_UNCAPTURED_ROW.to_vec()),
+        }
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if bytes == AMENDMENT_DELTA_UNCAPTURED_ROW {
+            return Ok(Self::Uncaptured);
+        }
+        Ok(Self::Captured(AmendmentDelta::decode(bytes)?))
+    }
+}
 
 /// The outcome token a Δ-carrying receipt reports. Both amendment doors
 /// (identity-topology resolution, ONE-1747; the inbox approve-with-edit door
@@ -36,13 +60,6 @@ pub(super) const PROPOSAL_TRIGGER_PREFIX: &str = "event:";
 // ---------------------------------------------------------------------------
 // Δ side-ledger + receipt attachment
 // ---------------------------------------------------------------------------
-
-fn amendment_delta_key(receipt_id: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(AMENDMENT_DELTA_KEY_PREFIX.len() + receipt_id.len());
-    key.extend_from_slice(AMENDMENT_DELTA_KEY_PREFIX);
-    key.extend_from_slice(receipt_id.as_bytes());
-    key
-}
 
 /// Records `delta` against the receipt it describes, returning whether a row
 /// was written.
@@ -57,23 +74,23 @@ pub(crate) fn put_amendment_delta_in_txn(
     receipt_id: &str,
     delta: &AmendmentDelta,
 ) -> Result<bool> {
-    put_amendment_row_in_txn(vault, wtxn, receipt_id, &delta.encode()?)
+    put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Captured(delta.clone()))
 }
 
 /// The write-once side-ledger row itself — a Δ payload or
-/// [`AMENDMENT_DELTA_UNCAPTURED_ROW`]. Both outcomes are measurements of the
-/// same closed window, so both take the same first-writer-wins law.
+/// [`DeltaRow::Uncaptured`]. Both outcomes are measurements of the same
+/// closed window, so both take the same first-writer-wins law.
 pub(super) fn put_amendment_row_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     receipt_id: &str,
-    row: &[u8],
+    row: &DeltaRow,
 ) -> Result<bool> {
-    let key = amendment_delta_key(receipt_id);
-    if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
+    let key = receipt_id.to_owned();
+    if AMENDMENT_DELTA.contains(&vault.store, &*wtxn, &key)? {
         return Ok(false);
     }
-    vault.store.vault_meta.put(wtxn, &key, row)?;
+    AMENDMENT_DELTA.put(&vault.store, wtxn, &key, row)?;
     Ok(true)
 }
 
@@ -89,25 +106,18 @@ pub(super) fn put_amendment_row_in_txn(
 /// Storage errors, and [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn amendment_delta(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentDelta>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(row) = amendment_delta_in_txn(vault, &rtxn, receipt_id)? else {
-        return Ok(None);
-    };
-    if row == AMENDMENT_DELTA_UNCAPTURED_ROW {
-        return Ok(None);
-    }
-    AmendmentDelta::decode(&row).map(Some)
+    Ok(match amendment_delta_in_txn(vault, &rtxn, receipt_id)? {
+        Some(DeltaRow::Captured(delta)) => Some(delta),
+        Some(DeltaRow::Uncaptured) | None => None,
+    })
 }
 
 fn amendment_delta_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     receipt_id: &str,
-) -> Result<Option<Vec<u8>>> {
-    Ok(vault
-        .store
-        .vault_meta
-        .get(rtxn, &amendment_delta_key(receipt_id))?
-        .map(std::borrow::Cow::into_owned))
+) -> Result<Option<DeltaRow>> {
+    AMENDMENT_DELTA.get(&vault.store, rtxn, &receipt_id.to_owned())
 }
 
 /// Whether this engine recorded an AMENDMENT against `receipt_id` — the
@@ -133,11 +143,7 @@ pub(in crate::edit_distance) fn amendment_recorded_in_txn(
     rtxn: &heed::RoTxn<'_>,
     receipt_id: &str,
 ) -> Result<bool> {
-    Ok(vault
-        .store
-        .vault_meta
-        .get(rtxn, &amendment_delta_key(receipt_id))?
-        .is_some())
+    AMENDMENT_DELTA.contains(&vault.store, rtxn, &receipt_id.to_owned())
 }
 
 /// Folds recorded Δs into the reserved `amendment_delta` slot of every
@@ -163,10 +169,11 @@ pub(crate) fn attach_amendment_deltas(
         let Some(row) = amendment_delta_in_txn(vault, rtxn, &record.receipt_id)? else {
             continue;
         };
-        let (field, value) = if row == AMENDMENT_DELTA_UNCAPTURED_ROW {
-            (FIELD_AMENDMENT_DELTA_UNCAPTURED, "true".to_owned())
-        } else {
-            (FIELD_AMENDMENT_DELTA, bytes_to_hex_lower(&row))
+        let (field, value) = match row {
+            DeltaRow::Uncaptured => (FIELD_AMENDMENT_DELTA_UNCAPTURED, "true".to_owned()),
+            DeltaRow::Captured(delta) => {
+                (FIELD_AMENDMENT_DELTA, bytes_to_hex_lower(&delta.encode()?))
+            }
         };
         record.fields.insert(field.to_owned(), value);
     }
@@ -231,12 +238,9 @@ pub fn project_identity_amendment_deltas(vault: &Vault) -> Result<usize> {
                 ProjectedDelta::Captured(delta) => {
                     put_amendment_delta_in_txn(vault, wtxn, receipt_id, delta)?
                 }
-                ProjectedDelta::Uncaptured => put_amendment_row_in_txn(
-                    vault,
-                    wtxn,
-                    receipt_id,
-                    AMENDMENT_DELTA_UNCAPTURED_ROW,
-                )?,
+                ProjectedDelta::Uncaptured => {
+                    put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Uncaptured)?
+                }
             };
             if wrote {
                 written += 1;

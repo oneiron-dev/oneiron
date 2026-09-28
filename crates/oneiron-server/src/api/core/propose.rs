@@ -57,8 +57,9 @@ pub(crate) async fn core_propose(
             .is_some()
     } else {
         scoped_read_for_core_auth(server.vault().as_ref(), &auth)?
-            .get(&subject)
+            .read(&[oneiron::claim::PointRead::id(subject)], None)
             .map_err(|error| core_engine_error("proposal target lookup failed", error))?
+            .single()
             .value
             .is_some()
     };

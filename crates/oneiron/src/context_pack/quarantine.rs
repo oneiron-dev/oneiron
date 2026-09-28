@@ -9,10 +9,14 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
 pub(super) const PACK_QUARANTINE_ROW: &str = "sync quarantine row";
-const PACK_REMAT_MARKER_PREFIX: &str = "rm:w:";
+
+/// Pending replay/quarantine rematerialization markers: `{window_key}:{entity_hex}`.
+/// The value is never read (only presence-under-prefix matters), so this binds `()`.
+const REMAT_MARKERS: SideTable<String, (), Raw> = SideTable::new(&side_table::SYNC_REMAT_MARKER);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,12 +82,7 @@ fn load_active_pack_entity_remat_markers(
     rtxn: &RoTxn<'_>,
 ) -> Result<HashSet<(String, (u64, u32))>> {
     let mut markers = HashSet::new();
-    let iter = store
-        .sync_state
-        .prefix_iter(rtxn, PACK_REMAT_MARKER_PREFIX)?;
-    for entry in iter {
-        let (key, _) = entry?;
-        let rest = &key[PACK_REMAT_MARKER_PREFIX.len()..];
+    for rest in REMAT_MARKERS.scan_keys(store, rtxn, &[])? {
         let Some((window_key, entity_hex)) = rest.split_once(':') else {
             continue;
         };

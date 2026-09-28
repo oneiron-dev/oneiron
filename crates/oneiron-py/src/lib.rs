@@ -109,6 +109,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             )],
             successor_short_id: None,
             gate_denial: None,
+            read_receipt: None,
         })
     })
 }
@@ -121,6 +122,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         suggestions: vec!["This is an Oneiron SDK bug; please report it.".to_owned()],
         successor_short_id: None,
         gate_denial: None,
+        read_receipt: None,
     })
 }
 

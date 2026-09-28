@@ -25,11 +25,9 @@ fn closing_op(vault: &Vault, id: EntityId) -> Result<BatchOp> {
 
 fn current_binding(vault: &Vault, id: EntityId) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&txn, &authored_key(&id))?
-        .map(|bytes| bytes.to_vec()))
+    Ok(AUTHORED
+        .get(&vault.store, &txn, &id)?
+        .map(|digest| digest.to_vec()))
 }
 
 fn assert_finalized_binding(vault: &Vault, id: EntityId) -> Result<()> {

@@ -4,6 +4,7 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, SideTable};
 use crate::store::GateDecisionId;
 
 use super::bound::{
@@ -15,6 +16,28 @@ use super::support::{
     SUBJECT_KIND_ACTOR, SUBJECT_KIND_AUDIENCE, hex_to_16_bytes, invalid_row, normalized_ref,
     required_value, validate_keys,
 };
+
+/// Standing consent-grant rows, keyed by the grant's own hex64 digest
+/// reference — an arbitrary caller-supplied string at the API boundary
+/// (`revoke_consent_grant`), never format-checked before this migration, so
+/// the key stays generic text rather than a validating hex64 type.
+pub(super) const GRANTS: SideTable<String, ConsentGrantRow, side_table::Raw> =
+    SideTable::new(&side_table::CONSENT_STANDING_GRANT);
+
+/// The row is its own pinned MessagePack layout: the side table stores
+/// exactly the bytes [`encode_consent_grant_row`] spells, and any decode
+/// failure surfaces through the SAME `GateError::InvalidConsentGrantRow`
+/// this codec has always returned (a crate [`Error`] round-trips through
+/// [`side_table::CodecError::Value`] unchanged).
+impl crate::side_table::RawValue for ConsentGrantRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_consent_grant_row(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_consent_grant_row(bytes)?)
+    }
+}
 
 /// Body schema version of a persisted standing consent-grant row.
 pub const CONSENT_GRANT_SCHEMA_VERSION: u64 = 1;

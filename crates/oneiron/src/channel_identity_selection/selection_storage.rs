@@ -3,7 +3,8 @@
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::overlay_db::OverlayDb;
+use crate::side_table::{self, Raw, SideTable};
+use crate::store::ManifestDbs;
 
 use super::selection_codec::{decode_rule_set, encode_rule_set};
 use super::selection_resolution::{
@@ -14,19 +15,27 @@ use super::selection_rules::{
     ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet, ChannelIdentitySelectionWriter,
 };
 use super::selection_vocabulary::{
-    CHANNEL_IDENTITY_SELECTION_KEY, CHANNEL_IDENTITY_SELECTION_SCHEMA_VERSION,
-    SelectionRuleWriterKind,
+    CHANNEL_IDENTITY_SELECTION_SCHEMA_VERSION, SelectionRuleWriterKind,
 };
 
 // ---------------------------------------------------------------------------
 // Storage + amendment
 // ---------------------------------------------------------------------------
 
+/// The stored selection rule set: a singleton row. Bound to raw bytes rather
+/// than the decoded `ChannelIdentitySelectionRuleSet`, because
+/// `decode_rule_set`/`encode_rule_set` return this module's own
+/// [`ChannelIdentitySelectionError`] (tests pin the `MalformedRuleSet`
+/// variant on a corrupt row) and a `RawValue` impl could only surface a
+/// generic `crate::error::Error` through `CodecError`.
+const SELECTION_RULES: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::CHANNEL_IDENTITY_SELECTION_RULES);
+
 fn stored_rule_set(
-    vault_meta: &OverlayDb,
+    dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
 ) -> ChannelIdentitySelectionResult<Option<ChannelIdentitySelectionRuleSet>> {
-    match vault_meta.get(txn, CHANNEL_IDENTITY_SELECTION_KEY)? {
+    match SELECTION_RULES.get(dbs, txn, &())? {
         Some(raw) => decode_rule_set(&raw).map(Some),
         None => Ok(None),
     }
@@ -118,7 +127,7 @@ impl Vault {
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
-        let stored = stored_rule_set(&self.store.vault_meta, &rtxn)?;
+        let stored = stored_rule_set(&self.store, &rtxn)?;
         compile_channel_identity_selection(stored.as_ref())
     }
 
@@ -136,7 +145,7 @@ impl Vault {
     ) -> ChannelIdentitySelectionResult<ChannelIdentitySelectionRuleSet> {
         let builtins = builtin_channel_identity_selection_rules();
         self.try_with_write_txn(|wtxn| {
-            let stored = stored_rule_set(&self.store.vault_meta, &*wtxn)?;
+            let stored = stored_rule_set(&self.store, &*wtxn)?;
             let current = stored.as_ref().map_or(0, |set| set.revision);
             if current != expected_revision {
                 return Err(ChannelIdentitySelectionError::RevisionConflict {
@@ -159,9 +168,7 @@ impl Vault {
             // on the next read.
             let compiled = compile_channel_identity_selection(Some(&record))?;
             let bytes = encode_rule_set(&record)?;
-            self.store
-                .vault_meta
-                .put(wtxn, CHANNEL_IDENTITY_SELECTION_KEY, &bytes)?;
+            SELECTION_RULES.put(&self.store, wtxn, &(), &bytes)?;
             Ok(compiled)
         })
     }
@@ -178,6 +185,6 @@ impl Vault {
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
-        stored_rule_set(&self.store.vault_meta, &rtxn)
+        stored_rule_set(&self.store, &rtxn)
     }
 }

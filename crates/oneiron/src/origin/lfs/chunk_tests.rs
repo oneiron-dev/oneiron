@@ -31,7 +31,7 @@ fn chunk_parameters_are_persisted_by_store_creation_before_vault_open() {
     let txn = store.env.read_txn().unwrap();
     let raw = store
         .vault_meta
-        .get(&txn, chunks::PARAM_KEY)
+        .get(&txn, crate::side_table::ORIGIN_LFS_CDC_SEED.prefix)
         .unwrap()
         .expect("creation must persist LFS parameters before a Vault opens");
     let seed = u64::from_le_bytes(raw.as_ref().try_into().unwrap());
@@ -50,7 +50,7 @@ fn missing_chunk_parameters_fail_closed_without_upload_reminting() {
     vault
         .store
         .vault_meta
-        .delete(&mut txn, chunks::PARAM_KEY)
+        .delete(&mut txn, crate::side_table::ORIGIN_LFS_CDC_SEED.prefix)
         .unwrap();
     txn.commit().unwrap();
 
@@ -72,7 +72,7 @@ fn missing_chunk_parameters_fail_closed_without_upload_reminting() {
         vault
             .store
             .vault_meta
-            .get(&txn, chunks::PARAM_KEY)
+            .get(&txn, crate::side_table::ORIGIN_LFS_CDC_SEED.prefix)
             .unwrap()
             .is_none()
     );

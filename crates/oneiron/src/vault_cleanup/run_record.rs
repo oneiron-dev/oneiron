@@ -5,22 +5,19 @@
 //! record co-commit; retries never open another proposal or advance the scan.
 
 use super::*;
+use crate::side_table::{self, Raw, SideTable};
 
-const RUN_PREFIX: &[u8] = b"vault_cleanup.run.v1:";
 const RUN_LABEL: &str = "cleanup run result";
 
-fn run_key(attempt: &AttemptId) -> Vec<u8> {
-    let mut key = RUN_PREFIX.to_vec();
-    key.extend_from_slice(attempt.as_bytes());
-    key
-}
+/// Durable cleanup-scan result for one attempt. Key: id16 (AttemptId).
+const RUN: SideTable<[u8; 16], Vec<u8>, Raw> = SideTable::new(&side_table::VAULT_CLEANUP_RUN);
 
 pub(super) fn read_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: &AttemptId,
 ) -> Result<Option<CleanupRunReport>> {
-    let Some(raw) = vault.store.vault_meta.get(txn, &run_key(attempt))? else {
+    let Some(raw) = RUN.get(&vault.store, txn, attempt.as_bytes())? else {
         return Ok(None);
     };
     let fields = decode_row(&raw, RUN_LABEL)?;
@@ -101,9 +98,10 @@ pub(super) fn put_in_txn(
         (Value::from(KEY_ARCHIVED), id_value_list(&report.archived)),
         (Value::from("digest"), optional(report.digest)),
     ]);
-    vault.store.vault_meta.put(
+    RUN.put(
+        &vault.store,
         txn,
-        &run_key(&report.attempt),
+        report.attempt.as_bytes(),
         &encode_row(&row, RUN_LABEL)?,
     )?;
     Ok(())

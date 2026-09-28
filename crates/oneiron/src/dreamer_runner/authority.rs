@@ -1,6 +1,7 @@
 //! One vault-owned Dreamer principal; job kinds are facets, not new authorities.
-use crate::attempt_queue::AttemptRecord;
+use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault,
@@ -9,8 +10,14 @@ use crate::{
 use serde::{Deserialize, Serialize};
 mod policy;
 pub use policy::{DreamerAgentBoundary, dreamer_facet_for_job_type, warrants_new_agent};
-const ACTOR_KEY: &[u8] = b"dreamer:authority:v1:actor";
-const ATTEMPT_PREFIX: &[u8] = b"dreamer:authority:v1:attempt:";
+
+/// Pointer to the single vault-owned Dreamer principal actor entity id.
+const ACTOR: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::DREAMER_AUTHORITY_ACTOR);
+/// Stamp binding one attempt id to the Dreamer principal, facet, and
+/// gate-decision receipt that admitted it.
+const ATTEMPT: SideTable<AttemptId, DreamerAuthorityStamp, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_AUTHORITY_ATTEMPT);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerAuthorityStamp {
@@ -34,9 +41,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         now: u64,
     ) -> Result<WriteActor> {
-        if let Some(raw) = self.store.vault_meta.get(&*txn, ACTOR_KEY)? {
-            let raw_id: &[u8] = &raw;
-            let id = EntityId::from_bytes(raw_id.try_into().map_err(|_| invalid())?)?;
+        if let Some(id) = ACTOR.get(&self.store, &*txn, &())? {
             let entity = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &id)?
                 .ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&entity)
@@ -60,9 +65,7 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            self.store
-                .vault_meta
-                .put(txn, ACTOR_KEY, actor.as_bytes())?;
+            ACTOR.put(&self.store, txn, &(), &actor)?;
             return Ok(WriteActor::new(actor, EdgeActorClass::Agent));
         }
         apply_ops(
@@ -88,9 +91,7 @@ impl Vault {
             false,
             true,
         )?;
-        self.store
-            .vault_meta
-            .put(txn, ACTOR_KEY, actor.as_bytes())?;
+        ACTOR.put(&self.store, txn, &(), &actor)?;
         Ok(WriteActor::new(actor, EdgeActorClass::Agent))
     }
     /// Proposal envelope shared by maintenance facets. Approval is never Auto.
@@ -148,17 +149,12 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: crate::attempt_queue::AttemptId,
     ) -> Result<Option<DreamerAuthorityStamp>> {
-        let key = [ATTEMPT_PREFIX, id.as_bytes()].concat();
-        self.store
-            .vault_meta
-            .get(txn, &key)?
-            .map(|raw| {
-                let stamp: DreamerAuthorityStamp =
-                    serde_json::from_slice(&raw).map_err(|_| invalid())?;
+        ATTEMPT
+            .get(&self.store, txn, &id)?
+            .map(|stamp| {
                 if stamp.attempt_id != *id.as_bytes()
                     || stamp.facet.trim().is_empty()
-                    || self.store.vault_meta.get(txn, ACTOR_KEY)?.as_deref()
-                        != Some(stamp.actor.as_bytes().as_slice())
+                    || ACTOR.get(&self.store, txn, &())? != Some(stamp.actor)
                     || crate::ports::EntityStoreRead::port_entity_raw(
                         &self.store,
                         txn,
@@ -197,9 +193,7 @@ pub(crate) fn stamp_attempt(
     }
     let actor = vault.dreamer_authority_in_txn(txn, record.created_at)?;
     let facet = dreamer_facet_for_job_type(facet).unwrap_or(facet);
-    let key = [ATTEMPT_PREFIX, record.id.as_bytes()].concat();
-    if let Some(raw) = vault.store.vault_meta.get(&*txn, &key)? {
-        let stamp: DreamerAuthorityStamp = serde_json::from_slice(&raw).map_err(|_| invalid())?;
+    if let Some(stamp) = ATTEMPT.get(&vault.store, &*txn, &record.id)? {
         if stamp.actor != actor.entity_ref()
             || stamp.attempt_id != *record.id.as_bytes()
             || stamp.facet != facet
@@ -235,11 +229,7 @@ pub(crate) fn stamp_attempt(
         facet: facet.into(),
         receipt_id: receipt_id.as_bytes(),
     };
-    vault.store.vault_meta.put(
-        txn,
-        &key,
-        &serde_json::to_vec(&stamp).map_err(|_| invalid())?,
-    )?;
+    ATTEMPT.put(&vault.store, txn, &record.id, &stamp)?;
     Ok(())
 }
 #[cfg(test)]

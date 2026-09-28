@@ -1,7 +1,6 @@
 //! Host-bound UI and agent action executor over the engine's one verb registry.
-use oneiron::code_run::{
-    SelfDispatchOutcome,
-    actions::{ActionRegistry, ActionVerbDefinition, AgentActionCall},
+use oneiron::code_run::actions::{
+    ActionDispatch, ActionRegistry, ActionVerbDefinition, AgentActionCall,
 };
 use oneiron::lens::{GeneratedUiValidatedAction, LensPrincipalBinding};
 use oneiron::{Result, Vault, WriteActor};
@@ -24,7 +23,7 @@ impl SharedActionExecutor {
         actor: WriteActor,
         event: &GeneratedUiValidatedAction,
         key: &str,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<ActionDispatch> {
         self.registry.execute_ui(vault, actor, event, key)
     }
     pub fn execute_agent(
@@ -33,7 +32,7 @@ impl SharedActionExecutor {
         actor: WriteActor,
         principal: &LensPrincipalBinding,
         call: &AgentActionCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<ActionDispatch> {
         self.registry.execute_agent(vault, actor, principal, call)
     }
 }

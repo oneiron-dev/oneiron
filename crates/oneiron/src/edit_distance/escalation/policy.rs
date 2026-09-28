@@ -2,9 +2,9 @@
 
 use super::ledger::{escalation_standing_n_in_txn, scope_rows_in_txn};
 use super::storage::{
-    ROW_VERSION, STANDING_POLICY_KEY_PREFIX, STANDING_POLICY_ROW_LABEL, StoredEscalation,
-    StoredStandingPolicy, encode_row, escalation_receipt_id, normalized_scope, ruling_from_parts,
-    ruling_parts, standing_policy_key, standing_policy_row, trigger_from_token,
+    ROW_VERSION, STANDING_POLICY, STANDING_POLICY_ROW_LABEL, ScopeTriggerKey, StoredEscalation,
+    StoredStandingPolicy, escalation_receipt_id, normalized_scope, ruling_from_parts, ruling_parts,
+    scope_key, trigger_from_token,
 };
 use super::types::{EscalationTrigger, StandingPolicy, StandingPolicyStatus};
 use crate::entity_id::EntityId;
@@ -53,8 +53,11 @@ pub(crate) fn maybe_propose_standing_policy_at(
     let scope = normalized_scope(scope)?.to_owned();
     let row_ref = vault.store.clock.entity_id()?;
     vault.with_write_txn(|wtxn| {
-        let key = standing_policy_key(&scope, trigger);
-        if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
+        let key = ScopeTriggerKey {
+            scope_digest: scope_key(&scope),
+            trigger,
+        };
+        if STANDING_POLICY.contains(&vault.store, &*wtxn, &key)? {
             return Ok(None);
         }
         let n = escalation_standing_n_in_txn(&vault.store, &*wtxn)?;
@@ -74,8 +77,7 @@ pub(crate) fn maybe_propose_standing_policy_at(
             proposed_at: at,
             accepted_at: None,
         };
-        let data = encode_row(&row, STANDING_POLICY_ROW_LABEL)?;
-        vault.store.vault_meta.put(wtxn, &key, &data)?;
+        STANDING_POLICY.put(&vault.store, wtxn, &key, &row)?;
         Ok(Some(row_ref))
     })
 }
@@ -145,14 +147,14 @@ pub fn standing_policy_for(
 ) -> Result<Option<StandingPolicy>> {
     let scope = normalized_scope(scope)?;
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &standing_policy_key(scope, trigger))?
-    else {
+    let key = ScopeTriggerKey {
+        scope_digest: scope_key(scope),
+        trigger,
+    };
+    let Some(row) = STANDING_POLICY.get(&vault.store, &rtxn, &key)? else {
         return Ok(None);
     };
-    standing_policy_parts(&standing_policy_row(&raw)?).map(Some)
+    standing_policy_parts(&row).map(Some)
 }
 
 fn standing_policy_parts(row: &StoredStandingPolicy) -> Result<StandingPolicy> {
@@ -205,8 +207,7 @@ pub(crate) fn accept_standing_policy_at(vault: &Vault, row_ref: &EntityId, at: u
             return Ok(());
         }
         row.accepted_at = Some(at);
-        let data = encode_row(&row, STANDING_POLICY_ROW_LABEL)?;
-        vault.store.vault_meta.put(wtxn, &key, &data)?;
+        STANDING_POLICY.put(&vault.store, wtxn, &key, &row)?;
         Ok(())
     })
 }
@@ -220,15 +221,11 @@ fn find_standing_policy_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     row_ref_hex: &str,
-) -> Result<Option<(Vec<u8>, StoredStandingPolicy)>> {
-    for entry in store
-        .vault_meta
-        .prefix_iter(txn, STANDING_POLICY_KEY_PREFIX)?
-    {
-        let (key, raw) = entry?;
-        let row = standing_policy_row(&raw)?;
+) -> Result<Option<(ScopeTriggerKey, StoredStandingPolicy)>> {
+    for entry in STANDING_POLICY.iter_from(store, txn, &[])? {
+        let (key, row) = entry?;
         if row.row_ref == row_ref_hex {
-            return Ok(Some((key.to_vec(), row)));
+            return Ok(Some((key, row)));
         }
     }
     Ok(None)

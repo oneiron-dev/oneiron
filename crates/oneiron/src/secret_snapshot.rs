@@ -11,11 +11,17 @@ use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::error::{CodeError, Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::read_secret_custody_in_txn;
-use crate::secret_lease::{SECRET_LOCAL_REGISTRATION_PREFIX, decode_local_registration_body};
+use crate::secret_lease::decode_local_registration_body;
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::vault::Vault;
 
-/// The `vault_meta` key prefix for a snapshot's custody report.
-pub const CODEBASE_CUSTODY_KEY_PREFIX: &str = "codebase:custody:v1:";
+/// SECRET-03 (ONE-1921): the T2 local-registration rows this snapshot filter
+/// reads to build its exclusion set. Bound here, not in `secret_lease`,
+/// because this is the only reader that scans the whole prefix; the row
+/// shape (a hand-rolled msgpack key map) stays behind
+/// `decode_local_registration_body`, which IS the codec for `Raw`.
+const T2_LOCAL_REGISTRATIONS: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SECRET_LOCAL_REGISTRATION);
 
 /// Vault-resident paths which must not enter a codebase snapshot.
 #[derive(Debug, Default)]
@@ -38,12 +44,7 @@ impl SnapshotExclusionSet {
                 declared_paths.extend(record.declared_paths);
             }
         }
-        for entry in vault
-            .store
-            .vault_meta
-            .prefix_iter(txn, SECRET_LOCAL_REGISTRATION_PREFIX.as_bytes())?
-        {
-            let (_, raw) = entry?;
+        for (_, raw) in T2_LOCAL_REGISTRATIONS.scan(&vault.store, txn)? {
             let registration = decode_local_registration_body(&raw)?;
             if registration.registration.project_id == project_id {
                 registered_hashes.insert(registration.registration.content_hash);
@@ -136,6 +137,25 @@ pub struct SnapshotCustodyReport {
     pub proposals: Vec<SecretLiftProposal>,
 }
 
+/// The side table's declared codec is `Raw`, not `Named`: the put/get/delete call sites in
+/// `codebase/store.rs` have always written this report through `rmp_serde::to_vec_named` and read
+/// it back through a plain (non-strict) `rmp_serde::from_slice`, so this impl keeps exactly that
+/// pair rather than switching to the door's strict whole-row `Named` decode.
+impl RawValue for SnapshotCustodyReport {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_report(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        rmp_serde::from_slice(bytes).map_err(|_| {
+            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "decode custody report",
+            ))
+            .into()
+        })
+    }
+}
+
 impl Vault {
     /// Filters declared files, quarantines unreadable or detected files, and
     /// returns the safe manifest plus its sidecar report.
@@ -178,14 +198,6 @@ impl Vault {
         }
         Ok((files, report))
     }
-}
-
-pub(crate) fn custody_key(fork_hash: &[u8; 32]) -> Vec<u8> {
-    format!(
-        "{CODEBASE_CUSTODY_KEY_PREFIX}{}",
-        crate::entity_id::bytes_to_hex_lower(fork_hash)
-    )
-    .into_bytes()
 }
 
 pub(crate) fn encode_report(report: &SnapshotCustodyReport) -> Result<Vec<u8>> {

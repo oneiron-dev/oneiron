@@ -16,7 +16,7 @@ use super::definition::{QueryScope, SavedQueryDefinition};
 // name is in scope for rustdoc without being an unused import.
 #[cfg(doc)]
 use super::evaluator::SavedQueryEvaluator;
-use super::storage::{decode_memo_row, encode_memo_row, keys, meta_row, put_meta_row};
+use super::storage::MEMOS;
 use super::support::{EVIDENCE_HASH_DOMAIN, canonical_json_bytes, hash_bytes, hash_len};
 
 /// One entity's evidence, narrowed to what a definition declared relevant.
@@ -227,10 +227,8 @@ fn hash_semantic_inputs(hasher: &mut Sha256, inputs: &[(EntityId, String)]) {
 /// [`Error::CorruptedIndex`] rather than silently treated as a miss — a memo
 /// that cannot be read is not the same as a memo that says "no match".
 pub fn verdict_memo(vault: &Vault, key: &VerdictMemoKey) -> Result<Option<VerdictMemoRow>> {
-    let Some(raw) = meta_row(vault, &keys::memo(key))? else {
-        return Ok(None);
-    };
-    decode_memo_row(&raw).map(Some)
+    let rtxn = vault.store.env.read_txn()?;
+    MEMOS.get(&vault.store, &rtxn, key)
 }
 
 /// Persists a verdict memo.
@@ -239,5 +237,8 @@ pub fn verdict_memo(vault: &Vault, key: &VerdictMemoKey) -> Result<Option<Verdic
 ///
 /// Storage errors propagate unchanged.
 pub fn put_verdict_memo(vault: &Vault, row: &VerdictMemoRow) -> Result<()> {
-    put_meta_row(vault, &keys::memo(&row.key), &encode_memo_row(row)?)
+    vault.with_write_txn(|wtxn| {
+        MEMOS.put(&vault.store, wtxn, &row.key, row)?;
+        Ok(())
+    })
 }

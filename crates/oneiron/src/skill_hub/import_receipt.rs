@@ -9,12 +9,42 @@ use super::{
 };
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectFacts};
+use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideTable};
 use crate::skill::{SkillContentHash, SkillLifecycle};
 use crate::{Vault, entity_id::EntityId, error::Result, temporal::TimeRange};
 
-pub(super) const CODE_AUTO_INSTALL_KEY: &[u8] = b"skill_hub/marketplace-code-auto-install/v1";
-const CODE_AUTO_INSTALL_REVISION_KEY: &[u8] =
-    b"skill_hub/marketplace-code-auto-install-revision/v1";
+/// Hub-import receipt for one entity, keyed by (entity, source hub id, hash
+/// of the source ref string).
+const IMPORT_RECEIPT: SideTable<(EntityId, EntityId, [u8; 32]), HubImportReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_IMPORT_RECEIPT);
+/// Owner switch for auto-installing code-bearing marketplace folders; an
+/// absent row is off. `pub(super)` for the transport tests' read-back.
+pub(super) const CODE_AUTO_INSTALL: SideTable<(), MarketplaceSwitch, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL);
+/// Revision of the code auto-install switch, bound into each change's consent.
+const CODE_AUTO_INSTALL_REVISION: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION);
+/// Owner blocking rule on one canonical content hash; an absent row is off.
+const BLOCKED_HASH: SideTable<[u8; 32], MarketplaceSwitch, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_BLOCKED_HASH);
+
+/// One owner-set marketplace switch byte: `0` off, `1` on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct MarketplaceSwitch(bool);
+
+impl RawValue for MarketplaceSwitch {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(vec![u8::from(self.0)])
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        match bytes {
+            [0] => Ok(Self(false)),
+            [1] => Ok(Self(true)),
+            _ => Err(crate::error::Error::CorruptedIndex("marketplace switch").into()),
+        }
+    }
+}
 
 /// A host-side fit rung over the exact fetched folder and its source-derived
 /// requested permissions. The hub cannot declare its own fit result.
@@ -72,12 +102,6 @@ pub trait MarketplaceFitEvaluator {
     ) -> Result<MarketplaceFitDecision>;
 }
 
-fn rule_key(hash: SkillContentHash) -> Vec<u8> {
-    let mut key = b"skill_hub/marketplace-blocked-hash/v1\0".to_vec();
-    key.extend_from_slice(hash.as_bytes());
-    key
-}
-
 /// Read the owner rule at the same write frontier as every imported activation.
 /// Scanner risk and provider governance remain independent advisory signals.
 pub(crate) fn marketplace_hash_blocked_in_txn(
@@ -85,13 +109,9 @@ pub(crate) fn marketplace_hash_blocked_in_txn(
     txn: &heed::RoTxn<'_>,
     hash: SkillContentHash,
 ) -> Result<bool> {
-    match store.vault_meta.get(txn, &rule_key(hash))?.as_deref() {
-        None | Some([0]) => Ok(false),
-        Some([1]) => Ok(true),
-        Some(_) => Err(crate::error::Error::CorruptedIndex(
-            "marketplace blocked hash",
-        )),
-    }
+    Ok(BLOCKED_HASH
+        .get(store, txn, hash.as_bytes())?
+        .is_some_and(|MarketplaceSwitch(blocked)| blocked))
 }
 
 /// A source receipt for a marketplace install. One content holder can have many source receipts.
@@ -128,23 +148,9 @@ impl Vault {
     ) -> Result<ConsentReceipt> {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            let revision = match self
-                .store
-                .vault_meta
-                .get(txn, CODE_AUTO_INSTALL_REVISION_KEY)?
-            {
-                None => 0,
-                Some(raw) if raw.len() == 8 => {
-                    u64::from_be_bytes(raw.as_ref().try_into().map_err(|_| {
-                        crate::error::Error::CorruptedIndex("marketplace code policy revision")
-                    })?)
-                }
-                Some(_) => {
-                    return Err(crate::error::Error::CorruptedIndex(
-                        "marketplace code policy revision",
-                    ));
-                }
-            };
+            let revision = CODE_AUTO_INSTALL_REVISION
+                .get(&self.store, txn, &())?
+                .unwrap_or(0);
             let next = revision
                 .checked_add(1)
                 .ok_or(crate::error::Error::IndexOverflow(
@@ -158,12 +164,8 @@ impl Vault {
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
                     .ok_or_else(|| invalid("code auto-install consent missing"))?;
-            self.store
-                .vault_meta
-                .put(txn, CODE_AUTO_INSTALL_KEY, &[u8::from(enabled)])?;
-            self.store
-                .vault_meta
-                .put(txn, CODE_AUTO_INSTALL_REVISION_KEY, &next.to_be_bytes())?;
+            CODE_AUTO_INSTALL.put(&self.store, txn, &(), &MarketplaceSwitch(enabled))?;
+            CODE_AUTO_INSTALL_REVISION.put(&self.store, txn, &(), &next)?;
             crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             Ok(receipt)
         })
@@ -190,9 +192,12 @@ impl Vault {
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
                     .ok_or_else(|| invalid("marketplace rule consent missing"))?;
-            self.store
-                .vault_meta
-                .put(txn, &rule_key(hash), &[u8::from(blocked)])?;
+            BLOCKED_HASH.put(
+                &self.store,
+                txn,
+                hash.as_bytes(),
+                &MarketplaceSwitch(blocked),
+            )?;
             crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             Ok(receipt)
         })
@@ -256,20 +261,9 @@ impl Vault {
                 .files
                 .iter()
                 .any(|file| file.path.starts_with("scripts/"));
-            let code_enabled = match self
-                .store
-                .vault_meta
-                .get(txn, CODE_AUTO_INSTALL_KEY)?
-                .as_deref()
-            {
-                None | Some([0]) => false,
-                Some([1]) => true,
-                Some(_) => {
-                    return Err(crate::error::Error::CorruptedIndex(
-                        "marketplace code auto-install flag",
-                    ));
-                }
-            };
+            let code_enabled = CODE_AUTO_INSTALL
+                .get(&self.store, txn, &())?
+                .is_some_and(|MarketplaceSwitch(enabled)| enabled);
             let record = self.read_skill_record_in_txn(txn, &entity)?;
             let plan = InstallPlan::marketplace(
                 &record,
@@ -331,15 +325,10 @@ impl Vault {
             at,
         };
         let key = import_receipt_key(entity, source);
-        if publisher_and_result.is_none() && self.store.vault_meta.get(txn, &key)?.is_some() {
+        if publisher_and_result.is_none() && IMPORT_RECEIPT.contains(&self.store, txn, &key)? {
             return Ok(());
         }
-        self.store.vault_meta.put(
-            txn,
-            &key,
-            &serde_json::to_vec(&receipt).map_err(|_| invalid("import receipt encode failed"))?,
-        )?;
-        Ok(())
+        IMPORT_RECEIPT.put(&self.store, txn, &key, &receipt)
     }
     /// Resolves an exact fit-rung permission ask by a current owner, without
     /// requiring held-out improvement of imported content. A changed package,
@@ -355,13 +344,9 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let key = import_receipt_key(entity, source);
-            let raw = self
-                .store
-                .vault_meta
-                .get(txn, &key)?
+            let mut receipt = IMPORT_RECEIPT
+                .get(&self.store, txn, &key)?
                 .ok_or_else(|| invalid("marketplace permission ask missing"))?;
-            let mut receipt: HubImportReceipt =
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid hub import receipt"))?;
             if receipt.disposition != InstallDisposition::PendingPermission
                 || receipt.hub_id != source.hub_id.to_hex()
                 || receipt.ref_string != source.ref_string
@@ -398,21 +383,12 @@ impl Vault {
                 .files
                 .iter()
                 .any(|file| file.path.starts_with("scripts/"));
-            if has_code {
-                match self
-                    .store
-                    .vault_meta
-                    .get(txn, CODE_AUTO_INSTALL_KEY)?
-                    .as_deref()
-                {
-                    Some([1]) => {}
-                    None | Some([0]) => return Err(invalid("code auto-install is disabled")),
-                    Some(_) => {
-                        return Err(crate::error::Error::CorruptedIndex(
-                            "marketplace code auto-install flag",
-                        ));
-                    }
-                }
+            if has_code
+                && !CODE_AUTO_INSTALL
+                    .get(&self.store, txn, &())?
+                    .is_some_and(|MarketplaceSwitch(enabled)| enabled)
+            {
+                return Err(invalid("code auto-install is disabled"));
             }
             let effect = ComposedEffect::new(EffectFacts::new(format!(
                 "skill.marketplace.permission:{}:{}:{}:{}",
@@ -444,12 +420,7 @@ impl Vault {
             receipt.disposition = result.disposition;
             receipt.installed_as = result.lifecycle;
             receipt.at = learned_at;
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&receipt)
-                    .map_err(|_| invalid("import receipt encode failed"))?,
-            )?;
+            IMPORT_RECEIPT.put(&self.store, txn, &key, &receipt)?;
             Ok(approval)
         })
     }
@@ -459,14 +430,8 @@ impl Vault {
     pub(crate) fn marketplace_install_receipts(&self) -> Result<Vec<HubImportReceipt>> {
         let txn = self.store.env.read_txn()?;
         let mut recent = std::collections::BTreeMap::new();
-        for row in self
-            .store
-            .vault_meta
-            .prefix_iter(&txn, b"skill_hub/import-receipt/v1\0")?
-        {
-            let (_, raw) = row?;
-            let receipt: HubImportReceipt =
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid hub import receipt"))?;
+        for row in IMPORT_RECEIPT.iter_from(&self.store, &txn, &[])? {
+            let (_, receipt) = row?;
             if receipt.publisher.is_some() {
                 let order = (
                     receipt.at,
@@ -489,13 +454,7 @@ impl Vault {
         source: &HubRef,
     ) -> Result<Option<HubImportReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &import_receipt_key(entity, source))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid hub import receipt"))
-            })
-            .transpose()
+        IMPORT_RECEIPT.get(&self.store, &txn, &import_receipt_key(entity, source))
     }
 }
 fn permission_labels(surface: &SkillCapabilitySurface) -> Vec<String> {
@@ -510,12 +469,12 @@ fn permission_labels(surface: &SkillCapabilitySurface) -> Vec<String> {
     .collect()
 }
 
-fn import_receipt_key(entity: &EntityId, source: &HubRef) -> Vec<u8> {
-    let mut key = b"skill_hub/import-receipt/v1\0".to_vec();
-    key.extend_from_slice(entity.as_bytes());
-    key.extend_from_slice(source.hub_id.as_bytes());
-    key.extend_from_slice(blake3::hash(source.ref_string.as_bytes()).as_bytes());
-    key
+fn import_receipt_key(entity: &EntityId, source: &HubRef) -> (EntityId, EntityId, [u8; 32]) {
+    (
+        *entity,
+        source.hub_id,
+        *blake3::hash(source.ref_string.as_bytes()).as_bytes(),
+    )
 }
 
 fn pin_value(pin: &super::HubPin) -> Option<String> {

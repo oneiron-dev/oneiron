@@ -11,10 +11,11 @@ use super::types::{
     TRAP_CHAIN_WALK_CAP, TrapRef,
 };
 use crate::Vault;
-use crate::attempt_queue::AttemptQueue;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::{self, Raw, SideTable};
 
 /// Creates the C9 anchor, private binding, and `Waiting` transition atomically
 /// with the caller's TASK binding. The caller owns commit/rollback. No runner,
@@ -174,10 +175,12 @@ fn step_wait_head_in_txn(
     Err(invalid_trap("step-only trap supersession chain too deep"))
 }
 
-const DETACHED_STEP: &[u8] = b"dreamer.detached_step.v1/";
-fn detached_key(ctx: &DurableStepContext<'_>) -> Vec<u8> {
-    [DETACHED_STEP, ctx.attempt_id.as_bytes()].concat()
-}
+/// Private binding proving a detached step's actor/subject/step hash. Key: id16(attempt);
+/// value: actor id16 + subject id16 + step hash32, a hand-rolled 64-byte concat compared as
+/// opaque bytes, never decoded field-by-field.
+const DETACHED_STEP: SideTable<AttemptId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DREAMER_DETACHED_STEP);
+
 fn detached_value(ctx: &DurableStepContext<'_>, step_hash: [u8; 32]) -> Vec<u8> {
     [
         ctx.envelope_actor.entity_ref().as_bytes().as_slice(),
@@ -193,11 +196,9 @@ fn detached_step_matches(
     step_hash: [u8; 32],
 ) -> Result<bool> {
     Ok(ctx.run_id.is_none()
-        && vault
-            .store
-            .vault_meta
-            .get(txn, &detached_key(ctx))?
-            .is_some_and(|v| v.as_ref() == detached_value(ctx, step_hash)))
+        && DETACHED_STEP
+            .get(&vault.store, txn, &ctx.attempt_id)?
+            .is_some_and(|v| v == detached_value(ctx, step_hash)))
 }
 /// An external SDK call has a durable step but no engine-owned run. Only the
 /// authenticated facade can mint its private context proof; claims cannot.
@@ -210,14 +211,13 @@ pub(crate) fn register_detached_step_in_txn(
     if ctx.run_id.is_some() {
         return Err(invalid_trap("detached step names a run"));
     }
-    let key = detached_key(ctx);
     let value = detached_value(ctx, step_hash);
-    if let Some(prior) = vault.store.vault_meta.get(txn, &key)? {
-        if prior.as_ref() != value {
+    if let Some(prior) = DETACHED_STEP.get(&vault.store, txn, &ctx.attempt_id)? {
+        if prior != value {
             return Err(invalid_trap("detached step binding changed"));
         }
     } else {
-        vault.store.vault_meta.put(txn, &key, &value)?;
+        DETACHED_STEP.put(&vault.store, txn, &ctx.attempt_id, &value)?;
     }
     Ok(())
 }

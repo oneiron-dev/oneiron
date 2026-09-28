@@ -10,10 +10,34 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideTable};
 
-const ASK_PREFIX: &[u8] = b"skill_optimize:judge_ask:v1:";
-const LABEL_PREFIX: &[u8] = b"skill_optimize:judge_label:v1:";
-const BUDGET_PREFIX: &[u8] = b"settings:skill_optimize:judge_minutes:v1:";
+/// Proposed calibration asks, keyed by the ask id (the digest of its immutable question).
+const ASKS: SideTable<[u8; 32], JudgeAsk, LegacyJson> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_JUDGE_ASK);
+
+/// The label anchor: one human pick per ask, keyed by the ask id.
+const LABELS: SideTable<[u8; 32], JudgeLabel, LegacyJson> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_JUDGE_LABEL);
+
+/// An owner's funded judge-ask minutes, keyed by the owner id. An absent row is zero.
+const MINUTES: SideTable<EntityId, JudgeMinutes, Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_JUDGE_MINUTES);
+
+/// [`MINUTES`]'s row: the balance as a big-endian `u32`.
+struct JudgeMinutes(u32);
+
+impl RawValue for JudgeMinutes {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_be_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        <[u8; 4]>::try_from(bytes)
+            .map(|raw| Self(u32::from_be_bytes(raw)))
+            .map_err(|_| Error::CorruptedIndex("judge minutes budget").into())
+    }
+}
 
 fn invalid() -> Error {
     Error::InvalidConfig("invalid judge calibration ask or pick".into())
@@ -57,20 +81,8 @@ pub struct JudgeLabel {
     pub principal_ref: String,
 }
 
-fn ask_key(id: &[u8; 32]) -> Vec<u8> {
-    [ASK_PREFIX, id].concat()
-}
-fn label_key(id: &[u8; 32]) -> Vec<u8> {
-    [LABEL_PREFIX, id].concat()
-}
-fn budget_key(owner: EntityId) -> Vec<u8> {
-    [BUDGET_PREFIX, owner.as_bytes()].concat()
-}
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|_| invalid())
-}
-fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|_| Error::CorruptedIndex("judge calibration row"))
 }
 fn valid_text(value: &str, limit: u32) -> bool {
     !value.trim().is_empty() && value.len() <= usize::try_from(limit).unwrap_or(usize::MAX)
@@ -179,8 +191,7 @@ fn propose(
         {
             return Err(invalid());
         }
-        if let Some(raw) = vault.store.vault_meta.get(&*txn, &ask_key(&id))? {
-            let existing: JudgeAsk = decode(&raw)?;
+        if let Some(existing) = ASKS.get(&vault.store, &*txn, &id)? {
             if existing.id != id
                 || existing.skill != skill
                 || existing.responsible != responsible
@@ -194,10 +205,7 @@ fn propose(
             }
             return Ok(existing);
         }
-        vault
-            .store
-            .vault_meta
-            .put(txn, &ask_key(&id), &encode(&question)?)?;
+        ASKS.put(&vault.store, txn, &id, &question)?;
         Ok(question)
     })
 }
@@ -212,11 +220,7 @@ pub fn set_judge_digest_minutes(
 ) -> Result<()> {
     vault.with_write_txn(|txn| {
         crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &budget_key(owner.actor()), &minutes.to_be_bytes())?;
-        Ok(())
+        MINUTES.put(&vault.store, txn, &owner.actor(), &JudgeMinutes(minutes))
     })
 }
 
@@ -229,10 +233,9 @@ pub fn judge_label_anchor(
 ) -> Result<Vec<JudgeLabel>> {
     let txn = vault.store.env.read_txn()?;
     let mut labels = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&txn, LABEL_PREFIX)? {
-        let (key, bytes) = row?;
-        let label: JudgeLabel = decode(&bytes)?;
-        if key != label_key(&label.ask.id) {
+    for row in LABELS.iter_from(&vault.store, &txn, &[])? {
+        let (key, label) = row?;
+        if key != label.ask.id {
             return Err(Error::CorruptedIndex("judge label identity"));
         }
         if label.ask.skill == skill && label.ask.campaign == campaign {
@@ -253,12 +256,9 @@ pub fn record_judge_pick(
 ) -> Result<JudgeLabel> {
     vault.with_write_txn(|txn| {
         crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
-        let raw = vault
-            .store
-            .vault_meta
-            .get(&*txn, &ask_key(&ask_id))?
+        let ask = ASKS
+            .get(&vault.store, &*txn, &ask_id)?
             .ok_or(Error::EntityNotFound)?;
-        let ask: JudgeAsk = decode(&raw)?;
         if ask.id != ask_id || ask.responsible != owner.actor() || ask.delivered_at.is_none() {
             return Err(invalid());
         }
@@ -267,8 +267,7 @@ pub fn record_judge_pick(
         } else {
             ask.option_a.clone()
         };
-        if let Some(raw) = vault.store.vault_meta.get(&*txn, &label_key(&ask_id))? {
-            let previous: JudgeLabel = decode(&raw)?;
+        if let Some(previous) = LABELS.get(&vault.store, &*txn, &ask_id)? {
             if previous.ask != ask || previous.chosen != chosen {
                 return Err(invalid());
             }
@@ -280,10 +279,7 @@ pub fn record_judge_pick(
             picked_at: at,
             principal_ref: owner.principal_ref().into(),
         };
-        vault
-            .store
-            .vault_meta
-            .put(txn, &label_key(&ask_id), &encode(&label)?)?;
+        LABELS.put(&vault.store, txn, &ask_id, &label)?;
         Ok(label)
     })
 }
@@ -297,17 +293,9 @@ pub(crate) fn take_digest_asks_in_txn(
     owner: EntityId,
     at: u64,
 ) -> Result<Vec<JudgeAsk>> {
-    let minutes = vault
-        .store
-        .vault_meta
-        .get(&*txn, &budget_key(owner))?
-        .map(|raw| {
-            <[u8; 4]>::try_from(raw.as_ref())
-                .map(u32::from_be_bytes)
-                .map_err(|_| Error::CorruptedIndex("judge minutes budget"))
-        })
-        .transpose()?
-        .unwrap_or(0);
+    let minutes = MINUTES
+        .get(&vault.store, &*txn, &owner)?
+        .map_or(0, |balance| balance.0);
     if minutes == 0 {
         return Ok(Vec::new());
     }
@@ -317,10 +305,9 @@ pub(crate) fn take_digest_asks_in_txn(
         return Ok(Vec::new());
     }
     let mut selected = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&*txn, ASK_PREFIX)? {
-        let (key, raw) = row?;
-        let mut ask: JudgeAsk = decode(&raw)?;
-        if key != ask_key(&ask.id) {
+    for row in ASKS.iter_from(&vault.store, &*txn, &[])? {
+        let (key, mut ask) = row?;
+        if key != ask.id {
             return Err(Error::CorruptedIndex("judge ask identity"));
         }
         if ask.responsible == owner && ask.delivered_at.is_none() {
@@ -340,15 +327,9 @@ pub(crate) fn take_digest_asks_in_txn(
         let remaining = minutes
             .checked_sub(spent)
             .ok_or(Error::ArithmeticOverflow("judge ask minutes"))?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &budget_key(owner), &remaining.to_be_bytes())?;
+        MINUTES.put(&vault.store, txn, &owner, &JudgeMinutes(remaining))?;
         for ask in &selected {
-            vault
-                .store
-                .vault_meta
-                .put(txn, &ask_key(&ask.id), &encode(ask)?)?;
+            ASKS.put(&vault.store, txn, &ask.id, ask)?;
         }
     }
     Ok(selected)

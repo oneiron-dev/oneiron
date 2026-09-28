@@ -5,42 +5,34 @@ use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, WriteActor};
 use heed::RoTxn;
 use std::collections::HashSet;
 
-pub(super) const HEAD: &[u8] = b"conversation_dag:local_head:v1:";
-pub(super) const CANONICAL: &[u8] = b"conversation_dag:canonical:v1:";
-pub(super) const MIGRATED: &[u8] = b"conversation_dag:migrated:v1:";
+/// Per-conversation pointer to the current local-head DAG record id.
+pub(super) const HEAD: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_LOCAL_HEAD);
+/// Forward canonical-chain link: one DAG record to its canonical successor.
+pub(super) const CANONICAL: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_CANONICAL);
+/// Single-byte `[1]` marker that a conversation has adopted the DAG record model.
+pub(super) const MIGRATED: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_MIGRATED);
 
 pub(super) fn invalid(reason: &'static str) -> Error {
     RecordError::InvalidConversationDag(reason).into()
 }
 
-pub(super) fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
-
 pub(super) fn read_id(
     store: &Store,
     txn: &RoTxn<'_>,
-    prefix: &[u8],
+    table: SideTable<EntityId, EntityId, Raw>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
-    store
-        .vault_meta
-        .get(txn, &key(prefix, id))?
-        .map(|raw| {
-            let bytes: [u8; 16] = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("conversation DAG sidecar"))?;
-            EntityId::from_bytes(bytes)
-                .map_err(|_| Error::CorruptedIndex("conversation DAG sidecar"))
-        })
-        .transpose()
+    table.get(store, txn, id)
 }
 
 pub(crate) fn require_type(

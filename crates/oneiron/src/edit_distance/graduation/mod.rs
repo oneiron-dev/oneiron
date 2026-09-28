@@ -61,26 +61,31 @@
 
 use serde::Serialize;
 
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 // ---------------------------------------------------------------------------
-// Keyspace + pinned strings
+// Tables
 // ---------------------------------------------------------------------------
-/// `vault_meta` key prefix of a runtime threshold row. The full key is this
-/// prefix followed by [`pattern_key`] — a digest rather than the pattern text,
-/// because a pattern of three [`crate::consent::MAX_CONSENT_REF_LEN`] segments
-/// is far past what belongs in a key.
-const THRESHOLD_KEY_PREFIX: &[u8] = b"graduation_threshold:v1:";
 
-/// `vault_meta` key prefix of the append-only offer-answer log. The full key is
-/// this prefix ‖ [`RampScope::key`] (16 B) ‖ row id (16 B).
+/// Runtime consent-graduation threshold override for one ramp pattern, keyed
+/// by [`threshold_policy::pattern_key`] — a digest rather than the pattern
+/// text, because a pattern of three [`crate::consent::MAX_CONSENT_REF_LEN`]
+/// segments is far past what belongs in a key.
+const THRESHOLD: SideTable<[u8; ENTITY_ID_LEN], threshold_policy::StoredThresholdRow, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_GRADUATION_THRESHOLD);
+
+/// Append-only offer-answer log, scope-major ([`RampScope::key`](crate::consent_graduation::RampScope::key), 16 B) then row id
+/// (16 B).
 ///
 /// Keying by SCOPE first is what makes replay cheap: one scope's answers are a
 /// contiguous range. The trailing id is a UUIDv7, so key order is WRITE order —
 /// MS-06's law that caller-supplied wall time is data and never order holds
 /// here too, and it has to: an unpin recorded with an earlier `at` than the
 /// decline it undoes would otherwise replay before it and undo nothing.
-const ANSWER_KEY_PREFIX: &[u8] = b"graduation_answer:v1:";
+const ANSWER: SideTable<([u8; ENTITY_ID_LEN], EntityId), answers::StoredAnswer, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_GRADUATION_ANSWER);
 
 /// Receipt-id prefix of an offer-answer receipt — the
 /// [`is_graduation_answer_receipt`] discriminator inside the `Gate` family,
@@ -105,11 +110,34 @@ fn decode_row<T: serde::de::DeserializeOwned>(raw: &[u8], label: &'static str) -
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
 }
 
-fn meta_key(prefix: &[u8], handle: &[u8]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + handle.len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(handle);
-    key
+impl RawValue for answers::StoredAnswer {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, ANSWER_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row: Self = decode_row(bytes, ANSWER_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(CodecError::Value(Error::CorruptedIndex(ANSWER_ROW_LABEL)));
+        }
+        Ok(row)
+    }
+}
+
+impl RawValue for threshold_policy::StoredThresholdRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, THRESHOLD_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row: Self = decode_row(bytes, THRESHOLD_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(CodecError::Value(Error::CorruptedIndex(
+                THRESHOLD_ROW_LABEL,
+            )));
+        }
+        Ok(row)
+    }
 }
 
 mod answers;
@@ -149,8 +177,6 @@ use self::{answers::*, receipts::*, threshold_policy::*};
 use crate::consent::AuthenticatedOwner;
 #[cfg(test)]
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope, RampState};
-#[cfg(test)]
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 #[cfg(test)]
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 #[cfg(test)]

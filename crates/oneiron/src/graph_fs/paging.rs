@@ -147,6 +147,7 @@ impl PageBuilder {
             entries: self.entries,
             next_cursor,
             byte_count: self.byte_count,
+            read_receipt: None,
         }
     }
 }

@@ -12,12 +12,14 @@ use super::super::rendezvous::{
 };
 use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
-    DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
+    DeleteReason, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, TombstoneValueV2,
+    window_label_from_timestamp,
 };
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
 use super::DeleteEntityOutcome;
+use crate::side_table::HexId;
 
 impl Vault {
     pub(super) fn delete_entity_without_header(
@@ -109,7 +111,7 @@ impl Vault {
             requested_at,
             TopologyDeletePhase::Committed,
         )?;
-        let marker_key = local_hard_delete_key(id);
+        let marker_key = HexId(*id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
         // probe above gated the tombstone publish; THIS probe gates the
@@ -124,11 +126,14 @@ impl Vault {
                 crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
             }
             if reason.active_store_hard_purge_v1()
-                && self.store.sync_state.get(&wtxn, &marker_key)?.is_none()
+                && !HARD_DELETE_MARKER.contains(&self.store, &wtxn, &marker_key)?
             {
-                self.store
-                    .sync_state
-                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+                HARD_DELETE_MARKER.put(
+                    &self.store,
+                    &mut wtxn,
+                    &marker_key,
+                    &tombstone.encode().to_vec(),
+                )?;
             }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
@@ -169,11 +174,7 @@ impl Vault {
         if reason == DeleteReason::UserDelete {
             // A headerless soft deletion still retires proposals. Its
             // cancellation and this evidence must become visible together.
-            self.store.sync_state.put(
-                &mut wtxn,
-                &crate::deletion::identity_soft_delete_key(id),
-                &[],
-            )?;
+            IDENTITY_SOFT_DELETE_MARKER.put(&self.store, &mut wtxn, &HexId(*id), &Vec::new())?;
         }
         if reason.active_store_hard_purge_v1() {
             // `dt:` local hard-delete marker (pinned: presence-only 25 B
@@ -184,9 +185,12 @@ impl Vault {
             // state; without the local marker a hostile tombstone removal
             // + re-put would resurrect this id through the
             // materialization gates.
-            self.store
-                .sync_state
-                .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+            HARD_DELETE_MARKER.put(
+                &self.store,
+                &mut wtxn,
+                &marker_key,
+                &tombstone.encode().to_vec(),
+            )?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;

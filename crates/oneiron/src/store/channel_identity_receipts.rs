@@ -1,24 +1,40 @@
 //! Append-only channel-identity lifecycle receipt ledger. (Distinct from
 //! the top-level `channel_identity_lifecycle` module, which consumes it.)
 
-use std::str;
-
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Named, SideKey, SideTable};
 
 use super::*;
 
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
 
-const CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX: &[u8] = b"channel_identity_lifecycle:v0:";
+/// Typed door for the append-only channel-identity lifecycle receipt ledger.
+const RECEIPTS: SideTable<
+    ChannelIdentityLifecycleReceiptId,
+    ChannelIdentityLifecycleReceiptRecord,
+    Named,
+> = SideTable::new(&side_table::CHANNEL_IDENTITY_LIFECYCLE_RECEIPT);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChannelIdentityLifecycleReceiptId {
     bytes: [u8; 16],
+}
+
+impl SideKey for ChannelIdentityLifecycleReceiptId {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.bytes);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self {
+            bytes: bytes.try_into().ok()?,
+        })
+    }
 }
 
 impl ChannelIdentityLifecycleReceiptId {
@@ -73,14 +89,12 @@ impl Store {
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
         vet_channel_identity_lifecycle_receipt_record(record)?;
-        let key = channel_identity_lifecycle_key(record.receipt_id);
-        if self.vault_meta.get(wtxn, &key)?.is_some() {
+        if RECEIPTS.contains(self, wtxn, &record.receipt_id)? {
             return Err(Error::InvariantViolation(
                 "channel identity lifecycle receipt id collision",
             ));
         }
-        let value = encode_channel_identity_lifecycle_receipt(record)?;
-        self.vault_meta.put(wtxn, &key, &value)?;
+        RECEIPTS.put(self, wtxn, &record.receipt_id, record)?;
         Ok(())
     }
 
@@ -92,21 +106,9 @@ impl Store {
             return Ok(Vec::new());
         }
         let rtxn = self.env.read_txn()?;
-        let upper = channel_identity_lifecycle_upper_bound();
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        for row in self.vault_meta.rev_range(
-            &rtxn,
-            &(
-                std::ops::Bound::Included(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            if !key.starts_with(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX) {
-                break;
-            }
-            let receipt_id = channel_identity_lifecycle_id_from_key(&key)?;
-            let record = decode_channel_identity_lifecycle_receipt(&value)?;
+        for row in RECEIPTS.iter_rev_from(self, &rtxn, &[])? {
+            let (receipt_id, record) = row?;
             if record.receipt_id != receipt_id {
                 return Err(Error::CorruptedIndex(
                     "channel identity lifecycle ledger key mismatch",
@@ -119,50 +121,6 @@ impl Store {
         }
         Ok(records)
     }
-}
-
-fn channel_identity_lifecycle_key(receipt_id: ChannelIdentityLifecycleReceiptId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX);
-    key.extend_from_slice(&receipt_id.as_bytes());
-    key
-}
-
-fn channel_identity_lifecycle_id_from_key(key: &[u8]) -> Result<ChannelIdentityLifecycleReceiptId> {
-    let bytes = key
-        .strip_prefix(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX)
-        .ok_or(Error::CorruptedIndex("channel identity lifecycle ledger"))?;
-    let bytes: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("channel identity lifecycle ledger"))?;
-    Ok(ChannelIdentityLifecycleReceiptId { bytes })
-}
-
-fn channel_identity_lifecycle_upper_bound() -> Vec<u8> {
-    let mut key = Vec::from(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX);
-    let last = key
-        .last_mut()
-        .expect("channel identity lifecycle key prefix must be non-empty");
-    *last = last
-        .checked_add(1)
-        .expect("channel identity lifecycle key prefix upper bound must not overflow");
-    key
-}
-
-fn encode_channel_identity_lifecycle_receipt(
-    record: &ChannelIdentityLifecycleReceiptRecord,
-) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(record)
-        .map_err(|_| Error::InvariantViolation("channel identity lifecycle ledger encode failed"))
-}
-
-fn decode_channel_identity_lifecycle_receipt(
-    raw: &[u8],
-) -> Result<ChannelIdentityLifecycleReceiptRecord> {
-    let record: ChannelIdentityLifecycleReceiptRecord = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("channel identity lifecycle ledger"))?;
-    vet_channel_identity_lifecycle_receipt_record(&record)?;
-    Ok(record)
 }
 
 fn vet_channel_identity_lifecycle_receipt_record(

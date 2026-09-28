@@ -1,8 +1,11 @@
-//! Shared campaign-enrollment storage primitives: schema version, key prefixes, JSON-row codecs, and vault_meta helpers.
+//! Shared campaign-enrollment storage primitives: schema version and hex/JSON row helpers.
+//!
+//! The typed `vault_meta` bindings for this family's five rows (program, step,
+//! event, baseline, home-node designation) live next to the row type each one
+//! stores, in `program.rs`, `detection.rs`, and `home_node.rs`.
 
 use serde::Serialize;
 
-use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -13,28 +16,9 @@ pub const CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND: &str = "campaign.enrollment.ma
 /// Schema version shared by every campaign-local row this module persists.
 pub const CAMPAIGN_ENROLLMENT_SCHEMA_VERSION: u32 = 1;
 
-pub(super) const ENROLLMENT_EVENT_PREFIX: &[u8] = b"campaign:enrollment_event:v1:";
-
-pub(super) const ENROLLMENT_BASELINE_PREFIX: &[u8] = b"campaign:enrollment_baseline:v1:";
-
-pub(super) const CAMPAIGN_PROGRAM_PREFIX: &[u8] = b"campaign:program:v1:";
-
-pub(super) const CAMPAIGN_PROGRAM_STEP_PREFIX: &[u8] = b"campaign:program_step:v1:";
-
-pub(super) fn keyed(prefix: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(prefix.len() + parts.iter().map(|part| part.len()).sum::<usize>());
-    key.extend_from_slice(prefix);
-    for part in parts {
-        key.extend_from_slice(part);
-    }
-    key
-}
-
-pub(super) fn baseline_key(query_ref: EntityId) -> Vec<u8> {
-    keyed(ENROLLMENT_BASELINE_PREFIX, &[query_ref.as_bytes()])
-}
-
+/// Generic JSON encode, used where the value crosses a non-`vault_meta` wire
+/// (the attempt-queue payload in `runner.rs`); the five `vault_meta` rows
+/// encode through their own typed `SideTable::put` instead.
 pub(super) fn to_row<T: Serialize>(row: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(row).map_err(|_| invalid("campaign enrollment row encode failed"))
 }
@@ -84,22 +68,6 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         _ => None,
     }
-}
-
-pub(super) fn read_meta(vault: &Vault, key: &[u8]) -> Result<Option<Vec<u8>>> {
-    let rtxn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&rtxn, key)?
-        .map(|bytes| bytes.to_vec()))
-}
-
-pub(super) fn put_meta(vault: &Vault, key: &[u8], value: &[u8]) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, key, value)?;
-        Ok(())
-    })
 }
 
 pub(super) fn invalid(reason: &str) -> Error {

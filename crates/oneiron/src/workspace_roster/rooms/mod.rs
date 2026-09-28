@@ -7,10 +7,11 @@ mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
-pub(super) use history::{THREAD_CHILDREN, delete_room_metadata};
+pub(super) use history::delete_room_metadata;
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
@@ -19,18 +20,34 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
 
-pub(super) const TURNS: &[u8] = b"rooms.turn.v1/";
-const HANDLES: &[u8] = b"rooms.platform_handle.v1/";
-const CLAIMS: &[u8] = b"rooms.claim.v1/";
-pub(super) fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
-pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(value).map_err(|_| invalid())
-}
-fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|_| invalid())
-}
+/// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
+/// (turn id).
+pub(super) const TURNS: SideTable<EntityId, RoomTurn, LegacyJson> =
+    SideTable::new(&side_table::ROOMS_TURN);
+/// Maps a host-configured platform handle to the one present actor it addresses within a room.
+/// Key: id16 (room id) + bytes (platform handle).
+const HANDLES: SideTable<(EntityId, String), EntityId, Raw> =
+    SideTable::new(&side_table::ROOMS_HANDLE);
+/// Claim-before-speaking receipt naming which actor may respond to one addressed turn. Key: id16
+/// (turn id).
+const CLAIMS: SideTable<EntityId, RoomClaimReceipt, LegacyJson> =
+    SideTable::new(&side_table::ROOMS_CLAIM);
+/// Chronological index of every turn in a room, walked for paged message history. Key: id16
+/// (room) + u64be (at) + id16 (turn).
+const HISTORY: SideTable<(EntityId, u64, EntityId), EntityId, Raw> =
+    SideTable::new(&side_table::ROOMS_HISTORY);
+/// Chronological index of non-branch (thread-root) turns, walked in reverse for the canonical
+/// room head. Key: id16 (room) + u64be (at) + id16 (turn).
+const HEADS: SideTable<(EntityId, u64, EntityId), EntityId, Raw> =
+    SideTable::new(&side_table::ROOMS_HEADS);
+/// Single-response-per-claim guard: which turn already answered one claimed parent turn. Key:
+/// id16 (parent turn id).
+const RESPONSE: SideTable<EntityId, EntityId, Raw> = SideTable::new(&side_table::ROOMS_RESPONSE);
+/// Parent-to-child index of a room's thread replies. Key: id16 (room) + id16 (parent turn) + id16
+/// (child turn).
+pub(super) const THREAD_CHILDREN: SideTable<(EntityId, EntityId, EntityId), EntityId, Raw> =
+    SideTable::new(&side_table::ROOMS_THREAD_CHILDREN);
+
 fn invalid() -> Error {
     Error::InvalidConfig("invalid room operation".into())
 }
@@ -68,12 +85,7 @@ pub(in crate::workspace_roster) fn turn_in(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<RoomTurn> {
-    let bytes = vault
-        .store
-        .vault_meta
-        .get(txn, &key(TURNS, id))?
-        .ok_or_else(invalid)?;
-    decode(&bytes)
+    TURNS.get(&vault.store, txn, &id)?.ok_or_else(invalid)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,14 +177,7 @@ pub(crate) fn project_room_audience_in(
     )?;
     if !body.extra.contains_key("project_id")
         && !body.extra.contains_key("memberIds")
-        && vault
-            .store
-            .vault_meta
-            .get(
-                txn,
-                &[super::project::ROOM_PROJECT, room.as_bytes()].concat(),
-            )?
-            .is_none()
+        && !super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)?
     {
         return Ok(None);
     }
@@ -205,13 +210,8 @@ impl Vault {
         )?;
         let derived = body.extra.contains_key("project_id") || body.extra.contains_key("memberIds");
         if derived
-            || self
-                .store
-                .vault_meta
-                .get(
-                    &txn,
-                    &[super::project::ROOM_PROJECT, room.as_bytes()].concat(),
-                )?
+            || super::project::ROOM_PROJECT
+                .get(&self.store, &txn, &room)?
                 .is_some()
         {
             return room_in(self, &txn, room)?
@@ -232,8 +232,7 @@ impl Vault {
         }
         self.with_write_txn(|txn| {
             require_member(self, txn, room, actor)?;
-            let key = [HANDLES, room.as_bytes(), handle.as_bytes()].concat();
-            self.store.vault_meta.put(txn, &key, actor.as_bytes())?;
+            HANDLES.put(&self.store, txn, &(room, handle.to_owned()), &actor)?;
             Ok(())
         })
     }
@@ -275,9 +274,7 @@ impl Memory<'_> {
             {
                 return Ok(RoomClaimOutcome::NotAddressed);
             }
-            let key = key(CLAIMS, turn);
-            if let Some(raw) = self.vault().store.vault_meta.get(txn, &key)? {
-                let claim: RoomClaimReceipt = decode(&raw)?;
+            if let Some(claim) = CLAIMS.get(&self.vault().store, txn, &turn)? {
                 return Ok(if claim.actor == self.actor().to_hex() {
                     RoomClaimOutcome::Claimed(claim)
                 } else {
@@ -294,10 +291,7 @@ impl Memory<'_> {
                 ),
                 at: now,
             };
-            self.vault()
-                .store
-                .vault_meta
-                .put(txn, &key, &encode(&receipt)?)?;
+            CLAIMS.put(&self.vault().store, txn, &turn, &receipt)?;
             Ok(RoomClaimOutcome::Claimed(receipt))
         })
     }

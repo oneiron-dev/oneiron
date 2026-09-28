@@ -7,12 +7,29 @@ use super::{
     codec::{decode_code_revision, encode_code_revision},
 };
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::{Vault, entity_id::EntityId};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
-const PREFIX: &[u8] = b"code_revision:proposal:v1:";
+/// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: revision id.
+const PROPOSALS: SideTable<EntityId, CodeRevisionProposal, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_PROPOSAL);
+
+/// The row is its own pinned hand-rolled MessagePack layout: the side table stores exactly the
+/// bytes [`encode_proposal`] spells, and any decode failure surfaces through the SAME
+/// `invalid()` error this codec has always returned (a crate [`Error`] round-trips through
+/// [`side_table::CodecError::Value`] unchanged).
+impl RawValue for CodeRevisionProposal {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_proposal(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode(bytes)?)
+    }
+}
 
 /// A frontier conflict does not finalize or rebase the submitted revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,10 +63,8 @@ impl Vault {
     ) -> Result<Vec<CodeRevisionProposal>> {
         let txn = self.store.env.read_txn()?;
         let mut proposals = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(&txn, PREFIX)? {
-            let (key, raw) = row?;
-            let proposal = decode(&raw)?;
-            if key != proposal_key(&proposal.revision.revision_id) {
+        for (key, proposal) in PROPOSALS.scan(&self.store, &txn)? {
+            if key != proposal.revision.revision_id {
                 return Err(invalid());
             }
             verify(&self.store, &txn, &proposal)?;
@@ -67,19 +82,15 @@ fn invalid() -> Error {
         "invalid stranded revision proposal",
     ))
 }
-fn proposal_key(id: &EntityId) -> Vec<u8> {
-    [PREFIX, id.as_bytes()].concat()
-}
 
 pub(super) fn load(
     store: &Store,
     txn: &RoTxn<'_>,
     revision_id: &EntityId,
 ) -> Result<Option<CodeRevisionProposal>> {
-    let Some(raw) = store.vault_meta.get(txn, &proposal_key(revision_id))? else {
+    let Some(proposal) = PROPOSALS.get(store, txn, revision_id)? else {
         return Ok(None);
     };
-    let proposal = decode(&raw)?;
     if proposal.revision.revision_id != *revision_id {
         return Err(invalid());
     }
@@ -102,34 +113,34 @@ pub(super) fn retain(
         proposed_fold: integrity.revision_fold,
         artifact_body: artifact_body.to_vec(),
     };
+    PROPOSALS.put(store, txn, &proposal.revision.revision_id, &proposal)?;
+    Ok(proposal)
+}
+
+fn encode_proposal(proposal: &CodeRevisionProposal) -> Result<Vec<u8>> {
     let fields = Value::Map(vec![
         (
             Value::from("revision"),
-            Value::Binary(encode_code_revision(revision)?),
+            Value::Binary(encode_code_revision(&proposal.revision)?),
         ),
         (
             Value::from("head_revision_id"),
-            Value::Binary(head.revision_id.as_bytes().to_vec()),
+            Value::Binary(proposal.head_revision_id.as_bytes().to_vec()),
         ),
         (
             Value::from("head_fold"),
-            Value::Binary(head.revision_fold.to_vec()),
+            Value::Binary(proposal.head_fold.to_vec()),
         ),
         (
             Value::from("proposed_fold"),
-            Value::Binary(integrity.revision_fold.to_vec()),
+            Value::Binary(proposal.proposed_fold.to_vec()),
         ),
         (
             Value::from("artifact_body"),
-            Value::Binary(artifact_body.to_vec()),
+            Value::Binary(proposal.artifact_body.clone()),
         ),
     ]);
-    store.vault_meta.put(
-        txn,
-        &proposal_key(&revision.revision_id),
-        &encode_value(&fields, "stranded revision encode")?,
-    )?;
-    Ok(proposal)
+    encode_value(&fields, "stranded revision encode")
 }
 
 fn decode(raw: &[u8]) -> Result<CodeRevisionProposal> {

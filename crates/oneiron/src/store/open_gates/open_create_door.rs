@@ -242,7 +242,13 @@ impl Store {
             storage_abi_version,
         )?;
         if is_new_vault {
-            crate::origin::lfs::mint_lfs_chunk_parameters_in_txn(&vault_meta_view, &mut wtxn)?;
+            // Pre-manifest bootstrap: the declared typed table owns these bytes,
+            // but the Store/ManifestDbs door does not exist yet.
+            vault_meta_view.put(
+                &mut wtxn,
+                crate::side_table::ORIGIN_LFS_CDC_SEED.prefix,
+                &crate::origin::lfs::random_lfs_chunk_seed(),
+            )?;
         }
         if !is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;

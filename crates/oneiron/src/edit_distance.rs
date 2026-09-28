@@ -65,8 +65,13 @@ use crate::claim::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+
+/// Finalized proposal-text artifact, keyed by artifact ref.
+const PROPOSAL_ARTIFACT: SideTable<EntityId, FinalizedProposalText, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_PROPOSAL_ARTIFACT);
 
 /// Schema version of the persisted proposal-artifact record.
 pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 1;
@@ -107,8 +112,6 @@ const SPAN_KEY_AFTER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[6];
 const SPAN_KEY_TRUST: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[7];
 const SPAN_KEY_ACTOR: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[8];
 const SPAN_KEY_CLASS: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[9];
-
-const PROPOSAL_ARTIFACT_KEY_PREFIX: &[u8] = b"edit_distance/proposal_artifact/v1\0";
 
 /// Value-map key carrying the bound peer id on an `actor.peer_binding` claim.
 const PEER_BINDING_VALUE_KEY_PEER: &str = "peer";
@@ -280,22 +283,16 @@ pub struct FinalizedProposalText {
 /// trace, so the divergence is surfaced instead: identical bytes are idempotent
 /// (a retried finalize is not an error), different bytes are an error.
 pub fn put_finalized_proposal_text(vault: &Vault, record: &FinalizedProposalText) -> Result<()> {
-    let key = proposal_artifact_key(record.artifact_ref);
-    let value = encode_finalized_proposal_text(record)?;
     vault.with_write_txn(|wtxn| {
-        let stored_matches = vault
-            .store
-            .vault_meta
-            .get(&*wtxn, &key)?
-            .map(|stored| stored == value.as_slice());
-        match stored_matches {
-            Some(true) => Ok(()),
-            Some(false) => Err(Error::InvariantViolation(
+        let stored =
+            PROPOSAL_ARTIFACT.get(&vault.store, &*wtxn, &record.artifact_ref.entity_id())?;
+        match stored {
+            Some(stored) if stored == *record => Ok(()),
+            Some(_) => Err(Error::InvariantViolation(
                 "proposal artifact is already finalized with a different record",
             )),
             None => {
-                vault.store.vault_meta.put(wtxn, &key, &value)?;
-                Ok(())
+                PROPOSAL_ARTIFACT.put(&vault.store, wtxn, &record.artifact_ref.entity_id(), record)
             }
         }
     })
@@ -307,18 +304,7 @@ pub fn finalized_proposal_text(
     artifact_ref: ProposalArtifactRef,
 ) -> Result<Option<FinalizedProposalText>> {
     let rtxn = vault.store.env.read_txn()?;
-    let key = proposal_artifact_key(artifact_ref);
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
-        return Ok(None);
-    };
-    decode_finalized_proposal_text(&raw).map(Some)
-}
-
-fn proposal_artifact_key(artifact_ref: ProposalArtifactRef) -> Vec<u8> {
-    let mut key = Vec::with_capacity(PROPOSAL_ARTIFACT_KEY_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(PROPOSAL_ARTIFACT_KEY_PREFIX);
-    key.extend_from_slice(artifact_ref.entity_id().as_bytes());
-    key
+    PROPOSAL_ARTIFACT.get(&vault.store, &rtxn, &artifact_ref.entity_id())
 }
 
 // ---------------------------------------------------------------------------
@@ -783,6 +769,16 @@ fn field_opt_entity_id(entries: &[(Value, Value)], key: &str) -> Result<Option<E
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("proposal artifact record")
+}
+
+impl RawValue for FinalizedProposalText {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_finalized_proposal_text(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_finalized_proposal_text(bytes)?)
+    }
 }
 
 #[cfg(test)]

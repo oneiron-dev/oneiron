@@ -1,10 +1,11 @@
 //! Proposal accept/reject lane plus the archived query and restore door.
 
+use super::codec_receipts::PROPOSAL;
 use super::person_provenance;
 use super::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupDecision, CleanupDigest, CleanupProposal,
-    PROPOSAL_PREFIX, apply_archives_in_txn, cleanup_posture_in_txn, decode_proposal, fresh_row_id,
-    proposal_key, put_digest_in_txn,
+    apply_archives_in_txn, cleanup_posture_in_txn, decode_proposal, fresh_row_id,
+    put_digest_in_txn,
 };
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -24,12 +25,11 @@ use uuid::Uuid;
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn cleanup_proposals(vault: &Vault) -> Result<Vec<CleanupProposal>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&rtxn, PROPOSAL_PREFIX)? {
-        let (key, raw) = row?;
-        out.push(decode_proposal(&key, &raw)?);
-    }
-    Ok(out)
+    PROPOSAL
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(id, raw)| decode_proposal(id, &raw))
+        .collect()
 }
 
 /// One open proposal by id.
@@ -39,11 +39,10 @@ pub fn cleanup_proposals(vault: &Vault) -> Result<Vec<CleanupProposal>> {
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<Option<CleanupProposal>> {
     let rtxn = vault.store.env.read_txn()?;
-    let key = proposal_key(proposal);
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
+    let Some(raw) = PROPOSAL.get(&vault.store, &rtxn, proposal)? else {
         return Ok(None);
     };
-    decode_proposal(&key, &raw).map(Some)
+    decode_proposal(*proposal, &raw).map(Some)
 }
 
 /// Accepts an archive proposal: re-runs the tripwire per candidate, archives
@@ -67,15 +66,14 @@ pub(super) fn accept_cleanup_proposal_in_txn(
     proposal: &EntityId,
 ) -> Result<CleanupAcceptOutcome> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let key = proposal_key(proposal);
-    let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? else {
+    let Some(raw) = PROPOSAL.get(&vault.store, wtxn, proposal)? else {
         return Err(Error::Maintenance(
             MaintenanceError::VaultCleanupProposalNotFound {
                 proposal: proposal.to_hex(),
             },
         ));
     };
-    let row = decode_proposal(&key, &raw)?;
+    let row = decode_proposal(*proposal, &raw)?;
     let applied = apply_archives_in_txn(vault, wtxn, &row.candidates)?;
     let digest = CleanupDigest {
         id: fresh_row_id(vault)?,
@@ -88,7 +86,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         skipped: applied.skipped.clone(),
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
-    vault.store.vault_meta.delete(wtxn, &key)?;
+    PROPOSAL.delete(&vault.store, wtxn, proposal)?;
     Ok(CleanupAcceptOutcome {
         proposal: row.id,
         archived: applied.archived,
@@ -107,11 +105,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
 /// storage errors.
 pub fn reject_cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<()> {
     vault.with_write_txn(|wtxn| {
-        if !vault
-            .store
-            .vault_meta
-            .delete(wtxn, &proposal_key(proposal))?
-        {
+        if !PROPOSAL.delete(&vault.store, wtxn, proposal)? {
             return Err(Error::Maintenance(
                 MaintenanceError::VaultCleanupProposalNotFound {
                     proposal: proposal.to_hex(),

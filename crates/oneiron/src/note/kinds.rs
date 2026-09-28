@@ -1,12 +1,15 @@
 //! Vault-resident PACK descriptor records; the shipped kinds are data, not variants.
 
 use crate::error::{Error, RecordError, Result};
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
-const PREFIX: &[u8] = b"note_kind:v1:";
-
 use super::NoteKind;
+
+/// PACK-registered NOTE kind descriptor, keyed by the kind name.
+const NOTE_KIND: SideTable<String, NoteKindDescriptor, Named> =
+    SideTable::new(&side_table::NOTE_KIND);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -124,9 +127,6 @@ pub(super) fn valid_name(s: &str) -> bool {
         && s.bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._/-".contains(&c))
 }
-fn key(kind: &str) -> Vec<u8> {
-    [PREFIX, kind.as_bytes()].concat()
-}
 
 impl Vault {
     /// Registers immutable PACK-owned kind defaults. A plugin kind is namespaced
@@ -145,19 +145,15 @@ impl Vault {
                 "invalid PACK kind descriptor",
             )));
         }
-        let bytes = rmp_serde::to_vec_named(descriptor)
-            .map_err(|_| Error::InvariantViolation("NOTE descriptor encoding"))?;
         self.with_write_txn(|txn| {
-            if let Some(old) = self.store.vault_meta.get(txn, &key(&descriptor.kind))? {
-                if old.as_ref() != bytes.as_slice() {
+            if let Some(old) = NOTE_KIND.get(&self.store, txn, &descriptor.kind)? {
+                if old != *descriptor {
                     return Err(Error::Record(RecordError::InvalidNoteBody(
                         "kind already registered",
                     )));
                 }
             } else {
-                self.store
-                    .vault_meta
-                    .put(txn, &key(&descriptor.kind), &bytes)?;
+                NOTE_KIND.put(&self.store, txn, &descriptor.kind, descriptor)?;
             }
             Ok(())
         })?;
@@ -169,10 +165,7 @@ impl Vault {
     pub fn note_kind_descriptors(&self) -> Result<Vec<NoteKindDescriptor>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = shipped();
-        for entry in self.store.vault_meta.prefix_iter(&txn, PREFIX)? {
-            let (_, value) = entry?;
-            let d: NoteKindDescriptor = rmp_serde::from_slice(&value)
-                .map_err(|_| Error::CorruptedIndex("NOTE kind descriptor"))?;
+        for (_, d) in NOTE_KIND.scan(&self.store, &txn)? {
             rows.retain(|old| old.kind != d.kind);
             rows.push(d);
         }
@@ -241,14 +234,12 @@ pub(super) fn context_in_txn(
     if let Some((_, _, context, _, _)) = SHIPPED.iter().find(|(name, ..)| *name == kind) {
         return Ok(*context);
     }
-    let Some(raw) = store.vault_meta().get(txn, &key(kind))? else {
+    let Some(descriptor) = NOTE_KIND.get(store, txn, &kind.to_owned())? else {
         return match NoteKind::parse(kind) {
             Some(NoteKind::Plugin(_)) => Ok(ContextDefault::RelationshipScoped),
             _ => Err(RecordError::InvalidNoteBody("unknown NOTE kind").into()),
         };
     };
-    let descriptor: NoteKindDescriptor =
-        rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("NOTE kind descriptor"))?;
     if descriptor.kind != kind
         || !valid_name(&descriptor.pack)
         || !kind.starts_with(&format!("{}/", descriptor.pack))

@@ -1,22 +1,21 @@
 //! Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers.
 
 use crate::Vault;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWireCommitOutcome, GitWireRepo,
 };
 
-use super::publication_codec::{
-    decode_publication_row, keep_owner_oid_prefix, origin_keep_ref_name, row_entity_id,
-    visible_ref_key, visible_ref_prefix,
-};
 #[cfg(test)]
-use super::publication_codec::{encode_publication_row, publication_key};
+use super::publication_codec::OriginPublicationRow;
+use super::publication_codec::{
+    KEEP_OWNER, PUBLICATIONS, VISIBLE_REF, keep_owner_oid_scan_prefix, origin_keep_ref_name,
+    visible_ref_key,
+};
 use super::publication_types::{
-    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, ORIGIN_PUBLICATION_MAX_ROWS,
-    ORIGIN_PUBLICATION_RECORD_KEY_PREFIX, OriginCensusDisposition, OriginPublicationReceipt,
-    OriginPublicationRecord, OriginPublicationRequest,
+    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, ORIGIN_PUBLICATION_MAX_ROWS, OriginCensusDisposition,
+    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
 };
 // ---------------------------------------------------------------------------
 // Journal access
@@ -45,10 +44,13 @@ impl Vault {
         &self,
         record: &OriginPublicationRecord,
     ) -> Result<()> {
-        let key = publication_key(&record.publication_id);
-        let row = encode_publication_row(record)?;
         self.with_write_txn(|wtxn| {
-            self.store.vault_meta.put(wtxn, &key, &row)?;
+            PUBLICATIONS.put(
+                &self.store,
+                wtxn,
+                &record.publication_id,
+                &OriginPublicationRow::from_record(record),
+            )?;
             Ok(())
         })
     }
@@ -60,17 +62,13 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
         let mut seen = 0_usize;
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, ORIGIN_PUBLICATION_RECORD_KEY_PREFIX)?
-        {
+        for row in PUBLICATIONS.iter_from(&self.store, &rtxn, &[])? {
             seen += 1;
             if seen > ORIGIN_PUBLICATION_MAX_ROWS {
                 return Err(Error::IndexOverflow("origin publication rows"));
             }
-            let (_, raw) = entry?;
-            let record = decode_publication_row(&raw)?;
+            let (_, row) = row?;
+            let record = row.into_record()?;
             if repo_id.is_none_or(|scope| scope == record.repo_id) {
                 rows.push(record);
             }
@@ -80,18 +78,13 @@ impl Vault {
 
     pub(super) fn origin_visible_ref_rows(&self, repo_id: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = visible_ref_prefix(repo_id);
         let mut rows = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
+        for row in VISIBLE_REF.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
             if rows.len() >= ORIGIN_PUBLICATION_MAX_ROWS {
                 return Err(Error::IndexOverflow("origin visible ref rows"));
             }
-            let (_, raw) = entry?;
-            let bytes: [u8; ENTITY_ID_LEN] = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("origin visible ref row"))?;
-            rows.push(row_entity_id(bytes)?);
+            let (_, publication_id) = row?;
+            rows.push(publication_id);
         }
         Ok(rows)
     }
@@ -108,17 +101,16 @@ impl Vault {
         ref_name: &GitRefName,
     ) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let key = visible_ref_key(&repo_id, ref_name);
-        Ok(self.store.vault_meta.get(&rtxn, &key)?.is_some())
+        VISIBLE_REF.contains(&self.store, &rtxn, &visible_ref_key(&repo_id, ref_name))
     }
 
     /// How many logical owners still reference one object in one repository.
     pub(super) fn origin_keep_owner_count(&self, repo_id: &EntityId, oid: &GitOid) -> Result<u64> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = keep_owner_oid_prefix(repo_id, oid);
+        let prefix = keep_owner_oid_scan_prefix(repo_id, oid);
         let mut count = 0_u64;
-        for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            entry?;
+        for row in KEEP_OWNER.iter_from(&self.store, &rtxn, &prefix)? {
+            row?;
             count = count.saturating_add(1);
         }
         Ok(count)

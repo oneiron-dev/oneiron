@@ -7,18 +7,18 @@ use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
+use crate::side_table::{self, Raw, SideTable};
 use rmpv::Value;
 
-/// A host-local erasure fence: a completed sweep cannot be followed by a new
-/// locally authored turn from the erased PERSON in this room.
-pub(crate) fn erasure_key(room: EntityId, person: EntityId) -> Vec<u8> {
-    [
-        b"conversation:erased_person:v1:".as_slice(),
-        room.as_bytes(),
-        person.as_bytes(),
-    ]
-    .concat()
-}
+/// A host-local erasure fence, keyed by `(room, person)`: a completed sweep
+/// cannot be followed by a new locally authored turn from the erased PERSON
+/// in this room.
+pub(crate) const ROOM_ERASURES: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
+    SideTable::new(&side_table::CONVERSATION_ERASED_PERSON);
+
+/// Durable room of a MESSAGE, keyed by the MESSAGE.
+const MESSAGE_OWNERS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_MESSAGE_OWNER);
 
 /// The in-flight fence is unconditional. A completed erasure consults the
 /// current trusted manifest for *new* IDs; the old IDs stay hard-once-seen.
@@ -29,10 +29,10 @@ pub(crate) fn room_person_write_allowed(
     room: EntityId,
     person: EntityId,
 ) -> Result<bool> {
-    let Some(marker) = store.vault_meta().get(txn, &erasure_key(room, person))? else {
+    let Some(marker) = ROOM_ERASURES.get(store, txn, &(room, person))? else {
         return Ok(true);
     };
-    match marker.as_ref() {
+    match marker {
         [1] => Ok(false),
         [2] => {
             let policy = crate::gate::resolve_policy_manifest(store, txn)?;
@@ -84,12 +84,6 @@ fn author_in(vault: &Vault, txn: &heed::RoTxn<'_>, record: EntityId) -> Result<O
     }
 }
 
-const MESSAGE_OWNER: &[u8] = b"conversation:message_owner:v1:";
-
-fn message_owner_key(message: EntityId) -> Vec<u8> {
-    key(MESSAGE_OWNER, message)
-}
-
 /// Durable room membership for a MESSAGE, including after incident edges
 /// have been removed by the reason-aware purge of its TURN.
 pub(crate) fn room_message_owner_in(
@@ -97,18 +91,7 @@ pub(crate) fn room_message_owner_in(
     txn: &heed::RoTxn<'_>,
     message: EntityId,
 ) -> Result<Option<EntityId>> {
-    let persisted = store
-        .vault_meta
-        .get(txn, &message_owner_key(message))?
-        .map(|bytes| {
-            EntityId::from_bytes(
-                bytes
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("room MESSAGE owner pin"))?,
-            )
-        })
-        .transpose()?;
+    let persisted = MESSAGE_OWNERS.get(store, txn, &message)?;
     if persisted.is_none()
         && store
             .entities
@@ -168,9 +151,7 @@ pub(crate) fn pin_room_message_edge(
         {
             return Err(denied());
         }
-        store
-            .vault_meta
-            .put(txn, &message_owner_key(message), target.as_bytes())?;
+        MESSAGE_OWNERS.put(store, txn, &message, &target)?;
     }
     if matches!(kind, EdgeKind::BelongsTo | EdgeKind::AuthoredBy)
         && let Some(room) = room_message_owner_in(store, txn, message)?
@@ -634,9 +615,7 @@ impl Vault {
     ) -> Result<Vec<DeleteEntityOutcome>> {
         self.with_write_txn(|txn| {
             authorize_room_erasure(self, txn, room, person, actor)?;
-            self.store
-                .vault_meta
-                .put(txn, &erasure_key(room, person), &[1])?;
+            ROOM_ERASURES.put(&self.store, txn, &(room, person), &[1])?;
             Ok(())
         })?;
         let mut outcomes = Vec::new();
@@ -728,9 +707,7 @@ impl Vault {
         // failure above leaves phase 1 for a bounded retry, never free append.
         self.with_write_txn(|txn| {
             authorize_room_erasure(self, txn, room, person, actor)?;
-            self.store
-                .vault_meta
-                .put(txn, &erasure_key(room, person), &[2])?;
+            ROOM_ERASURES.put(&self.store, txn, &(room, person), &[2])?;
             Ok(())
         })?;
         Ok(outcomes)

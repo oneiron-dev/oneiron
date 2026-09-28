@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, GateError, Result};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::GateDecisionId;
 
 use super::bound::GrantBound;
@@ -15,7 +16,9 @@ mod selection;
 
 use self::selection::{ReasonCandidate, ReasonSelection, select_reason};
 
-const RULE_PREFIX: &[u8] = b"consent.owner_reason.v1:";
+/// One owner-reason rule row. Key: grant ref `:` rule decision id.
+const RULES: SideTable<RuleKey, RuleRow, Named> =
+    SideTable::new(&side_table::CONSENT_OWNER_REASON_RULE);
 const MAX_REASON_BYTES: usize = 1024;
 
 /// A host-supplied, authenticated confirm payload. `notice_text` is supplied by
@@ -75,30 +78,48 @@ struct RuleRow {
     retired: bool,
 }
 
-fn grant_prefix(grant_ref: &str) -> Vec<u8> {
-    let mut key = RULE_PREFIX.to_vec();
-    key.extend_from_slice(grant_ref.as_bytes());
-    key.push(b':');
-    key
+/// [`RULES`]' key: the derived grant's ref, `:`, then the rule's 16-byte decision id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuleKey {
+    grant_ref: String,
+    decision_id: [u8; 16],
 }
 
-fn key(grant_ref: &str, decision_id: &[u8; 16]) -> Vec<u8> {
-    let mut key = grant_prefix(grant_ref);
-    key.extend_from_slice(decision_id);
-    key
+impl RuleKey {
+    /// The key bytes every rule of one grant starts with.
+    fn grant_prefix(grant_ref: &str) -> Vec<u8> {
+        let mut key = grant_ref.as_bytes().to_vec();
+        key.push(b':');
+        key
+    }
 }
 
-fn decode(raw: &[u8], key_bytes: &[u8]) -> Result<RuleRow> {
-    let row: RuleRow =
-        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("owner reason rule"))?;
+impl SideKey for RuleKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&Self::grant_prefix(&self.grant_ref));
+        out.extend_from_slice(&self.decision_id);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (head, decision_id) = bytes.split_at_checked(bytes.len().checked_sub(16)?)?;
+        Some(Self {
+            grant_ref: String::decode_key(head.strip_suffix(b":")?)?,
+            decision_id: decision_id.try_into().ok()?,
+        })
+    }
+}
+
+/// A rule row is refused unless its bounds hold and it names its own key.
+fn check(key: &RuleKey, row: &RuleRow) -> Result<()> {
     if row.version != 1
         || row.reason.trim().is_empty()
         || row.reason.len() > MAX_REASON_BYTES
-        || key_bytes != key(&row.grant_ref, &row.decision_id)
+        || key.grant_ref != row.grant_ref
+        || key.decision_id != row.decision_id
     {
         return Err(Error::CorruptedIndex("owner reason rule"));
     }
-    Ok(row)
+    Ok(())
 }
 
 /// Any revocation of the derived grant retires its rule in the same transaction.
@@ -108,22 +129,17 @@ pub(super) fn retire_owner_reason_rules_in_txn(
     txn: &mut heed::RwTxn<'_>,
     grant_ref: &str,
 ) -> Result<()> {
-    let prefix = grant_prefix(grant_ref);
     let mut rows = Vec::new();
-    for entry in store.vault_meta.prefix_iter(&*txn, &prefix)? {
-        let (key, raw) = entry?;
-        let mut row = decode(&raw, &key)?;
+    for entry in RULES.iter_from(store, &*txn, &RuleKey::grant_prefix(grant_ref))? {
+        let (key, mut row) = entry?;
+        check(&key, &row)?;
         if !row.retired {
             row.retired = true;
-            rows.push((
-                key.to_vec(),
-                rmp_serde::to_vec_named(&row)
-                    .map_err(|_| Error::InvariantViolation("owner reason encoding"))?,
-            ));
+            rows.push((key, row));
         }
     }
-    for (key, raw) in rows {
-        store.vault_meta.put(txn, &key, &raw)?;
+    for (key, row) in rows {
+        RULES.put(store, txn, &key, &row)?;
     }
     Ok(())
 }
@@ -184,13 +200,11 @@ impl Vault {
                 // that rule in the shared mint door, even with the same owner
                 // authentication; it cannot be silently replaced here.
                 let mut derived = false;
-                for entry in self
-                    .store
-                    .vault_meta
-                    .prefix_iter(&*txn, &grant_prefix(&grant_ref))?
+                for entry in
+                    RULES.iter_from(&self.store, &*txn, &RuleKey::grant_prefix(&grant_ref))?
                 {
-                    let (key, raw) = entry?;
-                    let rule = decode(&raw, &key)?;
+                    let (key, rule) = entry?;
+                    check(&key, &rule)?;
                     if !rule.retired
                         && rule.actor == *owner.actor().as_bytes()
                         && rule.actor == *grant.owner_stamp.actor.as_bytes()
@@ -217,11 +231,11 @@ impl Vault {
                 authentication_id: owner.decision_id().as_bytes(),
                 retired: false,
             };
-            let encoded = rmp_serde::to_vec_named(&row)
-                .map_err(|_| Error::InvariantViolation("owner reason encoding"))?;
-            self.store
-                .vault_meta
-                .put(txn, &key(&grant_ref, &row.decision_id), &encoded)?;
+            let key = RuleKey {
+                grant_ref: grant_ref.clone(),
+                decision_id: row.decision_id,
+            };
+            RULES.put(&self.store, txn, &key, &row)?;
             Ok(OwnerReasonConfirmation {
                 undo: Some(OwnerReasonUndo {
                     command: OWNER_REASON_UNDO_COMMAND.to_owned(),
@@ -246,13 +260,14 @@ impl Vault {
         }
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
-            let k = key(&action.grant_ref, &action.rule_decision_id.as_bytes());
-            let raw = self
-                .store
-                .vault_meta
-                .get(&*txn, &k)?
+            let key = RuleKey {
+                grant_ref: action.grant_ref.clone(),
+                decision_id: action.rule_decision_id.as_bytes(),
+            };
+            let row = RULES
+                .get(&self.store, &*txn, &key)?
                 .ok_or(Error::Gate(GateError::ConsentGrantNotFound))?;
-            let row = decode(&raw, &k)?;
+            check(&key, &row)?;
             if row.retired
                 || row.decision_id != action.rule_decision_id.as_bytes()
                 || row.actor != *owner.actor().as_bytes()
@@ -290,9 +305,9 @@ impl Vault {
         self.with_write_txn(|txn| {
             let mut rules = Vec::new();
             let mut candidates = Vec::new();
-            for entry in self.store.vault_meta.prefix_iter(&*txn, RULE_PREFIX)? {
-                let (key, raw) = entry?;
-                let rule = decode(&raw, &key)?;
+            for entry in RULES.iter_from(&self.store, &*txn, &[])? {
+                let (key, rule) = entry?;
+                check(&key, &rule)?;
                 let Some(grant) = self.consent_grant_in_txn(&*txn, &rule.grant_ref)? else {
                     return Err(Error::CorruptedIndex("owner reason grant"));
                 };

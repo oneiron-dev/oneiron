@@ -1,10 +1,8 @@
 //! Amendment evidence doors and the judging pass.
 
 use super::stored::{
-    EVIDENCE_KEY_PREFIX, EVIDENCE_ROW_LABEL, JUDGMENT_KEY_PREFIX, JUDGMENT_ROW_LABEL,
-    PREFERENCE_KEY_PREFIX, PREFERENCE_ROW_LABEL, ROW_VERSION, StoredEvidence, StoredJudgment,
-    StoredPreference, decode_row, encode_row, hex_entity, invalid, key_tail, meta_key,
-    normalized_scope,
+    EVIDENCE, EVIDENCE_ROW_LABEL, JUDGMENT, JUDGMENT_ROW_LABEL, PREFERENCE, ROW_VERSION,
+    StoredEvidence, StoredJudgment, StoredPreference, hex_entity, invalid, normalized_scope,
 };
 use super::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, PreferenceProposal,
@@ -62,10 +60,8 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
         skill_covered_step: evidence.skill_covered_step,
         at: evidence.at,
     };
-    let encoded = encode_row(&row, EVIDENCE_ROW_LABEL)?;
-    let key = meta_key(EVIDENCE_KEY_PREFIX, evidence.receipt_id.as_bytes());
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        EVIDENCE.put(&vault.store, wtxn, &evidence.receipt_id, &row)?;
         Ok(())
     })
 }
@@ -87,14 +83,9 @@ pub(in crate::edit_distance) fn amendment_evidence_in_txn(
     rtxn: &heed::RoTxn<'_>,
     receipt_id: &str,
 ) -> Result<Option<AmendmentEvidence>> {
-    let key = meta_key(EVIDENCE_KEY_PREFIX, receipt_id.as_bytes());
-    let Some(raw) = vault.store.vault_meta.get(rtxn, &key)? else {
+    let Some(row) = EVIDENCE.get(&vault.store, rtxn, &receipt_id.to_owned())? else {
         return Ok(None);
     };
-    let row: StoredEvidence = decode_row(&raw, EVIDENCE_ROW_LABEL)?;
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(EVIDENCE_ROW_LABEL));
-    }
     Ok(Some(AmendmentEvidence {
         receipt_id: receipt_id.to_owned(),
         actor: hex_entity(&row.actor, EVIDENCE_ROW_LABEL)?,
@@ -190,32 +181,25 @@ pub fn judge_amendment_with(
         d_norm: judgment.d_norm,
         at: judgment.at,
     };
-    let encoded = encode_row(&row, JUDGMENT_ROW_LABEL)?;
-    let judgment_key = meta_key(JUDGMENT_KEY_PREFIX, receipt_id.as_bytes());
-    let preference_row = (class == AmendmentClass::PreferenceShift)
-        .then(|| {
-            encode_row(
-                &StoredPreference {
-                    v: ROW_VERSION,
-                    scope: judgment.scope.clone(),
-                    evidence_receipts: judgment.evidence_receipts.clone(),
-                    at: judgment.at,
-                },
-                PREFERENCE_ROW_LABEL,
-            )
-        })
-        .transpose()?;
+    let preference_row = (class == AmendmentClass::PreferenceShift).then(|| StoredPreference {
+        v: ROW_VERSION,
+        scope: judgment.scope.clone(),
+        evidence_receipts: judgment.evidence_receipts.clone(),
+        at: judgment.at,
+    });
 
+    let receipt_id_owned = receipt_id.to_owned();
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &judgment_key, &encoded)?;
-        let key = meta_key(PREFERENCE_KEY_PREFIX, receipt_id.as_bytes());
+        JUDGMENT.put(&vault.store, wtxn, &receipt_id_owned, &row)?;
         match preference_row.as_ref() {
             // A proposal and the judgment that demanded it land together, and a
             // re-judgment that moved OFF preference_shift withdraws the
             // proposal it no longer stands behind.
-            Some(row) => vault.store.vault_meta.put(wtxn, &key, row)?,
+            Some(row) => {
+                PREFERENCE.put(&vault.store, wtxn, &receipt_id_owned, row)?;
+            }
             None => {
-                vault.store.vault_meta.delete(wtxn, &key)?;
+                PREFERENCE.delete(&vault.store, wtxn, &receipt_id_owned)?;
             }
         }
         Ok(())
@@ -230,25 +214,20 @@ pub fn judge_amendment_with(
 /// was holding up loses its ledger support, and the next
 /// [`project_edit_cost_claims`] pass retracts it.
 fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
-    let judgment_key = meta_key(JUDGMENT_KEY_PREFIX, receipt_id.as_bytes());
-    let preference_key = meta_key(PREFERENCE_KEY_PREFIX, receipt_id.as_bytes());
+    let receipt_id = receipt_id.to_owned();
     {
         // A receipt that never landed an answer has none to withdraw, and an
         // abstention is the common case — it must not cost a write transaction.
         let rtxn = vault.store.env.read_txn()?;
-        if vault.store.vault_meta.get(&rtxn, &judgment_key)?.is_none()
-            && vault
-                .store
-                .vault_meta
-                .get(&rtxn, &preference_key)?
-                .is_none()
+        if !JUDGMENT.contains(&vault.store, &rtxn, &receipt_id)?
+            && !PREFERENCE.contains(&vault.store, &rtxn, &receipt_id)?
         {
             return Ok(());
         }
     }
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.delete(wtxn, &judgment_key)?;
-        vault.store.vault_meta.delete(wtxn, &preference_key)?;
+        JUDGMENT.delete(&vault.store, wtxn, &receipt_id)?;
+        PREFERENCE.delete(&vault.store, wtxn, &receipt_id)?;
         Ok(())
     })
 }
@@ -261,17 +240,7 @@ fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
 pub fn amendment_judgments(vault: &Vault) -> Result<Vec<AmendmentJudgment>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, JUDGMENT_KEY_PREFIX)?
-    {
-        let (key, raw) = entry?;
-        let receipt_id = key_tail(&key, JUDGMENT_KEY_PREFIX, JUDGMENT_ROW_LABEL)?;
-        let row: StoredJudgment = decode_row(&raw, JUDGMENT_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(Error::CorruptedIndex(JUDGMENT_ROW_LABEL));
-        }
+    for (receipt_id, row) in JUDGMENT.scan(&vault.store, &rtxn)? {
         out.push(AmendmentJudgment {
             receipt_id,
             class: AmendmentClass::parse(&row.class)
@@ -298,17 +267,7 @@ pub fn amendment_judgments(vault: &Vault) -> Result<Vec<AmendmentJudgment>> {
 pub fn pending_preference_proposals(vault: &Vault) -> Result<Vec<PreferenceProposal>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, PREFERENCE_KEY_PREFIX)?
-    {
-        let (key, raw) = entry?;
-        let receipt_id = key_tail(&key, PREFERENCE_KEY_PREFIX, PREFERENCE_ROW_LABEL)?;
-        let row: StoredPreference = decode_row(&raw, PREFERENCE_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(Error::CorruptedIndex(PREFERENCE_ROW_LABEL));
-        }
+    for (receipt_id, row) in PREFERENCE.scan(&vault.store, &rtxn)? {
         out.push(PreferenceProposal {
             receipt_id,
             scope: row.scope,

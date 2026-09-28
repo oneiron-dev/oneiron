@@ -2,8 +2,11 @@
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 
-const PROJECTION_KEY: &[u8] = b"dreamer:wake:projection:v1";
+/// Digest of the last queued wake projector image. Key: ().
+const PROJECTION: SideTable<(), [u8; 32], Raw> =
+    SideTable::new(&side_table::DREAMER_WAKE_PROJECTION);
 
 /// Turns per cadence wake, read from the one Dreamer wake policy row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,16 +40,14 @@ impl Vault {
         &self,
         txn: &heed::RwTxn<'_>,
     ) -> Result<Option<[u8; 32]>> {
-        self.store
-            .vault_meta
-            .get(txn, PROJECTION_KEY)?
-            .map(|bytes| {
-                let slice: &[u8] = bytes.as_ref();
-                slice
-                    .try_into()
-                    .map_err(|_| Error::InvalidConfig("invalid wake projection row".into()))
+        PROJECTION
+            .get(&self.store, txn, &())
+            .map_err(|error| match error {
+                Error::Store(crate::error::StoreError::SideTableRow { .. }) => {
+                    Error::InvalidConfig("invalid wake projection row".into())
+                }
+                other => other,
             })
-            .transpose()
     }
 
     pub(super) fn set_queued_wake_projection_in_txn(
@@ -54,7 +55,6 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         digest: &[u8; 32],
     ) -> Result<()> {
-        self.store.vault_meta.put(txn, PROJECTION_KEY, digest)?;
-        Ok(())
+        PROJECTION.put(&self.store, txn, &(), digest)
     }
 }

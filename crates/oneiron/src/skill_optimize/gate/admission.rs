@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::ports::EntityStoreRead;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, StagedRow};
 
-/// `vault_meta` key prefix of the durable optimizer-BIRTH marker: this prefix ‖
-/// the entity id, exactly the [`optimizer_origin_marker_key`] key pattern.
+/// The durable optimizer-BIRTH marker, keyed by entity id.
 ///
 /// Written beside a LOCAL create whose record is optimizer-born, and never
 /// again for the life of that id. It is what makes optimizer origin survive
@@ -12,7 +12,8 @@ use crate::ports::EntityStoreRead;
 /// virgin create, the create door saw an ordinary candidate, and the record
 /// walked to `active` through the owner's door carrying an id whose gate
 /// history said "accepted". The row itself is inert to every other reader.
-const OPTIMIZER_ORIGIN_MARKER_PREFIX: &[u8] = b"skill_optimize/origin/v1\0";
+const ORIGIN_MARKER: SideTable<EntityId, Vec<Option<String>>, Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_ORIGIN_MARKER);
 
 /// Schema version of one origin-marker row. Fail-closed like the verdict row:
 /// an unreadable marker refuses the create rather than admitting it. v3 adds
@@ -414,11 +415,10 @@ const OPTIMIZER_ORIGIN_KEYS: [&str; 7] = [
 ];
 
 /// The `vault_meta` key the optimizer-birth marker for one entity lives at.
+/// Test-only: production code reads and writes through [`ORIGIN_MARKER`].
+#[cfg(test)]
 pub(in crate::skill_optimize) fn optimizer_origin_marker_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OPTIMIZER_ORIGIN_MARKER_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(OPTIMIZER_ORIGIN_MARKER_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
+    ORIGIN_MARKER.key_bytes(id)
 }
 
 /// The seven origin values a record carries, in the pinned key order.
@@ -427,6 +427,16 @@ fn optimizer_origin_values(record: &SkillRecord) -> Vec<Option<String>> {
         .iter()
         .map(|key| provenance_str(record, key))
         .collect()
+}
+
+impl RawValue for Vec<Option<String>> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_origin_marker(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_origin_marker(bytes)?)
+    }
 }
 
 fn encode_origin_marker(values: &[Option<String>]) -> Result<Vec<u8>> {
@@ -521,19 +531,12 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
     id: &EntityId,
     created: &SkillRecord,
     replicated: bool,
-) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+) -> Result<Option<StagedRow>> {
     validate_goal_birth_in_txn(store, txn, id, created, replicated)?;
-    let key = optimizer_origin_marker_key(id);
     let origin = optimizer_origin_values(created);
-    let Some(marked) = store
-        .vault_meta
-        .get(txn, &key)?
-        .as_deref()
-        .map(decode_origin_marker)
-        .transpose()?
-    else {
+    let Some(marked) = ORIGIN_MARKER.get(store, txn, id)? else {
         return if born_on_optimize_road(created) {
-            Ok(Some((key, encode_origin_marker(&origin)?)))
+            ORIGIN_MARKER.stage(id, &origin).map(Some)
         } else {
             Ok(None)
         };
@@ -554,13 +557,9 @@ pub(in crate::skill_optimize) fn retained_optimizer_parent_goal_in_txn(
     txn: &heed::RoTxn<'_>,
     parent: &EntityId,
 ) -> Result<Option<(SkillGoalId, String)>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(txn, &optimizer_origin_marker_key(parent))?
-    else {
+    let Some(values) = ORIGIN_MARKER.get(store, txn, parent)? else {
         return Ok(None);
     };
-    let values = decode_origin_marker(&raw)?;
     let corrupt = || Error::CorruptedIndex(ORIGIN_MARKER_LABEL);
     if values[0].as_deref() != Some(SKILL_OPTIMIZE_BIRTH_PATH) {
         return Err(corrupt());

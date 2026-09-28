@@ -8,11 +8,42 @@ use crate::claim::{
     ScopedReadActorKey,
 };
 use crate::llm::decision::{DecisionAnswer, DecisionReceipt, ProviderPin, TypedDecision};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
 use rmpv::Value;
+
+/// One backfill identity: question id + `backfill` family + version, unit and frontier.
+#[derive(Clone, Copy)]
+struct BackfillKey {
+    question: EntityId,
+    version: u32,
+    unit: EntityId,
+    frontier: [u8; 32],
+}
+impl SideKey for BackfillKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&family_prefix(self.question, b"backfill"));
+        out.extend_from_slice(&self.version.to_be_bytes());
+        out.extend_from_slice(self.unit.as_bytes());
+        out.extend_from_slice(&self.frontier);
+    }
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (question, tail) = super::store::decode_family(bytes, b"backfill")?;
+        let (version, tail) = tail.split_at_checked(4)?;
+        let (unit, frontier) = tail.split_at_checked(16)?;
+        Some(Self {
+            question,
+            version: u32::from_be_bytes(version.try_into().ok()?),
+            unit: EntityId::from_bytes(unit.try_into().ok()?).ok()?,
+            frontier: frontier.try_into().ok()?,
+        })
+    }
+}
+const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
+    SideTable::new(&side_table::TYPED_QUESTION);
 
 /// The host obtains `source_frontier` before asking a provider. Admission
 /// refuses a response if any source changed while the provider was working.
@@ -54,12 +85,16 @@ fn standing_record(
     if head.version != version {
         return Err(Error::ConcurrentWrite("standing question changed"));
     }
-    let record: QuestionRecord = load(
-        vault,
-        txn,
-        &key(question, b"version", &version.to_be_bytes()),
-    )?
-    .ok_or(Error::EntityNotFound)?;
+    let record: QuestionRecord = QUESTION_VERSION
+        .get(
+            &vault.store,
+            txn,
+            &VersionKey {
+                id: question,
+                version,
+            },
+        )?
+        .ok_or(Error::EntityNotFound)?;
     if record.schema_version != 1 {
         return Err(invalid("unsupported question schema"));
     }
@@ -231,18 +266,22 @@ pub fn backfill_standing_answer(
         if frontier != input.source_frontier {
             return Err(Error::ConcurrentWrite("standing source changed"));
         }
-        let dedup = key(
+        let dedup = BackfillKey {
             question,
-            b"backfill",
-            &[
-                expected_version.to_be_bytes().as_slice(),
-                input.unit.as_bytes(),
-                &frontier,
-            ]
-            .concat(),
-        );
-        if let Some(claim) = load::<EntityIdBytes>(vault, txn, &dedup)? {
-            let answer: AnswerRecord = load(vault, txn, &key(question, b"answer", &claim.0))?
+            version: expected_version,
+            unit: input.unit,
+            frontier,
+        };
+        if let Some(claim) = QUESTION_BACKFILL.get(&vault.store, txn, &dedup)? {
+            let answer = QUESTION_ANSWER
+                .get(
+                    &vault.store,
+                    txn,
+                    &AnswerKey {
+                        question,
+                        claim: EntityId::from_bytes(claim.0)?,
+                    },
+                )?
                 .ok_or(Error::CorruptedIndex("standing backfill answer"))?;
             if answer.unit != input.unit
                 || answer.frontier != frontier
@@ -359,15 +398,23 @@ pub fn backfill_standing_answer(
                 now,
             )
             .apply(txn)?;
-        put(
-            vault,
+        QUESTION_ANSWER.put(
+            &vault.store,
             txn,
-            &key(question, b"answer", answer.claim.as_bytes()),
+            &AnswerKey {
+                question,
+                claim: answer.claim,
+            },
             &answer,
         )?;
-        put(vault, txn, &dedup, &EntityIdBytes(*answer.claim.as_bytes()))?;
+        QUESTION_BACKFILL.put(
+            &vault.store,
+            txn,
+            &dedup,
+            &EntityIdBytes(*answer.claim.as_bytes()),
+        )?;
         head.last_refresh = Some(now);
-        put(vault, txn, &key(question, b"head", &[]), &head)?;
+        QUESTION_HEAD.put(&vault.store, txn, &HeadKey(question), &head)?;
         Ok(answer)
     })
 }

@@ -60,7 +60,7 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
         entity_ref: id(0x25),
         evidence_hash: [0x5A; EVIDENCE_HASH_LEN],
     };
-    let encoded = keys::memo(&key);
+    let encoded = MEMOS.key_bytes(&key);
     let prefix = b"saved_query.memo.v1:";
     assert!(encoded.starts_with(prefix));
     assert_eq!(encoded.len(), prefix.len() + 16 + 16 + EVIDENCE_HASH_LEN);
@@ -79,12 +79,12 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
 /// concatenation with fixed widths is only unambiguous if the order is honored.
 #[test]
 fn memo_key_distinguishes_swapped_refs() {
-    let forward = keys::memo(&VerdictMemoKey {
+    let forward = MEMOS.key_bytes(&VerdictMemoKey {
         query_ref: id(0x26),
         entity_ref: id(0x27),
         evidence_hash: [1u8; EVIDENCE_HASH_LEN],
     });
-    let swapped = keys::memo(&VerdictMemoKey {
+    let swapped = MEMOS.key_bytes(&VerdictMemoKey {
         query_ref: id(0x27),
         entity_ref: id(0x26),
         evidence_hash: [1u8; EVIDENCE_HASH_LEN],
@@ -97,17 +97,18 @@ fn memo_key_distinguishes_swapped_refs() {
 #[test]
 fn event_keys_sort_by_epoch_within_the_pair_prefix() {
     let (query, entity) = (id(0x28), id(0x29));
-    let prefix = keys::event_prefix(&query, &entity);
+    let mut prefix = MEMBERSHIP_EVENTS.decl().prefix.to_vec();
+    prefix.extend_from_slice(&event_pair_prefix(&query, &entity));
     let mut keys = [
-        keys::event(&query, &entity, 10),
-        keys::event(&query, &entity, 2),
-        keys::event(&query, &entity, 300),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)),
     ];
     assert!(keys.iter().all(|key| key.starts_with(&prefix)));
     keys.sort();
-    assert_eq!(keys[0], keys::event(&query, &entity, 2));
-    assert_eq!(keys[1], keys::event(&query, &entity, 10));
-    assert_eq!(keys[2], keys::event(&query, &entity, 300));
+    assert_eq!(keys[0], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)));
+    assert_eq!(keys[1], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)));
+    assert_eq!(keys[2], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)));
 }
 
 #[test]

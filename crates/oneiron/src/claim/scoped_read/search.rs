@@ -1,6 +1,41 @@
 use super::*;
 
 impl ScopedRead<'_> {
+    /// Resolve a bounded query's actor/proof ceiling once. The terminal read
+    /// checks fresh authority again, so this snapshot can never widen it.
+    pub(crate) fn recall_plan(
+        &self,
+    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        let txn = self.vault.store.env.read_txn()?;
+        let plan = self.resolve_retrieval_filter_in(&txn, None)?;
+        let fold = self.vault.authority_fold_readonly_in_txn(&txn)?;
+        *self
+            .recall_authority
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall authority lock"))? = Some(fold);
+        Ok(plan)
+    }
+
+    /// The final result and receipt must recheck authority in a fresh read.
+    pub(crate) fn end_recall_plan(&self) -> Result<()> {
+        *self
+            .recall_authority
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall authority lock"))? = None;
+        Ok(())
+    }
+
+    /// Admit one candidate in the retrieval transaction under the query plan.
+    pub(crate) fn recall_candidate_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+    ) -> Result<bool> {
+        self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
+    }
+
     /// Searches within this actor's resolved read authority. Unset means the floor.
     pub fn search(
         &self,
@@ -81,6 +116,7 @@ impl ScopedRead<'_> {
                 "scoped read credential no longer live",
             ));
         }
+        self.owner_live_in(txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),

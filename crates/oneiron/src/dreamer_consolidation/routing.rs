@@ -2,6 +2,7 @@
 use super::conflict::{candidate_facts, canonical_value_bytes};
 use super::provenance::source_meet;
 use super::{ConflictIdentity, ConflictSet, PromotionCandidate};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,11 @@ pub struct PredicateKeyRule {
     pub topic_field: Option<String>,
 }
 pub type PredicateKeyRules = BTreeMap<String, PredicateKeyRule>;
+
+/// Operator-set predicate key rules governing which claim keys the consolidator may fold.
+/// Key: ().
+pub(super) const KEY_RULES: SideTable<(), PredicateKeyRules, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_CONSOLIDATION_KEY_RULES);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CandidateKeys {
@@ -210,24 +216,15 @@ fn cosine(a: &[f32], b: &[f32]) -> Result<f64> {
 impl Vault {
     pub fn consolidation_key_rules(&self) -> Result<PredicateKeyRules> {
         let txn = self.store.env.read_txn()?;
-        match self
-            .store
-            .vault_meta
-            .get(&txn, b"dreamer:consolidation:keys:v1")?
-        {
-            Some(raw) => serde_json::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("consolidation key rules")),
+        match KEY_RULES.get(&self.store, &txn, &())? {
+            Some(rules) => Ok(rules),
             None => serde_json::from_str(include_str!("key_defaults.json"))
                 .map_err(|_| Error::CorruptedIndex("default key rules")),
         }
     }
     pub fn set_consolidation_key_rules(&self, rules: &PredicateKeyRules) -> Result<()> {
-        let bytes =
-            serde_json::to_vec(rules).map_err(|_| Error::InvalidConfig("key rule codec".into()))?;
         self.with_write_txn(|txn| {
-            self.store
-                .vault_meta
-                .put(txn, b"dreamer:consolidation:keys:v1", &bytes)?;
+            KEY_RULES.put(&self.store, txn, &(), rules)?;
             Ok(())
         })
     }

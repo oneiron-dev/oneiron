@@ -87,14 +87,8 @@ impl OutboundExecutionSink for NoticeSink<'_> {
                 return Err(invalid("notice event missing"));
             }
             if let Some(generation) = &self.notice.generation {
-                let manifest = self
-                    .vault
-                    .store
-                    .vault_meta
-                    .get(
-                        txn,
-                        &[b"esign.sealed.v1/".as_slice(), document.as_bytes()].concat(),
-                    )?
+                let manifest = super::seal::CANONICAL
+                    .get_bytes(&self.vault.store, txn, &document)?
                     .ok_or_else(|| invalid("notice seal missing"))?;
                 let sealed: super::SealedDocument =
                     serde_json::from_slice(&manifest).map_err(|_| invalid("notice seal schema"))?;

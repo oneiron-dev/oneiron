@@ -11,9 +11,7 @@ use sha2::Sha256;
 use super::claims::{
     COMM_SCHEMA_VERSION, CommError, CommResult, KEY_PARTY_KEY, KEY_SCHEMA_VERSION,
 };
-use super::records::{
-    decode_entity_id, encode_value, required_string, validate_key_string, value_map,
-};
+use super::records::{encode_value, required_string, validate_key_string, value_map};
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::ClaimSource;
@@ -23,10 +21,14 @@ use crate::identity_topology::{
     IdentityTopologyOp, MergeOp, SurvivorshipPlan,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
-const PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
+/// Node-local party shortcut: synced-truth PERSON id, keyed by the sha256
+/// digest of the party key.
+pub(super) const PARTY_INDEX: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::COMM_PARTY_INDEX);
 
 /// Stable machine rationale recorded on the MS-01 ledger event when the
 /// projector reconciles offline-minted twins of one `party_key`.
@@ -117,15 +119,10 @@ fn lookup_party_in_txn(
     rtxn: &heed::RoTxn<'_>,
     party_key: &str,
 ) -> CommResult<PartyLookup> {
-    if let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, &party_index_key(party_key))?
+    if let Some(id) = PARTY_INDEX.get(&vault.store, rtxn, &party_index_digest(party_key))?
+        && active_comm_party_key_in_txn(vault, rtxn, id)?.as_deref() == Some(party_key)
     {
-        let id = decode_entity_id(&raw)?;
-        if active_comm_party_key_in_txn(vault, rtxn, id)?.as_deref() == Some(party_key) {
-            return Ok(PartyLookup::Fresh(id));
-        }
+        return Ok(PartyLookup::Fresh(id));
     }
     Ok(active_comm_persons_by_party_key_in_txn(vault, rtxn)?
         .remove(party_key)
@@ -140,10 +137,7 @@ fn put_party_index_in_txn(
     party_key: &str,
     id: EntityId,
 ) -> CommResult<()> {
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &party_index_key(party_key), id.as_bytes())?;
+    PARTY_INDEX.put(&vault.store, wtxn, &party_index_digest(party_key), &id)?;
     Ok(())
 }
 
@@ -278,10 +272,9 @@ pub(crate) fn resolve_party_ref_from_store_in_txn(
     if party_key.is_empty() {
         return Ok(None);
     }
-    let Some(raw_id) = store.vault_meta.get(txn, &party_index_key(party_key))? else {
+    let Some(id) = PARTY_INDEX.get(store, txn, &party_index_digest(party_key))? else {
         return Ok(None);
     };
-    let id = decode_entity_id(&raw_id)?;
     let Some(raw) = store.port_entity_record(txn, &id)? else {
         return Ok(None);
     };
@@ -299,12 +292,8 @@ pub(crate) fn resolve_party_ref_from_store_in_txn(
     Ok((required_string(entries, KEY_PARTY_KEY).ok() == Some(party_key)).then_some(id))
 }
 
-pub(super) fn party_index_key(party: &str) -> Vec<u8> {
-    let digest = Sha256::digest(party.as_bytes());
-    let mut key = Vec::with_capacity(PARTY_INDEX_PREFIX.len() + digest.len());
-    key.extend_from_slice(PARTY_INDEX_PREFIX);
-    key.extend_from_slice(&digest);
-    key
+pub(super) fn party_index_digest(party: &str) -> [u8; 32] {
+    Sha256::digest(party.as_bytes()).into()
 }
 
 /// Converges offline-minted twins of one `party_key` onto a single canonical

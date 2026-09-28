@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Ratchet: recompute 4 metrics and fail if any exceeds baseline.json. No jq
-# dependency — baseline's 4 "count" fields are the only ones at that depth,
+# Ratchet: recompute 6 metrics and fail if any exceeds baseline.json. No jq
+# dependency — baseline's 6 "count" fields are the only ones at that depth,
 # extracted in fixed order: giant_files, allow_attrs, print_macros,
-# process_global_statics. That order is positional, so a new metric goes LAST
-# in baseline.json's "metrics" object and last in the `read -r` line below.
+# process_global_statics, keyspace_census, raw_core_writes. That order is
+# positional, so a new metric goes LAST in baseline.json's "metrics" object
+# and last in the `read -r` line below.
 #
 # Fails CLOSED: a missing/corrupt baseline, a missing/broken `rg`, or a file
 # scan that yields nothing is RATCHET-ERROR (exit 1), never a silent pass.
@@ -71,13 +72,25 @@ prints=$((p1 + p2 + p3))
 globals=$(python3 scripts/ratchet/process_globals.py) \
   || die "metric collection failed for process_global_statics"
 
-for v in "$giants" "$allows" "$prints" "$globals"; do
+# Raw `vault_meta` calls outside the typed side-table door (T47). Its own
+# scanner for the same reason: the call may break across lines.
+keyspace=$(python3 scripts/ratchet/keyspace_census.py) \
+  || die "metric collection failed for keyspace_census"
+
+# Raw `entities`/`type_index`/`edges_out`/`edges_in`/`short_ids`/
+# `short_ids_reverse`/`sync_state` writes outside the typed write doors (T48).
+# Its own scanner for the same reason as keyspace_census, plus a test-only
+# file/block classifier keyspace_census does not need.
+raw_writes=$(python3 scripts/ratchet/raw_write_census.py) \
+  || die "metric collection failed for raw_write_census"
+
+for v in "$giants" "$allows" "$prints" "$globals" "$keyspace" "$raw_writes"; do
   is_num "$v" || die "computed metric is not numeric: '$v'"
 done
 
 [ -f "$BASE" ] && [ -r "$BASE" ] || die "baseline unreadable/invalid"
-read -r base_giants base_allows base_prints base_globals <<<"$(grep -oE '"count": [0-9]+' "$BASE" | awk '{print $2}' | tr '\n' ' ')"
-for v in "${base_giants:-}" "${base_allows:-}" "${base_prints:-}" "${base_globals:-}"; do
+read -r base_giants base_allows base_prints base_globals base_keyspace base_raw_writes <<<"$(grep -oE '"count": [0-9]+' "$BASE" | awk '{print $2}' | tr '\n' ' ')"
+for v in "${base_giants:-}" "${base_allows:-}" "${base_prints:-}" "${base_globals:-}" "${base_keyspace:-}" "${base_raw_writes:-}"; do
   is_num "$v" || die "baseline unreadable/invalid"
 done
 
@@ -89,5 +102,7 @@ check giant_files "$giants" "$base_giants"
 check allow_attrs "$allows" "$base_allows"
 check print_macros "$prints" "$base_prints"
 check process_global_statics "$globals" "$base_globals"
+check keyspace_census "$keyspace" "$base_keyspace"
+check raw_core_writes "$raw_writes" "$base_raw_writes"
 
 [ "$fail" -eq 0 ] && echo "RATCHET-OK" || exit 1

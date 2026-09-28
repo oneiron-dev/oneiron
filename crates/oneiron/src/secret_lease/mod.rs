@@ -92,7 +92,7 @@ mod storage;
 mod types;
 
 pub use self::admission::tier_admission;
-pub(crate) use self::codec::{decode_local_registration_body, decode_secret_lease_body};
+pub(crate) use self::codec::decode_local_registration_body;
 pub(crate) use self::storage::{teardown_local_registration_in_txn, write_secret_lease_in_txn};
 pub(crate) use self::types::VaultInstant;
 pub use self::types::{

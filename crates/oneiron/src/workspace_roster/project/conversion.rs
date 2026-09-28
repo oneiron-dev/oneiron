@@ -101,11 +101,7 @@ impl Vault {
             }
             if !row.task_ids.contains(&task.to_hex()) {
                 row.task_ids.push(task.to_hex());
-                self.store.vault_meta.put(
-                    txn,
-                    &rooms::key(rooms::TURNS, thread),
-                    &rooms::encode(&row)?,
-                )?;
+                rooms::TURNS.put(&self.store, txn, &thread, &row)?;
             }
             Ok(())
         })
@@ -283,11 +279,7 @@ impl Vault {
                 .apply(txn)?;
             row.task_ids.clear();
             row.converted_project = Some(project_id.to_hex());
-            self.store.vault_meta.put(
-                txn,
-                &rooms::key(rooms::TURNS, thread),
-                &rooms::encode(&row)?,
-            )?;
+            rooms::TURNS.put(&self.store, txn, &thread, &row)?;
             Ok(project)
         })
     }
@@ -400,12 +392,7 @@ impl Vault {
         )?;
         let mut threads = Vec::new();
         // The containing thread hangs on its own message, even when it has no child.
-        if self
-            .store
-            .vault_meta
-            .get(&txn, &rooms::key(rooms::TURNS, *turn))?
-            .is_some()
-        {
+        if rooms::TURNS.contains(&self.store, &txn, turn)? {
             let source = rooms::turn_in(self, &txn, *turn)?;
             if source.room_id != room.to_hex() || !source.message_ids.contains(&message.to_hex()) {
                 return Err(invalid());
@@ -415,23 +402,15 @@ impl Vault {
             }
         }
         // Parent → child index scopes this read to matching threads only.
-        let prefix = [rooms::THREAD_CHILDREN, room.as_bytes(), turn.as_bytes()].concat();
-        for (n, item) in self
-            .store
-            .vault_meta
-            .prefix_iter(&txn, &prefix)?
+        let prefix = [room.as_bytes().as_slice(), turn.as_bytes().as_slice()].concat();
+        for (n, item) in rooms::THREAD_CHILDREN
+            .iter_from(&self.store, &txn, &prefix)?
             .enumerate()
         {
             if n >= 4096 {
                 return Err(Error::IndexOverflow("message_thread_matches"));
             }
-            let (_, bytes) = item?;
-            let child = EntityId::from_bytes(
-                bytes
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("room thread index"))?,
-            )?;
+            let (_, child) = item?;
             let row = rooms::turn_in(self, &txn, child)?;
             if row.room_id != room.to_hex()
                 || row.thread_of.as_deref() != Some(turn.to_hex().as_str())

@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -127,20 +128,15 @@ pub fn merge_lifecycle_states(
 /// standing. That direction is the safe one — a stale-SET marker costs one
 /// fold that returns the empty set, while a stale-CLEAR marker would hide a
 /// live shell. Correctness never depends on it, only cost.
-const IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY: &[u8] = b"m:identity_topology_zero_head_seen";
+const ZERO_HEAD_SEEN: SideTable<(), [u8; 1], Raw> =
+    SideTable::new(&side_table::IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN);
 
 /// Records that a zero-head split exists, arming the witness fold.
 pub(crate) fn note_zero_head_split_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
-    if store
-        .vault_meta
-        .get(&*wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
-        .is_some()
-    {
+    if ZERO_HEAD_SEEN.contains(store, wtxn, &())? {
         return Ok(());
     }
-    store
-        .vault_meta
-        .put(wtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY, &[1])?;
+    ZERO_HEAD_SEEN.put(store, wtxn, &(), &[1])?;
     Ok(())
 }
 
@@ -150,11 +146,7 @@ fn zero_head_split_shells_if_any_for_store_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<BTreeSet<EntityId>> {
-    if store
-        .vault_meta
-        .get(rtxn, IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN_KEY)?
-        .is_none()
-    {
+    if !ZERO_HEAD_SEEN.contains(store, rtxn, &())? {
         return Ok(BTreeSet::new());
     }
     zero_head_split_shells_for_store_in_txn(store, rtxn)

@@ -7,7 +7,9 @@ use super::*;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand_core::{OsRng, RngCore};
 
-const SIGNER_PREFIX: &[u8] = b"tasks.ask.link_signer.v1:";
+/// Local ed25519 seed that signs one ask group's option-link words. Key: id16 (group).
+const SIGNERS: SideTable<EntityId, [u8; 32], side_table::Raw> =
+    SideTable::new(&side_table::TASK_ASK_LINK_SIGNER);
 const TRANSCRIPT: &[u8] = b"oneiron.tasks.ask.link_answer.v1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,10 +20,6 @@ pub(super) struct LinkProof {
     pub signature: Vec<u8>,
 }
 
-fn signer_key(group: EntityId) -> Vec<u8> {
-    [SIGNER_PREFIX, group.as_bytes()].concat()
-}
-
 pub(in crate::task_verb) fn mint_key(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -30,7 +28,7 @@ pub(in crate::task_verb) fn mint_key(
     let mut seed = [0_u8; 32];
     OsRng.fill_bytes(&mut seed);
     let signing = SigningKey::from_bytes(&seed);
-    vault.store.vault_meta.put(txn, &signer_key(group), &seed)?;
+    SIGNERS.put(&vault.store, txn, &group, &seed)?;
     Ok(signing.verifying_key().to_bytes())
 }
 
@@ -64,12 +62,9 @@ pub(super) fn sign_link_word(
     fact: &AskAnswerFact,
     token_digest: [u8; 32],
 ) -> Result<LinkProof> {
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &signer_key(group_id))?
+    let seed = SIGNERS
+        .get(&vault.store, txn, &group_id)?
         .ok_or_else(invalid)?;
-    let seed: [u8; 32] = raw.as_ref().try_into().map_err(|_| invalid())?;
     let signing = SigningKey::from_bytes(&seed);
     if signing.verifying_key().to_bytes() != group.link_verify_key {
         return Err(invalid());
@@ -191,12 +186,9 @@ pub(in crate::task_verb) fn sign_settlement(
     if !needs_settlement_proof(result) {
         return Ok(None);
     }
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &signer_key(group_id))?
+    let seed = SIGNERS
+        .get(&vault.store, txn, &group_id)?
         .ok_or_else(invalid)?;
-    let seed: [u8; 32] = raw.as_ref().try_into().map_err(|_| invalid())?;
     let signer = SigningKey::from_bytes(&seed);
     if signer.verifying_key().to_bytes() != group.link_verify_key
         || result.settlement.group_ref != group_id

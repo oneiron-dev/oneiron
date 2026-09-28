@@ -1,32 +1,29 @@
 use rmpv::Value;
 
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, RawValue, SideTable};
 use crate::store::GateDecisionId;
 
 use super::bound::{MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS};
-use super::effect::{EffectDigest, UndoFidelity};
+use super::effect::UndoFidelity;
 use crate::error::GateError;
 
 // ---------------------------------------------------------------------------
 // Storage identity — no entity type, no type byte
 // ---------------------------------------------------------------------------
 
-/// `vault_meta` key prefix for canonical standing consent-grant rows. Owned by
-/// this module; suffix is the 16-byte grant id.
-pub(super) const CONSENT_GRANT_KEY_PREFIX: &[u8] = b"consent.grant.v1:";
-
-/// `vault_meta` key prefix for approve-once state. Owned by this module;
-/// suffix is the 32-byte effect digest. Minting writes an available marker in
-/// the same transaction as its receipt. Delivery atomically changes that marker
-/// to spent in the transaction that authorizes the effect. Presence therefore
-/// rejects a duplicate mint, while the state distinguishes the one live tap
-/// from a replay (DEC-0006 invariant 2).
-const CONSENT_APPROVE_ONCE_KEY_PREFIX: &[u8] = b"consent.once.v1:";
-
 const CONSENT_APPROVE_ONCE_MARKER_VERSION: u8 = 1;
 pub(super) const CONSENT_APPROVE_ONCE_AVAILABLE: u8 = 0;
 pub(super) const CONSENT_APPROVE_ONCE_SPENT: u8 = 1;
 const CONSENT_APPROVE_ONCE_MARKER_LEN: usize = 18;
+
+/// Approve-once state, keyed by the 32-byte effect digest. Minting writes an
+/// available marker in the same transaction as its receipt. Delivery
+/// atomically changes that marker to spent in the transaction that authorizes
+/// the effect. Presence therefore rejects a duplicate mint, while the state
+/// distinguishes the one live tap from a replay (DEC-0006 invariant 2).
+pub(super) const APPROVE_ONCE_MARKERS: SideTable<[u8; 32], ApproveOnceMarker, side_table::Raw> =
+    SideTable::new(&side_table::CONSENT_APPROVE_ONCE_MARKER);
 
 pub(super) const SUBJECT_KIND_ACTOR: &str = "actor";
 pub(super) const SUBJECT_KIND_AUDIENCE: &str = "audience";
@@ -35,12 +32,25 @@ pub(super) const SUBJECT_KIND_AUDIENCE: &str = "audience";
 // Helpers
 // ---------------------------------------------------------------------------
 
-pub(super) fn encode_approve_once_marker(state: u8, decision_id: GateDecisionId) -> [u8; 18] {
-    let mut marker = [0_u8; CONSENT_APPROVE_ONCE_MARKER_LEN];
-    marker[0] = CONSENT_APPROVE_ONCE_MARKER_VERSION;
-    marker[1] = state;
-    marker[2..].copy_from_slice(&decision_id.as_bytes());
-    marker
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ApproveOnceMarker {
+    pub(super) state: u8,
+    pub(super) decision_id: GateDecisionId,
+}
+
+impl RawValue for ApproveOnceMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut marker = [0_u8; CONSENT_APPROVE_ONCE_MARKER_LEN];
+        marker[0] = CONSENT_APPROVE_ONCE_MARKER_VERSION;
+        marker[1] = self.state;
+        marker[2..].copy_from_slice(&self.decision_id.as_bytes());
+        Ok(marker.to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (state, decision_id) = decode_approve_once_marker(bytes)?;
+        Ok(Self { state, decision_id })
+    }
 }
 
 pub(super) fn decode_approve_once_marker(raw: &[u8]) -> Result<(u8, GateDecisionId)> {
@@ -54,20 +64,6 @@ pub(super) fn decode_approve_once_marker(raw: &[u8]) -> Result<(u8, GateDecision
             .map_err(|_| Error::CorruptedIndex("consent approve-once marker"))?,
     );
     Ok((raw[1], decision_id))
-}
-
-pub(super) fn consent_approve_once_key(digest: &EffectDigest) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CONSENT_APPROVE_ONCE_KEY_PREFIX.len() + 32);
-    key.extend_from_slice(CONSENT_APPROVE_ONCE_KEY_PREFIX);
-    key.extend_from_slice(digest.as_bytes());
-    key
-}
-
-pub(super) fn consent_grant_key(grant_ref: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CONSENT_GRANT_KEY_PREFIX.len() + grant_ref.len());
-    key.extend_from_slice(CONSENT_GRANT_KEY_PREFIX);
-    key.extend_from_slice(grant_ref.as_bytes());
-    key
 }
 
 pub(super) fn normalized_ref(label: &'static str, value: String) -> Result<String> {

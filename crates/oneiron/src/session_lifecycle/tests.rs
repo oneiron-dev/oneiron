@@ -22,7 +22,7 @@ fn minted(outcome: SessionMintOutcome) -> EntityId {
 
 #[test]
 fn decode_session_record_rejects_an_unsupported_version() {
-    let encoded = encode_session_record(&SessionLifecycleRecord {
+    let record = SessionLifecycleRecord {
         version: SESSION_LIFECYCLE_RECORD_VERSION + 1,
         started_at: 1_000,
         last_activity: 1_000,
@@ -37,10 +37,18 @@ fn decode_session_record_rejects_an_unsupported_version() {
         }],
         activity_periods: Vec::new(),
         explicit_end_hint: None,
-    })
-    .expect("encode unsupported-version record");
+    };
+    // The `Named` codec has no opinion on `version`: an unsupported version
+    // still round-trips through encode/decode cleanly. The rejection is
+    // `validated_record`'s domain check, exercised here after a real decode.
+    let encoded = RECORDS
+        .encode_value(&record)
+        .expect("encode unsupported-version record");
+    let decoded = RECORDS
+        .decode_value(&encoded)
+        .expect("well-formed msgpack decodes");
 
-    let error = decode_session_record(&encoded).expect_err("unsupported version must fail closed");
+    let error = validated_record(decoded).expect_err("unsupported version must fail closed");
     assert!(matches!(error, Error::CorruptedIndex(_)));
 }
 

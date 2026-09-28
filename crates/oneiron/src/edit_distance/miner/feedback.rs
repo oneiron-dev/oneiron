@@ -4,16 +4,21 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use super::store::{decode_row, encode_row, meta_key};
+use super::store::{decode_row, encode_row};
 use super::target::CompilationTarget;
 use crate::Vault;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::GateDecisionRecord;
 
-const PREFIX: &[u8] = b"edit_distance/principal_decision/v1\0";
 const LABEL: &str = "principal-bound inbox decision";
+
+/// Immutable owner-bound decision on an inbox/amendment intake item, keyed by
+/// receipt id.
+const DECISION: SideTable<String, PrincipalDecision, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_PRINCIPAL_DECISION);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PrincipalDecision {
@@ -108,14 +113,10 @@ pub(crate) fn record_inbox_learning_in_txn(
         substitution,
         at: record.created_at,
     };
-    let key = meta_key(PREFIX, receipt.as_bytes());
-    if vault.store.vault_meta.get(txn, &key)?.is_some() {
+    if DECISION.contains(&vault.store, &*txn, &receipt)? {
         return Err(Error::InvariantViolation("inbox decision already captured"));
     }
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key, &encode_row(&row, LABEL)?)?;
+    DECISION.put(&vault.store, txn, &receipt, &row)?;
     Ok(())
 }
 
@@ -124,32 +125,23 @@ pub(super) fn principal_decision(
     txn: &heed::RoTxn<'_>,
     receipt: &str,
 ) -> Result<Option<PrincipalDecision>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(txn, &meta_key(PREFIX, receipt.as_bytes()))?
-    else {
+    let Some(row) = DECISION.get(&vault.store, txn, &receipt.to_owned())? else {
         return Ok(None);
     };
-    decode(&raw, receipt).map(Some)
+    validate_decision(row, receipt).map(Some)
 }
 
 pub(super) fn principal_decisions(vault: &Vault) -> Result<Vec<PrincipalDecision>> {
     let txn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for entry in vault.store.vault_meta.prefix_iter(&txn, PREFIX)? {
-        let (key, raw) = entry?;
-        let receipt =
-            std::str::from_utf8(&key[PREFIX.len()..]).map_err(|_| Error::CorruptedIndex(LABEL))?;
-        out.push(decode(&raw, receipt)?);
-    }
-    Ok(out)
+    DECISION
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .map(|(receipt, row)| validate_decision(row, &receipt))
+        .collect()
 }
 
-fn decode(raw: &[u8], receipt: &str) -> Result<PrincipalDecision> {
-    let row: PrincipalDecision = decode_row(raw, LABEL)?;
-    if row.v != 1
-        || row.receipt != receipt
+fn validate_decision(row: PrincipalDecision, receipt: &str) -> Result<PrincipalDecision> {
+    if row.receipt != receipt
         || !matches!(
             row.outcome.as_str(),
             "approved" | "approved_amended" | "rejected"
@@ -159,6 +151,20 @@ fn decode(raw: &[u8], receipt: &str) -> Result<PrincipalDecision> {
     }
     row.target.validate()?;
     Ok(row)
+}
+
+impl RawValue for PrincipalDecision {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row: PrincipalDecision = decode_row(bytes, LABEL)?;
+        if row.v != 1 {
+            return Err(CodecError::Value(Error::CorruptedIndex(LABEL)));
+        }
+        Ok(row)
+    }
 }
 
 /// Scope passed through the ordinary claim decoder, including its principal
@@ -226,11 +232,7 @@ pub fn bind_amendment_preference_principal(
                 "preference decision binding is immutable",
             ));
         }
-        vault.store.vault_meta.put(
-            txn,
-            &meta_key(PREFIX, receipt.as_bytes()),
-            &encode_row(&row, LABEL)?,
-        )?;
+        DECISION.put(&vault.store, txn, &receipt.to_owned(), &row)?;
         Ok(())
     })
 }

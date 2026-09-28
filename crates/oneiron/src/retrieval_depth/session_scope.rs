@@ -115,10 +115,19 @@ fn claim_world(
     let Some(revision) = revision else {
         return Ok(None);
     };
-    let result =
-        scoped.get_entity_parts_with_mode_with_receipt(id, ReadMode::Pinned(revision), None)?;
+    let result = scoped
+        .read(
+            &[crate::claim::PointRead::id(*id).at(ReadMode::Pinned(revision))],
+            None,
+        )?
+        .single();
     receipts.push(result.receipt);
-    let Some((entity_type, _, body)) = result.value else {
+    let Some(crate::claim::ReadRow {
+        entity_type,
+        body: Some(body),
+        ..
+    }) = result.value
+    else {
         return Ok(None);
     };
     if entity_type != ENTITY_TYPE_CLAIM {

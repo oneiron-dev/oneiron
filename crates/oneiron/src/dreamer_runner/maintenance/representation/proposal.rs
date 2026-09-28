@@ -1,18 +1,24 @@
 //! Pre-materialized author seam and durable maintenance execution. No delivery here.
 use super::context::{validate_citations, validate_packet};
 use super::{
-    PREDICATE, Packet, RECORD_PREFIX, REPRESENTATION_FACET, RepresentationCitation,
-    RepresentationContext, RepresentationRequest, invalid, key,
+    PREDICATE, Packet, REPRESENTATION_FACET, RepresentationCitation, RepresentationContext,
+    RepresentationRequest, invalid,
 };
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result, TimeRange,
     Vault, WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
+
+/// Evidence-citing user-voice representation proposal record, keyed by
+/// proposal claim id.
+const PROPOSAL: SideTable<EntityId, StoredProposal, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_REPRESENTATION_PROPOSAL);
 
 /// The host chooses the wording. The engine verifies every citation, stores
 /// the immutable UTF-8 bytes, and keeps source quotes beside the review.
@@ -134,12 +140,7 @@ pub(in crate::dreamer_runner::maintenance) fn run(
     )
     .with_evidence(evidence);
     vault.with_write_txn(|txn| {
-        if let Some(bytes) = vault
-            .store
-            .vault_meta
-            .get(&*txn, &key(RECORD_PREFIX, &id))?
-        {
-            let existing: StoredProposal = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        if let Some(existing) = PROPOSAL.get(&vault.store, &*txn, &id)? {
             if existing.packet != packet || vault.get_claim_in_txn(&*txn, &id)?.is_none() {
                 return Err(invalid());
             }
@@ -171,11 +172,7 @@ pub(in crate::dreamer_runner::maintenance) fn run(
             run,
             revision: review_revision(&landed)?,
         };
-        vault.store.vault_meta.put(
-            txn,
-            &key(RECORD_PREFIX, &id),
-            &serde_json::to_vec(&record).map_err(|_| invalid())?,
-        )?;
+        PROPOSAL.put(&vault.store, txn, &id, &record)?;
         Ok(id)
     })
 }
@@ -190,12 +187,7 @@ pub(super) fn read_proposal(
 ) -> Result<(StoredProposal, crate::ClaimBody)> {
     let record: StoredProposal = {
         let txn = vault.store.env.read_txn()?;
-        let bytes = vault
-            .store
-            .vault_meta
-            .get(&txn, &key(RECORD_PREFIX, id))?
-            .ok_or_else(invalid)?;
-        serde_json::from_slice(&bytes).map_err(|_| invalid())?
+        PROPOSAL.get(&vault.store, &txn, id)?.ok_or_else(invalid)?
     };
     let body = vault.get_claim(id)?.ok_or_else(invalid)?;
     if record.packet.id()? != *id

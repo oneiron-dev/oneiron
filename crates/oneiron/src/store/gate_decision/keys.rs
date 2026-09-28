@@ -7,16 +7,11 @@ use super::types::GateDecisionId;
 
 pub(in crate::store) const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 
-/// Pre-commit crash-recovery sidecar for a deletion authority record. This is
-/// not the Gate decision ledger: TXN3 consumes it with
-/// `append_gate_decision_in_txn` in the active-store purge transaction.
-const PENDING_DELETION_GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_delete_pending:v0:";
-
-/// Durable proof that a locally-authored deletion tombstone requires an
-/// authority sidecar before recovery may purge its target. Kept separate
-/// from the sidecar so corruption/loss of the latter is detectable instead
-/// of being mistaken for a legitimate sidecar-free remote tombstone.
-const DELETION_GATE_REQUIRED_KEY_PREFIX: &[u8] = b"gate_delete_required:v0:";
+// The `gate_delete_pending:v0:` crash-recovery sidecar and the
+// `gate_delete_required:v0:` durable-proof marker moved onto the typed
+// `PENDING_DELETION`/`DELETE_REQUIRED` side tables in `gate_decision/sidecar.rs`
+// (side_table::GATE_DELETE_PENDING_SIDECAR / GATE_DELETE_REQUIRED_MARKER); the
+// hand-spelled prefixes and key builders that used to live here are gone.
 
 pub(in crate::store) const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] =
     b"gate_decision:grant_ref_index:v1:";
@@ -47,65 +42,16 @@ pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY: &[u8
 /// Only accepted value byte for the backfill-complete flag row.
 pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE: [u8; 1] = [1];
 
-/// Per-decision constituent ids for a multi-claim inbox bundle. Its indexed
-/// counterpart is an acceleration only; the complete sidecar is the source
-/// for independent scan verification. Both are shredded with the bundle row.
-// Uncommitted-only batch preflight protection. A batch records every future
-// write decision before applying its first op; deletion may scrub only the
-// decisions already consumed. Markers are removed as each op applies, and
-// never survive a successful batch commit.
-const GATE_DECISION_UNAPPLIED_PREFLIGHT_PREFIX: &[u8] = b"gate_decision_unapplied_preflight:v0:";
-
-pub(super) fn gate_decision_unapplied_preflight_key(id: GateDecisionId) -> Vec<u8> {
-    index_key_with_id(GATE_DECISION_UNAPPLIED_PREFLIGHT_PREFIX, &id.as_bytes())
-}
-
-pub(super) const GATE_DECISION_CLAIM_REFS_PREFIX: &[u8] = b"gate_decision_claim_refs:v0:";
-pub(super) const GATE_DECISION_CLAIM_REF_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim_ref:v0:";
-
-pub(super) fn gate_decision_claim_refs_key(id: GateDecisionId) -> Vec<u8> {
-    index_key_with_id(GATE_DECISION_CLAIM_REFS_PREFIX, &id.as_bytes())
-}
-
-pub(super) fn gate_decision_claim_ref_prefix(claim_id: &[u8; 16]) -> Vec<u8> {
-    index_key_with_id(GATE_DECISION_CLAIM_REF_INDEX_PREFIX, claim_id)
-}
-
-pub(super) fn gate_decision_claim_ref_key(claim_id: &[u8; 16], id: GateDecisionId) -> Vec<u8> {
-    index_key_with_id(&gate_decision_claim_ref_prefix(claim_id), &id.as_bytes())
-}
-
 pub(in crate::store) const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
 
+/// The full raw key of one ledger row, for tests that plant rows directly;
+/// production reads and writes go through the typed ledger table.
+#[cfg(test)]
 pub(in crate::store) fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
     let mut key = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 16);
     key.extend_from_slice(GATE_DECISION_KEY_PREFIX);
     key.extend_from_slice(&decision_id.as_bytes());
     key
-}
-
-pub(super) fn pending_deletion_gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(PENDING_DELETION_GATE_DECISION_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(PENDING_DELETION_GATE_DECISION_KEY_PREFIX);
-    key.extend_from_slice(&decision_id.as_bytes());
-    key
-}
-
-pub(super) fn deletion_gate_required_key(decision_id: GateDecisionId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DELETION_GATE_REQUIRED_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(DELETION_GATE_REQUIRED_KEY_PREFIX);
-    key.extend_from_slice(&decision_id.as_bytes());
-    key
-}
-
-pub(super) fn gate_decision_id_from_key(key: &[u8]) -> Result<GateDecisionId> {
-    let bytes = key
-        .strip_prefix(GATE_DECISION_KEY_PREFIX)
-        .ok_or(Error::CorruptedIndex("gate decision ledger"))?;
-    let bytes: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("gate decision ledger"))?;
-    Ok(GateDecisionId { bytes })
 }
 
 pub(in crate::store) fn gate_decision_upper_bound() -> Vec<u8> {

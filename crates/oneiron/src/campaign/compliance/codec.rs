@@ -8,9 +8,10 @@ use sha2::Sha256;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
 use crate::edge::EdgeKind;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
 /// Live claim heads of `predicate` on `subject`.
@@ -94,8 +95,10 @@ pub(super) fn claim_body_in_txn(
 }
 
 /// Node-local party shortcut owned by `comm.rs`, re-validated against synced
-/// truth. Read-only mirror; CA never writes this index.
-const COMM_PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
+/// truth. Read-only mirror; CA never writes this index — this binding exists
+/// only for the read below, `comm` owns the declaration and its own writes.
+const COMM_PARTY_INDEX: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::COMM_PARTY_INDEX);
 
 /// Synced-truth field naming a comm-owned PERSON's party.
 const COMM_PARTY_KEY_FIELD: &str = "party_key";
@@ -116,17 +119,17 @@ pub(super) fn resolve_comm_party_in_txn(
     if party_key.is_empty() {
         return Ok(None);
     }
-    let mut key = Vec::with_capacity(COMM_PARTY_INDEX_PREFIX.len() + 32);
-    key.extend_from_slice(COMM_PARTY_INDEX_PREFIX);
-    key.extend_from_slice(&Sha256::digest(party_key.as_bytes()));
-    let Some(raw_id) = store.vault_meta.get(txn, &key)? else {
-        return Ok(None);
-    };
-    let Ok(bytes) = <[u8; ENTITY_ID_LEN]>::try_from(raw_id.as_ref()) else {
-        return Ok(None);
-    };
-    let Ok(id) = EntityId::from_bytes(bytes) else {
-        return Ok(None);
+    let digest: [u8; 32] = Sha256::digest(party_key.as_bytes()).into();
+    // A malformed shortcut resolves to NOTHING, not an error: it is a
+    // disposable cache `comm.rs` owns and may overwrite at will.
+    let id = match COMM_PARTY_INDEX.get(store, txn, &digest) {
+        Ok(Some(id)) => id,
+        Ok(None) => return Ok(None),
+        Err(Error::Store(StoreError::SideTableRow {
+            problem: SideTableRowProblem::Undecodable,
+            ..
+        })) => return Ok(None),
+        Err(err) => return Err(err),
     };
     Ok(person_with_party_key_in_txn(store, txn, &id, party_key)?.then_some(id))
 }

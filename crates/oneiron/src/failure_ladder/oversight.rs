@@ -1,12 +1,18 @@
 //! Per-vault signed oversight over healer proposals and review decisions.
 
+use crate::side_table::{self, Named, SideTable};
 use crate::{Error, Result, Vault};
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-const ACTIVITY: &[u8] = b"healer:activity:v1:";
-const RECEIPT: &[u8] = b"healer:oversight:v1:";
 const DOMAIN: &[u8] = b"oneiron:healer-oversight:v1\0";
+
+/// Proposed/reviewed/escalated timestamps for one healer case. Key: hex32 (case_ref).
+const ACTIVITY: SideTable<String, Activity, Named> = SideTable::new(&side_table::HEALER_ACTIVITY);
+
+/// Latest signed per-vault-device oversight receipt. Key: u8 (OversightKind tag: 0/1/2).
+const RECEIPT: SideTable<[u8; 1], OversightReceipt, Named> =
+    SideTable::new(&side_table::HEALER_OVERSIGHT_RECEIPT);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Activity {
@@ -16,15 +22,22 @@ struct Activity {
 }
 
 impl Activity {
+    /// The business rule `Named`'s plain decode cannot enforce: a review cannot predate its
+    /// own proposal. Runs immediately after every decode, direct or through [`ACTIVITY`].
+    fn validate_order(&self) -> Result<()> {
+        if self.reviewed_at.is_some_and(|at| at < self.proposed_at) {
+            return Err(Error::CorruptedIndex("healer activity"));
+        }
+        Ok(())
+    }
+
+    /// Test-only now: every non-test read of [`ACTIVITY`] decodes through the typed door
+    /// directly, then calls [`Self::validate_order`] separately.
+    #[cfg(test)]
     fn decode(bytes: &[u8]) -> Result<Self> {
         let activity: Self =
             rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("healer activity"))?;
-        if activity
-            .reviewed_at
-            .is_some_and(|at| at < activity.proposed_at)
-        {
-            return Err(Error::CorruptedIndex("healer activity"));
-        }
+        activity.validate_order()?;
         Ok(activity)
     }
 }
@@ -86,7 +99,7 @@ fn signed_bytes(counts: &OversightCounts) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
-fn activity_key(case: &str) -> Result<Vec<u8>> {
+fn validate_case_ref(case: &str) -> Result<()> {
     if case.len() != 32
         || !case
             .bytes()
@@ -94,7 +107,7 @@ fn activity_key(case: &str) -> Result<Vec<u8>> {
     {
         return Err(Error::InvalidConfig("invalid healer case ref".into()));
     }
-    Ok([ACTIVITY, case.as_bytes()].concat())
+    Ok(())
 }
 pub(crate) fn proposed_in_txn(
     vault: &Vault,
@@ -102,15 +115,19 @@ pub(crate) fn proposed_in_txn(
     case: &str,
     now: u64,
 ) -> Result<()> {
-    let key = activity_key(case)?;
-    if vault.store.vault_meta.get(txn, &key)?.is_none() {
-        let bytes = rmp_serde::to_vec_named(&Activity {
-            proposed_at: now,
-            reviewed_at: None,
-            escalated: false,
-        })
-        .map_err(|_| Error::CorruptedIndex("healer activity"))?;
-        vault.store.vault_meta.put(txn, &key, &bytes)?;
+    validate_case_ref(case)?;
+    let key = case.to_owned();
+    if !ACTIVITY.contains(&vault.store, txn, &key)? {
+        ACTIVITY.put(
+            &vault.store,
+            txn,
+            &key,
+            &Activity {
+                proposed_at: now,
+                reviewed_at: None,
+                escalated: false,
+            },
+        )?;
     }
     Ok(())
 }
@@ -118,14 +135,13 @@ impl Vault {
     /// The host's reviewed-decision door; this records a fact, never applies a
     /// repair. The ordinary consent gate remains the only repair authority.
     pub fn record_healer_review(&self, case: &str, now: u64, escalated: bool) -> Result<()> {
-        let key = activity_key(case)?;
+        validate_case_ref(case)?;
+        let key = case.to_owned();
         self.with_write_txn(|txn| {
-            let bytes = self
-                .store
-                .vault_meta
-                .get(txn, &key)?
+            let mut activity = ACTIVITY
+                .get(&self.store, txn, &key)?
                 .ok_or(Error::InvalidConfig("unknown healer case".into()))?;
-            let mut activity = Activity::decode(&bytes)?;
+            activity.validate_order()?;
             if now < activity.proposed_at {
                 return Err(Error::InvalidConfig("review predates proposal".into()));
             }
@@ -139,9 +155,7 @@ impl Vault {
             }
             activity.reviewed_at = Some(now);
             activity.escalated = escalated;
-            let bytes = rmp_serde::to_vec_named(&activity)
-                .map_err(|_| Error::CorruptedIndex("healer activity"))?;
-            self.store.vault_meta.put(txn, &key, &bytes)?;
+            ACTIVITY.put(&self.store, txn, &key, &activity)?;
             Ok(())
         })
     }
@@ -159,9 +173,8 @@ impl Vault {
                 escalated: 0,
                 review_latency_secs: 0,
             };
-            for row in self.store.vault_meta.prefix_iter(txn, ACTIVITY)? {
-                let (_, bytes) = row?;
-                let activity = Activity::decode(&bytes)?;
+            for (_, activity) in ACTIVITY.scan(&self.store, txn)? {
+                activity.validate_order()?;
                 if activity.proposed_at > now {
                     continue;
                 }
@@ -195,11 +208,7 @@ impl Vault {
                     signer: identity.signing_key.verifying_key().to_bytes(),
                     counts,
                 };
-                let bytes = rmp_serde::to_vec_named(&receipt)
-                    .map_err(|_| Error::CorruptedIndex("healer oversight"))?;
-                self.store
-                    .vault_meta
-                    .put(txn, &[RECEIPT, &[kind.tag()]].concat(), &bytes)?;
+                RECEIPT.put(&self.store, txn, &[kind.tag()], &receipt)?;
                 receipts.push(receipt);
             }
             Ok(receipts)

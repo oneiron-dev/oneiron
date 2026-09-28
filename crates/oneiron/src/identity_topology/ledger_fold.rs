@@ -8,6 +8,7 @@ use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
+use crate::side_table::HexId;
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -324,20 +325,15 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                                     IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
                                 )
                                 && op.participants().contains(participant)
-                                && (store
-                                    .sync_state
-                                    .get(
-                                        rtxn,
-                                        &crate::deletion::identity_soft_delete_key(participant),
-                                    )?
-                                    .is_some()
-                                    || store
-                                        .sync_state
-                                        .get(
-                                            rtxn,
-                                            &crate::deletion::local_hard_delete_key(participant),
-                                        )?
-                                        .is_some())
+                                && (crate::deletion::IDENTITY_SOFT_DELETE_MARKER.contains(
+                                    store,
+                                    rtxn,
+                                    &HexId(*participant),
+                                )? || crate::deletion::HARD_DELETE_MARKER.contains(
+                                    store,
+                                    rtxn,
+                                    &HexId(*participant),
+                                )?)
                         }
                         _ => false,
                     }

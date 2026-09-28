@@ -2,14 +2,20 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::storage::{
-    CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, CAMPAIGN_PROGRAM_PREFIX, CAMPAIGN_PROGRAM_STEP_PREFIX,
-    bytes_from_hex, from_row, id_from_hex, keyed, pin_schema, put_meta, read_meta, to_row,
-};
+use super::storage::{CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, bytes_from_hex, id_from_hex, pin_schema};
 use crate::Vault;
 use crate::campaign::claims::CampaignMemberChannel;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
+
+/// Persisted binding from a campaign program to the campaign it belongs to.
+/// Key: the program id.
+const PROGRAM: SideTable<EntityId, ProgramRow, LegacyJson> =
+    SideTable::new(&side_table::CAMPAIGN_PROGRAM);
+/// One step of a campaign program. Key: the program id then the step id.
+const PROGRAM_STEP: SideTable<(EntityId, EntityId), ProgramStepRow, LegacyJson> =
+    SideTable::new(&side_table::CAMPAIGN_PROGRAM_STEP);
 
 // ---------------------------------------------------------------------------
 // Campaign program state (the outward leg's persisted authority)
@@ -91,11 +97,15 @@ impl CampaignProgramStep {
 ///
 /// Storage errors propagate.
 pub fn put_campaign_program(vault: &Vault, program: &CampaignProgram) -> Result<()> {
-    put_meta(
-        vault,
-        &keyed(CAMPAIGN_PROGRAM_PREFIX, &[program.program_ref.as_bytes()]),
-        &encode_program(program)?,
-    )
+    vault.with_write_txn(|wtxn| {
+        PROGRAM.put(
+            &vault.store,
+            wtxn,
+            &program.program_ref,
+            &encode_program(program),
+        )?;
+        Ok(())
+    })
 }
 
 /// Reads a campaign program row.
@@ -104,12 +114,11 @@ pub fn put_campaign_program(vault: &Vault, program: &CampaignProgram) -> Result<
 ///
 /// Storage errors propagate; a malformed row is [`Error::CorruptedIndex`].
 pub fn campaign_program(vault: &Vault, program_ref: EntityId) -> Result<Option<CampaignProgram>> {
-    read_meta(
-        vault,
-        &keyed(CAMPAIGN_PROGRAM_PREFIX, &[program_ref.as_bytes()]),
-    )?
-    .map(|raw| decode_program(program_ref, &raw))
-    .transpose()
+    let rtxn = vault.store.env.read_txn()?;
+    PROGRAM
+        .get(&vault.store, &rtxn, &program_ref)?
+        .map(|row| decode_program(program_ref, row))
+        .transpose()
 }
 
 /// Persists a campaign program step.
@@ -118,11 +127,15 @@ pub fn campaign_program(vault: &Vault, program_ref: EntityId) -> Result<Option<C
 ///
 /// Storage errors propagate.
 pub fn put_campaign_program_step(vault: &Vault, step: &CampaignProgramStep) -> Result<()> {
-    put_meta(
-        vault,
-        &program_step_key(step.program_ref, step.step_ref),
-        &encode_program_step(step)?,
-    )
+    vault.with_write_txn(|wtxn| {
+        PROGRAM_STEP.put(
+            &vault.store,
+            wtxn,
+            &(step.program_ref, step.step_ref),
+            &encode_program_step(step),
+        )?;
+        Ok(())
+    })
 }
 
 /// Reads a campaign program step.
@@ -135,8 +148,10 @@ pub fn campaign_program_step(
     program_ref: EntityId,
     step_ref: EntityId,
 ) -> Result<Option<CampaignProgramStep>> {
-    read_meta(vault, &program_step_key(program_ref, step_ref))?
-        .map(|raw| decode_program_step(program_ref, step_ref, &raw))
+    let rtxn = vault.store.env.read_txn()?;
+    PROGRAM_STEP
+        .get(&vault.store, &rtxn, &(program_ref, step_ref))?
+        .map(|row| decode_program_step(program_ref, step_ref, row))
         .transpose()
 }
 
@@ -166,16 +181,15 @@ struct ProgramOutboundRow {
     idempotency_supported: bool,
 }
 
-fn encode_program(program: &CampaignProgram) -> Result<Vec<u8>> {
-    to_row(&ProgramRow {
+fn encode_program(program: &CampaignProgram) -> ProgramRow {
+    ProgramRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         campaign_ref: program.campaign_ref.to_hex(),
-    })
+    }
 }
 
-fn decode_program(program_ref: EntityId, raw: &[u8]) -> Result<CampaignProgram> {
+fn decode_program(program_ref: EntityId, row: ProgramRow) -> Result<CampaignProgram> {
     const CONTEXT: &str = "campaign program";
-    let row: ProgramRow = from_row(raw, CONTEXT)?;
     pin_schema(row.schema_version, CONTEXT)?;
     Ok(CampaignProgram {
         schema_version: row.schema_version,
@@ -184,8 +198,8 @@ fn decode_program(program_ref: EntityId, raw: &[u8]) -> Result<CampaignProgram> 
     })
 }
 
-fn encode_program_step(step: &CampaignProgramStep) -> Result<Vec<u8>> {
-    to_row(&ProgramStepRow {
+fn encode_program_step(step: &CampaignProgramStep) -> ProgramStepRow {
+    ProgramStepRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         channel: step.channel.clone(),
         sender_ref: step.sender_ref.to_hex(),
@@ -196,16 +210,15 @@ fn encode_program_step(step: &CampaignProgramStep) -> Result<Vec<u8>> {
             payload: bytes_to_hex_lower(&outbound.payload),
             idempotency_supported: outbound.idempotency_supported,
         }),
-    })
+    }
 }
 
 fn decode_program_step(
     program_ref: EntityId,
     step_ref: EntityId,
-    raw: &[u8],
+    row: ProgramStepRow,
 ) -> Result<CampaignProgramStep> {
     const CONTEXT: &str = "campaign program step";
-    let row: ProgramStepRow = from_row(raw, CONTEXT)?;
     pin_schema(row.schema_version, CONTEXT)?;
     let outbound = row
         .outbound
@@ -227,11 +240,4 @@ fn decode_program_step(
         basis_evidence: id_from_hex(&row.basis_evidence, CONTEXT)?,
         outbound,
     })
-}
-
-fn program_step_key(program_ref: EntityId, step_ref: EntityId) -> Vec<u8> {
-    keyed(
-        CAMPAIGN_PROGRAM_STEP_PREFIX,
-        &[program_ref.as_bytes(), step_ref.as_bytes()],
-    )
 }

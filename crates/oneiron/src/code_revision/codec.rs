@@ -4,9 +4,34 @@ use rmpv::Value;
 
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::side_table::{CodecError, RawValue};
 
 use super::types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
 use crate::error::ArtifactError;
+
+/// The side table's declared codec is `Raw`: a code revision's on-disk shape is the hand-rolled
+/// MessagePack map [`encode_code_revision`]/[`decode_code_revision`] have always spelled.
+impl RawValue for CodeRevision {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_code_revision(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_code_revision(bytes)?)
+    }
+}
+
+/// The side table's declared codec is `Raw`, for the same reason: [`encode_code_revision_fork`]/
+/// [`decode_code_revision_fork`] already spell this row's on-disk shape.
+impl RawValue for CodeRevisionFork {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_code_revision_fork(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_code_revision_fork(bytes)?)
+    }
+}
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
 

@@ -8,6 +8,7 @@ use crate::outbound_intent_ledger::{
     IntentState, OutboundCallRequest, OutboundSendOutcome, insert_pending_in_txn,
     read_intent_for_attempt_in_txn, read_intent_record,
 };
+use crate::side_table::{SideCodec, SideTable};
 
 #[derive(Default)]
 struct FrozenSpy(Vec<Vec<u8>>);
@@ -17,6 +18,21 @@ impl OutboundTransport for FrozenSpy {
         self.0.push(call.payload().to_vec());
         OutboundSendOutcome::Acked
     }
+}
+
+/// One row's stored bytes, undecoded, so a planted damaged row compares exactly as written.
+fn stored_bytes<V, C: SideCodec<V>>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    table: SideTable<String, V, C>,
+    key: &str,
+) -> Option<Vec<u8>> {
+    table
+        .iter_raw_from(&vault.store, txn, key.as_bytes())
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|(found, _)| found == key.as_bytes())
+        .map(|(_, value)| value)
 }
 
 fn persist_pending(vault: &Vault, request: OutboundCallRequest) -> IntentLedgerRecord {
@@ -253,11 +269,13 @@ fn completed_history_is_not_read_by_pending_event_effect_or_request_lookups() {
         }
         // A global scan would fail even before it could skip these unrelated
         // rows. Direct lookups must not deserialize them at all.
-        for prefix in [EMERGENCY_ITEM_META_PREFIX, EMERGENCY_PLAN_META_PREFIX] {
-            let mut key = prefix.to_vec();
-            key.extend_from_slice(b"unrelated-corrupt-history");
-            put_meta(&vault, txn, &key, b"not JSON")?;
-        }
+        let unrelated = "unrelated-corrupt-history".to_owned();
+        planning::ITEM
+            .put_undecodable(&vault.store, txn, &unrelated, b"not JSON")
+            .map_err(storage_failure)?;
+        planning::PLAN
+            .put_undecodable(&vault.store, txn, &unrelated, b"not JSON")
+            .map_err(storage_failure)?;
         Ok(last.unwrap())
     })
     .unwrap();
@@ -320,28 +338,43 @@ fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
         // This booking has no index yet. Both it and the healthy saved plan
         // must survive the damaged row in the same planning call.
         let fresh = book(&vault, PAGE, NOW + 9_000);
-        let prefix = lookup::request_plan_prefix(&plan.request).unwrap();
-        let mut index_key = prefix.clone();
-        index_key.extend_from_slice(event.as_bytes());
-        let mut healthy_index_key = prefix;
-        healthy_index_key.extend_from_slice(saved.calendar.event_ref.as_bytes());
+        let index = (lookup::request_plan_hash(&plan.request).unwrap(), event);
+        let healthy_index = (index.0, saved.calendar.event_ref);
         let key = {
             let txn = vault.store.env.read_txn().unwrap();
-            read_meta_bytes(&vault, &txn, &index_key).unwrap().unwrap()
+            lookup::REQUEST_PLAN_INDEX
+                .get(&vault.store, &txn, &index)
+                .unwrap()
+                .unwrap()
         };
+        let plan_row = planning::hex_suffix(&key, EMERGENCY_PLAN_META_PREFIX)
+            .unwrap()
+            .to_owned();
         let checkpoint_key = item_key(&plan.request, event).unwrap();
+        let checkpoint_row = planning::hex_suffix(&checkpoint_key, EMERGENCY_ITEM_META_PREFIX)
+            .unwrap()
+            .to_owned();
         booking_writer(&vault, |txn| {
             match damage {
                 "missing" => {
                     assert!(vault.store.vault_meta.delete(txn, &key).unwrap());
                 }
-                "malformed" => put_meta(&vault, txn, &key, b"{not JSON")?,
+                "malformed" => planning::PLAN
+                    .put_undecodable(&vault.store, txn, &plan_row, b"{not JSON")
+                    .map_err(storage_failure)?,
                 "target_binding" => {
-                    let target = read_meta_bytes(&vault, txn, &healthy_index_key)?.unwrap();
-                    put_meta(&vault, txn, &index_key, &target)?;
+                    let target = lookup::REQUEST_PLAN_INDEX
+                        .get(&vault.store, txn, &healthy_index)
+                        .map_err(storage_failure)?
+                        .unwrap();
+                    lookup::REQUEST_PLAN_INDEX
+                        .put(&vault.store, txn, &index, &target)
+                        .map_err(storage_failure)?;
                 }
                 "checkpoint_decode" => {
-                    put_meta(&vault, txn, &checkpoint_key, b"{not JSON")?;
+                    planning::ITEM
+                        .put_undecodable(&vault.store, txn, &checkpoint_row, b"{not JSON")
+                        .map_err(storage_failure)?;
                 }
                 "checkpoint_binding" => {
                     let checkpoint = EmergencyItem {
@@ -354,12 +387,9 @@ fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
                         apology_delivered: true,
                         picked: None,
                     };
-                    put_meta(
-                        &vault,
-                        txn,
-                        &checkpoint_key,
-                        &serde_json::to_vec(&checkpoint).unwrap(),
-                    )?;
+                    planning::ITEM
+                        .put(&vault.store, txn, &checkpoint_row, &checkpoint)
+                        .map_err(storage_failure)?;
                 }
                 _ => {
                     let mut damaged = plan.clone();
@@ -376,21 +406,32 @@ fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
                     if damage != "hash" {
                         damaged.content_hash = damaged.hash().unwrap();
                     }
-                    let mut bytes = serde_json::to_vec(&damaged).unwrap();
                     if damage == "noncanonical" {
+                        let mut bytes = serde_json::to_vec(&damaged).unwrap();
                         bytes.push(b' ');
+                        planning::PLAN
+                            .put_undecodable(&vault.store, txn, &plan_row, &bytes)
+                            .map_err(storage_failure)?;
+                    } else {
+                        planning::PLAN
+                            .put(&vault.store, txn, &plan_row, &damaged)
+                            .map_err(storage_failure)?;
                     }
-                    put_meta(&vault, txn, &key, &bytes)?;
                 }
             }
             Ok(())
         })
         .unwrap();
-        let damaged_rows = {
-            let txn = vault.store.env.read_txn().unwrap();
-            [index_key.clone(), key.clone(), checkpoint_key.clone()]
-                .map(|key| read_meta_bytes(&vault, &txn, &key).unwrap())
+        let stored_rows = |txn: &heed::RoTxn<'_>| {
+            (
+                lookup::REQUEST_PLAN_INDEX
+                    .get(&vault.store, txn, &index)
+                    .unwrap(),
+                stored_bytes(&vault, txn, planning::PLAN, &plan_row),
+                stored_bytes(&vault, txn, planning::ITEM, &checkpoint_row),
+            )
         };
+        let damaged_rows = stored_rows(&vault.store.env.read_txn().unwrap());
         let mut first_batch = None;
         for _ in 0..2 {
             let batch =
@@ -412,10 +453,8 @@ fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
                 "{damage}"
             );
             assert_eq!(batch.plans[0], healthy, "{damage}");
-            let txn = vault.store.env.read_txn().unwrap();
             assert_eq!(
-                [index_key.clone(), key.clone(), checkpoint_key.clone()]
-                    .map(|key| read_meta_bytes(&vault, &txn, &key).unwrap()),
+                stored_rows(&vault.store.env.read_txn().unwrap()),
                 damaged_rows,
                 "{damage}: planning must not repair or retry the refused booking"
             );

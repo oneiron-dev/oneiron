@@ -3,20 +3,36 @@
 use std::collections::VecDeque;
 
 use super::storage::{
-    ESCALATION_ROW_LABEL, ROW_VERSION, StoredEscalation, encode_row, escalation_key,
-    escalation_key_id, escalation_row, escalation_scope_prefix, normalized_scope, ruling_parts,
+    ESCALATION, ROW_VERSION, StoredEscalation, normalized_scope, ruling_parts, scope_key,
 };
 use super::types::{EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
 
-/// `vault_meta` key of the N dial: how many agreeing rulings earn a proposed
-/// standing policy. The house per-feature key const (cf.
-/// `inbox::INBOX_REVIEW_DIAL_KEY`); `settings.rs` is UI customization and owns
-/// nothing here.
-pub const ESCALATION_STANDING_N_KEY: &[u8] = b"edit_distance/escalation/standing_n/dial/v1";
+/// The N dial: how many agreeing rulings earn a proposed standing policy.
+const STANDING_N: SideTable<(), StandingN, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ESCALATION_STANDING_N);
+
+/// Little-endian `u32`: the byte layout [`set_escalation_standing_n`] always
+/// wrote, kept exactly rather than moved to the crate's big-endian `u64`
+/// convention.
+struct StandingN(u32);
+
+impl RawValue for StandingN {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(self.0.to_le_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let bytes: [u8; 4] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("escalation standing-N dial"))?;
+        Ok(Self(u32::from_le_bytes(bytes)))
+    }
+}
 
 /// How many of a `(scope, trigger)` pair's newest rulings [`EscalationStats`]
 /// retains. A history is for reading a pattern, not for replaying an audit —
@@ -42,14 +58,9 @@ pub fn escalation_standing_n(vault: &Vault) -> Result<u32> {
 }
 
 pub(super) fn escalation_standing_n_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u32> {
-    let Some(raw) = store.vault_meta.get(txn, ESCALATION_STANDING_N_KEY)? else {
-        return Ok(DEFAULT_ESCALATION_STANDING_N);
-    };
-    let bytes: [u8; 4] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("escalation standing-N dial"))?;
-    Ok(u32::from_le_bytes(bytes))
+    Ok(STANDING_N
+        .get(store, txn, &())?
+        .map_or(DEFAULT_ESCALATION_STANDING_N, |n| n.0))
 }
 
 /// Sets the N dial.
@@ -64,13 +75,7 @@ pub fn set_escalation_standing_n(vault: &Vault, n: u32) -> Result<()> {
             "a standing-policy threshold of zero rulings is not a threshold",
         )));
     }
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, ESCALATION_STANDING_N_KEY, &n.to_le_bytes())?;
-        Ok(())
-    })
+    vault.with_write_txn(|wtxn| STANDING_N.put(&vault.store, wtxn, &(), &StandingN(n)))
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +107,7 @@ pub(crate) fn record_escalation_at(
     }
     let (ruling, delta) = ruling_parts(&receipt.ruling)?;
     let id = vault.store.clock.entity_id()?;
-    let key = escalation_key(&scope, &id);
+    let key = (scope_key(&scope), id);
     let row = StoredEscalation {
         v: ROW_VERSION,
         task_ref: receipt.task_ref.to_hex(),
@@ -115,11 +120,7 @@ pub(crate) fn record_escalation_at(
         budget_band: receipt.budget_band,
         at,
     };
-    let data = encode_row(&row, ESCALATION_ROW_LABEL)?;
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &data)?;
-        Ok(())
-    })?;
+    vault.with_write_txn(|wtxn| ESCALATION.put(&vault.store, wtxn, &key, &row))?;
     Ok(id)
 }
 
@@ -165,16 +166,13 @@ pub(super) fn scope_rows_in_txn(
     trigger: EscalationTrigger,
 ) -> Result<Vec<(EntityId, StoredEscalation)>> {
     let scope = normalized_scope(scope)?;
-    let mut rows = Vec::new();
-    for entry in store
-        .vault_meta
-        .prefix_iter(txn, &escalation_scope_prefix(scope))?
-    {
-        let (key, raw) = entry?;
-        let row = escalation_row(&raw)?;
-        if row.trigger()? == trigger {
-            rows.push((escalation_key_id(&key)?, row));
-        }
-    }
-    Ok(rows)
+    ESCALATION
+        .scan_from(store, txn, &scope_key(scope))?
+        .into_iter()
+        .filter_map(|((_, id), row)| match row.trigger() {
+            Ok(row_trigger) if row_trigger == trigger => Some(Ok((id, row))),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect()
 }

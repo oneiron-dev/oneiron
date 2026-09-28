@@ -30,7 +30,6 @@ mod recovery_shell;
 pub(crate) use recovery_shell::restore_recovery_shell_in_txn;
 mod short_id;
 mod thread_claim_index;
-mod txn_builder;
 mod types;
 mod vad_postcommit;
 mod vector_apply;
@@ -39,8 +38,8 @@ mod vector_apply;
 mod tests;
 
 pub use self::builder::BatchBuilder;
-pub use self::txn_builder::TxnBatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
+#[cfg(feature = "sync")]
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
 
@@ -87,10 +86,6 @@ pub(crate) use self::types::{
 // Private re-exports preserving the module's original flat namespace for
 // sibling files and the white-box test module (`tests.rs` uses `super::*`).
 use self::authority_log::*;
-// `builder`'s module-private items are reached cross-file only from sync-gated
-// code (`replicated_put_op`); its public items route via the re-exports above.
-#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
-use self::builder::*;
 use self::child_of_overlay::*;
 use self::claim_candidate_apply::*;
 use self::deindex::*;

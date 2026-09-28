@@ -6,6 +6,7 @@ use heed::{RoTxn, RwTxn};
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
 
 use super::codec::{
@@ -15,6 +16,11 @@ use super::codec::{
 };
 use super::diagnostics::Bm25DiagnosticKind;
 use super::{DOC_META_LEN, ENTITY_ID_LEN, FIELD_STATS_LEN};
+
+/// Canonical caller-supplied text fields backing one document's bm25 index,
+/// keyed by doc id, used to rebuild postings on restore.
+const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
+    SideTable::new(&side_table::INDEX_SOURCE_TEXT);
 
 // === Indexing ===
 
@@ -113,11 +119,7 @@ pub(crate) fn index_text(
     }
 
     // Canonical caller input, not tokenizer output. Restore rebuilds postings from it.
-    let mut source_key = b"index_source:text:v1:".to_vec();
-    source_key.extend_from_slice(id.as_bytes());
-    let source = rmp_serde::to_vec_named(fields)
-        .map_err(|_| Error::InvariantViolation("index source encode"))?;
-    store.vault_meta().put(wtxn, &source_key, &source)?;
+    INDEX_SOURCE_TEXT.put(store, wtxn, id, &fields.to_vec())?;
 
     let mut tokens: Vec<Token> = Vec::new();
     let ctx = AnalyzerContext::for_index();
@@ -224,9 +226,7 @@ pub(crate) fn deindex_text(
     id: &EntityId,
 ) -> Result<()> {
     validate_text_doc_id(id)?;
-    let mut source_key = b"index_source:text:v1:".to_vec();
-    source_key.extend_from_slice(id.as_bytes());
-    store.vault_meta().delete(wtxn, &source_key)?;
+    INDEX_SOURCE_TEXT.delete(store, wtxn, id)?;
 
     let Some(forward_raw) = store.text_forward().get(wtxn, id.as_bytes())? else {
         if store.text_meta().get(wtxn, id.as_bytes())?.is_some() {

@@ -30,9 +30,9 @@ pub(crate) fn delete_code_memory_rows_for_entity_in_txn(
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    delete_prefix(store, txn, &slot_symbol_prefix(id))?;
-    delete_prefix(store, txn, &attachment_symbol_prefix(id))?;
-    delete_prefix(store, txn, &always_on_symbol_prefix(id))?;
+    SLOT.delete_from(store, txn, &slot_symbol_prefix(id))?;
+    ATTACHMENT.delete_from(store, txn, &attachment_symbol_prefix(id))?;
+    ALWAYS_ON.delete_from(store, txn, &always_on_symbol_prefix(id))?;
     delete_transfer_records_naming(store, txn, id)?;
     delete_attachment_and_always_on_rows_for_payload(store, txn, id)?;
     drop_payload_from_slot_bodies(store, txn, id)
@@ -40,29 +40,25 @@ pub(crate) fn delete_code_memory_rows_for_entity_in_txn(
 
 /// Transfer receipts are keyed `from | to | observed_at | digest`
 /// ([`transfer_key`]), so the `to` half is not prefix-addressable: the family
-/// is scanned and both endpoint segments are compared on the RAW key. Reading
-/// the key rather than decoding the body keeps an unrelated entity's deletion
+/// is scanned and both endpoint segments are compared on the RAW key, via
+/// [`SideTable::scan_keys`] rather than a decoding scan. Reading the key
+/// rather than decoding the body keeps an unrelated entity's deletion
 /// independent of any one receipt's decodability.
 fn delete_transfer_records_naming(
     store: &Store,
     txn: &mut RwTxn<'_>,
     symbol_id: &EntityId,
 ) -> Result<()> {
-    let mut keys = Vec::new();
-    for entry in store.vault_meta.prefix_iter(&*txn, TRANSFER_KEY_PREFIX)? {
-        let (key, _) = entry?;
-        let endpoints = &key[TRANSFER_KEY_PREFIX.len()..];
-        if endpoints.len() < 2 * ENTITY_ID_LEN {
+    let keys = TRANSFER.scan_keys(store, txn, &[])?;
+    for key in keys {
+        if key.len() < 2 * ENTITY_ID_LEN {
             continue;
         }
-        if &endpoints[..ENTITY_ID_LEN] == symbol_id.as_bytes()
-            || &endpoints[ENTITY_ID_LEN..2 * ENTITY_ID_LEN] == symbol_id.as_bytes()
+        if &key[..ENTITY_ID_LEN] == symbol_id.as_bytes()
+            || &key[ENTITY_ID_LEN..2 * ENTITY_ID_LEN] == symbol_id.as_bytes()
         {
-            keys.push(key.to_vec());
+            TRANSFER.delete(store, txn, &key)?;
         }
-    }
-    for key in keys {
-        store.vault_meta.delete(txn, &key)?;
     }
     Ok(())
 }
@@ -70,23 +66,22 @@ fn delete_transfer_records_naming(
 /// Attachment and always-on keys both END in `tag | payload id`
 /// ([`key_with_payload`]), so the trailing [`ENTITY_ID_LEN`] bytes ARE the
 /// payload id: one suffix match reaches both payload tags under any owning
-/// symbol and any slot name.
+/// symbol and any slot name. [`SideTable::scan_keys`] rather than a decoding
+/// scan, for the same corruption-independence reason as transfer receipts.
 fn delete_attachment_and_always_on_rows_for_payload(
     store: &Store,
     txn: &mut RwTxn<'_>,
     payload_id: &EntityId,
 ) -> Result<()> {
-    let mut keys = Vec::new();
-    for prefix in [ATTACHMENT_KEY_PREFIX, ALWAYS_ON_KEY_PREFIX] {
-        for entry in store.vault_meta.prefix_iter(&*txn, prefix)? {
-            let (key, _) = entry?;
-            if key.len() > prefix.len() + ENTITY_ID_LEN && key.ends_with(payload_id.as_bytes()) {
-                keys.push(key.to_vec());
-            }
+    for key in ATTACHMENT.scan_keys(store, txn, &[])? {
+        if key.len() > ENTITY_ID_LEN && key.ends_with(payload_id.as_bytes()) {
+            ATTACHMENT.delete(store, txn, &key)?;
         }
     }
-    for key in keys {
-        store.vault_meta.delete(txn, &key)?;
+    for key in ALWAYS_ON.scan_keys(store, txn, &[])? {
+        if key.len() > ENTITY_ID_LEN && key.ends_with(payload_id.as_bytes()) {
+            ALWAYS_ON.delete(store, txn, &key)?;
+        }
     }
     Ok(())
 }
@@ -102,10 +97,8 @@ fn drop_payload_from_slot_bodies(
     txn: &mut RwTxn<'_>,
     payload_id: &EntityId,
 ) -> Result<()> {
-    let mut rewrites: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
-    for entry in store.vault_meta.prefix_iter(&*txn, SLOT_KEY_PREFIX)? {
-        let (key, value) = entry?;
-        let mut slot = decode_slot(&value)?;
+    let mut rewrites: Vec<(Vec<u8>, Option<CodeMemorySlot>)> = Vec::new();
+    for (key, mut slot) in SLOT.scan(store, txn)? {
         let before = slot.values.len();
         slot.values
             .retain(|value| value.payload.entity_id() != *payload_id);
@@ -113,37 +106,16 @@ fn drop_payload_from_slot_bodies(
             continue;
         }
         slot.normalize();
-        let replacement = (!slot.values.is_empty()).then(|| encode_slot(&slot));
-        rewrites.push((key.to_vec(), replacement));
+        let replacement = (!slot.values.is_empty()).then_some(slot);
+        rewrites.push((key, replacement));
     }
     for (key, replacement) in rewrites {
         match replacement {
-            Some(body) => store.vault_meta.put(txn, &key, &body)?,
+            Some(slot) => SLOT.put(store, txn, &key, &slot)?,
             None => {
-                store.vault_meta.delete(txn, &key)?;
+                SLOT.delete(store, txn, &key)?;
             }
         }
-    }
-    Ok(())
-}
-
-fn count_prefix(store: &Store, txn: &RoTxn<'_>, prefix: &[u8]) -> Result<usize> {
-    let mut count = 0usize;
-    for entry in store.vault_meta.prefix_iter(txn, prefix)? {
-        entry?;
-        count += 1;
-    }
-    Ok(count)
-}
-
-fn delete_prefix(store: &Store, txn: &mut RwTxn<'_>, prefix: &[u8]) -> Result<()> {
-    let mut keys = Vec::new();
-    for entry in store.vault_meta.prefix_iter(&*txn, prefix)? {
-        let (key, _) = entry?;
-        keys.push(key.to_vec());
-    }
-    for key in keys {
-        store.vault_meta.delete(txn, &key)?;
     }
     Ok(())
 }
@@ -255,11 +227,19 @@ mod tests {
         let note = CodeMemoryPayloadRef::NoteEntity(id(0x53));
         let claim = CodeMemoryPayloadRef::Claim(id(0x53));
 
-        let mut symbol_prefixed = key_with_symbol(SLOT_KEY_PREFIX, &symbol);
+        let mut symbol_prefixed = key_with_symbol(&symbol);
         symbol_prefixed.pop();
         assert!(slot_key(&symbol, &slot_name()).starts_with(&symbol_prefixed));
-        assert!(attachment_key(&symbol, &slot_name(), note).starts_with(ATTACHMENT_KEY_PREFIX));
-        assert!(always_on_key(&symbol, &slot_name(), note).starts_with(ALWAYS_ON_KEY_PREFIX));
+        assert!(
+            ATTACHMENT
+                .key_bytes(&attachment_key(&symbol, &slot_name(), note))
+                .starts_with(side_table::CODE_MEMORY_ATTACHMENT.prefix)
+        );
+        assert!(
+            ALWAYS_ON
+                .key_bytes(&always_on_key(&symbol, &slot_name(), note))
+                .starts_with(side_table::CODE_MEMORY_ALWAYS_ON.prefix)
+        );
 
         assert_ne!(
             slot_key(&symbol, &slot_name()),

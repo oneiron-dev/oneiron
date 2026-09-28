@@ -4,6 +4,7 @@ use super::store::VAULT_LFS_ASSET_ID_DOMAIN;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 use rand_core::{OsRng, RngCore};
 
@@ -13,24 +14,36 @@ pub const LFS_CHUNK_MIN: usize = 32 * 1024;
 pub const LFS_CHUNK_AVG: usize = 64 * 1024;
 /// Maximum FastCDC chunk size.
 pub const LFS_CHUNK_MAX: usize = 128 * 1024;
-pub(super) const PARAM_KEY: &[u8] = b"origin:lfs:cdc:v1";
+
 const MANIFEST_MAGIC: &[u8; 8] = b"LFSCDC01";
 pub(super) const CHUNK_DOMAIN: &[u8] = b"oneiron:origin-lfs-chunk:v1";
-pub(super) const CHUNK_MARK: &[u8] = b"origin:lfs:chunk:v1:";
-pub(super) const OWNER_REF: &[u8] = b"origin:lfs:owner-ref:v1:";
-pub(super) const REF_PREFIX: &[u8] = b"origin:lfs:chunk-ref:v1:";
 
-/// Stamps the vault-private seed alongside the initial storage version, atomically.
-pub(crate) fn mint_lfs_chunk_parameters_in_txn(
-    vault_meta: &crate::overlay_db::OverlayDb,
-    txn: &mut heed::RwTxn<'_>,
-) -> Result<()> {
+/// Per-vault random FastCDC boundary-randomization seed (u64 LE). Key: ().
+const CDC_SEED: SideTable<(), [u8; 8], Raw> = SideTable::new(&side_table::ORIGIN_LFS_CDC_SEED);
+
+/// Marks an ASSET entity as an internal LFS chunk and records its content hash. Key: chunk asset
+/// id.
+pub(super) const CHUNK_MARKS: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_CHUNK_MARK);
+
+/// Forward index (empty marker): which owners still reference one chunk hash. Key: chunk hash +
+/// owner id.
+pub(super) const CHUNK_REFS: SideTable<([u8; 32], EntityId), (), Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_CHUNK_REF);
+
+/// Reverse index (empty marker): which chunk hashes one upload-journal owner references. Key:
+/// owner id + chunk hash.
+pub(super) const OWNER_REFS: SideTable<(EntityId, [u8; 32]), (), Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_OWNER_REF);
+
+/// Generates the nonzero vault-private seed for the store's creation transaction.
+/// The typed table cannot write until the vault's database manifest exists.
+pub(crate) fn random_lfs_chunk_seed() -> [u8; 8] {
     let mut seed = OsRng.next_u64();
     while seed == 0 {
         seed = OsRng.next_u64();
     }
-    vault_meta.put(txn, PARAM_KEY, &seed.to_le_bytes())?;
-    Ok(())
+    seed.to_le_bytes()
 }
 
 /// Persisted vault-specific boundary randomization, never sent to another vault.
@@ -127,16 +140,10 @@ impl Vault {
     /// Returns the boundary parameters minted in this vault's creation transaction.
     pub fn lfs_chunk_parameters(&self) -> Result<LfsChunkParameters> {
         let txn = self.store.env.read_txn()?;
-        let raw = self
-            .store
-            .vault_meta
-            .get(&txn, PARAM_KEY)?
+        let raw = CDC_SEED
+            .get(&self.store, &txn, &())?
             .ok_or(Error::CorruptedIndex("missing lfs cdc seed"))?;
-        let seed = u64::from_le_bytes(
-            raw.as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("lfs cdc seed"))?,
-        );
+        let seed = u64::from_le_bytes(raw);
         if seed == 0 {
             return Err(Error::CorruptedIndex("lfs cdc zero seed"));
         }
@@ -172,14 +179,8 @@ impl Vault {
 pub(super) fn invalid(why: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidLfsObject(why))
 }
-pub(super) fn key(prefix: &[u8], tail: &[u8]) -> Vec<u8> {
-    [prefix, tail].concat()
-}
 pub(super) fn chunk_id(hash: &[u8; 32]) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(CHUNK_DOMAIN, &[hash])
-}
-pub(super) fn ref_key(hash: &[u8; 32], owner: EntityId) -> Vec<u8> {
-    [REF_PREFIX, hash.as_slice(), owner.as_bytes().as_slice()].concat()
 }
 pub(super) fn asset_body(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let raw = vault
@@ -198,10 +199,6 @@ pub(super) fn read_chunk(vault: &Vault, chunk: &LfsChunkRef) -> Result<Vec<u8>> 
         return Err(Error::CorruptedIndex("lfs chunk digest"));
     }
     Ok(bytes)
-}
-
-pub(super) fn owner_ref_key(owner: EntityId, hash: &[u8; 32]) -> Vec<u8> {
-    [OWNER_REF, owner.as_bytes().as_slice(), hash.as_slice()].concat()
 }
 
 #[cfg(feature = "sync")]

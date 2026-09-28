@@ -64,7 +64,7 @@ pub(crate) fn restore_recovery_shell_in_txn(
     } else {
         None
     };
-    crate::ports::EntityStoreStaging::port_stage_entity_row(&vault.store, txn, id, blob)?;
+    crate::ports::EntityStoreMaintenance::port_retained_shell_restore(&vault.store, txn, id, blob)?;
     stage_entity_index_rows(
         &vault.store,
         txn,

@@ -15,10 +15,9 @@ use super::git::{
     validate_relative_repo_path, validate_worktree_path,
 };
 use super::oplog::{
-    REPO_MUTATION_OPLOG_SCHEMA_VERSION, StoredPreparedCommit, StoredPreparedConflictResolution,
-    StoredRepoMutationOplogEntry, decode_stored_oplog_entry, encode_oplog_entry,
-    public_oplog_entry, repo_mutation_oplog_key, repo_mutation_repo_key_hash,
-    repo_mutation_seq_key, repo_mutation_snapshot_key,
+    OPLOG, REPO_MUTATION_OPLOG_SCHEMA_VERSION, SEQ, SNAPSHOT, StoredPreparedCommit,
+    StoredPreparedConflictResolution, StoredRepoMutationOplogEntry, public_oplog_entry,
+    repo_mutation_oplog_key, repo_mutation_repo_key_hash, repo_mutation_snapshot_key,
 };
 use super::snapshot::{
     StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind,
@@ -356,11 +355,11 @@ impl Vault {
                 status: RepoMutationStatus::Prepared.as_str().to_owned(),
                 failure: None,
             };
-            let encoded = encode_oplog_entry(&stored)?;
-            self.store.vault_meta.put(
+            OPLOG.put(
+                &self.store,
                 &mut wtxn,
                 &repo_mutation_oplog_key(&repo_key_hash, seq),
-                &encoded,
+                &stored,
             )?;
             super::proposal::bind_prepared(self, &mut wtxn, proposal, repo_ref, seq)?;
             wtxn.commit()?;
@@ -405,11 +404,11 @@ impl Vault {
             status: RepoMutationStatus::Failed.as_str().to_owned(),
             failure: Some(truncate_failure(&error.to_string())),
         };
-        let encoded = encode_oplog_entry(&stored)?;
-        self.store.vault_meta.put(
+        OPLOG.put(
+            &self.store,
             &mut wtxn,
             &repo_mutation_oplog_key(&repo_key_hash, seq),
-            &encoded,
+            &stored,
         )?;
         wtxn.commit()?;
         Ok(())
@@ -424,12 +423,11 @@ impl Vault {
     ) -> Result<RepoMutationOplogEntry> {
         let key = repo_mutation_oplog_key(&prepared.repo_key_hash, prepared.seq);
         let mut wtxn = self.store.env.write_txn()?;
-        let raw = self.store.vault_meta.get(&wtxn, &key)?.ok_or(Error::Code(
+        let mut stored = OPLOG.get(&self.store, &wtxn, &key)?.ok_or(Error::Code(
             CodeError::InvalidRepoMutationRecord(
                 "repo mutation oplog row disappeared before completion",
             ),
         ))?;
-        let mut stored = decode_stored_oplog_entry(&raw)?;
         stored.status = status.as_str().to_owned();
         stored.failure = failure;
         stored.finished_at_ms = Some(finished_at_ms);
@@ -440,8 +438,7 @@ impl Vault {
             stored.seq,
             status,
         )?;
-        let encoded = encode_oplog_entry(&stored)?;
-        self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        OPLOG.put(&self.store, &mut wtxn, &key, &stored)?;
         wtxn.commit()?;
         public_oplog_entry(stored)
     }
@@ -713,8 +710,9 @@ fn store_snapshot_if_absent(
     snapshot_bytes: &[u8],
 ) -> Result<()> {
     let key = repo_mutation_snapshot_key(fork_hash);
-    if vault.store.vault_meta.get(wtxn, &key)?.is_none() {
-        vault.store.vault_meta.put(wtxn, &key, snapshot_bytes)?;
+    if !SNAPSHOT.contains(&vault.store, wtxn, &key)? {
+        let snapshot = SNAPSHOT.decode_value(snapshot_bytes)?;
+        SNAPSHOT.put(&vault.store, wtxn, &key, &snapshot)?;
     }
     Ok(())
 }
@@ -724,25 +722,12 @@ fn allocate_next_repo_mutation_seq(
     wtxn: &mut heed::RwTxn<'_>,
     repo_key_hash: &str,
 ) -> Result<u64> {
-    let key = repo_mutation_seq_key(repo_key_hash);
-    let current = match vault.store.vault_meta.get(wtxn, &key)? {
-        Some(bytes) => {
-            let bytes: [u8; 8] = bytes.as_ref().try_into().map_err(|_| {
-                Error::Code(CodeError::InvalidRepoMutationRecord(
-                    "repo mutation seq row must be 8 bytes",
-                ))
-            })?;
-            u64::from_be_bytes(bytes)
-        }
-        None => 0,
-    };
+    let key = repo_key_hash.to_owned();
+    let current = SEQ.get(&vault.store, wtxn, &key)?.unwrap_or(0);
     let next = current
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("repo_mutation_seq"))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &key, &next.to_be_bytes())?;
+    SEQ.put(&vault.store, wtxn, &key, &next)?;
     Ok(next)
 }
 

@@ -7,6 +7,7 @@ use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, ap
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -14,14 +15,18 @@ use crate::vault::Vault;
 use super::codec::{decode_secret_custody_body, encode_secret_custody_body, invalid_body};
 use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
-    SECRET_NAME_INDEX_PREFIX, SecretBinding, SecretCustodyFloor, SecretCustodyMetadata,
-    SecretCustodyRecord, SecretCustodyStatus, TierBand,
+    SecretBinding, SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord,
+    SecretCustodyStatus, TierBand,
 };
 use crate::error::SecretError;
 
 // ---------------------------------------------------------------------------
 // Name index
 // ---------------------------------------------------------------------------
+
+/// Live secret name -> custody `EntityId`, keyed by the name itself.
+pub(super) const NAME_INDEX: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::SECRET_CUSTODY_NAME_INDEX);
 
 /// Resolves a live secret name to its custody `EntityId` inside an
 /// existing txn. `pub(crate)` for SECRET-02's lease doors (ONE-1920), which
@@ -31,24 +36,7 @@ pub(crate) fn resolve_secret_ref_in_txn(
     txn: &heed::RoTxn<'_>,
     name: &str,
 ) -> Result<Option<EntityId>> {
-    let Some(bytes) = store.vault_meta.get(txn, &name_index_key(name))? else {
-        return Ok(None);
-    };
-    let id_bytes: [u8; 16] = bytes
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("secret name index id"))?;
-    let id = EntityId::from_bytes(id_bytes)
-        .map_err(|_| Error::CorruptedIndex("secret name index id"))?;
-    Ok(Some(id))
-}
-
-/// The `vault_meta` index key for a live secret name.
-pub(super) fn name_index_key(name: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(SECRET_NAME_INDEX_PREFIX.len() + name.len());
-    key.extend_from_slice(SECRET_NAME_INDEX_PREFIX.as_bytes());
-    key.extend_from_slice(name.as_bytes());
-    key
+    NAME_INDEX.get(store, txn, &name.to_owned())
 }
 
 /// Reads and decodes a custody record under either a read or write txn.
@@ -392,7 +380,6 @@ impl Vault {
         let id = self.store.clock.entity_id()?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        let index_key = name_index_key(&rec.name);
 
         // Resolve the floor against the LIVE vault inside this write
         // transaction and enforce narrow-only against it (never against the
@@ -412,13 +399,7 @@ impl Vault {
             }));
         }
 
-        if let Some(existing_bytes) = self.store.vault_meta.get(&wtxn, &index_key)? {
-            let id_bytes: [u8; 16] = existing_bytes
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("secret name index id"))?;
-            let existing_id = EntityId::from_bytes(id_bytes)
-                .map_err(|_| Error::CorruptedIndex("secret name index id"))?;
+        if let Some(existing_id) = NAME_INDEX.get(&self.store, &wtxn, &rec.name)? {
             // A live name denies; a revoked or missing record frees the index.
             if let Some(existing) = read_secret_custody_in_txn(&self.store, &wtxn, &existing_id)? {
                 if existing.status != SecretCustodyStatus::Revoked {
@@ -464,9 +445,7 @@ impl Vault {
         // SECRET-01 dedicated door: the sealed type-77 put shape lives in
         // `put_secret_custody_in_txn`, shared with SECRET-04's rotate/revoke.
         put_secret_custody_in_txn(self, &mut wtxn, &id, &rec, rec.registered_at)?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &index_key, id.as_bytes())?;
+        NAME_INDEX.put(&self.store, &mut wtxn, &rec.name, &id)?;
         wtxn.commit()?;
         Ok(id)
     }

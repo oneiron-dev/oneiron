@@ -460,25 +460,33 @@ pub(crate) fn search_response_with_revisions(
             Some((result, mode))
         })
         .collect();
-    let refs: Vec<_> = selected.iter().map(|(row, mode)| (row.id, *mode)).collect();
-    let read = scoped_read
-        .get_entities_parts_with_modes_with_receipt(&refs, requested)
-        .map_err(|error| {
-            tracing::error!(error = %error, "search projection failed");
-            ApiError::internal_server_error("search projection failed")
-        })?;
+    let refs: Vec<_> = selected
+        .iter()
+        .map(|(row, mode)| oneiron::claim::PointRead::id(row.id).at(*mode))
+        .collect();
+    let read = scoped_read.read(&refs, requested).map_err(|error| {
+        tracing::error!(error = %error, "search projection failed");
+        ApiError::internal_server_error("search projection failed")
+    })?;
+    let mut receipt = read.receipt;
     let mut staged = observations.as_deref().cloned();
     let mut response = Vec::with_capacity(selected.len().min(page_limit));
-    for ((result, _), parts) in selected.into_iter().zip(read.value) {
-        let Some((entity_type, learned_at, body)) = parts else {
+    for ((result, _), row) in selected.into_iter().zip(read.value) {
+        let Some(oneiron::claim::ReadRow {
+            entity_type,
+            learned_at,
+            body: Some(body),
+            ..
+        }) = row
+        else {
             continue;
         };
         // All overfetch rows were validated in the page snapshot. Observe only served rows.
         if response.len() >= page_limit {
             continue;
         }
-        if let Some(observations) = staged.as_mut() {
-            observations
+        if let Some(observations) = staged.as_mut()
+            && let Some(successor) = observations
                 .observe_snapshot(
                     scoped_read,
                     result.id,
@@ -489,7 +497,9 @@ pub(crate) fn search_response_with_revisions(
                 .map_err(|error| {
                     tracing::error!(error = %error, "search observation failed");
                     ApiError::internal_server_error("search projection failed")
-                })?;
+                })?
+        {
+            receipt.restrict_with(&successor);
         }
         let mut value = if matches!(view, View::Standard) {
             json!({"id": result.id.to_hex(), "score": result.score})
@@ -508,7 +518,7 @@ pub(crate) fn search_response_with_revisions(
     }
     Ok(oneiron::claim::ScopedReadResult {
         value: response,
-        receipt: read.receipt,
+        receipt,
     })
 }
 

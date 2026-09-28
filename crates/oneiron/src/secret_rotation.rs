@@ -68,10 +68,23 @@ use crate::secret_custody::{
     refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
 };
 use crate::secret_lease::{
-    SECRET_LEASE_KEY_PREFIX, SecretLeaseStatus, SecretTaintRef, decode_secret_lease_body,
-    teardown_local_registration_in_txn, write_secret_lease_in_txn,
+    SecretLease, SecretLeaseStatus, SecretTaintRef, teardown_local_registration_in_txn,
+    write_secret_lease_in_txn,
 };
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
+
+/// One durable rotation/revocation receipt, keyed by the receipt id in hex; the id is the key,
+/// not part of the body, so the body stays raw for `decode_rotation_receipt_body`.
+const RECEIPTS: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SECRET_ROTATION_RECEIPT);
+
+/// The FORWARD taint sidecar for one exhaust entity, keyed by the entity id in hex.
+const EXHAUST_TAINT: SideTable<HexId, Vec<SecretTaintRef>, Raw> =
+    SideTable::new(&side_table::SECRET_EXHAUST_TAINT);
+
+/// The lease table, scanned and decoded by the revoke sweep below.
+const LEASES: SideTable<HexId, SecretLease, Raw> = SideTable::new(&side_table::SECRET_LEASE);
 
 // ---------------------------------------------------------------------------
 // Row keys and policy keys
@@ -104,14 +117,6 @@ pub const SECRET_TAINT_REFS_MAX: usize = 64;
 
 fn invalid_body(reason: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretRotationBody(reason))
-}
-
-fn receipt_key(receipt_id: &EntityId) -> Vec<u8> {
-    format!("{SECRET_ROTATION_RECEIPT_PREFIX}{}", receipt_id.to_hex()).into_bytes()
-}
-
-fn exhaust_taint_key(id: &EntityId) -> Vec<u8> {
-    format!("{SECRET_EXHAUST_TAINT_PREFIX}{}", id.to_hex()).into_bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +405,17 @@ pub(crate) fn validate_taint_refs(refs: &[SecretTaintRef]) -> Result<()> {
     Ok(())
 }
 
+/// A taint sidecar row is its own pinned MessagePack layout.
+impl crate::side_table::RawValue for Vec<SecretTaintRef> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+        Ok(encode_taint_refs_row(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
+        Ok(decode_taint_refs_row(bytes)?)
+    }
+}
+
 pub(crate) fn encode_taint_refs_row(refs: &[SecretTaintRef]) -> Result<Vec<u8>> {
     validate_taint_refs(refs)?;
     let mut out = Vec::new();
@@ -497,10 +513,9 @@ pub(crate) fn exhaust_taint_refs_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<SecretTaintRef>> {
-    let mut refs = match store.vault_meta.get(txn, &exhaust_taint_key(id))? {
-        Some(raw) => decode_taint_refs_row(&raw)?,
-        None => Vec::new(),
-    };
+    let mut refs = EXHAUST_TAINT
+        .get(store, txn, &HexId(*id))?
+        .unwrap_or_default();
     if let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode())
         && let Some(header) = EntityMetadataHeader::parse(&raw)
         && header.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
@@ -531,13 +546,13 @@ pub(crate) fn mark_exhaust_tainted_in_txn(
     id: &EntityId,
     refs: &[SecretTaintRef],
 ) -> Result<()> {
-    let key = exhaust_taint_key(id);
+    let key = HexId(*id);
     if refs.is_empty() {
-        store.vault_meta.delete(wtxn, &key)?;
+        EXHAUST_TAINT.delete(store, wtxn, &key)?;
         return Ok(());
     }
-    let body = encode_taint_refs_row(refs)?;
-    store.vault_meta.put(wtxn, &key, &body)?;
+    let refs = refs.to_vec();
+    EXHAUST_TAINT.put(store, wtxn, &key, &refs)?;
     Ok(())
 }
 
@@ -655,9 +670,10 @@ impl Vault {
             kind: RotationKind::Rotated,
         };
         put_secret_custody_in_txn(self, &mut wtxn, &id, &rec, at)?;
-        self.store.vault_meta.put(
+        RECEIPTS.put(
+            &self.store,
             &mut wtxn,
-            &receipt_key(&receipt.receipt_id),
+            &HexId(receipt.receipt_id),
             &encode_rotation_receipt_body(&receipt)?,
         )?;
         wtxn.commit()?;
@@ -698,13 +714,8 @@ impl Vault {
         // The prefix sweep, collected before mutating: a cursor is not held
         // across the writes that follow it.
         let mut doomed = Vec::new();
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(&wtxn, SECRET_LEASE_KEY_PREFIX.as_bytes())?
-        {
-            let (_, raw) = entry?;
-            let lease = decode_secret_lease_body(&raw)?;
+        for entry in LEASES.scan(&self.store, &wtxn)? {
+            let (_, lease) = entry;
             if lease.secret_ref == secret_ref && lease.status != SecretLeaseStatus::Revoked {
                 doomed.push(lease);
             }
@@ -723,9 +734,10 @@ impl Vault {
             rotated_at: at,
             kind: RotationKind::Revoked,
         };
-        self.store.vault_meta.put(
+        RECEIPTS.put(
+            &self.store,
             &mut wtxn,
-            &receipt_key(&receipt.receipt_id),
+            &HexId(receipt.receipt_id),
             &encode_rotation_receipt_body(&receipt)?,
         )?;
         wtxn.commit()?;
@@ -735,9 +747,8 @@ impl Vault {
     /// Reads one durable rotation receipt.
     pub fn rotation_receipt(&self, receipt_id: &EntityId) -> Result<Option<RotationReceipt>> {
         let rtxn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&rtxn, &receipt_key(receipt_id))?
+        RECEIPTS
+            .get(&self.store, &rtxn, &HexId(*receipt_id))?
             .map(|raw| decode_rotation_receipt_body(*receipt_id, &raw))
             .transpose()
     }

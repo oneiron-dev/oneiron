@@ -15,6 +15,7 @@ pub(super) fn witness_input_error(reason: String) -> napi::Error {
         ],
         successor_short_id: None,
         gate_denial: None,
+        read_receipt: None,
     })
 }
 

@@ -1,6 +1,6 @@
 //! One fixture, multiple phases and caller-observable diary admission doors.
 use super::*;
-use crate::claim::{ScopedReadActorKey, ScopedReadResult};
+use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadResult};
 use crate::context_pack::ContextEntity;
 use crate::note::{NoteScope, NoteWriteEnvelope};
 use crate::vault::ReadMode;
@@ -14,6 +14,7 @@ struct DiaryMatrix {
     a2: EntityId,
     foreign: EntityId,
     key: ScopedReadActorKey,
+    proof: crate::authority::VerifiedSlip,
 }
 impl DiaryMatrix {
     fn new() -> Self {
@@ -57,17 +58,21 @@ impl DiaryMatrix {
             a2,
             foreign,
             key,
+            proof,
         }
     }
     fn check(&self, phase: &str, node: bool, exact_pair: bool, independent: bool) {
         let read = self.vault.scoped_read(self.key.clone());
         let missing = EntityId::from_bytes([0xF3; 16]).unwrap();
-        let point = read.get(&self.foreign).unwrap();
+        let point = read
+            .read(&[PointRead::id(self.foreign)], None)
+            .unwrap()
+            .single();
         assert_eq!(point.value.is_some(), node, "{phase}: point");
         if !node {
             assert_eq!(
                 point.receipt,
-                read.get(&missing).unwrap().receipt,
+                read.read(&[PointRead::id(missing)], None).unwrap().receipt,
                 "{phase}: opaque receipt"
             );
         }
@@ -86,7 +91,10 @@ impl DiaryMatrix {
             .short_ref_or_hex(&self.foreign)
             .unwrap();
         let (short, hash) = crate::entity_id::parse_short_ref_syntax(&reference).unwrap();
-        let short_read = read.hydrate_short_id(short, hash).unwrap();
+        let short_read = read
+            .read(&[PointRead::short(short, hash)], None)
+            .unwrap()
+            .single();
         assert_eq!(short_read.value.is_some(), node, "{phase}: short-id");
         let timeline = read.memory_timeline(&self.foreign).unwrap();
         assert_eq!(
@@ -124,8 +132,10 @@ impl DiaryMatrix {
             limit: 1,
             ..Default::default()
         };
+        // The vault is rooted: A's facade reads under A's credential.
         assert_eq!(
             !facade_for(&self.vault, self.a)
+                .with_read_proof(&self.proof)
                 .neighbors(&self.a1.to_hex(), &options)
                 .unwrap()
                 .is_empty(),
@@ -195,7 +205,8 @@ impl DiaryMatrix {
             }])
             .unwrap();
         assert_eq!(!scored.value.is_empty(), node, "{phase}: scored");
-        let ScopedReadResult { value, receipt: _ } = read.get(&self.a1).unwrap();
+        let ScopedReadResult { value, receipt: _ } =
+            read.read(&[PointRead::id(self.a1)], None).unwrap().single();
         assert!(value.is_some(), "{phase}: local diary remains readable");
     }
 }

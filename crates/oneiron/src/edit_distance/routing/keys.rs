@@ -5,28 +5,56 @@ use serde::{Deserialize, Serialize};
 use super::scope::RoutingScopeKey;
 use crate::error::{Error, Result};
 use crate::llm::LlmRole;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 
 // ---------------------------------------------------------------------------
-// Keyspace + pinned strings
+// Tables
 // ---------------------------------------------------------------------------
 
-/// `vault_meta` prefix of the per-scope aggregates. The full key is this
-/// prefix ‖ task class ‖ `0x00` ‖ model version — task class FIRST, because
-/// the peer distribution behind every relative score is exactly one
-/// task-class-prefixed scan.
-pub(super) const AGGREGATE_KEY_PREFIX: &[u8] = b"edit_distance/routing_aggregate/v1\0";
+/// Per-scope aggregates, keyed by task class then model version — task class
+/// FIRST, because the peer distribution behind every relative score is
+/// exactly one task-class-prefixed scan.
+pub(super) const AGGREGATE: SideTable<AggregateKey, StoredAggregate, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_AGGREGATE);
 
-/// `vault_meta` prefix of the run→generation binding, keyed by receipt id.
-pub(super) const MEMBER_KEY_PREFIX: &[u8] = b"edit_distance/routing_member/v1\0";
+/// Run→generation binding, keyed by receipt id.
+pub(super) const MEMBER: SideTable<String, StoredModelVersion, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_MEMBER);
 
-/// `vault_meta` prefix of the per-task-class rollout rung.
-pub(super) const RUNG_KEY_PREFIX: &[u8] = b"edit_distance/routing_rung/v1\0";
+/// Per-task-class rollout rung.
+pub(super) const RUNG: SideTable<String, StoredRung, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_RUNG);
 
-/// `vault_meta` key holding the model version new folds are stamped with —
-/// the house pattern of a per-feature key const over `vault_meta`
-/// (`inbox::INBOX_REVIEW_DIAL_KEY`), because `settings.rs` is UI customization
-/// and this is not.
-pub(super) const SERVING_MODEL_KEY: &[u8] = b"edit_distance/routing_serving_model/v1";
+/// The model version new folds are stamped with — the house pattern of a
+/// per-feature table in the owning module (`INBOX_REVIEW_DIAL_KEY`), because
+/// `settings.rs` is UI customization and this is not.
+pub(super) const SERVING_MODEL: SideTable<(), ServingModelVersion, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_SERVING_MODEL);
+
+/// `edit_distance/routing_aggregate/v1` row key: task class, then `0x00`, then
+/// model version. Not a [`FixedSideKey`](crate::side_table::FixedSideKey) tuple: neither half has a
+/// fixed width.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct AggregateKey {
+    pub(super) task_class: String,
+    pub(super) model_version: String,
+}
+
+impl SideKey for AggregateKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.task_class.as_bytes());
+        out.push(KEY_SEPARATOR);
+        out.extend_from_slice(self.model_version.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let split = bytes.iter().position(|&byte| byte == KEY_SEPARATOR)?;
+        Some(Self {
+            task_class: String::from_utf8(bytes[..split].to_vec()).ok()?,
+            model_version: String::from_utf8(bytes[split + 1..].to_vec()).ok()?,
+        })
+    }
+}
 
 /// Only accepted schema version for any row this module stores.
 pub(super) const ROW_VERSION: u8 = 1;
@@ -98,60 +126,80 @@ pub(super) fn decode_row<T: serde::de::DeserializeOwned>(
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
 }
 
-pub(super) fn decoded_aggregate(raw: &[u8]) -> Result<StoredAggregate> {
-    let row: StoredAggregate = decode_row(raw, AGGREGATE_ROW_LABEL)?;
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(AGGREGATE_ROW_LABEL));
+macro_rules! row_codec {
+    ($ty:ty, $label:expr) => {
+        impl RawValue for $ty {
+            fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+                Ok(encode_row(self, $label)?)
+            }
+
+            fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+                let row: $ty = decode_row(bytes, $label)?;
+                if row.v != ROW_VERSION {
+                    return Err(CodecError::Value(Error::CorruptedIndex($label)));
+                }
+                Ok(row)
+            }
+        }
+    };
+}
+
+row_codec!(StoredAggregate, AGGREGATE_ROW_LABEL);
+// `StoredModelVersion` backs two tables with two distinct pinned error
+// labels (`MEMBER_ROW_LABEL`, `SERVING_MODEL_ROW_LABEL`), so it cannot take
+// the shared macro: `MEMBER`'s value binds the type directly, and
+// `SERVING_MODEL` wraps it in `ServingModelVersion` below.
+impl RawValue for StoredModelVersion {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, MEMBER_ROW_LABEL)?)
     }
-    Ok(row)
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row: Self = decode_row(bytes, MEMBER_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(CodecError::Value(Error::CorruptedIndex(MEMBER_ROW_LABEL)));
+        }
+        Ok(row)
+    }
 }
 
-pub(super) fn meta_key(prefix: &[u8], handle: &[u8]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + handle.len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(handle);
-    key
+/// [`StoredModelVersion`] as stored in [`SERVING_MODEL`] — same shape, its own
+/// pinned error label.
+pub(super) struct ServingModelVersion(pub(super) StoredModelVersion);
+
+impl RawValue for ServingModelVersion {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(&self.0, SERVING_MODEL_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row: StoredModelVersion = decode_row(bytes, SERVING_MODEL_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(CodecError::Value(Error::CorruptedIndex(
+                SERVING_MODEL_ROW_LABEL,
+            )));
+        }
+        Ok(Self(row))
+    }
 }
 
-pub(super) fn key_tail(key: &[u8], prefix: &[u8], label: &'static str) -> Result<String> {
-    let tail = key
-        .get(prefix.len()..)
-        .ok_or(Error::CorruptedIndex(label))?;
-    String::from_utf8(tail.to_vec()).map_err(|_| Error::CorruptedIndex(label))
-}
+row_codec!(StoredRung, RUNG_ROW_LABEL);
 
+/// The bytes after [`AGGREGATE`]'s prefix that scope every model version under
+/// one task class — the peer-distribution scan's `key_prefix`.
 pub(super) fn task_class_prefix(task_class: &str) -> Result<Vec<u8>> {
-    let mut prefix = meta_key(
-        AGGREGATE_KEY_PREFIX,
-        normalized_task_class(task_class)?.as_bytes(),
-    );
+    let mut prefix = normalized_task_class(task_class)?.as_bytes().to_vec();
     prefix.push(KEY_SEPARATOR);
     Ok(prefix)
 }
 
-pub(super) fn aggregate_key(scope: &RoutingScopeKey) -> Result<Vec<u8>> {
+pub(super) fn aggregate_key(scope: &RoutingScopeKey) -> Result<AggregateKey> {
     if scope.model_version.is_empty() || scope.model_version.as_bytes().contains(&KEY_SEPARATOR) {
         return Err(invalid("a routing model version must be a usable key"));
     }
-    let mut key = task_class_prefix(&scope.task_class)?;
-    key.extend_from_slice(scope.model_version.as_bytes());
-    Ok(key)
-}
-
-pub(super) fn scope_key_of(key: &[u8]) -> Result<RoutingScopeKey> {
-    let tail = key
-        .get(AGGREGATE_KEY_PREFIX.len()..)
-        .ok_or(Error::CorruptedIndex(AGGREGATE_ROW_LABEL))?;
-    let split = tail
-        .iter()
-        .position(|byte| *byte == KEY_SEPARATOR)
-        .ok_or(Error::CorruptedIndex(AGGREGATE_ROW_LABEL))?;
-    let decode = |bytes: &[u8]| {
-        String::from_utf8(bytes.to_vec()).map_err(|_| Error::CorruptedIndex(AGGREGATE_ROW_LABEL))
-    };
-    Ok(RoutingScopeKey {
-        task_class: decode(&tail[..split])?,
-        model_version: decode(&tail[split + 1..])?,
+    Ok(AggregateKey {
+        task_class: normalized_task_class(&scope.task_class)?.to_owned(),
+        model_version: scope.model_version.clone(),
     })
 }
 

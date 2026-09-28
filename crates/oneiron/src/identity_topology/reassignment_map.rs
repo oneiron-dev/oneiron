@@ -13,6 +13,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 use super::event_body_codec::{decode_id_bytes, decode_id_value, id_value, map_field};
@@ -159,28 +160,52 @@ impl ReassignmentContext<'_> {
     }
 }
 
-/// `vault_meta` key prefix of the SPLIT assignment index, keyed by ORIGIN:
-/// prefix ++ origin(16) ++ event(16) ++ claim(16). The value is a
-/// [`REASSIGNMENT_ROW_VERSION`]-tagged head id, or the bare version byte for
-/// explicit ambiguous residue.
+/// The SPLIT assignment index, keyed by ORIGIN: origin(16) ++ event(16) ++
+/// claim(16). The value is a [`REASSIGNMENT_ROW_VERSION`]-tagged head id, or
+/// the bare version byte for explicit ambiguous residue.
 ///
 /// Keyed by event, not just by origin, so a row is owned by exactly the
 /// ledger event that stated it: undo deletes its own rows and can never
 /// clobber another event's.
 ///
-/// This const lives with the family rather than in `store.rs` for the reason
-/// [`IDENTITY_TOPOLOGY_SEQ_KEY`](super::IDENTITY_TOPOLOGY_SEQ_KEY) does — the family that owns the keyspace
+/// This table lives with the family rather than in `store.rs` for the reason
+/// [`IDENTITY_TOPOLOGY_SEQ`](super::IDENTITY_TOPOLOGY_SEQ) does — the family that owns the keyspace
 /// owns its key shape, and `vault_meta` readers ignore unknown prefixes.
-pub(super) const REASSIGNMENT_ORIGIN_META_PREFIX: &[u8] = b"reassign:v1:o:";
+pub(super) const REASSIGNMENT_ORIGIN_INDEX: SideTable<
+    (EntityId, EntityId, EntityId),
+    ReassignmentRow,
+    Raw,
+> = SideTable::new(&side_table::REASSIGNMENT_ORIGIN);
 
-/// `vault_meta` key prefix of the same index INVERTED by destination:
-/// prefix ++ head(16) ++ event(16) ++ claim(16), value = the bare version
-/// byte. [`Vault::claims_assigned_to`](crate::Vault::claims_assigned_to) is a prefix scan over this half; the
-/// origin half alone would force a whole-table scan per query.
-pub(super) const REASSIGNMENT_TARGET_META_PREFIX: &[u8] = b"reassign:v1:t:";
+/// The same index INVERTED by destination: head(16) ++ event(16) ++
+/// claim(16), value = the bare version byte. [`Vault::claims_assigned_to`](crate::Vault::claims_assigned_to) is
+/// a prefix scan over this half; the origin half alone would force a
+/// whole-table scan per query.
+pub(super) const REASSIGNMENT_TARGET_INDEX: SideTable<
+    (EntityId, EntityId, EntityId),
+    ReassignmentRow,
+    Raw,
+> = SideTable::new(&side_table::REASSIGNMENT_TARGET);
 
 /// Only accepted assignment-row version byte.
 const REASSIGNMENT_ROW_VERSION: u8 = 1;
+
+/// One assignment-index row, shared by both directions of the index:
+/// `Some(head)` for a resolved assignment, `None` for explicit ambiguous
+/// residue (and always `None` on the destination-inverted side, whose key
+/// alone carries the row's meaning).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ReassignmentRow(pub(super) Option<EntityId>);
+
+impl RawValue for ReassignmentRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_reassignment_row(self.0.as_ref()))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self(decode_reassignment_row(bytes)?))
+    }
+}
 
 pub(super) fn encode_reassignment_item(item: &ClaimSubject) -> Vec<u8> {
     match item {
@@ -311,45 +336,6 @@ pub(super) fn decode_reassignment_map(value: &Value) -> Result<ReassignmentMap> 
     Ok(ReassignmentMap { entries })
 }
 
-/// The `vault_meta` key of one origin-side assignment row.
-fn reassignment_origin_key(origin: &EntityId, event: &EntityId, claim: &EntityId) -> Vec<u8> {
-    reassignment_key(REASSIGNMENT_ORIGIN_META_PREFIX, origin, event, claim)
-}
-
-/// The `vault_meta` key of one destination-side assignment row.
-fn reassignment_target_key(target: &EntityId, event: &EntityId, claim: &EntityId) -> Vec<u8> {
-    reassignment_key(REASSIGNMENT_TARGET_META_PREFIX, target, event, claim)
-}
-
-fn reassignment_key(
-    prefix: &[u8],
-    anchor: &EntityId,
-    event: &EntityId,
-    claim: &EntityId,
-) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + ENTITY_ID_LEN * 3);
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(anchor.as_bytes());
-    key.extend_from_slice(event.as_bytes());
-    key.extend_from_slice(claim.as_bytes());
-    key
-}
-
-/// Splits a stored assignment key back into `(event, claim)`. Both halves are
-/// fixed-width tails, so this is exact for either prefix.
-fn decode_reassignment_key(prefix: &[u8], key: &[u8]) -> Result<(EntityId, EntityId)> {
-    let corrupt = || Error::CorruptedIndex("identity reassignment key");
-    let tail = key
-        .get(prefix.len() + ENTITY_ID_LEN..)
-        .ok_or_else(corrupt)?;
-    let (event, claim) = tail.split_at_checked(ENTITY_ID_LEN).ok_or_else(corrupt)?;
-    let id = |bytes: &[u8]| {
-        let bytes: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| corrupt())?;
-        EntityId::from_bytes(bytes).map_err(|_| corrupt())
-    };
-    Ok((id(event)?, id(claim)?))
-}
-
 /// Encodes an assignment row: a bare version byte is explicit ambiguous
 /// residue, a version byte plus a head id is an assignment.
 fn encode_reassignment_row(target: Option<&EntityId>) -> Vec<u8> {
@@ -439,16 +425,18 @@ fn write_reassignment_rows_in_txn(
     rows: &[(EntityId, Option<EntityId>)],
 ) -> Result<()> {
     for (claim, target) in rows {
-        store.vault_meta.put(
+        REASSIGNMENT_ORIGIN_INDEX.put(
+            store,
             wtxn,
-            &reassignment_origin_key(origin, event, claim),
-            &encode_reassignment_row(target.as_ref()),
+            &(*origin, *event, *claim),
+            &ReassignmentRow(*target),
         )?;
         if let Some(target) = target {
-            store.vault_meta.put(
+            REASSIGNMENT_TARGET_INDEX.put(
+                store,
                 wtxn,
-                &reassignment_target_key(target, event, claim),
-                &[REASSIGNMENT_ROW_VERSION],
+                &(*target, *event, *claim),
+                &ReassignmentRow(None),
             )?;
         }
     }
@@ -466,24 +454,16 @@ pub(super) fn clear_reassignment_rows_in_txn(
     origin: &EntityId,
     event: Option<&EntityId>,
 ) -> Result<()> {
-    let mut prefix = Vec::with_capacity(REASSIGNMENT_ORIGIN_META_PREFIX.len() + ENTITY_ID_LEN * 2);
-    prefix.extend_from_slice(REASSIGNMENT_ORIGIN_META_PREFIX);
+    let mut prefix = Vec::with_capacity(ENTITY_ID_LEN * 2);
     prefix.extend_from_slice(origin.as_bytes());
     if let Some(event) = event {
         prefix.extend_from_slice(event.as_bytes());
     }
-    let mut stale: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
-    for row in store.vault_meta.prefix_iter(&*wtxn, &prefix)? {
-        let (key, value) = row?;
-        let (event, claim) = decode_reassignment_key(REASSIGNMENT_ORIGIN_META_PREFIX, &key)?;
-        let twin = decode_reassignment_row(value.as_ref())?
-            .map(|target| reassignment_target_key(&target, &event, &claim));
-        stale.push((key.to_vec(), twin));
-    }
-    for (key, twin) in stale {
-        store.vault_meta.delete(wtxn, &key)?;
-        if let Some(twin) = twin {
-            store.vault_meta.delete(wtxn, &twin)?;
+    let stale = REASSIGNMENT_ORIGIN_INDEX.scan_from(store, wtxn, &prefix)?;
+    for ((origin, event, claim), row) in stale {
+        REASSIGNMENT_ORIGIN_INDEX.delete(store, wtxn, &(origin, event, claim))?;
+        if let Some(target) = row.0 {
+            REASSIGNMENT_TARGET_INDEX.delete(store, wtxn, &(target, event, claim))?;
         }
     }
     Ok(())
@@ -612,20 +592,16 @@ pub(super) fn maintain_split_reassignment_projection_in_txn(
 pub(super) fn reassignment_claims_for_prefix_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
-    index_prefix: &[u8],
+    table: SideTable<(EntityId, EntityId, EntityId), ReassignmentRow, Raw>,
     anchor: &EntityId,
     keep: impl Fn(Option<EntityId>) -> bool,
 ) -> Result<BTreeSet<EntityId>> {
-    let mut prefix = Vec::with_capacity(index_prefix.len() + ENTITY_ID_LEN);
-    prefix.extend_from_slice(index_prefix);
-    prefix.extend_from_slice(anchor.as_bytes());
     let mut claims = BTreeSet::new();
-    for row in store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, value) = row?;
-        if !keep(decode_reassignment_row(value.as_ref())?) {
+    for ((_, _, claim), row) in table.scan_from(store, rtxn, anchor.as_bytes())? {
+        if !keep(row.0) {
             continue;
         }
-        claims.insert(decode_reassignment_key(index_prefix, &key)?.1);
+        claims.insert(claim);
     }
     Ok(claims)
 }

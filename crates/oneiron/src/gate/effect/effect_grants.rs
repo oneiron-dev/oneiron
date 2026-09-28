@@ -8,8 +8,7 @@ use crate::gate::resolution::PolicyManifestResolution;
 use crate::outbound_consent::{ScopedMcpConsentDecision, evaluate_scoped_mcp_call};
 use crate::outbound_grant::{
     StandingOutboundGrant, decode_standing_outbound_grant_body,
-    standing_outbound_grant_principal_index_entity_id,
-    standing_outbound_grant_principal_index_prefix,
+    standing_outbound_grant_ids_for_principal,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
@@ -38,10 +37,7 @@ pub(super) fn standing_outbound_grant_for_effect(
             standing_outbound_grant_candidate_principals(effect)
         };
         for principal_ref in candidate_principals {
-            let prefix = standing_outbound_grant_principal_index_prefix(&principal_ref)?;
-            for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
-                let (key, _) = entry?;
-                let id = standing_outbound_grant_principal_index_entity_id(&key, &principal_ref)?;
+            for id in standing_outbound_grant_ids_for_principal(store, txn, &principal_ref)? {
                 if !candidate_ids.contains(&id) {
                     candidate_ids.push(id);
                 }

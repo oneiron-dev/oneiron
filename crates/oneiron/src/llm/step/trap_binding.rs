@@ -5,14 +5,14 @@ use super::codec::{
     pinned_key_index,
 };
 use super::types::{
-    DREAMER_PRIVATE_TRAP_BINDING_PREFIX, DREAMER_TRAP_BINDING_KEYS,
-    DREAMER_TRAP_BINDING_SCHEMA_VERSION, KEY_ATTEMPT_ID, KEY_PARK_OWNER, KEY_SCHEMA_VERSION,
-    KEY_STEP_HASH,
+    DREAMER_TRAP_BINDING_KEYS, DREAMER_TRAP_BINDING_SCHEMA_VERSION, KEY_ATTEMPT_ID, KEY_PARK_OWNER,
+    KEY_SCHEMA_VERSION, KEY_STEP_HASH,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use rmpv::Value;
 
 // ---------------------------------------------------------------------------
@@ -46,11 +46,97 @@ impl TrapBindingScope {
     }
 }
 
-fn trap_binding_key(anchor: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_TRAP_BINDING_PREFIX.len() + 16);
-    key.extend_from_slice(DREAMER_PRIVATE_TRAP_BINDING_PREFIX);
-    key.extend_from_slice(anchor.as_bytes());
-    key
+const TRAP_BINDING: SideTable<EntityId, TrapBindingRow, Raw> =
+    SideTable::new(&side_table::DREAMER_TRAP_BINDING);
+
+impl RawValue for TrapBindingRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let entries = vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(DREAMER_TRAP_BINDING_SCHEMA_VERSION),
+            ),
+            (
+                Value::from(KEY_ATTEMPT_ID),
+                Value::Binary(self.attempt_id.as_bytes().to_vec()),
+            ),
+            (
+                Value::from(KEY_STEP_HASH),
+                Value::Binary(self.step_hash.to_vec()),
+            ),
+            (
+                Value::from(KEY_PARK_OWNER),
+                Value::from(self.park_owner.as_str()),
+            ),
+        ];
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
+            .map_err(|_| invalid_trap("dreamer trap binding row MessagePack encode failed"))?;
+        Ok(encoded)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let value = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
+            .map_err(|_| invalid_trap("dreamer trap binding row MessagePack decode failed"))?;
+        let entries = expect_map(&value, "dreamer trap binding row must be a MessagePack map")?;
+
+        let mut schema_version = None;
+        let mut attempt_id = None;
+        let mut step_hash = None;
+        let mut park_owner = None;
+        let mut seen = [false; DREAMER_TRAP_BINDING_KEYS.len()];
+
+        for (key, value) in entries {
+            let key = expect_key(key, "dreamer trap binding row keys must be strings")?;
+            let index = pinned_key_index(key, &DREAMER_TRAP_BINDING_KEYS)
+                .ok_or(invalid_trap("dreamer trap binding row key is not pinned"))?;
+            if seen[index] {
+                return Err(invalid_trap("duplicate dreamer trap binding row key").into());
+            }
+            seen[index] = true;
+
+            match DREAMER_TRAP_BINDING_KEYS[index] {
+                KEY_SCHEMA_VERSION => {
+                    schema_version = Some(expect_u64(
+                        value,
+                        "dreamer trap binding schema_version must be an integer",
+                    )?);
+                }
+                KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id_value(value)?),
+                KEY_STEP_HASH => {
+                    let Value::Binary(bytes) = value else {
+                        return Err(
+                            invalid_trap("dreamer trap binding step_hash must be binary").into(),
+                        );
+                    };
+                    let raw: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+                        invalid_trap("dreamer trap binding step_hash must be 32 bytes")
+                    })?;
+                    step_hash = Some(raw);
+                }
+                KEY_PARK_OWNER => {
+                    park_owner = Some(expect_string(
+                        value,
+                        "dreamer trap binding park_owner must be a string",
+                    )?);
+                }
+                _ => unreachable!("index resolved from DREAMER_TRAP_BINDING_KEYS"),
+            }
+        }
+
+        let schema_version =
+            schema_version.ok_or(invalid_trap("missing dreamer trap binding schema_version"))?;
+        if schema_version != DREAMER_TRAP_BINDING_SCHEMA_VERSION {
+            return Err(invalid_trap("unsupported dreamer trap binding schema_version").into());
+        }
+
+        Ok(TrapBindingRow {
+            attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap binding job_id"))?,
+            step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap binding step_hash"))?,
+            park_owner: park_owner
+                .ok_or(invalid_trap("missing dreamer trap binding park_owner"))?,
+        })
+    }
 }
 
 pub(super) fn trap_binding_put_in_txn(
@@ -59,32 +145,7 @@ pub(super) fn trap_binding_put_in_txn(
     anchor: &EntityId,
     row: &TrapBindingRow,
 ) -> Result<()> {
-    let entries = vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(DREAMER_TRAP_BINDING_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_ATTEMPT_ID),
-            Value::Binary(row.attempt_id.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(KEY_STEP_HASH),
-            Value::Binary(row.step_hash.to_vec()),
-        ),
-        (
-            Value::from(KEY_PARK_OWNER),
-            Value::from(row.park_owner.as_str()),
-        ),
-    ];
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
-        .map_err(|_| invalid_trap("dreamer trap binding row MessagePack encode failed"))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &trap_binding_key(anchor), &encoded)?;
-    Ok(())
+    TRAP_BINDING.put(&vault.store, wtxn, anchor, row)
 }
 
 pub(super) fn trap_binding_read(
@@ -100,75 +161,7 @@ pub(super) fn trap_binding_read_in_txn(
     rtxn: &heed::RoTxn<'_>,
     anchor: &EntityId,
 ) -> Result<Option<TrapBindingRow>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, &trap_binding_key(anchor))?
-    else {
-        return Ok(None);
-    };
-    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-        .map_err(|_| invalid_trap("dreamer trap binding row MessagePack decode failed"))?;
-    let entries = expect_map(&value, "dreamer trap binding row must be a MessagePack map")?;
-
-    let mut schema_version = None;
-    let mut attempt_id = None;
-    let mut step_hash = None;
-    let mut park_owner = None;
-    let mut seen = [false; DREAMER_TRAP_BINDING_KEYS.len()];
-
-    for (key, value) in entries {
-        let key = expect_key(key, "dreamer trap binding row keys must be strings")?;
-        let index = pinned_key_index(key, &DREAMER_TRAP_BINDING_KEYS)
-            .ok_or(invalid_trap("dreamer trap binding row key is not pinned"))?;
-        if seen[index] {
-            return Err(invalid_trap("duplicate dreamer trap binding row key"));
-        }
-        seen[index] = true;
-
-        match DREAMER_TRAP_BINDING_KEYS[index] {
-            KEY_SCHEMA_VERSION => {
-                schema_version = Some(expect_u64(
-                    value,
-                    "dreamer trap binding schema_version must be an integer",
-                )?);
-            }
-            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id_value(value)?),
-            KEY_STEP_HASH => {
-                let Value::Binary(bytes) = value else {
-                    return Err(invalid_trap(
-                        "dreamer trap binding step_hash must be binary",
-                    ));
-                };
-                let raw: [u8; 32] = bytes
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| invalid_trap("dreamer trap binding step_hash must be 32 bytes"))?;
-                step_hash = Some(raw);
-            }
-            KEY_PARK_OWNER => {
-                park_owner = Some(expect_string(
-                    value,
-                    "dreamer trap binding park_owner must be a string",
-                )?);
-            }
-            _ => unreachable!("index resolved from DREAMER_TRAP_BINDING_KEYS"),
-        }
-    }
-
-    let schema_version =
-        schema_version.ok_or(invalid_trap("missing dreamer trap binding schema_version"))?;
-    if schema_version != DREAMER_TRAP_BINDING_SCHEMA_VERSION {
-        return Err(invalid_trap(
-            "unsupported dreamer trap binding schema_version",
-        ));
-    }
-
-    Ok(Some(TrapBindingRow {
-        attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap binding job_id"))?,
-        step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap binding step_hash"))?,
-        park_owner: park_owner.ok_or(invalid_trap("missing dreamer trap binding park_owner"))?,
-    }))
+    TRAP_BINDING.get(&vault.store, rtxn, anchor)
 }
 
 pub(super) fn trap_binding_delete_in_txn(
@@ -176,9 +169,6 @@ pub(super) fn trap_binding_delete_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     anchor: &EntityId,
 ) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .delete(wtxn, &trap_binding_key(anchor))?;
+    TRAP_BINDING.delete(&vault.store, wtxn, anchor)?;
     Ok(())
 }

@@ -14,12 +14,6 @@ use crate::entity_id::EntityId;
 /// be auto-archiving.
 pub const VAULT_CLEANUP_POSTURE_KEY: &[u8] = b"vault_cleanup.posture.v1";
 
-/// `vault_meta` key prefix for open cleanup proposals.
-pub(super) const PROPOSAL_PREFIX: &[u8] = b"vault_cleanup.proposal.v1:";
-
-/// `vault_meta` key prefix for cleanup run digests (the receipt substrate).
-pub(super) const DIGEST_PREFIX: &[u8] = b"vault_cleanup.digest.v1:";
-
 /// Receipt-id prefix that discriminates this projector's rows inside the
 /// shared `Gate` family.
 pub const VAULT_CLEANUP_RECEIPT_PREFIX: &str = "vault_cleanup:";

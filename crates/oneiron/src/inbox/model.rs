@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::edit_distance::delta::AmendmentDelta;
+use crate::error::Error;
 use crate::receipt::{ReceiptRecord, ReceiptView};
+use crate::side_table::{CodecError, RawValue};
 
 /// Upper bound on pending-consent rows visited per browse projection pass.
 pub const INBOX_PENDING_SCAN_LIMIT: usize = 10_000;
@@ -36,8 +38,6 @@ pub(super) const INBOX_REASON_AMEND_DELTA_UNCAPTURED: &str = "gate.consent.amend
 pub(super) const INBOX_BUNDLE_ACTOR_CLASS: &str = "owner";
 
 pub(super) const INBOX_BUNDLE_CONTENT_KIND: &str = "inbox_bundle";
-
-pub(super) const INBOX_REVIEW_DIAL_KEY: &[u8] = b"settings:inbox:v1:review_dial";
 
 pub(super) const INBOX_RUN_BRIEF_INTENT_KEY: &str = "intent";
 
@@ -82,6 +82,18 @@ impl InboxReviewDial {
             "review_everything" => Some(Self::ReviewEverything),
             _ => None,
         }
+    }
+}
+
+impl RawValue for InboxReviewDial {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.as_str().as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let token =
+            std::str::from_utf8(bytes).map_err(|_| Error::CorruptedIndex("inbox review dial"))?;
+        Self::parse(token).ok_or_else(|| Error::CorruptedIndex("inbox review dial").into())
     }
 }
 

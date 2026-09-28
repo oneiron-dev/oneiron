@@ -2,7 +2,9 @@
 
 use super::{EntityDoc, storage};
 use crate::error::ArtifactError;
+use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::recovery::CanonicalEntityDocument;
+use crate::side_table::HexId;
 fn invalid(reason: &'static str) -> crate::Error {
     ArtifactError::InvalidRecoveryArtifact(reason).into()
 }
@@ -15,20 +17,27 @@ fn guard(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<()> {
     if !super::forks::all_forks(&vault.store, txn, entity)?.is_empty() {
         return Err(invalid("entity document forks require causal recovery"));
     }
-    for prefix in ["pin", "receipt", "purge"] {
-        let key = format!("entity_doc:v1:{prefix}:{}:", entity.to_hex());
-        if vault
-            .store
-            .sync_state
-            .prefix_iter(txn, &key)?
+    let store = &vault.store;
+    let key_prefix = format!("{}:", entity.to_hex()).into_bytes();
+    if super::pins::ENTITY_DOC_PIN
+        .iter_raw_from(store, txn, &key_prefix)?
+        .next()
+        .transpose()?
+        .is_some()
+        || super::forks::ENTITY_DOC_RECEIPT
+            .iter_raw_from(store, txn, &key_prefix)?
             .next()
             .transpose()?
             .is_some()
-        {
-            return Err(invalid(
-                "entity document citations or receipts require causal recovery",
-            ));
-        }
+        || super::pins::ENTITY_DOC_PURGE_RECEIPT
+            .iter_raw_from(store, txn, &key_prefix)?
+            .next()
+            .transpose()?
+            .is_some()
+    {
+        return Err(invalid(
+            "entity document citations or receipts require causal recovery",
+        ));
     }
     Ok(())
 }
@@ -65,19 +74,17 @@ pub(crate) fn restore(
 ) -> Result<()> {
     let entity = EntityId::from_bytes(row.entity_id)?;
     guard(vault, txn, &entity)?;
-    let document = EntityId::from_bytes(row.document_id)?.to_hex();
-    if let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(txn, storage::head_key(&entity).as_bytes())?
-    {
-        let old: storage::Head = storage::decode(&raw)?;
+    let document_id = EntityId::from_bytes(row.document_id)?;
+    let document = document_id.to_hex();
+    if let Some(old) = storage::ENTITY_DOC_HEAD.get(&vault.store, txn, &HexId(entity))? {
         if old.document != document {
             return Err(invalid(
                 "entity document recovery conflicts with existing head",
             ));
         }
-        storage::delete_prefix(&vault.store, txn, &format!("u:e:{document}:"))?;
+        vault
+            .store
+            .port_document_updates_delete(txn, DocumentSlot::of(document_id))?;
     }
     let doc = EntityDoc::rebuild_value(
         entity,

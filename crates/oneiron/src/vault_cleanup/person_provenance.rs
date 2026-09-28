@@ -6,16 +6,20 @@
 //! Its local evidence is bound to the exact stored revision. A replacement,
 //! an absent marker, or unreadable evidence leaves the PERSON off the list.
 
-use super::{claim_source_is_machine_minted, prefixed_key};
+use super::claim_source_is_machine_minted;
 use crate::Vault;
 use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 
-const EXTRACTION_PERSON_PREFIX: &[u8] = b"vault_cleanup.extraction_person.v1:";
+/// Mint-time extraction evidence: a 32-byte revision hash then the source tag
+/// bytes. Key: id16 (PERSON id).
+pub(super) const EXTRACTION_PERSON: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::VAULT_CLEANUP_EXTRACTION_PERSON);
 const REVISION_HASH_LEN: usize = 32;
 
 impl Vault {
@@ -58,9 +62,8 @@ impl Vault {
         if !claim_source_is_machine_minted(source) {
             return Ok(false);
         }
-        let key = prefixed_key(EXTRACTION_PERSON_PREFIX, id);
         if self.store.port_entity_record(wtxn, id)?.is_some()
-            || self.store.vault_meta.get(wtxn, &key)?.is_some()
+            || EXTRACTION_PERSON.contains(&self.store, wtxn, id)?
             || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
             || self
                 .store
@@ -78,7 +81,7 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("extraction person mint"))?;
         let mut evidence = blake3::hash(&raw).as_bytes().to_vec();
         evidence.extend_from_slice(source.as_str().as_bytes());
-        self.store.vault_meta.put(wtxn, &key, &evidence)?;
+        EXTRACTION_PERSON.put(&self.store, wtxn, id, &evidence)?;
         Ok(true)
     }
 }
@@ -88,10 +91,7 @@ pub(super) fn clear_mint_evidence_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .delete(txn, &prefixed_key(EXTRACTION_PERSON_PREFIX, id))?;
+    EXTRACTION_PERSON.delete(&vault.store, txn, id)?;
     Ok(())
 }
 
@@ -100,8 +100,7 @@ pub(super) fn is_extraction_minted_person_in_txn(
     rtxn: &heed::RoTxn<'_>,
     person: &EntityId,
 ) -> Result<bool> {
-    let key = prefixed_key(EXTRACTION_PERSON_PREFIX, person);
-    let Some(evidence) = vault.store.vault_meta.get(rtxn, &key)? else {
+    let Some(evidence) = EXTRACTION_PERSON.get(&vault.store, rtxn, person)? else {
         return Ok(false);
     };
     let Some(source_bytes) = evidence.get(REVISION_HASH_LEN..) else {

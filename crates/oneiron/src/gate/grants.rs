@@ -47,6 +47,11 @@ pub(crate) fn scoped_read_claim_allowed(
             return false;
         }
     }
+    // The owner's own Grant is un-narrowed: no manifest row, and no manifest
+    // failure, narrows the person on their own vault (ARCH-0057, DEC-0005).
+    if actor_key.vault_owner_ref().is_some() {
+        return true;
+    }
     let diagnostics = policy.diagnostics();
     if diagnostics.loaded_manifest_forces_fail_closed() {
         return false;
@@ -104,6 +109,9 @@ pub(crate) fn scoped_read_record_allowed(
     actor: &ScopedReadActorKey,
     record: &crate::federation::Scope,
 ) -> bool {
+    if actor.vault_owner_ref().is_some() {
+        return true;
+    }
     if policy.diagnostics().loaded_manifest_forces_fail_closed() || policy.is_fail_closed() {
         return false;
     }

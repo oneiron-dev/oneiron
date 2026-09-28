@@ -2,8 +2,9 @@
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::critic::{CritiqueArtifact, CritiqueTriage};
-use crate::error::{Error, Result};
+use crate::critic::{CRITIQUE_ARTIFACT, CritiqueArtifact, CritiqueArtifactKey, CritiqueTriage};
+use crate::error::Result;
+use crate::side_table::{self, Named, SideKey, SideTable};
 
 use super::types::{
     DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION, DreamerTournamentBranchEvidence,
@@ -13,9 +14,60 @@ use super::types::{
 };
 
 use super::validate::{invalid_tournament, validate_evidence, validate_identifier};
-const DREAMER_TOURNAMENT_EVIDENCE_PREFIX: &[u8] = b"dreamer:tournament:v1:";
 
-const CRITIQUE_PRIVATE_ARTIFACT_PREFIX: &[u8] = b"dreamer:critic:v1:";
+/// One branch-evidence row: `run_id_len(u16 be) ++ run_id ++ branch_attempt(16) ++
+/// round(u16 be) ++ verdict(1) ++ candidate_ref_len(u16 be) ++ candidate_ref`, exactly as
+/// `tournament_evidence_key` spelled it. Every length was validated (`validate_identifier`)
+/// before this key is constructed, so `encode_into` casts rather than re-checking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TournamentEvidenceKey {
+    run_id: String,
+    branch_attempt: AttemptId,
+    round: u16,
+    verdict: DreamerTournamentBranchVerdict,
+    candidate_ref: String,
+}
+
+impl SideKey for TournamentEvidenceKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&(self.run_id.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.run_id.as_bytes());
+        out.extend_from_slice(self.branch_attempt.as_bytes());
+        out.extend_from_slice(&self.round.to_be_bytes());
+        out.push(verdict_key_byte(self.verdict));
+        out.extend_from_slice(&(self.candidate_ref.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.candidate_ref.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (run_id_len, rest) = bytes.split_at_checked(2)?;
+        let run_id_len = u16::from_be_bytes(run_id_len.try_into().ok()?) as usize;
+        let (run_id, rest) = rest.split_at_checked(run_id_len)?;
+        let run_id = std::str::from_utf8(run_id).ok()?.to_owned();
+        let (branch_attempt, rest) = rest.split_at_checked(16)?;
+        let branch_attempt = AttemptId::from_bytes(branch_attempt).ok()?;
+        let (round, rest) = rest.split_at_checked(2)?;
+        let round = u16::from_be_bytes(round.try_into().ok()?);
+        let (&verdict_byte, rest) = rest.split_first()?;
+        let verdict = decode_verdict_byte(verdict_byte)?;
+        let (candidate_ref_len, rest) = rest.split_at_checked(2)?;
+        let candidate_ref_len = u16::from_be_bytes(candidate_ref_len.try_into().ok()?) as usize;
+        let (candidate_ref, rest) = rest.split_at_checked(candidate_ref_len)?;
+        if !rest.is_empty() {
+            return None;
+        }
+        Some(Self {
+            run_id,
+            branch_attempt,
+            round,
+            verdict,
+            candidate_ref: std::str::from_utf8(candidate_ref).ok()?.to_owned(),
+        })
+    }
+}
+
+const EVIDENCE: SideTable<TournamentEvidenceKey, DreamerTournamentBranchEvidence, Named> =
+    SideTable::new(&side_table::DREAMER_TOURNAMENT_EVIDENCE);
 
 pub struct DreamerTournamentEvidenceStore<'a> {
     vault: &'a Vault,
@@ -28,13 +80,12 @@ impl<'a> DreamerTournamentEvidenceStore<'a> {
     }
 
     pub fn list_run(&self, run_id: &str) -> Result<Vec<DreamerTournamentBranchEvidence>> {
-        validate_identifier(run_id, MAX_TOURNAMENT_RUN_ID_BYTES, "tournament run id")?;
-        let rtxn = self.vault.store.env.read_txn()?;
         let prefix = tournament_evidence_run_prefix(run_id)?;
+        let rtxn = self.vault.store.env.read_txn()?;
         let mut evidence = Vec::new();
-        for row in self.vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (_key, raw) = row?;
-            evidence.push(decode_tournament_evidence(&raw)?);
+        for (_key, row) in EVIDENCE.scan_from(&self.vault.store, &rtxn, &prefix)? {
+            validate_evidence(&row)?;
+            evidence.push(row);
         }
         evidence.sort_by(|left, right| {
             (left.round, left.candidate_ref.as_str())
@@ -49,16 +100,24 @@ impl<'a> DreamerTournamentEvidenceStore<'a> {
         evidence: &DreamerTournamentBranchEvidence,
     ) -> Result<()> {
         validate_evidence(evidence)?;
-        let key = tournament_evidence_key(
-            &evidence.run_id,
-            evidence.branch_attempt,
-            evidence.round,
-            evidence.verdict,
+        validate_identifier(
             &evidence.candidate_ref,
+            MAX_TOURNAMENT_CANDIDATE_REF_BYTES,
+            "tournament candidate ref",
         )?;
-        let encoded = rmp_serde::to_vec_named(evidence)
-            .map_err(|_| invalid_tournament("tournament evidence MessagePack encode failed"))?;
-        self.vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        validate_identifier(
+            &evidence.run_id,
+            MAX_TOURNAMENT_RUN_ID_BYTES,
+            "tournament run id",
+        )?;
+        let key = TournamentEvidenceKey {
+            run_id: evidence.run_id.clone(),
+            branch_attempt: evidence.branch_attempt,
+            round: evidence.round,
+            verdict: evidence.verdict,
+            candidate_ref: evidence.candidate_ref.clone(),
+        };
+        EVIDENCE.put(&self.vault.store, wtxn, &key, evidence)?;
         Ok(())
     }
 }
@@ -115,38 +174,16 @@ pub(super) fn tournament_weave_evidence(
     Ok(evidence)
 }
 
+/// The raw key-prefix bytes (after the table's own declared prefix) selecting one run's
+/// evidence rows: `run_id_len(u16 be) ++ run_id`.
 fn tournament_evidence_run_prefix(run_id: &str) -> Result<Vec<u8>> {
     validate_identifier(run_id, MAX_TOURNAMENT_RUN_ID_BYTES, "tournament run id")?;
     let run_id_len = u16::try_from(run_id.len())
         .map_err(|_| invalid_tournament("tournament run id exceeds limit"))?;
-    let mut key = Vec::with_capacity(DREAMER_TOURNAMENT_EVIDENCE_PREFIX.len() + 2 + run_id.len());
-    key.extend_from_slice(DREAMER_TOURNAMENT_EVIDENCE_PREFIX);
-    key.extend_from_slice(&run_id_len.to_be_bytes());
-    key.extend_from_slice(run_id.as_bytes());
-    Ok(key)
-}
-
-fn tournament_evidence_key(
-    run_id: &str,
-    branch_attempt: AttemptId,
-    round: u16,
-    verdict: DreamerTournamentBranchVerdict,
-    candidate_ref: &str,
-) -> Result<Vec<u8>> {
-    validate_identifier(
-        candidate_ref,
-        MAX_TOURNAMENT_CANDIDATE_REF_BYTES,
-        "tournament candidate ref",
-    )?;
-    let candidate_ref_len = u16::try_from(candidate_ref.len())
-        .map_err(|_| invalid_tournament("tournament candidate ref exceeds limit"))?;
-    let mut key = tournament_evidence_run_prefix(run_id)?;
-    key.extend_from_slice(branch_attempt.as_bytes());
-    key.extend_from_slice(&round.to_be_bytes());
-    key.push(verdict_key_byte(verdict));
-    key.extend_from_slice(&candidate_ref_len.to_be_bytes());
-    key.extend_from_slice(candidate_ref.as_bytes());
-    Ok(key)
+    let mut prefix = Vec::with_capacity(2 + run_id.len());
+    prefix.extend_from_slice(&run_id_len.to_be_bytes());
+    prefix.extend_from_slice(run_id.as_bytes());
+    Ok(prefix)
 }
 
 fn verdict_key_byte(verdict: DreamerTournamentBranchVerdict) -> u8 {
@@ -158,6 +195,16 @@ fn verdict_key_byte(verdict: DreamerTournamentBranchVerdict) -> u8 {
     }
 }
 
+fn decode_verdict_byte(byte: u8) -> Option<DreamerTournamentBranchVerdict> {
+    match byte {
+        1 => Some(DreamerTournamentBranchVerdict::Survivor),
+        2 => Some(DreamerTournamentBranchVerdict::Refined),
+        3 => Some(DreamerTournamentBranchVerdict::Discarded),
+        4 => Some(DreamerTournamentBranchVerdict::Weaved),
+        _ => None,
+    }
+}
+
 pub(super) fn put_critique_artifact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -166,33 +213,15 @@ pub(super) fn put_critique_artifact_in_txn(
     if artifact.out_of_scope {
         return Ok(());
     }
-    let key = critique_artifact_key(artifact.branch_attempt, &artifact.artifact_id)?;
-    let encoded = rmp_serde::to_vec_named(artifact)
-        .map_err(|_| invalid_tournament("critique artifact MessagePack encode failed"))?;
-    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
-    Ok(())
-}
-
-fn critique_artifact_key(branch_attempt: AttemptId, artifact_id: &str) -> Result<Vec<u8>> {
     validate_identifier(
-        artifact_id,
+        &artifact.artifact_id,
         MAX_TOURNAMENT_ARTIFACT_ID_BYTES,
         "critique artifact id",
     )?;
-    let artifact_id_len = u16::try_from(artifact_id.len())
-        .map_err(|_| invalid_tournament("critique artifact id exceeds limit"))?;
-    let mut key =
-        Vec::with_capacity(CRITIQUE_PRIVATE_ARTIFACT_PREFIX.len() + 16 + 2 + artifact_id.len());
-    key.extend_from_slice(CRITIQUE_PRIVATE_ARTIFACT_PREFIX);
-    key.extend_from_slice(branch_attempt.as_bytes());
-    key.extend_from_slice(&artifact_id_len.to_be_bytes());
-    key.extend_from_slice(artifact_id.as_bytes());
-    Ok(key)
-}
-
-fn decode_tournament_evidence(raw: &[u8]) -> Result<DreamerTournamentBranchEvidence> {
-    let evidence: DreamerTournamentBranchEvidence = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("dreamer tournament evidence"))?;
-    validate_evidence(&evidence)?;
-    Ok(evidence)
+    let key = CritiqueArtifactKey {
+        branch_attempt: artifact.branch_attempt,
+        artifact_id: artifact.artifact_id.clone(),
+    };
+    CRITIQUE_ARTIFACT.put(&vault.store, wtxn, &key, artifact)?;
+    Ok(())
 }

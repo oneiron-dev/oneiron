@@ -109,7 +109,7 @@ pub(crate) fn thread_tasks(
         if !scoped.is_entity_readable(&id)? {
             continue;
         }
-        let Some(view) = memory.get_entity(&id.to_hex())? else {
+        let Some(view) = memory.get_entity(&id.to_hex())?.value else {
             continue;
         };
         let terminal = body.terminal();

@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
+use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::skill::{SkillLifecycle, SkillRecord, encode_skill_record, validate_skill_update};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -23,20 +24,31 @@ use crate::error::ArtifactError;
 // Terminal delete never happens here (ARCH-0053 §6): a silent orphan and a
 // deleted skill are the two failures this fold exists to avoid.
 
-/// `vault_meta` prefix of the reverse source index:
-/// `prefix ‖ source(16) ‖ skill(16)`, empty value.
+/// The reverse source index: skills citing a source. Key: id16(source) + id16(skill), empty
+/// value.
 ///
 /// Asking "which skills cite this id" by scanning every skill's provenance is
 /// O(library) on EVERY entity delete; this makes it one prefix seek. The index
 /// is a CACHE with an authority — the records themselves — and
 /// [`rebuild_skill_source_index`] reconstructs it from them, so a missing or
 /// drifted row costs a rebuild, never truth.
-pub(super) const SOURCE_INDEX_PREFIX: &[u8] = b"skill_convert/source_index/v1\0";
+pub(super) const SOURCE_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::SKILL_SOURCE_INDEX);
 
-/// `vault_meta` prefix of the staleness note: `prefix ‖ skill(16)`, carrying a
-/// MessagePack map of [`STALE_NOTE_REASON_KEY`] and
-/// [`STALE_NOTE_DELETED_REFS_KEY`].
-const STALE_NOTE_PREFIX: &[u8] = b"skill_convert/stale_note/v1\0";
+/// The staleness note of a skill, carrying a MessagePack map of
+/// [`STALE_NOTE_REASON_KEY`] and [`STALE_NOTE_DELETED_REFS_KEY`]. Key: id16(skill).
+pub(super) const STALE_NOTE: SideTable<EntityId, SkillStaleNote, Raw> =
+    SideTable::new(&side_table::SKILL_STALE_NOTE);
+
+impl RawValue for SkillStaleNote {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(encode_stale_note(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        Ok(decode_stale_note(bytes)?)
+    }
+}
 
 /// Staleness-note key naming WHY a record went stale.
 pub const STALE_NOTE_REASON_KEY: &str = "stale_reason";
@@ -73,12 +85,7 @@ pub fn skill_stale_note(vault: &Vault, skill: &EntityId) -> Result<Option<SkillS
         return Ok(None);
     }
     let rtxn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .get(&rtxn, &stale_note_key(skill))?
-        .map(|raw| decode_stale_note(&raw))
-        .transpose()
+    STALE_NOTE.get(&vault.store, &rtxn, skill)
 }
 
 /// Rebuilds the reverse source index from the SKILL records (the CID-7 door).
@@ -92,10 +99,11 @@ pub fn rebuild_skill_source_index(vault: &Vault) -> Result<()> {
 
     // Collect, then write: the cursors are dropped before the first mutation
     // (the `backfill_content_hash_index_if_needed` pattern).
-    let mut dead: Vec<Vec<u8>> = Vec::new();
-    for entry in store.vault_meta.prefix_iter(&wtxn, SOURCE_INDEX_PREFIX)? {
-        dead.push(entry?.0.to_vec());
-    }
+    let dead: Vec<(EntityId, EntityId)> = SOURCE_INDEX
+        .scan(store, &wtxn)?
+        .into_iter()
+        .map(|(key, ())| key)
+        .collect();
     let mut live: Vec<(EntityId, EntityId)> = Vec::new();
     for entry in store.port_entity_ids_by_type(&wtxn, ENTITY_TYPE_SKILL, None)? {
         let skill = entry?;
@@ -111,12 +119,10 @@ pub fn rebuild_skill_source_index(vault: &Vault) -> Result<()> {
     }
 
     for key in &dead {
-        store.vault_meta.delete(&mut wtxn, key)?;
+        SOURCE_INDEX.delete(store, &mut wtxn, key)?;
     }
     for (source, skill) in &live {
-        store
-            .vault_meta
-            .put(&mut wtxn, &source_index_key(source, skill), &[])?;
+        SOURCE_INDEX.put(store, &mut wtxn, &(*source, *skill), &())?;
     }
     wtxn.commit()?;
     Ok(())
@@ -143,14 +149,10 @@ pub(crate) fn maintain_skill_source_index_for_put(
         .and_then(|previous| source_message_refs(previous).ok())
         .unwrap_or_default();
     for source in dropped.iter().filter(|source| !next.contains(source)) {
-        store
-            .vault_meta
-            .delete(wtxn, &source_index_key(source, skill))?;
+        SOURCE_INDEX.delete(store, wtxn, &(*source, *skill))?;
     }
     for source in &next {
-        store
-            .vault_meta
-            .put(wtxn, &source_index_key(source, skill), &[])?;
+        SOURCE_INDEX.put(store, wtxn, &(*source, *skill), &())?;
     }
     Ok(())
 }
@@ -184,9 +186,7 @@ impl Vault {
                 // The cited skill left the active store while its row lingered.
                 // Prune as we read: the index is a cache, and a row nothing can
                 // answer for is the one kind that never becomes true again.
-                self.store
-                    .vault_meta
-                    .delete(wtxn, &source_index_key(deleted, &skill))?;
+                SOURCE_INDEX.delete(&self.store, wtxn, &(*deleted, skill))?;
                 continue;
             };
             if !record
@@ -231,10 +231,7 @@ impl Vault {
                     }
                 }
             };
-            let value = encode_stale_note(&note)?;
-            self.store
-                .vault_meta
-                .put(wtxn, &stale_note_key(&skill), &value)?;
+            STALE_NOTE.put(&self.store, wtxn, &skill, &note)?;
             staled.push(skill);
         }
         Ok(staled)
@@ -245,36 +242,14 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         skill: &EntityId,
     ) -> Result<SkillStaleNote> {
-        Ok(
-            match self.store.vault_meta.get(wtxn, &stale_note_key(skill))? {
-                Some(raw) => decode_stale_note(&raw)?,
-                None => SkillStaleNote {
-                    reason: STALE_REASON_SOURCE_MESSAGE_DELETED.to_owned(),
-                    deleted_refs: Vec::new(),
-                },
+        Ok(match STALE_NOTE.get(&self.store, wtxn, skill)? {
+            Some(note) => note,
+            None => SkillStaleNote {
+                reason: STALE_REASON_SOURCE_MESSAGE_DELETED.to_owned(),
+                deleted_refs: Vec::new(),
             },
-        )
+        })
     }
-}
-
-fn source_index_key(source: &EntityId, skill: &EntityId) -> Vec<u8> {
-    let mut key = source_index_prefix(source);
-    key.extend_from_slice(skill.as_bytes());
-    key
-}
-
-fn source_index_prefix(source: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(SOURCE_INDEX_PREFIX.len() + 32);
-    key.extend_from_slice(SOURCE_INDEX_PREFIX);
-    key.extend_from_slice(source.as_bytes());
-    key
-}
-
-fn stale_note_key(skill: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(STALE_NOTE_PREFIX.len() + 16);
-    key.extend_from_slice(STALE_NOTE_PREFIX);
-    key.extend_from_slice(skill.as_bytes());
-    key
 }
 
 fn dependent_skills_in_txn(
@@ -282,18 +257,11 @@ fn dependent_skills_in_txn(
     rtxn: &heed::RoTxn<'_>,
     source: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    const CONTEXT: &str = "skill source index";
-    let prefix = source_index_prefix(source);
-    let mut skills = Vec::new();
-    for entry in store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let key = entry?.0;
-        let bytes: [u8; 16] = key
-            .get(prefix.len()..)
-            .and_then(|tail| tail.try_into().ok())
-            .ok_or(Error::CorruptedIndex(CONTEXT))?;
-        skills.push(EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex(CONTEXT))?);
-    }
-    Ok(skills)
+    Ok(SOURCE_INDEX
+        .scan_keys(store, rtxn, source.as_bytes())?
+        .into_iter()
+        .map(|(_, skill)| skill)
+        .collect())
 }
 
 /// The SKILL record behind `id` plus its `occurred` range, or `None` when the

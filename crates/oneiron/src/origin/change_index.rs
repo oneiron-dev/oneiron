@@ -9,7 +9,13 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
+use crate::side_table::{self, Raw, SideTable};
 use rmpv::Value;
+
+/// Tamper-detection proof hash pinning one repo.change claim's exact byte content at publication
+/// time. Key: change claim id.
+const CHANGE_RECEIPTS: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::ORIGIN_CHANGE_RECEIPT);
 
 pub const ORIGIN_CHANGE_PREDICATE: &str = "repo.change";
 pub const ORIGIN_CHANGE_VALUE_KEYS: [&str; 7] = [
@@ -45,9 +51,6 @@ fn claim_id(repo: EntityId, commit: &GitOid) -> Result<EntityId> {
         &[repo.as_bytes(), commit.as_str().as_bytes()],
     )
 }
-fn receipt_key(id: EntityId) -> Vec<u8> {
-    [b"origin:change_receipt:v1:".as_slice(), id.as_bytes()].concat()
-}
 impl Vault {
     pub fn origin_change_for_commit(
         &self,
@@ -59,14 +62,12 @@ impl Vault {
             return Ok(None);
         };
         let txn = self.store.env.read_txn()?;
-        let proof =
-            self.store
-                .vault_meta
-                .get(&txn, &receipt_key(id))?
-                .ok_or(Error::CorruptedIndex(
-                    "origin change has no publication receipt",
-                ))?;
-        if proof.as_ref() != blake3::hash(&encode_claim_body(&body)?).as_bytes() {
+        let proof = CHANGE_RECEIPTS
+            .get(&self.store, &txn, &id)?
+            .ok_or(Error::CorruptedIndex(
+                "origin change has no publication receipt",
+            ))?;
+        if proof != *blake3::hash(&encode_claim_body(&body)?).as_bytes() {
             return Err(Error::CorruptedIndex(
                 "origin change claim was altered outside publication",
             ));
@@ -124,13 +125,12 @@ impl Vault {
                 .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("origin change entity header"))?;
             let proof =
-                self.store
-                    .vault_meta
-                    .get(txn, &receipt_key(id))?
+                CHANGE_RECEIPTS
+                    .get(&self.store, txn, &id)?
                     .ok_or(Error::CorruptedIndex(
                         "origin change has no publication receipt",
                     ))?;
-            if proof.as_ref() != blake3::hash(bytes).as_bytes() {
+            if proof != *blake3::hash(bytes).as_bytes() {
                 return Err(Error::CorruptedIndex(
                     "origin change claim was altered outside publication",
                 ));
@@ -174,9 +174,10 @@ impl Vault {
             Value::from("public"),
         )]));
         self.put_claim_in_txn(txn, &id, &body, record.occurred, now)?;
-        self.store.vault_meta.put(
+        CHANGE_RECEIPTS.put(
+            &self.store,
             txn,
-            &receipt_key(id),
+            &id,
             blake3::hash(&encode_claim_body(&body)?).as_bytes(),
         )?;
         Ok(change)

@@ -1,8 +1,8 @@
 //! Actor-scoped evidence and owner-authored voice reads, with exact revision pins.
 use super::{Packet, RepresentationCitation, RepresentationRequest, invalid};
 use crate::claim::{
-    ScopedRead, ScopedReadActorKey, claim_evidence_admissible, decode_claim_body,
-    session_claim_producer,
+    PointRead, ReadRow, ScopedRead, ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult,
+    claim_evidence_admissible, decode_claim_body, session_claim_producer,
 };
 use crate::{ClaimSource, EntityId, Result, Vault};
 use std::collections::BTreeSet;
@@ -27,6 +27,8 @@ pub struct RepresentationContext {
     pub request: RepresentationRequest,
     pub evidence: Vec<RepresentationSource>,
     pub voice: Vec<RepresentationSource>,
+    /// The Dreamer actor's read of every evidence and voice source, folded.
+    pub receipt: ScopedReadReceipt,
 }
 impl Vault {
     /// The model host receives only these admitted source texts. Claim bytes
@@ -52,30 +54,30 @@ impl Vault {
             ScopedReadActorKey::with_actor_class(actor.to_hex(), "agent").ok_or_else(invalid)?,
         );
         let mut seen = BTreeSet::new();
+        let mut receipt = reader.read_receipt(None, 0)?;
+        let mut read = |id: EntityId, voice_owner: Option<EntityId>| {
+            if !seen.insert(id) {
+                return Err(invalid());
+            }
+            let source = read_source(&reader, id, voice_owner)?;
+            receipt.restrict_with(&source.receipt);
+            Ok(source.value)
+        };
         let evidence = request
             .evidence
             .iter()
-            .map(|r| {
-                if !seen.insert(r.claim) {
-                    return Err(invalid());
-                }
-                read_source(&reader, r.claim, None)
-            })
+            .map(|r| read(r.claim, None))
             .collect::<Result<Vec<_>>>()?;
         let voice = request
             .voice
             .iter()
-            .map(|r| {
-                if !seen.insert(r.claim) {
-                    return Err(invalid());
-                }
-                read_source(&reader, r.claim, Some(request.owner))
-            })
+            .map(|r| read(r.claim, Some(request.owner)))
             .collect::<Result<Vec<_>>>()?;
         Ok(RepresentationContext {
             request: request.clone(),
             evidence,
             voice,
+            receipt,
         })
     }
 }
@@ -83,12 +85,16 @@ fn read_source(
     reader: &ScopedRead<'_>,
     id: EntityId,
     voice_owner: Option<EntityId>,
-) -> Result<RepresentationSource> {
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = reader.get_entity_parts_with_receipt(&id, None)?;
-    let (kind, _, bytes) = value.ok_or_else(invalid)?;
+) -> Result<ScopedReadResult<RepresentationSource>> {
+    let ScopedReadResult { value, receipt } = reader.read(&[PointRead::id(id)], None)?.single();
+    let Some(ReadRow {
+        entity_type: kind,
+        body: Some(bytes),
+        ..
+    }) = value
+    else {
+        return Err(invalid());
+    };
     if kind != crate::registry::ENTITY_TYPE_CLAIM {
         return Err(invalid());
     }
@@ -106,10 +112,13 @@ fn read_source(
     if text.trim().is_empty() || text.len() > 32_768 {
         return Err(invalid());
     }
-    Ok(RepresentationSource {
-        claim: id,
-        revision: *blake3::hash(&bytes).as_bytes(),
-        text: text.into(),
+    Ok(ScopedReadResult {
+        value: RepresentationSource {
+            claim: id,
+            revision: *blake3::hash(&bytes).as_bytes(),
+            text: text.into(),
+        },
+        receipt,
     })
 }
 pub(super) fn validate_citations(

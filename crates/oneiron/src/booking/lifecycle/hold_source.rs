@@ -1,9 +1,8 @@
 //! The vault-backed [`ActiveHoldSource`] the solver asks for live holds, with
 //! the self-exclusion a confirm needs.
 
-use super::storage::{decode_row, engine_failure, read_txn};
+use super::storage::{HOLD, engine_failure, read_txn};
 use super::token::SessionKey;
-use super::types::{BOOKING_HOLD_META_PREFIX, SoftHoldRow};
 use crate::booking::{ActiveHoldSource, BookingError};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
@@ -51,15 +50,10 @@ impl ActiveHoldSource for VaultActiveHoldSource<'_> {
         let bound = self.exclude_session_key.map(|key| key.0);
         let rtxn = read_txn(self.vault)?;
         let mut holds = Vec::new();
-        let rows = self
-            .vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, BOOKING_HOLD_META_PREFIX)
+        let rows = HOLD
+            .scan(&self.vault.store, &rtxn)
             .map_err(|error| engine_failure("hold scan", error))?;
-        for entry in rows {
-            let (_, raw) = entry.map_err(|error| engine_failure("hold scan", error))?;
-            let row: SoftHoldRow = decode_row(&raw)?;
+        for (_, row) in rows {
             if row.page_ref != page_ref || !row.is_live_at(now_utc) {
                 continue;
             }

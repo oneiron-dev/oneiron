@@ -11,6 +11,17 @@ use crate::outbound_grant::{
     StandingOutboundGrantStatus, standing_outbound_grant_principal_index_entity_id,
     standing_outbound_grant_principal_index_prefix,
 };
+use crate::side_table::{self, Raw, SideTable};
+
+/// Bound to the same declaration `outbound_grant::index` binds privately for
+/// its own reads/writes; its own doc names `booking` as one of the
+/// cross-module scanners expected to bind their own table over the shared
+/// declaration (two typed tables, one declaration). Key: everything after the
+/// declared prefix (`principal_len(2) ++ principal ++ id16`), exactly the
+/// bytes [`standing_outbound_grant_principal_index_prefix`]/
+/// `standing_outbound_grant_principal_index_key` already build.
+const PRINCIPAL_INDEX: SideTable<Vec<u8>, (), Raw> =
+    SideTable::new(&side_table::OUTBOUND_GRANT_PRINCIPAL_INDEX);
 
 /// Domain tag for the deterministic page-grant entity id. Deriving the id from
 /// the page is what makes a second publish land on
@@ -66,21 +77,22 @@ pub(super) fn live_page_invite_grant(
     let ids = {
         let prefix = standing_outbound_grant_principal_index_prefix(principal_ref)
             .map_err(|error| engine_failure("grant principal prefix", error))?;
+        let tail = prefix
+            .strip_prefix(PRINCIPAL_INDEX.decl().prefix)
+            .expect("grant principal prefix always carries its declared prefix");
         let rtxn = vault
             .store
             .env
             .read_txn()
             .map_err(|error| engine_failure("read transaction", error))?;
         let mut ids = Vec::new();
-        for entry in vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, &prefix)
+        for table_key in PRINCIPAL_INDEX
+            .scan_keys(&vault.store, &rtxn, tail)
             .map_err(|error| engine_failure("grant principal scan", error))?
         {
-            let (key, _) = entry.map_err(|error| engine_failure("grant principal scan", error))?;
+            let full_key = PRINCIPAL_INDEX.key_bytes(&table_key);
             ids.push(
-                standing_outbound_grant_principal_index_entity_id(&key, principal_ref)
+                standing_outbound_grant_principal_index_entity_id(&full_key, principal_ref)
                     .map_err(|error| engine_failure("grant principal key", error))?,
             );
         }

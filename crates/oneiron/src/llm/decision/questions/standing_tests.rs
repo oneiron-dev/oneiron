@@ -203,7 +203,7 @@ fn standing_backfill_keeps_receipts_by_immutable_version_after_edit_and_pause() 
         let claim = vault.get_claim(&answer.claim)?.expect("kept answer claim");
         assert_eq!(claim.predicate, "judgment.answer");
         let encoded = super::store::encode(answer)?;
-        let receipt: AnswerRecord = super::store::decode(&encoded)?;
+        let receipt: AnswerRecord = rmp_serde::from_slice(&encoded).expect("stored answer decode");
         assert_eq!(receipt.decision.receipt.question_version, version);
         assert_eq!(
             claim.value,

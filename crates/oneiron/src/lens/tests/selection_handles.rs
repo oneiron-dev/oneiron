@@ -96,6 +96,7 @@ fn quote_fixture() -> Result<SpanFixture> {
         .memory(actor_id, crate::edge::EdgeActorClass::Human)
         .get_entity(&receipt.message_short_ids[0])
         .expect("message read")
+        .value
         .expect("message exists");
     let target = crate::EntityId::from_hex(&message.id_hex)?;
     let actor =

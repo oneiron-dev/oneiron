@@ -1228,10 +1228,21 @@ fn permanent_failure_healer_reads_diagnostic_and_emits_case_bound_proposal() -> 
     let read = vault.scoped_read(
         crate::claim::ScopedReadActorKey::new(healer.to_hex()).expect("healer identity"),
     );
-    assert!(read.get(&checkpoint)?.value.is_some());
-    assert!(read.get(&thread)?.value.is_some());
+    assert!(
+        read.read(&[crate::claim::PointRead::id(checkpoint)], None)?
+            .single()
+            .value
+            .is_some()
+    );
+    assert!(
+        read.read(&[crate::claim::PointRead::id(thread)], None)?
+            .single()
+            .value
+            .is_some()
+    );
     let (read_id, observed) = registration
         .failure_corpus()?
+        .value
         .into_iter()
         .find(|(id, _)| id.to_hex() == case.evidence_ref)
         .expect("healer can read its durable diagnostic through ScopedRead");

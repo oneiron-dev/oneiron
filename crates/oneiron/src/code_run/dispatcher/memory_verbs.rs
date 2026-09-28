@@ -223,9 +223,10 @@ impl HostSelfDispatcher<'_> {
                     vault.set_dreamer_failure_rules(self.actor, &json)?;
                 }
                 ExecutorStorage::Session(binding) => {
-                    binding.session.vault_meta_put_routed(
+                    binding.session.side_table_put_routed(
                         &binding.route,
-                        crate::dreamer_consolidation::DREAMER_FAILURE_RULES_KEY,
+                        &crate::dreamer_consolidation::DREAMER_FAILURE_RULES,
+                        &(),
                         &record,
                     )?;
                 }

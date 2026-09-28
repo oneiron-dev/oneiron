@@ -883,6 +883,7 @@ pub(super) fn seed_disclosure_scope(
 ) {
     let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
+
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)

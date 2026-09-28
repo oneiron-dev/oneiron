@@ -1,6 +1,12 @@
 //! Idempotent outcome projection over durable facts and immutable question versions.
 
-use super::{records::*, store::*};
+use super::{
+    records::*,
+    store::{
+        HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
+        family_prefix,
+    },
+};
 use crate::{EntityId, Result, Vault};
 
 pub fn project_bound_outcomes(
@@ -36,13 +42,16 @@ pub fn calibration_pairs(
     question: EntityId,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(head) = load::<QuestionHead>(vault, &txn, &key(question, b"head", &[]))? else {
+    let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
         return Ok(Vec::new());
     };
-    let Some(current) = load::<QuestionRecord>(
-        vault,
+    let Some(current) = QUESTION_VERSION.get(
+        &vault.store,
         &txn,
-        &key(question, b"version", &head.version.to_be_bytes()),
+        &VersionKey {
+            id: question,
+            version: head.version,
+        },
     )?
     else {
         return Ok(Vec::new());
@@ -50,22 +59,29 @@ pub fn calibration_pairs(
     if current.principal != principal {
         return Ok(Vec::new());
     }
-    let answers: Vec<AnswerRecord> = list(vault, &txn, &key(question, b"answer", &[]))?;
-    let labels: Vec<OutcomeLabel> = list(vault, &txn, &key(question, b"label", &[]))?;
+    let answers: Vec<AnswerRecord> = QUESTION_ANSWER
+        .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))?
+        .into_iter()
+        .map(|(_, answer)| answer)
+        .collect();
+    let labels: Vec<OutcomeLabel> = QUESTION_LABEL
+        .scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
+        .into_iter()
+        .map(|(_, label)| label)
+        .collect();
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     let mut pairs = Vec::new();
     for outcome in labels {
         let Some(answer) = answers.iter().find(|a| a.claim == outcome.answer) else {
             continue;
         };
-        let Some(record) = load::<QuestionRecord>(
-            vault,
+        let Some(record) = QUESTION_VERSION.get(
+            &vault.store,
             &txn,
-            &key(
-                question,
-                b"version",
-                &answer.decision.receipt.question_version.to_be_bytes(),
-            ),
+            &VersionKey {
+                id: question,
+                version: answer.decision.receipt.question_version,
+            },
         )?
         else {
             continue;

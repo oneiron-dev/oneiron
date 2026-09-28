@@ -10,7 +10,7 @@ use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 
 use super::git::{git_output_optional, run_git, validate_relative_repo_path};
-use super::oplog::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, repo_mutation_snapshot_key};
+use super::oplog::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, SNAPSHOT, repo_mutation_snapshot_key};
 use super::support::{path_arg, sha256_bytes, utf8_trimmed};
 use super::types::RepoForkHash;
 use super::worktree::{ensure_repo_parent_dirs_no_symlink, write_repo_file_no_symlink};
@@ -140,21 +140,17 @@ pub(super) fn restore_repo_snapshot(
     }
     let key = repo_mutation_snapshot_key(fork_hash);
     let rtxn = vault.store.env.read_txn()?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &key)?
-        .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
-            "requested repo snapshot forkHash is unknown",
-        )))?
-        .to_vec();
+    let snapshot = SNAPSHOT.get(&vault.store, &rtxn, &key)?.ok_or(Error::Code(
+        CodeError::InvalidRepoMutationRecord("requested repo snapshot forkHash is unknown"),
+    ))?;
     drop(rtxn);
+    let raw = SNAPSHOT.encode_value(&snapshot)?;
     if *blake3::hash(&raw).as_bytes() != fork_hash && sha256_bytes(&raw) != fork_hash {
         return Err(Error::CorruptedIndex(
             "repo mutation snapshot hash mismatch",
         ));
     }
-    let snapshot = decode_snapshot(&raw)?;
+    let snapshot = require_snapshot_schema(snapshot)?;
     let snapshot_head = snapshot.head.clone();
     let desired: BTreeSet<String> = snapshot
         .entries
@@ -289,17 +285,20 @@ fn remove_existing_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The [`SNAPSHOT`] codec, kept callable directly: [`capture_repo_snapshot`]
+/// needs the encoded bytes themselves (their hash IS the row's key), and a
+/// few readers still hold raw bytes they must reverify before trusting.
 pub(super) fn encode_snapshot(snapshot: &StoredRepoSnapshot) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(snapshot)
-        .map_err(|_| Error::InvariantViolation("repo mutation snapshot encode failed"))
+    SNAPSHOT.encode_value(snapshot)
 }
 
+/// Decodes and re-checks the schema version [`SNAPSHOT`]'s generic codec has
+/// no notion of.
 pub(super) fn decode_snapshot(bytes: &[u8]) -> Result<StoredRepoSnapshot> {
-    let snapshot: StoredRepoSnapshot = rmp_serde::from_slice(bytes).map_err(|_| {
-        Error::Code(CodeError::InvalidRepoMutationRecord(
-            "repo mutation snapshot is not MessagePack",
-        ))
-    })?;
+    require_snapshot_schema(SNAPSHOT.decode_value(bytes)?)
+}
+
+pub(super) fn require_snapshot_schema(snapshot: StoredRepoSnapshot) -> Result<StoredRepoSnapshot> {
     if snapshot.schema_version != REPO_MUTATION_OPLOG_SCHEMA_VERSION {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "unsupported repo mutation snapshot schema version",

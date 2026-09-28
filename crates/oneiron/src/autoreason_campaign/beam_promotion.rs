@@ -3,10 +3,21 @@
 //! This module never contributes a scalar to campaign reward. Raw referee
 //! numbers are consumed here and are not exposed in campaign report types.
 use super::{CampaignComparisonReport, ExperimentVerdict};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-const DEFAULT_KEY: &[u8] = b"authoring/default-beam-winner";
+
+/// One-shot consumption marker and promotion receipt, keyed by the content-pinned
+/// strategy's digest. Two byte shapes share this row over its lifetime (a raw
+/// consumption sentinel, then the JSON receipt) and neither is ever decoded —
+/// every access is a raw presence or byte-equality check — hence `Raw`.
+const BEAM_ONCE: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::AUTOREASON_BEAM_ONCE);
+
+/// The current default (winning) authoring strategy pin and its receipt: a singleton row.
+const BEAM_DEFAULT: SideTable<(), PromotionReceipt, LegacyJson> =
+    SideTable::new(&side_table::AUTOREASON_BEAM_DEFAULT);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthoringStrategyPin {
@@ -53,7 +64,7 @@ impl AuthoringStrategyPin {
             })
     }
 
-    fn key(&self) -> Result<Vec<u8>> {
+    fn key(&self) -> Result<String> {
         if self.strategy_id.is_empty()
             || self.revision.is_empty()
             || self.config_sha256.len() != 64
@@ -62,12 +73,11 @@ impl AuthoringStrategyPin {
             return Err(invalid("authoring strategy must be content-pinned"));
         }
         Ok(format!(
-            "authoring/beam-once/{:x}",
+            "{:x}",
             Sha256::digest(
                 serde_json::to_vec(self).map_err(|_| invalid("strategy serialization"))?
             )
-        )
-        .into_bytes())
+        ))
     }
 }
 /// Constructed only by the sealed referee adapter. No reward-path score accessor.
@@ -129,13 +139,15 @@ pub fn measure_once(
     }
     let key = strategy.key()?;
     vault.with_write_txn(|txn| {
-        if vault.store.vault_meta.get(txn, &key)?.is_some() {
+        if BEAM_ONCE.contains(&vault.store, txn, &key)? {
             return Err(invalid("BEAM candidate measurement already consumed"));
         }
-        vault
-            .store
-            .vault_meta
-            .put(txn, &key, b"flagged:measurement-consumed")?;
+        BEAM_ONCE.put(
+            &vault.store,
+            txn,
+            &key,
+            &b"flagged:measurement-consumed".to_vec(),
+        )?;
         Ok(())
     })?;
     let measured = measure()?;
@@ -146,12 +158,11 @@ pub fn measure_once(
         became_default: measured.won,
         at: crate::unix_seconds_now(),
     };
-    let bytes =
-        serde_json::to_vec(&receipt).map_err(|_| invalid("promotion receipt serialization"))?;
+    let bytes = BEAM_DEFAULT.encode_value(&receipt)?;
     vault.with_write_txn(|txn| {
-        vault.store.vault_meta.put(txn, &key, &bytes)?;
+        BEAM_ONCE.put(&vault.store, txn, &key, &bytes)?;
         if receipt.became_default {
-            vault.store.vault_meta.put(txn, DEFAULT_KEY, &bytes)?;
+            BEAM_DEFAULT.put(&vault.store, txn, &(), &receipt)?;
         }
         Ok(())
     })?;
@@ -159,15 +170,14 @@ pub fn measure_once(
 }
 pub fn default_strategy(vault: &Vault) -> Result<Option<AuthoringStrategyPin>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(bytes) = vault.store.vault_meta.get(&txn, DEFAULT_KEY)? else {
+    let Some(receipt) = BEAM_DEFAULT.get(&vault.store, &txn, &())? else {
         return Ok(None);
     };
-    let receipt: PromotionReceipt =
-        serde_json::from_slice(&bytes).map_err(|_| invalid("invalid default authoring receipt"))?;
     let key = receipt.strategy.key()?;
+    let bytes = BEAM_DEFAULT.encode_value(&receipt)?;
     if !receipt.became_default
         || !valid_referee_pin(&receipt.referee_pin)
-        || vault.store.vault_meta.get(&txn, &key)? != Some(bytes)
+        || BEAM_ONCE.get(&vault.store, &txn, &key)? != Some(bytes)
     {
         return Err(invalid("unreceipted authoring default"));
     }

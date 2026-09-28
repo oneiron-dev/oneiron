@@ -7,13 +7,14 @@ use std::time::Instant;
 
 use rmpv::Value;
 
-use crate::claim::decode_claim_body;
+use crate::claim::{ScopedReadReceipt, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
 
+use super::coreutils_text::{append_grep_file_matches, join_graph_path, literal_grep_pattern};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -39,7 +40,7 @@ impl GraphFsResolver<'_, '_> {
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
             let page = self.grep_claims_pushdown(literal, cursor)?;
-            let mut output = self.finish_coreutils_command(
+            return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Grep,
                 started,
                 started_at,
@@ -49,23 +50,22 @@ impl GraphFsResolver<'_, '_> {
                 page.next_cursor,
                 vec![RetrievalSignal::Text],
                 page.total,
-            )?;
-            output.search_receipt = Some(page.receipt);
-            return Ok(output);
+                Some(page.receipt),
+            );
         }
 
-        let (bytes, next_cursor, total) =
-            self.grep_walk(pattern, &normalized, recursive, cursor)?;
+        let walk = self.grep_walk(pattern, &normalized, recursive, cursor)?;
         self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Grep,
             started,
             started_at,
             GraphFsCoreutilsDecision::Walk,
             "graph-fs bounded walk",
-            bytes,
-            next_cursor,
+            walk.bytes,
+            walk.next_cursor,
             Vec::new(),
-            total,
+            walk.total,
+            walk.receipt,
         )
     }
 
@@ -90,6 +90,7 @@ impl GraphFsResolver<'_, '_> {
                 next_cursor,
                 vec![RetrievalSignal::Temporal],
                 total,
+                None,
             );
         }
 
@@ -122,6 +123,7 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             total,
+            page.read_receipt,
         )
     }
 
@@ -147,20 +149,22 @@ impl GraphFsResolver<'_, '_> {
                 next_cursor,
                 vec![RetrievalSignal::Temporal],
                 total,
+                None,
             );
         }
 
-        let (bytes, next_cursor, total) = self.find_walk(&normalized, cursor)?;
+        let walk = self.find_walk(&normalized, cursor)?;
         self.finish_coreutils_command(
             GraphFsCoreutilsVerb::Find,
             started,
             started_at,
             GraphFsCoreutilsDecision::Walk,
             "graph-fs bounded walk",
-            bytes,
-            next_cursor,
+            walk.bytes,
+            walk.next_cursor,
             Vec::new(),
-            total,
+            walk.total,
+            walk.receipt,
         )
     }
 
@@ -169,7 +173,8 @@ impl GraphFsResolver<'_, '_> {
         let started_at = self.scoped_read.vault().now_recorded_at();
         let offset = parse_byte_cursor(cursor)?;
         let mut next_cursor = None;
-        let bytes = if let Some(file) = self.read_file(path)? {
+        let read = self.read_file(path)?;
+        let bytes = if let Some(file) = &read.value {
             let bytes = file.bytes();
             let start = offset.min(bytes.len());
             let end = start
@@ -192,6 +197,7 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             0,
+            read.receipt,
         )
     }
 
@@ -199,7 +205,8 @@ impl GraphFsResolver<'_, '_> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let mut out = CommandOutputBuilder::new(self.options);
-        if let Some(file) = self.read_file(path)? {
+        let read = self.read_file(path)?;
+        if let Some(file) = &read.value {
             for line in String::from_utf8_lossy(file.bytes()).lines().take(lines) {
                 let mut rendered = line.to_owned();
                 rendered.push('\n');
@@ -219,13 +226,15 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             total,
+            read.receipt,
         )
     }
 
     pub fn wc(&self, path: &str) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let bytes = if let Some(file) = self.read_file(path)? {
+        let read = self.read_file(path)?;
+        let bytes = if let Some(file) = &read.value {
             let text = String::from_utf8_lossy(file.bytes());
             let lines = text.lines().count();
             let words = text.split_whitespace().count();
@@ -243,6 +252,7 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             0,
+            read.receipt,
         )
     }
 
@@ -252,19 +262,25 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         recursive: bool,
         cursor: Option<&str>,
-    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+    ) -> Result<WalkOutput> {
         let mut out = CommandOutputBuilder::new(self.options);
         let mut last_emitted = cursor.map(str::to_owned);
         let mut total = 0;
         if !recursive {
-            if let Some(file) = self.read_file(path)? {
+            let read = self.read_file(path)?;
+            if let Some(file) = &read.value {
                 append_grep_file_matches(path, file.bytes(), pattern, &mut out, &mut total);
             }
-            return Ok((out.into_bytes(), None, total));
+            return Ok(WalkOutput::new(out, None, total, read.receipt));
         }
 
-        for path in self.walk_paths(path, cursor)? {
-            let Some(file) = self.read_file(&path)? else {
+        let (paths, mut receipt) = self.walk_paths(path, cursor)?;
+        for path in paths {
+            let read = self.read_file(&path)?;
+            if let Some(read_receipt) = read.receipt {
+                fold_receipt(&mut receipt, read_receipt);
+            }
+            let Some(file) = read.value else {
                 continue;
             };
             let before_entries = out.entries();
@@ -273,10 +289,10 @@ impl GraphFsResolver<'_, '_> {
                 last_emitted = Some(path);
             }
             if out.is_full() {
-                return Ok((out.into_bytes(), last_emitted, total));
+                return Ok(WalkOutput::new(out, last_emitted, total, receipt));
             }
         }
-        Ok((out.into_bytes(), None, total))
+        Ok(WalkOutput::new(out, None, total, receipt))
     }
 
     fn ls_claims_by_time_pushdown(
@@ -405,27 +421,31 @@ impl GraphFsResolver<'_, '_> {
         Ok((out.into_bytes(), None, total))
     }
 
-    fn find_walk(
-        &self,
-        path: &str,
-        cursor: Option<&str>,
-    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+    fn find_walk(&self, path: &str, cursor: Option<&str>) -> Result<WalkOutput> {
         let mut out = CommandOutputBuilder::new(self.options);
         let mut last_emitted = cursor.map(str::to_owned);
         let mut total = 0;
-        for path in self.walk_paths(path, cursor)? {
+        let (paths, receipt) = self.walk_paths(path, cursor)?;
+        for path in paths {
             let mut line = path.clone();
             line.push('\n');
             if !out.try_push(line.as_bytes()) {
-                return Ok((out.into_bytes(), last_emitted, total));
+                return Ok(WalkOutput::new(out, last_emitted, total, receipt));
             }
             total += 1;
             last_emitted = Some(path);
         }
-        Ok((out.into_bytes(), None, total))
+        Ok(WalkOutput::new(out, None, total, receipt))
     }
 
-    fn walk_paths(&self, path: &str, cursor: Option<&str>) -> Result<Vec<String>> {
+    /// Visible paths under `path`, with the folded receipt of every listing
+    /// the walk read.
+    fn walk_paths(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<String>, Option<ScopedReadReceipt>)> {
+        let mut receipt = None;
         let mut paths = Vec::new();
         let mut queue = VecDeque::from([path.to_owned()]);
         let mut scanned = 0usize;
@@ -450,6 +470,9 @@ impl GraphFsResolver<'_, '_> {
             }
 
             let page = self.readdir(&current, None)?;
+            if let Some(read) = page.read_receipt() {
+                fold_receipt(&mut receipt, read.clone());
+            }
             for entry in page.entries() {
                 if entry.kind() == GraphFsEntryKind::Cursor {
                     continue;
@@ -460,12 +483,12 @@ impl GraphFsResolver<'_, '_> {
                 } else if !skipping && self.coreutils_path_visible(&child)? {
                     paths.push(child);
                     if paths.len() >= self.coreutils_result_cap() {
-                        return Ok(paths);
+                        return Ok((paths, receipt));
                     }
                 }
             }
         }
-        Ok(paths)
+        Ok((paths, receipt))
     }
 
     fn find_path_for_temporal_hit_in(
@@ -562,6 +585,7 @@ impl GraphFsResolver<'_, '_> {
         next_cursor: Option<String>,
         signals: Vec<RetrievalSignal>,
         total_in_scope: usize,
+        read_receipt: Option<ScopedReadReceipt>,
     ) -> Result<GraphFsCommandOutput> {
         let telemetry_run_id = if self
             .scoped_read
@@ -608,8 +632,39 @@ impl GraphFsResolver<'_, '_> {
             decision,
             decision_reason: decision_reason.to_owned(),
             telemetry_run_id,
-            search_receipt: None,
+            read_receipt,
         })
+    }
+}
+
+/// A walk's rendered output and the folded receipt of the reads behind it.
+struct WalkOutput {
+    bytes: Vec<u8>,
+    next_cursor: Option<String>,
+    total: usize,
+    receipt: Option<ScopedReadReceipt>,
+}
+
+impl WalkOutput {
+    fn new(
+        out: CommandOutputBuilder,
+        next_cursor: Option<String>,
+        total: usize,
+        receipt: Option<ScopedReadReceipt>,
+    ) -> Self {
+        Self {
+            bytes: out.into_bytes(),
+            next_cursor,
+            total,
+            receipt,
+        }
+    }
+}
+
+fn fold_receipt(into: &mut Option<ScopedReadReceipt>, later: ScopedReadReceipt) {
+    match into {
+        Some(receipt) => receipt.restrict_with(&later),
+        None => *into = Some(later),
     }
 }
 
@@ -619,59 +674,6 @@ fn parse_byte_cursor(cursor: Option<&str>) -> Result<usize> {
             .parse::<usize>()
             .map_err(|_| Error::InvalidConfig("invalid graph-fs byte cursor".to_owned())),
         None => Ok(0),
-    }
-}
-
-fn literal_grep_pattern(pattern: &str) -> Option<&str> {
-    let pattern = pattern.trim();
-    if pattern.is_empty() || !pattern.is_ascii() {
-        return None;
-    }
-    if pattern.bytes().any(|byte| {
-        matches!(
-            byte,
-            b'.' | b'*'
-                | b'+'
-                | b'?'
-                | b'['
-                | b']'
-                | b'('
-                | b')'
-                | b'{'
-                | b'}'
-                | b'|'
-                | b'^'
-                | b'$'
-                | b'\\'
-        )
-    }) {
-        return None;
-    }
-    Some(pattern)
-}
-
-fn append_grep_file_matches(
-    path: &str,
-    bytes: &[u8],
-    pattern: &str,
-    out: &mut CommandOutputBuilder,
-    total: &mut usize,
-) {
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines().filter(|line| line.contains(pattern)) {
-        let rendered = format!("{path}:{line}\n");
-        if !out.try_push(rendered.as_bytes()) {
-            break;
-        }
-        *total += 1;
-    }
-}
-
-fn join_graph_path(parent: &str, name: &str) -> String {
-    if parent == "/" {
-        format!("/{name}")
-    } else {
-        format!("{parent}/{name}")
     }
 }
 

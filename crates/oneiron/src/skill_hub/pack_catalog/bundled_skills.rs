@@ -1,5 +1,6 @@
 //! Bundled skills traverse the same pinned hub import, scanner and provenance doors.
-use super::{PackInstallReceipt, PackSource, invalid};
+use super::{PackInstallReceipt, PackSource, admission::PACK_INSTALL, invalid};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{
     Vault,
     entity_id::EntityId,
@@ -9,6 +10,10 @@ use crate::{
     temporal::TimeRange,
 };
 use std::collections::BTreeMap;
+
+/// A bundled skill's provenance alias names the pack that minted it.
+const PACK_SKILL_ALIAS: SideTable<(EntityId, [u8; 32]), String, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_PACK_SKILL_ALIAS);
 
 /// Exact per-skill source held until the pack install verdict commits.
 pub(super) struct ImportedPackSkillSource {
@@ -63,10 +68,11 @@ impl Vault {
                 reference: skill_ref.clone(),
                 hash,
             });
-            self.store.vault_meta.put(
+            PACK_SKILL_ALIAS.put(
+                &self.store,
                 txn,
                 &pack_skill_alias_key(&id, &skill_ref)?,
-                source.manifest.name.as_bytes(),
+                &source.manifest.name,
             )?;
             ids.push(id);
         }
@@ -107,18 +113,24 @@ impl Vault {
                     .ok_or_else(|| invalid("bundled skill provenance missing hub ref"))?;
                 let reference = HubRef::from_value(value)?;
                 let marker = pack_skill_alias_key(&old_id, &reference)?;
-                match self.store.vault_meta.get(txn, &marker)? {
+                match PACK_SKILL_ALIAS
+                    .get(&self.store, txn, &marker)
+                    .map_err(|error| {
+                        if error.kind() == crate::error::ErrorKind::SideTableRow {
+                            invalid("pack skill alias owner corrupt")
+                        } else {
+                            error
+                        }
+                    })? {
                     // A standalone or unmarked alias is a separate holder.
                     None => shared = true,
                     Some(owner) => {
-                        let owner = std::str::from_utf8(&owner)
-                            .map_err(|_| invalid("pack skill alias owner corrupt"))?;
                         // This marker describes where the alias was minted,
                         // not who owns the SKILL today. Only a live receipt
                         // still listing the old ID keeps the revision Active.
                         if owner != prior.pack_name
                             && self
-                                .mounted_pack_in_txn(txn, owner)?
+                                .mounted_pack_in_txn(txn, &owner)?
                                 .is_some_and(|pack| pack.skills.contains(old_hex))
                         {
                             shared = true;
@@ -126,19 +138,18 @@ impl Vault {
                     }
                 }
             }
-            for entry in self
-                .store
-                .vault_meta
-                .prefix_iter(txn, b"pack.install.v1/")?
-            {
+            for entry in PACK_INSTALL.iter_raw_from(&self.store, txn, &[])? {
                 let (key, bytes) = entry?;
-                if key.as_ref()
-                    == [b"pack.install.v1/".as_slice(), prior.pack_name.as_bytes()].concat()
-                {
+                if key == prior.pack_name.as_bytes() {
                     continue;
                 }
-                let other: PackInstallReceipt = serde_json::from_slice(&bytes)
-                    .map_err(|_| invalid("pack install catalog corrupt"))?;
+                let other = PACK_INSTALL.decode_value(&bytes).map_err(|error| {
+                    if error.kind() == crate::error::ErrorKind::SideTableRow {
+                        invalid("pack install catalog corrupt")
+                    } else {
+                        error
+                    }
+                })?;
                 if self
                     .mounted_pack_in_txn(txn, &other.pack_name)?
                     .is_some_and(|pack| pack.skills.contains(old_hex))
@@ -164,13 +175,10 @@ impl Vault {
     }
 }
 
-fn pack_skill_alias_key(id: &EntityId, source: &HubRef) -> Result<Vec<u8>> {
-    let mut key = b"pack.skill-alias.v1/".to_vec();
-    key.extend_from_slice(id.as_bytes());
+fn pack_skill_alias_key(id: &EntityId, source: &HubRef) -> Result<(EntityId, [u8; 32])> {
     let encoded = serde_json::to_vec(&source.to_value()?)
         .map_err(|_| invalid("pack skill alias encoding failed"))?;
-    key.extend_from_slice(blake3::hash(&encoded).as_bytes());
-    Ok(key)
+    Ok((*id, *blake3::hash(&encoded).as_bytes()))
 }
 
 /// Distinct skill provenance: the pack source ref itself may contain many

@@ -122,7 +122,7 @@ fn pii_is_replaced_before_storage_and_read_and_uncertainty_fails_closed() -> cra
         .vault_meta
         .get(
             &raw,
-            &super::sample_key(got[0].sampled_at / super::WEEK, &id),
+            &super::SAMPLE.key_bytes(&super::sample_key(got[0].sampled_at / super::WEEK, &id)),
         )?
         .expect("persisted redacted sample");
     assert!(!stored.windows(3).any(|chunk| chunk == b"Ada"));
@@ -265,7 +265,10 @@ fn erasing_turn_or_message_revokes_the_derived_sample() -> crate::Result<()> {
             vault
                 .store
                 .vault_meta
-                .get(&txn, &super::sample_key(1_800_000_000 / super::WEEK, &id))?
+                .get(
+                    &txn,
+                    &super::SAMPLE.key_bytes(&super::sample_key(1_800_000_000 / super::WEEK, &id))
+                )?
                 .is_none()
         );
     }

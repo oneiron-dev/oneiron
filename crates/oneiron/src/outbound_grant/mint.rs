@@ -2,6 +2,7 @@
 
 use super::codec::{decode_standing_outbound_grant_body, encode_standing_outbound_grant_body};
 use super::grant::{StandingOutboundGrant, StandingOutboundGrantStatus};
+use super::index::{PRINCIPAL_INDEX, principal_index_table_key};
 use super::scope::{
     BOOKING_PAGE_INVITE_ORIGIN_ACTION_ID, BOOKING_PAGE_INVITE_ORIGIN_COMPONENT_ID,
     BookingPageInviteGrantMintIntent, ScopedMcpGrantMintIntent, StandingOutboundGrantScope,
@@ -275,9 +276,14 @@ impl Vault {
         if let Some(old_index_key) = old_index_key.as_ref()
             && old_index_key != &new_index_key
         {
-            self.store.vault_meta.delete(wtxn, old_index_key)?;
+            PRINCIPAL_INDEX.delete(&self.store, wtxn, &principal_index_table_key(old_index_key))?;
         }
-        self.store.vault_meta.put(wtxn, &new_index_key, &[])?;
+        PRINCIPAL_INDEX.put(
+            &self.store,
+            wtxn,
+            &principal_index_table_key(&new_index_key),
+            &(),
+        )?;
         Ok(())
     }
 }

@@ -7,10 +7,12 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::vault::{ReadMode, RevisionRef};
 
-const PREFIX: &[u8] = b"claim.supersession_diff.v1:";
 const ROW_LEN: usize = 16 + 16 + 32 + 32;
+const PAIRS: SideTable<(EntityId, EntityId), RevisionPair, Raw> =
+    SideTable::new(&side_table::CLAIM_SUPERSESSION_DIFF);
 
 #[derive(Clone, Copy)]
 pub(crate) struct RevisionPair {
@@ -19,9 +21,26 @@ pub(crate) struct RevisionPair {
     pub before_hash: [u8; 32],
     pub after_hash: [u8; 32],
 }
-
-fn key(old: EntityId, new: EntityId) -> Vec<u8> {
-    [PREFIX, old.as_bytes(), new.as_bytes()].concat()
+impl RawValue for RevisionPair {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut row = Vec::with_capacity(ROW_LEN);
+        row.extend_from_slice(&self.before.0);
+        row.extend_from_slice(&self.after.0);
+        row.extend_from_slice(&self.before_hash);
+        row.extend_from_slice(&self.after_hash);
+        Ok(row)
+    }
+    fn from_raw(row: &[u8]) -> std::result::Result<Self, CodecError> {
+        if row.len() != ROW_LEN {
+            return Err(Error::CorruptedIndex("supersession revision pair").into());
+        }
+        Ok(Self {
+            before: RevisionRef(row[0..16].try_into().expect("length checked")),
+            after: RevisionRef(row[16..32].try_into().expect("length checked")),
+            before_hash: row[32..64].try_into().expect("length checked"),
+            after_hash: row[64..96].try_into().expect("length checked"),
+        })
+    }
 }
 
 pub(crate) fn capture_in_txn(
@@ -61,18 +80,12 @@ pub(crate) fn store_in_txn(
     new: EntityId,
     pair: RevisionPair,
 ) -> Result<()> {
-    let key = key(old, new);
-    if vault.store.vault_meta.get(txn, &key)?.is_some() {
+    if PAIRS.contains(&vault.store, txn, &(old, new))? {
         return Err(Error::InvariantViolation(
             "supersession revision pair already recorded",
         ));
     }
-    let mut row = Vec::with_capacity(ROW_LEN);
-    row.extend_from_slice(&pair.before.0);
-    row.extend_from_slice(&pair.after.0);
-    row.extend_from_slice(&pair.before_hash);
-    row.extend_from_slice(&pair.after_hash);
-    vault.store.vault_meta.put(txn, &key, &row)?;
+    PAIRS.put(&vault.store, txn, &(old, new), &pair)?;
     Ok(())
 }
 
@@ -82,29 +95,5 @@ pub(crate) fn load_in_txn(
     old: EntityId,
     new: EntityId,
 ) -> Result<Option<RevisionPair>> {
-    let key = key(old, new);
-    let Some(row) = vault.store.vault_meta.get(txn, &key)? else {
-        return Ok(None);
-    };
-    if row.len() != ROW_LEN {
-        return Err(Error::CorruptedIndex("supersession revision pair"));
-    }
-    let mut before_hash = [0; 32];
-    let mut after_hash = [0; 32];
-    before_hash.copy_from_slice(&row[32..64]);
-    after_hash.copy_from_slice(&row[64..96]);
-    Ok(Some(RevisionPair {
-        before: RevisionRef(
-            row[0..16]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("supersession before revision"))?,
-        ),
-        after: RevisionRef(
-            row[16..32]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("supersession after revision"))?,
-        ),
-        before_hash,
-        after_hash,
-    }))
+    PAIRS.get(&vault.store, txn, &(old, new))
 }

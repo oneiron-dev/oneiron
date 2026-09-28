@@ -4,12 +4,12 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use super::facts::{CalendarEventRow, CalendarRead, event_row, visit_calendar_events};
+use super::facts::{CalendarEventRow, CalendarRead, event_row, receipted, visit_calendar_events};
 use super::requests::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
     MAX_CALENDAR_SEARCH_LIMIT,
 };
-use crate::claim::ScopedRead;
+use crate::claim::{ScopedRead, ScopedReadResult};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
@@ -42,12 +42,13 @@ pub fn read_event(vault: &Vault, req: &CalendarReadRequest) -> Result<Option<Cal
     read_event_in(&CalendarRead::Vault(vault), req)
 }
 
-/// Reads one calendar EVENT through an actor's scoped-read lane.
+/// Reads one calendar EVENT through an actor's scoped-read lane, with the
+/// receipt of every claim read the projection made.
 pub fn read_event_scoped(
     read: &ScopedRead<'_>,
     req: &CalendarReadRequest,
-) -> Result<Option<CalendarEventView>> {
-    read_event_in(&CalendarRead::Scoped(read), req)
+) -> Result<ScopedReadResult<Option<CalendarEventView>>> {
+    receipted(read, |lane| read_event_in(lane, req))
 }
 
 fn read_event_in(
@@ -66,12 +67,13 @@ pub fn search_events(vault: &Vault, req: &CalendarSearchRequest) -> Result<Vec<C
     search_events_in(&CalendarRead::Vault(vault), req)
 }
 
-/// Searches calendar EVENTs through an actor's scoped-read lane.
+/// Searches calendar EVENTs through an actor's scoped-read lane, with the
+/// receipt of every claim read the projection made.
 pub fn search_events_scoped(
     read: &ScopedRead<'_>,
     req: &CalendarSearchRequest,
-) -> Result<Vec<CalendarEventView>> {
-    search_events_in(&CalendarRead::Scoped(read), req)
+) -> Result<ScopedReadResult<Vec<CalendarEventView>>> {
+    receipted(read, |lane| search_events_in(lane, req))
 }
 
 fn search_events_in(

@@ -11,8 +11,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -22,14 +23,69 @@ use super::codec::{
     expect_string, expect_u64, invalid_dreamer_runner, pinned_key_index,
 };
 use super::constants::{
-    DREAMER_MILESTONE_INDEX_BACKFILLED_KEY, DREAMER_MILESTONE_INDEX_CANDIDATE_KEY_LEN,
-    DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX, DREAMER_MILESTONE_INDEX_CLAIM_PREFIX,
     DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_KEYS,
     DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_ATTEMPT_KIND, KEY_AT, KEY_ATTEMPT_ID,
     KEY_MILESTONE, KEY_SCHEMA_VERSION,
 };
 use super::store::DreamerRunnerStore;
 use super::types::{DreamerDurableMilestone, DreamerMilestoneClaim, DreamerMilestoneKind};
+
+/// Marker that the one-time durable-milestone-index backfill pass has run.
+pub(super) const MILESTONE_INDEX_BACKFILLED: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::DREAMER_MILESTONE_INDEX_BACKFILLED);
+/// Durable milestone-index candidate row (empty-value marker) for an
+/// attempt, ordered by (at, learned_at, claim_id); only indexed once the
+/// milestone claim is bound to its attempt.
+pub(super) const MILESTONE_INDEX_CANDIDATE: SideTable<MilestoneCandidateKey, (), Raw> =
+    SideTable::new(&side_table::DREAMER_MILESTONE_INDEX_CANDIDATE);
+/// Pointer from a milestone claim id back to its
+/// [`MILESTONE_INDEX_CANDIDATE`] row key (the full stored key bytes).
+pub(super) const MILESTONE_INDEX_CLAIM: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DREAMER_MILESTONE_INDEX_CLAIM);
+
+/// `dreamer.milestone_index.v1.c:` row key: attempt id, then `(at,
+/// learned_at, claim id)` — not a [`crate::side_table::FixedSideKey`] tuple
+/// because four fixed-width parts need one more slot than the built-in
+/// tuples spell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct MilestoneCandidateKey {
+    pub(super) attempt_id: AttemptId,
+    pub(super) at: u64,
+    pub(super) learned_at: u64,
+    pub(super) claim_id: EntityId,
+}
+
+impl SideKey for MilestoneCandidateKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.attempt_id.encode_into(out);
+        out.extend_from_slice(&self.at.to_be_bytes());
+        out.extend_from_slice(&self.learned_at.to_be_bytes());
+        self.claim_id.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (attempt_bytes, rest) = bytes.split_at_checked(16)?;
+        let (at_bytes, rest) = rest.split_at_checked(8)?;
+        let (learned_bytes, claim_bytes) = rest.split_at_checked(8)?;
+        Some(Self {
+            attempt_id: AttemptId::decode_key(attempt_bytes)?,
+            at: u64::from_be_bytes(at_bytes.try_into().ok()?),
+            learned_at: u64::from_be_bytes(learned_bytes.try_into().ok()?),
+            claim_id: EntityId::decode_key(claim_bytes)?,
+        })
+    }
+}
+
+impl From<&DreamerDurableMilestone> for MilestoneCandidateKey {
+    fn from(milestone: &DreamerDurableMilestone) -> Self {
+        Self {
+            attempt_id: milestone.attempt_id,
+            at: milestone.at,
+            learned_at: milestone.learned_at,
+            claim_id: milestone.claim_id,
+        }
+    }
+}
 
 impl DreamerRunnerStore<'_> {
     /// Returns the latest active/approved durable milestone for `attempt_id`.
@@ -41,25 +97,13 @@ impl DreamerRunnerStore<'_> {
         attempt_id: AttemptId,
     ) -> Result<Option<DreamerDurableMilestone>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        if self
-            .vault
-            .store
-            .vault_meta
-            .get(&rtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
-            .is_some()
-        {
+        if MILESTONE_INDEX_BACKFILLED.contains(&self.vault.store, &rtxn, &())? {
             return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, attempt_id);
         }
         drop(rtxn);
 
         let mut wtxn = self.vault.store.env.write_txn()?;
-        if self
-            .vault
-            .store
-            .vault_meta
-            .get(&wtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
-            .is_some()
-        {
+        if MILESTONE_INDEX_BACKFILLED.contains(&self.vault.store, &wtxn, &())? {
             drop(wtxn);
             let rtxn = self.vault.store.env.read_txn()?;
             return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, attempt_id);
@@ -174,11 +218,14 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
         return Ok(());
     }
 
-    let candidate_key = dreamer_milestone_candidate_key(&milestone);
-    store.vault_meta.put(wtxn, &candidate_key, b"")?;
-    store
-        .vault_meta
-        .put(wtxn, &dreamer_milestone_claim_key(claim_id), &candidate_key)?;
+    let candidate_key = MilestoneCandidateKey::from(&milestone);
+    MILESTONE_INDEX_CANDIDATE.put(store, wtxn, &candidate_key, &())?;
+    MILESTONE_INDEX_CLAIM.put(
+        store,
+        wtxn,
+        claim_id,
+        &MILESTONE_INDEX_CANDIDATE.key_bytes(&candidate_key),
+    )?;
     Ok(())
 }
 
@@ -370,16 +417,20 @@ pub(crate) fn deindex_dreamer_milestone_claim(
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<()> {
-    let claim_key = dreamer_milestone_claim_key(claim_id);
-    let Some(candidate_key) = store
-        .vault_meta
-        .get(wtxn, &claim_key)?
-        .map(|value| value.to_vec())
-    else {
+    let Some(candidate_key) = MILESTONE_INDEX_CLAIM.get(store, &*wtxn, claim_id)? else {
         return Ok(());
     };
-    store.vault_meta.delete(wtxn, &candidate_key)?;
-    store.vault_meta.delete(wtxn, &claim_key)?;
+    // The stored pointer is always this door's own `key_bytes` output
+    // (never sync-materialized, never peer-supplied), so the strip+decode
+    // below only fails on in-process corruption; a failure there leaves the
+    // candidate row behind rather than deleting the wrong one.
+    if let Some(candidate) = candidate_key
+        .strip_prefix(MILESTONE_INDEX_CANDIDATE.decl().prefix)
+        .and_then(MilestoneCandidateKey::decode_key)
+    {
+        MILESTONE_INDEX_CANDIDATE.delete(store, wtxn, &candidate)?;
+    }
+    MILESTONE_INDEX_CLAIM.delete(store, wtxn, claim_id)?;
     Ok(())
 }
 
@@ -388,10 +439,12 @@ fn latest_indexed_dreamer_milestone(
     rtxn: &heed::RoTxn<'_>,
     attempt_id: AttemptId,
 ) -> Result<Option<DreamerDurableMilestone>> {
-    let prefix = dreamer_milestone_candidate_prefix(attempt_id);
     let mut latest: Option<DreamerDurableMilestone> = None;
-    for row in store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, _value) = row?;
+    // A lazy, per-row-tolerant iterator rather than `scan_from`: a malformed
+    // candidate key (ONE-1288's corrupt-row fixture) must be skipped like
+    // any other non-matching row, never abort the whole lookup.
+    for row in MILESTONE_INDEX_CANDIDATE.iter_from(store, rtxn, attempt_id.as_bytes())? {
+        let Ok((key, ())) = row else { continue };
         let Some(milestone) = indexed_dreamer_milestone_if_current(store, rtxn, &key, attempt_id)?
         else {
             continue;
@@ -404,17 +457,13 @@ fn latest_indexed_dreamer_milestone(
 fn indexed_dreamer_milestone_if_current(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
-    key: &[u8],
+    key: &MilestoneCandidateKey,
     expected_attempt_id: AttemptId,
 ) -> Result<Option<DreamerDurableMilestone>> {
-    let Ok((attempt_id, at, learned_at, claim_id)) = decode_dreamer_milestone_candidate_key(key)
-    else {
-        return Ok(None);
-    };
-    if attempt_id != expected_attempt_id {
+    if key.attempt_id != expected_attempt_id {
         return Ok(None);
     }
-    let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, &key.claim_id)? else {
         return Ok(None);
     };
 
@@ -426,14 +475,14 @@ fn indexed_dreamer_milestone_if_current(
     let Ok(body) = crate::claim::decode_claim_body(&raw.body, true) else {
         return Ok(None);
     };
-    let Some(milestone) = dreamer_milestone_from_claim_body(&claim_id, &body, raw.learned_at)
+    let Some(milestone) = dreamer_milestone_from_claim_body(&key.claim_id, &body, raw.learned_at)
     else {
         return Ok(None);
     };
-    if milestone.attempt_id == attempt_id
-        && milestone.at == at
-        && milestone.learned_at == learned_at
-        && milestone.claim_id == claim_id
+    if milestone.attempt_id == key.attempt_id
+        && milestone.at == key.at
+        && milestone.learned_at == key.learned_at
+        && milestone.claim_id == key.claim_id
     {
         Ok(Some(milestone))
     } else {
@@ -469,12 +518,13 @@ fn backfill_dreamer_milestone_index(
 
     let mut latest: Option<DreamerDurableMilestone> = None;
     for milestone in milestones {
-        let candidate_key = dreamer_milestone_candidate_key(&milestone);
-        store.vault_meta.put(wtxn, &candidate_key, b"")?;
-        store.vault_meta.put(
+        let candidate_key = MilestoneCandidateKey::from(&milestone);
+        MILESTONE_INDEX_CANDIDATE.put(store, wtxn, &candidate_key, &())?;
+        MILESTONE_INDEX_CLAIM.put(
+            store,
             wtxn,
-            &dreamer_milestone_claim_key(&milestone.claim_id),
-            &candidate_key,
+            &milestone.claim_id,
+            &MILESTONE_INDEX_CANDIDATE.key_bytes(&candidate_key),
         )?;
         if milestone.attempt_id == attempt_id
             && latest.as_ref().is_none_or(|current| {
@@ -485,9 +535,7 @@ fn backfill_dreamer_milestone_index(
             latest = Some(milestone);
         }
     }
-    store
-        .vault_meta
-        .put(wtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY, b"1")?;
+    MILESTONE_INDEX_BACKFILLED.put(store, wtxn, &(), &b"1".to_vec())?;
     Ok(latest)
 }
 
@@ -513,57 +561,6 @@ fn dreamer_milestone_from_claim_body(
         at,
         learned_at,
     })
-}
-
-pub(super) fn dreamer_milestone_candidate_prefix(attempt_id: AttemptId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len() + 16);
-    key.extend_from_slice(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX);
-    key.extend_from_slice(attempt_id.as_bytes());
-    key
-}
-
-fn dreamer_milestone_candidate_key(milestone: &DreamerDurableMilestone) -> Vec<u8> {
-    let mut key = dreamer_milestone_candidate_prefix(milestone.attempt_id);
-    key.extend_from_slice(&milestone.at.to_be_bytes());
-    key.extend_from_slice(&milestone.learned_at.to_be_bytes());
-    key.extend_from_slice(milestone.claim_id.as_bytes());
-    key
-}
-
-fn dreamer_milestone_claim_key(claim_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_MILESTONE_INDEX_CLAIM_PREFIX.len() + 16);
-    key.extend_from_slice(DREAMER_MILESTONE_INDEX_CLAIM_PREFIX);
-    key.extend_from_slice(claim_id.as_bytes());
-    key
-}
-
-fn decode_dreamer_milestone_candidate_key(key: &[u8]) -> Result<(AttemptId, u64, u64, EntityId)> {
-    if key.len() != DREAMER_MILESTONE_INDEX_CANDIDATE_KEY_LEN
-        || !key.starts_with(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX)
-    {
-        return Err(Error::CorruptedIndex("dreamer milestone index key"));
-    }
-    let mut cursor = DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len();
-    let attempt_id = AttemptId::from_bytes(&key[cursor..cursor + 16])?;
-    cursor += 16;
-    let at = u64::from_be_bytes(
-        key[cursor..cursor + 8]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("dreamer milestone index key"))?,
-    );
-    cursor += 8;
-    let learned_at = u64::from_be_bytes(
-        key[cursor..cursor + 8]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("dreamer milestone index key"))?,
-    );
-    cursor += 8;
-    let claim_id = EntityId::from_bytes(
-        key[cursor..cursor + 16]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("dreamer milestone index key"))?,
-    )?;
-    Ok((attempt_id, at, learned_at, claim_id))
 }
 
 /// The ONE home of the pinned `dreamer.job_milestone` claim-value shape

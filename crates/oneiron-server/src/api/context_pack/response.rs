@@ -290,7 +290,7 @@ pub(crate) async fn run_context_pack_builder(
         core_engine_error("core context-pack failed", error)
     })?;
     let clamped_out = pack.clamped_out();
-    let narrowing = scoped_read
+    let mut narrowing = scoped_read
         .filter_context_pack(&mut pack.value)
         .map_err(|error| {
             pack.discard_telemetry();
@@ -349,7 +349,7 @@ pub(crate) async fn run_context_pack_builder(
                         })?,
                 );
             }
-            let cursor = advance_memories_cursor(
+            let (cursor, observed) = advance_memories_cursor(
                 server,
                 &request.session_scope_id,
                 &request.session_id,
@@ -359,6 +359,7 @@ pub(crate) async fn run_context_pack_builder(
             )
             .await
             .map_err(|error| core_engine_error("context-pack observations failed", error))?;
+            narrowing.restrict_with(&observed);
             (section, Some(cursor))
         }
         None => (None, None),
@@ -638,8 +639,10 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
 }
 
 impl CoreContextPackResponse {
+    /// Records the served rows on the session, folding that read's receipt
+    /// into this response's `narrowing` and its withheld-data notice.
     pub(super) fn observe_rows(
-        &self,
+        &mut self,
         read: &oneiron::claim::ScopedRead<'_>,
         session: &mut oneiron::context_board::SessionReadSet,
     ) -> oneiron::Result<()> {
@@ -652,6 +655,16 @@ impl CoreContextPackResponse {
         if let Some(base) = &self.l2_base {
             ids.extend_from_slice(base.evidence_ids());
         }
-        session.observe_rows(read, &ids)
+        let observed = session.observe_rows(read, &ids)?;
+        self.narrowing.restrict_with(&observed);
+        self.access = oneiron::access_grant::GrantedData::new(
+            self.results
+                .iter()
+                .chain(&self.neighbors)
+                .map(|row| row.id.clone())
+                .collect(),
+            self.narrowing.suppressed_count,
+        );
+        Ok(())
     }
 }

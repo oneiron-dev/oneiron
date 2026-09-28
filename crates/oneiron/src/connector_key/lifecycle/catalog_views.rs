@@ -8,10 +8,7 @@ use super::super::record::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeyRecord, ConnectorKeyStatus,
     normalize_connector_key,
 };
-use super::super::txn::{
-    CONNECTOR_CATALOG_NAME_INDEX_PREFIX, connector_catalog_index_entity_id,
-    connector_catalog_name_index_key, governing_connector_key, read_connector_key_in_txn,
-};
+use super::super::txn::{CATALOG_NAME_INDEX, governing_connector_key, read_connector_key_in_txn};
 
 /// The HISTORY lens over one catalogued connector: what it is, plus the
 /// VALUE-LESS metadata of the key that governs it. `secret_ref` is a custody
@@ -79,15 +76,11 @@ impl Vault {
         let name_query = normalize_connector_key(query);
         let summary_query = query.trim().to_lowercase();
         let rtxn = self.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, CONNECTOR_CATALOG_NAME_INDEX_PREFIX)?
-        {
-            let (_, raw_id) = entry?;
-            ids.push(connector_catalog_index_entity_id(&raw_id)?);
-        }
+        let ids = CATALOG_NAME_INDEX
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect::<Vec<_>>();
         let mut hits = Vec::new();
         for id in ids {
             let record = read_connector_key_in_txn(&self.store, &rtxn, &id)?
@@ -174,11 +167,10 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         name: &str,
     ) -> Result<Option<(EntityId, ConnectorKeyRecord)>> {
-        let name_key = connector_catalog_name_index_key(&normalize_connector_key(name));
-        let Some(raw_id) = self.store.vault_meta.get(rtxn, &name_key)? else {
+        let Some(id) = CATALOG_NAME_INDEX.get(&self.store, rtxn, &normalize_connector_key(name))?
+        else {
             return Ok(None);
         };
-        let id = connector_catalog_index_entity_id(&raw_id)?;
         let record = read_connector_key_in_txn(&self.store, rtxn, &id)?
             .ok_or(Error::CorruptedIndex("connector catalog name index row"))?;
         Ok(Some((id, record)))

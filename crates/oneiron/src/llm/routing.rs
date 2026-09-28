@@ -15,15 +15,20 @@ use super::{
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
     ResponseFormat, StepOutcome, call_as_step,
 };
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     error::{Error, Result},
 };
 
-const POLICY_KEY: &[u8] = b"llm:description_policy:v1";
-const MEASUREMENTS_KEY: &[u8] = b"llm:description_measurements:v1";
-const SEAT_PREFIX: &[u8] = b"llm:routed_seat:v1:";
-const REASK_PREFIX: &[u8] = b"llm:description_reask:v1:";
+const POLICY: SideTable<(), DescriptionPolicy, LegacyJson> =
+    SideTable::new(&side_table::LLM_DESCRIPTION_POLICY);
+const MEASUREMENTS: SideTable<(), BTreeMap<ModelId, MeasuredDescription>, LegacyJson> =
+    SideTable::new(&side_table::LLM_DESCRIPTION_MEASUREMENTS);
+const REASKS: SideTable<String, DescriptionReask, LegacyJson> =
+    SideTable::new(&side_table::LLM_DESCRIPTION_REASK);
+const SEATS: SideTable<String, RoutedSeat, LegacyJson> =
+    SideTable::new(&side_table::LLM_ROUTED_SEAT);
 
 fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
@@ -243,12 +248,6 @@ pub struct DescriptionReask {
     pub acknowledged: bool,
 }
 
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(value).map_err(|err| invalid(err.to_string()))
-}
-fn decode<'a, T: Deserialize<'a>>(value: &'a [u8]) -> Result<T> {
-    serde_json::from_slice(value).map_err(|err| invalid(err.to_string()))
-}
 fn seat_key(id: &str) -> Result<Vec<u8>> {
     if id.is_empty()
         || id.len() > 128
@@ -258,7 +257,7 @@ fn seat_key(id: &str) -> Result<Vec<u8>> {
     {
         return Err(invalid("invalid routed seat id"));
     }
-    Ok([SEAT_PREFIX, id.as_bytes()].concat())
+    Ok(SEATS.key_bytes(&id.to_owned()))
 }
 pub(crate) fn purpose_key(purpose: &CallPurpose) -> String {
     match purpose {
@@ -446,19 +445,15 @@ impl Vault {
     pub fn set_description_policy(&self, policy: &DescriptionPolicy) -> Result<()> {
         policy.validate()?;
         let mut txn = self.store.env.write_txn()?;
-        self.store
-            .vault_meta
-            .put(&mut txn, POLICY_KEY, &encode(policy)?)?;
+        POLICY.put(&self.store, &mut txn, &(), policy)?;
         txn.commit()?;
         Ok(())
     }
     pub fn description_policy(&self) -> Result<Option<DescriptionPolicy>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, POLICY_KEY)?
-            .map(|bytes| {
-                let policy: DescriptionPolicy = decode(&bytes)?;
+        POLICY
+            .get(&self.store, &txn, &())?
+            .map(|policy| {
                 policy.validate()?;
                 Ok(policy)
             })
@@ -469,17 +464,11 @@ impl Vault {
             return Err(invalid("invalid measured description"));
         }
         let mut txn = self.store.env.write_txn()?;
-        let mut rows: BTreeMap<ModelId, MeasuredDescription> = self
-            .store
-            .vault_meta
-            .get(&txn, MEASUREMENTS_KEY)?
-            .map(|bytes| decode(&bytes))
-            .transpose()?
+        let mut rows = MEASUREMENTS
+            .get(&self.store, &txn, &())?
             .unwrap_or_default();
         rows.insert(measurement.model.clone(), measurement);
-        self.store
-            .vault_meta
-            .put(&mut txn, MEASUREMENTS_KEY, &encode(&rows)?)?;
+        MEASUREMENTS.put(&self.store, &mut txn, &(), &rows)?;
         txn.commit()?;
         Ok(())
     }
@@ -488,17 +477,12 @@ impl Vault {
     /// per pinned owner line even when the measured score later fluctuates.
     pub fn check_description_drift(&self) -> Result<Vec<DescriptionReask>> {
         let mut txn = self.store.env.write_txn()?;
-        let Some(bytes) = self.store.vault_meta.get(&txn, POLICY_KEY)? else {
+        let Some(policy) = POLICY.get(&self.store, &txn, &())? else {
             return Ok(vec![]);
         };
-        let policy: DescriptionPolicy = decode(&bytes)?;
         policy.validate()?;
-        let measurements: BTreeMap<ModelId, MeasuredDescription> = self
-            .store
-            .vault_meta
-            .get(&txn, MEASUREMENTS_KEY)?
-            .map(|bytes| decode(&bytes))
-            .transpose()?
+        let measurements = MEASUREMENTS
+            .get(&self.store, &txn, &())?
             .unwrap_or_default();
         let mut emitted = vec![];
         for row in &policy.models {
@@ -523,8 +507,7 @@ impl Vault {
                 blake3::hash(format!("{}|{:?}|{subject}", owner.model, trigger).as_bytes())
                     .to_hex()
                     .to_string();
-            let key = [REASK_PREFIX, identity.as_bytes()].concat();
-            if self.store.vault_meta.get(&txn, &key)?.is_none() {
+            if !REASKS.contains(&self.store, &txn, &identity)? {
                 let reask = DescriptionReask {
                     identity,
                     owner_model: owner.model.clone(),
@@ -532,9 +515,7 @@ impl Vault {
                     trigger,
                     acknowledged: false,
                 };
-                self.store
-                    .vault_meta
-                    .put(&mut txn, &key, &encode(&reask)?)?;
+                REASKS.put(&self.store, &mut txn, &reask.identity, &reask)?;
                 emitted.push(reask);
             }
         }
@@ -547,22 +528,16 @@ impl Vault {
         if identity.len() != 64 || !identity.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(invalid("invalid description re-ask identity"));
         }
-        let key = [REASK_PREFIX, identity.as_bytes()].concat();
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|bytes| decode(&bytes))
-            .transpose()
+        REASKS.get(&self.store, &txn, &identity.to_owned())
     }
     /// Recover owner asks persisted before their first delivery. A crash
     /// between trigger persistence and handoff cannot hide a pending ask.
     pub fn pending_description_reasks(&self) -> Result<Vec<DescriptionReask>> {
         let txn = self.store.env.read_txn()?;
         let mut pending = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&txn, REASK_PREFIX)? {
-            let (_, bytes) = entry?;
-            let ask: DescriptionReask = decode(&bytes)?;
+        for entry in REASKS.iter_from(&self.store, &txn, &[])? {
+            let (_, ask) = entry?;
             if !ask.acknowledged {
                 pending.push(ask);
             }
@@ -575,20 +550,15 @@ impl Vault {
         if identity.len() != 64 || !identity.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(invalid("invalid description re-ask identity"));
         }
-        let key = [REASK_PREFIX, identity.as_bytes()].concat();
         let mut txn = self.store.env.write_txn()?;
-        let mut ask: DescriptionReask = decode(
-            &self
-                .store
-                .vault_meta
-                .get(&txn, &key)?
-                .ok_or_else(|| invalid("unknown description re-ask"))?,
-        )?;
+        let mut ask = REASKS
+            .get(&self.store, &txn, &identity.to_owned())?
+            .ok_or_else(|| invalid("unknown description re-ask"))?;
         if ask.identity != identity {
             return Err(invalid("description re-ask identity mismatch"));
         }
         ask.acknowledged = true;
-        self.store.vault_meta.put(&mut txn, &key, &encode(&ask)?)?;
+        REASKS.put(&self.store, &mut txn, &identity.to_owned(), &ask)?;
         txn.commit()?;
         Ok(())
     }
@@ -606,32 +576,26 @@ impl Vault {
             settings,
             tier,
         } = birth;
-        let key = seat_key(id)?;
+        seat_key(id)?;
         validate_overrides(&settings.inference_overrides)?;
         let (policy_bytes, measurement_bytes, existing) = {
             let txn = self.store.env.read_txn()?;
             (
-                self.store
-                    .vault_meta
-                    .get(&txn, POLICY_KEY)?
-                    .map(|b| b.to_vec()),
-                self.store
-                    .vault_meta
-                    .get(&txn, MEASUREMENTS_KEY)?
-                    .map(|b| b.to_vec()),
-                self.store.vault_meta.get(&txn, &key)?.map(|b| b.to_vec()),
+                POLICY.get_bytes(&self.store, &txn, &())?,
+                MEASUREMENTS.get_bytes(&self.store, &txn, &())?,
+                SEATS.get(&self.store, &txn, &id.to_owned())?,
             )
         };
-        if let Some(bytes) = existing {
-            return decode(&bytes);
+        if let Some(seat) = existing {
+            return Ok(seat);
         }
         let policy_bytes =
             policy_bytes.ok_or_else(|| invalid("description policy not configured"))?;
-        let policy: DescriptionPolicy = decode(&policy_bytes)?;
+        let policy: DescriptionPolicy = POLICY.decode_value(&policy_bytes)?;
         policy.validate()?;
-        let measurements: BTreeMap<ModelId, MeasuredDescription> = measurement_bytes
+        let measurements = measurement_bytes
             .as_deref()
-            .map(decode)
+            .map(|bytes| MEASUREMENTS.decode_value(bytes))
             .transpose()?
             .unwrap_or_default();
         let (chosen, verdict, effort) = resolve(
@@ -663,39 +627,28 @@ impl Vault {
             ),
         };
         let mut txn = self.store.env.write_txn()?;
-        if let Some(bytes) = self.store.vault_meta.get(&txn, &key)? {
-            return decode(&bytes);
+        if let Some(seat) = SEATS.get(&self.store, &txn, &id.to_owned())? {
+            return Ok(seat);
         }
-        if self.store.vault_meta.get(&txn, POLICY_KEY)?.as_deref() != Some(policy_bytes.as_slice())
-            || self
-                .store
-                .vault_meta
-                .get(&txn, MEASUREMENTS_KEY)?
-                .as_deref()
-                != measurement_bytes.as_deref()
+        if POLICY.get_bytes(&self.store, &txn, &())?.as_deref() != Some(policy_bytes.as_slice())
+            || MEASUREMENTS.get_bytes(&self.store, &txn, &())? != measurement_bytes
         {
             return Err(invalid("description evidence changed during seat birth"));
         }
-        self.store.vault_meta.put(&mut txn, &key, &encode(&seat)?)?;
+        SEATS.put(&self.store, &mut txn, &id.to_owned(), &seat)?;
         txn.commit()?;
         Ok(seat)
     }
     pub fn routed_seat(&self, id: &str) -> Result<Option<RoutedSeat>> {
+        seat_key(id)?;
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &seat_key(id)?)?
-            .map(|bytes| decode(&bytes))
-            .transpose()
+        SEATS.get(&self.store, &txn, &id.to_owned())
     }
     fn description_measurements(&self) -> Result<BTreeMap<ModelId, MeasuredDescription>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, MEASUREMENTS_KEY)?
-            .map(|bytes| decode(&bytes))
-            .transpose()
-            .map(Option::unwrap_or_default)
+        Ok(MEASUREMENTS
+            .get(&self.store, &txn, &())?
+            .unwrap_or_default())
     }
     /// Build the one current verdict request before durable hashing. Generative
     /// history and provider cache references cannot cross this boundary.

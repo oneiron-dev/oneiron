@@ -43,6 +43,7 @@ use crate::identity_topology::{
     identity_topology_shell_peers_for_store_in_txn, note_zero_head_split_in_txn,
     shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
 };
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::vault::{MAX_EDGE_QUERY_RESULTS, Vault};
 
@@ -53,15 +54,40 @@ use crate::vault::{MAX_EDGE_QUERY_RESULTS, Vault};
 /// dropped table degrades to universal identity, never to a wrong head.
 ///
 /// This const lives with the projection rather than in `store.rs` for the
-/// same reason `identity_topology::IDENTITY_TOPOLOGY_SEQ_KEY` does: the
+/// same reason `identity_topology::IDENTITY_TOPOLOGY_SEQ` does: the
 /// family that owns the keyspace owns its key shape, and `vault_meta`
 /// readers already ignore unknown prefixes.
+///
+/// Kept as a plain byte string, alongside [`REDIRECT`] below:
+/// `crate::subject_model`'s tests and this module's own tests address this
+/// row family directly through this constant, so it stays live even though
+/// this module's own accessors now go through the typed table.
+#[cfg(test)]
 pub(crate) const REDIRECT_TABLE_META_PREFIX: &[u8] = b"redirect:v1:";
 
 /// Only accepted row-version byte. A row is `[version][head_id(16)]*`, so
 /// the zero-head split is exactly the one-byte row — distinguishable from
 /// an absent row (live entity) by presence alone.
 const REDIRECT_ROW_VERSION: u8 = 1;
+
+/// The materialized redirect projection. Key: shell [`EntityId`].
+const REDIRECT: SideTable<EntityId, RedirectRow, Raw> =
+    SideTable::new(&side_table::IDENTITY_REDIRECT);
+
+/// [`REDIRECT`]'s value: a shell's head set, wire-encoded by
+/// [`encode_redirect_row`] / [`decode_redirect_row`] (those stay the codec).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RedirectRow(Vec<EntityId>);
+
+impl RawValue for RedirectRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_redirect_row(&self.0))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self(decode_redirect_row(bytes)?))
+    }
+}
 
 /// ARCH-0038 carrier-class handle for the redirect table (MS-07 / ONE-1749
 /// adds it to the erase machinery's carrier list). Named here so the erase
@@ -103,14 +129,6 @@ fn decode_redirect_row(row: &[u8]) -> Result<Vec<EntityId>> {
             EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex("identity redirect row"))
         })
         .collect()
-}
-
-/// The `vault_meta` key of one shell's redirect row.
-fn redirect_key(shell: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(REDIRECT_TABLE_META_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(REDIRECT_TABLE_META_PREFIX);
-    key.extend_from_slice(shell.as_bytes());
-    key
 }
 
 /// The redirect row `entity` MUST have, derived from engine-authored truth
@@ -185,13 +203,10 @@ pub(crate) fn maintain_redirect_projection_in_txn(
         );
     }
     for (entity, heads) in rows {
-        let key = redirect_key(&entity);
         match heads {
-            Some(heads) => store
-                .vault_meta
-                .put(wtxn, &key, &encode_redirect_row(&heads))?,
+            Some(heads) => REDIRECT.put(store, wtxn, &entity, &RedirectRow(heads))?,
             None => {
-                store.vault_meta.delete(wtxn, &key)?;
+                REDIRECT.delete(store, wtxn, &entity)?;
             }
         }
     }
@@ -205,10 +220,9 @@ fn redirect_row_in_txn(
     rtxn: &heed::RoTxn<'_>,
     shell: &EntityId,
 ) -> Result<Option<Vec<EntityId>>> {
-    let Some(row) = store.vault_meta.get(rtxn, &redirect_key(shell))? else {
-        return Ok(None);
-    };
-    decode_redirect_row(row.as_ref()).map(Some)
+    Ok(REDIRECT
+        .get(store, rtxn, shell)?
+        .map(|RedirectRow(heads)| heads))
 }
 
 /// Walks `id` through the projection into its head set, accumulating into
@@ -268,18 +282,8 @@ fn table_inbound_shells_in_txn(
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
     let mut inbound: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
-    for entry in store
-        .vault_meta
-        .prefix_iter(rtxn, REDIRECT_TABLE_META_PREFIX)?
-    {
-        let (key, value) = entry?;
-        let shell_bytes: [u8; ENTITY_ID_LEN] = key
-            .get(REDIRECT_TABLE_META_PREFIX.len()..)
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or(Error::CorruptedIndex("identity redirect row"))?;
-        let shell = EntityId::from_bytes(shell_bytes)
-            .map_err(|_| Error::CorruptedIndex("identity redirect row"))?;
-        for head in decode_redirect_row(value.as_ref())? {
+    for (shell, RedirectRow(heads)) in REDIRECT.scan(store, rtxn)? {
+        for head in heads {
             inbound.entry(head).or_default().insert(shell);
         }
     }
@@ -557,15 +561,7 @@ impl Vault {
     /// and never to a wrong head.
     pub fn drop_redirect_projection(&self) -> Result<()> {
         self.with_write_txn(|wtxn| {
-            let stale: Vec<Vec<u8>> = self
-                .store
-                .vault_meta
-                .prefix_iter(&*wtxn, REDIRECT_TABLE_META_PREFIX)?
-                .map(|row| row.map(|(key, _)| key.to_vec()))
-                .collect::<Result<_>>()?;
-            for key in stale {
-                self.store.vault_meta.delete(wtxn, &key)?;
-            }
+            REDIRECT.delete_from(&self.store, wtxn, &[])?;
             Ok(())
         })
     }

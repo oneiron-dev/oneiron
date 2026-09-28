@@ -8,7 +8,10 @@ impl DreamerRunnerStore<'_> {
         input: SettleDreamerBudget,
     ) -> Result<DreamerBudgetSettlementOutcome> {
         validate_budget_id(&input.budget_id)?;
-        let reservation_key = budget_reservation_key(&input.budget_id, input.child_attempt)?;
+        let reservation_key = BudgetReservationKey {
+            budget_id: input.budget_id.clone(),
+            attempt_id: input.child_attempt,
+        };
         let Some(reservation) = read_budget_reservation_in_txn(
             self.vault,
             wtxn,
@@ -19,13 +22,11 @@ impl DreamerRunnerStore<'_> {
             return Ok(DreamerBudgetSettlementOutcome::NoReservation);
         };
 
-        let budget_key = budget_key(&input.budget_id)?;
-        let Some(raw_budget) = self.vault.store.vault_meta.get(wtxn, &budget_key)? else {
+        let Some(mut budget) = BUDGET.get(&self.vault.store, &*wtxn, &input.budget_id)? else {
             return Err(invalid_dreamer_runner(
                 "dreamer budget reservation missing counter",
             ));
         };
-        let mut budget = decode_budget_record(&raw_budget)?;
         if budget.budget_id != input.budget_id {
             return Err(invalid_dreamer_runner("dreamer budget key/body mismatch"));
         }
@@ -33,7 +34,7 @@ impl DreamerRunnerStore<'_> {
         let settlement =
             settle_budget_for_child(&mut budget, reservation, input.actual_units, input.now)?;
         put_budget_record_in_txn(self.vault, wtxn, &settlement.budget)?;
-        self.vault.store.vault_meta.delete(wtxn, &reservation_key)?;
+        BUDGET_RESERVATION.delete(&self.vault.store, wtxn, &reservation_key)?;
 
         Ok(DreamerBudgetSettlementOutcome::Settled(settlement))
     }
@@ -45,9 +46,8 @@ impl DreamerRunnerStore<'_> {
         attempt_id: AttemptId,
         step_hash: &[u8; 32],
     ) -> Result<bool> {
-        let key = budget_step_charge_key(attempt_id, step_hash);
         let rtxn = self.vault.store.env.read_txn()?;
-        match self.vault.store.vault_meta.get(&rtxn, &key)?.as_deref() {
+        match BUDGET_STEP_CHARGE.get(&self.vault.store, &rtxn, &(attempt_id, *step_hash))? {
             None => Ok(false),
             Some([1]) => Ok(true),
             Some(_) => Err(invalid_dreamer_runner(
@@ -62,17 +62,7 @@ impl DreamerRunnerStore<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         attempt_id: AttemptId,
     ) -> Result<()> {
-        let prefix = budget_step_charge_prefix(attempt_id);
-        let keys: Vec<Vec<u8>> = self
-            .vault
-            .store
-            .vault_meta
-            .prefix_iter(&*wtxn, &prefix)?
-            .map(|row| row.map(|(key, _)| key.to_vec()))
-            .collect::<std::result::Result<_, _>>()?;
-        for key in keys {
-            self.vault.store.vault_meta.delete(wtxn, &key)?;
-        }
+        BUDGET_STEP_CHARGE.delete_from(&self.vault.store, wtxn, attempt_id.as_bytes())?;
         Ok(())
     }
 
@@ -97,11 +87,11 @@ impl DreamerRunnerStore<'_> {
                 ));
             }
             for hash in step_hashes {
-                let key = budget_step_charge_key(input.child_attempt, hash);
-                if self.vault.store.vault_meta.get(wtxn, &key)?.is_some() {
+                let key = (input.child_attempt, *hash);
+                if BUDGET_STEP_CHARGE.contains(&self.vault.store, wtxn, &key)? {
                     return Err(invalid_dreamer_runner("checkpoint step charged twice"));
                 }
-                self.vault.store.vault_meta.put(wtxn, &key, &[1])?;
+                BUDGET_STEP_CHARGE.put(&self.vault.store, wtxn, &key, &[1])?;
             }
             self.park_attempt_in_txn(wtxn, park)?;
             Ok(settled)

@@ -9,7 +9,17 @@ use crate::error::{Error, ErrorKind, RegistryError, Result};
 use crate::ports::EntityStoreStaging;
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
+
+/// The `gate` module's trusted-manifest-origin marker, deleted here as part
+/// of full entity deindex. Key: hex32.
+const TRUSTED_MANIFEST_ORIGIN: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_TRUSTED_ORIGIN);
+/// The `gate` module's seeded-default body hash, deleted with the manifest
+/// it vouches for. Key: hex32.
+const SEEDED_MANIFEST_CONFIDENCE: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_SEEDED_CONFIDENCE);
 
 pub(super) fn reject_engine_authored_delete(
     store: &Store,
@@ -225,15 +235,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
-    store
-        .sync_state
-        .delete(wtxn, &crate::gate::trusted_manifest_key(id))?;
-    store
-        .sync_state
-        .delete(wtxn, &crate::gate::seeded_manifest_key(id))?;
-    store
-        .sync_state
-        .delete(wtxn, &crate::gate::seeded_manifest_key(id))?;
+    TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
+    SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.port_remove_entity_row(wtxn, id)?;
     crate::ports::audit_mutation_in_txn(

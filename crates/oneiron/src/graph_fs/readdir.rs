@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use crate::batch::EntityMetadataHeader;
-use crate::claim::ScopedRead;
+use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::code_sandbox::SandboxLinkedImport;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -25,6 +25,23 @@ use super::coreutils::{claim_matches_world_in, grant_scope_world_name, read_gran
 use super::paging::{
     EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard, parse_edge_cursor,
 };
+
+/// File lookup and the receipt of the scoped read, if a stored row was read.
+/// Fixed files and unmatched paths have no scoped-read receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphFsFileRead {
+    pub value: Option<GraphFsFile>,
+    pub receipt: Option<ScopedReadReceipt>,
+}
+
+impl From<ScopedReadResult<Option<GraphFsFile>>> for GraphFsFileRead {
+    fn from(read: ScopedReadResult<Option<GraphFsFile>>) -> Self {
+        Self {
+            value: read.value,
+            receipt: Some(read.receipt),
+        }
+    }
+}
 
 impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     #[must_use]
@@ -82,23 +99,25 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["entities"] => self.listdir_entities(&normalized, cursor),
             ["entities", entity] => {
                 let id = parse_entity_id(entity)?;
-                if self.scoped_read.is_entity_readable(&id)? {
-                    let crate::claim::ScopedReadResult {
-                        value,
-                        receipt: _receipt,
-                    } = self.scoped_read.get_entity_parts_with_receipt(&id, None)?;
-                    Ok(self.fixed_page(
+                let readable = self.scoped_read.is_entity_readable(&id)?;
+                let body = self.scoped_read.read(&[PointRead::id(id)], None)?.single();
+                let page = if readable {
+                    self.fixed_page(
                         &normalized,
                         vec![
                             GraphFsEntry::directory("claims"),
                             GraphFsEntry::directory("backlinks"),
-                            GraphFsEntry::file("body", value.map(|(_, _, b)| b.len())),
+                            GraphFsEntry::file(
+                                "body",
+                                body.value.and_then(|row| row.body).map(|b| b.len()),
+                            ),
                         ],
                         cursor,
-                    ))
+                    )
                 } else {
-                    Ok(empty_page(&normalized, self.options.mount))
-                }
+                    empty_page(&normalized, self.options.mount)
+                };
+                Ok(page.with_read_receipt(body.receipt))
             }
             ["entities", entity, "claims"] => {
                 self.listdir_claims_for_subject(&normalized, &parse_entity_id(entity)?, cursor)
@@ -129,27 +148,30 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         Ok(self.readdir(path, cursor)?.render_bytes())
     }
 
-    pub fn read_file(&self, path: &str) -> Result<Option<GraphFsFile>> {
+    /// A file and any scoped-read receipt behind it. Fixed files and paths
+    /// that name no file make no scoped read and carry no receipt.
+    pub fn read_file(&self, path: &str) -> Result<GraphFsFileRead> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
         match components.as_slice() {
-            ["claims", claim] | ["claims", "by-id", claim] => {
-                self.read_claim_file(&normalized, &parse_entity_id(claim)?)
-            }
+            ["claims", claim] | ["claims", "by-id", claim] => Ok(self
+                .read_claim_file(&normalized, &parse_entity_id(claim)?)?
+                .into()),
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
-                let crate::claim::ScopedReadResult {
-                    value,
-                    receipt: _receipt,
-                } = self.scoped_read.get_entity_parts_with_receipt(&id, None)?;
-                let Some((_, _, bytes)) = value else {
-                    return Ok(None);
-                };
-                Ok(Some(GraphFsFile {
-                    path: normalized,
-                    mount: self.options.mount,
-                    bytes,
-                }))
+                let mount = self.options.mount;
+                Ok(self
+                    .scoped_read
+                    .read(&[PointRead::id(id)], None)?
+                    .single()
+                    .map(|row| {
+                        row.and_then(|row| row.body).map(|bytes| GraphFsFile {
+                            path: normalized,
+                            mount,
+                            bytes,
+                        })
+                    })
+                    .into())
             }
             ["worlds", world, "scope"] => {
                 let bytes = if *world == "base" {
@@ -158,13 +180,19 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                     let id = parse_entity_id(world)?;
                     format!("world_ref:{}\n", id.to_hex()).into_bytes()
                 };
-                Ok(Some(GraphFsFile {
-                    path: normalized,
-                    mount: self.options.mount,
-                    bytes,
-                }))
+                Ok(GraphFsFileRead {
+                    value: Some(GraphFsFile {
+                        path: normalized,
+                        mount: self.options.mount,
+                        bytes,
+                    }),
+                    receipt: None,
+                })
             }
-            _ => Ok(None),
+            _ => Ok(GraphFsFileRead {
+                value: None,
+                receipt: None,
+            }),
         }
     }
 
@@ -181,7 +209,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             return Ok(None);
         };
         let claim_id = parse_entity_id(claim_hex)?;
-        if self.scoped_read.get(&claim_id)?.is_some() {
+        if self
+            .scoped_read
+            .read(&[PointRead::id(claim_id)], None)?
+            .single()
+            .value
+            .is_some()
+        {
             Ok(Some(format!("/claims/{}", claim_id.to_hex())))
         } else {
             Ok(None)
@@ -211,19 +245,23 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         &self,
         path: &str,
         claim_id: &EntityId,
-    ) -> Result<Option<GraphFsFile>> {
-        let crate::claim::ScopedReadResult {
-            value,
-            receipt: _receipt,
-        } = self
+    ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
+        let ScopedReadResult { value, receipt } = self
             .scoped_read
-            .get_entity_parts_with_receipt(claim_id, None)?;
-        let Some((entity_type, learned_at, body)) = value else {
-            return Ok(None);
+            .read(&[PointRead::id(*claim_id)], None)?
+            .single();
+        let Some(ReadRow {
+            entity_type: ENTITY_TYPE_CLAIM,
+            learned_at,
+            body: Some(body),
+            ..
+        }) = value
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
         };
-        if entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(None);
-        }
         let mut bytes = Vec::new();
         bytes.extend_from_slice(GRAPH_FS_PROJECTION_VERSION.as_bytes());
         bytes.extend_from_slice(b"\nkind\tclaim\nmount\t");
@@ -235,11 +273,25 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         bytes.extend_from_slice(b"\nbody_msgpack_hex\t");
         bytes.extend_from_slice(bytes_to_hex_lower(&body).as_bytes());
         bytes.push(b'\n');
-        Ok(Some(GraphFsFile {
-            path: path.to_owned(),
-            mount: self.options.mount,
-            bytes,
-        }))
+        Ok(ScopedReadResult {
+            value: Some(GraphFsFile {
+                path: path.to_owned(),
+                mount: self.options.mount,
+                bytes,
+            }),
+            receipt,
+        })
+    }
+
+    /// One live point read, folded into a listing's receipt.
+    fn read_live_into(
+        &self,
+        id: EntityId,
+        receipt: &mut ScopedReadReceipt,
+    ) -> Result<Option<ReadRow>> {
+        let row = self.scoped_read.read(&[PointRead::id(id)], None)?.single();
+        receipt.restrict_with(&row.receipt);
+        Ok(row.value)
     }
 
     fn fixed_page(
@@ -379,12 +431,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let after = cursor.map(parse_entity_id).transpose()?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
+        let mut receipt = self.scoped_read.read_receipt(None, 0)?;
         for id in self.scoped_read.vault().entities_by_type_page(
             ENTITY_TYPE_CLAIM,
             after.as_ref(),
             GRAPH_FS_MAX_PAGE_ENTRIES,
         )? {
-            if self.scoped_read.get(&id)?.is_none() {
+            if self.read_live_into(id, &mut receipt)?.is_none() {
                 continue;
             }
             let entry = GraphFsEntry::file(id.to_hex(), None);
@@ -393,7 +446,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 break;
             }
         }
-        Ok(builder.finish(next_cursor))
+        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
     }
 
     fn listdir_claims_for_subject(
@@ -408,6 +461,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let after = cursor.map(parse_entity_id).transpose()?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
+        let mut receipt = self.scoped_read.read_receipt(None, 0)?;
         for claim in self.scoped_read.vault().sources_page(
             subject,
             EdgeKind::ClaimOf,
@@ -415,7 +469,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             after.as_ref(),
             GRAPH_FS_MAX_PAGE_ENTRIES,
         )? {
-            if self.scoped_read.get(&claim)?.is_none() {
+            if self.read_live_into(claim, &mut receipt)?.is_none() {
                 continue;
             }
             let entry = GraphFsEntry::file(claim.to_hex(), None);
@@ -424,7 +478,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 break;
             }
         }
-        Ok(builder.finish(next_cursor))
+        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
     }
 
     fn listdir_claims_in_world(
@@ -657,6 +711,7 @@ fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
         entries: Vec::new(),
         next_cursor: None,
         byte_count: 0,
+        read_receipt: None,
     }
 }
 

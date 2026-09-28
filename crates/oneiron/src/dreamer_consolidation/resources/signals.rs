@@ -2,7 +2,7 @@
 //! A projection grant is mandatory. Model-selected ids never grant vector access.
 
 use super::{BranchResources, document_version};
-use crate::claim::{ClaimSubject, decode_claim_body};
+use crate::claim::{ClaimSubject, PointRead, ReadRow, decode_claim_body};
 use crate::dreamer_consolidation::conflict::{candidate_facts, canonical_value_bytes};
 use crate::dreamer_consolidation::provenance::PromotionCandidate;
 use crate::dreamer_consolidation::support::{
@@ -61,14 +61,21 @@ impl BranchResources<'_> {
             .get_entity_type(&candidate.claim_id)?
             .is_some()
         {
-            let crate::claim::ScopedReadResult {
-                value,
-                receipt: _receipt,
-            } = self
+            let stored = self
                 .read
-                .get_entity_parts_with_receipt(&candidate.claim_id, None)?;
-            let (kind, _, bytes) = value
-                .ok_or_else(|| invalid_consolidation("candidate vector entity is not readable"))?;
+                .read(&[PointRead::id(candidate.claim_id)], None)?
+                .single();
+            self.fold_read_receipt(&stored.receipt)?;
+            let Some(ReadRow {
+                entity_type: kind,
+                body: Some(bytes),
+                ..
+            }) = stored.value
+            else {
+                return Err(invalid_consolidation(
+                    "candidate vector entity is not readable",
+                ));
+            };
             if kind != ENTITY_TYPE_CLAIM {
                 return Err(invalid_consolidation(
                     "candidate vector identity is not a claim",
@@ -97,11 +104,12 @@ impl BranchResources<'_> {
         if kind == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Ok(false);
         }
-        let crate::claim::ScopedReadResult {
-            value,
-            receipt: _receipt,
-        } = self.read.get_entity_parts_with_receipt(id, None)?;
-        let Some((_, _, bytes)) = value else {
+        let source = self.read.read(&[PointRead::id(*id)], None)?.single();
+        self.fold_read_receipt(&source.receipt)?;
+        let Some(ReadRow {
+            body: Some(bytes), ..
+        }) = source.value
+        else {
             return Ok(false);
         };
         let pinned = scope.allows_read(&document_version(*id, &bytes));
@@ -124,6 +132,7 @@ impl BranchResources<'_> {
                     return Ok(false);
                 }
                 let edges = self.read.edges_out(id)?;
+                self.fold_read_receipt(&edges.receipt)?;
                 if edges.receipt.suppressed_count != 0 {
                     return Ok(false);
                 }

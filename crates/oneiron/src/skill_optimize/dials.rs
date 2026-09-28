@@ -2,6 +2,11 @@
 
 use crate::Vault;
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{self, Raw, SideTable};
+
+/// The N dial: a singleton row.
+const MIN_OUTCOMES: SideTable<(), [u8; 4], Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_MIN_OUTCOMES);
 
 /// `vault_meta` key holding N, the attributed outcomes a skill must carry
 /// before it can be optimized.
@@ -41,17 +46,9 @@ pub(super) fn validate_text(value: &str, max_bytes: usize, reason: &'static str)
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn skill_optimize_min_outcomes(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY)?
-    else {
+    let Some(bytes) = MIN_OUTCOMES.get(&vault.store, &rtxn, &())? else {
         return Ok(DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES);
     };
-    let bytes: [u8; 4] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("skill optimize min outcomes"))?;
     Ok(u32::from_be_bytes(bytes))
 }
 
@@ -68,11 +65,7 @@ pub fn set_skill_optimize_min_outcomes(vault: &Vault, min_outcomes: u32) -> Resu
         ));
     }
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(
-            wtxn,
-            SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
-            &min_outcomes.to_be_bytes(),
-        )?;
+        MIN_OUTCOMES.put(&vault.store, wtxn, &(), &min_outcomes.to_be_bytes())?;
         Ok(())
     })
 }

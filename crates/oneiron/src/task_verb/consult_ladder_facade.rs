@@ -21,7 +21,7 @@ use super::create_validation::{
     consult_body_in_txn, consult_refusal, require_resolved_entity, validate_task_create,
 };
 use super::entity_delta_facade::counter_lineage_artifact_value;
-use super::follow_up::peer_handle_key;
+use super::follow_up::PEER_HANDLES;
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::TaskCreateReceipt;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
@@ -36,13 +36,12 @@ impl Memory<'_> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         require_resolved_entity(self.vault(), actor_ref)?;
         self.with_verified_actor_write_txn(|wtxn| {
-            self.vault()
-                .store
-                .vault_meta
+            PEER_HANDLES
                 .put(
+                    &self.vault().store,
                     wtxn,
-                    peer_handle_key(actor_ref).as_slice(),
-                    handle.as_bytes(),
+                    &actor_ref,
+                    &handle.as_bytes().to_vec(),
                 )
                 .map_err(MemoryError::from)
         })

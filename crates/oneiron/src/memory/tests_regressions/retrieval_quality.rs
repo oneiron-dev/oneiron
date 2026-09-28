@@ -6,7 +6,7 @@ use super::*;
 fn retrieval_quality_facade_metadata_defaults_preserve_old_pack_json() {
     use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalQuality};
 
-    let old = serde_json::json!({
+    let mut old = serde_json::json!({
         "items": [],
         "scope_honesty": {"out_of_scope_worlds": []},
         "retrieval_meta": {
@@ -18,7 +18,18 @@ fn retrieval_quality_facade_metadata_defaults_preserve_old_pack_json() {
         "pack_version": 1,
         "rendered": null
     });
-    let pack: MemoryPack = serde_json::from_value(old).expect("old facade pack");
+    // T49 requires a receipt on every pack, including a legacy-quality
+    // metadata fixture. An unreceipted pack must now fail closed.
+    assert!(serde_json::from_value::<MemoryPack>(old.clone()).is_err());
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x77);
+    let receipt = facade_for(&vault, actor)
+        .read_lane(crate::claim::ClaimReadStatus::Surfaceable)
+        .expect("actor lane")
+        .read_receipt(None, 0)
+        .expect("read receipt");
+    old["narrowing"] = serde_json::to_value(receipt).expect("receipt JSON");
+    let pack: MemoryPack = serde_json::from_value(old).expect("receipted old-quality pack");
     assert_eq!(pack.retrieval_meta.quality, RetrievalQuality::Passthrough);
     assert!(pack.retrieval_meta.degradation.is_empty());
     assert_eq!(

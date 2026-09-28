@@ -5,32 +5,13 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 
 use super::{
-    LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX, LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX,
-    LINKEDIN_INBOX_SYNC_SEEN_PREFIX, LinkedInConversationMessage, LinkedInInboxSyncConfig,
+    LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX, LinkedInConversationMessage, LinkedInInboxSyncConfig,
     MAX_LINKEDIN_MESSAGE_ID_BYTES, MAX_LINKEDIN_SESSION_REF_BYTES, MAX_LINKEDIN_THREAD_ID_BYTES,
 };
 
-pub(super) fn linkedin_inbox_seen_key(
-    config: &LinkedInInboxSyncConfig,
-    message: &LinkedInConversationMessage,
-) -> String {
-    format!(
-        "{LINKEDIN_INBOX_SYNC_SEEN_PREFIX}{}",
-        linkedin_inbox_message_key_hash(config, message)
-    )
-}
-
-pub(super) fn linkedin_inbox_provenance_key(
-    config: &LinkedInInboxSyncConfig,
-    message: &LinkedInConversationMessage,
-) -> String {
-    format!(
-        "{LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX}{}",
-        linkedin_inbox_message_key_hash(config, message)
-    )
-}
-
-fn linkedin_inbox_message_key_hash(
+/// The `linkedin:inbox_sync:{seen,provenance}:v1:` table key for one message:
+/// the part after either declared prefix, shared by both tables.
+pub(super) fn linkedin_inbox_message_key_hash(
     config: &LinkedInInboxSyncConfig,
     message: &LinkedInConversationMessage,
 ) -> String {

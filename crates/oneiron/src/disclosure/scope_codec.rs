@@ -9,6 +9,7 @@ use crate::federation::{
     Scope,
     scope_codec::{decode_scope_value, encode_scope_value},
 };
+use crate::side_table::{CodecError, RawValue};
 
 /// Current contact clearance body schema version (prerelease wire format).
 pub const DISCLOSURE_SCOPE_SCHEMA_VERSION: u64 = 1;
@@ -150,6 +151,17 @@ pub fn decode_disclosure_scope_body(bytes: &[u8]) -> Result<DisclosureScope> {
     }
     decode_disclosure_scope_value(&value)
 }
+
+impl RawValue for DisclosureScope {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_disclosure_scope_body(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_disclosure_scope_body(bytes)?)
+    }
+}
+
 pub(super) fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_scope());

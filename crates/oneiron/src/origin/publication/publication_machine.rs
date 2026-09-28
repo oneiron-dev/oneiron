@@ -11,18 +11,17 @@ use crate::git_wire::{
 #[cfg(test)]
 use super::publication_codec::origin_publication_id;
 use super::publication_codec::{
-    bounded_failure, cas_intent_key, decode_publication_row, encode_publication_row,
-    keep_owner_key, origin_publication_claim_id, origin_publication_intent_claim,
-    publication_claim_body, publication_key, row_entity_id, visible_ref_key,
+    CAS_INTENT, CasIntentKey, KEEP_OWNER, OriginPublicationRow, PUBLICATIONS, VISIBLE_REF,
+    bounded_failure, keep_owner_key, origin_publication_claim_id, origin_publication_intent_claim,
+    publication_claim_body, visible_ref_key,
 };
 #[cfg(test)]
 use super::publication_journal::validate_origin_publication_request;
 use super::publication_journal::{OriginAdvance, origin_receipt};
 use super::publication_types::{
-    ORIGIN_KEEP_OWNER_KEY_PREFIX, ORIGIN_KEY_SEPARATOR, ORIGIN_PUBLICATION_INTENT_PREDICATE,
-    ORIGIN_PUBLICATION_MAX_ROWS, ORIGIN_PUBLICATION_PREDICATE, OriginCensusDisposition,
-    OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
-    OriginPublicationStatus,
+    ORIGIN_PUBLICATION_INTENT_PREDICATE, ORIGIN_PUBLICATION_MAX_ROWS, ORIGIN_PUBLICATION_PREDICATE,
+    OriginCensusDisposition, OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord,
+    OriginPublicationRequest, OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // The state machine
@@ -100,20 +99,10 @@ impl Vault {
         // Reconcile a colliding owner before creating anything for this caller.
         // Completed Published rows retain the consumed triple after T2 removes
         // the in-flight index. A different provenance is not a second effect.
-        let intent_key = cas_intent_key(&record);
+        let intent_key = CasIntentKey::new(&record);
         let owner = {
             let rtxn = self.store.env.read_txn()?;
-            self.store
-                .vault_meta
-                .get(&rtxn, &intent_key)?
-                .map(|raw| {
-                    let bytes = raw
-                        .as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("origin CAS intent owner"))?;
-                    row_entity_id(bytes)
-                })
-                .transpose()?
+            CAS_INTENT.get(&self.store, &rtxn, &intent_key)?
         };
         if let Some(owner) = owner {
             let previous = self
@@ -144,7 +133,7 @@ impl Vault {
             .any(|row| {
                 row.publication_id != publication_id
                     && row.status == OriginPublicationStatus::Published
-                    && cas_intent_key(row) == intent_key
+                    && CasIntentKey::new(row) == intent_key
             })
         {
             return Err(Error::ConcurrentWrite(
@@ -177,18 +166,16 @@ impl Vault {
                 )?;
             }
         }
-        let key = publication_key(&publication_id);
-        let row = encode_publication_row(&record)?;
+        let row = OriginPublicationRow::from_record(&record);
+        PUBLICATIONS.encode_value(&row)?;
         self.with_write_txn(|wtxn| {
-            if self.store.vault_meta.get(wtxn, &intent_key)?.is_some()
-                || self.store.vault_meta.get(wtxn, &key)?.is_some()
+            if CAS_INTENT.contains(&self.store, wtxn, &intent_key)?
+                || PUBLICATIONS.contains(&self.store, wtxn, &publication_id)?
             {
                 return Err(Error::ConcurrentWrite("origin CAS intent already owned"));
             }
-            self.store
-                .vault_meta
-                .put(wtxn, &intent_key, publication_id.as_bytes())?;
-            self.store.vault_meta.put(wtxn, &key, &row)?;
+            CAS_INTENT.put(&self.store, wtxn, &intent_key, &publication_id)?;
+            PUBLICATIONS.put(&self.store, wtxn, &publication_id, &row)?;
             Ok(())
         })?;
         Ok(record)
@@ -427,8 +414,7 @@ impl Vault {
                 "origin finalize requires a terminal state",
             ));
         }
-        let record_key = publication_key(&terminal.publication_id);
-        let intent_key = cas_intent_key(&terminal);
+        let intent_key = CasIntentKey::new(&terminal);
         let owner_key = keep_owner_key(
             &terminal.repo_id,
             &terminal.new_oid,
@@ -436,12 +422,10 @@ impl Vault {
             &terminal.publication_id.to_hex(),
         );
         self.with_write_txn(|wtxn| {
-            let raw = self
-                .store
-                .vault_meta
-                .get(wtxn, &record_key)?
-                .ok_or(Error::CorruptedIndex("origin finalize has no prepared row"))?;
-            let current = decode_publication_row(&raw)?;
+            let current = PUBLICATIONS
+                .get(&self.store, wtxn, &terminal.publication_id)?
+                .ok_or(Error::CorruptedIndex("origin finalize has no prepared row"))?
+                .into_record()?;
             if current.status.is_terminal() {
                 if current.status == terminal.status {
                     return Ok(current);
@@ -460,12 +444,10 @@ impl Vault {
                     "origin finalize changed prepared intent",
                 ));
             }
-            let owner = self
-                .store
-                .vault_meta
-                .get(wtxn, &intent_key)?
+            let owner = CAS_INTENT
+                .get(&self.store, wtxn, &intent_key)?
                 .ok_or(Error::CorruptedIndex("origin finalize has no CAS intent"))?;
-            if owner.as_ref() != terminal.publication_id.as_bytes() {
+            if owner != terminal.publication_id {
                 return Err(Error::InvariantViolation(
                     "origin finalize does not own CAS intent",
                 ));
@@ -481,7 +463,8 @@ impl Vault {
                 let change_id = self.put_origin_change_in_txn(wtxn, &terminal, learned_at)?;
                 // Transfer reachability to the durable change-index before releasing
                 // the temporary publication owner. The physical root already exists.
-                self.store.vault_meta.put(
+                KEEP_OWNER.put(
+                    &self.store,
                     wtxn,
                     &keep_owner_key(
                         &terminal.repo_id,
@@ -491,17 +474,21 @@ impl Vault {
                     ),
                     &learned_at.to_le_bytes(),
                 )?;
-                self.store.vault_meta.put(
+                VISIBLE_REF.put(
+                    &self.store,
                     wtxn,
                     &visible_ref_key(&terminal.repo_id, &terminal.ref_name),
-                    terminal.publication_id.as_bytes(),
+                    &terminal.publication_id,
                 )?;
             }
-            self.store
-                .vault_meta
-                .put(wtxn, &record_key, &encode_publication_row(&terminal)?)?;
-            self.store.vault_meta.delete(wtxn, &intent_key)?;
-            self.store.vault_meta.delete(wtxn, &owner_key)?;
+            PUBLICATIONS.put(
+                &self.store,
+                wtxn,
+                &terminal.publication_id,
+                &OriginPublicationRow::from_record(&terminal),
+            )?;
+            CAS_INTENT.delete(&self.store, wtxn, &intent_key)?;
+            KEEP_OWNER.delete(&self.store, wtxn, &owner_key)?;
             Ok(terminal)
         })
     }
@@ -607,10 +594,13 @@ impl Vault {
         )?;
         let owns_visible_slot = {
             let rtxn = self.store.env.read_txn()?;
-            self.store
-                .vault_meta
-                .get(&rtxn, &visible_ref_key(&record.repo_id, &record.ref_name))?
-                .is_some_and(|id| id.as_ref() == record.publication_id.as_bytes())
+            VISIBLE_REF
+                .get(
+                    &self.store,
+                    &rtxn,
+                    &visible_ref_key(&record.repo_id, &record.ref_name),
+                )?
+                .is_some_and(|id| id == record.publication_id)
         };
         if record.status != OriginPublicationStatus::Published
             || !owns_visible_slot
@@ -643,40 +633,27 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let _guard = lock_repository(repo.common_dir())?;
-        let mut prefix = ORIGIN_KEEP_OWNER_KEY_PREFIX.to_vec();
-        prefix.extend_from_slice(repo_id.as_bytes());
-        prefix.push(ORIGIN_KEY_SEPARATOR);
         let owners = {
             let rtxn = self.store.env.read_txn()?;
             let mut owners = Vec::new();
-            for (index, entry) in self
-                .store
-                .vault_meta
-                .prefix_iter(&rtxn, &prefix)?
+            for (index, row) in KEEP_OWNER
+                .iter_from(&self.store, &rtxn, repo_id.as_bytes())?
                 .enumerate()
             {
                 if index >= ORIGIN_PUBLICATION_MAX_ROWS {
                     return Err(Error::IndexOverflow("origin keep owner rows"));
                 }
-                let (key, _) = entry?;
-                let suffix = std::str::from_utf8(&key[prefix.len()..])
-                    .map_err(|_| Error::CorruptedIndex("origin keep owner key"))?;
-                let fields = suffix.splitn(3, '\0').collect::<Vec<_>>();
-                if fields.len() != 3 || fields[1] != OriginKeepRefKind::Publication.as_str() {
+                let (key, _) = row?;
+                if key.kind != OriginKeepRefKind::Publication.as_str() {
                     continue;
                 }
                 // Only publication-id owners belong to this journal. Other
                 // callers of the general pin door keep their own owner keys.
-                let Ok(id) = EntityId::from_hex(fields[2]) else {
+                let Ok(id) = EntityId::from_hex(&key.owner_key) else {
                     continue;
                 };
-                if self
-                    .store
-                    .vault_meta
-                    .get(&rtxn, &publication_key(&id))?
-                    .is_none()
-                {
-                    owners.push((GitOid::parse_hex(fields[0])?, fields[2].to_owned()));
+                if !PUBLICATIONS.contains(&self.store, &rtxn, &id)? {
+                    owners.push((GitOid::parse_hex(&key.oid)?, key.owner_key));
                 }
             }
             owners

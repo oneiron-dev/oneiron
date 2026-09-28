@@ -1,25 +1,20 @@
 //! Ordered by-turn projection of independent retrieval runs.
 
-use super::run_store::{decode_retrieval_run, retrieval_run_key};
+use super::run_store::RETRIEVAL_RUN;
 use super::{RetrievalRunId, RetrievalRunRecord};
+use crate::side_table::{self, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{Error, Result, Vault};
 use heed::{RoTxn, RwTxn};
-const PREFIX: &[u8] = b"retr_turn:v1:";
 
-fn prefix(turn: &[u8; 16]) -> Vec<u8> {
-    [PREFIX, turn.as_slice()].concat()
-}
-fn key(record: &RetrievalRunRecord) -> Option<Vec<u8>> {
+type TurnIndexKey = ([u8; 16], u64, RetrievalRunId);
+
+const TURN_INDEX: SideTable<TurnIndexKey, (), side_table::Raw> =
+    SideTable::new(&side_table::RETRIEVAL_TURN_INDEX);
+
+fn key(record: &RetrievalRunRecord) -> Option<TurnIndexKey> {
     let turn = record.turn?;
-    Some(
-        [
-            prefix(&turn.turn_id).as_slice(),
-            &record.started_at.to_be_bytes(),
-            &record.run_id.as_bytes(),
-        ]
-        .concat(),
-    )
+    Some((turn.turn_id, record.started_at, record.run_id))
 }
 pub(super) fn put(
     target: &impl ManifestDbs,
@@ -27,7 +22,7 @@ pub(super) fn put(
     record: &RetrievalRunRecord,
 ) -> Result<()> {
     if let Some(key) = key(record) {
-        target.vault_meta().put(txn, &key, b"")?;
+        TURN_INDEX.put(target, txn, &key, &())?;
     }
     Ok(())
 }
@@ -37,7 +32,7 @@ pub(super) fn delete(
     record: &RetrievalRunRecord,
 ) -> Result<()> {
     if let Some(key) = key(record) {
-        target.vault_meta().delete(txn, &key)?;
+        TURN_INDEX.delete(target, txn, &key)?;
     }
     Ok(())
 }
@@ -47,26 +42,18 @@ fn read(
     turn: &[u8; 16],
 ) -> Result<Vec<RetrievalRunId>> {
     let mut runs = Vec::new();
-    let prefix = prefix(turn);
-    for row in target.vault_meta().prefix_iter(txn, &prefix)? {
-        let (index_key, _) = row?;
-        let suffix = &index_key[prefix.len()..];
-        if suffix.len() != 24 {
-            return Err(Error::CorruptedIndex("retrieval turn index"));
-        }
-        let bytes = suffix[8..]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("retrieval turn index"))?;
-        let id = RetrievalRunId { bytes };
-        let raw = target
-            .vault_meta()
-            .get(txn, &retrieval_run_key(id))?
+    for row in TURN_INDEX.scan_from(target, txn, turn)? {
+        let ((turn_id, started_at, run_id), ()) = row;
+        let record = RETRIEVAL_RUN
+            .get(target, txn, &run_id)?
             .ok_or(Error::CorruptedIndex("retrieval turn index"))?;
-        let record = decode_retrieval_run(&raw)?;
-        if key(&record).as_deref() != Some(index_key.as_ref()) {
+        if record.turn.map(|turn| turn.turn_id) != Some(turn_id)
+            || record.started_at != started_at
+            || record.run_id != run_id
+        {
             return Err(Error::CorruptedIndex("retrieval turn index"));
         }
-        runs.push(id);
+        runs.push(run_id);
     }
     Ok(runs)
 }
@@ -104,14 +91,16 @@ pub(super) fn delete_for_run(
     run_id: RetrievalRunId,
 ) -> Result<()> {
     let mut keys = Vec::new();
-    for row in target.vault_meta().prefix_iter(txn, PREFIX)? {
-        let (key, _) = row?;
-        if key.len() == PREFIX.len() + 16 + 8 + 16 && key.ends_with(&run_id.as_bytes()) {
-            keys.push(key.to_vec());
+    for (key, ()) in TURN_INDEX
+        .iter_from(target, &*txn, &[])?
+        .collect::<Result<Vec<_>>>()?
+    {
+        if key.2 == run_id {
+            keys.push(key);
         }
     }
     for key in keys {
-        target.vault_meta().delete(txn, &key)?;
+        TURN_INDEX.delete(target, txn, &key)?;
     }
     Ok(())
 }

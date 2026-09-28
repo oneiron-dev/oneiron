@@ -98,7 +98,8 @@ pub(crate) fn test_only_by_path(rel: &str) -> bool {
     let Some(name) = parts.next() else {
         return false;
     };
-    name == "tests.rs"
+    rel.starts_with("memory/tests_regressions/recall/")
+        || name == "tests.rs"
         || name.ends_with("_tests.rs")
         || parts.any(|dir| matches!(dir, "tests" | "benches"))
 }

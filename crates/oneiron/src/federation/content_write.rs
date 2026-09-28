@@ -2,10 +2,11 @@
 //! snapshot and apply typed programs, but cannot commit a raw batch through
 //! this interface. Trusted provisioning and replay use separate Vault doors.
 use crate::Vault;
-use crate::batch::{EntityMetadataHeader, TxnBatchBuilder};
+use crate::batch::{BatchBuilder, EntityMetadataHeader};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 use std::collections::BTreeSet;
 
@@ -27,34 +28,55 @@ impl ContentOwner {
     }
 }
 
-// This key lives only inside the active LMDB writer and is deleted before
-// commit. It carries no process-global authority and cannot become a grant.
-const ACTIVE_ACTOR_KEY: &[u8] = b"federation:actor-content:inflight:v1";
+/// The actor bound to the active content writer. Key: `()` (singleton).
+///
+/// This row lives only inside the active LMDB writer and is deleted before
+/// commit. It carries no process-global authority and cannot become a grant.
+const ACTIVE_ACTOR: SideTable<(), InflightActor, Raw> =
+    SideTable::new(&side_table::FEDERATION_ACTOR_CONTENT_INFLIGHT);
+
+/// [`ACTIVE_ACTOR`]'s value: actor id16 + class byte, then the 32-byte
+/// authority frontier when the writer carries one.
+struct InflightActor(WriteActor);
+
+impl RawValue for InflightActor {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut bytes = self.0.entity_ref().as_bytes().to_vec();
+        bytes.push(self.0.actor_class() as u8);
+        if let Some(frontier) = self.0.authority_frontier() {
+            bytes.extend_from_slice(&frontier);
+        }
+        Ok(bytes)
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        if raw.len() != 17 && raw.len() != 49 {
+            return Err(Error::CorruptedIndex("actor content in-flight binding").into());
+        }
+        let actor = EntityId::from_bytes(
+            raw[..16]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("actor content id"))?,
+        )?;
+        let class = EdgeActorClass::try_from_u8(raw[16])
+            .ok_or(Error::CorruptedIndex("actor content class"))?;
+        let writer = WriteActor::new(actor, class);
+        Ok(Self(if raw.len() == 49 {
+            writer.with_authority_frontier(
+                raw[17..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("actor content frontier"))?,
+            )
+        } else {
+            writer
+        }))
+    }
+}
 
 pub(crate) fn actor_for_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<WriteActor>> {
-    let Some(raw) = vault.store.vault_meta.get(txn, ACTIVE_ACTOR_KEY)? else {
-        return Ok(None);
-    };
-    if raw.len() != 17 && raw.len() != 49 {
-        return Err(Error::CorruptedIndex("actor content in-flight binding"));
-    }
-    let actor = EntityId::from_bytes(
-        raw[..16]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("actor content id"))?,
-    )?;
-    let class =
-        EdgeActorClass::try_from_u8(raw[16]).ok_or(Error::CorruptedIndex("actor content class"))?;
-    let writer = WriteActor::new(actor, class);
-    Ok(Some(if raw.len() == 49 {
-        writer.with_authority_frontier(
-            raw[17..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("actor content frontier"))?,
-        )
-    } else {
-        writer
-    }))
+    Ok(ACTIVE_ACTOR
+        .get(&vault.store, txn, &())?
+        .map(|InflightActor(writer)| writer))
 }
 
 pub(crate) struct ActorContentTxn<'v, 't, 'env> {
@@ -74,12 +96,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
                 "nested actor content transaction",
             ));
         }
-        let mut bytes = writer.entity_ref().as_bytes().to_vec();
-        bytes.push(writer.actor_class() as u8);
-        if let Some(frontier) = writer.authority_frontier() {
-            bytes.extend_from_slice(&frontier);
-        }
-        vault.store.vault_meta.put(txn, ACTIVE_ACTOR_KEY, &bytes)?;
+        ACTIVE_ACTOR.put(&vault.store, txn, &(), &InflightActor(writer))?;
         Ok(Self {
             vault,
             txn,
@@ -101,7 +118,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
 
     /// The batch derives its semantic effect set and checks both positions
     /// before this actor's transaction can commit.
-    pub(crate) fn apply_batch(&mut self, batch: TxnBatchBuilder<'_>) -> Result<()> {
+    pub(crate) fn apply_batch(&mut self, batch: BatchBuilder<'_>) -> Result<()> {
         batch.apply_actor(self.txn, &self.writer)
     }
 
@@ -176,10 +193,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
                 "actor content in-flight binding changed",
             ));
         }
-        self.vault
-            .store
-            .vault_meta
-            .delete(self.txn, ACTIVE_ACTOR_KEY)?;
+        ACTIVE_ACTOR.delete(&self.vault.store, self.txn, &())?;
         Ok(())
     }
 

@@ -45,6 +45,7 @@ mod tests {
             // ONE-1686: the typed Gate denial rides as an additive field. This
             // fixture is not a gate refusal, so it carries none.
             gate_denial: None,
+            read_receipt: None,
         };
         let expected = source.clone();
 
@@ -67,6 +68,7 @@ mod tests {
             suggestions: Vec::new(),
             successor_short_id: None,
             gate_denial: None,
+            read_receipt: None,
         });
 
         assert!(suggestions.is_empty());

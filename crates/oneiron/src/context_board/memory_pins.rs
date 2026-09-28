@@ -1,7 +1,7 @@
 //! Explicit memory pins bypass query relevance and render shedding, never read authority.
 use super::memories::{MemoriesSection, MemoryRow, MemorySource, MemoryTier};
 use super::memories_projection::{finish_projection, foreign_row, memory_asset_ref, memory_slot};
-use crate::claim::{ScopedRead, ScopedReadReceipt, decode_claim_body};
+use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::{EntityId, Result};
 impl MemoriesSection {
     /// Pins are engine-issued short references already selected by the caller.
@@ -39,7 +39,9 @@ impl MemoriesSection {
             }
             let hash = u8::from_str_radix(hash, 16)
                 .map_err(|_| crate::Error::InvalidConfig("invalid memory pin hash".into()))?;
-            let hydrated = reader.hydrate_short_id(short_id, hash)?;
+            let hydrated = reader
+                .read(&[PointRead::short(short_id, hash)], None)?
+                .single();
             let mut receipt = hydrated.receipt;
             let Some(hydrated) = hydrated.value else {
                 receipts.push(receipt);

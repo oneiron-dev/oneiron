@@ -6,6 +6,7 @@ use rmpv::Value;
 
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::side_table::{CodecError, RawValue};
 
 use super::codec_records::{
     BASIS_KIND_NOTICE, BASIS_KIND_TOGGLE, BASIS_KIND_VERBAL, ORIGIN_KIND_SEGMENT, ORIGIN_KIND_SOLO,
@@ -16,6 +17,31 @@ use super::types::{
     VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentSampleV1,
     VoicePrintPurpose,
 };
+
+/// The [`side_table::Raw`](crate::side_table::Raw) codec for
+/// [`super::storage_admission::CONSENT`]: this hand-rolled `rmpv` layout IS
+/// the codec, so encode/decode just call it.
+impl RawValue for VoiceConsentEventV1 {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_consent_event(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_consent_event(bytes)?)
+    }
+}
+
+/// The [`side_table::Raw`](crate::side_table::Raw) codec for
+/// [`super::storage_admission::SAMPLE`].
+impl RawValue for VoiceEnrollmentSampleV1 {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_sample(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_sample(bytes)?)
+    }
+}
 
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
 

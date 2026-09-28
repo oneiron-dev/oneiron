@@ -15,7 +15,9 @@ use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::ports::{RetrievalIndexMaintenance, ShortIdStoreMaintenance};
+use crate::ports::{
+    EntityStoreMaintenance, RetrievalIndexMaintenance, ScrubbedRecord, ShortIdStoreMaintenance,
+};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -31,12 +33,16 @@ use crate::store::GateDecisionId;
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone;
-use super::tombstone::{ReplayedTombstoneOutcome, decode_tombstone_value, local_hard_delete_key};
+use super::tombstone::{
+    HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, ReplayedTombstoneOutcome,
+    decode_tombstone_value,
+};
 use super::topology_delete_intent::{
     clear_own_topology_delete_in_txn, guard_topology_delete_request_in_txn,
     settled_topology_delete_in_txn,
 };
 use crate::error::{ClaimError, RegistryError};
+use crate::side_table::HexId;
 
 /// ARCH-0038 delete-interplay refs captured from an `edge.provenance` Claim
 /// BEFORE its body is purged or SoftErased: the subject EdgeRef whose cached

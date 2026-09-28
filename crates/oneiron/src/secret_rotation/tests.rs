@@ -261,16 +261,13 @@ fn the_next_lease_gets_the_new_value_and_the_old_lease_stays_alive_and_observabl
     // still Active, still stamped at the generation it minted under, and
     // its staleness is READ OFF that field against the record. That is the
     // honest lease-scoped caveat, stated rather than hidden.
-    let raw = row_bytes(
-        &vault,
-        format!(
-            "{SECRET_LEASE_KEY_PREFIX}{}",
-            before.lease.lease_id.to_hex()
-        )
-        .as_bytes(),
-    )
-    .expect("old lease row survives the rotation");
-    let old = decode_secret_lease_body(&raw).expect("decode old lease");
+    let old = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        LEASES
+            .get(&vault.store, &rtxn, &HexId(before.lease.lease_id))
+            .expect("read old lease")
+            .expect("old lease row survives the rotation")
+    };
     assert_eq!(old.status, SecretLeaseStatus::Active);
     assert_eq!(old.value_generation, 0);
     assert!(
@@ -333,12 +330,12 @@ fn revoke_kills_every_lease_and_every_door_for_the_ref() {
     );
 
     let lease_status = |lease_id: &EntityId| {
-        let raw = row_bytes(
-            &vault,
-            format!("{SECRET_LEASE_KEY_PREFIX}{}", lease_id.to_hex()).as_bytes(),
-        )
-        .expect("lease row");
-        decode_secret_lease_body(&raw).expect("decode lease").status
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        LEASES
+            .get(&vault.store, &rtxn, &HexId(*lease_id))
+            .expect("read lease")
+            .expect("lease row")
+            .status
     };
     assert_eq!(
         lease_status(&doomed.lease.lease_id),

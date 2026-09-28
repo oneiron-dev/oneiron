@@ -1,6 +1,7 @@
 //! Receipt-derived rate and failure streak supplied to the existing auto checker.
 //! There is no trip threshold, demotion, durable counter, or reset operation here.
 use crate::llm::AutoCheckSignals;
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -11,16 +12,19 @@ struct SignalWindow {
     window_secs: u64,
 }
 
+/// Cached configuration window (seconds) for the receipt-derived auto-checker signal; no engine
+/// write path found in this repo, likely operator-provisioned. Key: ().
+const AUTO_SIGNALS_WINDOW: SideTable<(), SignalWindow, LegacyJson> =
+    SideTable::new(&side_table::GATE_AUTO_SIGNALS_WINDOW);
+
 pub(super) fn auto_check_signals(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor_ref: Option<&str>,
     now: u64,
 ) -> Result<AutoCheckSignals> {
-    let config: SignalWindow = match store.vault_meta.get(txn, b"gate:auto_signals:window:v1")? {
-        Some(raw) => {
-            serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("auto signal window"))?
-        }
+    let config: SignalWindow = match AUTO_SIGNALS_WINDOW.get(store, txn, &())? {
+        Some(config) => config,
         None => serde_json::from_str(include_str!("auto_signal_defaults.json"))
             .map_err(|_| Error::CorruptedIndex("default auto signal window"))?,
     };

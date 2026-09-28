@@ -5,6 +5,7 @@ use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
+use crate::side_table::{self, LegacyCompact, SideKey, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,13 +25,37 @@ pub struct ReceivedFileOperation {
     pub new_mode: Option<u32>,
     pub document_edit: bool,
 }
-fn key(provenance: EntityId) -> Vec<u8> {
-    [
-        b"origin:code_operations:v1:".as_slice(),
-        provenance.as_bytes(),
-    ]
-    .concat()
+/// Crash-idempotent receipt of the file operations one push landed against one ref, keyed by
+/// provenance then blake3(ref_name). Key: id16 ":" hash32 — the ':' is a literal byte, not a
+/// NUL, exactly the shape this row has always spelled.
+const CODE_OPERATIONS: SideTable<ProvenanceRefKey, Vec<ReceivedFileOperation>, LegacyCompact> =
+    SideTable::new(&side_table::ORIGIN_CODE_OPERATIONS);
+
+struct ProvenanceRefKey {
+    provenance: EntityId,
+    ref_name_hash: [u8; 32],
 }
+
+impl SideKey for ProvenanceRefKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.provenance.as_bytes());
+        out.push(b':');
+        out.extend_from_slice(&self.ref_name_hash);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (id, rest) = bytes.split_at_checked(16)?;
+        let (&separator, hash) = rest.split_first()?;
+        if separator != b':' {
+            return None;
+        }
+        Some(Self {
+            provenance: EntityId::from_bytes(id.try_into().ok()?).ok()?,
+            ref_name_hash: hash.try_into().ok()?,
+        })
+    }
+}
+
 impl Vault {
     /// The authenticated observer receipt, not a trailer, identifies the push.
     /// The outer landing holds the repo coordinator and already validated it.
@@ -139,24 +164,21 @@ impl Vault {
                 });
             }
         }
-        let encoded = rmp_serde::to_vec(&operations)
-            .map_err(|_| Error::CorruptedIndex("push operations encode"))?;
-        let receipt_key = [
-            key(attribution.provenance_claim_id),
-            b":".to_vec(),
-            blake3::hash(update.name.as_bytes()).as_bytes().to_vec(),
-        ]
-        .concat();
+        CODE_OPERATIONS.encode_value(&operations)?;
+        let receipt_key = ProvenanceRefKey {
+            provenance: attribution.provenance_claim_id,
+            ref_name_hash: *blake3::hash(update.name.as_bytes()).as_bytes(),
+        };
         self.with_write_txn(|txn| {
-            if let Some(old) = self.store.vault_meta.get(txn, &receipt_key)?
-                && old.as_ref() != encoded
+            if let Some(old) = CODE_OPERATIONS.get(&self.store, txn, &receipt_key)?
+                && old != operations
             {
                 return Err(Error::ConcurrentWrite("push operation receipt changed"));
             }
             // A conflicting aggregate must refuse before any document effect.
             // Both receipt layers commit together or the entire ref aborts.
             self.apply_code_file_ingress_exact_in_txn(txn, &mut ingress)?;
-            self.store.vault_meta.put(txn, &receipt_key, &encoded)?;
+            CODE_OPERATIONS.put(&self.store, txn, &receipt_key, &operations)?;
             Ok(())
         })
     }
@@ -166,10 +188,7 @@ impl Vault {
     ) -> Result<Vec<ReceivedFileOperation>> {
         let txn = self.store.env.read_txn()?;
         let mut operations = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(&txn, &key(provenance))? {
-            let (_, raw) = row?;
-            let rows: Vec<ReceivedFileOperation> = rmp_serde::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("push operation receipt decode"))?;
+        for (_, rows) in CODE_OPERATIONS.scan_from(&self.store, &txn, provenance.as_bytes())? {
             operations.extend(rows);
         }
         operations.sort_by(|a, b| (&a.ref_name, &a.path).cmp(&(&b.ref_name, &b.path)));

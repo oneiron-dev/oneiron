@@ -19,13 +19,34 @@ use super::provenance::{
     validate_provenance, write_provenance_value,
 };
 use super::store_keys::{
-    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_head_key,
-    blob_artifact_highwater_key, blob_artifact_version_key, blob_artifact_version_prefix,
-    require_entity_type,
+    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, require_entity_type,
 };
 pub(super) use super::version_codec::decode_blob_artifact_version_record;
 use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+
+/// Blob artifact version record. Key: id16 (artifact) + u64be (version).
+pub(super) const VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_VERSION);
+/// Blob artifact head version — the same record shape as [`VERSIONS`], keyed by artifact alone.
+/// Key: id16 (artifact).
+pub(super) const HEAD: SideTable<EntityId, BlobArtifactVersion, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_HEAD);
+
+/// Last issued version survives artifact deletion, as u64 big endian.
+const HIGHWATER: SideTable<EntityId, [u8; 8], Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_HIGHWATER);
+
+impl RawValue for BlobArtifactVersion {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_blob_artifact_version_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_blob_artifact_version_record(bytes)?)
+    }
+}
 
 /// The calculator that last computed an artifact version's cached values.
 /// An upload or a version that was never recalculated has no stamp; absence is
@@ -356,15 +377,12 @@ impl Vault {
         }
         let parent_version = match (fork_parent, &head) {
             (Some(parent), Some(head)) if parent > 0 && parent <= head.version => {
-                let key = blob_artifact_version_key(artifact_id, parent);
-                let raw = self
-                    .store
-                    .vault_meta
-                    .get(wtxn, &key)?
+                let record = VERSIONS
+                    .get(&self.store, wtxn, &(*artifact_id, parent))?
                     .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                         "fork parent version does not exist",
                     )))?;
-                if decode_blob_artifact_version_record(&raw)?.version != parent {
+                if record.version != parent {
                     return Err(Error::CorruptedIndex("blob artifact fork parent"));
                 }
                 Some(parent)
@@ -381,16 +399,14 @@ impl Vault {
             (None, Some(head)) => Some(head.version),
             (None, None) => None,
         };
-        // Deletion removes the current chain but never its high-water mark:
-        // an old immutable URL must not identify a new incarnation's bytes.
+        // Deletion removes the current chain but never its high-water mark.
         let previous_version = head
             .as_ref()
             .map_or(highwater.unwrap_or(0), |head| head.version);
         let next_version = previous_version
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?;
-        let version_key = blob_artifact_version_key(artifact_id, next_version);
-        if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
+        if VERSIONS.contains(&self.store, wtxn, &(*artifact_id, next_version))? {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "blob artifact version is already recorded",
             )));
@@ -460,16 +476,10 @@ impl Vault {
                 reason: Some("blob version appended".into()),
             },
         )?;
-        let encoded = encode_blob_artifact_version_record(&record)?;
-        self.store.vault_meta.put(wtxn, &version_key, &encoded)?;
-        self.store
-            .vault_meta
-            .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
-        self.store.vault_meta.put(
-            wtxn,
-            &blob_artifact_highwater_key(artifact_id),
-            &next_version.to_be_bytes(),
-        )?;
+        VERSIONS.put(&self.store, wtxn, &(*artifact_id, next_version), &record)?;
+        HEAD.put(&self.store, wtxn, artifact_id, &record)?;
+        HIGHWATER.put(&self.store, wtxn, artifact_id, &next_version.to_be_bytes())?;
+
         fingerprint.persist(&self.store, wtxn, artifact_id)?;
         Ok(record)
     }
@@ -489,24 +499,22 @@ impl Vault {
         artifact_id: &EntityId,
     ) -> Result<Vec<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = blob_artifact_version_prefix(artifact_id);
         let mut versions = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, raw) = entry?;
-            let record = decode_blob_artifact_version_record(&raw)?;
+        for entry in VERSIONS.iter_from(&self.store, &rtxn, artifact_id.as_bytes())? {
+            let ((_, key_version), record) = entry?;
             let first_version = versions
                 .first()
                 .map_or(record.version, |first: &BlobArtifactVersion| first.version);
             let expected =
                 versions
                     .last()
-                    .map_or(Ok(record.version), |previous: &BlobArtifactVersion| {
-                        previous
+                    .map_or(Ok(record.version), |prior: &BlobArtifactVersion| {
+                        prior
                             .version
                             .checked_add(1)
                             .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
                     })?;
-            if record.version != expected || !key.ends_with(&record.version.to_be_bytes()) {
+            if record.version != expected || key_version != record.version {
                 return Err(Error::CorruptedIndex("blob artifact version chain"));
             }
             if let Some(parent) = record.parent_version
@@ -550,14 +558,9 @@ impl Vault {
         artifact_id: &EntityId,
         version: u64,
     ) -> Result<Option<BlobArtifactVersion>> {
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(rtxn, &blob_artifact_version_key(artifact_id, version))?
-        else {
+        let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
-        let record = decode_blob_artifact_version_record(&raw)?;
         if record.version != version {
             return Err(Error::CorruptedIndex("blob artifact version record"));
         }
@@ -598,14 +601,9 @@ impl Vault {
         artifact_id: &EntityId,
         version: u64,
     ) -> Result<Option<Vec<u8>>> {
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(rtxn, &blob_artifact_version_key(artifact_id, version))?
-        else {
+        let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
-        let record = decode_blob_artifact_version_record(&raw)?;
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
     }
 }
@@ -615,16 +613,9 @@ fn read_blob_artifact_highwater_in_txn(
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<u64>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &blob_artifact_highwater_key(artifact_id))?
-    else {
+    let Some(bytes) = HIGHWATER.get(store, rtxn, artifact_id)? else {
         return Ok(None);
     };
-    let bytes: [u8; 8] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("blob artifact version highwater"))?;
     let version = u64::from_be_bytes(bytes);
     if version == 0 {
         return Err(Error::CorruptedIndex("blob artifact version highwater"));
@@ -637,13 +628,7 @@ pub(crate) fn read_blob_artifact_head_in_txn(
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<BlobArtifactVersion>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &blob_artifact_head_key(artifact_id))?
-    else {
-        return Ok(None);
-    };
-    decode_blob_artifact_version_record(&raw).map(Some)
+    HEAD.get(store, rtxn, artifact_id)
 }
 
 fn read_blob_asset_in_txn(

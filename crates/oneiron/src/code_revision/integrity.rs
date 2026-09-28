@@ -10,6 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::side_table::{CodecError, RawValue};
 use crate::store::Store;
 
 use super::codec::{
@@ -23,12 +24,24 @@ use super::graph::{
     code_artifact_body_bytes, require_code_revision_ancestor, require_entity_type,
     require_revision_session,
 };
-use super::keys::{code_revision_integrity_key, code_revision_session_index_prefix};
+use super::keys::INTEGRITY;
 use super::storage::{
     collect_code_revision_records_by_index_prefix, read_code_revision_record_in_txn,
 };
 use super::types::{CodeRevision, CodeRevisionIntegrityRecord, CodeRevisionKind};
 use crate::error::ArtifactError;
+
+/// The side table's declared codec is `Raw`: [`encode_code_revision_integrity_record`]/
+/// [`decode_code_revision_integrity_record`] already spell this row's on-disk shape.
+impl RawValue for CodeRevisionIntegrityRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_code_revision_integrity_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_code_revision_integrity_record(bytes)?)
+    }
+}
 
 const CODE_REVISION_INTEGRITY_KEYS: [&str; 10] = [
     "revision_id",
@@ -250,8 +263,7 @@ pub(super) fn backfill_code_revision_integrity_for_session_in_txn(
     wtxn: &mut RwTxn<'_>,
     session_id: &EntityId,
 ) -> Result<()> {
-    let prefix = code_revision_session_index_prefix(session_id);
-    let revisions = collect_code_revision_records_by_index_prefix(store, wtxn, &prefix)?;
+    let revisions = collect_code_revision_records_by_index_prefix(store, wtxn, session_id)?;
     let existing_frontier = get_code_revision_frontier_in_txn(store, wtxn, session_id)?;
     if revisions.is_empty() {
         if existing_frontier.is_some() {
@@ -340,12 +352,7 @@ pub(super) fn ensure_code_revision_integrity_record_in_txn(
         revision_fold,
         finalized_at: revision.finalized_at,
     };
-    let encoded = encode_code_revision_integrity_record(&record)?;
-    store.vault_meta.put(
-        wtxn,
-        &code_revision_integrity_key(&revision.revision_id),
-        encoded.as_slice(),
-    )?;
+    INTEGRITY.put(store, wtxn, &revision.revision_id, &record)?;
     visiting.remove(revision_id);
     Ok(record)
 }
@@ -570,13 +577,7 @@ pub(super) fn load_optional_code_revision_integrity_record(
     rtxn: &RoTxn<'_>,
     revision_id: &EntityId,
 ) -> Result<Option<CodeRevisionIntegrityRecord>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &code_revision_integrity_key(revision_id))?
-    else {
-        return Ok(None);
-    };
-    decode_code_revision_integrity_record(&raw).map(Some)
+    INTEGRITY.get(store, rtxn, revision_id)
 }
 
 pub(super) fn compute_code_revision_fold(

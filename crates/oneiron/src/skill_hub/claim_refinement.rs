@@ -7,6 +7,7 @@ use super::refinement_admission::{
 };
 use super::refinement_custody::RefinementReceipt;
 use super::{package_codec::invalid, shared_gate::checked_useful_decision};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     batch::{BatchOp, ClaimMaterialization, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -28,13 +29,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-const RESERVE: &[u8] = b"skill_hub/claim-refinement-reserve/v1\0";
-
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+/// Owner-adjudicated held-out claim labels (sorted, unique hex ids) reserved
+/// for one claim base.
+const RESERVE: SideTable<EntityId, Vec<String>, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_CLAIM_REFINEMENT_RESERVE);
 
 /// The edit stays under its session tag until independently admitted. IDs in
 /// this row are canonical hex, not an alternate authority for the claim body.
@@ -139,7 +137,7 @@ pub(crate) fn claim_refinement_scope_exists_in_txn(
 ) -> Result<bool> {
     Ok(
         super::refinement_admission::refinement_control_scope_exists(store, txn, id)?
-            || store.vault_meta.get(txn, &key(RESERVE, id))?.is_some(),
+            || RESERVE.contains(store, txn, id)?,
     )
 }
 pub(crate) fn erase_claim_refinement_in_txn(
@@ -148,7 +146,7 @@ pub(crate) fn erase_claim_refinement_in_txn(
     id: &EntityId,
 ) -> Result<bool> {
     let had_control = super::refinement_admission::retire_refinement_control(store, txn, id)?;
-    let had_reserve = store.vault_meta.delete(txn, &key(RESERVE, id))?;
+    let had_reserve = RESERVE.delete(store, txn, id)?;
     Ok(had_control || had_reserve)
 }
 
@@ -191,10 +189,12 @@ impl Vault {
                     ));
                 }
             }
-            self.store.vault_meta.put(
+            // The set's sorted order is the stored JSON array order.
+            RESERVE.put(
+                &self.store,
                 txn,
-                &key(RESERVE, &base),
-                &serde_json::to_vec(&unique).map_err(|_| invalid("reserve encode failed"))?,
+                &base,
+                &unique.into_iter().collect::<Vec<_>>(),
             )?;
             Ok(())
         })
@@ -539,14 +539,9 @@ impl Vault {
         {
             return Err(invalid("claim branch edit no longer revises its base"));
         }
-        let evidence: Vec<String> = serde_json::from_slice(
-            &self
-                .store
-                .vault_meta
-                .get(txn, &key(RESERVE, &base_id))?
-                .ok_or_else(|| invalid("claim held-out reserve is missing"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("claim held-out reserve"))?;
+        let evidence = RESERVE
+            .get(&self.store, txn, &base_id)?
+            .ok_or_else(|| invalid("claim held-out reserve is missing"))?;
         if evidence.is_empty() || evidence.len() > 4096 {
             return Err(invalid("claim held-out reserve is invalid"));
         }

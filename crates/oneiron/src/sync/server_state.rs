@@ -22,6 +22,11 @@ use super::loro_support::{doc_from_snapshot, doc_version_vector, export_snapshot
 use super::types::WindowKey;
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::sync::window_rows::{
+    ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE, WINDOW_SHALLOW_FENCE,
+    WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR, WINDOW_UPDATE, WINDOW_UPDATE_SEQ, WindowUpdateKey,
+    WindowUpdateSeq,
+};
 
 /// Persists an imported window update (Observer-A-equivalent).
 ///
@@ -41,32 +46,27 @@ pub fn persist_imported_window_update(
     update_bytes: &[u8],
 ) -> Result<u32> {
     vault.with_write_txn(|wtxn| {
-        let seq_key = format!("m:u_seq:w:{key}");
-        let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
+        let seq_key = key.as_str().to_owned();
+        let seq: u32 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
             None => 0,
-            Some(raw) if raw.len() == 4 => u32::from_le_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .expect("match guard ensures raw.len() == 4"),
-            ),
-            Some(_) => return Err(Error::CorruptedIndex("imported update u_seq row")),
+            Some(WindowUpdateSeq(seq)) => seq,
         };
         let next_seq = seq
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("imported update u_seq"))?;
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &seq_key, &next_seq.to_le_bytes())?;
+        WINDOW_UPDATE_SEQ.put(&vault.store, wtxn, &seq_key, &WindowUpdateSeq(next_seq))?;
 
-        let update_key = format!("u:w:{key}:{next_seq:08x}");
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &update_key, update_bytes)?;
+        WINDOW_UPDATE.put(
+            &vault.store,
+            wtxn,
+            &WindowUpdateKey {
+                window: key.as_str().to_owned(),
+                seq: next_seq,
+            },
+            &update_bytes.to_vec(),
+        )?;
 
-        let svf_key = format!("svf:w:{key}");
-        vault.store.sync_state.put(wtxn, &svf_key, &[0u8])?;
+        WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[0u8])?;
 
         Ok(next_seq)
     })
@@ -81,14 +81,9 @@ pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) ->
     let vv = doc_version_vector(doc);
 
     vault.with_write_txn(|wtxn| {
-        let doc_key = format!("d:w:{key}");
-        vault.store.sync_state.put(wtxn, &doc_key, &state)?;
-
-        let sv_key = format!("sv:w:{key}");
-        vault.store.sync_state.put(wtxn, &sv_key, &vv)?;
-
-        let svf_key = format!("svf:w:{key}");
-        vault.store.sync_state.put(wtxn, &svf_key, &[1u8])?;
+        WINDOW_SNAPSHOT.put(&vault.store, wtxn, &key.as_str().to_owned(), &state)?;
+        WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv)?;
+        WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
         Ok(())
     })?;
 
@@ -125,9 +120,9 @@ pub fn persist_root_snapshot_in_txn(
     let state = export_snapshot(doc)?;
     let vv = doc_version_vector(doc);
 
-    vault.store.sync_state.put(wtxn, "d:root", &state)?;
-    vault.store.sync_state.put(wtxn, "sv:root", &vv)?;
-    vault.store.sync_state.put(wtxn, "svf:root", &[1u8])?;
+    ROOT_SNAPSHOT.put(&vault.store, wtxn, &(), &state)?;
+    ROOT_STATE_VECTOR.put(&vault.store, wtxn, &(), &vv)?;
+    ROOT_SHALLOW_FENCE.put(&vault.store, wtxn, &(), &[1u8])?;
     Ok(())
 }
 
@@ -150,13 +145,12 @@ pub fn persist_root_snapshot(vault: &Vault, doc: &LoroDoc) -> Result<()> {
 pub fn load_root_from_state(vault: &Vault) -> Result<Option<LoroDoc>> {
     let rtxn = vault.store.env.read_txn()?;
 
-    let Some(state) = vault.store.sync_state.get(&rtxn, "d:root")? else {
+    let Some(state) = ROOT_SNAPSHOT.get(&vault.store, &rtxn, &())? else {
         return Ok(None);
     };
     let doc = doc_from_snapshot(&state)?;
 
-    let iter = vault.store.sync_state.prefix_iter(&rtxn, "u:root:")?;
-    for entry in iter {
+    for entry in ROOT_UPDATE.iter_from(&vault.store, &rtxn, &[])? {
         let (_k, v) = entry?;
         import_doc(&doc, &v)?;
     }
@@ -171,18 +165,15 @@ pub fn load_root_from_state(vault: &Vault) -> Result<Option<LoroDoc>> {
 /// root persistence cannot permanently hide a window from clients. Keys
 /// that fail `YYYY-MM` validation are skipped with a warning.
 pub fn persisted_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
-    const PREFIX: &str = "d:w:";
     let rtxn = vault.store.env.read_txn()?;
 
     let mut keys = Vec::new();
-    let iter = vault.store.sync_state.prefix_iter(&rtxn, PREFIX)?;
-    for entry in iter {
-        let (k, _) = entry?;
-        match WindowKey::try_new(&k[PREFIX.len()..]) {
+    for entry in WINDOW_SNAPSHOT.scan_keys(&vault.store, &rtxn, &[])? {
+        match WindowKey::try_new(entry.clone()) {
             Some(key) => keys.push(key),
             None => {
                 tracing::warn!(
-                    key = %k,
+                    key = %entry,
                     "sync server_state: ignoring invalid persisted window snapshot key"
                 );
             }

@@ -2,7 +2,7 @@
 
 use super::graph::{self, invalid};
 #[cfg(feature = "sync")]
-use super::graph::{HEAD, MIGRATED, key};
+use super::graph::{HEAD, MIGRATED};
 use crate::EntityId;
 use crate::edge::EdgeKind;
 #[cfg(feature = "sync")]
@@ -376,8 +376,8 @@ pub(crate) fn prospective_parent(
             Dependency::ParentOf(root),
         )));
     }
-    if let Some(marker) = store.vault_meta.get(txn, &key(MIGRATED, &conversation))? {
-        if marker.as_ref() != [1] {
+    if let Some(marker) = MIGRATED.get(store, txn, &conversation)? {
+        if marker != [1] {
             return Err(Error::CorruptedIndex("conversation DAG migration marker"));
         }
         if let Some(head) = graph::read_id(store, txn, HEAD, &conversation)?

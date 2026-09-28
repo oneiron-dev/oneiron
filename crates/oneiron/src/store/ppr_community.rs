@@ -16,6 +16,7 @@ use crate::ppr_community::{
     CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::side_table::{self, Raw, SideTable};
 
 use super::Store;
 
@@ -24,7 +25,15 @@ use super::Store;
 pub(super) const MAX_COMMUNITY_NODES: usize = 100_000;
 const MAX_COMMUNITY_EDGES: usize = 1_000_000;
 pub(super) const MAX_COMMUNITY_CACHE_BYTES: usize = 64 * 1024 * 1024;
-pub(super) const COMMUNITY_META_KEY: &[u8] = b"ppr_community_cache:v0:meta";
+pub(super) const COMMUNITY_META_SUFFIX: &str = "meta";
+
+/// Typed door for the `ppr_community_cache:v0:` family: `meta`, `node:hex32`
+/// and `members:hex32` rows, addressed by their string tag. The value stays
+/// raw bytes — [`CommunitySnapshot`] and [`CommunityCacheMeta`] own their own
+/// hand-rolled row layouts and decode the whole family together, not row by
+/// row, so the typed door only takes over the get/put/delete/scan plumbing.
+pub(super) const CACHE: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::PPR_COMMUNITY_CACHE);
 
 fn cache_error(_: crate::ppr_community::CommunityError) -> Error {
     Error::CorruptedIndex("ppr community cache")
@@ -39,11 +48,9 @@ impl Store {
     ) -> Result<Option<CommunitySnapshot>> {
         let mut rows = Vec::new();
         let mut bytes = 0usize;
-        for entry in self
-            .vault_meta
-            .prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())?
-        {
-            let (key, value) = entry?;
+        for entry in CACHE.iter_from(self, txn, &[])? {
+            let (suffix, value) = entry?;
+            let key = CACHE.key_bytes(&suffix);
             super::ppr_community_indexed::record_query_read(key.len() + value.len());
             bytes = bytes
                 .checked_add(key.len())
@@ -56,14 +63,15 @@ impl Store {
             {
                 return Err(Error::CorruptedIndex("ppr community cache bounds"));
             }
-            rows.push((key.to_vec(), value.to_vec()));
+            rows.push((key, value));
         }
         if rows.is_empty() {
             return Ok(None);
         }
+        let meta_key = CACHE.key_bytes(&COMMUNITY_META_SUFFIX.to_owned());
         let meta = rows
             .iter()
-            .find(|(key, _)| key.as_slice() == COMMUNITY_META_KEY)
+            .find(|(key, _)| *key == meta_key)
             .map(|(_, value)| value)
             .ok_or(Error::CorruptedIndex("ppr community cache metadata"))?;
         let version = meta
@@ -115,23 +123,25 @@ impl Store {
             return Err(Error::CorruptedIndex("ppr community cache bounds"));
         }
         let mut old_keys = Vec::new();
-        for entry in self
-            .vault_meta
-            .prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())?
-        {
-            let (key, _) = entry?;
+        for entry in CACHE.iter_from(self, &*txn, &[])? {
+            let (suffix, _) = entry?;
             if old_keys.len() > MAX_COMMUNITY_NODES * 3
-                || key.len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32
+                || CACHE.key_bytes(&suffix).len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32
             {
                 return Err(Error::CorruptedIndex("ppr community cache bounds"));
             }
-            old_keys.push(key.to_vec());
+            old_keys.push(suffix);
         }
-        for key in old_keys {
-            self.vault_meta.delete(txn, &key)?;
+        for suffix in old_keys {
+            CACHE.delete(self, txn, &suffix)?;
         }
         for (key, value) in rows {
-            self.vault_meta.put(txn, &key, &value)?;
+            let suffix = key
+                .strip_prefix(CACHE.decl().prefix)
+                .ok_or(Error::CorruptedIndex("ppr community cache key"))?;
+            let suffix = String::from_utf8(suffix.to_vec())
+                .map_err(|_| Error::CorruptedIndex("ppr community cache key"))?;
+            CACHE.put(self, txn, &suffix, &value)?;
         }
         Ok(())
     }

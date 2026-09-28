@@ -4,6 +4,8 @@
 //! lease, and the optional durable started-milestone claim co-commit.
 
 mod settlement;
+mod validation;
+use self::validation::validate_admission_input;
 
 use std::collections::HashSet;
 
@@ -13,19 +15,16 @@ use crate::attempt_queue::{
     InterveneAttempt,
 };
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 
 use super::claim_authoring::{DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision};
 use super::codec::{
-    budget_key, budget_reservation_key, budget_step_charge_key, budget_step_charge_prefix,
-    decode_budget_record, decode_budget_reservation, decode_home_node_designation,
-    encode_budget_record, encode_budget_reservation, encode_home_node_designation,
-    invalid_dreamer_runner, validate_budget_id, validate_budget_record,
-    validate_budget_reservation,
+    invalid_dreamer_runner, validate_budget_id, validate_budget_record, validate_budget_reservation,
 };
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
-    DREAMER_PRIVATE_HOME_NODE_KEY, DREAMER_RUNNER_ATTEMPT_KIND,
-    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -37,6 +36,50 @@ use super::types::{
     DreamerHomeNodeDesignation, DreamerMilestoneKind, DreamerReservedBudget, ParkDreamerAttempt,
     ReserveDreamerBudget, SettleDreamerBudget,
 };
+
+/// Private wake-budget counter, keyed by budget id (the rest of the key).
+pub(super) const BUDGET: SideTable<String, DreamerBudgetRecord, Raw> =
+    SideTable::new(&side_table::DREAMER_BUDGET);
+/// Per-child reservation against a [`BUDGET`] row.
+pub(super) const BUDGET_RESERVATION: SideTable<
+    BudgetReservationKey,
+    DreamerBudgetReservation,
+    Raw,
+> = SideTable::new(&side_table::DREAMER_BUDGET_RESERVATION);
+/// Exact attempt/step memo charged by one wake checkpoint.
+const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), [u8; 1], Raw> =
+    SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
+/// The single elected MACRO home-node designation.
+pub(super) const HOME_NODE: SideTable<(), DreamerHomeNodeDesignation, Raw> =
+    SideTable::new(&side_table::DREAMER_HOME_NODE);
+
+/// `dreamer:budget_reservation:` row key: a big-endian u16 length, the budget
+/// id's own bytes, then the reserving child attempt id — not a
+/// [`crate::side_table::FixedSideKey`] tuple because the budget id is neither
+/// fixed-width nor last.
+pub(super) struct BudgetReservationKey {
+    pub(super) budget_id: String,
+    pub(super) attempt_id: AttemptId,
+}
+
+impl SideKey for BudgetReservationKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        let budget_id_len = u16::try_from(self.budget_id.len()).unwrap_or(u16::MAX);
+        out.extend_from_slice(&budget_id_len.to_be_bytes());
+        out.extend_from_slice(self.budget_id.as_bytes());
+        out.extend_from_slice(self.attempt_id.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (len_bytes, rest) = bytes.split_at_checked(2)?;
+        let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
+        let (id_bytes, attempt_bytes) = rest.split_at_checked(len)?;
+        Some(Self {
+            budget_id: String::from_utf8(id_bytes.to_vec()).ok()?,
+            attempt_id: AttemptId::decode_key(attempt_bytes)?,
+        })
+    }
+}
 
 struct DreamerKindAdmissionResult {
     outcome: DreamerAdmissionOutcome,
@@ -80,16 +123,9 @@ impl DreamerRunnerStore<'_> {
             return Ok(previous);
         }
         if let Some(designation) = designation {
-            let encoded = encode_home_node_designation(&designation)?;
-            self.vault
-                .store
-                .vault_meta
-                .put(&mut wtxn, DREAMER_PRIVATE_HOME_NODE_KEY, &encoded)?;
+            HOME_NODE.put(&self.vault.store, &mut wtxn, &(), &designation)?;
         } else {
-            self.vault
-                .store
-                .vault_meta
-                .delete(&mut wtxn, DREAMER_PRIVATE_HOME_NODE_KEY)?;
+            HOME_NODE.delete(&self.vault.store, &mut wtxn, &())?;
         }
         wtxn.commit()?;
         Ok(designation)
@@ -114,15 +150,7 @@ impl DreamerRunnerStore<'_> {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<DreamerHomeNodeDesignation>> {
-        let Some(raw) = self
-            .vault
-            .store
-            .vault_meta
-            .get(txn, DREAMER_PRIVATE_HOME_NODE_KEY)?
-        else {
-            return Ok(None);
-        };
-        decode_home_node_designation(&raw).map(Some)
+        HOME_NODE.get(&self.vault.store, txn, &())
     }
 
     pub fn home_node_designation(&self) -> Result<Option<DreamerHomeNodeDesignation>> {
@@ -498,11 +526,7 @@ impl DreamerRunnerStore<'_> {
     pub fn budget(&self, budget_id: &str) -> Result<Option<DreamerBudgetRecord>> {
         validate_budget_id(budget_id)?;
         let rtxn = self.vault.store.env.read_txn()?;
-        let key = budget_key(budget_id)?;
-        let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
-            return Ok(None);
-        };
-        decode_budget_record(&raw).map(Some)
+        BUDGET.get(&self.vault.store, &rtxn, &budget_id.to_owned())
     }
 
     /// Reads the remaining units in a private Dreamer budget row.
@@ -519,11 +543,14 @@ impl DreamerRunnerStore<'_> {
     ) -> Result<Option<DreamerBudgetReservation>> {
         validate_budget_id(budget_id)?;
         let rtxn = self.vault.store.env.read_txn()?;
-        let key = budget_reservation_key(budget_id, child_attempt)?;
-        let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
-            return Ok(None);
-        };
-        decode_budget_reservation(&raw).map(Some)
+        BUDGET_RESERVATION.get(
+            &self.vault.store,
+            &rtxn,
+            &BudgetReservationKey {
+                budget_id: budget_id.to_owned(),
+                attempt_id: child_attempt,
+            },
+        )
     }
 }
 
@@ -531,14 +558,7 @@ fn home_node_designation_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
 ) -> Result<Option<DreamerHomeNodeDesignation>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(txn, DREAMER_PRIVATE_HOME_NODE_KEY)?
-    else {
-        return Ok(None);
-    };
-    decode_home_node_designation(&raw).map(Some)
+    HOME_NODE.get(&vault.store, txn, &())
 }
 
 fn elect_home_node_designation(
@@ -587,8 +607,7 @@ fn read_or_initialize_budget_in_txn(
     budget_total_units: u64,
     now: u64,
 ) -> Result<DreamerBudgetRecord> {
-    let key = budget_key(budget_id)?;
-    let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? else {
+    let Some(record) = BUDGET.get(&vault.store, wtxn, &budget_id.to_owned())? else {
         return Ok(DreamerBudgetRecord {
             budget_id: budget_id.to_owned(),
             total_units: budget_total_units,
@@ -597,7 +616,6 @@ fn read_or_initialize_budget_in_txn(
             updated_at: now,
         });
     };
-    let record = decode_budget_record(&raw)?;
     if record.budget_id != budget_id {
         return Err(invalid_dreamer_runner("dreamer budget key/body mismatch"));
     }
@@ -609,10 +627,7 @@ fn put_budget_record_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &DreamerBudgetRecord,
 ) -> Result<()> {
-    let encoded = encode_budget_record(record)?;
-    let key = budget_key(&record.budget_id)?;
-    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
-    Ok(())
+    BUDGET.put(&vault.store, wtxn, &record.budget_id.clone(), record)
 }
 
 fn read_budget_reservation_in_txn(
@@ -621,11 +636,17 @@ fn read_budget_reservation_in_txn(
     budget_id: &str,
     child_attempt: AttemptId,
 ) -> Result<Option<DreamerBudgetReservation>> {
-    let reservation_key = budget_reservation_key(budget_id, child_attempt)?;
-    let Some(raw) = vault.store.vault_meta.get(txn, &reservation_key)? else {
+    let Some(reservation) = BUDGET_RESERVATION.get(
+        &vault.store,
+        txn,
+        &BudgetReservationKey {
+            budget_id: budget_id.to_owned(),
+            attempt_id: child_attempt,
+        },
+    )?
+    else {
         return Ok(None);
     };
-    let reservation = decode_budget_reservation(&raw)?;
     if reservation.budget_id != budget_id || reservation.attempt_id != child_attempt {
         return Err(invalid_dreamer_runner(
             "dreamer budget reservation key/body mismatch",
@@ -646,13 +667,11 @@ fn reserve_budget_for_child_in_txn(
             "dreamer budget reservation targets a different counter",
         ));
     }
-    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.attempt_id)?;
-    if vault
-        .store
-        .vault_meta
-        .get(&*wtxn, &reservation_key)?
-        .is_some()
-    {
+    let reservation_key = BudgetReservationKey {
+        budget_id: reservation.budget_id.clone(),
+        attempt_id: reservation.attempt_id,
+    };
+    if BUDGET_RESERVATION.contains(&vault.store, &*wtxn, &reservation_key)? {
         return Err(invalid_dreamer_runner(
             "dreamer budget reservation already exists",
         ));
@@ -671,11 +690,7 @@ fn reserve_budget_for_child_in_txn(
     budget.updated_at = reservation.updated_at;
     put_budget_record_in_txn(vault, wtxn, budget)?;
 
-    let encoded = encode_budget_reservation(reservation)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &reservation_key, &encoded)?;
+    BUDGET_RESERVATION.put(&vault.store, wtxn, &reservation_key, reservation)?;
     Ok(())
 }
 
@@ -720,12 +735,11 @@ fn top_up_budget_reservation_in_txn(
     validate_budget_record(budget)?;
 
     put_budget_record_in_txn(vault, wtxn, budget)?;
-    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.attempt_id)?;
-    let encoded = encode_budget_reservation(&reservation)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &reservation_key, &encoded)?;
+    let reservation_key = BudgetReservationKey {
+        budget_id: reservation.budget_id.clone(),
+        attempt_id: reservation.attempt_id,
+    };
+    BUDGET_RESERVATION.put(&vault.store, wtxn, &reservation_key, &reservation)?;
     Ok(reservation)
 }
 
@@ -771,23 +785,4 @@ fn settle_budget_for_child(
         refunded_units,
         over_reserved_units,
     })
-}
-
-fn validate_admission_input(input: &AdmitDreamerAttempt) -> Result<()> {
-    validate_budget_id(&input.budget_id)?;
-    if input.reserve_units == 0 {
-        return Err(invalid_dreamer_runner(
-            "dreamer admission reserve_units must be > 0",
-        ));
-    }
-    if input
-        .started_milestone
-        .as_ref()
-        .is_some_and(|milestone| milestone.kind != DreamerMilestoneKind::Started)
-    {
-        return Err(invalid_dreamer_runner(
-            "dreamer admission milestone must be started",
-        ));
-    }
-    Ok(())
 }

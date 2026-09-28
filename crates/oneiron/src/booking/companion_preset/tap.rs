@@ -1,14 +1,12 @@
 //! Proposal taps, the authorized common intersection, and soft confirmation.
 
-use crate::booking::lifecycle::{booking_writer, put_meta};
+use crate::booking::lifecycle::booking_writer;
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
 use super::render::validate_participant_token;
-use super::storage::{
-    encode_row, load_live_row, participant_token_hash, proposal_meta_key, refused,
-};
+use super::storage::{PROPOSAL, load_live_row, participant_token_hash, refused, surface};
 use super::{
     ChoiceId, CompanionProposal, CompanionSoftConfirmation, ProposalChoice, ProposalId,
     ProposalTap, TapAggregate,
@@ -35,10 +33,9 @@ pub fn record_proposal_tap(
 ) -> Result<TapAggregate, BookingError> {
     validate_participant_token(opaque_participant_token)?;
     let hash = participant_token_hash(proposal_id, opaque_participant_token);
-    let key = proposal_meta_key(proposal_id);
 
     booking_writer(vault, |wtxn| {
-        let mut row = load_live_row(vault, &*wtxn, &key, now_utc)?;
+        let mut row = load_live_row(vault, &*wtxn, proposal_id, now_utc)?;
         if !row.proposal.participant_token_hashes.contains(&hash) {
             return Err(refused("this token was not issued for this proposal"));
         }
@@ -63,8 +60,7 @@ pub fn record_proposal_tap(
                 choice_id,
                 tapped_at: now_utc,
             });
-            let encoded = encode_row(&row)?;
-            put_meta(vault, wtxn, &key, &encoded)?;
+            surface(PROPOSAL.put(&vault.store, wtxn, &proposal_id.0, &row))?;
         }
         Ok(TapAggregate::fold(&row.proposal, &row.taps))
     })
@@ -139,9 +135,8 @@ pub fn soft_confirm_highest_common_on_home_node(
     companion_ref: EntityId,
     now_utc: u64,
 ) -> Result<Option<CompanionSoftConfirmation>, BookingError> {
-    let key = proposal_meta_key(proposal_id);
     booking_writer(vault, |wtxn| {
-        let mut row = load_live_row(vault, &*wtxn, &key, now_utc)?;
+        let mut row = load_live_row(vault, &*wtxn, proposal_id, now_utc)?;
         // A retry is answered with the answer it was answered with the first
         // time; a second confirmation would be a second authority.
         if let Some(recorded) = &row.confirmation {
@@ -161,8 +156,7 @@ pub fn soft_confirm_highest_common_on_home_node(
             confirmed_at: now_utc,
         };
         row.confirmation = Some(confirmation.clone());
-        let encoded = encode_row(&row)?;
-        put_meta(vault, wtxn, &key, &encoded)?;
+        surface(PROPOSAL.put(&vault.store, wtxn, &proposal_id.0, &row))?;
         Ok(Some(confirmation))
     })
 }

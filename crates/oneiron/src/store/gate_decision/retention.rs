@@ -11,33 +11,45 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 
 use super::orcb;
 use super::types::GateDecisionRecord;
 
-const HOLD_PREFIX: &[u8] = b"gate_decision:partition_hold:v1:";
-const RETAIN_PREFIX: &[u8] = b"gate_decision:partition_retain_until:v1:";
-const RETIRE_PENDING_PREFIX: &[u8] = b"gate_decision:partition_retire_pending:v1:";
+/// One exterior-key partition: the claim-free partition, or one claim's. Spelled `0`, or `1`
+/// then the claim id, after its table's prefix.
+struct Partition(Option<[u8; 16]>);
 
-pub(super) fn pending_key(claim: &[u8; 16]) -> Vec<u8> {
-    let mut key = Vec::from(RETIRE_PENDING_PREFIX);
-    key.extend_from_slice(claim);
-    key
-}
-
-fn partition_key(prefix: &[u8], claim: Option<&[u8; 16]>) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + claim.map_or(1, |_| 17));
-    key.extend_from_slice(prefix);
-    match claim {
-        Some(id) => {
-            key.push(1);
-            key.extend_from_slice(id);
+impl SideKey for Partition {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        match self.0 {
+            Some(id) => {
+                out.push(1);
+                out.extend_from_slice(&id);
+            }
+            None => out.push(0),
         }
-        None => key.push(0),
     }
-    key
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        match bytes.split_first()? {
+            (&0, []) => Some(Self(None)),
+            (&1, id) => Some(Self(Some(id.try_into().ok()?))),
+            _ => None,
+        }
+    }
 }
+
+/// A legal hold; the value is the single byte 1.
+const HOLD: SideTable<Partition, [u8; 1], Raw> =
+    SideTable::new(&side_table::GATE_DECISION_PARTITION_HOLD);
+/// The latest retain-until stamp of a held partition.
+const RETAIN_UNTIL: SideTable<Partition, u64, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_PARTITION_RETAIN_UNTIL);
+/// A committed key-retirement intent: the claim partition's key generation.
+pub(super) const RETIRE_PENDING: SideTable<[u8; 16], u64, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_PARTITION_RETIRE_PENDING);
 
 impl Store {
     pub(crate) fn gate_partition_held_in_txn(
@@ -45,12 +57,9 @@ impl Store {
         txn: &RoTxn<'_>,
         claim: Option<&[u8; 16]>,
     ) -> Result<bool> {
-        match self
-            .vault_meta
-            .get(txn, &partition_key(HOLD_PREFIX, claim))?
-        {
+        match HOLD.get(self, txn, &Partition(claim.copied()))? {
             None => Ok(false),
-            Some(raw) if raw.as_ref() == [1] => Ok(true),
+            Some([1]) => Ok(true),
             Some(_) => Err(Error::CorruptedIndex("gate decision partition hold")),
         }
     }
@@ -60,16 +69,7 @@ impl Store {
         txn: &RoTxn<'_>,
         claim: &[u8; 16],
     ) -> Result<Option<u64>> {
-        self.vault_meta
-            .get(txn, &pending_key(claim))?
-            .map(|raw| {
-                let bytes: [u8; 8] = raw
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("gate decision retirement intent"))?;
-                Ok(u64::from_be_bytes(bytes))
-            })
-            .transpose()
+        RETIRE_PENDING.get(self, txn, claim)
     }
 
     pub(crate) fn reject_held_gate_partition_in_txn(
@@ -229,7 +229,7 @@ impl Vault {
         claim_partition: Option<[u8; 16]>,
         held: bool,
     ) -> Result<()> {
-        let key = partition_key(HOLD_PREFIX, claim_partition.as_ref());
+        let partition = Partition(claim_partition);
         self.with_write_txn(|txn| {
             if held {
                 if let Some(claim) = claim_partition.as_ref()
@@ -246,9 +246,9 @@ impl Vault {
                         "gate decision partition key already retired".into(),
                     ));
                 }
-                self.store.vault_meta.put(txn, &key, &[1])?;
+                HOLD.put(&self.store, txn, &partition, &[1])?;
             } else {
-                self.store.vault_meta.delete(txn, &key)?;
+                HOLD.delete(&self.store, txn, &partition)?;
             }
             Ok(())
         })
@@ -260,18 +260,7 @@ impl Vault {
         claim_partition: Option<[u8; 16]>,
     ) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
-        let key = partition_key(RETAIN_PREFIX, claim_partition.as_ref());
-        self.store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|raw| {
-                let bytes: [u8; 8] = raw
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("gate decision retain until"))?;
-                Ok(u64::from_be_bytes(bytes))
-            })
-            .transpose()
+        RETAIN_UNTIL.get(&self.store, &txn, &Partition(claim_partition))
     }
 
     /// Complete durable key retirements left after an interrupted sweep.
@@ -279,24 +268,7 @@ impl Vault {
     /// of every primary in that physical key partition.
     fn finish_gate_decision_retirements(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        let mut pending = Vec::new();
-        for row in self
-            .store
-            .vault_meta
-            .prefix_iter(&txn, RETIRE_PENDING_PREFIX)?
-        {
-            let (key, value) = row?;
-            let claim: [u8; 16] = key
-                .strip_prefix(RETIRE_PENDING_PREFIX)
-                .ok_or(Error::CorruptedIndex("gate decision retirement intent"))?
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("gate decision retirement intent"))?;
-            let generation: [u8; 8] = value
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("gate decision retirement intent"))?;
-            pending.push((claim, u64::from_be_bytes(generation)));
-        }
+        let pending = RETIRE_PENDING.scan(&self.store, &txn)?;
         drop(txn);
         for (claim, generation) in pending {
             #[cfg(test)]
@@ -336,9 +308,7 @@ impl Vault {
                 ));
             }
             orcb::retire_claim_key(&self.store.core.gate_custody_root, &claim, generation)?;
-            self.store
-                .vault_meta
-                .delete(&mut txn, &pending_key(&claim))?;
+            RETIRE_PENDING.delete(&self.store, &mut txn, &claim)?;
             txn.commit()?;
         }
         Ok(())
@@ -450,23 +420,16 @@ impl Vault {
             Ok(())
         })?;
         for claim in held_partitions {
-            let key = partition_key(RETAIN_PREFIX, claim.as_ref());
-            let previous = self
-                .store
-                .vault_meta
-                .get(&txn, &key)?
-                .map(|raw| -> Result<u64> {
-                    let bytes: [u8; 8] = raw
-                        .as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("gate decision retain until"))?;
-                    Ok(u64::from_be_bytes(bytes))
-                })
-                .transpose()?
+            let partition = Partition(claim);
+            let previous = RETAIN_UNTIL
+                .get(&self.store, &txn, &partition)?
                 .unwrap_or(0);
-            self.store
-                .vault_meta
-                .put(&mut txn, &key, &previous.max(retain_until).to_be_bytes())?;
+            RETAIN_UNTIL.put(
+                &self.store,
+                &mut txn,
+                &partition,
+                &previous.max(retain_until),
+            )?;
         }
         let removed = eligible.len() as u64;
         for record in &eligible {
@@ -478,9 +441,7 @@ impl Vault {
         // leaves a resumable pending marker and no rows that need the key.
         for claim in removed_claims.difference(&live_claims) {
             let generation = orcb::key_generation(&self.store.core.gate_custody_root, claim)?;
-            self.store
-                .vault_meta
-                .put(&mut txn, &pending_key(claim), &generation.to_be_bytes())?;
+            RETIRE_PENDING.put(&self.store, &mut txn, claim, &generation)?;
         }
         txn.commit()?;
         self.finish_gate_decision_retirements()?;

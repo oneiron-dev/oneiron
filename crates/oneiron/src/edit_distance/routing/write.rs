@@ -1,9 +1,7 @@
 //! Judged-amendment fold writes.
 
 use super::keys::{
-    AGGREGATE_ROW_LABEL, MEMBER_KEY_PREFIX, MEMBER_ROW_LABEL, ROW_VERSION, StoredAggregate,
-    StoredModelVersion, aggregate_key, decode_row, decoded_aggregate, encode_row, invalid,
-    meta_key,
+    AGGREGATE, MEMBER, ROW_VERSION, StoredAggregate, StoredModelVersion, aggregate_key, invalid,
 };
 use super::scope::RoutingScopeKey;
 use super::version::serving_model_version;
@@ -37,18 +35,15 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
     let Some(judgment) = judgment_for(vault, delta_receipt)? else {
         return Err(invalid("routing projection cites an unjudged receipt"));
     };
-    let member_key = meta_key(MEMBER_KEY_PREFIX, delta_receipt.as_bytes());
+    let member_key = delta_receipt.to_owned();
     let model_version = serving_model_version(vault)?;
     let fold = fold_of(&judgment)?;
     let scope = RoutingScopeKey::new(model_version.clone(), judgment.scope);
     let scope_row_key = aggregate_key(&scope)?;
-    let member = encode_row(
-        &StoredModelVersion {
-            v: ROW_VERSION,
-            model_version,
-        },
-        MEMBER_ROW_LABEL,
-    )?;
+    let member = StoredModelVersion {
+        v: ROW_VERSION,
+        model_version,
+    };
 
     vault.with_write_txn(|wtxn| {
         // The binding is read in the transaction that writes it. An earlier
@@ -56,17 +51,15 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         // of one receipt would both read "absent" and both count it — the
         // writer serialization below orders those writes without making either
         // one's decision to write correct.
-        if vault.store.vault_meta.get(&*wtxn, &member_key)?.is_some() {
+        if MEMBER.contains(&vault.store, &*wtxn, &member_key)? {
             return Ok(());
         }
-        let mut aggregate = match vault.store.vault_meta.get(&*wtxn, &scope_row_key)? {
-            Some(raw) => decoded_aggregate(&raw)?,
-            None => StoredAggregate::default(),
-        };
+        let mut aggregate = AGGREGATE
+            .get(&vault.store, &*wtxn, &scope_row_key)?
+            .unwrap_or_default();
         apply_fold(&mut aggregate, fold)?;
-        let encoded = encode_row(&aggregate, AGGREGATE_ROW_LABEL)?;
-        vault.store.vault_meta.put(wtxn, &scope_row_key, &encoded)?;
-        vault.store.vault_meta.put(wtxn, &member_key, &member)?;
+        AGGREGATE.put(&vault.store, wtxn, &scope_row_key, &aggregate)?;
+        MEMBER.put(&vault.store, wtxn, &member_key, &member)?;
         Ok(())
     })
 }
@@ -87,15 +80,9 @@ pub(in crate::edit_distance) fn folded_model_version_in_txn(
     rtxn: &heed::RoTxn<'_>,
     delta_receipt: &str,
 ) -> Result<Option<String>> {
-    let key = meta_key(MEMBER_KEY_PREFIX, delta_receipt.as_bytes());
-    let Some(raw) = vault.store.vault_meta.get(rtxn, &key)? else {
-        return Ok(None);
-    };
-    let row: StoredModelVersion = decode_row(&raw, MEMBER_ROW_LABEL)?;
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(MEMBER_ROW_LABEL));
-    }
-    Ok(Some(row.model_version))
+    Ok(MEMBER
+        .get(&vault.store, rtxn, &delta_receipt.to_owned())?
+        .map(|row| row.model_version))
 }
 
 /// One judgment's contribution: its edit mass, and whether it was sound.

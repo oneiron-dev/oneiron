@@ -1,32 +1,33 @@
 //! Retirement of copied agent source when a captured input is erased.
 use super::birth_custody::{birth_carriers_for_holder_in_txn, retire_birth_source_holder_in_txn};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
     store::Store,
 };
 use std::collections::BTreeSet;
-const INPUT: &[u8] = b"agent_def/birth-input/v1\0";
-const RETIRED_INPUT: &[u8] = b"agent_def/birth-input-retired/v1\0";
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+
+/// Empty-marker index from a captured dependency input to a birthed-agent
+/// child. Key: the input's id, then the child's id.
+const INPUT: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::AGENT_DEF_BIRTH_INPUT);
+/// Empty marker: a captured dependency input has been retired.
+const RETIRED_INPUT: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::AGENT_DEF_BIRTH_INPUT_RETIRED);
+/// The ARCH-0023b global local hard-delete marker (owned by
+/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
+const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
+
 pub(super) fn check_inputs(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     inputs: &BTreeSet<EntityId>,
 ) -> Result<()> {
     for input in inputs {
-        if store
-            .vault_meta
-            .get(txn, &key(RETIRED_INPUT, input))?
-            .is_some()
-            || store
-                .sync_state
-                .get(txn, &format!("dt:{}", input.to_hex()))?
-                .is_some()
+        if RETIRED_INPUT.contains(store, txn, input)?
+            || HARD_DELETE_MARKER.contains(store, txn, &HexId(*input))?
             || store.off_record_sessions.contains_entity(input)?
         {
             return Err(Error::Artifact(
@@ -45,9 +46,7 @@ pub(super) fn bind_inputs(
 ) -> Result<()> {
     let child = source.child()?;
     for input in source.dependencies()? {
-        let mut binding = key(INPUT, &input);
-        binding.extend_from_slice(child.as_bytes());
-        store.vault_meta.put(txn, &binding, &[])?;
+        INPUT.put(store, txn, &(input, child), &())?;
     }
     Ok(())
 }
@@ -56,19 +55,11 @@ fn children_for_input(
     txn: &heed::RoTxn<'_>,
     input: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let prefix = key(INPUT, input);
-    let mut children = Vec::new();
-    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (key, value) = row?;
-        if !value.is_empty() {
-            return Err(Error::CorruptedIndex("agent birth input binding"));
-        }
-        children.push(crate::entity_id::parse_entity_id(
-            &key[prefix.len()..],
-            "agent birth input child",
-        )?);
-    }
-    Ok(children)
+    Ok(INPUT
+        .scan_from(store, txn, input.as_bytes())?
+        .into_iter()
+        .map(|((_, child), ())| child)
+        .collect())
 }
 /// Includes direct ownership and copies of this input. Index entries grant no
 /// authority over the child rows: only their captured ASSET payloads are scoped.
@@ -108,9 +99,7 @@ pub(super) fn retire_input(
         if !visited.insert(input) {
             continue;
         }
-        store
-            .vault_meta
-            .put(txn, &key(RETIRED_INPUT, &input), &[])?;
+        RETIRED_INPUT.put(store, txn, &input, &())?;
         for child in children_for_input(store, txn, &input)? {
             if children.insert(child) {
                 pending.extend(birth_carriers_for_holder_in_txn(store, txn, &child)?);

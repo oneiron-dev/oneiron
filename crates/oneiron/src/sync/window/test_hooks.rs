@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 
 use crate::entity_id::EntityId;
+use crate::ports::EntityStoreMaintenance;
 use crate::{Error, Result, Vault};
 
 thread_local! {
@@ -39,13 +40,7 @@ pub(super) fn run_receipt_revocation_race(vault: &Vault) -> Result<()> {
             return Err(Error::InvariantViolation("empty local receipt test row"));
         }
         vault.with_write_txn(|wtxn| {
-            crate::ports::EntityStoreStaging::port_stage_entity_row(
-                &vault.store,
-                wtxn,
-                &id,
-                &local_blob,
-            )?;
-            Ok(())
+            EntityStoreMaintenance::port_raw_record_seed(&vault.store, wtxn, &id, &local_blob)
         })?;
     }
     Ok(())

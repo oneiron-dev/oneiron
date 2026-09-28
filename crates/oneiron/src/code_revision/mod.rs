@@ -30,9 +30,12 @@ mod tests;
 // test module through `use super::*`: its own private crate/std import header,
 // and every code-revision-internal item the tests name bare. After the
 // directory split the seam re-imports both so `tests.rs` resolves exactly as
-// it did before.
+// it did before. (`frontier::*` is absent from the globs on purpose: the
+// typed side tables cover what the tests used to reach into that module for,
+// so its `pub(super)` items are no longer named bare and the glob would be an
+// unused import.)
 #[cfg(test)]
-use self::{frontier::*, integrity::*, keys::*, storage::*, types::*};
+use self::{integrity::*, keys::*, storage::*, types::*};
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

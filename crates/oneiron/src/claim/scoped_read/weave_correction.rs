@@ -3,10 +3,13 @@ use super::{ScopedRead, WeaveItem, WeaveReader, WeaveSectionKind, WeaveSectionSp
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::provenance::EdgeRef;
+use crate::provenance::{EDGE_REF_LEN, EdgeRef};
+use crate::side_table::{self, Named, SideTable};
 use serde::{Deserialize, Serialize};
 
-const PREFIX: &[u8] = b"weave:wrong-link:v1:";
+/// Wrong-link labels, keyed by the link's edge ref, then the label's receipt id.
+const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named> =
+    SideTable::new(&side_table::WEAVE_WRONG_LINK_LABEL);
 
 /// An immutable negative training label for one weave link. The edge reference
 /// is the link's stable id; the receipt id distinguishes independent taps.
@@ -24,10 +27,6 @@ struct StoredCorrection {
     link: Vec<u8>,
     actor: EntityId,
     recorded_at: u64,
-}
-
-fn prefix(link: EdgeRef) -> Vec<u8> {
-    [PREFIX, &link.encode()].concat()
 }
 
 impl ScopedRead<'_> {
@@ -68,9 +67,8 @@ impl ScopedRead<'_> {
             ))?;
         // Writers enforce the reader's bound in this SAME serialized txn.
         // Refuse a tap before it can make all prior labels unreadable.
-        let key_prefix = prefix(link);
         let mut count = 0;
-        for row in self.vault.store.vault_meta.prefix_iter(&txn, &key_prefix)? {
+        for row in LABELS.iter_raw_from(&self.vault.store, &txn, &link.encode())? {
             row?;
             count += 1;
             if count >= limit {
@@ -83,15 +81,17 @@ impl ScopedRead<'_> {
             actor: auth.actor(),
             recorded_at: now,
         };
-        let key = [key_prefix, correction.id.as_bytes().to_vec()].concat();
-        let bytes = rmp_serde::to_vec_named(&StoredCorrection {
-            id: correction.id,
-            link: link.encode().to_vec(),
-            actor: correction.actor,
-            recorded_at: correction.recorded_at,
-        })
-        .map_err(|_| Error::InvariantViolation("weave correction encode"))?;
-        self.vault.store.vault_meta.put(&mut txn, &key, &bytes)?;
+        LABELS.put(
+            &self.vault.store,
+            &mut txn,
+            &(link.encode(), correction.id),
+            &StoredCorrection {
+                id: correction.id,
+                link: link.encode().to_vec(),
+                actor: correction.actor,
+                recorded_at: correction.recorded_at,
+            },
+        )?;
         txn.commit()?;
         Ok(correction)
     }
@@ -142,15 +142,9 @@ impl crate::Vault {
         link: EdgeRef,
     ) -> Result<Vec<WeaveLinkCorrection>> {
         let mut labels = Vec::new();
-        let prefix = prefix(link);
-        for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
-            let (key, raw) = row?;
-            let stored: StoredCorrection = rmp_serde::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("weave correction label"))?;
-            if stored.link != link.encode()
-                || key.len() != prefix.len() + stored.id.as_bytes().len()
-                || &key[prefix.len()..] != stored.id.as_bytes()
-            {
+        for row in LABELS.iter_from(&self.store, txn, &link.encode())? {
+            let ((_, receipt_id), stored) = row?;
+            if stored.link != link.encode() || receipt_id != stored.id {
                 return Err(Error::CorruptedIndex("weave correction link"));
             }
             labels.push(WeaveLinkCorrection {

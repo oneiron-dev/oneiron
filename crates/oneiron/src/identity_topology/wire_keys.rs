@@ -20,11 +20,6 @@
 /// enforces the pair.
 pub const PREDICATE_ENTITY_DISTINCT_FROM: &str = "entity.distinct_from";
 
-/// vault_meta key of the engine-stamped monotonic event sequence — the
-/// family's causality clock. Allocated inside the apply/undo write txn, so
-/// a rolled-back op never burns a visible gap into committed history.
-pub(crate) const IDENTITY_TOPOLOGY_SEQ_KEY: &[u8] = b"m:identity_topology_seq";
-
 /// First sequence value the local allocator may not enter. The final 1,024
 /// `u64` values remain the terminal band shared by local and replicated
 /// records.

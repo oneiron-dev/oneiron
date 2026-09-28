@@ -154,10 +154,3 @@ pub(super) fn sort_pending_gate_consents(records: &mut [PendingGateConsentRecord
             .then_with(|| left.claim_id.cmp(&right.claim_id))
     });
 }
-
-pub(super) fn decode_pending_gate_consent_sequence(value: &[u8]) -> Result<u64> {
-    value
-        .try_into()
-        .map(u64::from_be_bytes)
-        .map_err(|_| Error::CorruptedIndex("pending gate consent sequence"))
-}

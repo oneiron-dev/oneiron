@@ -6,10 +6,9 @@ use super::state::{
     ScopeOutcomeStats,
 };
 use super::storage::{
-    RAMP_DEMOTION_KEY_PREFIX, RAMP_DEMOTION_ROW_LABEL, RAMP_OUTCOME_KEY_PREFIX,
-    RAMP_OUTCOME_ROW_LABEL, RAMP_ROW_VERSION, RAMP_STATS_KEY_PREFIX, StoredDemotion,
-    StoredRampOutcome, StoredScopeStats, decode_ramp_row, decode_row, encode_row, floor_key,
-    ramp_row_key, ramp_row_key_id, stats_key, stats_row, stats_row_parts, stored_row_scope,
+    RAMP_DEMOTION, RAMP_DEMOTION_ROW_LABEL, RAMP_FLOOR, RAMP_OUTCOME, RAMP_OUTCOME_ROW_LABEL,
+    RAMP_ROW_VERSION, RAMP_STATS, StoredDemotion, StoredRampOutcome, StreakFloor, stats_row,
+    stats_row_parts, stored_row_scope, validated_ramp_row,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -25,10 +24,9 @@ pub(super) fn read_counters_in_txn(
     txn: &heed::RoTxn<'_>,
     scope: &RampScope,
 ) -> Result<Counters> {
-    let Some(raw) = store.vault_meta.get(txn, &stats_key(scope))? else {
+    let Some(row) = RAMP_STATS.get(store, txn, &scope.key())? else {
         return Ok(Counters::default());
     };
-    let row: StoredScopeStats = decode_row(&raw, "ramp stats row")?;
     Ok(stats_row_parts(row)?.1)
 }
 
@@ -38,8 +36,7 @@ pub(super) fn write_counters_in_txn(
     scope: &RampScope,
     counters: Counters,
 ) -> Result<()> {
-    let data = encode_row(&stats_row(scope, counters), "ramp stats row encode failed")?;
-    store.vault_meta.put(wtxn, &stats_key(scope), &data)?;
+    RAMP_STATS.put(store, wtxn, &scope.key(), &stats_row(scope, counters))?;
     Ok(())
 }
 
@@ -54,12 +51,9 @@ pub(crate) fn ramp_floor_override_in_txn(
     txn: &heed::RoTxn<'_>,
     scope: &RampScope,
 ) -> Result<Option<u32>> {
-    let Some(raw) = store.vault_meta.get(txn, &floor_key(scope))? else {
-        return Ok(None);
-    };
-    <[u8; 4]>::try_from(raw.as_ref())
-        .map(|bytes| Some(u32::from_le_bytes(bytes)))
-        .map_err(|_| Error::CorruptedIndex("ramp streak floor row"))
+    Ok(RAMP_FLOOR
+        .get(store, txn, &scope.key())?
+        .map(|StreakFloor(floor)| floor))
 }
 
 /// The scope's live standing grant reference, when one is active.
@@ -131,13 +125,7 @@ pub(crate) fn ramp_stats_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<ScopeOutcomeStats>> {
     let mut rows = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, RAMP_STATS_KEY_PREFIX)?
-    {
-        let (_, raw) = entry?;
-        let row: StoredScopeStats = decode_row(&raw, "ramp stats row")?;
+    for (_, row) in RAMP_STATS.scan(&vault.store, txn)? {
         let (scope, counters) = stats_row_parts(row)?;
         let state = derive_state_in_txn(vault, txn, &scope, counters)?;
         rows.push(stats_view(scope, counters, state));
@@ -187,15 +175,11 @@ pub(super) fn append_demotion_in_txn(
         after_seq: vault.read_identity_topology_seq_in_txn(&*wtxn)?,
         at,
     };
-    let data = encode_row(&row, "ramp demotion row encode failed")?;
-    vault.store.vault_meta.put(
+    RAMP_DEMOTION.put(
+        &vault.store,
         wtxn,
-        &ramp_row_key(
-            RAMP_DEMOTION_KEY_PREFIX,
-            at,
-            &vault.store.clock.entity_id()?,
-        ),
-        &data,
+        &(at, vault.store.clock.entity_id()?),
+        &row,
     )?;
 
     let mut counters = read_counters_in_txn(&vault.store, &*wtxn, scope)?;
@@ -224,11 +208,11 @@ fn append_door_outcome_in_txn(
         after_seq: vault.read_identity_topology_seq_in_txn(&*wtxn)?,
         at,
     };
-    let data = encode_row(&row, "ramp outcome row encode failed")?;
-    vault.store.vault_meta.put(
+    RAMP_OUTCOME.put(
+        &vault.store,
         wtxn,
-        &ramp_row_key(RAMP_OUTCOME_KEY_PREFIX, at, &vault.store.clock.entity_id()?),
-        &data,
+        &(at, vault.store.clock.entity_id()?),
+        &row,
     )?;
     Ok(())
 }
@@ -326,14 +310,8 @@ impl Vault {
             });
         }
 
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(rtxn, RAMP_OUTCOME_KEY_PREFIX)?
-        {
-            let (key, raw) = entry?;
-            let row: StoredRampOutcome = decode_ramp_row(&raw, RAMP_OUTCOME_ROW_LABEL)?;
-            let id = ramp_row_key_id(RAMP_OUTCOME_KEY_PREFIX, &key, RAMP_OUTCOME_ROW_LABEL)?;
+        for ((_, id), row) in RAMP_OUTCOME.scan(&self.store, rtxn)? {
+            let row = validated_ramp_row(row, RAMP_OUTCOME_ROW_LABEL)?;
             let outcome = ProposalOutcome::parse(&row.outcome)
                 .ok_or(Error::CorruptedIndex(RAMP_OUTCOME_ROW_LABEL))?;
             events.push(RampFoldEvent {
@@ -349,14 +327,8 @@ impl Vault {
             });
         }
 
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(rtxn, RAMP_DEMOTION_KEY_PREFIX)?
-        {
-            let (key, raw) = entry?;
-            let row: StoredDemotion = decode_ramp_row(&raw, RAMP_DEMOTION_ROW_LABEL)?;
-            let id = ramp_row_key_id(RAMP_DEMOTION_KEY_PREFIX, &key, RAMP_DEMOTION_ROW_LABEL)?;
+        for ((_, id), row) in RAMP_DEMOTION.scan(&self.store, rtxn)? {
+            let row = validated_ramp_row(row, RAMP_DEMOTION_ROW_LABEL)?;
             events.push(RampFoldEvent {
                 key: (row.after_seq, FOLD_RANK_RAMP_ROW, id),
                 scope: stored_row_scope(

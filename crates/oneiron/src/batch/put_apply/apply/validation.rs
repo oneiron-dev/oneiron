@@ -1,4 +1,5 @@
 use super::*;
+use crate::ErrorKind;
 
 // The ledger is immutable birth identity, never a second text plane. This
 // shared guard covers local writes and replicated/window rematerialization.

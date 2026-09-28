@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::booking::constraint::validate_visitor_tz;
-use crate::booking::lifecycle::{booking_writer, digest_with, mint_raw_token, put_meta};
+use crate::booking::lifecycle::{booking_writer, digest_with, mint_raw_token};
 use crate::booking::{
     BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotOracle, SolveRequest,
 };
@@ -13,7 +13,7 @@ use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
 use super::CompanionPresetRow;
-use super::storage::{encode_row, participant_token_hash, proposal_meta_key, refused};
+use super::storage::{PROPOSAL, participant_token_hash, refused, surface};
 // -------------------------------------------------------------------------
 // Ratified constants
 // -------------------------------------------------------------------------
@@ -248,9 +248,9 @@ pub fn create_companion_proposal(
         taps: Vec::new(),
         confirmation: None,
     };
-    let key = proposal_meta_key(id);
-    let encoded = encode_row(&row)?;
-    booking_writer(vault, |wtxn| put_meta(vault, wtxn, &key, &encoded))?;
+    booking_writer(vault, |wtxn| {
+        surface(PROPOSAL.put(&vault.store, wtxn, &id.0, &row))
+    })?;
 
     Ok(CompanionProposalCreation {
         proposal,

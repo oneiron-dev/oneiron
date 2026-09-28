@@ -23,7 +23,7 @@
 use super::query::{
     CalendarRead, CalendarSel, matches_selectors, validate_selectors, visit_calendar_events,
 };
-use crate::claim::ScopedRead;
+use crate::claim::{ScopedRead, ScopedReadResult};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
@@ -58,13 +58,13 @@ pub fn freebusy(vault: &Vault, calendars: &[CalendarSel], range: TimeRange) -> R
 ///
 /// Claims the actor may not read never enter the union, so an actor's freebusy
 /// is always a subset of the internal projection — filtering happens before the
-/// merge, never after it.
+/// merge, never after it. The receipt counts the claims the lane withheld.
 pub fn freebusy_scoped(
     read: &ScopedRead<'_>,
     calendars: &[CalendarSel],
     range: TimeRange,
-) -> Result<BusyUnion> {
-    freebusy_in(&CalendarRead::Scoped(read), calendars, range)
+) -> Result<ScopedReadResult<BusyUnion>> {
+    super::query::receipted(read, |lane| freebusy_in(lane, calendars, range))
 }
 
 fn freebusy_in(

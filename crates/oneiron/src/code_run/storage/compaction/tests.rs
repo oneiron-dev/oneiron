@@ -15,25 +15,16 @@ fn malformed_or_misbound_coverage_never_becomes_a_view_decision() -> Result<()> 
         first: 1,
         last: 2,
     };
-    let key = key(run, summary);
+    let key = (run, summary);
     let mut raw = encode(&bogus);
     for invalid in [vec![], vec![2_u8; BODY_LEN]] {
-        vault.with_write_txn(|txn| {
-            vault.store.vault_meta.put(txn, &key, &invalid)?;
-            Ok(())
-        })?;
+        vault.with_write_txn(|txn| COVERAGE.put_undecodable(&vault.store, txn, &key, &invalid))?;
         assert!(vault.code_run_compaction_coverage(run).is_err());
     }
     raw[1] ^= 1; // value's run contradicts its indexed key
-    vault.with_write_txn(|txn| {
-        vault.store.vault_meta.put(txn, &key, &raw)?;
-        Ok(())
-    })?;
+    vault.with_write_txn(|txn| COVERAGE.put_undecodable(&vault.store, txn, &key, &raw))?;
     assert!(vault.code_run_compaction_coverage(run).is_err());
-    vault.with_write_txn(|txn| {
-        vault.store.vault_meta.put(txn, &key, &encode(&bogus))?;
-        Ok(())
-    })?;
+    vault.with_write_txn(|txn| COVERAGE.put(&vault.store, txn, &key, &bogus))?;
     assert!(
         vault.code_run_compaction_coverage(run).is_err(),
         "no minted SUMMARY exists"
@@ -78,12 +69,9 @@ fn coverage_row_must_match_the_exact_minted_summary_body() -> Result<()> {
         first: 1,
         last: 2,
     };
-    let key = key(run, summary);
+    let key = (run, summary);
     let put = |row: &CodeRunCompactionCoverage| -> Result<()> {
-        vault.with_write_txn(|txn| {
-            vault.store.vault_meta.put(txn, &key, &encode(row))?;
-            Ok(())
-        })
+        vault.with_write_txn(|txn| COVERAGE.put(&vault.store, txn, &key, row))
     };
     put(&row)?;
     assert_eq!(vault.code_run_compaction_coverage(run)?.len(), 1);

@@ -3,6 +3,7 @@ use crate::build_cache::{ActionResult, BuildAction, BuildCache, BuildCacheResult
 use crate::checkout::CheckoutTaskClass;
 use crate::codebase::CodebaseSnapshotMount;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, Named, SideTable};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -10,6 +11,17 @@ use std::path::{Path, PathBuf};
 
 mod language_server;
 pub use language_server::{LanguageServer, SharedLanguageServer, StdioLanguageServer};
+
+/// One materialized view's receipt, keyed by view id.
+const VIEW_RECEIPTS: SideTable<EntityId, ViewReceipt, Named> =
+    SideTable::new(&side_table::CODE_VIEW_RECEIPT);
+
+/// One view build's cache outcome, keyed by (view id, action key). The
+/// stored shape is an ad hoc JSON object with no matching Rust type, so the
+/// table binds `serde_json::Value` directly rather than a struct that could
+/// drift from the `json!` macro's field order.
+const VIEW_BUILD_OUTCOMES: SideTable<(EntityId, [u8; 32]), serde_json::Value, LegacyJson> =
+    SideTable::new(&side_table::CODE_VIEW_BUILD);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,28 +139,15 @@ impl<'a> CodeViewSet<'a> {
             fork_hash: mount.snapshot().fork_hash,
             files,
         };
-        let bytes = rmp_serde::to_vec_named(&receipt)
-            .map_err(|_| Error::InvalidClaimBody("view receipt encode"))?;
         self.vault.with_write_txn(|txn| {
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &receipt_key(view_id), &bytes)?;
+            VIEW_RECEIPTS.put(&self.vault.store, txn, &view_id, &receipt)?;
             Ok(())
         })?;
         Ok(receipt)
     }
     pub fn receipt(&self, id: EntityId) -> Result<Option<ViewReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
-        self.vault
-            .store
-            .vault_meta
-            .get(&txn, &receipt_key(id))?
-            .map(|bytes| {
-                rmp_serde::from_slice(&bytes)
-                    .map_err(|_| Error::CorruptedIndex("view receipt decode"))
-            })
-            .transpose()
+        VIEW_RECEIPTS.get(&self.vault.store, &txn, &id)
     }
     pub fn view_path(&self, id: EntityId) -> Result<PathBuf> {
         if self.receipt(id)?.is_none() {
@@ -228,15 +227,14 @@ impl<'a> CodeViewSet<'a> {
                 Err(error) => return Err(Error::from(error).into()),
             }
         }
-        let key = [
-            b"code_view:build:v1:".as_slice(),
-            id.as_bytes(),
-            leg.cached.action_key.as_bytes(),
-        ]
-        .concat();
-        let outcome = serde_json::to_vec(&serde_json::json!({"hit":leg.receipt.cache_hit,"producer":leg.receipt.producer_ref,"action":leg.cached.action_key.to_hex()})).map_err(|_| Error::InvalidClaimBody("view build receipt encode"))?;
+        let outcome = serde_json::json!({"hit":leg.receipt.cache_hit,"producer":leg.receipt.producer_ref,"action":leg.cached.action_key.to_hex()});
         self.vault.with_write_txn(|txn| {
-            self.vault.store.vault_meta.put(txn, &key, &outcome)?;
+            VIEW_BUILD_OUTCOMES.put(
+                &self.vault.store,
+                txn,
+                &(id, *leg.cached.action_key.as_bytes()),
+                &outcome,
+            )?;
             Ok(())
         })?;
         Ok(leg)
@@ -289,9 +287,6 @@ fn verify_view_inputs(root: &Path, receipt: &ViewReceipt) -> Result<()> {
     Ok(())
 }
 
-fn receipt_key(id: EntityId) -> Vec<u8> {
-    [b"code_view:receipt:v1:".as_slice(), id.as_bytes()].concat()
-}
 fn relative(path: &str) -> Result<()> {
     if path.is_empty()
         || path.contains(['\\', '\0'])

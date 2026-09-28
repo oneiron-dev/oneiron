@@ -4,10 +4,10 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use super::support::{
-    DEFAULT_MESO_ROUND_TURN_CAP, DREAMER_PRIVATE_WATERMARK_PREFIX, KEY_LAST_LEARNED_AT,
-    KEY_LAST_TURN_ID, KEY_SCHEMA_VERSION, TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY,
-    WATERMARK_SCHEMA_VERSION, WATERMARK_SCHEMA_VERSION_V1, decode_value, encode_value, expect_key,
-    expect_map, invalid_consolidation, scope_byte,
+    DEFAULT_MESO_ROUND_TURN_CAP, KEY_LAST_LEARNED_AT, KEY_LAST_TURN_ID, KEY_SCHEMA_VERSION,
+    TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, WATERMARK_SCHEMA_VERSION,
+    WATERMARK_SCHEMA_VERSION_V1, decode_value, encode_value, expect_key, expect_map,
+    invalid_consolidation, scope_byte,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -19,6 +19,21 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
+use crate::side_table::{self, Raw, SideTable};
+
+/// Per-scope consolidation watermark row. Key: u8 (the scope byte).
+const WATERMARK: SideTable<[u8; 1], ConsolidationWatermark, Raw> =
+    SideTable::new(&side_table::DREAMER_WATERMARK);
+
+impl crate::side_table::RawValue for ConsolidationWatermark {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+        Ok(encode_watermark(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
+        Ok(decode_watermark(bytes)?)
+    }
+}
 
 #[cfg(test)]
 mod rescan_tests;
@@ -76,11 +91,11 @@ pub struct WorkingSetTurn {
     pub conversation: Option<EntityId>,
 }
 
+/// Reconstructs the full raw key a watermark row lives under, for tests that plant or inspect
+/// rows through the raw `vault_meta` door directly.
+#[cfg(test)]
 pub(super) fn watermark_key(scope: DreamerConsolidationScope) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_WATERMARK_PREFIX.len() + 1);
-    key.extend_from_slice(DREAMER_PRIVATE_WATERMARK_PREFIX);
-    key.push(scope_byte(scope));
-    key
+    WATERMARK.key_bytes(&[scope_byte(scope)])
 }
 
 /// Reads the per-scope watermark; absent row = bootstrap watermark 0.
@@ -89,10 +104,9 @@ pub fn read_watermark(
     scope: DreamerConsolidationScope,
 ) -> Result<ConsolidationWatermark> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &watermark_key(scope))? else {
-        return Ok(ConsolidationWatermark::bootstrap());
-    };
-    decode_watermark(&raw)
+    Ok(WATERMARK
+        .get(&vault.store, &rtxn, &[scope_byte(scope)])?
+        .unwrap_or_else(ConsolidationWatermark::bootstrap))
 }
 
 /// Reads the per-scope watermark inside a caller-owned write transaction
@@ -103,10 +117,9 @@ pub(crate) fn read_watermark_in_txn(
     txn: &heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
 ) -> Result<ConsolidationWatermark> {
-    let Some(raw) = vault.store.vault_meta.get(txn, &watermark_key(scope))? else {
-        return Ok(ConsolidationWatermark::bootstrap());
-    };
-    decode_watermark(&raw)
+    Ok(WATERMARK
+        .get(&vault.store, txn, &[scope_byte(scope)])?
+        .unwrap_or_else(ConsolidationWatermark::bootstrap))
 }
 
 /// Complete-second administrative adapter — writes `last_turn_id = None`,
@@ -240,11 +253,7 @@ fn write_watermark_in_txn(
     scope: DreamerConsolidationScope,
     watermark: &ConsolidationWatermark,
 ) -> Result<()> {
-    let encoded = encode_watermark(watermark)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &watermark_key(scope), &encoded)?;
+    WATERMARK.put(&vault.store, wtxn, &[scope_byte(scope)], watermark)?;
     Ok(())
 }
 

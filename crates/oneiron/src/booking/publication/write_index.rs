@@ -1,9 +1,19 @@
 //! Local owner write authorization and bounded public-address lookup.
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::memory::booking_publication::publication_write_key;
+use crate::memory::booking_publication;
 use crate::ports::EntityStoreRead;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+
+/// Deny-only ownership marker of one publication claim id. Key: id16 (claim).
+const PROTECTED_CLAIM: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::BOOKING_PUBLIC_PAGE_PROTECTED_CLAIM);
+
+/// Public booking page token index, value = `page(16) ++ claim(16)`. Key:
+/// string (the opaque token text).
+const TOKEN_INDEX: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::BOOKING_PUBLIC_PAGE_TOKEN_INDEX);
 
 /// `incoming_claim` is the structurally validated write-door body, or `None`
 /// for a non-CLAIM put. Admission stays read-only and precedes all write effects.
@@ -29,37 +39,14 @@ pub(crate) fn guard_publication_put(
         }
         None => false,
     };
-    if (new_publication
-        || old_publication
-        || store
-            .vault_meta
-            .get(txn, &publication_slot_key(id))?
-            .is_some())
-        && store
-            .vault_meta
-            .get(txn, &publication_write_key(id))?
-            .is_none()
+    if (new_publication || old_publication || PROTECTED_CLAIM.contains(store, txn, &id)?)
+        && !booking_publication::STAGE.contains(store, txn, &id)?
     {
         return Err(Error::InvalidClaimBody(
             "booking publication requires the owner memory write door",
         ));
     }
     Ok(())
-}
-
-// Deny-only ownership of the claim id survives body erasure and head changes.
-// It is not a write permit or publication authority; only the owner transaction
-// creates it, and generic writes/replay cannot clear it or use it as consent.
-fn publication_slot_key(claim: EntityId) -> Vec<u8> {
-    let mut key = b"booking.public_page.protected_claim/".to_vec();
-    key.extend_from_slice(claim.as_bytes());
-    key
-}
-
-fn index_key(token: &str) -> Vec<u8> {
-    let mut key = b"booking.public_page.token/".to_vec();
-    key.extend_from_slice(token.as_bytes());
-    key
 }
 
 pub(crate) fn index_publication_in_txn(
@@ -70,15 +57,17 @@ pub(crate) fn index_publication_in_txn(
 ) -> Result<()> {
     let mut value = page.as_bytes().to_vec();
     value.extend_from_slice(claim.as_bytes());
-    vault.store.vault_meta.put(
+    TOKEN_INDEX.put(
+        &vault.store,
         txn,
-        &index_key(&crate::booking::PublicBookingPageToken::for_page(page).0),
+        &crate::booking::PublicBookingPageToken::for_page(page).0,
         &value,
     )?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, &publication_slot_key(claim), &[])?;
+    // Deny-only ownership of the claim id survives body erasure and head
+    // changes. It is not a write permit or publication authority; only the
+    // owner transaction creates it, and generic writes/replay cannot clear it
+    // or use it as consent.
+    PROTECTED_CLAIM.put(&vault.store, txn, &claim, &())?;
     Ok(())
 }
 
@@ -94,7 +83,7 @@ pub(super) fn indexed_publication(
     }) {
         return Ok(None);
     }
-    let Some(raw) = vault.store.vault_meta.get(txn, &index_key(token))? else {
+    let Some(raw) = TOKEN_INDEX.get(&vault.store, txn, &token.to_owned())? else {
         return Ok(None);
     };
     if raw.len() != 32 {

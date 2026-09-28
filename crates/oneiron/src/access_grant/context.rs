@@ -298,12 +298,16 @@ mod tests {
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = reader.get_entity_parts_with_receipt(&message, None)?;
+        } = reader
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single();
         assert!(value.is_some());
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = reader.get_entity_parts_with_receipt(&summary, None)?;
+        } = reader
+            .read(&[crate::claim::PointRead::id(summary)], None)?
+            .single();
         assert!(value.is_none());
         let fs = reader.graph_fs(crate::graph_fs::GraphFsOptions::default());
         let found = fs.find("/entities", Some(0), None)?;
@@ -352,7 +356,9 @@ mod tests {
             let crate::claim::ScopedReadResult {
                 value,
                 receipt: _receipt,
-            } = reader.get_entity_parts_with_receipt(&malformed, None)?;
+            } = reader
+                .read(&[crate::claim::PointRead::id(malformed)], None)?
+                .single();
             assert!(value.is_none());
         }
         grant.expires_at = Some(2);
@@ -360,7 +366,9 @@ mod tests {
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = reader.get_entity_parts_with_receipt(&message, None)?;
+        } = reader
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single();
         assert!(value.is_none());
         let unbound = vault.scoped_read(
             ScopedReadActorKey::new("unbound")
@@ -370,7 +378,9 @@ mod tests {
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = unbound.get_entity_parts_with_receipt(&message, None)?;
+        } = unbound
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single();
         assert!(value.is_none());
         Ok(())
     }
@@ -435,13 +445,15 @@ mod tests {
         let broad = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
         assert!(
             broad
-                .get_entity_parts_with_receipt(&permitted, None)?
+                .read(&[crate::claim::PointRead::id(permitted)], None)?
+                .single()
                 .value
                 .is_some()
         );
         assert!(
             broad
-                .get_entity_parts_with_receipt(&outside, None)?
+                .read(&[crate::claim::PointRead::id(outside)], None)?
+                .single()
                 .value
                 .is_some()
         );
@@ -452,13 +464,15 @@ mod tests {
         );
         assert!(
             reader
-                .get_entity_parts_with_receipt(&permitted, None)?
+                .read(&[crate::claim::PointRead::id(permitted)], None)?
+                .single()
                 .value
                 .is_some()
         );
         assert!(
             reader
-                .get_entity_parts_with_receipt(&outside, None)?
+                .read(&[crate::claim::PointRead::id(outside)], None)?
+                .single()
                 .value
                 .is_none()
         );

@@ -816,6 +816,7 @@ fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
     let turn = facade
         .get_entity(&turn_id.to_hex())
         .expect("get promoted turn")
+        .value
         .expect("promoted turn is a base row");
     assert_eq!(
         turn.body.expect("turn body"),

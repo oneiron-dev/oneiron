@@ -129,10 +129,8 @@ fn prove_childof_only(
     conversation: &EntityId,
 ) -> Result<PreviewTopology> {
     let store = &vault.store;
-    let marker = store
-        .vault_meta
-        .get(txn, &graph::key(MIGRATED, conversation))?;
-    if marker.as_deref().is_some_and(|value| value != [1]) {
+    let marker = MIGRATED.get(store, txn, conversation)?;
+    if marker.is_some_and(|value| value != [1]) {
         return Err(Error::CorruptedIndex("conversation DAG migration marker"));
     }
     for entry in store.port_edges(

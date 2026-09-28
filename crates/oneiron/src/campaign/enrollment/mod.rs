@@ -74,12 +74,12 @@ mod tests;
 // module through `use super::*`: every enrollment-internal item the tests name
 // bare (via the per-child globs), plus the private crate/std imports the old
 // header supplied. After the directory split the seam re-imports both so
-// `tests.rs` resolves exactly as it did before. (`program::*` is absent from
-// the globs on purpose: that child exposes no `pub(super)` item, so its `pub`
-// names already reach the tests through the seam above and a glob would be an
-// unused import.)
+// `tests.rs` resolves exactly as it did before. (`program::*` and `storage::*`
+// are absent from the globs on purpose: neither child's `pub(super)` items are
+// named bare by the tests anymore — the typed side tables cover what `storage`
+// used to hand-roll — so either glob would be an unused import.)
 #[cfg(test)]
-use self::{detection::*, home_node::*, outbound_leg::*, runner::*, storage::*};
+use self::{detection::*, home_node::*, outbound_leg::*, runner::*};
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

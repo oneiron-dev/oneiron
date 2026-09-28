@@ -1,9 +1,11 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::EntityId;
+use crate::booking::BookingError;
 use crate::booking::lifecycle::digest_with;
-use crate::booking::{BookingError, EventTypeKey};
+use crate::side_table::{self, Raw, SideTable};
+
+use super::rules::BookingAntiAbuseRuleRow;
 
 // -------------------------------------------------------------------------
 // Storage layout
@@ -18,10 +20,37 @@ pub const BOOKING_ANTI_ABUSE_META_PREFIX: &[u8] = b"booking:anti_abuse:v1:";
 
 /// Key tags under the prefix, one byte-string per row family, kept distinct
 /// so a prefix scan can pick out exactly one family.
-const RULE_KEY_TAG: &[u8] = b"rule\x00";
-const NOTICE_KEY_TAG: &[u8] = b"notice\x00";
-pub(super) const RATE_KEY_TAG: &[u8] = b"rate\x00";
-const CACHE_KEY_TAG: &[u8] = b"cache\x00";
+pub(super) const RULE_KEY_TAG: &[u8; 5] = b"rule\x00";
+pub(super) const NOTICE_KEY_TAG: &[u8; 7] = b"notice\x00";
+pub(super) const RATE_KEY_TAG: &[u8; 5] = b"rate\x00";
+pub(super) const CACHE_KEY_TAG: &[u8; 6] = b"cache\x00";
+
+/// One activated rule row. Key: `"rule\0"` + hash32 (the row id digest).
+pub(super) const RULE: SideTable<([u8; 5], [u8; 32]), BookingAntiAbuseRuleRow, Raw> =
+    SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
+
+/// One owner-visible activation notice. Key: `"notice\0"` + hash32 (the row id
+/// + version digest).
+pub(super) const NOTICE: SideTable<([u8; 7], [u8; 32]), String, Raw> =
+    SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
+
+impl crate::side_table::RawValue for BookingAntiAbuseRuleRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+        encode_row(self).map_err(to_codec_error)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
+        decode_row(bytes).map_err(to_codec_error)
+    }
+}
+
+/// Every hand-rolled booking anti-abuse row shares this codec (a `BookingError`
+/// decode/encode failure carries no crate-`Error` payload to preserve, and no
+/// test pins its message), so a decode failure through the typed door becomes
+/// this one generic row-corruption marker.
+pub(super) fn to_codec_error(_: BookingError) -> crate::side_table::CodecError {
+    crate::error::Error::CorruptedIndex("booking anti-abuse row").into()
+}
 
 /// Wire-format version byte prepended to every encoded row (the same
 /// version-then-rmp idiom the lifecycle rows use).
@@ -31,8 +60,8 @@ const ANTI_ABUSE_WIRE_VERSION: u8 = 0;
 /// replayed across purposes because the domain differs.
 pub(super) const RULE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.rule_key.v0";
 const NOTICE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.notice_key.v0";
-const RATE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.rate_key.v0";
-const CACHE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.cache_key.v0";
+pub(super) const RATE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.rate_key.v0";
+pub(super) const CACHE_KEY_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.cache_key.v0";
 pub(super) const QUARANTINE_RATE_DOMAIN: &[u8] = b"oneiron.booking.anti_abuse.quarantine_rate.v0";
 pub(super) const SUBMISSION_FINGERPRINT_DOMAIN: &[u8] =
     b"oneiron.booking.anti_abuse.server_submission.v0";
@@ -120,7 +149,11 @@ pub(super) fn decode_row<T: DeserializeOwned>(raw: &[u8]) -> Result<T, BookingEr
         .map_err(|error| refused(format!("booking anti-abuse row does not decode: {error}")))
 }
 
-/// prefix + tag + domain-tagged digest: the one key shape for every family.
+/// prefix + tag + domain-tagged digest: the one key shape for every family,
+/// kept for tests that plant or inspect rows through the raw `vault_meta`
+/// door directly; production reads and writes now go through [`RULE`] /
+/// [`NOTICE`] directly, keyed by `(tag, digest)`.
+#[cfg(test)]
 fn tagged_key(tag: &[u8], domain: &[u8], material: &[u8]) -> Vec<u8> {
     let digest = digest_with(domain, material);
     let mut key =
@@ -131,51 +164,20 @@ fn tagged_key(tag: &[u8], domain: &[u8], material: &[u8]) -> Vec<u8> {
     key
 }
 
+pub(super) fn rule_digest(row_id: &str) -> [u8; 32] {
+    digest_with(RULE_KEY_DOMAIN, row_id.as_bytes())
+}
+
+#[cfg(test)]
 pub(super) fn rule_row_key(row_id: &str) -> Vec<u8> {
     tagged_key(RULE_KEY_TAG, RULE_KEY_DOMAIN, row_id.as_bytes())
 }
 
-pub(super) fn notice_key(row_id: &str, version: u64) -> Vec<u8> {
+pub(super) fn notice_digest(row_id: &str, version: u64) -> [u8; 32] {
     let mut material = Vec::with_capacity(row_id.len() + 8);
     material.extend_from_slice(row_id.as_bytes());
     material.extend_from_slice(&version.to_be_bytes());
-    tagged_key(NOTICE_KEY_TAG, NOTICE_KEY_DOMAIN, &material)
-}
-
-pub(super) fn rate_counter_key(purpose: &[u8], material: &[u8]) -> Vec<u8> {
-    let mut keyed = Vec::with_capacity(purpose.len() + 1 + material.len());
-    keyed.extend_from_slice(purpose);
-    keyed.push(0);
-    keyed.extend_from_slice(material);
-    tagged_key(RATE_KEY_TAG, RATE_KEY_DOMAIN, &keyed)
-}
-
-pub(super) fn slot_list_cache_key(
-    page_ref: &EntityId,
-    event_type: Option<&EventTypeKey>,
-) -> Vec<u8> {
-    let mut material = Vec::new();
-    material.extend_from_slice(page_ref.as_bytes());
-    if let Some(event_type) = event_type {
-        material.push(0);
-        material.extend_from_slice(event_type.0.as_bytes());
-    }
-    tagged_key(CACHE_KEY_TAG, CACHE_KEY_DOMAIN, &material)
-}
-
-pub(super) fn rule_scan_prefix() -> Vec<u8> {
-    let mut prefix = Vec::with_capacity(BOOKING_ANTI_ABUSE_META_PREFIX.len() + RULE_KEY_TAG.len());
-    prefix.extend_from_slice(BOOKING_ANTI_ABUSE_META_PREFIX);
-    prefix.extend_from_slice(RULE_KEY_TAG);
-    prefix
-}
-
-pub(super) fn notice_scan_prefix() -> Vec<u8> {
-    let mut prefix =
-        Vec::with_capacity(BOOKING_ANTI_ABUSE_META_PREFIX.len() + NOTICE_KEY_TAG.len());
-    prefix.extend_from_slice(BOOKING_ANTI_ABUSE_META_PREFIX);
-    prefix.extend_from_slice(NOTICE_KEY_TAG);
-    prefix
+    digest_with(NOTICE_KEY_DOMAIN, &material)
 }
 
 pub(super) fn hex_lower(bytes: &[u8]) -> String {

@@ -909,13 +909,13 @@ fn the_adapter_registers_field_ownership_and_needs_no_credential() {
     // v4: event identity and link CAS remain, with a separate remote snapshot
     // hashes, so the row key namespace moves with the shape.
     assert_eq!(registration.schema_version, 4);
-    assert!(LINEAR_SYNC_LINK_KEY_PREFIX.ends_with(b"v4:"));
+    assert!(LINEAR_LINKS.decl().prefix.ends_with(b"v4:"));
     assert_eq!(registration.mirrored_fields.len(), 5);
     let engine_owned = registration.engine_authoritative_fields;
     assert!(engine_owned.contains(&"blocked_by"));
-    let key = linear_sync_link_key(task_ref);
-    assert!(key.starts_with(LINEAR_SYNC_LINK_KEY_PREFIX));
-    assert_eq!(key.len(), LINEAR_SYNC_LINK_KEY_PREFIX.len() + 16);
+    let key = LINEAR_LINKS.key_bytes(&task_ref);
+    assert!(key.starts_with(LINEAR_LINKS.decl().prefix));
+    assert_eq!(key.len(), LINEAR_LINKS.decl().prefix.len() + 16);
 }
 
 /// Unlike the older counter-only fake, this egress enforces the production

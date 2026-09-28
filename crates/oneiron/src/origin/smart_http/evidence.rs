@@ -23,8 +23,14 @@ use crate::git_wire::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, 
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::publication::OriginPublicationRequest;
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use rmpv::Value;
+
+/// Producer receipt pinning the exact encoded admission/outcome evidence claim body for one
+/// receive-pack operation. Key: operation/evidence id.
+const EVIDENCE: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_EVIDENCE);
 
 /// A ref and the value the origin observed for it. The oid is the canonical
 /// [`GitOid`]; this module mints no origin-local object identifier.
@@ -140,14 +146,6 @@ pub(in crate::origin) const RECEIVE_PACK_ADMISSION_PREDICATE: &str = "repo.recei
 
 pub(in crate::origin) const RECEIVE_PACK_OUTCOME_PREDICATE: &str = "repo.receive_pack_outcome";
 
-const RECEIVE_PACK_EVIDENCE_PREFIX: &[u8] = b"origin:receive_pack_evidence:v1:";
-
-fn receive_pack_evidence_key(id: EntityId) -> Vec<u8> {
-    let mut key = RECEIVE_PACK_EVIDENCE_PREFIX.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
 fn receive_pack_fields(fields: Vec<(&str, Value)>) -> Value {
     Value::Map(
         fields
@@ -240,17 +238,16 @@ fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> C
 impl Vault {
     fn put_receive_pack_evidence(&self, id: EntityId, body: &ClaimBody, at: u64) -> Result<()> {
         let encoded = encode_claim_body(body)?;
-        let key = receive_pack_evidence_key(id);
         self.with_write_txn(|wtxn| {
             if self.store.port_entity_record(wtxn, &id)?.is_some()
-                || self.store.vault_meta.get(wtxn, &key)?.is_some()
+                || EVIDENCE.contains(&self.store, wtxn, &id)?
             {
                 return Err(receive_pack_provenance_refused(
                     "evidence id already exists",
                 ));
             }
             self.put_claim_in_txn(wtxn, &id, body, TimeRange { start: at, end: at }, at)?;
-            self.store.vault_meta.put(wtxn, &key, &encoded)?;
+            EVIDENCE.put(&self.store, wtxn, &id, &encoded)?;
             Ok(())
         })
     }
@@ -264,12 +261,9 @@ impl Vault {
         let body = self
             .get_claim_in_txn(rtxn, &id)?
             .ok_or_else(|| receive_pack_provenance_refused("claim is absent"))?;
-        let key = receive_pack_evidence_key(id);
-        let receipt =
-            self.store.vault_meta.get(rtxn, &key)?.ok_or_else(|| {
-                receive_pack_provenance_refused("not a locally observed operation")
-            })?;
-        let receipt: &[u8] = receipt.as_ref();
+        let receipt = EVIDENCE
+            .get(&self.store, rtxn, &id)?
+            .ok_or_else(|| receive_pack_provenance_refused("not a locally observed operation"))?;
         if body.predicate != predicate
             || body.lifecycle != ClaimLifecycleStatus::Active
             || receipt != encode_claim_body(&body)?.as_slice()
@@ -582,11 +576,7 @@ impl Vault {
 
     pub(in crate::origin) fn has_receive_pack_evidence(&self, id: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self
-            .store
-            .vault_meta
-            .get(&rtxn, &receive_pack_evidence_key(id))?
-            .is_some())
+        EVIDENCE.contains(&self.store, &rtxn, &id)
     }
 
     /// The publication door must not let a receive-pack source certify some

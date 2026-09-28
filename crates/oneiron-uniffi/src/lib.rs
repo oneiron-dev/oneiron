@@ -27,10 +27,11 @@ mod error;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, ClaimInput, ClaimListFilter,
-    ClaimView, CommitReceipt, ConsolidationJobInput, DeleteReceipt, DreamerJobRef, DreamerJobView,
-    Effort, EntityRefReceipt, EntityView, FacadeReceipt, ForgetSelector, HabitCheckinInput,
-    LexicalHit, MemoryItem, MemoryPack, MemoryProvenance, NeighborHit, NeighborOpts, OpenOptions,
-    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, RecallScope, RetrievalMeta,
+    ClaimView, ClaimViews, CommitReceipt, ConsolidationJobInput, DeleteReceipt, DreamerJobRef,
+    DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews, FacadeReceipt,
+    ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack,
+    MemoryProvenance, NeighborHit, NeighborHits, NeighborOpts, OpenOptions, OutboundDraftInput,
+    OutboundIntentReceipt, PendingWrite, ReadReceipt, ReadScope, RecallScope, RetrievalMeta,
     SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
     WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };

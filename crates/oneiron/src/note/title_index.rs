@@ -6,8 +6,19 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use super::document::{NoteDocument, invalid, validate_title};
+use super::sync_rows::SYNC_DS_E;
+use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
+
+/// One author's reservation of a normalized title, keyed by
+/// `hex32(author) ":" hex64(blake3(normalized title))`; the value is the owning NOTE.
+const TITLE_RESERVATION: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::NOTE_TITLE_RESERVATION);
+/// A NOTE's current reservation, keyed by the NOTE; the value is the reservation's full
+/// stored key.
+const TITLE_BY_NOTE: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_TITLE_BY_NOTE);
 
 struct TitleKey(String);
 struct FinalTitle {
@@ -19,10 +30,6 @@ struct FinalTitle {
 /// derive membership from a committed document or every canonical live head.
 struct ValidatedTitleReplacement {
     members: Vec<FinalTitle>,
-}
-
-fn reverse_key(note: EntityId) -> String {
-    format!("note.title/v1/id/{}", note.to_hex())
 }
 
 fn title_key(
@@ -41,7 +48,7 @@ fn title_key(
                 .join(" ")
                 .to_lowercase();
             Ok(TitleKey(format!(
-                "note.title/v1/author/{}:{}",
+                "{}:{}",
                 core.author_ref.to_hex(),
                 blake3::hash(normalized.as_bytes()).to_hex()
             )))
@@ -107,15 +114,10 @@ impl ValidatedTitleReplacement {
         }
         for member in &self.members {
             if let Some(key) = &member.key
-                && let Some(owner) = store.vault_meta.get(txn, key.0.as_bytes())?
+                && let Some(owner) = TITLE_RESERVATION.get(store, txn, &key.0)?
+                && !ids.contains(owner.as_bytes())
             {
-                let owner: [u8; 16] = owner
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| invalid("NOTE title reservation owner"))?;
-                if !ids.contains(&owner) {
-                    return Err(invalid("duplicate NOTE title"));
-                }
+                return Err(invalid("duplicate NOTE title"));
             }
         }
         // Validate every old pair before changing either direction.
@@ -127,21 +129,31 @@ impl ValidatedTitleReplacement {
         }
         for member in self.members {
             if let Some(key) = member.key {
-                store
-                    .vault_meta
-                    .put(txn, key.0.as_bytes(), member.note.as_bytes())?;
-                store
-                    .vault_meta
-                    .put(txn, reverse_key(member.note).as_bytes(), key.0.as_bytes())?;
+                TITLE_RESERVATION.put(store, txn, &key.0, &member.note)?;
+                let full = TITLE_RESERVATION.key_bytes(&key.0);
+                TITLE_BY_NOTE.put(store, txn, &HexId(member.note), &full)?;
             }
         }
         Ok(())
     }
 }
 
+/// The reservation a NOTE's reverse row names. A reverse row that names no
+/// reservation key is a broken pair.
+fn old_reservation(store: &Store, txn: &heed::RoTxn<'_>, note: EntityId) -> Result<Option<String>> {
+    TITLE_BY_NOTE
+        .get(store, txn, &HexId(note))?
+        .map(|full| {
+            full.strip_prefix(TITLE_RESERVATION.decl().prefix)
+                .and_then(String::decode_key)
+                .ok_or_else(|| invalid("NOTE title reservation mismatch"))
+        })
+        .transpose()
+}
+
 fn validate_old_pair(store: &Store, txn: &heed::RoTxn<'_>, note: EntityId) -> Result<()> {
-    if let Some(key) = store.vault_meta.get(txn, reverse_key(note).as_bytes())?
-        && store.vault_meta.get(txn, &key)?.as_deref() != Some(note.as_bytes())
+    if let Some(key) = old_reservation(store, txn, note)?
+        && TITLE_RESERVATION.get(store, txn, &key)? != Some(note)
     {
         return Err(invalid("NOTE title reservation mismatch"));
     }
@@ -149,14 +161,9 @@ fn validate_old_pair(store: &Store, txn: &heed::RoTxn<'_>, note: EntityId) -> Re
 }
 
 fn remove_old_pair(store: &Store, txn: &mut heed::RwTxn<'_>, note: EntityId) -> Result<()> {
-    let reverse = reverse_key(note);
-    if let Some(key) = store
-        .vault_meta
-        .get(txn, reverse.as_bytes())?
-        .map(|key| key.to_vec())
-    {
-        store.vault_meta.delete(txn, &key)?;
-        store.vault_meta.delete(txn, reverse.as_bytes())?;
+    if let Some(key) = old_reservation(store, txn, note)? {
+        TITLE_RESERVATION.delete(store, txn, &key)?;
+        TITLE_BY_NOTE.delete(store, txn, &HexId(note))?;
     }
     Ok(())
 }
@@ -167,12 +174,7 @@ pub(super) fn replace_authoritative_document_in_txn(
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
-    if vault
-        .store
-        .sync_state
-        .get(txn, &format!("ds:e:{}", doc.id.to_hex()))?
-        .is_some()
-    {
+    if SYNC_DS_E.contains(&vault.store, txn, &HexId(doc.id))? {
         return Err(invalid(
             "replica NOTE cannot reserve an authoritative title",
         ));
@@ -190,12 +192,7 @@ pub(crate) fn replace_recovered_set_in_txn(
 ) -> Result<()> {
     let set = ValidatedTitleReplacement::recovery(vault, txn, snapshot)?;
     for row in &set.members {
-        if vault
-            .store
-            .sync_state
-            .get(txn, &format!("ds:e:{}", row.note.to_hex()))?
-            .is_some()
-        {
+        if SYNC_DS_E.contains(&vault.store, txn, &HexId(row.note))? {
             return Err(invalid("replica NOTE cannot recover as authority"));
         }
     }
@@ -209,12 +206,7 @@ pub(super) fn remove_replica_projection_in_txn(
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
 ) -> Result<()> {
-    if vault
-        .store
-        .sync_state
-        .get(txn, &format!("ds:e:{}", note.to_hex()))?
-        .is_none()
-    {
+    if !SYNC_DS_E.contains(&vault.store, txn, &HexId(note))? {
         return Err(invalid("NOTE replica subscription missing"));
     }
     validate_old_pair(&vault.store, txn, note)?;

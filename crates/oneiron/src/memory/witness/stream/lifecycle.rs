@@ -121,13 +121,15 @@ impl Vault {
         let seeds = {
             let txn = self.store.env.read_txn()?;
             let mut seeds = Vec::new();
-            for row in self.store.vault_meta.prefix_iter(&txn, storage::ACTIVE)? {
+            // Undecoded rows: the cap must stop the DECODE, not just collecting
+            // past MAX_MESSAGE_STREAMS rows.
+            for row in storage::ACTIVE.iter_raw_from(&self.store, &txn, &[])? {
                 if seeds.len() >= MAX_MESSAGE_STREAMS {
                     return Err(MessageStreamError::TooManyStreams);
                 }
                 let (key, bytes) = row?;
-                let seed: Seed = storage::decode(&bytes)?;
-                if key.as_ref() != storage::key(storage::ACTIVE, seed.message_id).as_slice() {
+                let seed: Seed = storage::ACTIVE.decode_value(&bytes)?;
+                if key.as_slice() != seed.message_id.as_bytes().as_slice() {
                     return Err(Error::CorruptedIndex("stream seed key").into());
                 }
                 seed.mode.validate()?;

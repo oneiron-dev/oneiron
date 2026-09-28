@@ -28,7 +28,7 @@ pub(crate) use self::codec::{
 };
 use self::index::standing_outbound_grant_principal_index_key;
 pub(crate) use self::index::{
-    standing_outbound_grant_principal_index_entity_id,
+    standing_outbound_grant_ids_for_principal, standing_outbound_grant_principal_index_entity_id,
     standing_outbound_grant_principal_index_prefix,
 };
 pub(crate) use self::mint::standing_outbound_grant_in_txn;

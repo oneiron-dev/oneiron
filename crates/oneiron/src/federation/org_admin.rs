@@ -1,8 +1,13 @@
 //! Closed organization-administration powers. No member key custody or root power.
 use super::ScopeId;
+use crate::side_table::{self, HexId, LegacyJson, SideTable};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+/// Immutable per-organization setup, keyed by the org's hex32 entity id.
+const ORG_ADMIN_POLICY: SideTable<HexId, OrgAdminPolicy, LegacyJson> =
+    SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
 /// The complete administration vocabulary, fixed by the engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -112,30 +117,21 @@ impl Vault {
             policy.admin_refs.iter().map(|id| id.0).collect(),
             policy.powers.clone(),
         )?;
-        let key = format!("org.admin.v1.{}", policy.org_ref.0.to_hex());
+        let key = HexId(policy.org_ref.0);
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
-        if self.store.vault_meta.get(&txn, key.as_bytes())?.is_some() {
+        if ORG_ADMIN_POLICY.contains(&self.store, &txn, &key)? {
             return Err(OrgAdminError::AlreadyConfigured);
         }
-        let bytes = serde_json::to_vec(policy)
-            .map_err(|_| crate::Error::InvariantViolation("org admin policy encoding"))?;
-        self.store
-            .vault_meta
-            .put(&mut txn, key.as_bytes(), &bytes)?;
+        ORG_ADMIN_POLICY.put(&self.store, &mut txn, &key, policy)?;
         txn.commit().map_err(crate::Error::from)?;
         Ok(())
     }
     /// Reads the fixed power set; absence refuses, rather than granting a default.
     pub fn org_admin_policy(&self, org_ref: EntityId) -> Result<OrgAdminPolicy, OrgAdminError> {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-        let key = format!("org.admin.v1.{}", org_ref.to_hex());
-        let bytes = self
-            .store
-            .vault_meta
-            .get(&txn, key.as_bytes())?
+        let policy = ORG_ADMIN_POLICY
+            .get(&self.store, &txn, &HexId(org_ref))?
             .ok_or(OrgAdminError::Denied)?;
-        let policy: OrgAdminPolicy = serde_json::from_slice(&bytes)
-            .map_err(|_| crate::Error::InvariantViolation("org admin policy decoding"))?;
         if policy.org_ref.0 != org_ref {
             return Err(OrgAdminError::Denied);
         }

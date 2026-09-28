@@ -152,7 +152,14 @@ fn corrupted_instruction_body_and_conflicting_append_fail_closed() {
             _ => forged.recorded_at += 1,
         }
         booking_writer(&vault, |wtxn| {
-            put_meta(&vault, wtxn, &key, &serde_json::to_vec(&forged).unwrap())
+            INSTRUCTION
+                .put(
+                    &vault.store,
+                    wtxn,
+                    &instruction_hex(&key).unwrap().to_owned(),
+                    &forged,
+                )
+                .map_err(storage_failure)
         })
         .unwrap();
         let before = meta(&vault);

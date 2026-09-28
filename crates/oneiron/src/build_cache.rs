@@ -12,6 +12,7 @@ use crate::codebase::{CodebaseForkHash, RepoRef};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::secret_rotation::ArtifactTaintState;
+use crate::side_table::{self, Raw, RawValue, SideTable};
 
 pub const BUILD_CACHE_SCHEMA_VERSION_V1: u8 = 2;
 pub const BUILD_CACHE_ACTION_SCHEMA_VERSION_V1: u8 = 1;
@@ -336,7 +337,7 @@ impl<'a> BuildCache<'a> {
     /// Only an absent row is a miss. Admission errors never remove a row.
     pub fn get(&self, key: &ActionKey) -> BuildCacheResult<Option<CachedActionResult>> {
         self.read_row(key)?
-            .map(|bytes| self.admit_row(key, &bytes))
+            .map(|record| self.admit_row(key, record))
             .transpose()
     }
 
@@ -366,41 +367,67 @@ impl<'a> BuildCache<'a> {
             result,
             referenced_bytes,
         };
-        let bytes = encode_build_cache_row(&candidate)?;
+        BUILD_CACHE_REAPI_ROW.encode_value(&candidate)?;
         let store = &self.vault.store;
-        let index_key = build_cache_key(&key);
         // This scope does index work ONLY. Copy a winner before aborting the
         // write transaction, then decode/admit it outside the transaction.
         let winner = {
             let mut wtxn = store.env.write_txn().map_err(Error::from)?;
-            let winner = store.vault_meta.get(&wtxn, &index_key)?.map(|v| v.to_vec());
+            let winner = BUILD_CACHE_REAPI_ROW.get(store, &wtxn, key.as_bytes())?;
             if winner.is_none() {
-                store.vault_meta.put(&mut wtxn, &index_key, &bytes)?;
+                BUILD_CACHE_REAPI_ROW.put(store, &mut wtxn, key.as_bytes(), &candidate)?;
                 wtxn.commit().map_err(Error::from)?;
             }
             winner
         };
         match winner {
-            Some(bytes) => Ok(BuildCachePutOutcome::Existing(
-                self.admit_row(&key, &bytes)?,
+            Some(record) => Ok(BuildCachePutOutcome::Existing(
+                self.admit_row(&key, record)?,
             )),
             None => Ok(BuildCachePutOutcome::Stored(candidate)),
         }
     }
 
-    fn read_row(&self, key: &ActionKey) -> BuildCacheResult<Option<Vec<u8>>> {
+    fn read_row(&self, key: &ActionKey) -> BuildCacheResult<Option<CachedActionResult>> {
         let store = &self.vault.store;
         let rtxn = store.env.read_txn().map_err(Error::from)?;
-        Ok(store
-            .vault_meta
-            .get(&rtxn, &build_cache_key(key))?
-            .map(|v| v.to_vec()))
+        Ok(BUILD_CACHE_REAPI_ROW.get(store, &rtxn, key.as_bytes())?)
     }
 
-    fn admit_row(&self, key: &ActionKey, bytes: &[u8]) -> BuildCacheResult<CachedActionResult> {
-        let record = decode_build_cache_row(key, bytes)?;
+    fn admit_row(
+        &self,
+        key: &ActionKey,
+        record: CachedActionResult,
+    ) -> BuildCacheResult<CachedActionResult> {
+        verify_action_key(key, &record)?;
         admit_result_for_hit(self.vault, &record.result)?;
         Ok(record)
+    }
+}
+
+/// A cached build/verify action result, addressed by its content-derived action key. Key: bytes32
+/// (REAPI action key).
+const BUILD_CACHE_REAPI_ROW: SideTable<[u8; BUILD_CACHE_ACTION_KEY_LEN], CachedActionResult, Raw> =
+    SideTable::new(&side_table::BUILD_CACHE_REAPI_ROW);
+
+impl RawValue for CachedActionResult {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        encode_build_cache_row(self)
+            .map_err(|_| Error::InvariantViolation("build cache row").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        decode_build_cache_row(bytes).map_err(|_| Error::CorruptedIndex("build cache row").into())
+    }
+}
+
+/// The row's own `action_key` field must match the key it was fetched under: a defense-in-depth
+/// check the pure decode above cannot make (it never sees the lookup key).
+fn verify_action_key(key: &ActionKey, record: &CachedActionResult) -> BuildCacheResult<()> {
+    if record.action_key == *key {
+        Ok(())
+    } else {
+        Err(BuildCacheError::CorruptRecord("action key mismatch"))
     }
 }
 
@@ -415,13 +442,6 @@ struct BuildCacheRowV1 {
     produced_at: u64,
     producer_ref: String,
     referenced_bytes: u64,
-}
-
-fn build_cache_key(key: &ActionKey) -> [u8; BUILD_CACHE_KEY_PREFIX_V1.len() + 32] {
-    let mut bytes = [0; BUILD_CACHE_KEY_PREFIX_V1.len() + 32];
-    bytes[..BUILD_CACHE_KEY_PREFIX_V1.len()].copy_from_slice(BUILD_CACHE_KEY_PREFIX_V1);
-    bytes[BUILD_CACHE_KEY_PREFIX_V1.len()..].copy_from_slice(key.as_bytes());
-    bytes
 }
 
 fn encode_build_cache_row(record: &CachedActionResult) -> BuildCacheResult<Vec<u8>> {
@@ -453,10 +473,7 @@ fn encode_build_cache_row(record: &CachedActionResult) -> BuildCacheResult<Vec<u
     Ok(bytes)
 }
 
-fn decode_build_cache_row(
-    expected_key: &ActionKey,
-    bytes: &[u8],
-) -> BuildCacheResult<CachedActionResult> {
+fn decode_build_cache_row(bytes: &[u8]) -> BuildCacheResult<CachedActionResult> {
     let (&version, body) = bytes
         .split_first()
         .ok_or(BuildCacheError::CorruptRecord("empty row"))?;
@@ -476,9 +493,6 @@ fn decode_build_cache_row(
             .map_err(|_| BuildCacheError::CorruptRecord("row length overflow"))?
     {
         return Err(BuildCacheError::CorruptRecord("trailing row bytes"));
-    }
-    if row.action_key != *expected_key.as_bytes() {
-        return Err(BuildCacheError::CorruptRecord("action key mismatch"));
     }
     if row.outputs.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
         return Err(BuildCacheError::CorruptRecord(
@@ -509,7 +523,7 @@ fn decode_build_cache_row(
     };
     result.validate()?;
     Ok(CachedActionResult {
-        action_key: *expected_key,
+        action_key: ActionKey(row.action_key),
         result,
         referenced_bytes: row.referenced_bytes,
     })

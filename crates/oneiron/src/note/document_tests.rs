@@ -162,6 +162,7 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     let first = vault
         .render_brief(brief, &frame, &read_lane)
         .unwrap()
+        .value
         .unwrap();
     assert!(
         first
@@ -216,6 +217,7 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     let after = vault
         .render_brief(brief, &frame, &read_lane)
         .unwrap()
+        .value
         .unwrap();
     let old = after
         .citations
@@ -265,6 +267,7 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
     let erased = reopened
         .render_brief(brief, &frame, &read)
         .unwrap()
+        .value
         .unwrap();
     assert!(erased.citations.iter().all(|citation| citation.redacted
         && citation.quote.is_none()

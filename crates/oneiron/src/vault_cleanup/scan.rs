@@ -2,12 +2,41 @@
 
 use super::*;
 use crate::ports::EntityStoreRead;
+use crate::side_table::{self, Raw, SideKey, SideTable};
 
-const CURSOR_PREFIX: &[u8] = b"vault_cleanup.scan.v1:";
+/// Rotating per-arm scan cursor: one row per [`CLEANUP_CHECKS`] entity type,
+/// plus one literal `"attempt"` row for the completed-queue-record arm in
+/// [`super::attempt_retention`]. Both suffix shapes share this one declared
+/// prefix and cannot collide (1 byte vs 7 ASCII bytes).
+pub(super) const SCAN_CURSOR: SideTable<ScanCursorTag, EntityId, Raw> =
+    SideTable::new(&side_table::VAULT_CLEANUP_SCAN_CURSOR);
+
+#[derive(Clone, Copy)]
+pub(super) enum ScanCursorTag {
+    EntityType(u8),
+    Attempt,
+}
+
+impl SideKey for ScanCursorTag {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::EntityType(byte) => out.push(*byte),
+            Self::Attempt => out.extend_from_slice(b"attempt"),
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        match bytes {
+            [byte] => Some(Self::EntityType(*byte)),
+            b"attempt" => Some(Self::Attempt),
+            _ => None,
+        }
+    }
+}
 
 pub(super) struct CleanupScan {
     pub(super) candidates: Vec<CleanupCandidate>,
-    cursors: Vec<(Vec<u8>, Option<EntityId>)>,
+    cursors: Vec<(ScanCursorTag, Option<EntityId>)>,
 }
 
 pub(super) fn scan_in_txn(
@@ -18,14 +47,8 @@ pub(super) fn scan_in_txn(
     let mut candidates = Vec::new();
     let mut cursors = Vec::new();
     for (type_byte, _, _) in CLEANUP_CHECKS {
-        let mut cursor_key = CURSOR_PREFIX.to_vec();
-        cursor_key.push(type_byte);
-        let after = vault
-            .store
-            .vault_meta
-            .get(txn, &cursor_key)?
-            .map(|raw| decode_id_bytes(&raw))
-            .transpose()?;
+        let tag = ScanCursorTag::EntityType(type_byte);
+        let after = SCAN_CURSOR.get(&vault.store, txn, &tag)?;
         let mut last = None;
         let mut exhausted = true;
         for (examined, row) in vault
@@ -43,7 +66,7 @@ pub(super) fn scan_in_txn(
                 candidates.push(CleanupCandidate { entity: id, kind });
             }
         }
-        cursors.push((cursor_key, if exhausted { None } else { last }));
+        cursors.push((tag, if exhausted { None } else { last }));
     }
     cursors.push(super::attempt_retention::scan(
         vault,
@@ -55,13 +78,6 @@ pub(super) fn scan_in_txn(
         candidates,
         cursors,
     })
-}
-
-fn decode_id_bytes(raw: &[u8]) -> Result<EntityId> {
-    let bytes = raw
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("cleanup scan cursor"))?;
-    EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex("cleanup scan cursor"))
 }
 
 pub(super) fn run_with_limit(
@@ -78,11 +94,11 @@ pub(super) fn run_with_limit(
             cursors,
         } = scan_in_txn(vault, txn, limit)?;
         let report = run_cleanup_candidates_in_txn(vault, txn, attempt, candidates)?;
-        for (key, after) in cursors {
+        for (tag, after) in cursors {
             if let Some(id) = after {
-                vault.store.vault_meta.put(txn, &key, id.as_bytes())?;
+                SCAN_CURSOR.put(&vault.store, txn, &tag, &id)?;
             } else {
-                vault.store.vault_meta.delete(txn, &key)?;
+                SCAN_CURSOR.delete(&vault.store, txn, &tag)?;
             }
         }
         run_record::put_in_txn(vault, txn, &report)?;

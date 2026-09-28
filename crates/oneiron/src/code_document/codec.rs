@@ -1,7 +1,7 @@
 //! Strict durable document rows and canonical operation folds.
 
 use loro::{IdSpan, LoroDoc};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::error::{ArtifactError, Error, Result};
@@ -18,38 +18,28 @@ pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid())
 }
 
-pub(super) fn decode<T: DeserializeOwned>(raw: &[u8]) -> Result<T> {
-    let mut cursor = std::io::Cursor::new(raw);
-    let value =
-        T::deserialize(&mut rmp_serde::Deserializer::new(&mut cursor)).map_err(|_| invalid())?;
-    if cursor.position() != raw.len() as u64 {
-        return Err(invalid());
-    }
-    Ok(value)
-}
-
 pub(super) fn hash(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
-pub(super) fn path_key(repo: &str, path: &str) -> Vec<u8> {
+/// The `CODE_DOCUMENT_PATH` row's key: a sha256 of the length-prefixed repo
+/// and path, with no separate table prefix (the typed table supplies that).
+pub(super) fn path_hash(repo: &str, path: &str) -> [u8; 32] {
     let mut bytes = (repo.len() as u64).to_be_bytes().to_vec();
     bytes.extend_from_slice(repo.as_bytes());
     bytes.extend_from_slice(path.as_bytes());
-    key(b"code_document:path:v1:", &hash(&bytes))
+    hash(&bytes)
 }
 
 pub(super) fn key(prefix: &[u8], id: &[u8; 32]) -> Vec<u8> {
     [prefix, id.as_slice()].concat()
 }
 
-pub(super) fn snapshot_key(frontier: &CodeDocumentFrontier) -> Vec<u8> {
-    [
-        b"code_document:frontier:v1:".as_slice(),
-        &frontier.document_id,
-        &frontier.op_fold,
-    ]
-    .concat()
+/// The full `CODE_DOCUMENT_PATH` row key, prefix included: also folded into
+/// the genesis document-id hash and the rename-generation counter's key, so
+/// those two derivations keep calling this rather than the typed table.
+pub(super) fn path_key(repo: &str, path: &str) -> Vec<u8> {
+    key(b"code_document:path:v1:", &path_hash(repo, path))
 }
 
 pub(super) fn validate_path(repo: &str, path: &str) -> Result<()> {

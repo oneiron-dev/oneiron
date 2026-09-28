@@ -8,11 +8,13 @@ use super::{
 };
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{RetrievalRunId, RetrievalRunRecord};
 use crate::{EntityId, Error, Result, Vault, consent::AuthenticatedOwner};
 use serde::{Deserialize, Serialize};
 
-const PREFIX: &[u8] = b"self_heal:distill:";
+const LABEL: SideTable<Vec<u8>, ReviewedFinding, Named> =
+    SideTable::new(&side_table::SELF_HEAL_DISTILL);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewedFinding {
@@ -48,14 +50,14 @@ pub enum ClosedFormPredicate {
 }
 
 fn key(family: &str, id: &EntityId) -> Vec<u8> {
-    let mut out = PREFIX.to_vec();
+    let mut out = Vec::new();
     out.extend_from_slice(family.as_bytes());
     out.push(b':');
     out.extend_from_slice(id.as_bytes());
     out
 }
 fn family_prefix(family: &str) -> Vec<u8> {
-    let mut out = PREFIX.to_vec();
+    let mut out = Vec::new();
     out.extend_from_slice(family.as_bytes());
     out.push(b':');
     out
@@ -116,13 +118,12 @@ impl Vault {
             reviewer: owner.actor(),
             positive,
         };
-        let body = rmp_serde::to_vec_named(&label)
-            .map_err(|_| Error::InvariantViolation("distillation label encode"))?;
         self.with_write_txn(|txn| {
             let k = key(family, &event_id);
-            if let Some(existing) = self.store.vault_meta.get(txn, &k)? {
-                let stored: ReviewedFinding = rmp_serde::from_slice(&existing)
-                    .map_err(|_| Error::CorruptedIndex("distillation label"))?;
+            if let Some(stored) = LABEL
+                .get(&self.store, txn, &k)
+                .map_err(|_| Error::CorruptedIndex("distillation label"))?
+            {
                 if stored != label {
                     return Err(Error::InvalidConfig(
                         "label is immutable; review a new finding".into(),
@@ -130,7 +131,7 @@ impl Vault {
                 }
                 return Ok(stored);
             }
-            self.store.vault_meta.put(txn, &k, &body)?;
+            LABEL.put(&self.store, txn, &k, &label)?;
             Ok(label)
         })
     }
@@ -138,14 +139,14 @@ impl Vault {
     fn reviewed_findings(&self, family: &str) -> Result<Vec<ReviewedFinding>> {
         let txn = self.store.env.read_txn()?;
         let prefix = family_prefix(family);
-        self.store
-            .vault_meta
-            .prefix_iter(&txn, &prefix)?
+        LABEL
+            .iter_raw_from(&self.store, &txn, &prefix)?
             .map(|entry| {
                 let (stored_key, raw) = entry?;
-                let label: ReviewedFinding = rmp_serde::from_slice(&raw)
+                let label = LABEL
+                    .decode_value(&raw)
                     .map_err(|_| Error::CorruptedIndex("distillation label"))?;
-                if label.family != family || stored_key.as_ref() != key(family, &label.event_id) {
+                if label.family != family || stored_key != key(family, &label.event_id) {
                     return Err(Error::CorruptedIndex("distillation label key"));
                 }
                 Ok(label)

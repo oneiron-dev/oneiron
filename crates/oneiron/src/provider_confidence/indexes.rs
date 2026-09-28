@@ -10,10 +10,11 @@ use sha2::Sha256;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, unit_interval_f32};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::identity_topology::EntityLifecycleState;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 
 use super::{
@@ -21,18 +22,23 @@ use super::{
     validate_actor_confidence_prior_claim_structure, validate_provider_key,
 };
 
-const PROVIDER_ACTOR_INDEX_PREFIX: &[u8] = b"provider_confidence/actor/v1\0";
+/// Disposable per-provider shortcut to the entity id of the actor PERSON
+/// carrying a given `provider_key`. Key: `sha256(provider)`.
+pub(super) const PROVIDER_ACTOR_INDEX: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::PROVIDER_ACTOR_INDEX);
 
 /// Disposable per-provider shortcut to the CLAIM id of the newest active
-/// `actor.confidence_prior` head, whichever actor owns it.
+/// `actor.confidence_prior` head, whichever actor owns it. Key:
+/// `sha256(provider)`.
 ///
-/// Deliberately a SECOND prefix rather than a wider value under the actor
-/// prefix: the actor row answers "which entity is this provider" and the head
+/// Deliberately a SECOND table rather than a wider value under the actor
+/// table: the actor row answers "which entity is this provider" and the head
 /// row answers "which claim is its current belief". They invalidate for
 /// different reasons and are repaired independently, and keeping the actor
-/// prefix byte-stable means an existing vault's actor rows keep working
+/// row byte-stable means an existing vault's actor rows keep working
 /// untouched while the head row simply starts absent.
-const PROVIDER_PRIOR_HEAD_INDEX_PREFIX: &[u8] = b"provider_confidence/prior_head/v1\0";
+pub(super) const PROVIDER_PRIOR_HEAD_INDEX: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::PROVIDER_PRIOR_HEAD_INDEX);
 
 const PROVIDER_ACTOR_BODY_KEY: &str = "provider_key";
 
@@ -80,28 +86,24 @@ pub(super) fn active_provider_prior_in_txn(
     provider: &str,
 ) -> Result<Option<f32>> {
     validate_provider_key(provider)?;
-    let head_key = provider_prior_head_index_key(provider);
-    let cached_head = vault.store.vault_meta.get(&*wtxn, &head_key)?;
+    let digest = provider_key_hash(provider);
+    // A malformed-length row is STALE, not corruption: these bytes are a
+    // cache the engine may overwrite at will, so a decode failure routes to
+    // the rebuild below instead of failing the caller's read.
+    let cached_head =
+        tolerate_undecodable(PROVIDER_PRIOR_HEAD_INDEX.get(&vault.store, &*wtxn, &digest))?;
     let cached_head_present = cached_head.is_some();
 
     // ---- scope 1: the shortcut, honoured only after it re-earns trust ----
     if let Some((actor, subject)) = cached_head
-        .as_deref()
-        // A malformed-length row is STALE, not corruption: these bytes are a
-        // cache the engine may overwrite at will, so a decode failure routes to
-        // the rebuild below instead of failing the caller's read.
-        .and_then(decode_index_entity_id)
         .map(|head| validated_prior_head_owner_in_txn(vault, &*wtxn, &head, provider))
         .transpose()?
         .flatten()
         && let Some((claim_id, value)) =
             newest_active_prior_for_actor_in_txn(vault, &*wtxn, &actor, &subject)?
     {
-        if cached_head.as_deref() != Some(claim_id.as_bytes()) {
-            vault
-                .store
-                .vault_meta
-                .put(wtxn, &head_key, claim_id.as_bytes())?;
+        if cached_head != Some(claim_id) {
+            PROVIDER_PRIOR_HEAD_INDEX.put(&vault.store, wtxn, &digest, &claim_id)?;
         }
         return Ok(Some(value));
     }
@@ -112,11 +114,7 @@ pub(super) fn active_provider_prior_in_txn(
         shell_priors,
     } = provider_actors_for_key_in_txn(vault, &*wtxn, provider)?;
     if let Some(smallest) = actors.first() {
-        vault.store.vault_meta.put(
-            wtxn,
-            &provider_actor_index_key(provider),
-            smallest.as_bytes(),
-        )?;
+        PROVIDER_ACTOR_INDEX.put(&vault.store, wtxn, &digest, smallest)?;
     }
     let mut best = shell_priors
         .into_iter()
@@ -136,18 +134,29 @@ pub(super) fn active_provider_prior_in_txn(
     }
     match best {
         Some((_, claim_id, value)) => {
-            vault
-                .store
-                .vault_meta
-                .put(wtxn, &head_key, claim_id.as_bytes())?;
+            PROVIDER_PRIOR_HEAD_INDEX.put(&vault.store, wtxn, &digest, &claim_id)?;
             Ok(Some(value))
         }
         None => {
             if cached_head_present {
-                vault.store.vault_meta.delete(wtxn, &head_key)?;
+                PROVIDER_PRIOR_HEAD_INDEX.delete(&vault.store, wtxn, &digest)?;
             }
             Ok(None)
         }
+    }
+}
+
+/// Treats a malformed-length shortcut row as absent rather than a fatal
+/// decode error: these rows are DISPOSABLE caches the engine may overwrite at
+/// will, so a stray byte must route to the truth-scan rebuild, never deny a
+/// read that truth can answer.
+fn tolerate_undecodable<T>(result: Result<Option<T>>) -> Result<Option<T>> {
+    match result {
+        Err(Error::Store(StoreError::SideTableRow {
+            problem: SideTableRowProblem::Undecodable,
+            ..
+        })) => Ok(None),
+        other => other,
     }
 }
 
@@ -398,7 +407,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
         return Ok(actor);
     }
 
-    let index_key = provider_actor_index_key(provider);
+    let digest = provider_key_hash(provider);
     let id = vault.store.clock.entity_id()?;
     let body = encode_value(&Value::Map(vec![(
         Value::from(PROVIDER_ACTOR_BODY_KEY),
@@ -425,10 +434,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
         false,
         true,
     )?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &index_key, id.as_bytes())?;
+    PROVIDER_ACTOR_INDEX.put(&vault.store, wtxn, &digest, &id)?;
     Ok(id)
 }
 
@@ -450,13 +456,9 @@ pub(super) fn resolve_provider_actor_in_txn(
     provider: &str,
 ) -> Result<Option<EntityId>> {
     validate_provider_key(provider)?;
-    let index_key = provider_actor_index_key(provider);
-    if let Some(cached) = vault
-        .store
-        .vault_meta
-        .get(&*wtxn, &index_key)?
-        .as_deref()
-        .and_then(decode_index_entity_id)
+    let digest = provider_key_hash(provider);
+    if let Some(cached) =
+        tolerate_undecodable(PROVIDER_ACTOR_INDEX.get(&vault.store, &*wtxn, &digest))?
         && active_actor_provider_key_matches_in_txn(vault, &*wtxn, &cached, provider)?
     {
         return Ok(Some(cached));
@@ -469,37 +471,16 @@ pub(super) fn resolve_provider_actor_in_txn(
     else {
         return Ok(None);
     };
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &index_key, actor.as_bytes())?;
+    PROVIDER_ACTOR_INDEX.put(&vault.store, wtxn, &digest, &actor)?;
     Ok(Some(actor))
 }
 
-fn provider_actor_index_key(provider: &str) -> Vec<u8> {
-    provider_index_key(PROVIDER_ACTOR_INDEX_PREFIX, provider)
-}
-
-pub(super) fn provider_prior_head_index_key(provider: &str) -> Vec<u8> {
-    provider_index_key(PROVIDER_PRIOR_HEAD_INDEX_PREFIX, provider)
-}
-
-/// `prefix || sha256(provider)` — a fixed-width suffix so an arbitrary
-/// 512-byte provider key cannot shape the key space.
-fn provider_index_key(prefix: &'static [u8], provider: &str) -> Vec<u8> {
-    let digest = Sha256::digest(provider.as_bytes());
-    let mut key = Vec::with_capacity(prefix.len() + digest.len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(&digest);
-    key
-}
-
-/// Tolerant decode of a shortcut row. `None` = "this row teaches nothing",
-/// which is the only verdict a DISPOSABLE index is allowed to produce: raising
-/// here would let a stray byte deny a read that truth can answer perfectly.
-fn decode_index_entity_id(raw: &[u8]) -> Option<EntityId> {
-    let bytes: [u8; ENTITY_ID_LEN] = raw.try_into().ok()?;
-    EntityId::from_bytes(bytes).ok()
+/// `sha256(provider)` — a fixed-width key so an arbitrary 512-byte provider
+/// key cannot shape the key space. Shared by both provider-confidence
+/// shortcut tables: a provider's digest is the same row-address suffix under
+/// either table's own prefix.
+pub(super) fn provider_key_hash(provider: &str) -> [u8; 32] {
+    Sha256::digest(provider.as_bytes()).into()
 }
 
 /// The `provider_key` string in a PERSON actor's MessagePack body, if any.
@@ -534,14 +515,9 @@ fn provider_key_from_actor_body(body: &[u8]) -> Option<String> {
 pub fn clear_provider_confidence_indexes(vault: &Vault, provider: &str) -> Result<()> {
     validate_provider_key(provider)?;
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .delete(wtxn, &provider_actor_index_key(provider))?;
-        vault
-            .store
-            .vault_meta
-            .delete(wtxn, &provider_prior_head_index_key(provider))?;
+        let digest = provider_key_hash(provider);
+        PROVIDER_ACTOR_INDEX.delete(&vault.store, wtxn, &digest)?;
+        PROVIDER_PRIOR_HEAD_INDEX.delete(&vault.store, wtxn, &digest)?;
         Ok(())
     })
 }
@@ -552,17 +528,10 @@ pub fn clear_provider_confidence_indexes(vault: &Vault, provider: &str) -> Resul
 pub fn provider_confidence_index_presence(vault: &Vault, provider: &str) -> Result<(bool, bool)> {
     validate_provider_key(provider)?;
     let rtxn = vault.store.env.read_txn()?;
+    let digest = provider_key_hash(provider);
     Ok((
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &provider_actor_index_key(provider))?
-            .is_some(),
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &provider_prior_head_index_key(provider))?
-            .is_some(),
+        PROVIDER_ACTOR_INDEX.contains(&vault.store, &rtxn, &digest)?,
+        PROVIDER_PRIOR_HEAD_INDEX.contains(&vault.store, &rtxn, &digest)?,
     ))
 }
 
@@ -571,6 +540,11 @@ pub fn provider_confidence_index_presence(vault: &Vault, provider: &str) -> Resu
 /// Total in both slots on purpose — a partial setter would need to READ the
 /// row it is leaving alone, which is the one thing a raw seam must not teach
 /// its caller.
+///
+/// Plants the row's VALUE bytes through `put_undecodable` rather than the
+/// typed tables' `put`: the whole point of this seam is to plant bytes a real
+/// write could never produce (wrong length, foreign entity ids) so a reader
+/// can be proven tolerant of them.
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub fn set_provider_confidence_index_raw(
@@ -581,14 +555,15 @@ pub fn set_provider_confidence_index_raw(
 ) -> Result<()> {
     validate_provider_key(provider)?;
     vault.with_write_txn(|wtxn| {
-        for (key, value) in [
-            (provider_actor_index_key(provider), actor_row),
-            (provider_prior_head_index_key(provider), prior_head_row),
+        let digest = provider_key_hash(provider);
+        for (table, value) in [
+            (PROVIDER_ACTOR_INDEX, actor_row),
+            (PROVIDER_PRIOR_HEAD_INDEX, prior_head_row),
         ] {
             match value {
-                Some(bytes) => vault.store.vault_meta.put(wtxn, &key, bytes)?,
+                Some(bytes) => table.put_undecodable(&vault.store, wtxn, &digest, bytes)?,
                 None => {
-                    vault.store.vault_meta.delete(wtxn, &key)?;
+                    table.delete(&vault.store, wtxn, &digest)?;
                 }
             }
         }

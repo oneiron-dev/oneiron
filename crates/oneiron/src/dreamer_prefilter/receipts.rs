@@ -16,22 +16,20 @@ use crate::receipt::{
     FIELD_PREFILTER_TURN, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord,
     hex_lower, retain_newest_receipt,
 };
+use crate::side_table::{self, Named, SideTable};
 
-use super::config::invalid_prefilter_config;
 use super::screen::PrefilterScreen;
 use super::supersession;
 
-/// One SKIP receipt row per screened-out turn: `prefix || round_hash(32) || turn_id(16)`.
-const PREFILTER_SKIP_PREFIX: &[u8] = b"dreamer:prefilter:skip:v1:";
+/// One SKIP receipt row per screened-out turn. Key: round_hash(32) + turn_id(16).
+pub(super) const SKIP: SideTable<([u8; 32], EntityId), PrefilterSkipRow, Named> =
+    SideTable::new(&side_table::PREFILTER_SKIP);
 
-/// One ROLLUP receipt row per screened round: `prefix || round_hash(32)`.
-const PREFILTER_ROUND_PREFIX: &[u8] = b"dreamer:prefilter:round:v1:";
+/// One ROLLUP receipt row per screened round. Key: round_hash(32).
+pub(super) const ROUND: SideTable<[u8; 32], PrefilterRoundRow, Named> =
+    SideTable::new(&side_table::PREFILTER_ROUND);
 
 pub(super) const PREFILTER_RECEIPT_VERSION: u8 = 1;
-
-pub(super) const PREFILTER_ROUND_HASH_LEN: usize = 32;
-
-pub(super) const PREFILTER_TURN_ID_LEN: usize = 16;
 
 /// Value of the receipt `phase` field: which pre-extraction stage ruled.
 /// Pinned here rather than in the receipt kernel because it is this writer's
@@ -79,23 +77,6 @@ pub(super) struct PrefilterRoundRow {
     pub(super) threshold: f32,
 }
 
-pub(super) fn prefilter_skip_key(round: &[u8; 32], turn: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        PREFILTER_SKIP_PREFIX.len() + PREFILTER_ROUND_HASH_LEN + PREFILTER_TURN_ID_LEN,
-    );
-    key.extend_from_slice(PREFILTER_SKIP_PREFIX);
-    key.extend_from_slice(round);
-    key.extend_from_slice(turn.as_bytes());
-    key
-}
-
-pub(super) fn prefilter_round_key(round: &[u8; 32]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(PREFILTER_ROUND_PREFIX.len() + PREFILTER_ROUND_HASH_LEN);
-    key.extend_from_slice(PREFILTER_ROUND_PREFIX);
-    key.extend_from_slice(round);
-    key
-}
-
 /// Persists the exact screen consumed by the transaction's partition planner.
 /// Per-turn rows remain SKIPS ONLY; passes ride a lossy round's rollup. An
 /// all-pass or disabled round writes nothing, but still retires earlier
@@ -135,13 +116,7 @@ pub(crate) fn write_prefilter_receipts_in_txn(
                 .map(|(name, value)| ((*name).to_owned(), *value))
                 .collect(),
         };
-        let encoded = rmp_serde::to_vec_named(&row).map_err(|_| {
-            invalid_prefilter_config("dreamer prefilter skip receipt encode failed")
-        })?;
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &prefilter_skip_key(&round, &entry.turn_id), &encoded)?;
+        SKIP.put(&vault.store, wtxn, &(round, entry.turn_id), &row)?;
     }
 
     let rollup = PrefilterRoundRow {
@@ -154,12 +129,7 @@ pub(crate) fn write_prefilter_receipts_in_txn(
         estimated_tokens_saved: screen.estimated_tokens_saved,
         threshold: screen.threshold,
     };
-    let encoded = rmp_serde::to_vec_named(&rollup)
-        .map_err(|_| invalid_prefilter_config("dreamer prefilter round receipt encode failed"))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &prefilter_round_key(&round), &encoded)?;
+    ROUND.put(&vault.store, wtxn, &round, &rollup)?;
     supersession::index_round(vault, wtxn, scope, &round, turns)?;
     Ok(())
 }
@@ -267,10 +237,8 @@ pub(crate) fn prefilter_receipts(
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
 
-    for (scanned, row) in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, PREFILTER_SKIP_PREFIX)?
+    for (scanned, row) in SKIP
+        .iter_from(&vault.store, &rtxn, &[])?
         .take(MAX_RECEIPT_QUERY_SCAN + 1)
         .enumerate()
     {
@@ -278,10 +246,7 @@ pub(crate) fn prefilter_receipts(
             note_prefilter_scan_capped("skip");
             break;
         }
-        let (key, raw) = row?;
-        let (round, turn) = parse_prefilter_skip_key(&key)?;
-        let decoded: PrefilterSkipRow = rmp_serde::from_slice(&raw)
-            .map_err(|_| Error::CorruptedIndex("dreamer prefilter skip receipt"))?;
+        let ((round, turn), decoded) = row?;
         // The key is version-scoped, so a foreign version UNDER a v1 key is
         // corruption rather than a migration.
         if decoded.version != PREFILTER_RECEIPT_VERSION {
@@ -290,14 +255,12 @@ pub(crate) fn prefilter_receipts(
         collect_prefilter_receipt(
             &mut out,
             query,
-            prefilter_skip_receipt(round, &turn, &decoded),
+            prefilter_skip_receipt(&round, &turn, &decoded),
         );
     }
 
-    for (scanned, row) in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, PREFILTER_ROUND_PREFIX)?
+    for (scanned, row) in ROUND
+        .iter_from(&vault.store, &rtxn, &[])?
         .take(MAX_RECEIPT_QUERY_SCAN + 1)
         .enumerate()
     {
@@ -305,34 +268,14 @@ pub(crate) fn prefilter_receipts(
             note_prefilter_scan_capped("round");
             break;
         }
-        let (key, raw) = row?;
-        let round = key
-            .get(PREFILTER_ROUND_PREFIX.len()..)
-            .filter(|rest| rest.len() == PREFILTER_ROUND_HASH_LEN)
-            .ok_or(Error::CorruptedIndex("dreamer prefilter round key"))?;
-        let decoded: PrefilterRoundRow = rmp_serde::from_slice(&raw)
-            .map_err(|_| Error::CorruptedIndex("dreamer prefilter round receipt"))?;
+        let (round, decoded) = row?;
         if decoded.version != PREFILTER_RECEIPT_VERSION {
             return Err(Error::CorruptedIndex("dreamer prefilter round receipt"));
         }
-        collect_prefilter_receipt(&mut out, query, prefilter_round_receipt(round, &decoded));
+        collect_prefilter_receipt(&mut out, query, prefilter_round_receipt(&round, &decoded));
     }
 
     Ok(out)
-}
-
-fn parse_prefilter_skip_key(key: &[u8]) -> Result<(&[u8], EntityId)> {
-    let rest = key
-        .get(PREFILTER_SKIP_PREFIX.len()..)
-        .filter(|rest| rest.len() == PREFILTER_ROUND_HASH_LEN + PREFILTER_TURN_ID_LEN)
-        .ok_or(Error::CorruptedIndex("dreamer prefilter skip key"))?;
-    let (round, turn_bytes) = rest.split_at(PREFILTER_ROUND_HASH_LEN);
-    let raw: [u8; PREFILTER_TURN_ID_LEN] = turn_bytes
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("dreamer prefilter skip key"))?;
-    let turn = EntityId::from_bytes(raw)
-        .map_err(|_| Error::CorruptedIndex("dreamer prefilter skip key"))?;
-    Ok((round, turn))
 }
 
 fn collect_prefilter_receipt(

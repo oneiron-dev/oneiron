@@ -6,6 +6,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestKind};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_MESSAGE;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::rooms::{RoomTurn, require_member, turn_in};
 use crate::{EntityId, Result, Vault};
@@ -33,19 +34,16 @@ impl GoalInterviewTurns {
     }
 }
 
-const GENERATION_KEY: &[u8] = b"project.goal_intake.generation/";
+/// A project's goal generation. Key: id16 (project).
+const GENERATIONS: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::PROJECT_GOAL_INTAKE_GENERATION);
+/// The goal claim a single-use interview confirmation committed. Key: id16 (confirmation turn).
+const CONFIRMATIONS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::PROJECT_GOAL_INTAKE_CONFIRMATION);
 
 /// A project's durable goal generation; zero before its first goal commits.
 pub(super) fn generation(store: &Store, txn: &RoTxn<'_>, project: EntityId) -> Result<u64> {
-    let Some(raw) = store
-        .vault_meta
-        .get(txn, &[GENERATION_KEY, project.as_bytes()].concat())?
-    else {
-        return Ok(0);
-    };
-    Ok(u64::from_be_bytes(
-        raw.as_ref().try_into().map_err(|_| invalid())?,
-    ))
+    Ok(GENERATIONS.get(store, txn, &project)?.unwrap_or(0))
 }
 
 /// Called in the same write txn as every goal-pointer change, so no
@@ -54,11 +52,7 @@ pub(super) fn bump_generation(store: &Store, txn: &mut RwTxn<'_>, project: Entit
     let next = generation(store, txn, project)?
         .checked_add(1)
         .ok_or_else(invalid)?;
-    store.vault_meta.put(
-        txn,
-        &[GENERATION_KEY, project.as_bytes()].concat(),
-        &next.to_be_bytes(),
-    )?;
+    GENERATIONS.put(store, txn, &project, &next)?;
     Ok(())
 }
 
@@ -172,13 +166,7 @@ impl Vault {
             // A confirmation is single-use. Its stored claim is stable on an
             // identical retry; an older retry after a newer goal never rolls
             // the project back to historical words.
-            let completion_key = [
-                b"project.goal_intake.confirmation/".as_slice(),
-                turns.confirmation.as_bytes(),
-            ]
-            .concat();
-            if let Some(raw) = self.store.vault_meta.get(txn, &completion_key)? {
-                let id = EntityId::from_bytes(raw.as_ref().try_into().map_err(|_| invalid())?)?;
+            if let Some(id) = CONFIRMATIONS.get(&self.store, txn, &turns.confirmation)? {
                 return if project.goal.as_deref() == Some(id.to_hex().as_str()) {
                     Ok(id)
                 } else {
@@ -199,9 +187,7 @@ impl Vault {
                 return Err(invalid());
             }
             let id = self.write_project_goal_in_txn(txn, owner, project_id, &record, now)?;
-            self.store
-                .vault_meta
-                .put(txn, &completion_key, id.as_bytes())?;
+            CONFIRMATIONS.put(&self.store, txn, &turns.confirmation, &id)?;
             Ok(id)
         })
     }

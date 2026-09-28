@@ -2,10 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::keys::{
-    AGGREGATE_KEY_PREFIX, RUNG_KEY_PREFIX, StoredAggregate, aggregate_key, decoded_aggregate,
-    meta_key, scope_key_of, task_class_prefix,
-};
+use super::keys::{AGGREGATE, StoredAggregate, aggregate_key, task_class_prefix};
 use super::ladder::{rollout_rung, rung_in_txn};
 use super::scope::{RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint};
 use crate::Vault;
@@ -28,10 +25,9 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
     }
     let aggregate_key = aggregate_key(key)?;
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &aggregate_key)? else {
+    let Some(own) = AGGREGATE.get(&vault.store, &rtxn, &aggregate_key)? else {
         return Ok(None);
     };
-    let own = decoded_aggregate(&raw)?;
     let peers = peer_totals(vault, &rtxn, &key.task_class)?;
     Ok(hint_of(own, peers))
 }
@@ -58,8 +54,7 @@ pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
 
     let mut out = Vec::new();
     for (key, aggregate) in rows {
-        let rung_key = meta_key(RUNG_KEY_PREFIX, key.task_class.as_bytes());
-        let rung = rung_in_txn(vault, &rtxn, &rung_key)?;
+        let rung = rung_in_txn(vault, &rtxn, &key.task_class)?;
         if rung == RolloutRung::Shadow {
             continue;
         }
@@ -116,9 +111,7 @@ fn peer_totals(vault: &Vault, rtxn: &heed::RoTxn<'_>, task_class: &str) -> Resul
     let prefix = task_class_prefix(task_class)?;
     let mut sum = 0.0;
     let mut runs = 0_u64;
-    for entry in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (_, raw) = entry?;
-        let aggregate = decoded_aggregate(&raw)?;
+    for (_, aggregate) in AGGREGATE.scan_from(&vault.store, rtxn, &prefix)? {
         sum += aggregate.d_norm_sum;
         runs += aggregate.runs;
     }
@@ -129,14 +122,14 @@ fn aggregates(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(RoutingScopeKey, StoredAggregate)>> {
-    let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(rtxn, AGGREGATE_KEY_PREFIX)?
-    {
-        let (key, raw) = entry?;
-        out.push((scope_key_of(&key)?, decoded_aggregate(&raw)?));
-    }
-    Ok(out)
+    Ok(AGGREGATE
+        .scan(&vault.store, rtxn)?
+        .into_iter()
+        .map(|(key, aggregate)| {
+            (
+                RoutingScopeKey::new(key.model_version, key.task_class),
+                aggregate,
+            )
+        })
+        .collect())
 }

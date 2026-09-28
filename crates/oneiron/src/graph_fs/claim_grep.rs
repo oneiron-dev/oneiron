@@ -1,5 +1,5 @@
 //! Indexed claim grep with search and final-hydration narrowing receipts.
-use crate::claim::{ScopedReadReceipt, decode_claim_body};
+use crate::claim::{PointRead, ReadRow, ScopedReadReceipt, decode_claim_body};
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use rmpv::Value;
@@ -24,16 +24,17 @@ impl GraphFsResolver<'_, '_> {
             .scoped_read
             .search_text(pattern, self.coreutils_result_cap(), None)?;
         let ids: Vec<_> = hits.value.iter().map(|hit| hit.id).collect();
+        let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
         let projection = self
             .scoped_read
-            .get_entities_parts_with_receipt(&ids, Some(&hits.receipt.applied.as_filter()))?;
+            .read(&reads, Some(&hits.receipt.applied.as_filter()))?;
         let mut receipt = hits.receipt;
         receipt.restrict_with(&projection.receipt);
         let mut out = CommandOutputBuilder::new(self.options);
         let mut last_emitted = cursor.map(str::to_owned);
         let mut skipping = cursor.is_some();
         let mut total = 0;
-        for (id, parts) in ids.into_iter().zip(projection.value) {
+        for (id, row) in ids.into_iter().zip(projection.value) {
             let id_hex = id.to_hex();
             if skipping {
                 if cursor == Some(id_hex.as_str()) {
@@ -41,7 +42,12 @@ impl GraphFsResolver<'_, '_> {
                 }
                 continue;
             }
-            let Some((ENTITY_TYPE_CLAIM, _, body)) = parts else {
+            let Some(ReadRow {
+                entity_type: ENTITY_TYPE_CLAIM,
+                body: Some(body),
+                ..
+            }) = row
+            else {
                 continue;
             };
             let body = decode_claim_body(&body, true)?;

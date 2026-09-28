@@ -130,9 +130,8 @@ pub(crate) enum BatchOp {
 
 /// Builds the sync-replay put op — the SINGLE place where the replicated
 /// door's two admit flags are set (`allow_maintenance` AND
-/// `allow_reserved_predicate`). Both `put_replicated` flavors
-/// ([`BatchBuilder::put_replicated`] / [`TxnBatchBuilder::put_replicated`])
-/// delegate here; no other constructor may open both bands at once.
+/// `allow_reserved_predicate`). [`BatchBuilder::put_replicated`] delegates
+/// here; no other constructor may open both bands at once.
 ///
 /// A trusted door still validates structure: the flags only skip the
 /// public-band rejections (`MaintenanceKindNotWritable` /
@@ -142,11 +141,12 @@ pub(crate) enum BatchOp {
 /// manifests and AccessGrants are authority-bearing control-plane inputs and
 /// are not admitted through this unverified replicated door.
 ///
-/// Compiled for sync production replay (`TxnBatchBuilder::put_replicated`) and
-/// for the test fixture door (`BatchBuilder::put_replicated`), which is the
-/// only reason this constructor exists in a featureless test build.
+/// Compiled for sync production replay and for the test fixtures, which are
+/// the only reason this constructor exists in a featureless test build.
+///
+/// [`BatchBuilder::put_replicated`]: super::BatchBuilder::put_replicated
 #[cfg(any(feature = "sync", test))]
-pub(in crate::batch) fn replicated_put_op(
+pub(super) fn replicated_put_op(
     id: &EntityId,
     entity_type: u8,
     occurred: TimeRange,

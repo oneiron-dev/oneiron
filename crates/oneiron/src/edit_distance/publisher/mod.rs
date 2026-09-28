@@ -54,9 +54,8 @@
 //! Outbound consent rails already ride the comm send path (`disclosure.rs`),
 //! so this module adds no second consent check.
 
-use crate::Vault;
 use crate::comm::CommError;
-use crate::error::{Error, Result};
+use crate::error::Error;
 
 mod dial;
 mod interview;
@@ -66,8 +65,8 @@ mod transport;
 mod vocab;
 
 pub use self::dial::{
-    PUBLISHER_ENABLED_COMPILED_DEFAULT, PUBLISHER_ENABLED_KEY, PUBLISHER_INSTALL_DEFAULT_KEY,
-    publisher_enabled, set_publisher_enabled, set_publisher_install_default,
+    PUBLISHER_ENABLED_COMPILED_DEFAULT, publisher_enabled, set_publisher_enabled,
+    set_publisher_install_default,
 };
 pub use self::interview::{
     InterviewSession, InterviewState, interview_session, submit_interview_for_review,
@@ -90,7 +89,7 @@ mod tests;
 // bare. After the directory split the seam re-imports them so `tests.rs`
 // resolves exactly as it did before.
 #[cfg(test)]
-use self::signature_store::signature_key;
+use self::signature_store::SIGNATURE;
 #[cfg(test)]
 use crate::identity_topology::ProposalOutcome;
 #[cfg(test)]
@@ -138,10 +137,3 @@ pub enum PublisherError {
 
 /// Result alias for the publisher loop's doors.
 pub type PublisherResult<T> = std::result::Result<T, PublisherError>;
-
-fn put_meta(vault: &Vault, key: &[u8], value: &[u8]) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, key, value)?;
-        Ok(())
-    })
-}

@@ -11,7 +11,7 @@ use crate::batch::EntityMetadataHeader;
 
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::error::ErrorKind;
+use crate::error::{Error, ErrorKind};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::session_lifecycle::SessionMintOutcome;

@@ -9,20 +9,44 @@ use super::{MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptRecord, ReceiptScan};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, Result};
+use crate::error::{Error, RecordError, Result, StoreError};
 use crate::outbound_intent_ledger::IntentId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
-const LOCAL_PREFIX: &[u8] = b"outbound:suppression_receipt:v1:";
-const INDEX_PREFIX: &[u8] = b"outbound:suppression_index:v1:";
+const INDEX: SideTable<EntityId, IntentId, Raw> =
+    SideTable::new(&side_table::OUTBOUND_SUPPRESSION_INDEX);
+const LOCAL_RECEIPT: SideTable<IntentId, ReceiptRecord, Named> =
+    SideTable::new(&side_table::OUTBOUND_SUPPRESSION_RECEIPT);
 
-fn index_key(id: &EntityId) -> Vec<u8> {
-    let mut key = INDEX_PREFIX.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
+fn index_intent(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    reason: &'static str,
+) -> Result<Option<IntentId>> {
+    INDEX.get(store, txn, id).map_err(|error| match error {
+        Error::Store(StoreError::SideTableRow { .. }) => Error::CorruptedIndex(reason),
+        other => other,
+    })
+}
+
+fn local_receipt(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &IntentId,
+) -> Result<Option<ReceiptRecord>> {
+    LOCAL_RECEIPT
+        .get(store, txn, id)
+        .map_err(|error| match error {
+            Error::Store(StoreError::SideTableRow { .. }) => {
+                Error::CorruptedIndex("outbound suppression local receipt")
+            }
+            other => other,
+        })
 }
 
 pub(crate) fn suppression_receipt_id(id: &IntentId) -> String {
@@ -30,12 +54,6 @@ pub(crate) fn suppression_receipt_id(id: &IntentId) -> String {
         "outbound:suppression:{}",
         crate::entity_id::bytes_to_hex_lower(id)
     )
-}
-
-fn local_key(id: &IntentId) -> Vec<u8> {
-    let mut key = LOCAL_PREFIX.to_vec();
-    key.extend_from_slice(id);
-    key
 }
 
 #[derive(Serialize, Deserialize)]
@@ -110,8 +128,8 @@ pub(crate) fn validated_local_record_for_canonical(
     if header.occurred_start != header.occurred_end
         || header.occurred_start != header.learned_at
         || header.occurred_start != decoded.receipt.occurred_at
-        || store.vault_meta.get(txn, &index_key(id))?.as_deref()
-            != Some(decoded.intent_id.as_slice())
+        || index_intent(store, txn, id, "canonical receipt record/index binding")?
+            != Some(decoded.intent_id)
     {
         return Err(Error::CorruptedIndex(
             "canonical receipt record/index binding",
@@ -130,18 +148,18 @@ pub(crate) fn canonical_records_in_window(
     window: &str,
 ) -> Result<Vec<(EntityId, Vec<u8>)>> {
     let mut records = Vec::new();
-    for (count, row) in store.vault_meta.prefix_iter(txn, INDEX_PREFIX)?.enumerate() {
+    for (count, row) in INDEX.iter_raw_from(store, txn, &[])?.enumerate() {
         if count >= MAX_RECEIPT_QUERY_SCAN {
             return Err(Error::IndexOverflow("canonical receipt record scan"));
         }
         let (key, value) = row?;
         let id_bytes: [u8; 16] = key
-            .get(INDEX_PREFIX.len()..)
-            .and_then(|suffix| suffix.try_into().ok())
-            .ok_or(Error::CorruptedIndex("canonical receipt index key"))?;
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("canonical receipt index key"))?;
         let id = EntityId::from_bytes(id_bytes)?;
         let intent: IntentId = value
-            .as_ref()
+            .as_slice()
             .try_into()
             .map_err(|_| Error::CorruptedIndex("canonical receipt index value"))?;
         if record_id(&intent)? != id {
@@ -243,13 +261,12 @@ pub(crate) fn stage_receipt_record_index(
         return Ok(());
     }
     let asset = decode_incoming(*id, data)?.0;
-    let key = index_key(id);
-    if let Some(previous) = store.vault_meta.get(txn, &key)?
-        && previous.as_ref() != asset.intent_id.as_slice()
+    if let Some(previous) = index_intent(store, txn, id, "outbound suppression index binding")?
+        && previous != asset.intent_id
     {
         return Err(Error::CorruptedIndex("outbound suppression index binding"));
     }
-    store.vault_meta.put(txn, &key, &asset.intent_id)?;
+    INDEX.put(store, txn, id, &asset.intent_id)?;
     Ok(())
 }
 
@@ -271,12 +288,7 @@ pub(crate) fn put_suppression_in_txn(
         receipt: receipt.clone(),
     })
     .map_err(|_| Error::InvariantViolation("outbound suppression encode"))?;
-    if vault
-        .store
-        .vault_meta
-        .get(txn, &local_key(intent_id))?
-        .is_some()
-    {
+    if LOCAL_RECEIPT.contains(&vault.store, txn, intent_id)? {
         return Err(Error::CorruptedIndex(
             "outbound suppression local receipt occupied",
         ));
@@ -305,12 +317,14 @@ pub(crate) fn put_suppression_in_txn(
         false,
         true,
     )?;
-    let encoded = rmp_serde::to_vec_named(receipt)
-        .map_err(|_| Error::InvariantViolation("outbound suppression receipt encode"))?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, &local_key(intent_id), &encoded)?;
+    LOCAL_RECEIPT
+        .put(&vault.store, txn, intent_id, receipt)
+        .map_err(|error| match error {
+            Error::Store(StoreError::SideTableRow { .. }) => {
+                Error::InvariantViolation("outbound suppression receipt encode")
+            }
+            other => other,
+        })?;
     Ok(())
 }
 
@@ -325,15 +339,9 @@ pub(crate) fn suppression_for_intent(vault: &Vault, intent_id: &IntentId) -> Res
         return Err(Error::CorruptedIndex("outbound suppression record type"));
     }
     let asset = decode(id, &row.body)?;
-    let local = vault
-        .store
-        .vault_meta
-        .get(&txn, &local_key(intent_id))?
-        .ok_or(Error::CorruptedIndex(
-            "outbound suppression local receipt missing",
-        ))?;
-    let receipt: ReceiptRecord = rmp_serde::from_slice(&local)
-        .map_err(|_| Error::CorruptedIndex("outbound suppression local receipt"))?;
+    let receipt = local_receipt(&vault.store, &txn, intent_id)?.ok_or(Error::CorruptedIndex(
+        "outbound suppression local receipt missing",
+    ))?;
     if receipt != asset.receipt {
         return Err(Error::CorruptedIndex(
             "outbound suppression local/replicated mismatch",
@@ -345,23 +353,18 @@ pub(crate) fn suppression_for_intent(vault: &Vault, intent_id: &IntentId) -> Res
 pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
     let txn = vault.store.env.read_txn()?;
     let mut receipts = Vec::new();
-    for (scanned, row) in vault
-        .store
-        .vault_meta
-        .prefix_iter(&txn, INDEX_PREFIX)?
-        .enumerate()
-    {
+    for (scanned, row) in INDEX.iter_raw_from(&vault.store, &txn, &[])?.enumerate() {
         if scanned >= MAX_RECEIPT_QUERY_SCAN {
             return Err(Error::IndexOverflow("outbound suppression receipt scan"));
         }
         let (key, value) = row?;
         let id_bytes: [u8; 16] = key
-            .get(INDEX_PREFIX.len()..)
-            .and_then(|suffix| suffix.try_into().ok())
-            .ok_or(Error::CorruptedIndex("outbound suppression index key"))?;
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("outbound suppression index key"))?;
         let id = EntityId::from_bytes(id_bytes)?;
         let indexed_intent: IntentId = value
-            .as_ref()
+            .as_slice()
             .try_into()
             .map_err(|_| Error::CorruptedIndex("outbound suppression index value"))?;
         let stored = vault
@@ -377,18 +380,12 @@ pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
         if asset.intent_id != indexed_intent {
             return Err(Error::CorruptedIndex("outbound suppression index target"));
         }
-        if let Some(local) = vault
-            .store
-            .vault_meta
-            .get(&txn, &local_key(&asset.intent_id))?
+        if let Some(receipt) = local_receipt(&vault.store, &txn, &asset.intent_id)?
+            && receipt != asset.receipt
         {
-            let receipt: ReceiptRecord = rmp_serde::from_slice(&local)
-                .map_err(|_| Error::CorruptedIndex("outbound suppression local receipt"))?;
-            if receipt != asset.receipt {
-                return Err(Error::CorruptedIndex(
-                    "outbound suppression local/replicated mismatch",
-                ));
-            }
+            return Err(Error::CorruptedIndex(
+                "outbound suppression local/replicated mismatch",
+            ));
         }
         receipts.push(asset.receipt);
     }

@@ -3,7 +3,7 @@
 use super::support::invalid_consolidation;
 use super::watermark::decode_turn_body;
 use crate::attempt_queue::AttemptId;
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::edge::EdgeKind;
 use crate::llm::{Scope, ScopeResource};
@@ -74,6 +74,9 @@ pub struct PreparedWake {
     sources: BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
     attempts: BTreeSet<[u8; 16]>,
     preparations: BTreeMap<[u8; 16], AttemptPreparation>,
+    /// The receipt of the one scoped read behind `sources`; `None` when the
+    /// wake read nothing. Every branch opened on this wake folds it.
+    read_receipt: Option<ScopedReadReceipt>,
 }
 
 impl PreparedWake {
@@ -261,6 +264,15 @@ impl PreparedWake {
         let read = vault.scoped_read(key);
         let source_ids: Vec<_> = ids.into_iter().collect();
         let rows = read.get_entities_parts_in_txn(&txn, &source_ids)?;
+        // The receipt is resolved in the SAME snapshot and counts every
+        // existing row withheld from the Dreamer actor, retry peers included.
+        let mut withheld = 0;
+        for (id, row) in source_ids.iter().zip(&rows) {
+            if row.is_none() && vault.get_entity_type_in_txn(&txn, id)?.is_some() {
+                withheld += 1;
+            }
+        }
+        let read_receipt = read.read_receipt_in(&txn, None, withheld)?;
         let sources: BTreeMap<_, _> = source_ids
             .into_iter()
             .zip(rows)
@@ -391,6 +403,7 @@ impl PreparedWake {
             sources,
             attempts,
             preparations,
+            read_receipt: Some(read_receipt),
         })
     }
 
@@ -413,5 +426,10 @@ impl PreparedWake {
 
     pub(super) fn source(&self, id: &EntityId) -> Option<(u8, u64, Vec<u8>)> {
         self.sources.get(id).cloned()
+    }
+
+    /// The receipt of the wake's one scoped read, if it read anything.
+    pub(super) fn read_receipt(&self) -> Option<&ScopedReadReceipt> {
+        self.read_receipt.as_ref()
     }
 }

@@ -4,10 +4,23 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entity_id::bytes_to_hex_lower;
+use crate::side_table::SideKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GateDecisionId {
     pub(super) bytes: [u8; 16],
+}
+
+impl SideKey for GateDecisionId {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.bytes);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self {
+            bytes: bytes.try_into().ok()?,
+        })
+    }
 }
 
 impl GateDecisionId {

@@ -287,7 +287,8 @@ async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
         assert_eq!(reply["requestId"], 8);
         assert_eq!(reply["last"], true);
         if scope == "core:read" {
-            assert_eq!(reply["result"], json!([]));
+            assert_eq!(reply["result"]["value"], json!([]));
+            assert!(reply["result"]["narrowing"].is_object());
             assert!(reply.get("error").is_none());
         } else {
             assert_eq!(reply["error"]["code"], "FORBIDDEN");

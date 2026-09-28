@@ -135,7 +135,12 @@ fn scoped_read_receipt_required_core_grants_fail_closed_without_receipt() -> Res
     );
 
     let scoped_read = vault.scoped_read(actor_key);
-    assert!(scoped_read.get(&id)?.is_none());
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .is_none()
+    );
     Ok(())
 }
 
@@ -167,7 +172,12 @@ fn scoped_read_budgeted_core_grants_fail_closed_without_budget_enforcer() -> Res
     );
 
     let scoped_read = vault.scoped_read(actor_key);
-    assert!(scoped_read.get(&id)?.is_none());
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .is_none()
+    );
     Ok(())
 }
 
@@ -196,9 +206,24 @@ fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<
 
     // Fail-closed: with no grants, even the surfaceable claim is unreadable.
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
-    assert!(scoped_read.get(&live_id)?.is_none());
-    assert!(scoped_read.get(&proposed_id)?.is_none());
-    assert!(scoped_read.get(&stale_id)?.is_none());
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(live_id)], None)?
+            .single()
+            .is_none()
+    );
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(proposed_id)], None)?
+            .single()
+            .is_none()
+    );
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(stale_id)], None)?
+            .single()
+            .is_none()
+    );
 
     // With an explicit read grant, the surfaceable gate still applies.
     put_policy_manifest_bytes(
@@ -207,9 +232,24 @@ fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<
         &core_read_grants_manifest(vec![core_read_grant_map("reader", Value::Nil)]),
     )?;
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
-    assert!(scoped_read.get(&live_id)?.is_some());
-    assert!(scoped_read.get(&proposed_id)?.is_none());
-    assert!(scoped_read.get(&stale_id)?.is_none());
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(live_id)], None)?
+            .single()
+            .is_some()
+    );
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(proposed_id)], None)?
+            .single()
+            .is_none()
+    );
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(stale_id)], None)?
+            .single()
+            .is_none()
+    );
 
     let visible: Vec<_> = scoped_read
         .filter_scored_entities(vec![
@@ -296,9 +336,17 @@ fn scoped_read_core_grant_preserves_claim_surfaceable_gate() -> Result<()> {
     put_claim_body(&vault, &proposed_id, &proposed)?;
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
-    assert!(scoped_read.get(&live_id)?.is_some());
     assert!(
-        scoped_read.get(&proposed_id)?.is_none(),
+        scoped_read
+            .read(&[crate::claim::PointRead::id(live_id)], None)?
+            .single()
+            .is_some()
+    );
+    assert!(
+        scoped_read
+            .read(&[crate::claim::PointRead::id(proposed_id)], None)?
+            .single()
+            .is_none(),
         "matching scoped grant must still preserve claim_surfaceable"
     );
     let visible: Vec<_> = scoped_read
@@ -383,7 +431,8 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let hydrated = scoped_read
-        .hydrate_short_id("cldangling", 0x5A)?
+        .read(&[crate::claim::PointRead::short("cldangling", 0x5A)], None)?
+        .single()
         .value
         .expect("dangling short id should surface deletion metadata");
     assert_eq!(hydrated.id, missing_id);
@@ -407,7 +456,12 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
         )],
     ] {
         put_policy_manifest_bytes(&vault, test_id(0x65), &core_read_grants_manifest(scopes))?;
-        assert!(scoped_read.hydrate_short_id("cldangling", 0x5A)?.is_none());
+        assert!(
+            scoped_read
+                .read(&[crate::claim::PointRead::short("cldangling", 0x5A)], None)?
+                .single()
+                .is_none()
+        );
     }
     Ok(())
 }
@@ -437,7 +491,11 @@ fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()>
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let hydrated = scoped_read
-        .hydrate_short_id(short_id, content_hash)?
+        .read(
+            &[crate::claim::PointRead::short(short_id, content_hash)],
+            None,
+        )?
+        .single()
         .value
         .expect("deleted claim short id should preserve deletion metadata");
     assert_eq!(hydrated.id, claim_id);
@@ -592,7 +650,11 @@ fn a_session_staged_facet_edge_authorizes_a_facet_scoped_read() -> Result<()> {
 
     // No `FacetOf` edge anywhere yet: the grant reaches nothing.
     assert!(
-        vault.scoped_read(actor_key.clone()).get(&claim)?.is_none(),
+        vault
+            .scoped_read(actor_key.clone())
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .is_none(),
         "a facet-scoped grant must not read a claim carrying no facet"
     );
 
@@ -610,12 +672,17 @@ fn a_session_staged_facet_edge_authorizes_a_facet_scoped_read() -> Result<()> {
     assert!(
         vault
             .scoped_read_in_session(actor_key.clone(), &view)
-            .get(&claim)?
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
             .is_some(),
         "a `FacetOf` edge staged in the room authorizes in the room"
     );
     assert!(
-        vault.scoped_read(actor_key).get(&claim)?.is_none(),
+        vault
+            .scoped_read(actor_key)
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .is_none(),
         "and nowhere else: the canonical handle still reads base only"
     );
     Ok(())
@@ -632,7 +699,11 @@ fn a_session_tombstoned_facet_edge_stops_authorizing() -> Result<()> {
     let actor_key = ScopedReadActorKey::new("reader").expect("actor key");
     vault.put_edge(&claim, EdgeKind::FacetOf, &facet, 0.7)?;
     assert!(
-        vault.scoped_read(actor_key.clone()).get(&claim)?.is_some(),
+        vault
+            .scoped_read(actor_key.clone())
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .is_some(),
         "the base facet edge authorizes the base read"
     );
 
@@ -650,12 +721,17 @@ fn a_session_tombstoned_facet_edge_stops_authorizing() -> Result<()> {
     assert!(
         vault
             .scoped_read_in_session(actor_key.clone(), &view)
-            .get(&claim)?
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
             .is_none(),
         "a facet the room tombstoned must stop authorizing inside the room"
     );
     assert!(
-        vault.scoped_read(actor_key).get(&claim)?.is_some(),
+        vault
+            .scoped_read(actor_key)
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .is_some(),
         "and the canonical handle is untouched"
     );
     Ok(())
@@ -1069,11 +1145,17 @@ fn scoped_read_facet_grants_match_facet_of_edges() -> Result<()> {
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     assert!(
-        scoped_read.get(&faceted_claim)?.is_some(),
+        scoped_read
+            .read(&[crate::claim::PointRead::id(faceted_claim)], None)?
+            .single()
+            .is_some(),
         "facet grant must match the claim's outgoing FacetOf edge"
     );
     assert!(
-        scoped_read.get(&unfaceted_claim)?.is_none(),
+        scoped_read
+            .read(&[crate::claim::PointRead::id(unfaceted_claim)], None)?
+            .single()
+            .is_none(),
         "facet grant must not fall through to unfaceted claims"
     );
     Ok(())
@@ -1162,7 +1244,8 @@ fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() ->
     );
     assert!(
         reader
-            .get_entity_parts_with_receipt(&strong_id, None)?
+            .read(&[crate::claim::PointRead::id(strong_id)], None)?
+            .single()
             .value
             .is_some()
     );
@@ -1174,11 +1257,15 @@ fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() ->
             Value::Nil,
         )]),
     )?;
-    let denied = reader.get_entity_parts_with_receipt(&strong_id, None)?;
+    let denied = reader
+        .read(&[crate::claim::PointRead::id(strong_id)], None)?
+        .single();
     assert!(denied.value.is_none());
     assert!(denied.receipt.applied.deny_all);
     assert_eq!(denied.receipt.suppressed_count, 1);
-    let missing = reader.get_entity_parts_with_receipt(&test_id(0x53), None)?;
+    let missing = reader
+        .read(&[crate::claim::PointRead::id(test_id(0x53))], None)?
+        .single();
     assert!(missing.value.is_none());
     assert_eq!(missing.receipt.suppressed_count, 0);
     Ok(())
@@ -1248,13 +1335,25 @@ fn stored_six_axis_scope_gates_real_claim_reads_and_preserves_mask_relevance() -
     )]);
     put_policy_manifest_bytes(&vault, manifest, &data)?;
     let actor = ScopedReadActorKey::new("reader").expect("fixture");
-    assert!(vault.scoped_read(actor.clone()).get(&id)?.is_some());
+    assert!(
+        vault
+            .scoped_read(actor.clone())
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .is_some()
+    );
     authority.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Public);
     let data = encode_policy_manifest(vec![core_read_scoped_grant_entry(
         "reader",
         crate::federation::scope_codec::encode_scope_value(&authority)?,
     )]);
     put_policy_manifest_bytes(&vault, manifest, &data)?;
-    assert!(vault.scoped_read(actor).get(&id)?.is_none());
+    assert!(
+        vault
+            .scoped_read(actor)
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .is_none()
+    );
     Ok(())
 }
