@@ -128,6 +128,14 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.scoped_grants.extend(decoded.scoped_grants);
                 resolution.room_policy_rows.extend(decoded.room_policy_rows);
                 resolution
+                    .weave_report_policy
+                    .extend(decoded.weave_report_policy);
+                resolution.weave_report_policy_empty |= decoded.weave_report_policy_empty;
+                // The most restrictive authored order wins across trusted packs.
+                resolution.weave_report_precedence = resolution
+                    .weave_report_precedence
+                    .max(decoded.weave_report_precedence);
+                resolution
                     .federation_grant_rows
                     .extend(decoded.federation_grant_rows);
                 resolution

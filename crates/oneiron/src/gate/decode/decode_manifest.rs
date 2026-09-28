@@ -97,6 +97,9 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) voice_serving: Option<crate::gate::voice_serving::VoiceServingRows>,
+    pub(in crate::gate) weave_report_policy: Vec<crate::gate::weave_policy::Row>,
+    pub(in crate::gate) weave_report_policy_empty: bool,
+    pub(in crate::gate) weave_report_precedence: crate::gate::weave_policy::Precedence,
     pub(in crate::gate) gate_decision_retention: Option<GateDecisionRetentionPolicy>,
     pub(in crate::gate) wait_policy: WaitPolicyTable,
     pub(in crate::gate) act_policy: ActPolicyTable,
@@ -209,6 +212,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "diagnostic_bounds"
                 | "policy_values"
                 | "livequery_tracker_limits"
+                | crate::gate::weave_policy::KEY
+                | crate::gate::weave_policy::PRECEDENCE_KEY
                 | RETRIEVAL_RETENTION_ROWS_KEY
                 | "goal_limits"
                 | "voice_ref_limits"
@@ -494,6 +499,24 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => parse_policy_values(value)?,
     };
 
+    let weave_report_precedence =
+        match single_map_value(&entries, crate::gate::weave_policy::PRECEDENCE_KEY) {
+            MapValue::Missing => crate::gate::weave_policy::Precedence::default(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                crate::gate::weave_policy::Precedence::parse(value.as_str()?)?
+            }
+        };
+    let (weave_report_policy, weave_report_policy_empty) =
+        match single_map_value(&entries, crate::gate::weave_policy::KEY) {
+            MapValue::Missing => (Vec::new(), false),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                let rows = crate::gate::weave_policy::parse(value)?;
+                let empty = rows.is_empty();
+                (rows, empty)
+            }
+        };
     let retrieval_retention = match single_map_value(&entries, RETRIEVAL_RETENTION_ROWS_KEY) {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -650,6 +673,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         voice_serving,
+        weave_report_policy,
+        weave_report_policy_empty,
+        weave_report_precedence,
         gate_decision_retention,
         wait_policy,
         act_policy,
