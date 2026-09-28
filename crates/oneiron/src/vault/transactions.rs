@@ -293,6 +293,7 @@ impl Vault {
         key: &str,
         value: &[u8],
     ) -> Result<()> {
+        check_generic_sync_state_key(key)?;
         crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
     }
 
@@ -301,6 +302,7 @@ impl Vault {
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
+        check_generic_sync_state_key(key)?;
         self.with_write_txn(|wtxn| {
             crate::side_table::host_sync_state_delete(&self.store, wtxn, key)
         })
