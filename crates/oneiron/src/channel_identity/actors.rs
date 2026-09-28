@@ -37,7 +37,7 @@ impl Vault {
         let Some(identity) = self.get_channel_identity(identity_ref)? else {
             return Ok(None);
         };
-        let Some(actor) = identity.reputation_ref else {
+        let Some(actor) = identity.reputation_ref() else {
             return Ok(None);
         };
         let txn = self.store.env.read_txn()?;
@@ -112,12 +112,8 @@ impl Vault {
         let connector_key_ref = EntityId::now();
         let now = self.instant_in_txn(&txn)?.secs();
         let mut identity = registration.identity;
-        let route_target = identity.binding.actor_ref();
-        identity.binding = ChannelIdentityBinding::Actor {
-            actor_ref,
-            facet_ref: identity.binding.facet_ref(),
-        };
-        identity.reputation_ref = Some(actor_ref);
+        let route_target = identity.binding().actor_ref();
+        identity.bind_to_channel_actor(actor_ref);
         let actor_body = Value::Map(vec![
             (
                 Value::from("provider_key"),
@@ -127,10 +123,7 @@ impl Vault {
                 Value::from("channel_identity_ref"),
                 Value::from(identity_ref.to_hex()),
             ),
-            (
-                Value::from("channel"),
-                Value::from(identity.channel.clone()),
-            ),
+            (Value::from("channel"), Value::from(identity.channel())),
             (Value::from("actor_class"), Value::from("system")),
             (
                 Value::from("route_target_ref"),
@@ -175,8 +168,12 @@ impl Vault {
             now,
             encode_channel_identity_body(&identity)?,
         )?;
-        let connector =
-            ConnectorKeyRecord::active(identity.channel, Some(actor_ref), Vec::new(), now);
+        let connector = ConnectorKeyRecord::active(
+            identity.channel().to_owned(),
+            Some(actor_ref),
+            Vec::new(),
+            now,
+        );
         self.register_connector_key_in_txn(&mut txn, &connector_key_ref, &connector)?;
         let prior_claim_ref = crate::provider_confidence::write_provider_prior_in_txn(
             self,

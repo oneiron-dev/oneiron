@@ -274,7 +274,11 @@ pub(crate) fn identity_topology_shell_sources_for_store_in_txn(
         StoredIdentityOpAction::Undo { .. }
         | StoredIdentityOpAction::Facet { .. }
         | StoredIdentityOpAction::AssertDistinct { .. }
-        | StoredIdentityOpAction::ProposalResolution { .. } => BTreeSet::new(),
+        | StoredIdentityOpAction::ProposalResolution { .. }
+        | StoredIdentityOpAction::ProposalCancellation { .. }
+        | StoredIdentityOpAction::AdmissionDisposition(_)
+        | StoredIdentityOpAction::AuthorAttribution { .. }
+        | StoredIdentityOpAction::AuthorRedaction { .. } => BTreeSet::new(),
     }))
 }
 
@@ -313,12 +317,14 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
             // not duplicate that pass from the generic put hook. A
             // resolution moves no shell edge at all.
             IdentityTopologyAction::Undo { .. }
-            | IdentityTopologyAction::ResolveProposal { .. } => false,
+            | IdentityTopologyAction::ResolveProposal { .. }
+            | IdentityTopologyAction::CancelProposal { .. }
+            | IdentityTopologyAction::Disposition => false,
         };
         let record = identity_topology_event_for_store_in_txn(store, &*wtxn, &event.event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-        let actor_relevant = record
-            .actor
+        let actor_relevant = super::effective_author_in_txn(store, wtxn, event.event_id)?
+            .or(record.actor)
             .is_some_and(|actor| materialized.contains(&actor.entity_ref()));
         if action_relevant || actor_relevant {
             return reconcile_identity_topology_edges_for_store_in_txn(

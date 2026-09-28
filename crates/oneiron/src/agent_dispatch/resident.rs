@@ -226,7 +226,7 @@ fn validate(vault: &Vault, spec: &ResidentAgentSpec) -> Result<()> {
     let identity = vault
         .get_channel_identity(&spec.inbox_identity_ref)?
         .ok_or_else(invalid)?;
-    if identity.binding.actor_ref() != Some(spec.agent_def_ref) {
+    if identity.binding().actor_ref() != Some(spec.agent_def_ref) {
         return Err(invalid());
     }
     let parents: Vec<_> = vault

@@ -7,8 +7,14 @@ use crate::entity_id::EntityId;
 use crate::gate::ceiling::{SourceTrustCeiling, SourceTrustRow};
 use crate::gate::constants::{
     ACTOR_REF_KEY, BUDGET_POLICY_ACTOR_KEY, BUDGET_POLICY_CAP_KEY, BUDGET_POLICY_FLOOR_KEY,
-    BUDGET_POLICY_PURPOSE_KEY, SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
+    BUDGET_POLICY_PURPOSE_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
+    GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
     SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+};
+use crate::gate::resolution::{
+    GateDecisionRetentionPolicy, GateRetentionOverrideCeiling, GateRetentionPrecedence,
+    GateRetentionRow, GateRetentionScope,
 };
 use crate::llm::{
     BudgetExhaustionPolicy, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable, CallPurpose,
@@ -89,6 +95,135 @@ pub(super) fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                 actor_ref,
             })
         }
+        _ => None,
+    }
+}
+
+/// Refuse unknown, missing, duplicated, zero, and wrongly typed values. A
+/// malformed retention row drops the whole manifest, not merely this option.
+pub(super) fn parse_gate_decision_retention(value: &Value) -> Option<GateDecisionRetentionPolicy> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    for (key, _) in entries {
+        if !matches!(
+            key.as_str()?,
+            GATE_RETENTION_HORIZON_SECS_KEY
+                | GATE_RETENTION_MAX_SWEEP_ROWS_KEY
+                | GATE_RETENTION_PRECEDENCE_KEY
+                | GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY
+                | "rows"
+        ) {
+            return None;
+        }
+    }
+    let precedence = match required_value(entries, GATE_RETENTION_PRECEDENCE_KEY)?.as_str()? {
+        "nested_narrowing" => GateRetentionPrecedence::NestedNarrowing,
+        "most_specific" => GateRetentionPrecedence::MostSpecific,
+        _ => return None,
+    };
+    let holder_override_ceiling =
+        match required_value(entries, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY)?.as_str()? {
+            "vault" => GateRetentionOverrideCeiling::Vault,
+            "parent" => GateRetentionOverrideCeiling::Parent,
+            _ => return None,
+        };
+    let horizon_secs =
+        parse_retention_horizon(required_value(entries, GATE_RETENTION_HORIZON_SECS_KEY)?)?;
+    let max_sweep_rows =
+        usize::try_from(required_value(entries, GATE_RETENTION_MAX_SWEEP_ROWS_KEY)?.as_u64()?)
+            .ok()
+            .filter(|rows| *rows > 0)?;
+    let rows = match single_map_value(entries, "rows") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) if rows.len() <= 1024 => {
+            let mut parsed: Vec<GateRetentionRow> = Vec::with_capacity(rows.len());
+            for row in rows {
+                let Value::Map(fields) = row else {
+                    return None;
+                };
+                if fields.len() != 4
+                    || fields.iter().any(|(key, _)| {
+                        !matches!(
+                            key.as_str(),
+                            Some("row_ref" | "scope" | "horizon_secs" | "override_parent")
+                        )
+                    })
+                {
+                    return None;
+                }
+                let row_ref = required_value(fields, "row_ref")?.as_str()?;
+                if row_ref.is_empty()
+                    || row_ref.len() > 96
+                    || !row_ref.bytes().all(|b| {
+                        b.is_ascii_lowercase()
+                            || b.is_ascii_digit()
+                            || matches!(b, b'.' | b'_' | b'-')
+                    })
+                {
+                    return None;
+                }
+                let scope = parse_retention_scope(required_value(fields, "scope")?)?;
+                if scope == GateRetentionScope::Vault
+                    || parsed
+                        .iter()
+                        .any(|prior| prior.scope == scope || prior.row_ref == row_ref)
+                {
+                    return None;
+                }
+                parsed.push(GateRetentionRow {
+                    row_ref: row_ref.to_owned(),
+                    scope,
+                    horizon_secs: parse_retention_horizon(required_value(fields, "horizon_secs")?)?,
+                    override_parent: match required_value(fields, "override_parent")? {
+                        Value::Boolean(value) => *value,
+                        _ => return None,
+                    },
+                });
+            }
+            parsed
+        }
+        _ => return None,
+    };
+    Some(GateDecisionRetentionPolicy {
+        horizon_secs,
+        max_sweep_rows,
+        precedence,
+        holder_override_ceiling,
+        rows,
+    })
+}
+
+fn parse_retention_horizon(value: &Value) -> Option<Option<u64>> {
+    match value {
+        Value::Nil => Some(None),
+        value => Some(Some(value.as_u64().filter(|seconds| *seconds > 0)?)),
+    }
+}
+
+fn parse_retention_scope(value: &Value) -> Option<GateRetentionScope> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    let level = required_value(entries, "level")?.as_str()?;
+    if entries.len() != 2
+        || entries
+            .iter()
+            .any(|(key, _)| !matches!(key.as_str(), Some("level" | "ref")))
+    {
+        return None;
+    }
+    let reference = required_value(entries, "ref")?.as_str()?;
+    let id = EntityId::from_hex(reference).ok()?;
+    if id.to_hex() != reference {
+        return None;
+    }
+    match level {
+        "world" => Some(GateRetentionScope::World(id)),
+        "project" => Some(GateRetentionScope::Project(id)),
+        "sub_project" => Some(GateRetentionScope::SubProject(id)),
+        "thread" => Some(GateRetentionScope::Thread(id)),
         _ => None,
     }
 }

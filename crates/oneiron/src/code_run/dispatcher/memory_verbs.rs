@@ -64,6 +64,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::InferenceDefaultsReplace
             | SelfEffect::WakePolicyWrite
             | SelfEffect::AgentsSpawn
+            | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
             | SelfEffect::TaskDelegate => {

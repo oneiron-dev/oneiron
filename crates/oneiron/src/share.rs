@@ -24,6 +24,9 @@ use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM};
 use crate::store::{GateDecisionId, Store};
 use crate::write_envelope::WriteActor;
 
+mod admission_refs;
+pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
+
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Share {
@@ -215,8 +218,10 @@ fn decode_refs(value: &Value) -> Result<BTreeSet<EntityId>> {
 // Local, engine-written provenance. Generic grant writes cannot touch a reserved id,
 // even after deletion or a foreign overwrite. A replayed row with no local admission
 // never becomes a usable share. No rendered bytes or claim values live here.
+const SHARE_ADMISSION_PREFIX: &[u8] = b"share:brief:admission:v1:";
+
 fn admission_key(id: &EntityId) -> Vec<u8> {
-    [b"share:brief:admission:v1:".as_slice(), id.as_bytes()].concat()
+    [SHARE_ADMISSION_PREFIX, id.as_bytes()].concat()
 }
 
 // A one-way admission fence for a deleted brief identity. It is staged in the
