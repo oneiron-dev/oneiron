@@ -1154,6 +1154,34 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/pptx_reanchor.rs",
+     "purpose": "PPTX thread re-binding over actual version bytes, including unknown-anchor drift",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/pptx_settle.rs",
+     "purpose": "Atomic managed annotation writes accompanying verified modern-comment exports",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/anchored_annotation/pptx_tests.rs",
+     "purpose": "PPTX thread identity/drift and consume-once settlement using actual package bytes",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -15533,6 +15561,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SheetAnswerBundle",
+      "SheetCellAnswer"
+     ],
+     "path": "src/edit_roundtrip/judgment.rs",
+     "purpose": "Typed sheet answers: one ask over a bounded range becomes one retained edit",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/judgment_cells.rs",
+     "purpose": "Independent OOXML reads for typed sheet answers",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EditManifest",
       "EditWarning",
       "MutationMode",
@@ -15554,7 +15607,9 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "re-export": 6
+      "crate-vis": 1,
+      "mod": 2,
+      "re-export": 7
      }
     },
     {
@@ -15576,7 +15631,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnchorEffect",
@@ -15610,6 +15665,139 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/archive.rs",
+     "purpose": "Retained ZIP records: unchanged entries keep compression, metadata and local bytes",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/comments.rs",
+     "purpose": "Modern threaded comments using retained XML surgery and a derived part allowlist",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/identities.rs",
+     "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PptxOperationalLimits"
+     ],
+     "path": "src/edit_roundtrip/pptx/limits.rs",
+     "purpose": "Policy-manifest budgets for the modern-comment writer",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/links.rs",
+     "purpose": "OPC link additions and modern-comment part discovery; retained XML insertion only",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/mod.rs",
+     "purpose": "Narrow, byte-preserving modern PowerPoint comment edits",
+     "surface": {
+      "crate-vis": 5,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PptxAnchorOutcome",
+      "PptxAuthor",
+      "PptxCommentAction",
+      "PptxCommentEffects",
+      "PptxCommentPatch",
+      "PptxCommentTarget",
+      "PptxDriftReason",
+      "PptxError",
+      "PptxInspection",
+      "PptxProposalError",
+      "PptxShapeIdentity",
+      "PptxSlideIdentity"
+     ],
+     "path": "src/edit_roundtrip/pptx/package.rs",
+     "purpose": "Public PowerPoint comment requests, inspection facts, and typed refusals",
+     "surface": {
+      "crate-vis": 19,
+      "enum": 5,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/proposal.rs",
+     "purpose": "Modern comments use the existing retained-output proposal and consume-once settle",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/tests.rs",
+     "purpose": "Returned bytes and typed refusals; no assertions of PowerPoint visibility",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/tests/support.rs",
+     "purpose": "Small OPC fixtures, not PowerPoint application-oracle evidence",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/pptx/xml.rs",
+     "purpose": "Namespace-aware XML spans for surgical edits",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -15630,7 +15818,37 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideJudgment",
+      "SlideReviewError",
+      "SlideReviewLabels",
+      "SlideReviewProvider",
+      "SlideReviewRequest",
+      "SlideReviewRun",
+      "SlideReviewUnit"
+     ],
+     "path": "src/edit_roundtrip/slides_review.rs",
+     "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/slides_review/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
@@ -15644,11 +15862,11 @@
      "path": "src/edit_roundtrip/xml.rs",
      "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_settle/codec.rs",
@@ -15665,7 +15883,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 32
+      "crate-vis": 39
      }
     },
     {
@@ -15693,13 +15911,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PptxReviewIdentity",
       "SettleConsent",
       "SettleDiscardOutcome",
       "SettleOutcomeKind",
       "SettleReceiptDoor",
       "SettleSelectOutcome",
       "SettledAnchor",
-      "SettlementRecord"
+      "SettlementRecord",
+      "SheetAnswerReceipt"
      ],
      "path": "src/edit_settle/records.rs",
      "purpose": "Consent, outcome and settlement records",
@@ -15707,7 +15927,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
-      "struct": 5
+      "struct": 7
      }
     },
     {
@@ -15717,7 +15937,7 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -17174,7 +17394,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 81
+      "crate-vis": 85
      }
     },
     {
@@ -17515,7 +17735,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 36
      }
     },
     {
@@ -17556,7 +17776,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -17845,11 +18065,27 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/pptx_limits.rs",
+     "purpose": "Shipped PowerPoint limits and owner/holder policy precedence",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/scoped_read.rs",
      "purpose": "Scoped read and retrieval filtering: core-read grants, context-pack scrubbing, and facet edges",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/slide_review_policy.rs",
+     "purpose": "Shipped slide-review limits, scoped manifest narrowing, and strict row decode",
      "surface": {}
     },
     {
@@ -20979,7 +21215,7 @@
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -21173,6 +21409,23 @@
      "path": "src/llm/decision/seat/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SlideReviewLimits",
+      "SlideReviewPolicy",
+      "SlideReviewPrecedence",
+      "SlideReviewRoute"
+     ],
+     "path": "src/llm/decision/slides_policy.rs",
+     "purpose": "Manifest-backed operating limits for the artifact judgment adapter",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -36478,7 +36731,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 7,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36961,8 +37214,8 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 12,
-     "impl_vault": false,
+     "files": 27,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
@@ -37052,7 +37305,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 85,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37185,7 +37438,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37740,8 +37993,8 @@
    },
    "over_bar": 5,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2240,
-   "test_files": 767
+   "source_files": 2255,
+   "test_files": 773
   },
   "oneiron-android": {
    "files": [
