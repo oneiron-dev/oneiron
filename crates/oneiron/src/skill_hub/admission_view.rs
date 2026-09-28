@@ -172,7 +172,11 @@ impl Vault {
         {
             return Err(invalid("stored package and candidate disagree"));
         }
-        self.check_hub_source_alias(txn, &candidate, source, package.content_hash()?)?;
+        let content_hash = package.content_hash()?;
+        if super::import_receipt::marketplace_hash_blocked_in_txn(&self.store, txn, content_hash)? {
+            return Err(invalid("marketplace hash rule blocks activation"));
+        }
+        self.check_hub_source_alias(txn, &candidate, source, content_hash)?;
         let baseline = read_skill(self, txn, &evidence_skill)?;
         if baseline.lifecycle_status != SkillLifecycle::Active {
             return Err(invalid("held-out baseline is not active"));
@@ -220,7 +224,7 @@ impl Vault {
             surface,
         })
     }
-    fn check_hub_source_alias(
+    pub(super) fn check_hub_source_alias(
         &self,
         txn: &heed::RoTxn<'_>,
         candidate: &EntityId,

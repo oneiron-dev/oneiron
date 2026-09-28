@@ -662,7 +662,7 @@ impl ScopedRead<'_> {
             if !sources_live_in_txn(&self.vault.store, txn, &report.value)? {
                 return Ok(None);
             }
-            if self.weave_report_in(txn, reader, &row.recipe)? != report {
+            if self.weave_report_in_txn(txn, reader, &row.recipe)? != report {
                 return Ok(None);
             }
             if let Some(raw) = self.vault.store.vault_meta.get(&*txn, &digest_key)? {

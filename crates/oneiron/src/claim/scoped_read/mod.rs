@@ -29,8 +29,10 @@ pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
     StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule,
 };
+mod weave_correction;
 mod weave_report;
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+pub use weave_correction::WeaveLinkCorrection;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };

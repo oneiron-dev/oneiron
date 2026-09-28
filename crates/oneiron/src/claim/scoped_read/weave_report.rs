@@ -89,13 +89,13 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
     ) -> Result<ScopedReadResult<WeaveReport>> {
-        let txn = self.vault.store.env.read_txn()?;
-        self.weave_report_in(&txn, reader, recipe)
+        let txn = self.grant_read_txn()?;
+        self.weave_report_in_txn(&txn, reader, recipe)
     }
 
-    /// The very same projection inside a caller-owned transaction: the digest
-    /// publisher re-runs it at commit to fence every item and endpoint.
-    pub(super) fn weave_report_in(
+    /// Run the same live report admission against a caller-owned transaction.
+    /// Correction writes and receipt reads need admission and effects in one snapshot.
+    pub(super) fn weave_report_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         reader: WeaveReader<'_>,

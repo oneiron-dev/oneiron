@@ -157,6 +157,11 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .edge_hop(edge_hop)
             .max_neighbors(max_neighbors)
             .field_profile(FieldProfile::Standard);
+        if let Some(model) = request.executor_model.as_deref() {
+            builder = builder
+                .skill_executor(model)
+                .map_err(|error| engine_failure(METHOD, &error))?;
+        }
         if let Some(query) = query {
             builder = builder.search_text(query, candidate_limit);
         }

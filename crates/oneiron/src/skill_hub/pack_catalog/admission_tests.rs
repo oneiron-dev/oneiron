@@ -23,6 +23,53 @@ fn source(connector: bool) -> Result<PackSource> {
         HubFile::new("skills/format/SKILL.md", b"---\nname: alice.format\ndescription: format\nversion: 1\n---\nKeep facts exact.\n".to_vec()),
     ])
 }
+fn assert_bundled_source_line(
+    vault: &Vault,
+    pack_ref: &HubRef,
+    skill: &EntityId,
+    lifecycle: &str,
+    outcome: &str,
+) -> Result<()> {
+    let record = vault.get_skill_record(skill)?.expect("bundled skill");
+    let reference = super::pack_skill_hub_ref(
+        pack_ref,
+        "format",
+        record.content_hash.expect("bundled skill hash"),
+    )?;
+    let receipt = vault
+        .hub_import_receipt(skill, &reference)?
+        .expect("source receipt");
+    assert_eq!(receipt.installed_as.as_str(), lifecycle);
+    assert_eq!(receipt.disposition.as_str(), outcome);
+    assert_eq!(receipt.hub_id, pack_ref.hub_id.to_hex());
+    assert_eq!(receipt.ref_string, reference.ref_string);
+    crate::test_util::authorize_readers(vault, &["pack-reader"]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("pack-reader").unwrap());
+    let changed = crate::context_board::SessionReadSet::default().refresh(&read, 16)?;
+    let rendered = crate::context_board::render_board_block(
+        &crate::context_board::BoardFrame {
+            header: &crate::context_board::BoardBlockHeader {
+                epoch: 1,
+                scope: "base".into(),
+            },
+            legend: &crate::context_board::BoardLegend::canonical(),
+            sections: &[],
+            changes: Some(&changed),
+        },
+        crate::context_board::BoardBudgetRequest {
+            harness_default_tok: 0,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        },
+    )
+    .expect("board render");
+    assert!(rendered.text.contains("changed_install["));
+    assert!(rendered.text.contains(&receipt.hub_id));
+    assert!(rendered.text.contains(&reference.ref_string));
+    assert!(rendered.text.contains(&format!("{lifecycle}/{outcome}")));
+    Ok(())
+}
+
 struct Policy {
     rules_hit: bool,
     code_auto_install: bool,
@@ -62,7 +109,10 @@ fn fixture(
     config.dimensions = 4;
     // Boundary fixtures stage a full 16 MiB source plus its catalog indexes.
     config.map_size = 128 * 1024 * 1024;
-    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    // Install admission resolves the seeded policy manifest. The generic
+    // legacy helper deindexes it and cannot serve this fixture.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), config)?;
     let owner = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };
     vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
@@ -135,9 +185,10 @@ fn installed_inventory_skips_deleted_source_but_refuses_corrupt_receipt() -> Res
         HubPin::ContentHash(second.content_hash().to_hex()),
     )?;
     let next = install(&second, &next_ref, 4)?;
-    assert_eq!(vault.installed_packs()?.len(), 2);
+    assert_eq!(vault.installed_packs()?.len(), 2 + 4);
     assert!(vault.delete_entity(&EntityId::from_hex(&old.source_id)?)?);
-    assert_eq!(vault.installed_packs()?, vec![next]);
+    assert!(vault.installed_packs()?.contains(&next));
+    assert_eq!(vault.installed_packs()?.len(), 1 + 4);
     vault.with_write_txn(|txn| {
         vault
             .store
@@ -245,6 +296,9 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
             panic!("post-fit install");
         };
         assert_eq!(receipt.status, PackInstallStatus::Active);
+        assert_eq!(receipt.kind, PackKind::Capability);
+        assert_eq!(receipt.adapter, None);
+        assert_eq!(receipt.engine_version, None);
         assert_eq!(receipt.hub_ref, "pack");
         assert_eq!(receipt.pin_value, source.content_hash().to_hex());
         assert_eq!(
@@ -263,6 +317,7 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
             vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
             crate::skill::SkillLifecycle::Active
         );
+        assert_bundled_source_line(&vault, &reference, &skill, "active", "installed")?;
         // The resident can load and attribute the pack's exact authored skill
         // through the ordinary attempt door, not only inspect Active metadata.
         let queue = crate::attempt_queue::AttemptQueue::new(&vault);
@@ -277,7 +332,24 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
         else {
             panic!("attempt")
         };
-        let loaded = vault.load_attempt_skill_pack(attempt.id, &skill, 8)?;
+        let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+            "pack.runtime",
+            crate::attempt_queue::ClaimAttempt {
+                lease_owner: "worker".into(),
+                now: 8,
+            },
+        )?
+        else {
+            panic!("lease")
+        };
+        let loaded = vault.load_attempt_skill_pack(
+            attempt.id,
+            &skill,
+            "worker",
+            leased.attempt_count,
+            "fixture/model@1",
+            8,
+        )?;
         assert!(
             loaded
                 .source_files
@@ -338,15 +410,39 @@ fn resident_authored_skill_rides_installed_pack_in_one_attempt() -> Result<()> {
     else {
         panic!("attempt")
     };
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "pack.runtime",
+        crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 7,
+        },
+    )?
+    else {
+        panic!("lease")
+    };
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &bundled, 7)?
+            .load_attempt_skill_pack(
+                attempt.id,
+                &bundled,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                7
+            )?
             .source_files
             .is_some()
     );
     assert_eq!(
         vault
-            .load_attempt_skill_pack(attempt.id, &authored_id, 8)?
+            .load_attempt_skill_pack(
+                attempt.id,
+                &authored_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )?
             .record
             .skill_id,
         "alice.workflow"
@@ -397,6 +493,17 @@ fn code_flag_and_rule_hits_keep_candidate_inert() -> Result<()> {
             vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
             crate::skill::SkillLifecycle::Candidate
         );
+        assert_bundled_source_line(
+            &vault,
+            &reference,
+            &skill,
+            "candidate",
+            if rules_hit {
+                "rules_hit"
+            } else {
+                "code_auto_install_off"
+            },
+        )?;
         let resumed = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
         assert!(matches!(
             vault.install_pack(&resumed)?,
@@ -451,7 +558,7 @@ fn code_free_pack_is_candidate_only_on_rules_hit() -> Result<()> {
     Ok(())
 }
 #[test]
-fn pinned_bundled_skill_verdict_keeps_pack_candidate() -> Result<()> {
+fn pinned_bundled_skill_scanner_signal_does_not_override_fit() -> Result<()> {
     use crate::skill_hub::{
         ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt,
     };
@@ -488,18 +595,21 @@ fn pinned_bundled_skill_verdict_keeps_pack_candidate() -> Result<()> {
     )?;
     vault.ingest_skill_scan_verdict(&skill, hash, &verdict, TimeRange { start: 5, end: 5 }, 5)?;
     let fit = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
-    let PackInstallDisposition::Candidate(receipt) = vault.install_pack(&fit)? else {
-        panic!("scanner rules hit");
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&fit)? else {
+        panic!("fit-ready pack installs despite advisory scanner signal");
     };
+    assert_eq!(receipt.candidate_reason, None);
+    assert!(vault.installed_pack("alice.tools")?.is_some());
+    let stored = vault.get_skill_record(&skill)?.unwrap();
     assert_eq!(
-        receipt.candidate_reason,
-        Some(PackCandidateReason::RulesHit)
+        stored.lifecycle_status,
+        crate::skill::SkillLifecycle::Active
     );
-    assert!(vault.installed_pack("alice.tools")?.is_none());
     assert_eq!(
-        vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
-        crate::skill::SkillLifecycle::Candidate
+        stored.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
     );
+    assert_bundled_source_line(&vault, &reference, &skill, "active", "installed")?;
     Ok(())
 }
 #[test]
@@ -672,7 +782,14 @@ fn bundled_skill_revision_supersedes_old_and_widened_capability_reaches_fit() ->
     );
     assert!(
         vault
-            .load_attempt_skill_pack(crate::attempt_queue::AttemptId::now(), &old_id, 7)
+            .load_attempt_skill_pack(
+                crate::attempt_queue::AttemptId::now(),
+                &old_id,
+                "worker",
+                1,
+                "fixture/model@1",
+                7
+            )
             .is_err()
     );
     Ok(())
@@ -855,14 +972,38 @@ fn last_shared_pack_owner_supersedes_old_revision() -> Result<()> {
     else {
         panic!("attempt")
     };
+    let crate::attempt_queue::ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "pack.runtime",
+        crate::attempt_queue::ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 8,
+        },
+    )?
+    else {
+        panic!("lease")
+    };
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &old_id, 8)
+            .load_attempt_skill_pack(
+                attempt.id,
+                &old_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )
             .is_err()
     );
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &new_id, 8)
+            .load_attempt_skill_pack(
+                attempt.id,
+                &new_id,
+                "worker",
+                leased.attempt_count,
+                "fixture/model@1",
+                8
+            )
             .is_ok()
     );
     Ok(())
