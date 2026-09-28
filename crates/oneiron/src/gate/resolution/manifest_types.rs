@@ -4,7 +4,10 @@ use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
 };
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::llm::{
+    BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailureClass, DreamerFailureDecision,
+    DreamerFailurePrecedence, DreamerFailureRule, decide_failure,
+};
 use std::collections::BTreeMap;
 
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
@@ -346,6 +349,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    pub(super) dreamer_failure_rules: Vec<DreamerFailureRule>,
+    pub(super) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
     /// Vault-resident wait windows keyed by class.
     pub(super) wait_policy: WaitPolicyTable,
     /// Vault-resident act postures keyed by act and subject class.
@@ -356,4 +361,19 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy:
         Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
+}
+
+impl PolicyManifestResolution {
+    /// A malformed policy cannot authorize use of failed model output.
+    pub(crate) fn dreamer_failure_decision(
+        &self,
+        class: DreamerFailureClass,
+    ) -> DreamerFailureDecision {
+        let precedence = self.dreamer_failure_precedence.unwrap_or_default();
+        if self.diagnostics.is_fail_closed() {
+            decide_failure(&[], class, precedence)
+        } else {
+            decide_failure(&self.dreamer_failure_rules, class, precedence)
+        }
+    }
 }

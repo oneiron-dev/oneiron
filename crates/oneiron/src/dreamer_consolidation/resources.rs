@@ -2,6 +2,7 @@
 //! boundary, not read authority: source bytes still pass through ScopedRead,
 //! and the promotion sink still owns the write gate and live ceiling.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::conflict::{
@@ -22,7 +23,7 @@ use crate::claim::{ScopedRead, ScopedReadActorKey};
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::llm::{Scope, ScopeResource};
+use crate::llm::{LlmResponse, Scope, ScopeResource, StepEffectBinding};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
@@ -40,6 +41,23 @@ struct SourcePin {
     trust_class: Option<crate::claim::ClaimSource>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct FallbackOutputPin {
+    pub(super) step: StepEffectBinding,
+    pub(super) response_hash: [u8; 32],
+}
+
+impl FallbackOutputPin {
+    pub(super) fn new(step: StepEffectBinding, response: &LlmResponse) -> Result<Self> {
+        let encoded = serde_json::to_vec(response)
+            .map_err(|_| invalid_consolidation("fallback response encoding failed"))?;
+        Ok(Self {
+            step,
+            response_hash: *blake3::hash(&encoded).as_bytes(),
+        })
+    }
+}
+
 pub(super) struct BranchResources<'a> {
     read: ScopedRead<'a>,
     prepared_wake: Option<&'a PreparedWake>,
@@ -50,6 +68,7 @@ pub(super) struct BranchResources<'a> {
     output: ScopeResource,
     scope: Scope,
     attempt: AttemptId,
+    fallback_binding: Cell<Option<FallbackOutputPin>>,
     signals: ScopeResource,
     priors: BTreeMap<EntityId, super::PriorHead>,
     rules: super::routing::PredicateKeyRules,
@@ -198,6 +217,7 @@ impl<'a> BranchResources<'a> {
             output,
             scope,
             attempt,
+            fallback_binding: Cell::new(None),
             signals,
             priors: BTreeMap::new(),
             rules: vault.consolidation_key_rules()?,
@@ -217,6 +237,18 @@ impl<'a> BranchResources<'a> {
             .get(id)
             .map(|pin| pin.resource.clone())
             .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))
+    }
+
+    pub(super) fn bind_fallback(&self, pin: FallbackOutputPin) -> Result<()> {
+        if pin.step.attempt_id != self.attempt || self.fallback_binding.get().is_some() {
+            return Err(invalid_consolidation("invalid extraction fallback binding"));
+        }
+        self.fallback_binding.set(Some(pin));
+        Ok(())
+    }
+
+    pub(super) fn fallback_binding(&self) -> Option<FallbackOutputPin> {
+        self.fallback_binding.get()
     }
 
     pub(super) fn key_rules(&self) -> &super::routing::PredicateKeyRules {

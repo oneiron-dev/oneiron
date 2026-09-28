@@ -84,6 +84,8 @@ pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
 pub(super) const POLICY_SHEET_ANSWER_LIMITS_KEY: &str = "sheet_answer_limits";
 /// The shipped scope-composition row, distinct from the numeric limit rows.
 pub(super) const POLICY_SHEET_ANSWER_PRECEDENCE_KEY: &str = "sheet_answer_precedence";
+pub(super) const POLICY_DREAMER_FAILURE_RULES_KEY: &str = "dreamer_failure_rules";
+pub(super) const POLICY_DREAMER_FAILURE_PRECEDENCE_KEY: &str = "dreamer_failure_precedence";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 /// Vault and holder rows for artifact-review operating limits and precedence.
 pub(super) const POLICY_SLIDE_REVIEW_KEY: &str = "slide_review_policy";
