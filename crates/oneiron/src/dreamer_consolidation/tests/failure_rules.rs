@@ -43,13 +43,133 @@ fn permits_only_decorated_extraction(request: &LlmRequest) -> bool {
             .and_then(serde_json::Value::as_str) == Some("from declared fallback"))
 }
 
+fn set_manifest_failure_policy(
+    vault: &Vault,
+    consolidation_ceiling: bool,
+    effector_ceiling: bool,
+    precedence: &str,
+) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let raw = vault.get_raw(&id)?.expect("fixture policy manifest");
+    let mut data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut data).expect("manifest map") else {
+        panic!("manifest map")
+    };
+    entries.retain(|(key, _)| {
+        !matches!(
+            key.as_str(),
+            Some("dreamer_failure_rules" | "dreamer_failure_precedence")
+        )
+    });
+    entries.push(("dreamer_failure_precedence".into(), precedence.into()));
+    entries.push((
+        "dreamer_failure_rules".into(),
+        Value::Array(vec![Value::Map(vec![
+            ("failure".into(), "fatal".into()),
+            ("route".into(), "fallback".into()),
+            (
+                "consolidation_eligible".into(),
+                consolidation_ceiling.into(),
+            ),
+            ("effector_eligible".into(), effector_ceiling.into()),
+            ("default_consolidation_eligible".into(), false.into()),
+            ("default_effector_eligible".into(), false.into()),
+        ])]),
+    ));
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        id,
+        &super::super::support::encode_value(&Value::Map(entries))?,
+    )
+}
+
+fn deny_manifest_consolidation(vault: &Vault) -> Result<()> {
+    set_manifest_failure_policy(vault, false, false, "holder_override_capped_at_vault")
+}
+
+struct RevokeBeforePromotion<'a> {
+    inner: crate::dreamer_promotion::PromotionWriterSink<'a>,
+    author: WriteActor,
+    revoked: Vec<u8>,
+    kind: &'static str,
+}
+
+impl ConsolidationSink for RevokeBeforePromotion<'_> {
+    fn accept(&mut self, _: Vec<PromotionCandidate>) -> Result<()> {
+        panic!("sealed scoped write required")
+    }
+
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        match self.kind {
+            "manifest" => deny_manifest_consolidation(self.inner.vault)?,
+            "stage" => self
+                .inner
+                .vault
+                .set_dreamer_failure_rules(self.author, &self.revoked)?,
+            _ => unreachable!(),
+        }
+        self.inner.accept_scoped(write)
+    }
+}
+
+fn execute_with_sink(
+    vault: &Vault,
+    admitted: &crate::dreamer_runner::DreamerAdmittedAttempt,
+    backend: &ScriptedBackend,
+    guard: &crate::BudgetGuard,
+    deadline: &WakePassDeadline,
+    sink: &mut dyn ConsolidationSink,
+) -> Result<DreamerAttemptExecution> {
+    let mut executor = ConsolidationExecutor {
+        backend,
+        guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink,
+        inference: crate::llm::HostInferenceContext {
+            extraction_egress: Some(&permits_only_decorated_extraction),
+            ..test_inference_host()
+        },
+        scope: None,
+    };
+    block_on_ready(executor.execute(
+        admitted,
+        &mut WakeAttemptContext {
+            vault,
+            deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
+        },
+    ))
+}
+
 #[test]
 fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result<()> {
-    for (eligible, on_record_session) in
-        [(false, false), (true, false), (false, true), (true, true)]
-    {
+    for (
+        eligible,
+        on_record_session,
+        manifest_denies,
+        revoke_before_mint,
+        revoke_before_promotion,
+        stage_effector,
+    ) in [
+        (false, false, false, None, None, false),
+        (true, false, false, None, None, false),
+        (false, true, false, None, None, false),
+        (true, true, false, None, None, false),
+        (true, false, true, None, None, false),
+        (true, false, false, Some("manifest"), None, false),
+        (true, false, false, Some("stage"), None, false),
+        (true, false, false, None, Some("manifest"), false),
+        (true, false, false, None, Some("stage"), false),
+        (true, false, false, None, None, true),
+    ] {
         let (_dir, vault) = open_vault();
         super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
+        set_manifest_failure_policy(&vault, true, true, "holder_override_capped_at_vault")?;
         let store = DreamerRunnerStore::new(&vault);
         let (admitted, turns, _) = admitted_attempt_fixture(
             &vault,
@@ -89,9 +209,13 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
             Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
         );
         let author = WriteActor::new(resident, EdgeActorClass::Agent);
-        let authored: serde_json::Value =
+        let mut authored: serde_json::Value =
             serde_json::from_slice(&rows(subject, turns[0], eligible))
                 .expect("valid authored rows");
+        if revoke_before_promotion.is_some() {
+            authored["rows"][1]["value"]["persons"] = serde_json::json!([]);
+        }
+        authored["rows"][1]["effector_eligible"] = stage_effector.into();
         let value = super::super::value_projection::json_to_rmpv(&authored);
         crate::dreamer_consolidation::prepare_authored_claim(
             crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
@@ -130,6 +254,28 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
         assert!(crate::dreamer_consolidation::admitted_authored_claim(
             &vault, &claim_id, author
         )?);
+        if manifest_denies {
+            deny_manifest_consolidation(&vault)?;
+        }
+        match revoke_before_mint {
+            Some("manifest") => vault
+                .test_hooks()
+                .install_before_dreamer_person_mint(|vault| {
+                    deny_manifest_consolidation(vault).expect("revoke before mint");
+                }),
+            Some("stage") => {
+                let disallowed = rows(subject, turns[0], false);
+                vault
+                    .test_hooks()
+                    .install_before_dreamer_person_mint(move |vault| {
+                        vault
+                            .set_dreamer_failure_rules(author, &disallowed)
+                            .expect("revoke stage rule before mint");
+                    });
+            }
+            None => {}
+            _ => unreachable!(),
+        }
         let backend = ScriptedBackend::new(vec![Err(crate::FatalLlmError::Auth.into())]);
         let guard = crate::BudgetGuard::with_reserve_units(
             "wake",
@@ -139,43 +285,89 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
         );
         let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
         let mut sink = CapturingSink::default();
-        let mut executor = ConsolidationExecutor {
-            backend: &backend,
-            guard: &guard,
-            strategy: DreamerClaimAuthoringStrategy::SinglePass,
-            actor: vault.dreamer_authority()?,
-            model: crate::ModelId::new("test/model@r1").expect("model"),
-            sink: &mut sink,
-            inference: crate::llm::HostInferenceContext {
-                extraction_egress: Some(&permits_only_decorated_extraction),
-                ..test_inference_host()
-            },
-            scope: None,
-        };
-        let execution = block_on_ready(executor.execute(
-            &admitted,
-            &mut WakeAttemptContext {
-                vault: &vault,
-                deadline: &deadline,
-                budget_id: "wake",
+        let execution = if let Some(kind) = revoke_before_promotion {
+            let run = crate::dreamer_promotion::DreamerRunContext {
+                run_id: admitted
+                    .status
+                    .attempt
+                    .run_id
+                    .clone()
+                    .unwrap_or_else(|| "run-1".into()),
+                attempt_id: admitted.status.attempt.id,
+                agent_actor: vault.dreamer_authority()?,
                 now_ms: 21_000,
-                prepared_wake: None,
-                prepared_attempt: None,
-            },
-        ))?;
+            };
+            let mut writer = RevokeBeforePromotion {
+                inner: crate::dreamer_promotion::PromotionWriterSink::new(&vault, run),
+                author,
+                revoked: rows(subject, turns[0], false),
+                kind,
+            };
+            let result =
+                execute_with_sink(&vault, &admitted, &backend, &guard, &deadline, &mut writer);
+            assert!(result.is_err(), "revocation before promotion must refuse");
+            assert!(writer.inner.outcome.landed.is_empty());
+            assert!(!writer.inner.outcome.rejected.is_empty());
+            assert!(vault.get_raw(&EntityId::from_bytes([0x68; 16])?)?.is_none());
+            for id in vault.claims_for_subject(&subject)? {
+                assert_ne!(
+                    vault.get_claim(&id)?.expect("stored claim").predicate,
+                    "profile.name"
+                );
+            }
+            assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+            continue;
+        } else {
+            execute_with_sink(&vault, &admitted, &backend, &guard, &deadline, &mut sink)
+        };
+        if revoke_before_mint.is_some() {
+            assert!(execution.is_err(), "revocation before mint must refuse");
+            assert!(sink.accepted.is_empty());
+            assert!(vault.get_raw(&EntityId::from_bytes([0x68; 16])?)?.is_none());
+            assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+            continue;
+        }
         assert!(matches!(
-            execution,
+            execution?,
             DreamerAttemptExecution::Completed { completed_units: 0 }
         ));
-        assert_eq!(sink.accepted.len(), usize::from(eligible));
+        // Even a separate manifest effector permit cannot widen the resident
+        // consolidation stage row (whose only valid effector bit is false).
+        let txn = vault.store.env.read_txn()?;
+        let fallback = crate::LlmResponse {
+            message: crate::LlmMessage {
+                role: crate::LlmMessageRole::Assistant,
+                content: vec![crate::ContentPart::Text {
+                    text: "fallback".into(),
+                }],
+            },
+            usage: crate::LlmUsage::zero(),
+            finish_reason: crate::FinishReason::Other {
+                name: "fallback:json_rules_v1".into(),
+            },
+        };
+        assert_eq!(
+            super::super::step_effector_eligible_in_txn(&vault, &txn, "extraction", &fallback,)?,
+            Some(stage_effector),
+        );
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        assert_eq!(
+            policy
+                .dreamer_failure_decision(crate::llm::DreamerFailureClass::Fatal)
+                .effector_with_stage(Some(stage_effector)),
+            stage_effector && !manifest_denies,
+        );
+        drop(txn);
+        let accepted = eligible && !manifest_denies;
+        assert_eq!(sink.accepted.len(), usize::from(accepted));
         let person = EntityId::from_bytes([0x68; 16])?;
         let minted = vault.get_raw(&person)?;
         assert_eq!(
             minted.is_some(),
-            eligible,
+            accepted,
             "fallback PERSON follows eligibility"
         );
-        if eligible {
+        if accepted {
             assert_eq!(sink.accepted[0].evidence_turn_refs, turns);
             let row = minted.expect("minted person");
             let mut body = &row[crate::batch::ENTITY_METADATA_HEADER_LEN..];
@@ -213,13 +405,30 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
     );
     let mut value: serde_json::Value = serde_json::from_slice(&rules).expect("valid rules");
     value["rows"][1]["effector_eligible"] = true.into();
+    let authored = super::super::value_projection::json_to_rmpv(&value);
+    assert!(
+        super::super::failure_rules::prepare_authored_claim(
+            super::super::failure_rules::PREDICATE,
+            &authored,
+        )?
+        .is_some(),
+        "authenticated Fatal stage true is valid policy data"
+    );
     assert!(
         vault
             .set_dreamer_failure_rules(author, &serde_json::to_vec(&value).expect("valid json"),)
-            .is_err()
+            .is_err(),
+        "PERSON actor cannot author stage policy"
     );
     value["rows"][1]["effector_eligible"] = false.into();
     value["rows"][1]["route"] = "step_retry".into();
+    assert!(
+        super::super::failure_rules::prepare_authored_claim(
+            super::super::failure_rules::PREDICATE,
+            &super::super::value_projection::json_to_rmpv(&value),
+        )
+        .is_err()
+    );
     assert!(
         vault
             .set_dreamer_failure_rules(author, &serde_json::to_vec(&value).expect("valid json"),)
@@ -231,6 +440,13 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
         .expect("fallback value");
     extraction.remove("persons");
     extraction.insert("people".into(), serde_json::json!([]));
+    assert!(
+        super::super::failure_rules::prepare_authored_claim(
+            super::super::failure_rules::PREDICATE,
+            &super::super::value_projection::json_to_rmpv(&value),
+        )
+        .is_err()
+    );
     assert!(
         vault
             .set_dreamer_failure_rules(author, &serde_json::to_vec(&value).expect("json"))

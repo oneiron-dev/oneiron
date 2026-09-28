@@ -254,6 +254,16 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .booking_conversion_rows
                     .extend(decoded.booking_conversion_rows);
+                resolution
+                    .dreamer_failure_rules
+                    .extend(decoded.dreamer_failure_rules);
+                if let Some(precedence) = decoded.dreamer_failure_precedence {
+                    resolution.dreamer_failure_precedence = Some(
+                        resolution
+                            .dreamer_failure_precedence
+                            .map_or(precedence, |prior| prior.restrict(precedence)),
+                    );
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
                     let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();

@@ -20,17 +20,17 @@ use crate::gate::constants::{
     POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
     POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
     POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
-    POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
-    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
-    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_PRECEDENCE_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
-    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY,
-    POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
-    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
-    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_HOSTED_TTS_KEY,
+    POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
+    POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
+    POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY, POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY,
+    POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
+    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -41,7 +41,10 @@ use crate::gate::resolution::{AttributionLimits, ConnectorClassPrecedence, Teach
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
 };
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::llm::{
+    BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailurePrecedence, DreamerFailureRule,
+    parse_failure_rules,
+};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
 use super::decode_map_util::{
@@ -95,6 +98,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(in crate::gate) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    pub(in crate::gate) dreamer_failure_rules: Vec<DreamerFailureRule>,
+    pub(in crate::gate) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
     pub(in crate::gate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
     pub(in crate::gate) connector_class_role: ConnectorClassRole,
@@ -178,6 +183,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | "booking_conversion"
+                | POLICY_DREAMER_FAILURE_RULES_KEY
+                | POLICY_DREAMER_FAILURE_PRECEDENCE_KEY
                 | POLICY_HOSTED_TTS_KEY
                 | POLICY_CONNECTOR_CLASS_CARRY_KEY
                 | POLICY_CONNECTOR_CLASS_ROLE_KEY
@@ -372,6 +379,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             .collect::<Option<Vec<_>>>()?,
         MapValue::Present(_) => return None,
     };
+    let dreamer_failure_rules = match single_map_value(&entries, POLICY_DREAMER_FAILURE_RULES_KEY) {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_failure_rules(value)?,
+    };
+    let dreamer_failure_precedence =
+        match single_map_value(&entries, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(DreamerFailurePrecedence::parse(value.as_str()?)?),
+        };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
@@ -619,6 +637,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         room_thread,
         pptx_comment_limits,
         booking_conversion_rows,
+        dreamer_failure_rules,
+        dreamer_failure_precedence,
         hosted_tts,
         connector_class_carry,
         connector_class_role,

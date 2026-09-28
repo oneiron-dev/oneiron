@@ -38,7 +38,7 @@ mod failure_rules;
 pub(crate) use failure_rules::PREDICATE as DREAMER_FAILURE_RULES_PREDICATE;
 pub(crate) use failure_rules::{
     KEY as DREAMER_FAILURE_RULES_KEY, admitted_authored_claim, prepare_authored_claim,
-    resident_record,
+    resident_record, step_consolidation_eligible_in_txn, step_effector_eligible_in_txn,
 };
 mod gap;
 mod judge_context;
