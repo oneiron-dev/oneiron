@@ -9,7 +9,7 @@
 use tokio::sync::broadcast;
 
 use crate::api::ReactiveChange;
-use crate::protocol::{SyncMessage, parse_message, window_sub_tags};
+use crate::protocol::{SyncMessage, parse_message};
 use crate::server::BroadcastPayload;
 
 /// A subscriber handle for a single WebSocket connection.
@@ -44,6 +44,7 @@ impl BroadcastSubscriber {
                 Ok(BroadcastPayload::Resync { missed }) => {
                     return Err(BroadcastError::Lagged(missed));
                 }
+                Ok(BroadcastPayload::LocalDocs(_)) => continue,
                 Ok(BroadcastPayload::Frame(sender_conn_id, data)) => {
                     // Reset lag counter on successful receive
                     self.lag_count = 0;
@@ -121,6 +122,9 @@ impl ReactiveChangeSubscriber {
                 Ok(BroadcastPayload::Resync { missed }) => {
                     return Some(ReactiveChange::InvalidateAll { missed });
                 }
+                Ok(BroadcastPayload::LocalDocs(entities)) => {
+                    return Some(ReactiveChange::Doc { entities });
+                }
                 Ok(BroadcastPayload::Frame(_, data)) => {
                     if let Some(change) = persistent_change(&data) {
                         return Some(change);
@@ -138,20 +142,14 @@ impl ReactiveChangeSubscriber {
 
 /// Classifies one encoded frame as a persistent-store invalidation, or `None`.
 ///
-/// Exactly two frame shapes can change what an LMDB read returns: a root-doc
-/// update, and a WindowSync carrying the `UPDATE` sub-tag. Everything else —
-/// ephemeral state, root version vectors, lease frames, WindowSync VV and
-/// selector requests, malformed frames, unknown tags, and any future app-tier
-/// frame this server does not parse — is negotiation or presence traffic that
-/// must never trigger a re-query.
+/// Root updates and entity-document UPDATE/STATE frames invalidate local
+/// reads. Observer B sends entity IDs through `LocalDocs` after materializing
+/// ledger changes, never as a synthetic peer frame. WindowSync (including
+/// UPDATE), ephemeral state, negotiation and malformed frames do not carry
+/// local document invalidations.
 fn persistent_change(data: &[u8]) -> Option<ReactiveChange> {
     match parse_message(data) {
         Ok(SyncMessage::RootUpdate(_)) => Some(ReactiveChange::Root),
-        Ok(SyncMessage::WindowSync {
-            window_key,
-            sub_tag,
-            ..
-        }) if sub_tag == window_sub_tags::UPDATE => Some(ReactiveChange::Window { window_key }),
         Ok(SyncMessage::Doc {
             entity,
             kind:
@@ -237,6 +235,21 @@ mod tests {
         let msg2 = sub2.recv().await.unwrap().unwrap();
         assert_eq!(msg2, vec![77]);
     }
+    #[tokio::test]
+    async fn observer_b_local_docs_never_reach_peer_socket() {
+        let (tx, _) = broadcast::channel::<BroadcastPayload>(8);
+        let id = oneiron::EntityId::now();
+        let mut peer = BroadcastSubscriber::new(1, &tx);
+        let mut local = ReactiveChangeSubscriber::new(&tx);
+        tx.send(BroadcastPayload::LocalDocs(vec![id])).unwrap();
+        broadcast(&tx, 0, vec![42]).unwrap();
+        assert_eq!(
+            local.recv().await,
+            Some(ReactiveChange::Doc { entities: vec![id] })
+        );
+        assert_eq!(peer.recv().await.unwrap(), Some(vec![42]));
+    }
+
     #[test]
     fn document_and_batch_notices_invalidate_only_named_entity_queries() {
         use crate::api::ReactiveDependency;
@@ -253,7 +266,7 @@ mod tests {
             let notice = persistent_change(&frame).unwrap();
             assert!(notice.invalidates(&[ReactiveDependency::Doc(id)]));
             assert!(!notice.invalidates(&[ReactiveDependency::Doc(other)]));
-            assert!(!notice.invalidates(&[ReactiveDependency::Window("2026-03".into())]));
+            assert!(!notice.invalidates(&[ReactiveDependency::Root]));
         }
         let request = encode_document(id, document_sub_tags::REQUEST, b"request")
             .into_result()

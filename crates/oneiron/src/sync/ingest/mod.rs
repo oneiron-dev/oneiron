@@ -10,6 +10,7 @@ mod entity;
 mod tombstone;
 
 pub(in crate::sync) use self::entity::{
-    EntityStep, IngestCtx, RefusalRetry, ingest_entity_in_savepoint, ingest_entity_in_txn,
+    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint,
+    ingest_entity_in_txn,
 };
 pub(in crate::sync) use self::tombstone::{TombstoneStep, classify_tombstone};

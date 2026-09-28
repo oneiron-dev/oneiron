@@ -29,6 +29,7 @@ fn stamp_body(
     actor: crate::WriteActor,
     session: Option<EntityId>,
     thread: bool,
+    project_scope: Option<EntityId>,
 ) -> Result<Vec<u8>> {
     let mut input = body;
     let decoded = rmpv::decode::read_value(&mut input)
@@ -57,6 +58,7 @@ fn stamp_body(
                 | "summary"
                 | "dag_session_ref"
                 | "dag_kind"
+                | "scope_project_id"
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
@@ -77,6 +79,12 @@ fn stamp_body(
         entries.push((
             Value::from("dag_session_ref"),
             Value::from(session.to_hex()),
+        ));
+    }
+    if let Some(project) = project_scope {
+        entries.push((
+            Value::from("scope_project_id"),
+            Value::from(project.to_hex()),
         ));
     }
     let mut bytes = Vec::new();
@@ -114,6 +122,13 @@ pub(crate) fn append_in_txn(
         txn,
         &input.conversation,
         ENTITY_TYPE_CONVERSATION,
+    )?;
+    let project_scope = crate::workspace_roster::admit_leader_chat_turn(
+        vault,
+        txn,
+        input.conversation,
+        input.actor.entity_ref(),
+        false,
     )?;
     migrate_in_txn(vault, txn, &input.conversation)?;
     let old_head = graph::canonical_chain(&vault.store, txn, &input.conversation)?
@@ -217,7 +232,13 @@ pub(crate) fn append_in_txn(
             crate::registry::ENTITY_TYPE_PERSON,
         )?;
     }
-    let mut body = stamp_body(&input.body, input.actor, input.session, thread)?;
+    let mut body = stamp_body(
+        &input.body,
+        input.actor,
+        input.session,
+        thread,
+        project_scope,
+    )?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut body.as_slice())
         .map_err(|_| invalid("record decode failed"))?
     else {
@@ -300,7 +321,25 @@ pub(crate) fn append_in_txn(
         );
     }
     super::admission::permit(&vault.store, txn, &id, &input.conversation)?;
+    if project_scope.is_some() {
+        crate::workspace_roster::permit_leader_chat_record(
+            &vault.store,
+            txn,
+            id,
+            input.conversation,
+        )?;
+    }
     batch.apply(txn)?;
+    if let Some(project) = project_scope {
+        crate::workspace_roster::settle_leader_chat_record(
+            vault,
+            txn,
+            id,
+            input.conversation,
+            input.actor.entity_ref(),
+            project,
+        )?;
+    }
     super::admission::finish(&vault.store, txn, &id)?;
     crate::compaction::record_turn_session_membership_in_txn(
         &vault.store,

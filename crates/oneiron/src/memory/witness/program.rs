@@ -245,6 +245,7 @@ impl Memory<'_> {
 
         let landed = self.with_verified_actor_write_txn(|wtxn| {
             let mut mint_conversation = false;
+            let mut leader_project = None;
             let admission = match &sink {
                 WitnessSink::Base(_) => {
                     let person_author = match self.base_guards_in_txn(&plan, wtxn, prepare)? {
@@ -252,8 +253,10 @@ impl Memory<'_> {
                         BaseGuards::Clear {
                             mint_conversation: absent,
                             person_author,
+                            leader_project: project,
                         } => {
                             mint_conversation = absent;
+                            leader_project = project;
                             person_author
                         }
                     };
@@ -286,6 +289,19 @@ impl Memory<'_> {
                 }
             };
             effect(wtxn)?;
+            if let Some(project) = leader_project {
+                let message_ids = plan.message_ids();
+                for id in std::iter::once(plan.turn_id).chain(message_ids.iter().copied()) {
+                    crate::workspace_roster::settle_leader_chat_record(
+                        self.vault,
+                        wtxn,
+                        id,
+                        plan.conversation_id,
+                        self.actor,
+                        project,
+                    )?;
+                }
+            }
             // LAST statement in the transaction, deliberately: a witness
             // admitted on record must not commit base rows once the room has
             // flipped back off record (K10). Every earlier row rolls back with

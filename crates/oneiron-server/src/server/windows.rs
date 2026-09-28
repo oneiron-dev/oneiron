@@ -2,6 +2,7 @@
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, VersionVector};
+use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use oneiron::sync::schema::{add_window_to_root, read_window_list};
 use oneiron::sync::server_state;
 use oneiron::sync::{WindowKey, WindowManager};
@@ -59,8 +60,18 @@ impl SyncServer {
                 .iter()
                 .any(|existing| existing == key)
             {
+                let root_vv = self.root_doc.oplog_vv();
                 add_window_to_root(&self.root_doc, key);
                 server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
+                let delta = self
+                    .root_doc
+                    .export(ExportMode::updates(&root_vv))
+                    .map_err(|e| {
+                        oneiron::Error::InvalidConfig(format!("root window index export: {e}"))
+                    })?;
+                let mut notice = vec![crate::protocol::TAG_SYNC_UPDATE];
+                notice.extend_from_slice(&delta);
+                let _ = crate::broadcast::broadcast(&self.broadcast_tx, 0, notice);
             }
         }
 
@@ -94,6 +105,41 @@ impl SyncServer {
     }
 }
 
+/// Observer B publishes only committed entity IDs to local reactive readers.
+/// Its tee already exposes `e:<id>` for entity, edge-endpoint and tombstone
+/// changes; do not turn these into synthetic Doc frames sent to sync peers.
+struct LocalReadTee {
+    tx: broadcast::Sender<BroadcastPayload>,
+}
+
+impl LiveQueryTee for LocalReadTee {
+    fn on_materialized(&self, _path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+        // Publication precedes the hard purge. The deletion door sends a
+        // separate entity notice only after its destructive commit.
+        if by.origin.as_deref() == Some("deletion_tombstone") {
+            return;
+        }
+        let entities: Vec<_> = diff
+            .containers
+            .iter()
+            .filter_map(|path| path.strip_prefix("e:"))
+            .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
+            .collect();
+        if !entities.is_empty() {
+            let _ = self.tx.send(BroadcastPayload::LocalDocs(entities));
+        }
+    }
+}
+
+pub(super) fn attach_local_read_tee(
+    manager: &Arc<WindowManager>,
+    tx: &broadcast::Sender<BroadcastPayload>,
+) -> Arc<dyn LiveQueryTee> {
+    let tee: Arc<dyn LiveQueryTee> = Arc::new(LocalReadTee { tx: tx.clone() });
+    manager.materializer().attach_live_query_tee(&tee);
+    tee
+}
+
 /// Bridges the engine's Observer-A local-update path into `broadcast_tx`.
 ///
 /// Until now only *relayed* writes produced a change notice: a client's update
@@ -104,9 +150,8 @@ impl SyncServer {
 /// commit through one shared `OutboundSink` (bridge.rs Observer A), so the
 /// server attaches its own receiver there and re-publishes each update as the
 /// existing WindowSync `UPDATE` frame with `conn_id = 0`, the local/bridge
-/// sender sentinel. Local writes then look exactly like relayed ones to anyone
-/// reading the channel, which is what makes an in-process reactive local read
-/// (ONE-1437, `api::reactive`) possible without a second notification path.
+/// sender sentinel. Peers forward this ledger frame; local reactive reads
+/// instead take named entity invalidations from Observer B's local-only tee.
 ///
 /// The frames are CRDT updates, so the handful of call sites that also publish
 /// their own coarse delta stay correct: a client importing the same update

@@ -1,6 +1,6 @@
 //! Grant and pact authorization resolving the requested position under the grant ceiling, guest-share stripping, and the closed-subgraph filter pass.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use loro::LoroDoc;
 
@@ -9,7 +9,7 @@ use crate::authority::{AuthorityFold, FederationGrantActivation, federation_gran
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Result, SyncSelectorValidation as SelectorError};
+use crate::error::{Error, Result, SyncError, SyncSelectorValidation as SelectorError};
 use crate::federation::{
     Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
     base_world_axis, decode_federation_grant_body,
@@ -22,6 +22,9 @@ use crate::sync::loro_support::{
 };
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
+use crate::sync::window::{
+    apply_pending_window_updates, load_window_from_state, reverse_rematerialize,
+};
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
 use super::scope::{
@@ -244,6 +247,67 @@ fn guest_share_metadata_blob(blob: &[u8]) -> bool {
     })
 }
 
+/// A world edge may name an entity carried by a different base-month Doc.
+/// Authorize that endpoint through the SAME selector over its real base Doc;
+/// a local row alone is not evidence that the grant may export it.
+fn authorized_base_edge_endpoints(
+    vault: &Vault,
+    edges: &loro::LoroMap,
+    kept: &BTreeSet<EntityId>,
+    selector: &SyncSelector,
+    position: &Position,
+) -> Result<BTreeSet<EntityId>> {
+    let mut wanted = BTreeSet::new();
+    map_for_each_value_bytes(edges, |raw, value| {
+        if value.is_none() {
+            return;
+        }
+        if let Some((src, _, tgt)) = parse_edge_key(raw) {
+            if kept.contains(&src) && !kept.contains(&tgt) {
+                wanted.insert(tgt);
+            }
+            if kept.contains(&tgt) && !kept.contains(&src) {
+                wanted.insert(src);
+            }
+        }
+    });
+    let mut selected_by_month = HashMap::<String, LoroDoc>::new();
+    let mut allowed = BTreeSet::new();
+    for id in wanted {
+        let Some(raw) = vault.get_raw(&id)? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+        if crate::sync::types::entity_world(&raw)?.is_some() {
+            continue;
+        }
+        let base_key = WindowKey::from_timestamp(header.learned_at);
+        if !selected_by_month.contains_key(base_key.as_str()) {
+            let base = match load_window_from_state(vault, "selector-base", &base_key) {
+                Ok(doc) => doc,
+                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                    let doc = create_window_doc("selector-base", &base_key);
+                    apply_pending_window_updates(vault, &doc, &base_key)?;
+                    doc
+                }
+                Err(error) => return Err(error),
+            };
+            reverse_rematerialize(vault, &base, &base_key)?;
+            let selected = filter_window_doc(vault, &base, &base_key, selector, position)?;
+            selected_by_month.insert(base_key.to_string(), selected);
+        }
+        if selected_by_month[base_key.as_str()]
+            .get_map("entities")
+            .get(&id.to_hex())
+            .is_some()
+        {
+            allowed.insert(id);
+        }
+    }
+    Ok(allowed)
+}
+
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -251,7 +315,7 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     position: &Position,
 ) -> Result<LoroDoc> {
-    let position = position.as_scope();
+    let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
     // Refresh a detached window, then copy only owners that pass this filter.
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
@@ -293,9 +357,14 @@ pub(super) fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let facets = facet_filter(position);
-    let facet_scope =
-        facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, position)?;
+    let facets = facet_filter(scope_position);
+    let facet_scope = facet_scope_by_source(
+        vault,
+        &rtxn,
+        &source_entities,
+        &source_edges,
+        scope_position,
+    )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
     let mut custody_ids = BTreeSet::new();
     map_for_each_value_bytes(&source_entities, |key, blob| {
@@ -382,7 +451,7 @@ pub(super) fn filter_window_doc(
             (&id, blob),
             selector,
             &facet_scope,
-            position,
+            scope_position,
             &coreference,
         ) else {
             return;
@@ -451,6 +520,11 @@ pub(super) fn filter_window_doc(
         }
     });
 
+    let authorized_base = if key.world().is_some() {
+        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?
+    } else {
+        BTreeSet::new()
+    };
     let out_edges = out.get_map("edges");
     map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
         let Some(value) = maybe_value else {
@@ -465,7 +539,10 @@ pub(super) fn filter_window_doc(
         if kind == EdgeKind::SameAs && !coreference.allows(src, tgt) {
             return;
         }
-        if kept.contains(&src) && kept.contains(&tgt) {
+        if (kept.contains(&src) && kept.contains(&tgt))
+            || (kept.contains(&src) && authorized_base.contains(&tgt))
+            || (kept.contains(&tgt) && authorized_base.contains(&src))
+        {
             let _ = map_insert_bytes(&out_edges, raw_key, value);
         }
     });
@@ -477,7 +554,7 @@ pub(super) fn filter_window_doc(
         };
         if kept.contains(&id)
             || (facets.is_none()
-                && band_filter(position).is_none()
+                && band_filter(scope_position).is_none()
                 && matches!(selector.world, SyncSelectorWorld::All))
         {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);

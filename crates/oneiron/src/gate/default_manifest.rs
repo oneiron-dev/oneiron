@@ -25,10 +25,11 @@ use super::constants::{
     POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
-    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY,
-    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
+    POLICY_PROJECT_CONVERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY, POLICY_TEACHER_PROBE_KEY,
     POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
     RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
@@ -45,6 +46,13 @@ use super::resolution::{
 use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
+/// Seeded policy data, not a project-constructor or dispatch constant.
+pub(crate) const SEEDED_PROJECT_DEPTH_DEFAULT: u8 = 10;
+pub(crate) const SEEDED_PROJECT_DEPTH_MAX: u8 = 16;
+
+pub(crate) const fn seeded_project_depth_default() -> u8 {
+    SEEDED_PROJECT_DEPTH_DEFAULT
+}
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 
 /// Shipped policy data; organ users resolve this row or supply their own
@@ -162,6 +170,14 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
         (
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
+        ),
+        (
+            Value::from("project_depth_default"),
+            Value::from(SEEDED_PROJECT_DEPTH_DEFAULT),
+        ),
+        (
+            Value::from("project_depth_max"),
+            Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
             Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
@@ -723,6 +739,10 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             default_docedit_resource_row(),
         ),
         (
+            Value::from(POLICY_PROJECT_CONVERSION_KEY),
+            super::project_conversion::shipped_row(),
+        ),
+        (
             Value::from("experiment_selection"),
             default_experiment_selection_rows(),
         ),
@@ -792,9 +812,32 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                     .collect(),
             ),
         ),
+        (
+            Value::from(POLICY_PROJECT_COLLABORATION_KEY),
+            Value::Map(vec![
+                (
+                    Value::from("leader_chat"),
+                    Value::Map(vec![
+                        (Value::from("default"), Value::from("allow")),
+                        (Value::from("precedence"), Value::from("nested_narrowing")),
+                        (Value::from("holder_override_cap"), Value::from("vault")),
+                    ]),
+                ),
+                (
+                    Value::from("cross_project_ask"),
+                    Value::Map(vec![(Value::from("fallback"), Value::from("hold"))]),
+                ),
+            ]),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
+        // Owner default for a fresh non-home machine; sync-all remains an
+        // explicit host request bounded by trusted world ceilings.
+        (
+            Value::from(POLICY_SYNC_WORLD_DEFAULT_KEY),
+            Value::from("opened"),
+        ),
         (
             Value::from(POLICY_OWNER_POLICY_ENABLED_KEY),
             Value::Boolean(false),

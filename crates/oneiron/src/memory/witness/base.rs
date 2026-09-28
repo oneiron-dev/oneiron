@@ -25,6 +25,9 @@ pub(super) enum BaseGuards {
         mint_conversation: bool,
         /// The actor, when it is stored as a PERSON: the TURN's byline.
         person_author: Option<EntityId>,
+        /// The project whose leader chat admitted this witness; its records
+        /// are settled after the landing's effect.
+        leader_project: Option<EntityId>,
     },
 }
 
@@ -298,9 +301,43 @@ impl Memory<'_> {
             plan.turn,
             &message_ids,
         )?;
+        let leader_project = crate::workspace_roster::admit_leader_chat_witness(
+            self.vault,
+            wtxn,
+            plan.conversation_id,
+            self.actor,
+            plan.turn
+                .messages
+                .iter()
+                .any(|m| m.author == super::WitnessAuthor::System),
+        )?;
+        if let Some(project) = leader_project
+            && self
+                .vault
+                .get_entity_type_in_txn(wtxn, &plan.turn_id)?
+                .is_some()
+        {
+            crate::workspace_roster::verify_existing_leader_chat_turn(
+                self.vault,
+                wtxn,
+                plan.turn_id,
+                plan.conversation_id,
+                self.actor,
+                project,
+            )?;
+        }
+        if leader_project.is_some() {
+            crate::workspace_roster::permit_leader_chat_record(
+                &self.vault.store,
+                wtxn,
+                plan.turn_id,
+                plan.conversation_id,
+            )?;
+        }
         Ok(BaseGuards::Clear {
             mint_conversation: current_conversation.is_none(),
             person_author,
+            leader_project,
         })
     }
 

@@ -11,7 +11,7 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_savepoint};
+use crate::sync::ingest::{EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint};
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
 use crate::vault::ReadMode;
@@ -38,8 +38,10 @@ pub(super) fn materialize_entities_from_delta(
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
-) -> bool {
-    materialize_entities_with_changes(doc, delta, vault, window_key, lease_vault_id).0
+) -> Option<Vec<EntityId>> {
+    materialize_entities_with_changes(doc, delta, vault, window_key, lease_vault_id)
+        .0
+        .then(Vec::new)
 }
 
 /// Revision receipts are retained only after the nested savepoint and outer
@@ -52,7 +54,8 @@ pub(super) fn materialize_entities_with_changes(
     lease_vault_id: u64,
 ) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
     let tombstones_map = doc.get_map("tombstones");
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones_map);
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones_map)
+        .with_residence(Residence::Quarantine(doc));
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
     // point (unlike the tombstone path), so the swallow site below needs

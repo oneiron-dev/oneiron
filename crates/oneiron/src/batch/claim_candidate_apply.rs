@@ -18,6 +18,7 @@ pub(super) struct AppliedClaimCandidate {
 
 pub(super) fn apply_claim_candidate(
     store: &Store,
+    posture: crate::HostingPrivacyPosture,
     wtxn: &mut RwTxn<'_>,
     request: ClaimCandidateRequest<'_>,
 ) -> Result<AppliedClaimCandidate> {
@@ -113,6 +114,7 @@ pub(super) fn apply_claim_candidate(
                 refinement_admission: None,
                 // Carried-forward transitions bind only to exact claim Puts.
                 transition: None,
+                posture,
             },
         },
     )?;

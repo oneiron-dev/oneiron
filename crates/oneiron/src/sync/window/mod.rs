@@ -30,10 +30,17 @@ mod reverse;
 pub mod test_hooks;
 mod tombstones;
 
-pub use self::admission::validate_window_update_locality;
+#[cfg(test)]
+pub(in crate::sync) use self::admission::validate_window_update_residence;
+pub(in crate::sync) use self::admission::validate_window_update_with_staged_worlds;
+pub use self::admission::{
+    validate_window_update_locality, validate_window_update_residence_with_vault,
+};
 pub(crate) use self::egress::export_history_free_window_snapshot;
-pub(in crate::sync) use self::egress::export_scrubbed_window_snapshot;
 use self::egress::window_packing_excludes_entity;
+pub(in crate::sync) use self::egress::{
+    export_promoted_window_updates_since, export_scrubbed_window_snapshot,
+};
 pub use self::egress::{
     export_window_updates_since, history_free_window_required, replay_pending_mirrors,
     require_history_free_window,

@@ -113,24 +113,30 @@ mod tests;
 mod project;
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
-    PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
-    ProjectRole, ProjectRoom, ProjectRoomChange,
+    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectBudgetShare,
+    ProjectGoalRecord, ProjectMintReceipt, ProjectRecord, ProjectRole, ProjectRoom,
+    ProjectRoomChange, ProjectWidenAsk, ProjectWidenAxis, RoomOriginCard,
 };
 pub(crate) use project::{
-    GoalLimits, HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put,
-    guard_goal_delete, guard_goal_pointer_put, is_project_entity, is_project_type,
-    precheck_goal_delete, project_mint_gate_refs_in_txn, project_room_dependency,
-    reconcile_project_rooms, retire_goal_for_delete, seed_root_project, validate_project_body,
-    validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
-    validate_room_body,
+    GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, admit_leader_chat_turn,
+    admit_leader_chat_witness, deindex_project_room, guard_goal_claim_put, guard_goal_delete,
+    guard_goal_pointer_put, is_project_entity, is_project_type, leader_chat_record_permitted,
+    normalize_project_body, permit_leader_chat_record, precheck_goal_delete,
+    project_mint_gate_refs_in_txn, project_room_dependency, reconcile_project_rooms,
+    retire_goal_for_delete, seed_root_project, settle_leader_chat_record,
+    validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_room_body,
+    verify_existing_leader_chat_turn,
 };
+#[cfg(test)]
+pub(crate) use project::{create_project_signed_for_test, set_project_depth_signed_for_test};
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPage,
-    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTurn,
-    RoomWaitKind,
+    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTrunkItem,
+    RoomTurn, RoomWaitKind,
 };
 
 pub(crate) use rooms::RoomThreadTask;

@@ -51,6 +51,7 @@ impl Vault {
         &self,
         id: &EntityId,
         window_ts: u64,
+        window_label: &str,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
@@ -59,6 +60,7 @@ impl Vault {
         let outcome = self.write_crdt_tombstone_impl(
             id,
             window_ts,
+            window_label,
             value,
             gate_decision,
             gate,
@@ -127,11 +129,15 @@ impl Vault {
     /// receipt ordering, and a B-side replay here would purge BEFORE the
     /// purge transaction, voiding the local receipt and the
     /// `DeleteEntityOutcome` (mirrors `replay_pending_tombstones`).
+    /// `window_ts` keys the topology reservation (the caller's Committed row
+    /// uses the same value); `window_label` addresses the world-month document.
     #[cfg(feature = "sync")]
+    #[allow(clippy::too_many_arguments)]
     fn write_crdt_tombstone_impl(
         &self,
         id: &EntityId,
         window_ts: u64,
+        window_label: &str,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
@@ -149,7 +155,7 @@ impl Vault {
         };
         use loro::CommitOptions;
 
-        let window_key = WindowKey::from_timestamp(window_ts);
+        let window_key = WindowKey::new(window_label);
 
         if let Some((window, materializer, manager)) = self.live_window(&window_key) {
             // Live path: merge the on-disk record first (clobber guard —
@@ -300,6 +306,38 @@ impl Vault {
         wtxn.commit()?;
         self.notify_tombstone_publication(id, &window_key, value);
         Ok(true)
+    }
+
+    /// A separate local-read notice after the destructive LMDB transaction
+    /// commits. Tombstone publication is too early for hard purge, and a soft
+    /// scrub must notify even when later CRDT publication fails. The existing
+    /// tee is vault-scoped and has no recipient if no window manager is live.
+    pub(super) fn notify_local_delete_materialized(&self, ids: &[EntityId]) {
+        #[cfg(feature = "sync")]
+        {
+            let manager = self
+                .live_window_manager
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .upgrade();
+            if let Some(manager) = manager {
+                let path = "local_delete_committed";
+                manager.materializer().notify_live_queries(
+                    path,
+                    &crate::sync::bridge::MaterializedDiffSummary {
+                        containers: ids.iter().map(|id| format!("e:{}", id.to_hex())).collect(),
+                        bytes: 0,
+                        revision_events: Vec::new(),
+                    },
+                    &crate::sync::bridge::OriginMark {
+                        conn_id: None,
+                        origin: Some("local_delete_committed".to_owned()),
+                    },
+                );
+            }
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = ids;
     }
 
     /// Publication notification only: never run from a Loro observer or before
@@ -664,6 +702,7 @@ impl Vault {
         &self,
         _id: &EntityId,
         _window_ts: u64,
+        _window_label: &str,
         _value: &TombstoneValueV2,
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
@@ -752,7 +791,14 @@ mod live_query_publication_tests {
                 deleted_at: 1_772_000_000,
                 request_id: [7; 16],
             };
-            let result = vault.write_crdt_tombstone(&id, 1_772_000_000, &value, None, None);
+            let result = vault.write_crdt_tombstone(
+                &id,
+                1_772_000_000,
+                tee.window.as_str(),
+                &value,
+                None,
+                None,
+            );
             assert_eq!(result.is_err(), fail);
             assert_eq!(*tee.seen.lock().unwrap(), usize::from(!fail));
         }

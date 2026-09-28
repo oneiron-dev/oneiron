@@ -39,7 +39,7 @@ impl Vault {
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
         let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
+        let (outcome, _changed) = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
         wtxn.commit()?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
@@ -55,13 +55,17 @@ impl Vault {
     /// The transaction is the caller's: this function NEVER commits, and an
     /// `Err` return leaves the decision of what to roll back (the whole batch,
     /// or just this item's savepoint) to the caller.
+    ///
+    /// Also returns the other documents whose local reads this apply changed
+    /// (citing NOTEs, rewritten merge events, a restamped subject edge's
+    /// endpoints); the caller notifies them only after its commit.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn apply_replayed_tombstone_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         raw_value: &[u8],
-    ) -> Result<ReplayedTombstoneOutcome> {
+    ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
@@ -122,23 +126,31 @@ impl Vault {
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
-            if existed && let Some(captured) = &captured {
-                self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
-            }
+            let changed_documents = match &captured {
+                Some(captured) if existed => self.refresh_subject_edge_after_claim_delete_in_txn(
+                    wtxn,
+                    id,
+                    &captured.subject,
+                )?,
+                _ => Vec::new(),
+            };
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             if let Some(request) = decoded.request_id.as_ref() {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }
-            return Ok(ReplayedTombstoneOutcome::SoftErased {
-                changed: ledger_changed
-                    || had_body
-                    || had_vector
-                    || had_birth_sources
-                    || had_sources
-                    || had_receipt_sources
-                    || had_refinement
-                    || had_merge_receipt,
-            });
+            return Ok((
+                ReplayedTombstoneOutcome::SoftErased {
+                    changed: ledger_changed
+                        || had_body
+                        || had_vector
+                        || had_birth_sources
+                        || had_sources
+                        || had_receipt_sources
+                        || had_refinement
+                        || had_merge_receipt,
+                },
+                changed_documents,
+            ));
         }
 
         self.store
@@ -184,18 +196,24 @@ impl Vault {
             if let Some(request) = decoded.request_id.as_ref() {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }
-            return Ok(ReplayedTombstoneOutcome::HardPurged {
-                erased: false,
-                receipt_id: None,
-                sweep_key: None,
-            });
+            return Ok((
+                ReplayedTombstoneOutcome::HardPurged {
+                    erased: false,
+                    receipt_id: None,
+                    sweep_key: None,
+                },
+                Vec::new(),
+            ));
         }
         // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must
         // leave this replica as unreadable as the origin, so the local shells
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
-        let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
-        self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
+        let (cascaded_shells, mut changed_documents) =
+            self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
+        let (_existed, citing) =
+            self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
+        changed_documents.extend(citing);
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
@@ -203,7 +221,11 @@ impl Vault {
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {
-            self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
+            changed_documents.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
+                wtxn,
+                id,
+                &captured.subject,
+            )?);
         }
         if let Some((request_id, tombstone_reason)) =
             decoded.request_id.zip(raw_value.first().copied())
@@ -250,11 +272,14 @@ impl Vault {
         if let Some(request) = decoded.request_id.as_ref() {
             clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
         }
-        Ok(ReplayedTombstoneOutcome::HardPurged {
-            erased: true,
-            receipt_id: Some(receipt_id),
-            sweep_key: Some(sweep_key),
-        })
+        Ok((
+            ReplayedTombstoneOutcome::HardPurged {
+                erased: true,
+                receipt_id: Some(receipt_id),
+                sweep_key: Some(sweep_key),
+            },
+            changed_documents,
+        ))
     }
 
     #[cfg(feature = "sync")]

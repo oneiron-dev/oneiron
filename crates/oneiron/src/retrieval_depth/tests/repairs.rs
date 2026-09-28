@@ -559,8 +559,27 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
         .text(&id, &[("body", "scopefrontier original")])
         .commit()?;
     let old_pin = vault.indexed_revision(&id)?.expect("indexed birth");
+    // A claim keeps the scope it was born with: moving it to world B by an
+    // edit is refused, so the edit below stays in world A.
     body.world = Some(world_b);
     body.value = Value::from("world B content");
+    assert!(matches!(
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                range(2),
+                2,
+                &encode_claim_body(&body)?,
+            )
+            .commit(),
+        Err(crate::Error::InvalidClaimBody(
+            "record scope restamp refused"
+        ))
+    ));
+    body.world = Some(world_a);
+    body.value = Value::from("world A edited");
     // A local edit retains its old indexed revision until idle publication.
     // Replicated overwrites instead remove the losing posting immediately.
 
@@ -603,17 +622,16 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
         .value
         .and_then(|row| row.body)
         .expect("selected body");
-    assert_eq!(
-        crate::claim::decode_claim_body(&pinned_body, true)?.world,
-        Some(world_a)
-    );
+    let pinned_claim = crate::claim::decode_claim_body(&pinned_body, true)?;
+    assert_eq!(pinned_claim.world, Some(world_a));
+    assert_eq!(pinned_claim.value, Value::from("world A content"));
     vault.set_indexed_idle_delay_ms(0)?;
     assert_eq!(
         vault.refresh_staged_indexed_at_idle(u64::MAX)?.refreshed,
         vec![(id, new_pin)]
     );
-    assert!(search(world_a)?.hits.is_empty());
-    let current_result = search(world_b)?;
+    assert!(search(world_b)?.hits.is_empty());
+    let current_result = search(world_a)?;
     assert_eq!(hit_ids(&current_result), vec![id]);
     assert_eq!(current_result.revisions[&id], new_pin);
     Ok(())

@@ -183,6 +183,8 @@ pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
     clippy::too_many_arguments,
     reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
 )]
+// One transaction applies every op and then its whole-batch validators in order.
+#[allow(clippy::too_many_lines)]
 pub(super) fn apply_ops_with_origin(
     store: &Store,
     config: &crate::config::VaultConfig,
@@ -228,6 +230,7 @@ pub(super) fn apply_ops_with_origin(
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
     let mut project_edge_endpoints = BTreeSet::new();
+    let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
     // inducing type-76 rows are gone, so the full reconciler's
     // surviving-events derivation can no longer reach them. Non-empty here
@@ -378,6 +381,7 @@ pub(super) fn apply_ops_with_origin(
                             hub_admission: hub_admission.as_ref(),
                             refinement_admission: refinement_admission.as_ref(),
                             transition: transition.as_ref(),
+                            posture: config.privacy.posture,
                         },
                     },
                 )?;
@@ -514,6 +518,7 @@ pub(super) fn apply_ops_with_origin(
                 put_options.decision.preflight = preflight_decision_id;
                 let applied = apply_claim_candidate(
                     store,
+                    config.privacy.posture,
                     wtxn,
                     ClaimCandidateRequest {
                         id,
@@ -683,6 +688,7 @@ pub(super) fn apply_ops_with_origin(
     )?;
     project_edge_endpoints.extend(&materialized_entity_ids);
     crate::workspace_roster::validate_project_graph(store, wtxn, &project_edge_endpoints)?;
+    crate::workspace_roster::validate_local_leader_chat_turns(store, wtxn, &local_chat_turns)?;
 
     // STO-03: derived Habit counters, recomputed from the FINAL child state of
     // this transaction — after every op, so an add and a delete of the same

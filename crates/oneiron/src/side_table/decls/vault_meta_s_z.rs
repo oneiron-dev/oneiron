@@ -26,9 +26,11 @@ side_tables! {
     SCOPE_STAMP_SWEEP_DONE: VaultMeta b"scope:claim-codec:v2" Raw;
     /// The scope-stamp sweep over policy manifests has run. Key: ().
     SCOPE_POLICY_SWEEP_DONE: VaultMeta b"scope:policy-manifest:v1.2" Raw;
-    /// Digest-bound ARCH-0055-adjacent scope stamp (worlds/facets/bands/audience/sensitivity) for one
-    /// stored record, used by scoped read/export/delete. Key: id16.
-    SCOPE_RECORD: VaultMeta b"scope:record:v1:" LegacyJson;
+    /// Record-scope revision counter (u64 little-endian), bumped on every stamp change. Key: ().
+    SCOPE_RECORD_REVISION: VaultMeta b"scope:record:revision:v1" Raw;
+    /// Birth-position scope stamp (kind, birth facet, worlds/facets/bands/audience/sensitivity) for
+    /// one stored record, used by scoped read/export/delete. Key: id16.
+    SCOPE_RECORD: VaultMeta b"scope:record:v2:" LegacyJson;
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw;

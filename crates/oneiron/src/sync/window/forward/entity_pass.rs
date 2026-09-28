@@ -8,7 +8,9 @@ use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
 use crate::error::Result;
-use crate::sync::ingest::{EntityStep, IngestCtx, RefusalRetry, ingest_entity_in_savepoint};
+use crate::sync::ingest::{
+    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint,
+};
 
 /// Run the entity pass: iterate the window `entities` map, ingest each value in its own write
 /// transaction, then scrub local-only companion carriers from the document.
@@ -21,7 +23,11 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         ctx.window_key.as_str(),
         ctx.lease_vault_id,
         &ctx.tombstones_map,
-    );
+    )
+    .with_residence(Residence::Forward {
+        doc: ctx.doc,
+        trusted: ctx.trusted.is_some(),
+    });
     let mut entity_error = None;
     let mut companion_scrubs = Vec::new();
     // Ask words and receipts verify against their group: visit them last.

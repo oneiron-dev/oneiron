@@ -5747,3 +5747,79 @@ fn ask_guest_grant_cannot_authorize_sync_selector() {
     assert!(authorize_sync_selector(&vault, FederationGrantScope::ask(group), &selector).is_err());
     assert!(authorize_sync_selector(&vault, FederationGrantScope::vault(7), &selector).is_err());
 }
+
+#[test]
+fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5e);
+    let person = entity_id(0x62);
+    let claim = entity_id(0x63);
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.shared_subject",
+        ClaimSubject::Entity(person),
+        Value::from("world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault
+        .batch()
+        .edge(&claim, EdgeKind::About, &person, 1.0)
+        .commit()?;
+    let world_key = WindowKey::for_month_world(&base_key, world.entity_id());
+    let base_doc = create_window_doc("source", &base_key);
+    let world_doc = create_window_doc("source", &world_key);
+    crate::sync::window::reverse_rematerialize(&vault, &base_doc, &base_key)?;
+    crate::sync::window::reverse_rematerialize(&vault, &world_doc, &world_key)?;
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::World(world),
+        vec![],
+        vec![],
+    );
+    let base = filtered_window_doc(
+        &vault,
+        &base_doc,
+        &base_key,
+        test_selector_scope(),
+        &selector,
+    )?;
+    let scoped = filtered_window_doc(
+        &vault,
+        &world_doc,
+        &world_key,
+        test_selector_scope(),
+        &selector,
+    )?;
+    let edge = crate::sync::bridge::format_edge_key(&claim, EdgeKind::About, &person);
+    assert!(base.get_map("entities").get(&person.to_hex()).is_some());
+    assert!(scoped.get_map("entities").get(&claim.to_hex()).is_some());
+    assert!(scoped.get_map("entities").get(&person.to_hex()).is_none());
+    assert!(scoped.get_map("edges").get(&edge).is_some());
+    let peer_dir = tempfile::tempdir()?;
+    let peer = Vault::open(peer_dir.path(), crate::VaultConfig::device())?;
+    let materializer = crate::sync::bridge::Materializer::new();
+    crate::sync::window::forward_rematerialize(&peer, &base, &materializer, &base_key)?;
+    crate::sync::window::forward_rematerialize(&peer, &scoped, &materializer, &world_key)?;
+    assert!(
+        peer.edges_out(&claim)?
+            .iter()
+            .any(|row| row.kind == EdgeKind::About && row.target == person)
+    );
+    Ok(())
+}

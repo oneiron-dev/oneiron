@@ -178,6 +178,8 @@ pub(in crate::batch) struct PutContext<'a> {
     /// The verified confidence transition a local claim put carries forward
     /// from its predecessor, when the batch was handed one for this op.
     pub(in crate::batch) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
+    /// The vault's hosting privacy posture, which bounds a project put.
+    pub(in crate::batch) posture: crate::HostingPrivacyPosture,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its

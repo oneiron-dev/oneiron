@@ -471,8 +471,10 @@ impl<'vault> SessionVault<'vault> {
             content_kind: "outbound_content".to_owned(),
             policy_manifest_version: "test-policy".to_owned(),
             // No grant_ref and no claim_id, so this crossing writes
-            // EXACTLY one `vault_meta` row — the census delta below names
-            // that one row rather than an unexplained bump.
+            // EXACTLY two `vault_meta` rows: the decision and its
+            // append-time retention-context sidecar (ONE-1642; claim-free,
+            // so vault scoped). The census delta below names those rows
+            // rather than an unexplained bump.
             claim_id: None,
             grant_ref: None,
             diff_handle: vec![0xA5],

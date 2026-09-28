@@ -22,7 +22,7 @@ pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
 /// (turn id).
-const TURNS: SideTable<EntityId, RoomTurn, LegacyJson> = SideTable::new(&side_table::ROOMS_TURN);
+pub(super) const TURNS: SideTable<EntityId, RoomTurn, LegacyJson> = SideTable::new(&side_table::ROOMS_TURN);
 /// Maps a host-configured platform handle to the one present actor it addresses within a room.
 /// Key: id16 (room id) + bytes (platform handle).
 const HANDLES: SideTable<(EntityId, String), EntityId, Raw> =
@@ -42,11 +42,15 @@ const HEADS: SideTable<(EntityId, u64, EntityId), EntityId, Raw> =
 /// Single-response-per-claim guard: which turn already answered one claimed parent turn. Key:
 /// id16 (parent turn id).
 const RESPONSE: SideTable<EntityId, EntityId, Raw> = SideTable::new(&side_table::ROOMS_RESPONSE);
+/// Parent-to-child index of a room's thread replies. Key: id16 (room) + id16 (parent turn) + id16
+/// (child turn).
+pub(super) const THREAD_CHILDREN: SideTable<(EntityId, EntityId, EntityId), EntityId, Raw> =
+    SideTable::new(&side_table::ROOMS_THREAD_CHILDREN);
 
 fn invalid() -> Error {
     Error::InvalidConfig("invalid room operation".into())
 }
-fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<ProjectRoom> {
+pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<ProjectRoom> {
     let room: ProjectRoom = super::project::record(
         &vault.store,
         txn,
@@ -94,7 +98,19 @@ pub struct RoomTurn {
     pub reply_to: Option<String>,
     pub thread_of: Option<String>,
     pub at: u64,
+    #[serde(default)]
+    pub task_ids: Vec<String>,
+    #[serde(default)]
+    pub converted_project: Option<String>,
 }
+/// The first trunk entry is the origin card when this room came from a thread.
+/// It points to that thread without copying any of its messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoomTrunkItem {
+    Origin(super::project::RoomOriginCard),
+    Turn(RoomTurn),
+}
+
 /// A delivered TASK's durable result, attached to its trunk on a room read.
 /// The TASK terminal register holds the fact; no second row is stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

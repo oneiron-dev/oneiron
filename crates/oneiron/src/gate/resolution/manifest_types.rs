@@ -19,6 +19,7 @@ use crate::gate::ceiling::{
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::policy_values::PolicyValueRow;
+use crate::gate::project_conversion::ProjectConversionPolicy;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -311,12 +312,67 @@ impl CredentialLifetimePolicy {
     }
 }
 
+/// Manifest-backed project coordination. The two fixed shape tokens state the
+/// non-widening authority law; owner-editable defaults compose restrictively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeaderChatDefault {
+    Allow,
+    Deny,
+}
+impl LeaderChatDefault {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectWidenAskFallback {
+    Hold,
+    AskMe,
+}
+impl ProjectWidenAskFallback {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hold => "hold",
+            Self::AskMe => "ask_me",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectCollaborationPolicy {
+    pub(crate) leader_chat_default: LeaderChatDefault,
+    pub(crate) widen_ask_fallback: ProjectWidenAskFallback,
+}
+impl ProjectCollaborationPolicy {
+    pub(crate) fn restrict(self, other: Self) -> Self {
+        Self {
+            leader_chat_default: if self.leader_chat_default == LeaderChatDefault::Deny
+                || other.leader_chat_default == LeaderChatDefault::Deny
+            {
+                LeaderChatDefault::Deny
+            } else {
+                LeaderChatDefault::Allow
+            },
+            widen_ask_fallback: if self.widen_ask_fallback == ProjectWidenAskFallback::Hold
+                || other.widen_ask_fallback == ProjectWidenAskFallback::Hold
+            {
+                ProjectWidenAskFallback::Hold
+            } else {
+                ProjectWidenAskFallback::AskMe
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
+    pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) teacher_probe_trusted: bool,
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
@@ -346,6 +402,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) carry_forward_authored: bool,
     pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
+    pub(crate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
+    pub(crate) sync_world_default: Option<bool>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) policy_values: Vec<PolicyValueRow>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
@@ -370,15 +428,19 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     pub(crate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
+    pub(super) project_collaboration: Option<ProjectCollaborationPolicy>,
     /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
     /// never stored here — only the manifest's selector for it. Injection
     /// rides the write door's own options, so no host object is ever reachable
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
+    pub(crate) project_depth_default: Option<u8>,
+    pub(crate) project_depth_max: Option<u8>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) connector_admission: crate::gate::connector_admission::ConnectorAdmissionPolicy,
     pub(super) voice_serving: Vec<crate::gate::voice_serving::VoiceServingRows>,
     pub(super) gate_decision_retention: Option<GateDecisionRetentionPolicy>,
+    pub(super) project_conversion: ProjectConversionPolicy,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
@@ -410,4 +472,86 @@ impl PolicyManifestResolution {
             decide_failure(&self.dreamer_failure_rules, class, precedence)
         }
     }
+}
+
+/// Hard-bounded residence-operation limits carried by a typed policy map.
+///
+/// `Default` is the shipped vault ceiling. Manifest maps can only narrow it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResidenceOperationBudgetLimits {
+    pub(crate) rpc_timeout_ms: u64,
+    pub(crate) index_page_limit: usize,
+    pub(crate) max_index_pages: usize,
+    pub(crate) current_window_count: usize,
+    pub(crate) title_max_chars: usize,
+    pub(crate) search_limit: usize,
+    pub(crate) search_query_max_bytes: usize,
+    pub(crate) offline_candidate_multiplier: usize,
+    pub(crate) ack_timeout_ms: u64,
+    pub(crate) index_cache_bytes: usize,
+}
+
+impl ResidenceOperationBudgetLimits {
+    pub(crate) const DEFAULT_RPC_TIMEOUT_MS: u64 = 12_000;
+    pub(crate) const MAX_RPC_TIMEOUT_MS: u64 = 60_000;
+    pub(crate) const DEFAULT_INDEX_PAGE_LIMIT: usize = 256;
+    pub(crate) const DEFAULT_MAX_INDEX_PAGES: usize = 1_024;
+    pub(crate) const DEFAULT_CURRENT_WINDOW_COUNT: usize = 2;
+    pub(crate) const DEFAULT_TITLE_MAX_CHARS: usize = 128;
+    pub(crate) const DEFAULT_SEARCH_LIMIT: usize = 100;
+    pub(crate) const DEFAULT_SEARCH_QUERY_MAX_BYTES: usize = 4_096;
+    pub(crate) const DEFAULT_OFFLINE_CANDIDATE_MULTIPLIER: usize = 10;
+    pub(crate) const DEFAULT_ACK_TIMEOUT_MS: u64 = 30_000;
+    pub(crate) const DEFAULT_INDEX_CACHE_BYTES: usize = 16 * 1024 * 1024;
+    pub(crate) const MAX_INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
+    /// Restrictive composition. Policy rows never raise a shipped limit.
+    pub(crate) fn restrict(&mut self, other: Self) {
+        self.rpc_timeout_ms = self.rpc_timeout_ms.min(other.rpc_timeout_ms);
+        self.index_page_limit = self.index_page_limit.min(other.index_page_limit);
+        self.max_index_pages = self.max_index_pages.min(other.max_index_pages);
+        self.current_window_count = self.current_window_count.min(other.current_window_count);
+        self.title_max_chars = self.title_max_chars.min(other.title_max_chars);
+        self.search_limit = self.search_limit.min(other.search_limit);
+        self.search_query_max_bytes = self
+            .search_query_max_bytes
+            .min(other.search_query_max_bytes);
+        self.offline_candidate_multiplier = self
+            .offline_candidate_multiplier
+            .min(other.offline_candidate_multiplier);
+        self.ack_timeout_ms = self.ack_timeout_ms.min(other.ack_timeout_ms);
+        self.index_cache_bytes = self.index_cache_bytes.min(other.index_cache_bytes);
+    }
+}
+
+impl Default for ResidenceOperationBudgetLimits {
+    fn default() -> Self {
+        Self {
+            rpc_timeout_ms: Self::DEFAULT_RPC_TIMEOUT_MS,
+            index_page_limit: Self::DEFAULT_INDEX_PAGE_LIMIT,
+            max_index_pages: Self::DEFAULT_MAX_INDEX_PAGES,
+            current_window_count: Self::DEFAULT_CURRENT_WINDOW_COUNT,
+            title_max_chars: Self::DEFAULT_TITLE_MAX_CHARS,
+            search_limit: Self::DEFAULT_SEARCH_LIMIT,
+            search_query_max_bytes: Self::DEFAULT_SEARCH_QUERY_MAX_BYTES,
+            offline_candidate_multiplier: Self::DEFAULT_OFFLINE_CANDIDATE_MULTIPLIER,
+            ack_timeout_ms: Self::DEFAULT_ACK_TIMEOUT_MS,
+            index_cache_bytes: Self::DEFAULT_INDEX_CACHE_BYTES,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ResidenceOperationBudgetPrecedence {
+    /// Holder-level budgets can narrow, but never widen, the vault-level cap.
+    #[default]
+    NestedNarrowing,
+}
+
+/// One manifest's optional vault and holder narrowing maps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResidenceOperationBudgetRow {
+    pub(crate) precedence: ResidenceOperationBudgetPrecedence,
+    pub(crate) vault: ResidenceOperationBudgetLimits,
+    pub(crate) holder: Option<ResidenceOperationBudgetLimits>,
 }

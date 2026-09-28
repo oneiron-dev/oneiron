@@ -221,6 +221,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
     let mut snapshot = CanonicalSnapshot {
         window: "2000-01".to_owned(),
         entity_blobs: Vec::new(),
+        retained_claim_worlds: Vec::new(),
         base_edges: Vec::new(),
         tombstones: Vec::new(),
         doc_snapshots: Vec::new(),

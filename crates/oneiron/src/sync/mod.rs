@@ -49,6 +49,8 @@ pub mod queue;
 pub mod quota;
 pub(crate) mod receipt_ingest;
 pub mod replay;
+pub mod residence;
+pub mod residence_operation_budgets;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
@@ -60,8 +62,8 @@ pub mod window;
 pub(crate) mod window_rows;
 
 pub use client::{
-    EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus,
-    SyncTransportCredential,
+    EphemeralChangeOrigin, ResidenceHit, ResidenceSearch, SearchSource, SyncClient,
+    SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{ConnectionConfig, HomeNodeTopology, LocalUpdate, SyncConnection};
 pub use lease::{
@@ -87,6 +89,7 @@ pub use quota::{
     MaintenanceIngestQuotaSnapshot, maintenance_ingest_quota_config,
     maintenance_ingest_quota_snapshots, set_maintenance_ingest_quota_config,
 };
+pub use residence::discover_local_window_keys;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{

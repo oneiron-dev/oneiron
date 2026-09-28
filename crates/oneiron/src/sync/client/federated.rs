@@ -43,7 +43,24 @@ impl SyncClient {
             });
         }
         let window = self.ensure_window(window_key)?;
-        self.import_accepted_window_update(window_key, &window, update)
+        if window.key.world().is_some() {
+            self.staged_world_updates
+                .push((window.key.clone(), update.to_vec()));
+            let pending_bytes: usize = self
+                .staged_world_updates
+                .iter()
+                .map(|(_, bytes)| bytes.len())
+                .sum();
+            if self.staged_world_updates.len() > 64 || pending_bytes > MAX_DECODED_PAYLOAD_BYTES {
+                self.staged_world_updates.pop();
+                return Err(TransportError::InvalidPayload(
+                    "too many unresolved world updates",
+                ));
+            }
+            return self.drain_staged_world_updates();
+        }
+        self.import_accepted_window_update(window_key, &window, update)?;
+        self.drain_staged_world_updates()
     }
 
     /// Builds a selector request frame for a selector-capable caller.

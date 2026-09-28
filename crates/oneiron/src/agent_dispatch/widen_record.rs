@@ -67,6 +67,9 @@ pub(super) struct WidenIntent {
     pub spec: ContextSpec,
     pub context_from: Vec<String>,
     pub depth: Option<u8>,
+    pub project_ref: Option<String>,
+    pub scope: Option<crate::llm::Scope>,
+    pub healer_case: Option<crate::failure_ladder::HealerCase>,
 }
 
 impl WidenIntent {
@@ -85,6 +88,9 @@ impl WidenIntent {
             spec: spawn.context_spec.clone().unwrap_or_default(),
             context_from: spawn.context_from.iter().map(EntityId::to_hex).collect(),
             depth: spawn.depth_remaining,
+            project_ref: spawn.project_ref.map(|id| id.to_hex()),
+            scope: spawn.scope.clone(),
+            healer_case: spawn.healer_case.clone(),
         })
     }
 
@@ -111,7 +117,7 @@ impl WidenIntent {
                 now,
             },
             AgentSpawnContext {
-                healer_case: None,
+                healer_case: self.healer_case.clone(),
                 context_spec: Some(self.spec.clone()),
                 context_from: self
                     .context_from
@@ -119,7 +125,12 @@ impl WidenIntent {
                     .map(|id| EntityId::from_hex(id))
                     .collect::<Result<_>>()?,
                 depth_remaining: self.depth,
-                scope: None,
+                project_ref: self
+                    .project_ref
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()?,
+                scope: self.scope.clone(),
             },
         ))
     }
