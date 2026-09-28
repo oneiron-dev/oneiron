@@ -113,8 +113,16 @@ impl PreparedOutboundDispatch {
         let policy_risk = if space_posting
             .as_ref()
             .is_some_and(crate::channel_identity_autonomy::FrozenSpacePosting::policy_risk)
+            || request.gate.policy_risk
+                == crate::outbound::OutboundDispatchPolicyRisk::HoldToProposal
         {
             ExternalEffectPolicyRisk::HoldToProposal
+        } else if native_mail_recipient {
+            // The trusted native-mail manifest row decides known vs cold in
+            // the Gate transaction. The generic email capability's advisory
+            // risk flag must not pre-hold every known-recipient send; caller
+            // and space-specific explicit holds remain restrictive above.
+            ExternalEffectPolicyRisk::Normal
         } else {
             outbound_dispatch_policy_risk(request.gate, verb_contract)
         };

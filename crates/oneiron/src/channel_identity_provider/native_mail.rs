@@ -541,17 +541,11 @@ pub(crate) fn native_mail_cold_send_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
+    policy: &crate::gate::PolicyManifestResolution,
 ) -> Result<bool> {
     if effect.channel != "email"
         || effect.verb != "send"
         || effect.counterparty.as_deref().is_none_or(str::is_empty)
-        || matches!(
-            effect.counterparty_first_touch,
-            Some(
-                crate::counterparty_contact::CounterpartyFirstTouch::UserIntroduction
-                    | crate::counterparty_contact::CounterpartyFirstTouch::InboundFirst
-            )
-        )
     {
         return Ok(false);
     }
@@ -570,7 +564,9 @@ pub(crate) fn native_mail_cold_send_in_txn(
     if identity.binding.actor_ref() != Some(actor) || !identity.may_send() {
         return Ok(false);
     }
-    Ok(true)
+    Ok(policy
+        .native_mail_policy_for(Some(actor), Some(identity_ref))
+        .is_some_and(|row| !row.is_known(effect.counterparty_first_touch)))
 }
 
 /// A cold send may borrow the graduated owner grant only after the current
@@ -579,8 +575,9 @@ pub(crate) fn mail_graduated_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
+    policy: &crate::gate::PolicyManifestResolution,
 ) -> Result<bool> {
-    if !native_mail_cold_send_in_txn(store, txn, effect)? {
+    if !native_mail_cold_send_in_txn(store, txn, effect, policy)? {
         return Ok(false);
     }
     let (Some(identity_ref), Some(actor)) = (
@@ -607,13 +604,20 @@ pub(crate) fn native_mail_reputation_earned(
 ) -> Result<bool> {
     use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
     use crate::identity_reputation::{
-        BOUNCE_CONSTRAINED_THRESHOLD, COMPLAINT_CONSTRAINED_THRESHOLD,
         PREDICATE_IDENTITY_REPUTATION_ATTESTATION_TIER, PREDICATE_IDENTITY_REPUTATION_BOUNCE_RATE,
         PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE,
         PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
         PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
     };
     use crate::ports::TombstoneStore;
+    let Some(identity) = native_mail_identity_in_txn(&vault.store, txn, identity_ref)? else {
+        return Ok(false);
+    };
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    let Some(row) = policy.native_mail_policy_for(identity.binding.actor_ref(), Some(identity_ref))
+    else {
+        return Ok(false);
+    };
     let mut seen = [false; 5];
     for id in vault.claims_for_subject_in_txn(txn, &identity_ref)? {
         let Some(claim) = vault.get_claim_in_txn(txn, &id)? else {
@@ -641,17 +645,26 @@ pub(crate) fn native_mail_reputation_earned(
         };
         crate::identity_reputation::validate_identity_reputation_claim_structure(&claim)?;
         let safe = match index {
-            0 => claim.value.as_str() == Some("established"),
+            0 => claim
+                .value
+                .as_str()
+                .is_some_and(|stage| row.warmup_earns(stage)),
             1 => claim
                 .value
                 .as_f64()
-                .is_some_and(|n| n < COMPLAINT_CONSTRAINED_THRESHOLD),
+                .is_some_and(|n| n < row.max_complaint_rate),
             2 => claim
                 .value
                 .as_f64()
-                .is_some_and(|n| n < BOUNCE_CONSTRAINED_THRESHOLD),
-            3 => claim.value.as_u64() == Some(0),
-            4 => matches!(claim.value.as_str(), Some("a" | "b")),
+                .is_some_and(|n| n < row.max_bounce_rate),
+            3 => claim
+                .value
+                .as_u64()
+                .is_some_and(|n| n <= row.max_spam_labels),
+            4 => claim
+                .value
+                .as_str()
+                .is_some_and(|tier| row.attestation_earns(tier)),
             _ => unreachable!(),
         };
         if !safe {

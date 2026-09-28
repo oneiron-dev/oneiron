@@ -22,6 +22,7 @@ mod effect;
 mod foreign_agent;
 mod grants;
 mod input;
+pub(crate) mod mail_policy;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;

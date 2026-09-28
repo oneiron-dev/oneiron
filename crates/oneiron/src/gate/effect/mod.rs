@@ -138,7 +138,7 @@ pub(crate) fn evaluate_external_effect_policy(
 ) -> Result<ExternalEffectGovernance> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let (mut hydrated_effect, counterparty_send_override) =
-        hydrate_external_effect_contact(store, &*wtxn, effect)?;
+        hydrate_external_effect_contact(store, &*wtxn, effect, policy)?;
     // Send eligibility is checked with the Gate's writer snapshot. A sender
     // released after dispatch preparation cannot authorize even a known
     // contact through an ordinary policy grant. Terminal replay never enters
@@ -200,19 +200,19 @@ pub(crate) fn evaluate_external_effect_policy(
         store,
         &*wtxn,
         &hydrated_effect,
+        policy,
     )?;
     let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
         store,
         &*wtxn,
         &hydrated_effect,
+        policy,
     )?;
     let provisional = hydrated_effect.gate_input(agent_definition_ceiling, None);
     let requirement = external_effect_action_requirement(&hydrated_effect);
     let mail_retry_authorized = match approval_context {
-        ApprovalContext::Retry(proof) if mail_cold => {
-            native_mail_cold_composed_effect(&hydrated_effect)
-                .is_some_and(|effect| effect.digest() == proof.effect_digest())
-        }
+        ApprovalContext::Retry(proof) => native_mail_cold_composed_effect(&hydrated_effect)
+            .is_some_and(|effect| effect.digest() == proof.effect_digest()),
         _ => false,
     };
     if mail_retry_authorized
@@ -269,7 +269,7 @@ pub(crate) fn evaluate_external_effect_policy(
     // unforgeable available authorization, or a typed spent-replay refusal.
     // The marker is changed to spent only when the final Gate decision is
     // recorded as Allow in this same transaction.
-    let composed = if mail_cold {
+    let composed = if mail_cold || mail_retry_authorized {
         native_mail_cold_composed_effect(&hydrated_effect)
     } else {
         external_effect_composed_effect(&hydrated_effect)
@@ -285,7 +285,7 @@ pub(crate) fn evaluate_external_effect_policy(
             .transpose()?
             .flatten()
     };
-    let consent = if mail_cold {
+    let consent = if mail_cold || mail_retry_authorized {
         composed.as_ref().map(|effect| {
             ConsentGateContext::evaluate(effect, approve_once.as_ref(), &consent_grants)
         })
@@ -309,7 +309,7 @@ pub(crate) fn evaluate_external_effect_policy(
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
-        effect.mail_approve_once = mail_cold && (approve_once.is_some() || mail_retry_authorized);
+        effect.mail_approve_once = mail_retry_authorized || (mail_cold && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
         effect.artifact_publish_approve_once = approve_once.is_some()

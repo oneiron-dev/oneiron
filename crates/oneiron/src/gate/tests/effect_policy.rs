@@ -164,21 +164,27 @@ fn mail_09_cold_send_asks_known_recipient_uses_ordinary_grant() -> Result<()> {
     let public = CounterpartyContactRecord::public(identity, "public@example.test", 1)?;
     vault.create_counterparty_contact(&test_id(0xDB), &public)?;
 
-    let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
-        "sender",
-        "send",
-        Value::Map(vec![
-            (
-                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
-                Value::from("email"),
-            ),
-            (
-                Value::from(EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY),
-                Value::from(ExternalEffectPolicyRisk::Normal.as_str()),
-            ),
-        ]),
-        None,
-    )]);
+    let data = encode_policy_manifest(vec![
+        (
+            Value::from("native_mail_policy"),
+            Value::Array(vec![crate::gate::mail_policy::default_row()]),
+        ),
+        external_effect_scoped_grant_entry(
+            "sender",
+            "send",
+            Value::Map(vec![
+                (
+                    Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                    Value::from("email"),
+                ),
+                (
+                    Value::from(EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY),
+                    Value::from(ExternalEffectPolicyRisk::Normal.as_str()),
+                ),
+            ]),
+            None,
+        ),
+    ]);
     put_policy_manifest_bytes(&vault, test_id(0xD0), &data)?;
     let policy = resolve(&vault)?;
     let mut effect = external_effect_gate_input("sender", "send", "email");
@@ -238,6 +244,125 @@ fn mail_09_cold_send_asks_known_recipient_uses_ordinary_grant() -> Result<()> {
         ));
         assert_eq!(sink.0, 0);
     }
+
+    let inbound = CounterpartyContactRecord::inbound_first(identity, "inbound@example.test", 1)?;
+    vault.create_counterparty_contact(&test_id(0xDC), &inbound)?;
+    let mut narrow = crate::gate::mail_policy::default_row();
+    let Value::Map(ref mut axes) = narrow else {
+        panic!("mail policy row")
+    };
+    for (key, value) in axes {
+        match key.as_str() {
+            Some("scope") => *value = Value::from("holder"),
+            Some("holder") => *value = Value::from(actor.to_hex()),
+            Some("known_first_touch") => {
+                *value = Value::Array(vec![Value::from("user_introduction")]);
+            }
+            _ => {}
+        }
+    }
+    let mut cursor = data.as_slice();
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("manifest") else {
+        panic!("manifest")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("native_mail_policy"));
+    entries.push((
+        Value::from("native_mail_policy"),
+        Value::Array(vec![crate::gate::mail_policy::default_row(), narrow]),
+    ));
+    let mut narrow_bytes = Vec::new();
+    rmpv::encode::write_value(&mut narrow_bytes, &Value::Map(entries)).expect("encode manifest");
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &narrow_bytes)?;
+    let narrow_policy = resolve(&vault)?;
+    effect.counterparty = Some("inbound@example.test".into());
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy(&vault.store, txn, &effect, &narrow_policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    effect.counterparty = Some("known@example.test".into());
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy(&vault.store, txn, &effect, &narrow_policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    for (n, (recipient, expected)) in [
+        (
+            "inbound@example.test",
+            crate::outbound::OutboundDispatchOutcome::Held,
+        ),
+        (
+            "known@example.test",
+            crate::outbound::OutboundDispatchOutcome::DeliveredToChannel,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("actor", "send", "email", recipient),
+            OutboundIntentTrigger::agent_immediate(format!("session:mail-policy-{n}")),
+        );
+        let request = OutboundDispatchRequest::new(
+            format!("mail-policy:receipt:{n}"),
+            format!("mail-policy:intent:{n}"),
+            intent,
+            OutboundDispatchActor {
+                actor_class: "first_party".into(),
+                actor_ref: Some("sender".into()),
+                actor_entity_ref: Some(actor),
+            },
+            OutboundDispatchGate::allow_when_policy_grants(),
+            20,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .channel_identity_ref(identity);
+        let result = vault
+            .dispatch_outbound_intent(request, &mut sink)
+            .expect("resolved holder policy reaches the outbound door");
+        assert_eq!(result.outcome, expected, "{result:?}");
+        assert_eq!(sink.0, n);
+    }
+
+    // The holder can narrow the vault row, not override its cap to widen it.
+    let Value::Map(ref mut manifest) =
+        rmpv::decode::read_value(&mut narrow_bytes.as_slice()).expect("read narrowed manifest")
+    else {
+        panic!("manifest map")
+    };
+    let mut vault_narrow = crate::gate::mail_policy::default_row();
+    let Value::Map(ref mut vault_axes) = vault_narrow else {
+        panic!("policy row")
+    };
+    for (key, value) in vault_axes {
+        if key.as_str() == Some("known_first_touch") {
+            *value = Value::Array(vec![Value::from("user_introduction")]);
+        }
+    }
+    let mut holder_wide = crate::gate::mail_policy::default_row();
+    let Value::Map(ref mut holder_axes) = holder_wide else {
+        panic!("holder row")
+    };
+    for (key, value) in holder_axes {
+        match key.as_str() {
+            Some("scope") => *value = Value::from("holder"),
+            Some("holder") => *value = Value::from(actor.to_hex()),
+            _ => {}
+        }
+    }
+    manifest.retain(|(key, _)| key.as_str() != Some("native_mail_policy"));
+    manifest.push((
+        Value::from("native_mail_policy"),
+        Value::Array(vec![vault_narrow, holder_wide]),
+    ));
+    let mut capped_bytes = Vec::new();
+    rmpv::encode::write_value(&mut capped_bytes, &Value::Map(manifest.clone()))
+        .expect("encode capped policy");
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &capped_bytes)?;
+    let capped = resolve(&vault)?;
+    effect.counterparty = Some("inbound@example.test".into());
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy(&vault.store, txn, &effect, &capped, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
 
     // A non-native email connector still sees its original normal-risk policy.
     effect.channel_identity_ref = None;

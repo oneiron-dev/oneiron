@@ -115,6 +115,9 @@ pub(crate) fn resolve_policy_manifest(
                 // that disagree have a deterministic, safe answer — hold the
                 // send. Marking that malformed would fail the whole vault
                 // closed over a question the axis can answer itself.
+                resolution
+                    .native_mail_policy
+                    .extend(decoded.native_mail_policy);
                 if let Some(posture) = decoded.comm_opt_out_posture {
                     resolution.comm_opt_out_posture = Some(
                         resolution

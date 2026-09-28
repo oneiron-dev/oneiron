@@ -36,6 +36,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
     let manifest = Value::Map(vec![
         (
+            Value::from(super::mail_policy::MANIFEST_KEY),
+            Value::Array(vec![super::mail_policy::default_row()]),
+        ),
+        (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),
         ),

@@ -40,6 +40,7 @@ pub(super) fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
+    policy: &crate::gate::PolicyManifestResolution,
 ) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>)> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
@@ -70,11 +71,9 @@ pub(super) fn hydrate_external_effect_contact(
         }
     }
 
-    // MAIL-09: an unintroduced external email address is cold even when CID-7
-    // has no row at all. Known recipients (owner-introduced or inbound-first)
-    // retain the ordinary grant path. A public-list contact stays cold.
-    // This is a default asking posture, not a ban: the owner's explicit
-    // scoped/standing grant can still authorize the send at this same door.
+    // A native-mail sender resolves the vault's recipient-class and initial
+    // posture rows on this SAME Gate transaction as the CID-7 contact facts.
+    // An absent/malformed policy keeps the send in the asking lane.
     let native_mail = if channel_class == "email" && effect.verb == "send" {
         effect.channel_identity_ref.map_or(Ok(false), |identity| {
             crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
@@ -84,13 +83,23 @@ pub(super) fn hydrate_external_effect_contact(
     } else {
         false
     };
-    if native_mail
-        && !matches!(
-            hydrated.counterparty_first_touch,
-            Some(CounterpartyFirstTouch::UserIntroduction | CounterpartyFirstTouch::InboundFirst)
-        )
-    {
-        hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
+    if native_mail {
+        let mail = policy.native_mail_policy_for(
+            effect.provenance.actor_entity_ref,
+            effect.channel_identity_ref,
+        );
+        if mail
+            .as_ref()
+            .is_none_or(|row| !row.is_known(hydrated.counterparty_first_touch))
+        {
+            let risk = mail.as_ref().map_or(
+                ExternalEffectPolicyRisk::HoldToProposal,
+                crate::gate::mail_policy::MailPolicy::cold_risk,
+            );
+            if risk == ExternalEffectPolicyRisk::HoldToProposal {
+                hydrated.policy_risk = risk;
+            }
+        }
     }
 
     fold_matching_comm_do_not_contact_heads(store, txn, party_ref, &channel_class, &mut hydrated)?;

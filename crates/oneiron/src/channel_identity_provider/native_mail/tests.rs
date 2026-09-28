@@ -25,6 +25,52 @@ impl NativeMailHost for Host {
         Ok(self.inbound.clone())
     }
 }
+fn set_holder_mail_policy(
+    vault: &Vault,
+    holder: EntityId,
+    known: &[&str],
+    tiers: &[&str],
+    complaint_cap: f64,
+) -> Result<()> {
+    let mut bytes = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("seeded manifest decodes")
+    else {
+        panic!("manifest map")
+    };
+    let mut holder_row = crate::gate::mail_policy::default_row();
+    let rmpv::Value::Map(ref mut axes) = holder_row else {
+        panic!("row map")
+    };
+    for (key, value) in axes {
+        match key.as_str() {
+            Some("scope") => *value = rmpv::Value::from("holder"),
+            Some("holder") => *value = rmpv::Value::from(holder.to_hex()),
+            Some("known_first_touch") => {
+                *value = rmpv::Value::Array(known.iter().map(|v| rmpv::Value::from(*v)).collect());
+            }
+            Some("allowed_attestation") => {
+                *value = rmpv::Value::Array(tiers.iter().map(|v| rmpv::Value::from(*v)).collect());
+            }
+            Some("max_complaint_rate") => *value = rmpv::Value::F64(complaint_cap),
+            _ => {}
+        }
+    }
+    entries.retain(|(key, _)| key.as_str() != Some("native_mail_policy"));
+    entries.push((
+        rmpv::Value::from("native_mail_policy"),
+        rmpv::Value::Array(vec![crate::gate::mail_policy::default_row(), holder_row]),
+    ));
+    bytes.clear();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .expect("mail policy manifest encodes");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
 #[test]
 fn native_modes_conform_and_unauthenticated_ingress_writes_nothing() -> Result<()> {
     let id = EntityId::from_hex("abababababababababababababababab")?;
@@ -260,7 +306,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
 
     let reputation = IdentityReputation {
-        complaint_rate: 0.0,
+        complaint_rate: 0.0015,
         bounce_rate: 0.0,
         spam_label_observations: 0,
         attestation_tier: IdentityAttestationTier::A,
@@ -293,6 +339,35 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
         Some(scope.clone())
     );
     assert!(vault.graduation_offers()?.contains(&scope));
+    // An owner-narrowed holder row retracts a displayed offer immediately;
+    // acceptance rechecks the same resolved row in its write transaction.
+    set_holder_mail_policy(
+        &vault,
+        actor,
+        &["user_introduction", "inbound_first"],
+        &["a"],
+        0.001,
+    )?;
+    assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_none());
+    assert!(!vault.graduation_offers()?.contains(&scope));
+    assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
+    set_holder_mail_policy(
+        &vault,
+        actor,
+        &["user_introduction", "inbound_first"],
+        &["b"],
+        0.002,
+    )?;
+    assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_none());
+    assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
+    set_holder_mail_policy(
+        &vault,
+        actor,
+        &["user_introduction", "inbound_first"],
+        &["a", "b"],
+        0.002,
+    )?;
+    assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_some());
     let (stale_id, fresh_body) = warmup_claim.expect("warmup evidence");
     vault.with_write_txn(|txn| vault.port_retrieval_mark_stale(txn, &stale_id))?;
     assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_none());
@@ -326,6 +401,10 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     let v = rmpv::Value::from;
     let manifest = rmpv::Value::Map(vec![
         (v("schema_version"), v("1.2")),
+        (
+            v("native_mail_policy"),
+            rmpv::Value::Array(vec![crate::gate::mail_policy::default_row()]),
+        ),
         (v("pack_id"), v("native-mail-test")),
         (v("pack_version"), v("v1")),
         (v("min_engine_version"), v(env!("CARGO_PKG_VERSION"))),
@@ -534,6 +613,10 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     let v = rmpv::Value::from;
     let manifest = rmpv::Value::Map(vec![
         (v("schema_version"), v("1.2")),
+        (
+            v("native_mail_policy"),
+            rmpv::Value::Array(vec![crate::gate::mail_policy::default_row()]),
+        ),
         (v("pack_id"), v("native-mail-once")),
         (v("pack_version"), v("v1")),
         (v("min_engine_version"), v(env!("CARGO_PKG_VERSION"))),
@@ -648,6 +731,12 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         assert!(adapter.dispatch_send(&vault, changed, &mut sink).is_err());
         assert_eq!(sink.calls, 2);
     }
+    let inbound = crate::counterparty_contact::CounterpartyContactRecord::inbound_first(
+        identity,
+        "new@example.test",
+        22,
+    )?;
+    vault.create_counterparty_contact(&EntityId::now(), &inbound)?;
     let mut parked_retry = other.clone();
     parked_retry.window_decision = OutboundDeliveryWindowDecision::Hold {
         reason: "quiet_window".into(),
@@ -678,6 +767,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     assert_eq!(sink.calls, 3);
     let mut third = other;
     third.intent_ref = "mail-09:third-intent".into();
+    third.intent.target = "third@example.test".into();
     third.receipt_id = "mail-09:third-receipt".into();
     let held = adapter
         .dispatch_send(&vault, third.clone(), &mut sink)
@@ -706,6 +796,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     // under its writer lock; the Pending row must carry THAT proof.
     let mut concurrent = request.clone();
     concurrent.intent_ref = "mail-09:tap-between-prep-and-admission".into();
+    concurrent.intent.target = "concurrent@example.test".into();
     concurrent.receipt_id = "mail-09:tap-between-prep-and-admission-receipt".into();
     let hook_vault = std::rc::Rc::clone(&vault);
     let hook_adapter = std::rc::Rc::clone(&adapter);
@@ -728,6 +819,12 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         .effector_budget_read("email", Some(&actor))?
         .expect("governing budget read");
     assert_eq!(before_retry.rows[0].used, 1);
+    let introduced = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        identity,
+        "concurrent@example.test",
+        23,
+    )?;
+    vault.create_counterparty_contact(&EntityId::now(), &introduced)?;
     let retried = adapter
         .dispatch_send(&vault, concurrent, &mut sink)
         .expect("typed admitted proof permits the exact retry");
@@ -760,6 +857,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     );
     let mut refused = request.clone();
     refused.intent_ref = "mail-09:refused-before-admission".into();
+    refused.intent.target = "refused@example.test".into();
     refused.receipt_id = "mail-09:refused-before-admission-receipt".into();
     adapter.approve_send_once(&vault, &owner, &refused)?;
     vault.suspend_connector_key(&key_id, "owner", 11)?;
@@ -796,6 +894,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
 
     let mut pending = request;
     pending.intent_ref = "mail-09:pending-policy-recheck".into();
+    pending.intent.target = "pending@example.test".into();
     pending.receipt_id = "mail-09:pending-policy-recheck-receipt".into();
     adapter.approve_send_once(&vault, &owner, &pending)?;
     sink.fail_next = true;
@@ -806,7 +905,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     assert_eq!(sink.calls, 8);
     let contact = crate::counterparty_contact::CounterpartyContactRecord::public(
         identity,
-        "new@example.test",
+        "pending@example.test",
         15,
     )?;
     let contact_id = EntityId::now();
