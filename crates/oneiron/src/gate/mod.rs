@@ -28,6 +28,7 @@ mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
 mod input;
+mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
 pub(crate) mod policy_values;
@@ -109,8 +110,9 @@ use self::dreamer_precommit::{
     validate_dreamer_precommit,
 };
 pub(crate) use self::effect::{
-    ExternalEffectGovernance, check_external_effect_policy, evaluate_external_effect_policy,
-    external_effect_approval_digest, record_external_effect_policy,
+    ExternalEffectGovernance, check_external_effect_policy, check_external_effect_policy_pair,
+    evaluate_external_effect_policy, external_effect_approval_digest,
+    record_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
@@ -120,6 +122,11 @@ pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_lim
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
+};
+#[cfg(test)]
+pub(crate) use self::operational_policy::default_manifest_with_linear_sync_pages_for_test;
+pub(crate) use self::operational_policy::{
+    LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
 };
 pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
 pub use self::owner_policy_mutation::{

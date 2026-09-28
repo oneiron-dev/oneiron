@@ -1,6 +1,8 @@
 //! Vault storage for the tracker mirror: replicated fields, local OCC and CAS links.
+use super::TaskExecutionState;
 use super::wire_decode::{task_body_has_typed_subkind, task_verb_body_in};
 use super::wire_encode::encode_task_verb_body;
+use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::linear_sync::*;
 use crate::store::Store;
@@ -8,6 +10,7 @@ use crate::{EntityId, Vault};
 
 const REVISION: &[u8] = b"linear.task_revision.v1/";
 const DIRTY: &[u8] = b"linear.task_dirty.v1/";
+const WRITER: &[u8] = b"linear.task_writer.v1/";
 const ISSUE: &[u8] = b"linear.issue.v1/";
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
@@ -24,6 +27,64 @@ fn revision(store: &Store, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<u64> {
             ))
         })
 }
+pub(crate) fn task_revision_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<u64> {
+    revision(store, txn, id)
+}
+
+/// A raw/replayed TASK put clears this mark at the generic batch door. Only
+/// the verified typed facade may restamp it after the same write transaction.
+pub(crate) fn note_task_writer_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    actor: EntityId,
+    class: EdgeActorClass,
+) -> Result<()> {
+    let rev = revision(store, txn, task)?;
+    let mut value = Vec::with_capacity(25);
+    value.extend_from_slice(&rev.to_be_bytes());
+    value.extend_from_slice(actor.as_bytes());
+    value.push(class as u8);
+    store.vault_meta.put(txn, &key(WRITER, task), &value)?;
+    Ok(())
+}
+
+fn writer_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Option<LinearWriteActor>> {
+    let Some(raw) = store.vault_meta.get(txn, &key(WRITER, task))? else {
+        return Ok(None);
+    };
+    if raw.len() != 25 {
+        return Err(Error::CorruptedIndex("linear task writer"));
+    }
+    let stamped_rev = u64::from_be_bytes(
+        raw[..8]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("linear task writer revision"))?,
+    );
+    if stamped_rev != revision(store, txn, task)? {
+        return Ok(None);
+    }
+    let id = EntityId::from_bytes(
+        raw[8..24]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("linear task writer id"))?,
+    )?;
+    let class = EdgeActorClass::try_from_u8(raw[24])
+        .ok_or(Error::CorruptedIndex("linear task writer class"))?;
+    Ok(Some(LinearWriteActor {
+        actor_ref: id,
+        actor_class: class as u8,
+    }))
+}
+
 pub(crate) fn note_task_write(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -42,6 +103,7 @@ pub(crate) fn note_task_write(
     store
         .vault_meta
         .put(txn, &key(DIRTY, id), &revision.to_be_bytes())?;
+    store.vault_meta.delete(txn, &key(WRITER, id))?;
     Ok(())
 }
 fn issue_key(issue: &LinearIssueRef) -> Vec<u8> {
@@ -61,6 +123,41 @@ fn read_link(
         .transpose()
 }
 
+/// One locked view for the external Linear effect door. No provider bytes.
+pub(crate) struct LinearEffectState {
+    pub revision: u64,
+    pub dirty_revision: Option<u64>,
+    pub link: Option<TaskIssueLink>,
+    pub writer: Option<LinearWriteActor>,
+    /// The outbound snapshot as of this transaction.
+    pub snapshot: TaskMirrorSnapshot,
+}
+
+pub(crate) fn linear_effect_state_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> LinearSyncResult<LinearEffectState> {
+    let dirty_revision = vault
+        .store
+        .vault_meta
+        .get(txn, &key(DIRTY, task))?
+        .map(|raw| {
+            raw.as_ref()
+                .try_into()
+                .map(u64::from_be_bytes)
+                .map_err(|_| Error::CorruptedIndex("linear dirty revision"))
+        })
+        .transpose()?;
+    Ok(LinearEffectState {
+        revision: revision(&vault.store, txn, task)?,
+        dirty_revision,
+        link: read_link(vault, txn, task)?,
+        writer: writer_in_txn(&vault.store, txn, task)?,
+        snapshot: VaultLinearTaskStore::new(vault).snapshot(txn, task)?,
+    })
+}
+
 pub struct VaultLinearTaskStore<'v> {
     vault: &'v Vault,
 }
@@ -69,6 +166,11 @@ impl<'v> VaultLinearTaskStore<'v> {
     /// adapters outside this port; no provider credentials enter the vault.
     pub fn new(vault: &'v Vault) -> Self {
         Self { vault }
+    }
+    /// Writer of the current dirty revision; raw/replayed writes have none.
+    pub fn dirty_writer(&self, task: EntityId) -> LinearSyncResult<Option<LinearWriteActor>> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        Ok(writer_in_txn(&self.vault.store, &txn, task)?)
     }
     fn snapshot(
         &self,
@@ -90,9 +192,14 @@ impl<'v> VaultLinearTaskStore<'v> {
             status: "queued".to_owned(),
         });
         fields.title = body.label.clone().unwrap_or_default();
-        if let Some(terminal) = body.terminal() {
-            fields.status = terminal.disposition.as_str().to_owned();
-        }
+        // Execution facts win over the last imported tracker token. Inbound
+        // status remains a mirror field; it never authors Working or Terminal.
+        fields.status = match body.state.as_ref() {
+            Some(TaskExecutionState::Working { .. }) => "working".to_owned(),
+            Some(TaskExecutionState::Interrupted { .. }) => "interrupted".to_owned(),
+            Some(TaskExecutionState::Terminal(record)) => record.disposition.as_str().to_owned(),
+            None | Some(TaskExecutionState::Queued) => fields.status,
+        };
         Ok(TaskMirrorSnapshot {
             task_ref: task,
             issue: link.as_ref().map(|l| l.issue.clone()),
@@ -168,6 +275,9 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
                     found: current.revision,
                 });
             }
+            let prior_writer = writer_in_txn(&self.vault.store, txn, task)?;
+            let locally_dirty = read_link(self.vault, txn, task)?
+                .is_some_and(|link| current.fields.field_hashes() != link.base_field_hashes);
             let mut body =
                 task_verb_body_in(self.vault, txn, task)?.ok_or(Error::EntityNotFound)?;
             // Imported status is tracker state, never a forged completion/result.
@@ -187,6 +297,15 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
                     &encode_task_verb_body(body),
                 )
                 .apply(txn)?;
+            // An inbound disjoint-field merge may carry an unsent LOCAL edit.
+            // The generic batch write clears writer provenance, so copy only
+            // an already-verified current writer to the merged revision. An
+            // unattributed raw/replayed write cannot gain one here.
+            if locally_dirty && let Some(writer) = prior_writer {
+                let class = EdgeActorClass::try_from_u8(writer.actor_class)
+                    .ok_or(Error::CorruptedIndex("linear task writer class"))?;
+                note_task_writer_in_txn(&self.vault.store, txn, task, writer.actor_ref, class)?;
+            }
             self.snapshot(txn, task)
         })
     }
@@ -259,28 +378,20 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
 
 const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
-    /// Scheduled host entry: reconcile EACH linked dirty issue against its
-    /// current tracker snapshot before pushing, then consume one source page.
-    /// A single cursor page cannot preflight an issue on a later page.
-    /// Errors retain dirty revisions/cursor for retry. The injected egress is
-    /// still the authenticated OF-327 rail, never a credential in core.
+    /// Scheduled host entry: reconcile every available inbound page BEFORE
+    /// publishing any dirty TASK snapshot. A rejected outbound item retains
+    /// its revision without starving later items or the pull cursor.
     pub fn synchronize(
         &mut self,
         now: u64,
+        max_pull_pages_per_pass: usize,
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
-        let mut pushed = Vec::new();
-        for (task, revision) in self.tasks().dirty_tasks()? {
-            if let Some(link) = self.tasks().link(task)? {
-                let current = self.inbound_mut().current_issue(&link.issue)?;
-                self.apply_issue_change(current, now)?;
-            }
-            let receipt = self.push_task(task, now)?;
-            if receipt.status != LinearMirrorStatus::Conflict {
-                self.tasks().acknowledge_push(task, revision)?;
-            }
-            pushed.push(receipt);
+        if !(1..=1024).contains(&max_pull_pages_per_pass) {
+            return Err(
+                Error::InvalidConfig("linear pull page policy is out of bounds".into()).into(),
+            );
         }
-        let cursor = {
+        let mut cursor = {
             let txn = self
                 .tasks()
                 .vault
@@ -299,16 +410,66 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                 })
                 .transpose()?
         };
-        let pulled = self.pull_page(cursor.as_deref(), now)?;
-        if let Some(cursor) = &pulled.new_cursor {
+        let mut pulled = LinearPullReceipt {
+            applied: 0,
+            skipped_echo: 0,
+            conflicts: Vec::new(),
+            new_cursor: cursor.clone(),
+            pulled_at: now,
+        };
+        // A malicious or broken source cannot keep the pass inside pagination
+        // forever. The cursor of each completed page is durable before reading
+        // the next; no outbound write occurs until a terminal page is reached.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut caught_up = false;
+        for _ in 0..max_pull_pages_per_pass {
+            let page = self.pull_page(cursor.as_deref(), now)?;
+            pulled.applied += page.applied;
+            pulled.skipped_echo += page.skipped_echo;
+            pulled.conflicts.extend(page.conflicts);
+            let Some(next) = page.new_cursor else {
+                caught_up = true;
+                break;
+            };
+            if cursor.as_deref() == Some(next.as_str()) || !seen.insert(next.clone()) {
+                return Err(
+                    Error::InvalidConfig("linear source repeated its cursor".into()).into(),
+                );
+            }
             self.tasks().vault.with_write_txn(|txn| {
                 self.tasks()
                     .vault
                     .store
                     .vault_meta
-                    .put(txn, PULL_CURSOR, cursor.as_bytes())?;
+                    .put(txn, PULL_CURSOR, next.as_bytes())?;
                 Ok(())
             })?;
+            cursor = Some(next);
+            pulled.new_cursor = cursor.clone();
+        }
+        if !caught_up {
+            return Err(Error::InvalidConfig("linear source page bound exceeded".into()).into());
+        }
+
+        let mut pushed = Vec::new();
+        let mut first_failure = None;
+        for (task, revision) in self.tasks().dirty_tasks()? {
+            match self.push_task(task, now) {
+                Ok(receipt) => {
+                    if receipt.status != LinearMirrorStatus::Conflict
+                        && let Err(error) = self.tasks().acknowledge_push(task, revision)
+                    {
+                        first_failure.get_or_insert_with(|| error.into());
+                    }
+                    pushed.push(receipt);
+                }
+                Err(error) => {
+                    first_failure.get_or_insert(error);
+                }
+            }
+        }
+        if let Some(error) = first_failure {
+            return Err(error);
         }
         Ok((pushed, pulled))
     }
@@ -320,6 +481,7 @@ pub(crate) fn forget_task_mirror(
     id: EntityId,
 ) -> Result<()> {
     store.vault_meta.delete(txn, &key(DIRTY, id))?;
+    store.vault_meta.delete(txn, &key(WRITER, id))?;
     let link_key = linear_sync_link_key(id);
     if let Some(raw) = store.vault_meta.get(txn, &link_key)? {
         let link: TaskIssueLink =

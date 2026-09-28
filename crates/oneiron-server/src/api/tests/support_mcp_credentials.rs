@@ -65,6 +65,23 @@ pub(super) fn pair_mcp_credential(
     token
 }
 
+/// The holder attenuates its own paired credential; the label then presents
+/// the narrowed token. Register the returned token, not the paired one.
+pub(super) fn attenuate_mcp_credential(
+    server: &SyncServer,
+    label: &str,
+    caveat: oneiron::authority::SlipCaveat,
+) -> String {
+    let mut slip = CapabilitySlip::from_token(&mcp_registered_credential(server, label)).unwrap();
+    slip.attenuate(caveat, &holder_key(label)).unwrap();
+    let token = slip.to_token().unwrap();
+    server
+        .vault()
+        .sync_state_put(&cache_key(label), token.as_bytes())
+        .unwrap();
+    token
+}
+
 pub(super) fn mcp_registered_credential(server: &SyncServer, label: &str) -> String {
     server
         .vault()

@@ -57,6 +57,9 @@ pub(crate) struct ContextBoardRequest {
     /// Companion scope that influences MEMORIES assembly.
     #[serde(default)]
     companion: Option<ContextBoardCompanionControls>,
+    /// Append a current describe(self) card to the tail of an existing run.
+    #[serde(default)]
+    describe_self: bool,
 }
 
 /// The assembled context for one turn.
@@ -94,6 +97,11 @@ pub(crate) struct ContextBoardResponse {
     changed: Vec<String>,
     /// Turn discovery rows plus the session-long loaded skill line.
     skills: Vec<String>,
+    /// Host-authenticated self brief, in the prefix only at open/fold and
+    /// otherwise appended in the tail on an explicit describe(self) read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
+    self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
     /// This turn's capability agent candidates.
     agents: Vec<String>,
 }
@@ -279,6 +287,7 @@ pub(crate) async fn context_board_hydrate(
     let skills =
         oneiron::context_board::SkillsSection::project(hits, reads.as_deref().unwrap_or(&empty));
     let skills = std::iter::once(skills.loaded).chain(skills.found).collect();
+    let observed_reads = reads.as_deref().cloned().unwrap_or_default();
     drop(reads);
     let cursor = match advanced {
         Some(cursor) => cursor,
@@ -307,6 +316,48 @@ pub(crate) async fn context_board_hydrate(
         })?
         .map(|render| render.text);
 
+    // Only a trusted host may install a run snapshot. Caller-controlled HTTP
+    // fields choose neither authority nor the epoch; an absent snapshot is
+    // never filled with fabricated grant or budget data.
+    // Stage prefix bytes and epoch under one session lock. The response may
+    // still fail the full token-budget check below; on failure neither moves.
+    let mut runs = server.self_brief_sessions.lock().await;
+    let mut staged_prefix = None;
+    let self_brief = if let (Some(actor_ref), Some(session_id)) = (
+        auth.principal_ref()
+            .filter(|_| auth.actor_class() == Some("agent")),
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+    ) {
+        let actor = oneiron::EntityId::from_hex(actor_ref).map_err(|_| {
+            crate::error::ApiError::bad_request("invalid agent actor", Some("session"))
+        })?;
+        let key = (actor, session_id.to_owned());
+        if let Some(run) = runs.get_mut(&key) {
+            if run.emitted_epoch.is_none() || run.emitted_epoch != Some(run.epoch) {
+                let mut candidate = run.render.clone();
+                let card = if run.emitted_epoch.is_none() {
+                    candidate.turn_one(&server.vault, &run.state, &observed_reads)
+                } else {
+                    candidate.fold(&server.vault, &run.state, &observed_reads)
+                }
+                .map_err(|error| super::core_engine_error("self brief failed", error))?;
+                staged_prefix = Some((key, candidate, run.epoch));
+                Some(card)
+            } else if req.describe_self {
+                Some(
+                    run.render
+                        .describe_self(&server.vault, &run.state, &observed_reads)
+                        .map_err(|error| super::core_engine_error("self brief failed", error))?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let response = ContextBoardResponse {
         standing,
         session,
@@ -320,6 +371,7 @@ pub(crate) async fn context_board_hydrate(
         changed,
         skills,
         agents,
+        self_brief,
     };
     if let Some(prefix) = &response.standing {
         let wire = serde_json::to_string(&response).map_err(|_| {
@@ -333,6 +385,14 @@ pub(crate) async fn context_board_hydrate(
             .into());
         }
     }
+    if let Some((key, render, epoch)) = staged_prefix {
+        let run = runs
+            .get_mut(&key)
+            .expect("run remains locked through response validation");
+        run.render = render;
+        run.emitted_epoch = Some(epoch);
+    }
+    drop(runs);
     if let Some(mut reads) = session_read_set(
         &server,
         caller,
@@ -345,4 +405,57 @@ pub(crate) async fn context_board_hydrate(
         reads.observe_pack_inventory(&installed_packs);
     }
     Ok(Json(response))
+}
+
+/// The authenticated SDK describe(self) path uses the same run snapshot and
+/// renderer as context-board assembly. It cannot accept authority in the body.
+/// The brief is rendered whole, so a record-narrowed credential is refused.
+pub(crate) async fn describe_self_for_auth(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, crate::error::ApiError> {
+    auth.require_unrestricted_record_scope()?;
+    oneiron::task_verb::sdk::validate_input("describe", body).map_err(|_| {
+        crate::error::ApiError::bad_request("invalid describe(self) input", Some("self"))
+    })?;
+    let request: oneiron::task_verb::sdk::DescribeRequest = serde_json::from_value(body.clone())
+        .map_err(|_| {
+            crate::error::ApiError::bad_request("invalid describe(self) input", Some("self"))
+        })?;
+    if !request.self_target || request.task_ref.is_some() || auth.actor_class() != Some("agent") {
+        return Err(crate::error::ApiError::bad_request(
+            "describe(self) requires an agent run",
+            Some("self"),
+        ));
+    }
+    let actor = auth
+        .principal_ref()
+        .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+        .ok_or_else(|| crate::error::ApiError::bad_request("missing agent actor", Some("self")))?;
+    let session_id = request.session_id.as_deref().ok_or_else(|| {
+        crate::error::ApiError::bad_request("missing run session", Some("session_id"))
+    })?;
+    validate_session_id(session_id, "session_id")?;
+    let mut runs = server.self_brief_sessions.lock().await;
+    let run = runs
+        .get_mut(&(actor, session_id.to_owned()))
+        .ok_or_else(|| {
+            crate::error::ApiError::bad_request("run has no self brief", Some("session_id"))
+        })?;
+    let read_set = server
+        .memories_cursors
+        .lock()
+        .await
+        .session_reads(&actor.to_hex(), Some(session_id))
+        .clone();
+    let card = run
+        .render
+        .describe_self(&server.vault, &run.state, &read_set)
+        .map_err(|error| super::core_engine_error("self brief failed", error))?;
+    let tail = card.tail.ok_or_else(|| {
+        crate::error::ApiError::internal_server_error("self brief tail is missing")
+    })?;
+    serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
+        .map_err(|_| crate::error::ApiError::internal_server_error("self brief encoding failed"))
 }

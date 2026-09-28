@@ -175,4 +175,8 @@ pub enum TaskDescription {
     Section(TasksSection),
     #[serde(rename = "task_card")]
     Card { lines: Vec<String> },
+    /// A host-bound `describe(self)` call returns the same tail card as the
+    /// context assembly path. No prefix replacement occurs mid-run.
+    #[serde(rename = "self_card")]
+    SelfCard { tail: String },
 }
