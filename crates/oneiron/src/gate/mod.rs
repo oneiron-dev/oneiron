@@ -7,6 +7,7 @@ mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
+pub(crate) mod class_policy;
 pub(crate) mod manifest_authenticity;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
@@ -37,6 +38,7 @@ pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
 pub(crate) mod retry_source_policy;
+mod room_policy;
 mod room_thread;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
@@ -123,11 +125,15 @@ pub(crate) use self::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
-pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub(crate) use self::resolution::{
+    GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
+    resolve_gate_decision_retention, resolve_policy_manifest, retention_edit_target,
+};
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
     ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,
 };
+pub(crate) use self::room_policy::{RoomAction, allows as room_policy_allows};
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;

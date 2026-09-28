@@ -1191,3 +1191,69 @@ fn failed_soft_publication_can_retry_from_shell_preview_to_purge() -> Result<()>
     assert_eq!(vault.get(&brief)?, None);
     Ok(())
 }
+
+#[test]
+fn receipt_retention_keeps_active_share_admission_gate() -> Result<()> {
+    let (_dir, vault, issuer, share) = fixture()?;
+    let id = EntityId::now();
+    vault.create_share(&id, &issuer, &share)?;
+    let gate_id = {
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .vault_meta
+            .get(&txn, &admission_key(&id))?
+            .expect("admission");
+        ShareAdmission::decode(&raw)
+            .expect("typed admission")
+            .gate_id
+    };
+    let unrelated = vault.with_write_txn(|txn| {
+        let mut old = vault
+            .store
+            .gate_decision_in_txn(txn, gate_id)?
+            .expect("allow receipt");
+        vault.store.delete_gate_decision_in_txn(txn, gate_id)?;
+        old.created_at = 1;
+        vault.store.append_gate_decision_in_txn(txn, &old)?;
+        let mut unrelated = old;
+        unrelated.decision_id = GateDecisionId::now();
+        vault.store.append_gate_decision_in_txn(txn, &unrelated)?;
+        Ok(unrelated.decision_id)
+    })?;
+    // This fixture replaces the seeded default with an older policy shape.
+    // Give retention its own trusted manifest contribution for this test.
+    put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let owner = vault.authenticate_owner(
+        issuer.entity_ref(),
+        "principal:share-retention",
+        true,
+        GateDecisionId::now(),
+    )?;
+    vault.set_gate_decision_retention_secs(&owner, Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert!(
+        vault
+            .store
+            .gate_decisions(100)?
+            .iter()
+            .all(|row| row.decision_id != unrelated)
+    );
+    assert_eq!(vault.get_share(&id)?, Some(share.clone()));
+    assert!(
+        vault
+            .resolve_share_for_view(&id, &share.recipient_ref, None, &[])?
+            .is_some()
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::Share))?
+            .iter()
+            .any(|row| row.receipt_id == format!("share:brief:{}", id.to_hex()))
+    );
+    Ok(())
+}

@@ -173,6 +173,9 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        if !crate::claim::has_live_support_in_txn(&self.vault.store, rtxn, body)? {
+            return Ok(false);
+        }
         let principal = claim_principal_id(body)?;
         let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
         if principal.is_some() && principal != reader {

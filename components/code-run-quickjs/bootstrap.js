@@ -42,6 +42,7 @@
     set("self", freeze(sdk.self));
     set("ask", sdk.ask);
   }
+  if (sdk.vault) set("vault", freeze(sdk.vault));
   const randomDouble = () => {
     const bytes = random.bytes(7);
     let value = bytes[0] & 31;

@@ -108,5 +108,5 @@ fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
 }
 
-pub(crate) use approval::validate_dispatch;
+pub(crate) use approval::{representation_approval_is_live_in_txn, validate_dispatch};
 pub(super) use proposal::run;
