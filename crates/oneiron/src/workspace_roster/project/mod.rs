@@ -39,8 +39,10 @@ mod tests;
 pub(crate) use projection::{
     normalize_project_body, reconcile_project_rooms, validate_project_body, validate_room_body,
 };
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use tests::create_project_signed_for_test;
 #[cfg(test)]
-pub(crate) use tests::{create_project_signed_for_test, set_project_depth_signed_for_test};
+pub(crate) use tests::set_project_depth_signed_for_test;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
