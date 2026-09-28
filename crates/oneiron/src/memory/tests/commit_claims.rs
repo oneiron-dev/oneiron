@@ -639,9 +639,9 @@ fn put_structural_carries_text_index_fields_and_edges() {
         .expect_err("CLAIM kind must go through commit");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
-    // Entities land with correct type bytes. The four bootstrap seed skills
-    // each persist one source carrier ASSET alongside the fixture ASSET.
-    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 5);
+    // Entities land with correct type bytes. Four bootstrap skill carriers and
+    // four built-in pack sources persist alongside the fixture ASSET.
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 9);
 }
 
 #[test]
@@ -783,8 +783,8 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
     }
 
     // Exactly one entity of each checked fixture kind exists, and no
-    // refusal minted a second row. The four bootstrap seed skills each persist
-    // one source carrier ASSET alongside the fixture ASSET.
+    // refusal minted a second row. Four bootstrap skill carriers and four
+    // built-in pack sources persist alongside the fixture ASSET.
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_TASK)
@@ -797,7 +797,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("asset entities")
             .len(),
-        5
+        9
     );
 }
 

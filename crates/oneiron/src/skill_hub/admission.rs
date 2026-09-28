@@ -213,7 +213,7 @@ impl Vault {
         admitted.lifecycle_status = SkillLifecycle::Active;
         let data = crate::skill::encode_skill_record(&admitted)?;
         let proof =
-            super::HubAdmissionProof::consent(&self.store, txn, *candidate, &data, authorization)?;
+            super::HubAdmissionProof::held_out(&self.store, txn, *candidate, &data, authorization)?;
         self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
     }
     pub(super) fn activate_refined_hub_record_in_txn(

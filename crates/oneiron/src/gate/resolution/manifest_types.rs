@@ -1,6 +1,7 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use std::collections::BTreeMap;
 
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -73,15 +74,43 @@ impl CommOptOutPosture {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::gate) struct TeacherProbeRow {
+    pub(in crate::gate) min_f1_millionths: u32,
+    pub(in crate::gate) holders: BTreeMap<String, u32>,
+}
+
+/// Restrict-only typed sheet answer count for a vault, artifact, or sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SheetAnswerLimitRow {
+    pub(crate) artifact_ref: Option<String>,
+    pub(crate) sheet: Option<String>,
+    pub(crate) max_count: u64,
+}
+
+/// The manifest's explicit scope-composition rule. Other tokens fail decode
+/// until their admission semantics are specified and tested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SheetAnswerPrecedence {
+    NestedNarrowingHolderCappedAtVault,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
+    pub(in crate::gate) teacher_probe_trusted: bool,
+    pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
+    pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
+    pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) sheet_answer_default_max_count: Option<u64>,
+    pub(crate) sheet_answer_precedence: Option<SheetAnswerPrecedence>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
@@ -110,5 +139,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
+    pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
+    pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) hosted_tts: HostedTtsPolicy,
+    pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) docedit_resource_policy:
+        Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
 }

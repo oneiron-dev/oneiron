@@ -67,8 +67,27 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// # One autonomous agent is guaranteed a slice but cannot consume the vault.
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
+/// Vault-resident extraction-teacher quality floor, in F1 millionths.
+/// The seeded default is data in `default_policy_manifest`; nested holder
+/// floors only narrow it, and independent trusted packs compose by max.
+pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Per-format edit resource budgets; precedence is a required manifest row.
+pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
+/// Ordered restrict-only rows: vault, artifact, and named sheet caps compose
+/// by minimum. The shipped vault row bounds holder overrides.
+pub(super) const POLICY_SHEET_ANSWER_LIMITS_KEY: &str = "sheet_answer_limits";
+/// The shipped scope-composition row, distinct from the numeric limit rows.
+pub(super) const POLICY_SHEET_ANSWER_PRECEDENCE_KEY: &str = "sheet_answer_precedence";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
+/// Vault and holder rows for artifact-review operating limits and precedence.
+pub(super) const POLICY_SLIDE_REVIEW_KEY: &str = "slide_review_policy";
+/// Vault-wide resource ceilings for bounded office package parsing.
+pub(super) const POLICY_DOCEDIT_RESOURCE_KEY: &str = "docedit_resource_policy";
+/// Trusted vault-level DOCX ZIP workload row. Every dimension only narrows
+/// the shipped upper default; per-call holders may narrow it again.
+pub(super) const POLICY_DOCX_ARCHIVE_LIMITS_KEY: &str = "docx_archive_limits";
+
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

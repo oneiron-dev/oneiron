@@ -169,6 +169,98 @@ fn assembly_preserves_stricter_internal_taint_after_parent_reread() -> Result<()
 }
 
 #[test]
+fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<()> {
+    use std::collections::BTreeMap;
+
+    use crate::llm::manifest::{
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
+    };
+    use crate::llm::{ModelId, ModelLocality, ModelTierRef};
+
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, _turns, _conversation) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0x73,
+        &[("user", "a private conversation transcript")],
+    )?;
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    ModelBinding {
+                        model: ModelId::new(format!("test/{role:?}@remote-r1")).unwrap(),
+                        slot: ModelSlot::Llm,
+                        tier: ModelTierRef("configured".into()),
+                        route_models: if role == ModelRole::ExtractionTeacher {
+                            BTreeMap::new()
+                        } else {
+                            BTreeMap::from([(
+                                ModelLocality::OnDevice,
+                                ModelId::new(format!("local/{role:?}@local-r1")).unwrap(),
+                            )])
+                        },
+                    },
+                )
+            })
+            .collect(),
+        routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+            .into_iter()
+            .map(|slot| (slot, ModelLocality::OwnServer))
+            .collect(),
+        verdict: None,
+    };
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None)?,
+        1_000_000,
+    )?;
+    vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
+    // Other served roles may narrow, but the teacher has no approved local checkpoint.
+    vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)?;
+
+    let backend = ScriptedBackend::new(Vec::new());
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
+    };
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: ModelId::new("test/model@r1").unwrap(),
+        sink: &mut sink,
+        inference: test_inference_host(),
+        scope: None,
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&attempt, &mut ctx)),
+        Err(Error::InvalidConfig(_))
+    ));
+    drop(executor);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert!(sink.accepted.is_empty());
+    Ok(())
+}
+
+#[test]
 fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
@@ -207,6 +299,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     assert!(matches!(
@@ -215,6 +308,10 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
     ));
     // A different revision forces a new extraction, not the prior memoized one.
     executor.model = crate::ModelId::new("test/model@r2").unwrap();
+    executor.inference.binding = crate::llm::HostInferenceBinding::Advertised {
+        model: executor.model.clone(),
+        locality: crate::ModelLocality::OwnServer,
+    };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx)),
         Err(Error::InvalidClaimBody(_))
@@ -251,6 +348,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: Some(no_output),
     };
     assert!(matches!(
@@ -428,6 +526,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
     for resolution in ["accumulate", "merge", "missing", "unlisted"] {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        authorize_test_inference(&vault)?;
         grant_fixture_reads(&vault)?;
         let store = DreamerRunnerStore::new(&vault);
         let (attempt, turns, _) =
@@ -480,6 +579,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").unwrap(),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -750,6 +850,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -1096,6 +1197,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
                 actor: vault.dreamer_authority()?,
                 model: crate::ModelId::new("test/model@r1").unwrap(),
                 sink: &mut sink,
+                inference: test_inference_host(),
                 scope: caller_scope,
             };
             block_on_ready(executor.execute(&attempt, &mut ctx))?
@@ -1156,6 +1258,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").unwrap(),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let outcome = block_on_ready(executor.execute(&next, &mut ctx));
@@ -1180,6 +1283,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
 #[test]
 fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    authorize_test_inference(&vault)?;
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x49, &[("user", "read grant required")])?;
