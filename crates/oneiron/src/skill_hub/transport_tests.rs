@@ -1,6 +1,7 @@
 //! Real Git repositories and loopback static HTTP fixtures; no mocked adapter calls.
 use super::*;
 use crate::{
+    attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome},
     entity_id::EntityId,
     error::{ErrorKind, Result},
 };
@@ -14,6 +15,61 @@ use std::{
     },
     time::Duration,
 };
+
+struct ReadyFit;
+impl MarketplaceFitEvaluator for ReadyFit {
+    fn evaluate(
+        &self,
+        source: &HubRef,
+        package: &HubPackage,
+        static_scan: &SkillScanReceipt,
+    ) -> Result<MarketplaceFitDecision> {
+        MarketplaceFitDecision::new(
+            source,
+            package,
+            MarketplaceFit::Ready,
+            "fixture fit",
+            static_scan,
+        )
+    }
+}
+
+struct FixedFit(MarketplaceFit);
+impl MarketplaceFitEvaluator for FixedFit {
+    fn evaluate(
+        &self,
+        source: &HubRef,
+        package: &HubPackage,
+        static_scan: &SkillScanReceipt,
+    ) -> Result<MarketplaceFitDecision> {
+        MarketplaceFitDecision::new(
+            source,
+            package,
+            self.0,
+            "fixture permission review",
+            static_scan,
+        )
+    }
+}
+
+struct WrongSourceFit;
+impl MarketplaceFitEvaluator for WrongSourceFit {
+    fn evaluate(
+        &self,
+        source: &HubRef,
+        package: &HubPackage,
+        static_scan: &SkillScanReceipt,
+    ) -> Result<MarketplaceFitDecision> {
+        let other = HubRef::new(EntityId::now(), &source.ref_string, source.pin.clone())?;
+        MarketplaceFitDecision::new(
+            &other,
+            package,
+            MarketplaceFit::Ready,
+            "mismatched source",
+            static_scan,
+        )
+    }
+}
 
 fn files(name: &str, version: &str, body: &str) -> Vec<HubFile> {
     vec![
@@ -333,8 +389,14 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
             "fixture",
             HubPin::ContentHash(index[0].content_hash.to_hex()),
         )?;
-        let entity =
-            vault.import_marketplace_skill_from_adapter(&adapter, &source, &publisher, at, 10)?;
+        let entity = vault.import_marketplace_skill_from_adapter(
+            &adapter,
+            &source,
+            &publisher,
+            &ReadyFit,
+            at,
+            10 + imported.len() as u64,
+        )?;
         let receipt = vault
             .hub_import_receipt(&entity, &source)?
             .expect("import receipt");
@@ -344,10 +406,825 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
             Some(publisher.grant_ref())
         );
         assert_eq!(receipt.content_hash, index[0].content_hash.to_hex());
+        assert_eq!(receipt.hub_id, hub_id.to_hex());
+        assert_eq!(receipt.ref_string, source.ref_string);
+        assert_eq!(receipt.installed_as, InstallLifecycle::Active);
+        assert_eq!(
+            vault
+                .get_skill_record(&entity)?
+                .expect("installed skill")
+                .lifecycle_status,
+            crate::skill::SkillLifecycle::Active,
+        );
+        assert!(vault.hub_admission_receipt(&entity)?.is_none());
         imported.push(entity);
     }
     assert_eq!(imported[0], imported[1]);
     assert_eq!(vault.skill_hub_provenance_count(&imported[0])?, 2);
+    crate::test_util::authorize_readers(&vault, &["viewer"]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("viewer").unwrap());
+    let latest = crate::context_board::SessionReadSet::default().refresh(&read, 1)?;
+    assert_eq!(latest.install_rows.len(), 1);
+    assert_eq!(latest.install_rows[0].at, 11);
+    let changes = crate::context_board::SessionReadSet::default().refresh(&read, 16)?;
+    let rendered = crate::context_board::render_board_block(
+        &crate::context_board::BoardFrame {
+            header: &crate::context_board::BoardBlockHeader {
+                epoch: 1,
+                scope: "base".into(),
+            },
+            legend: &crate::context_board::BoardLegend::canonical(),
+            sections: &[],
+            changes: Some(&changes),
+        },
+        crate::context_board::BoardBudgetRequest {
+            harness_default_tok: 0,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        },
+    )
+    .expect("board render");
+    assert!(rendered.text.contains("changed_install[2:]"));
+    assert!(rendered.text.contains("installed"));
+    for receipt in &changes.install_rows {
+        assert_eq!(receipt.entity, imported[0].to_hex());
+        assert!(rendered.text.contains(&receipt.hub_id));
+    }
+    Ok(())
+}
+
+#[test]
+fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Result<()> {
+    use crate::skill::{SkillLifecycle, encode_skill_record};
+    let mut tree = files("fixture.code", "1", "Run the supplied script.");
+    tree[0].content = b"---\nname: fixture.code\ndescription: fixture\nversion: 1\nrequires-bins: [\"python3\"]\n---\nRun the supplied script.\n".to_vec();
+    tree.push(HubFile::new("scripts/run.py", b"print(1)\n"));
+    let server = StaticHttp::new(routes(&tree));
+    let temp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner_id = EntityId::now();
+    let at = crate::TimeRange { start: 10, end: 10 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:fixture",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub_id = EntityId::now();
+    vault.configure_skill_hub(
+        &owner,
+        &hub_id,
+        &SkillHubRecord::new(
+            SkillHubKind::HttpIndex,
+            server.index_url(),
+            SkillHubTrustTier::Verified,
+            HubSyncPolicy::ContentHashFrozen,
+        )?,
+        at,
+        10,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:fixture", hub_id)?;
+    let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+    let source = HubRef::new(
+        hub_id,
+        "fixture",
+        HubPin::ContentHash(adapter.discover()?[0].content_hash.to_hex()),
+    )?;
+    assert_eq!(
+        vault
+            .import_marketplace_skill_from_adapter(
+                &adapter,
+                &source,
+                &publisher,
+                &WrongSourceFit,
+                at,
+                10
+            )
+            .expect_err("fit cannot authorize another source")
+            .kind(),
+        ErrorKind::InvalidSkillBody,
+    );
+    let id = vault
+        .import_marketplace_skill_from_adapter(&adapter, &source, &publisher, &ReadyFit, at, 10)?;
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .installed_as,
+        InstallLifecycle::Candidate
+    );
+    crate::test_util::authorize_readers(&vault, &["viewer"]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("viewer").unwrap());
+    let changes = crate::context_board::SessionReadSet::default().refresh(&read, 16)?;
+    assert!(
+        changes
+            .render()
+            .join("\n")
+            .contains("code_auto_install_off")
+    );
+    let mut forged = vault.get_skill_record(&id)?.unwrap();
+    forged.lifecycle_status = SkillLifecycle::Active;
+    assert!(
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_SKILL,
+                at,
+                11,
+                &encode_skill_record(&forged)?
+            )
+            .commit()
+            .is_err()
+    );
+    // Host-controlled code flag is separate from sandbox qualification.
+    vault.set_marketplace_code_auto_install(&owner, true)?;
+    // Fit and owner rules, not the advisory scan threshold, govern activation.
+    for (fit, outcome) in [
+        (MarketplaceFit::Ask, "ask_permissions"),
+        (MarketplaceFit::NoFit, "not_fit"),
+    ] {
+        assert_eq!(
+            vault.import_marketplace_skill_from_adapter(
+                &adapter,
+                &source,
+                &publisher,
+                &FixedFit(fit),
+                at,
+                13
+            )?,
+            id,
+        );
+        assert_eq!(
+            vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+            SkillLifecycle::Candidate
+        );
+        assert_eq!(
+            vault
+                .hub_import_receipt(&id, &source)?
+                .unwrap()
+                .disposition
+                .as_str(),
+            outcome
+        );
+        if fit == MarketplaceFit::Ask {
+            let ask = vault.hub_import_receipt(&id, &source)?.expect("fit ask");
+            assert_eq!(ask.requested_permissions, ["bin:python3"]);
+            let changed = crate::context_board::SessionReadSet::default().refresh(&read, 16)?;
+            assert!(
+                changed
+                    .render()
+                    .join("\n")
+                    .contains("fixture permission review")
+            );
+        }
+    }
+    let hash = adapter.discover()?[0].content_hash;
+    vault.set_marketplace_blocked_hash(&owner, hash, true)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(
+            &adapter, &source, &publisher, &ReadyFit, at, 13
+        )?,
+        id
+    );
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .disposition
+            .as_str(),
+        "rules_hit"
+    );
+    vault.set_marketplace_blocked_hash(&owner, hash, false)?;
+    // A scanner signal at Low is advisory once the host's exact fit is Ready.
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::Low)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(
+            &adapter, &source, &publisher, &ReadyFit, at, 14,
+        )?,
+        id
+    );
+    let installed = vault.get_skill_record(&id)?.expect("fit-ready install");
+    assert_eq!(installed.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(
+        installed.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
+    );
+    let receipt = vault
+        .hub_import_receipt(&id, &source)?
+        .expect("installed receipt");
+    assert_eq!(receipt.disposition, InstallDisposition::Installed);
+    assert_eq!(receipt.installed_as, InstallLifecycle::Active);
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::High)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(
+            &adapter, &source, &publisher, &ReadyFit, at, 15,
+        )?,
+        id
+    );
+    assert_eq!(
+        vault.hub_import_receipt(&id, &source)?.unwrap().disposition,
+        InstallDisposition::AlreadyInstalled
+    );
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "marketplace.scan-reimport".into(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 30,
+    })?
+    else {
+        panic!("fresh attempt");
+    };
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "marketplace.scan-reimport",
+        ClaimAttempt {
+            lease_owner: "hub-worker".into(),
+            now: 31,
+        },
+    )?
+    else {
+        panic!("leased attempt");
+    };
+    assert_eq!(leased.id, attempt.id);
+    let loaded = vault.load_attempt_skill_pack(
+        attempt.id,
+        &id,
+        "hub-worker",
+        leased.attempt_count,
+        "hub-model@1",
+        31,
+    )?;
+    assert_eq!(
+        loaded.record.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+#[test]
+fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs() -> Result<()> {
+    use crate::{claim::ClaimApprovalStatus, skill::SkillLifecycle};
+    for inactive in [
+        SkillLifecycle::Stale,
+        SkillLifecycle::Quarantined,
+        SkillLifecycle::Superseded,
+        SkillLifecycle::Active,
+    ] {
+        let tree = files("fixture.inactive", "1", "Preserve this skill.");
+        let servers = [
+            StaticHttp::new(routes(&tree)),
+            StaticHttp::new(routes(&tree)),
+        ];
+        let temp = tempfile::tempdir()?;
+        let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+        let owner_id = EntityId::now();
+        let at = crate::TimeRange { start: 10, end: 10 };
+        vault.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            10,
+            b"owner",
+        )?;
+        let owner = vault.authenticate_owner(
+            owner_id,
+            "principal:inactive",
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let mut sources = Vec::new();
+        for server in &servers {
+            let hub_id = EntityId::now();
+            vault.configure_skill_hub(
+                &owner,
+                &hub_id,
+                &SkillHubRecord::new(
+                    SkillHubKind::HttpIndex,
+                    server.index_url(),
+                    SkillHubTrustTier::Verified,
+                    HubSyncPolicy::ContentHashFrozen,
+                )?,
+                at,
+                10,
+            )?;
+            let publisher = vault.admit_skill_publisher(&owner, "publisher:inactive", hub_id)?;
+            let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+            let reference = HubRef::new(
+                hub_id,
+                "fixture",
+                HubPin::ContentHash(adapter.discover()?[0].content_hash.to_hex()),
+            )?;
+            sources.push((adapter, reference, publisher));
+        }
+        let (adapter, reference, publisher) = &sources[0];
+        let id = vault.import_marketplace_skill_from_adapter(
+            adapter, reference, publisher, &ReadyFit, at, 10,
+        )?;
+        let mut record = vault.get_skill_record(&id)?.expect("installed skill");
+        match inactive {
+            SkillLifecycle::Active => {
+                record.approval_status = ClaimApprovalStatus::Proposed;
+                vault.update_skill_record(&id, &record, at, 11)?;
+            }
+            SkillLifecycle::Stale => {
+                record.lifecycle_status = SkillLifecycle::Stale;
+                vault.update_skill_record(&id, &record, at, 11)?;
+            }
+            SkillLifecycle::Quarantined => {
+                record.lifecycle_status = SkillLifecycle::Quarantined;
+                record.approval_status = ClaimApprovalStatus::Approved;
+                vault.update_skill_record(&id, &record, at, 11)?;
+            }
+            SkillLifecycle::Superseded => {
+                let successor = EntityId::now();
+                let mut newer = super::folder::package_from_files(files(
+                    "fixture.inactive",
+                    "2",
+                    "New revision.",
+                ))?
+                .record;
+                newer.source = crate::claim::ClaimSource::UserStated;
+                newer.content_hash = None;
+                vault.put_skill_record(&successor, &newer, at, 11)?;
+                newer.lifecycle_status = SkillLifecycle::Active;
+                vault.update_skill_record(&successor, &newer, at, 12)?;
+                vault.supersede_skill_record(&id, &successor, at, 13)?;
+            }
+            _ => unreachable!(),
+        }
+        for (adapter, source, publisher) in &sources {
+            for fit in [MarketplaceFit::Ready, MarketplaceFit::Ask] {
+                assert_eq!(
+                    vault.import_marketplace_skill_from_adapter(
+                        adapter,
+                        source,
+                        publisher,
+                        &FixedFit(fit),
+                        at,
+                        20,
+                    )?,
+                    id
+                );
+                let receipt = vault
+                    .hub_import_receipt(&id, source)?
+                    .expect("source receipt");
+                assert_eq!(receipt.installed_as.as_str(), inactive.as_str());
+                let reason = match inactive {
+                    SkillLifecycle::Stale => InstallHoldReason::Stale,
+                    SkillLifecycle::Quarantined => InstallHoldReason::Quarantined,
+                    SkillLifecycle::Superseded => InstallHoldReason::Superseded,
+                    SkillLifecycle::Active => InstallHoldReason::UnloadableApproval,
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    receipt.disposition,
+                    InstallDisposition::NotInstalled(reason)
+                );
+                assert_eq!(
+                    vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+                    inactive
+                );
+                assert!(
+                    vault
+                        .approve_marketplace_permission_ask(&owner, &id, source, at, 21,)
+                        .is_err()
+                );
+                let queue = AttemptQueue::new(&vault);
+                let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+                    kind: "inactive.marketplace".into(),
+                    payload: vec![],
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 22,
+                })?
+                else {
+                    panic!("fresh attempt");
+                };
+                let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+                    "inactive.marketplace",
+                    ClaimAttempt {
+                        lease_owner: "hub-worker".into(),
+                        now: 23,
+                    },
+                )?
+                else {
+                    panic!("leased attempt");
+                };
+                assert_eq!(leased.id, attempt.id);
+                assert!(
+                    vault
+                        .load_attempt_skill_pack(
+                            attempt.id,
+                            &id,
+                            "hub-worker",
+                            leased.attempt_count,
+                            "hub-model@1",
+                            23,
+                        )
+                        .is_err()
+                );
+            }
+        }
+        assert_eq!(vault.skill_hub_provenance_count(&id)?, 2);
+        crate::test_util::authorize_readers(&vault, &["inactive-reader"]);
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new("inactive-reader").unwrap());
+        let lines = crate::context_board::SessionReadSet::default()
+            .refresh(&read, 16)?
+            .render();
+        assert!(lines.join("\n").contains(&format!(
+                "{}/{}",
+                inactive.as_str(),
+                InstallDisposition::NotInstalled(match inactive {
+                    SkillLifecycle::Stale => InstallHoldReason::Stale,
+                    SkillLifecycle::Quarantined => InstallHoldReason::Quarantined,
+                    SkillLifecycle::Active => InstallHoldReason::UnloadableApproval,
+                    _ => InstallHoldReason::Superseded,
+                })
+                .as_str()
+            )));
+    }
+    Ok(())
+}
+
+#[test]
+fn rejected_marketplace_candidate_cannot_be_activated_by_reimport_from_another_hub() -> Result<()> {
+    use crate::claim::ClaimApprovalStatus;
+    use crate::skill::SkillLifecycle;
+    let mut tree = files("fixture.denied", "1", "Run supplied script.");
+    tree.push(HubFile::new("scripts/run.py", b"print(1)\n"));
+    let first = StaticHttp::new(routes(&tree));
+    let second = StaticHttp::new(routes(&tree));
+    let temp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner_id = EntityId::now();
+    let at = crate::TimeRange { start: 10, end: 10 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:fixture",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let mut sources = Vec::new();
+    for server in [&first, &second] {
+        let hub_id = EntityId::now();
+        vault.configure_skill_hub(
+            &owner,
+            &hub_id,
+            &SkillHubRecord::new(
+                SkillHubKind::HttpIndex,
+                server.index_url(),
+                SkillHubTrustTier::Verified,
+                HubSyncPolicy::ContentHashFrozen,
+            )?,
+            at,
+            10,
+        )?;
+        let publisher = vault.admit_skill_publisher(&owner, "publisher:fixture", hub_id)?;
+        let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+        let source = HubRef::new(
+            hub_id,
+            "fixture",
+            HubPin::ContentHash(adapter.discover()?[0].content_hash.to_hex()),
+        )?;
+        sources.push((adapter, source, publisher));
+    }
+    let (adapter, source, publisher) = &sources[0];
+    let id = vault
+        .import_marketplace_skill_from_adapter(adapter, source, publisher, &ReadyFit, at, 10)?;
+    let mut denied = vault.get_skill_record(&id)?.expect("candidate");
+    denied.approval_status = ClaimApprovalStatus::Rejected;
+    vault.update_skill_record(&id, &denied, at, 11)?;
+    vault.set_marketplace_code_auto_install(&owner, true)?;
+    for (adapter, source, publisher) in &sources {
+        assert_eq!(
+            vault.import_marketplace_skill_from_adapter(
+                adapter, source, publisher, &ReadyFit, at, 12
+            )?,
+            id
+        );
+        let stored = vault.get_skill_record(&id)?.expect("denied candidate");
+        assert_eq!(stored.lifecycle_status, SkillLifecycle::Candidate);
+        assert_eq!(stored.approval_status, ClaimApprovalStatus::Rejected);
+        assert_eq!(
+            vault
+                .hub_import_receipt(&id, source)?
+                .expect("source receipt")
+                .installed_as
+                .as_str(),
+            "candidate"
+        );
+    }
+    assert_eq!(vault.skill_hub_provenance_count(&id)?, 2);
+    Ok(())
+}
+
+#[test]
+fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner_id = EntityId::now();
+    let survivor = EntityId::now();
+    let at = crate::TimeRange { start: 1, end: 1 };
+    for id in [owner_id, survivor] {
+        vault.put_entity(&id, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"person")?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    for enabled in [true, false, true] {
+        vault.set_marketplace_code_auto_install(&owner, enabled)?;
+    }
+    let write = crate::identity_topology::IdentityOpWrite {
+        source: crate::claim::ClaimSource::Inferred,
+        approval: crate::claim::ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        actor: None,
+    };
+    vault.apply_identity_topology_op(
+        &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![owner_id],
+            survivor,
+            evidence: crate::identity_topology::IdentityOpEvidence {
+                refs: Vec::new(),
+                rationale: "fixture merge".to_owned(),
+            },
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        }),
+        &write,
+        100,
+    )?;
+    assert_eq!(
+        vault
+            .set_marketplace_code_auto_install(&owner, false)
+            .expect_err("inactive owner")
+            .kind(),
+        ErrorKind::ConsentOwnerNotAuthenticated
+    );
+    // A rejected setter neither changes the flag nor spends the next transition.
+    let current = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&current, super::import_receipt::CODE_AUTO_INSTALL_KEY)?
+            .as_deref(),
+        Some(&[1][..])
+    );
+    drop(current);
+    let new_owner = vault.authenticate_owner(
+        survivor,
+        "principal:survivor",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.set_marketplace_code_auto_install(&new_owner, false)?;
+    drop(vault);
+    let reopened = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let new_owner = reopened.authenticate_owner(
+        survivor,
+        "principal:survivor",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    reopened.set_marketplace_code_auto_install(&new_owner, true)?;
+    reopened.set_marketplace_code_auto_install(&new_owner, false)?;
+    Ok(())
+}
+
+#[test]
+fn permission_ask_requires_current_rule_and_one_exact_owner_decision() -> Result<()> {
+    use crate::skill::SkillLifecycle;
+    let mut tree = files("fixture.ask", "1", "Check the result.");
+    tree[0].content = b"---\nname: fixture.ask\ndescription: fixture\nversion: 1\nrequires-bins: [\"rg\"]\n---\nCheck the result.\n".to_vec();
+    let server = StaticHttp::new(routes(&tree));
+    let temp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner_id = EntityId::now();
+    let at = crate::TimeRange { start: 10, end: 10 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:ask",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub_id = EntityId::now();
+    vault.configure_skill_hub(
+        &owner,
+        &hub_id,
+        &SkillHubRecord::new(
+            SkillHubKind::HttpIndex,
+            server.index_url(),
+            SkillHubTrustTier::Community,
+            HubSyncPolicy::ContentHashFrozen,
+        )?,
+        at,
+        10,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:ask", hub_id)?;
+    let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+    let hash = adapter.discover()?[0].content_hash;
+    let source = HubRef::new(hub_id, "fixture", HubPin::ContentHash(hash.to_hex()))?;
+    let id = vault.import_marketplace_skill_from_adapter(
+        &adapter,
+        &source,
+        &publisher,
+        &FixedFit(MarketplaceFit::Ask),
+        at,
+        10,
+    )?;
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    let ask = vault.hub_import_receipt(&id, &source)?.expect("ask");
+    assert_eq!(ask.requested_permissions, ["bin:rg"]);
+    vault.set_marketplace_blocked_hash(&owner, hash, true)?;
+    assert!(
+        vault
+            .approve_marketplace_permission_ask(&owner, &id, &source, at, 11)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    vault.set_marketplace_blocked_hash(&owner, hash, false)?;
+    vault.approve_marketplace_permission_ask(&owner, &id, &source, at, 12)?;
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Active
+    );
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .disposition
+            .as_str(),
+        "installed"
+    );
+    assert!(
+        vault
+            .approve_marketplace_permission_ask(&owner, &id, &source, at, 13)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn fit_ready_scanner_signal_does_not_create_a_second_admission_gate() -> Result<()> {
+    use crate::skill::SkillLifecycle;
+    let mut tree = files("fixture.scan-review", "1", "Check the result.");
+    tree[0].content = b"---\nname: fixture.scan-review\ndescription: fixture\nversion: 1\nrequires-bins: [\"rg\"]\n---\nCheck the result.\n".to_vec();
+    let server = StaticHttp::new(routes(&tree));
+    let temp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner_id = EntityId::now();
+    let at = crate::TimeRange { start: 10, end: 10 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:ask",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub_id = EntityId::now();
+    vault.configure_skill_hub(
+        &owner,
+        &hub_id,
+        &SkillHubRecord::new(
+            SkillHubKind::HttpIndex,
+            server.index_url(),
+            SkillHubTrustTier::Community,
+            HubSyncPolicy::ContentHashFrozen,
+        )?,
+        at,
+        10,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:ask", hub_id)?;
+    let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+    let hash = adapter.discover()?[0].content_hash;
+    let source = HubRef::new(hub_id, "fixture", HubPin::ContentHash(hash.to_hex()))?;
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::Low)?;
+    let id = vault
+        .import_marketplace_skill_from_adapter(&adapter, &source, &publisher, &ReadyFit, at, 10)?;
+    let record = vault.get_skill_record(&id)?.expect("fit-ready skill");
+    assert_eq!(record.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(
+        record.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
+    );
+    let receipt = vault
+        .hub_import_receipt(&id, &source)?
+        .expect("install receipt");
+    assert_eq!(receipt.requested_permissions, ["bin:rg"]);
+    assert_eq!(receipt.disposition, InstallDisposition::Installed);
+    assert_eq!(receipt.installed_as, InstallLifecycle::Active);
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "marketplace.scan-review".into(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 30,
+    })?
+    else {
+        panic!("fresh attempt");
+    };
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "marketplace.scan-review",
+        ClaimAttempt {
+            lease_owner: "hub-worker".into(),
+            now: 30,
+        },
+    )?
+    else {
+        panic!("leased attempt");
+    };
+    assert_eq!(leased.id, attempt.id);
+    let loaded = vault.load_attempt_skill_pack(
+        attempt.id,
+        &id,
+        "hub-worker",
+        leased.attempt_count,
+        "hub-model@1",
+        30,
+    )?;
+    assert_eq!(
+        loaded.record.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
+    );
+    vault.set_marketplace_blocked_hash(&owner, hash, true)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(
+            &adapter, &source, &publisher, &ReadyFit, at, 11,
+        )?,
+        id
+    );
+    assert_eq!(
+        vault.hub_import_receipt(&id, &source)?.unwrap().disposition,
+        InstallDisposition::AlreadyInstalled
+    );
+    assert!(
+        vault
+            .approve_marketplace_permission_ask(&owner, &id, &source, at, 12)
+            .is_err()
+    );
+    vault.set_marketplace_blocked_hash(&owner, hash, false)?;
+    assert_eq!(
+        vault
+            .load_attempt_skill_pack(
+                attempt.id,
+                &id,
+                "hub-worker",
+                leased.attempt_count,
+                "hub-model@1",
+                31,
+            )?
+            .record
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
     Ok(())
 }
 
@@ -592,6 +1469,8 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
         skill_receipt.content_hash,
         skill_record.content_hash.unwrap().to_hex()
     );
+    assert_eq!(skill_receipt.installed_as.as_str(), "active");
+    assert_eq!(skill_receipt.disposition.as_str(), "installed");
     let standalone = files("alice.plain", "1", "plain knowledge");
     for file in &standalone {
         let path = repository.path().join("skills/plain").join(&file.path);

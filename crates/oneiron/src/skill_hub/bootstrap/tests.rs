@@ -514,10 +514,7 @@ fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
             TimeRange { start: 2, end: 2 },
             2,
             data.clone(),
-            HubAdmissionProof {
-                id: old,
-                binding: blake3::hash(&data),
-            },
+            HubAdmissionProof::bootstrap(old, &data),
         )
     })?;
     record.lifecycle_status = SkillLifecycle::Stale;

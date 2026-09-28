@@ -53,29 +53,49 @@ impl Vault {
         content_hash: SkillContentHash,
         source: Option<&HubRef>,
     ) -> Result<Option<EntityId>> {
+        // Explicit restore may have minted a newer live holder for these exact
+        // bytes. Prefer it; otherwise ordinary re-import preserves an inactive
+        // holder and adds the new provenance without reviving it (owner ruling A).
+        let mut exact_live = None;
         let mut other_live = None;
+        let mut exact_inactive = None;
+        let mut other_inactive = None;
         for (entity, record) in
             self.structured_skills_for_content_hash_in_txn(rtxn, content_hash)?
         {
-            // A restore may retain the exact retired bytes as history. Never
-            // resolve a new import to that retired holder or move a live
-            // restored holder's source alias back to it.
-            if record.source != ClaimSource::Imported
-                || !matches!(
-                    record.lifecycle_status,
-                    crate::skill::SkillLifecycle::Candidate | crate::skill::SkillLifecycle::Active
-                )
-            {
+            if record.source != ClaimSource::Imported {
                 continue;
             }
-            if let Some(source) = source
-                && self.default_skill_present_for_entity_in_txn(rtxn, &entity, source)?
-            {
-                return Ok(Some(entity));
+            let exact = if let Some(source) = source {
+                self.default_skill_present_for_entity_in_txn(rtxn, &entity, source)?
+            } else {
+                false
+            };
+            match (record.lifecycle_status, exact) {
+                (
+                    crate::skill::SkillLifecycle::Candidate | crate::skill::SkillLifecycle::Active,
+                    true,
+                ) => {
+                    exact_live.get_or_insert(entity);
+                }
+                (
+                    crate::skill::SkillLifecycle::Candidate | crate::skill::SkillLifecycle::Active,
+                    false,
+                ) => {
+                    other_live.get_or_insert(entity);
+                }
+                (_, true) => {
+                    exact_inactive.get_or_insert(entity);
+                }
+                (_, false) => {
+                    other_inactive.get_or_insert(entity);
+                }
             }
-            other_live.get_or_insert(entity);
         }
-        Ok(other_live)
+        Ok(exact_live
+            .or(other_live)
+            .or(exact_inactive)
+            .or(other_inactive))
     }
 
     pub(super) fn structured_skills_for_content_hash_in_txn(

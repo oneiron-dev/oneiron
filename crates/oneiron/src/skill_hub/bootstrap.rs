@@ -2,50 +2,12 @@
 
 use rmpv::Value;
 
-use super::{HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
+use super::{HubAdmissionProof, HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
-
-/// Exact-record activation proof, issued after local consent and held-out replay,
-/// or at bootstrap: the vault's own genesis authorizes the embedded install set,
-/// which is why first-open seeding needs no separately minted owner consent.
-#[derive(Debug)]
-pub(crate) struct HubAdmissionProof {
-    id: EntityId,
-    binding: blake3::Hash,
-}
-impl HubAdmissionProof {
-    pub(in crate::skill_hub) fn post_fit(id: EntityId, data: &[u8]) -> Self {
-        Self {
-            id,
-            binding: blake3::hash(data),
-        }
-    }
-    pub(super) fn id(&self) -> EntityId {
-        self.id
-    }
-
-    pub(crate) fn binds(&self, id: &EntityId, data: &[u8]) -> bool {
-        self.id == *id && self.binding == blake3::hash(data)
-    }
-
-    pub(super) fn consent(
-        store: &crate::store::Store,
-        txn: &mut heed::RwTxn<'_>,
-        id: EntityId,
-        data: &[u8],
-        authorization: &crate::consent::ApproveOnceAuthorization,
-    ) -> Result<Self> {
-        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
-        Ok(Self {
-            id,
-            binding: blake3::hash(data),
-        })
-    }
-}
 
 impl Vault {
     pub(crate) fn admit_optimized_skill_in_txn(
@@ -61,10 +23,7 @@ impl Vault {
             proposal,
             learned_at,
             |txn, data| {
-                let proof = HubAdmissionProof {
-                    id: *proposal,
-                    binding: blake3::hash(&data),
-                };
+                let proof = HubAdmissionProof::optimized(*proposal, &data);
                 self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
             },
         )
@@ -214,10 +173,7 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         if record.lifecycle_status == SkillLifecycle::Candidate {
             record.lifecycle_status = SkillLifecycle::Active;
             let data = crate::skill::encode_skill_record(&record)?;
-            let proof = HubAdmissionProof {
-                id,
-                binding: blake3::hash(&data),
-            };
+            let proof = HubAdmissionProof::bootstrap(id, &data);
             vault.admit_hub_skill_record_in_txn(&mut wtxn, occurred, 0, data, proof)?;
         }
     }

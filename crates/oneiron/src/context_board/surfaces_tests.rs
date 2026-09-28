@@ -220,6 +220,8 @@ fn changed_rider_replaces_the_whole_block_and_clears_on_next_existing_frame() {
     let changes = ChangedLine {
         rows: vec![("cl1".into(), ServedLifecycle::Retracted)],
         overflow: 0,
+        install_rows: Vec::new(),
+        install_overflow: 0,
     };
     let keyframe = changes
         .ride(Some(BoardStreamFrame {

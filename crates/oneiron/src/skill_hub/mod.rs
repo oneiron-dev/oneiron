@@ -13,18 +13,21 @@ mod git_fetch;
 mod git_process;
 mod http_fetch;
 mod import_receipt;
+mod install_transition;
+pub use import_receipt::{
+    HubImportReceipt, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
+};
 mod package_codec;
 mod publisher;
-pub use import_receipt::HubImportReceipt;
 mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
 mod shared_gate;
 
 pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
-pub(crate) use admission_guard::check_hub_skill_put;
+pub(crate) use admission_guard::HubAdmissionProof;
+pub(crate) use admission_guard::{check_hub_skill_put, scan_skill_admission};
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
-pub(crate) use bootstrap::HubAdmissionProof;
 pub use claim_refinement::{
     ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt,
     HeldOutClaimReplayCase, HeldOutClaimReplayScorer, LocalClaimRefinement,
@@ -37,6 +40,7 @@ pub(crate) use default_hub::seed_default_skill_hub;
 pub use default_hub::{default_skill_hub_commit, default_skill_hub_id};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
+pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;

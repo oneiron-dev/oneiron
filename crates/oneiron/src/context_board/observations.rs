@@ -65,7 +65,23 @@ impl SessionReadSet {
                 }
             }
         });
-        error.map_or(Ok(changed), Err)
+        if let Some(error) = error {
+            return Err(error);
+        }
+        let mut changed = changed;
+        for receipt in read.vault().marketplace_install_receipts()? {
+            let id = EntityId::from_hex(&receipt.entity)?;
+            let crate::claim::ScopedReadResult { value, receipt: _ } =
+                read.get_entity_parts_with_receipt(&id, None)?;
+            if value.is_some_and(|(kind, _, _)| kind == ENTITY_TYPE_SKILL) {
+                if changed.install_rows.len() < cap {
+                    changed.install_rows.push(receipt);
+                } else {
+                    changed.install_overflow += 1;
+                }
+            }
+        }
+        Ok(changed)
     }
 }
 
