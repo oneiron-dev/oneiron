@@ -18,11 +18,21 @@ fn navigation_projection_rechecks_private_notes_even_if_nominated() {
     let reader =
         vault.scoped_read(oneiron::claim::ScopedReadActorKey::new(owner.to_hex()).unwrap());
     let mut results = reader.search_text("private diary", 10, None).unwrap();
+    let mut absent = results.clone();
     // Even a stale or overbroad nomination cannot bypass final projection.
     results.value = vec![oneiron::ScoredEntity { id, score: 1.0 }];
     let (items, receipt) = project_nav_results(&reader, results).unwrap();
     assert!(items.is_empty());
-    assert!(receipt.suppressed_count > 0);
+    // A privately denied NOTE is opaque-absent: its receipt must match a
+    // missing id and never count it as a suppression (ONE-2110).
+    absent.value = vec![oneiron::ScoredEntity {
+        id: oneiron::EntityId::now(),
+        score: 1.0,
+    }];
+    let (absent_items, absent_receipt) = project_nav_results(&reader, absent).unwrap();
+    assert!(absent_items.is_empty());
+    assert_eq!(receipt.suppressed_count, 0);
+    assert_eq!(receipt, absent_receipt);
 }
 
 #[test]
@@ -51,6 +61,7 @@ fn navigation_projection_uses_indexed_body_while_live_edit_is_pending() {
             oneiron::ClaimApprovalStatus::Auto,
             oneiron::ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let at = |second| oneiron::TimeRange {
         start: second,
@@ -74,7 +85,14 @@ fn navigation_projection_uses_indexed_body_while_live_edit_is_pending() {
     let (items, _receipt) = project_nav_results(&reader, hits).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["label"], "navanchor.original");
-    let live = reader.get(&id).unwrap().value.unwrap();
+    let live = reader
+        .read(&[oneiron::claim::PointRead::id(id)], None)
+        .unwrap()
+        .single()
+        .value
+        .unwrap()
+        .body
+        .unwrap();
     let live: rmpv::Value = rmp_serde::from_slice(&live).unwrap();
     assert_eq!(live["pred"].as_str(), Some("unmatched.replacement"));
 }

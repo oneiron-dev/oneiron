@@ -25,7 +25,7 @@ pub(super) fn assert_excluded_history_survives(exclude: Exclude) -> Result<()> {
                 )
             };
             let excluded_id = entity(0x84);
-            let mut excluded = subject_fact(predicate, subject, old_value.clone(), writer(), 100);
+            let mut excluded = subject_fact(predicate, subject, old_value.clone(), writer(), 100)?;
             exclude(&mut excluded);
             put_subject_fixture(&vault, &excluded_id, &excluded)?;
             let excluded_before = vault.get(&excluded_id)?;
@@ -37,7 +37,7 @@ pub(super) fn assert_excluded_history_survives(exclude: Exclude) -> Result<()> {
                     (entity(0x86), ClaimApprovalStatus::Approved),
                 ] {
                     let mut body =
-                        subject_fact(predicate, subject, old_value.clone(), writer(), 100);
+                        subject_fact(predicate, subject, old_value.clone(), writer(), 100)?;
                     body.approval = approval;
                     put_subject_fixture(&vault, &id, &body)?;
                     prior_heads.push(id);

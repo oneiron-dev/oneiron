@@ -229,7 +229,7 @@ fn actor_binding_fold_transition_table() {
         fixture.enroll.clone(),
         bind.clone(),
     ];
-    let fold = fold_authority_log_without_seen_time_delay(&base);
+    let fold = fold_authority_log(&base);
     assert!(
         fold.issues.is_empty(),
         "clean bind must fold without issues"
@@ -248,7 +248,7 @@ fn actor_binding_fold_transition_table() {
     );
     let mut with_rebind = base.clone();
     with_rebind.push(rebind);
-    let fold = fold_authority_log_without_seen_time_delay(&with_rebind);
+    let fold = fold_authority_log(&with_rebind);
     assert!(fold.issues.is_empty());
     let binding = &fold.actor_bindings[&key];
     assert_eq!(binding.actor_ref, other_actor);
@@ -260,7 +260,7 @@ fn actor_binding_fold_transition_table() {
     let revoke = cosigned_entry(&fixture, vec![bind_hash], 3, revoke_actor_op(&key, 1), 104);
     let mut with_revoke = base;
     with_revoke.push(revoke.clone());
-    let fold = fold_authority_log_without_seen_time_delay(&with_revoke);
+    let fold = fold_authority_log(&with_revoke);
     assert!(fold.issues.is_empty());
     assert_eq!(
         folded_status(&fold, &key),
@@ -284,7 +284,7 @@ fn actor_binding_fold_transition_table() {
         orphan_revoke.clone(),
         bind,
     ];
-    let fold = fold_authority_log_without_seen_time_delay(&merged);
+    let fold = fold_authority_log(&merged);
     assert!(binding_rejection(&fold, &orphan_revoke).is_none());
     assert!(!actor_binding_is_active(&fold, &fixture.actor, "human"));
 
@@ -299,7 +299,7 @@ fn actor_binding_fold_transition_table() {
     );
     let mut revived = with_revoke.clone();
     revived.push(rebind_above);
-    let fold = fold_authority_log_without_seen_time_delay(&revived);
+    let fold = fold_authority_log(&revived);
     assert!(fold.issues.is_empty());
     assert_eq!(folded_status(&fold, &key), Some(ActorBindingStatus::Active));
     assert!(actor_binding_is_active(&fold, &fixture.actor, "human"));
@@ -334,7 +334,7 @@ fn actor_binding_rejection_rows_leave_state_untouched() {
     );
     let mut entries = base.clone();
     entries.push(double_bind.clone());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     assert_eq!(
         binding_rejection(&fold, &double_bind),
         Some(ActorBindingRejection::BindingExists)
@@ -353,7 +353,7 @@ fn actor_binding_rejection_rows_leave_state_untouched() {
         rebind_op(&key, fixture.actor, "human", 1),
         104,
     );
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         fixture.enroll.clone(),
         orphan_rebind.clone(),
@@ -374,7 +374,7 @@ fn actor_binding_rejection_rows_leave_state_untouched() {
     );
     let mut entries = base.clone();
     entries.push(stale_rebind.clone());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     assert_eq!(
         binding_rejection(&fold, &stale_rebind),
         Some(ActorBindingRejection::EpochNotAdvanced)
@@ -394,7 +394,7 @@ fn actor_binding_rejection_rows_leave_state_untouched() {
     let mut entries = base;
     entries.push(revoke);
     entries.push(replay.clone());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     assert_eq!(
         binding_rejection(&fold, &replay),
         Some(ActorBindingRejection::EpochNotAdvanced)
@@ -420,7 +420,7 @@ fn human_class_bind_requires_owner_capable_key() {
     );
     let mut entries = base.to_vec();
     entries.push(agent_as_human.clone());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     assert_eq!(
         binding_rejection(&fold, &agent_as_human),
         Some(ActorBindingRejection::OwnerCapabilityRequired)
@@ -438,7 +438,7 @@ fn human_class_bind_requires_owner_capable_key() {
     );
     let mut entries = base.to_vec();
     entries.push(agent_as_agent);
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     assert!(fold.issues.is_empty());
     assert_eq!(
         folded_status(&fold, &fixture.agent_key),
@@ -459,7 +459,7 @@ fn human_class_bind_requires_owner_capable_key() {
     );
     let mut entries = base.to_vec();
     entries.push(unenrolled.clone());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     assert_eq!(
         binding_rejection(&fold, &unenrolled),
         Some(ActorBindingRejection::KeyNotInRoster)
@@ -485,7 +485,7 @@ fn binding_dies_with_roster_key() {
         bind.clone(),
     ];
     assert!(actor_binding_is_active(
-        &fold_authority_log_without_seen_time_delay(&base),
+        &fold_legacy_authority_log(&base),
         &fixture.actor,
         "human"
     ));
@@ -508,7 +508,7 @@ fn binding_dies_with_roster_key() {
     );
     let mut entries = base.clone();
     entries.push(recovery);
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_legacy_authority_log(&entries);
     assert_eq!(
         folded_status(&fold, &key),
         Some(ActorBindingStatus::Revoked)
@@ -536,7 +536,7 @@ fn binding_dies_with_roster_key() {
     );
     let mut entries = base.clone();
     entries.push(rotate.clone());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_legacy_authority_log(&entries);
     assert_eq!(
         folded_status(&fold, &key),
         Some(ActorBindingStatus::Revoked)
@@ -563,7 +563,7 @@ fn binding_dies_with_roster_key() {
     let mut entries = base;
     entries.push(rotate);
     entries.push(rebound);
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_legacy_authority_log(&entries);
     assert_eq!(
         folded_status(&fold, &rotated_key),
         Some(ActorBindingStatus::Active)
@@ -611,7 +611,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
         wide_enroll,
         bind,
     ];
-    let fold = fold_authority_log_without_seen_time_delay(&owner_capable);
+    let fold = fold_legacy_authority_log(&owner_capable);
     assert_eq!(
         fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
         ROLE_OWNER | ROLE_ADMIN,
@@ -635,7 +635,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
     );
     let mut stripped = owner_capable;
     stripped.push(narrow_enroll);
-    let fold = fold_authority_log_without_seen_time_delay(&stripped);
+    let fold = fold_legacy_authority_log(&stripped);
     assert_eq!(
         fold.roster[&third_key].roles & (ROLE_OWNER | ROLE_ADMIN),
         0,
@@ -685,10 +685,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
         bind.clone(),
     ];
     assert_eq!(
-        folded_status(
-            &fold_authority_log_without_seen_time_delay(&live),
-            &spare_key
-        ),
+        folded_status(&fold_legacy_authority_log(&live), &spare_key),
         Some(ActorBindingStatus::Active),
         "control: a live agent key backs an agent-class binding"
     );
@@ -703,7 +700,7 @@ fn binding_dies_when_key_loses_its_bind_qualification() {
     );
     let mut revoked = live;
     revoked.push(revoke_device);
-    let fold = fold_authority_log_without_seen_time_delay(&revoked);
+    let fold = fold_legacy_authority_log(&revoked);
     assert!(
         fold.issues.is_empty(),
         "revoke fixture must fold cleanly: {:?}",
@@ -798,7 +795,7 @@ fn equal_epoch_divergent_bindings_fail_closed() {
     // Only the two branches: nothing resolves the divergence, so the merged
     // binding must be deterministic AND dead. A divergence over identity is exactly
     // where picking a silent winner would be the bug.
-    let fold = fold_authority_log_without_seen_time_delay(&dag.entries[..4]);
+    let fold = fold_authority_log(&dag.entries[..4]);
     let binding = &dag.key;
     assert_eq!(
         folded_status(&fold, binding),
@@ -820,7 +817,7 @@ proptest! {
         perm in prop::collection::vec(0_usize..6, 6),
     ) {
         let dag = binding_dag();
-        let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
+        let baseline = fold_authority_log(&dag.entries);
 
         let mut permuted = Vec::new();
         for index in perm {
@@ -833,7 +830,7 @@ proptest! {
                 permuted.push(entry.clone());
             }
         }
-        let folded = fold_authority_log_without_seen_time_delay(&permuted);
+        let folded = fold_authority_log(&permuted);
 
         // Absolute checks, not just baseline equality: a consistently
         // order-biased merge would agree with itself under every permutation.
@@ -928,10 +925,7 @@ fn atomic_genesis_owner_binding_door() {
 fn revoke_branch_beats_concurrent_higher_epoch_bind_in_every_order() {
     fn permutations(entries: &mut [AuthorityLogEntry], at: usize, expected: &AuthorityFold) {
         if at == entries.len() {
-            assert_eq!(
-                &fold_authority_log_without_seen_time_delay(entries),
-                expected
-            );
+            assert_eq!(&fold_authority_log(entries), expected);
         } else {
             for i in at..entries.len() {
                 entries.swap(at, i);
@@ -966,7 +960,7 @@ fn revoke_branch_beats_concurrent_higher_epoch_bind_in_every_order() {
         revoke.clone(),
         grant,
     ];
-    let expected = fold_authority_log_without_seen_time_delay(&entries);
+    let expected = fold_authority_log(&entries);
     assert_eq!(
         folded_status(&expected, &f.agent_key),
         Some(ActorBindingStatus::Revoked)
@@ -980,7 +974,7 @@ fn revoke_branch_beats_concurrent_higher_epoch_bind_in_every_order() {
         40,
     );
     entries.push(regrant);
-    let recovered = fold_authority_log_without_seen_time_delay(&entries);
+    let recovered = fold_authority_log(&entries);
     assert_eq!(
         folded_status(&recovered, &f.agent_key),
         Some(ActorBindingStatus::Active)
@@ -1014,7 +1008,7 @@ fn write_concurrent_with_revoke_regrant_window_quarantines() {
     );
     let regrant_hash = authority_entry_hash(&regrant).unwrap();
     let entries = vec![f.genesis, f.enroll, initial, revoke, regrant];
-    let folded = fold_authority_log_without_seen_time_delay(&entries);
+    let folded = fold_authority_log(&entries);
     assert_eq!(
         folded.actor_write_disposition(&f.actor, "agent", Some(initial_hash)),
         CausalWriteDisposition::Quarantined
@@ -1032,7 +1026,7 @@ fn write_concurrent_with_revoke_regrant_window_quarantines() {
         CausalWriteDisposition::Admitted
     );
     let reverse: Vec<_> = entries.into_iter().rev().collect();
-    assert_eq!(fold_authority_log_without_seen_time_delay(&reverse), folded);
+    assert_eq!(fold_authority_log(&reverse), folded);
 }
 
 #[test]
@@ -1075,13 +1069,13 @@ fn verified_revoke_floor_survives_invalid_grant_ancestry() {
     );
     let invalid_child_hash = authority_entry_hash(&invalid_child).unwrap();
     let base = vec![fixture.genesis, fixture.enroll, bind, invalid_grant];
-    let before = fold_authority_log_without_seen_time_delay(&base);
+    let before = fold_authority_log(&base);
     assert!(actor_binding_is_active(&before, &fixture.actor, "human"));
     assert!(!before.valid_entries.contains(&invalid_hash));
 
     let mut entries = base;
     entries.extend([revoke, invalid_child]);
-    let after = fold_authority_log_without_seen_time_delay(&entries);
+    let after = fold_authority_log(&entries);
     assert_eq!(
         folded_status(&after, &key),
         Some(ActorBindingStatus::Revoked)
@@ -1095,7 +1089,7 @@ fn verified_revoke_floor_survives_invalid_grant_ancestry() {
             .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
     );
     entries.reverse();
-    assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
+    assert_eq!(fold_authority_log(&entries), after);
 }
 
 /// Adding a signed sibling enrollment never erases an independently
@@ -1182,7 +1176,7 @@ fn verified_revoke_survives_concurrent_signer_enrollment() {
     );
     let revoke_hash = authority_entry_hash(&revoke).unwrap();
     let mut entries = vec![genesis, enroll_consent, bind, loser, revoke];
-    let before = fold_authority_log_without_seen_time_delay(&entries);
+    let before = fold_legacy_authority_log(&entries);
     assert!(
         before.issues.is_empty(),
         "valid revoke fixture: {:?}",
@@ -1195,7 +1189,7 @@ fn verified_revoke_survives_concurrent_signer_enrollment() {
     );
 
     entries.push(winner);
-    let after = fold_authority_log_without_seen_time_delay(&entries);
+    let after = fold_legacy_authority_log(&entries);
     assert!(after.valid_entries.contains(&winner_hash));
     assert!(after.valid_entries.contains(&loser_hash));
     assert!(after.valid_entries.contains(&revoke_hash));
@@ -1211,13 +1205,13 @@ fn verified_revoke_survives_concurrent_signer_enrollment() {
     );
     let mut bad_entries = entries.clone();
     bad_entries[4].cosigns[0].signature[0] ^= 1;
-    let bad = fold_authority_log_without_seen_time_delay(&bad_entries);
+    let bad = fold_legacy_authority_log(&bad_entries);
     assert_eq!(
         folded_status(&bad, &consent_key),
         Some(ActorBindingStatus::Active)
     );
     entries.reverse();
-    assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
+    assert_eq!(fold_legacy_authority_log(&entries), after);
 }
 
 #[test]
@@ -1315,7 +1309,7 @@ fn verified_revoke_survives_invalid_grant_and_concurrent_enrollment() {
     );
     let revoke_hash = authority_entry_hash(&revoke).unwrap();
     let mut entries = vec![genesis, enroll_consent, bind, loser, invalid_grant, revoke];
-    let before = fold_authority_log_without_seen_time_delay(&entries);
+    let before = fold_legacy_authority_log(&entries);
     assert!(
         before
             .issues
@@ -1332,7 +1326,7 @@ fn verified_revoke_survives_invalid_grant_and_concurrent_enrollment() {
     );
 
     entries.push(winner);
-    let after = fold_authority_log_without_seen_time_delay(&entries);
+    let after = fold_legacy_authority_log(&entries);
     assert!(after.valid_entries.contains(&winner_hash));
     assert!(after.valid_entries.contains(&loser_hash));
     assert!(!after.valid_entries.contains(&revoke_hash));
@@ -1353,185 +1347,11 @@ fn verified_revoke_survives_invalid_grant_and_concurrent_enrollment() {
     );
     let mut bad_entries = entries.clone();
     bad_entries[5].cosigns[0].signature[0] ^= 1;
-    let bad = fold_authority_log_without_seen_time_delay(&bad_entries);
+    let bad = fold_legacy_authority_log(&bad_entries);
     assert_eq!(
         folded_status(&bad, &consent_key),
         Some(ActorBindingStatus::Active)
     );
     entries.reverse();
-    assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
-}
-
-#[test]
-fn verified_revoke_survives_frozen_grant_and_concurrent_enrollment() {
-    let owner = ed_key(143);
-    let owner_key = authority_key_from_ed(&owner);
-    let consent = ed_key(144);
-    let consent_key = authority_key_from_ed(&consent);
-    let genesis = genesis_entry(143, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let enroll_consent = enroll_device_entry(
-        vault_id,
-        &genesis,
-        &owner,
-        EnrollSpec {
-            seed: 144,
-            roles: ROLE_OWNER | ROLE_ADMIN,
-            tier: AuthorityTier::Software,
-            seq: 1,
-            ts: 2,
-        },
-    );
-    let actor = scope_entity(0x6c);
-    let bind = cosign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            1,
-            vec![authority_entry_hash(&enroll_consent).unwrap()],
-            bind_op(&consent_key, actor, "human", 1),
-            consent_key.clone(),
-            3,
-        ),
-        &consent,
-        &owner,
-    );
-    let bind_hash = authority_entry_hash(&bind).unwrap();
-    let enroll_agent = |seed| {
-        cosign_ed(
-            unsigned_entry(
-                Some(vault_id),
-                2,
-                vec![bind_hash],
-                AuthorityOp::EnrollDevice {
-                    device: device(
-                        authority_key_from_ed(&ed_key(seed)),
-                        ROLE_AGENT,
-                        AuthorityTier::Software,
-                    ),
-                },
-                owner_key.clone(),
-                4,
-            ),
-            &owner,
-            &consent,
-        )
-    };
-    let first = enroll_agent(145);
-    let second = enroll_agent(146);
-    // Sign the revoke on one branch, then add a signed concurrent enrollment.
-    // Current main accepts both same-sequence siblings.
-    let (loser, signer_seed, winner) =
-        if authority_entry_hash(&first).unwrap() > authority_entry_hash(&second).unwrap() {
-            (first, 145, second)
-        } else {
-            (second, 146, first)
-        };
-    let loser_hash = authority_entry_hash(&loser).unwrap();
-    let winner_hash = authority_entry_hash(&winner).unwrap();
-    let signer = ed_key(signer_seed);
-    let signer_key = authority_key_from_ed(&signer);
-    let widen = cosign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            1,
-            vec![loser_hash],
-            AuthorityOp::EnrollDevice {
-                device: device(
-                    authority_key_from_ed(&ed_key(147)),
-                    ROLE_AGENT,
-                    AuthorityTier::Software,
-                ),
-            },
-            signer_key.clone(),
-            5,
-        ),
-        &signer,
-        &consent,
-    );
-    let widen_hash = authority_entry_hash(&widen).unwrap();
-    let frozen_grant = cosign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            2,
-            vec![widen_hash],
-            rebind_op(&consent_key, actor, "human", 10),
-            signer_key.clone(),
-            6,
-        ),
-        &signer,
-        &consent,
-    );
-    let frozen_hash = authority_entry_hash(&frozen_grant).unwrap();
-    let revoke = cosign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            3,
-            vec![frozen_hash],
-            revoke_actor_op(&consent_key, 11),
-            signer_key.clone(),
-            7,
-        ),
-        &signer,
-        &consent,
-    );
-    let revoke_hash = authority_entry_hash(&revoke).unwrap();
-    let now = 10_000_000;
-    let mut entries = vec![
-        genesis,
-        enroll_consent,
-        bind,
-        loser,
-        widen,
-        frozen_grant,
-        revoke,
-    ];
-    let mut first_seen = BTreeMap::new();
-    for entry in entries.iter().take(4) {
-        first_seen.insert(authority_entry_hash(entry).unwrap(), 1);
-    }
-    for entry in entries.iter().skip(4) {
-        first_seen.insert(authority_entry_hash(entry).unwrap(), now);
-    }
-    first_seen.insert(winner_hash, 1);
-    let before = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-    assert!(before.valid_entries.contains(&revoke_hash));
-    assert!(before.pending_widens.contains_key(&widen_hash));
-    assert!(!before.valid_entries.contains(&frozen_hash));
-    assert_eq!(
-        folded_status(&before, &consent_key),
-        Some(ActorBindingStatus::Revoked)
-    );
-    assert_eq!(
-        before.actor_write_disposition(&actor, "human", None),
-        CausalWriteDisposition::Quarantined
-    );
-
-    entries.push(winner);
-    let after = fold_authority_log_with_seen_times(&entries, &first_seen, now);
-    assert!(after.valid_entries.contains(&winner_hash));
-    assert!(after.valid_entries.contains(&loser_hash));
-    assert!(after.valid_entries.contains(&widen_hash));
-    assert!(!after.valid_entries.contains(&frozen_hash));
-    assert!(after.valid_entries.contains(&revoke_hash));
-    assert!(after.roster.contains_key(&signer_key));
-    assert_eq!(
-        folded_status(&after, &consent_key),
-        Some(ActorBindingStatus::Revoked)
-    );
-    assert_eq!(
-        after.actor_write_disposition(&actor, "human", None),
-        CausalWriteDisposition::Quarantined
-    );
-    let mut bad_entries = entries.clone();
-    bad_entries[6].cosigns[0].signature[0] ^= 1;
-    let bad = fold_authority_log_with_seen_times(&bad_entries, &first_seen, now);
-    assert_eq!(
-        folded_status(&bad, &consent_key),
-        Some(ActorBindingStatus::Active)
-    );
-    entries.reverse();
-    assert_eq!(
-        fold_authority_log_with_seen_times(&entries, &first_seen, now),
-        after
-    );
+    assert_eq!(fold_legacy_authority_log(&entries), after);
 }

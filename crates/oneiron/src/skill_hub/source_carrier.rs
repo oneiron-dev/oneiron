@@ -72,7 +72,7 @@ pub(crate) fn validate_hub_source_carrier_put(
     bytes: &[u8],
 ) -> Result<()> {
     super::source_custody::validate_registered_source_target(store, txn, id, entity_type, bytes)?;
-    let previous = store.entities.get(txn, id.as_bytes())?;
+    let previous = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     if let Some(raw) = &previous {
         let header = EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("hub source carrier header"))?;
@@ -145,7 +145,8 @@ pub(super) fn canonical_source_package(package: &HubPackage) -> Result<HubPackag
         vec![],
         rmpv::Value::Map(vec![("source".into(), "byte-custody".into())]),
     )
-    .with_content_hash(package.content_hash()?);
+    .with_content_hash(package.content_hash()?)
+    .with_role(package.record.role, package.record.call.clone());
     let mut canonical =
         HubPackage::new(record, package.files.clone(), package.capabilities.clone());
     canonical.format = package.format;

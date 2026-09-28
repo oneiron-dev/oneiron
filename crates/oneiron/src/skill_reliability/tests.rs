@@ -90,7 +90,7 @@ fn stamped_receipt(vault: &Vault, skill_id: &str) -> String {
 
 /// [`stamped_receipt`] with the manifest revision named explicitly.
 fn stamped_receipt_for_revision(vault: &Vault, skill_id: &str, version: &str) -> String {
-    stamped_receipt_for_revision_as(vault, skill_id, version, None)
+    stamped_receipt_for_as_model(vault, skill_id, version, None, None)
 }
 
 fn stamped_receipt_for_revision_as(
@@ -98,6 +98,16 @@ fn stamped_receipt_for_revision_as(
     skill_id: &str,
     version: &str,
     actor: Option<EntityId>,
+) -> String {
+    stamped_receipt_for_as_model(vault, skill_id, version, actor, None)
+}
+
+fn stamped_receipt_for_as_model(
+    vault: &Vault,
+    skill_id: &str,
+    version: &str,
+    actor: Option<EntityId>,
+    model: Option<&str>,
 ) -> String {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue
@@ -135,6 +145,14 @@ fn stamped_receipt_for_revision_as(
     else {
         panic!("the enqueued attempt is claimable");
     };
+    queue
+        .set_executor_model(
+            attempt.id,
+            "sk05-worker",
+            leased.attempt_count,
+            model.unwrap_or("fixture/model@1"),
+        )
+        .expect("stamp model");
     let CompleteOutcome::Completed(_) = queue
         .complete(CompleteAttempt {
             id: attempt.id,
@@ -146,7 +164,12 @@ fn stamped_receipt_for_revision_as(
     else {
         panic!("a leased attempt completes exactly once");
     };
-    attempt_pack_receipt_id(&attempt.id)
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    if model.is_none() {
+        crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
+            .expect("emulate older receipt without executor stamp");
+    }
+    receipt_id
 }
 
 /// Records one routed outcome and returns the judgments the pass minted.
@@ -192,7 +215,8 @@ fn plant_synced_claim(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.evidence = Some(Value::Array(
         cited.iter().map(|id| Value::from(*id)).collect(),
     ));
@@ -1360,6 +1384,234 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
 }
 
 #[test]
+fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.pair.swap");
+    put_actor(&vault, &actor);
+    let prior = skill_reliability_prior(&vault, &skill)?;
+    let old = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.pair.swap",
+        "1.0.0",
+        Some(actor),
+        Some("old@1"),
+    );
+    record_skill_contributing_win(&vault, &skill, &old, 20)?;
+    project_skill_reliability_for_executor(&vault, &skill, "old@1", 21)?;
+    let old_posterior = skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?.unwrap();
+    assert_eq!(old_posterior.alpha, prior.alpha + 1.0);
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "new@2")?.posterior,
+        prior
+    );
+    assert_eq!(skill_executor_reliability(&vault, &skill, "new@2")?.runs, 0);
+    assert!(skill_executor_reliability(&vault, &skill, "new@2")?.new_model);
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "new@2")?,
+        None
+    );
+    assert_eq!(skill_reliability_posterior(&vault, &skill)?, None);
+    assert_eq!(
+        vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
+        SkillLifecycle::Active
+    );
+
+    // An A/B slice credits only the new model. A held-out rerun has the same
+    // receipt-stamped door; neither can borrow the incumbent's observations.
+    for _ in 0..2 {
+        let new_receipt = stamped_receipt_for_as_model(
+            &vault,
+            "sk05.pair.swap",
+            "1.0.0",
+            Some(actor),
+            Some("new@2"),
+        );
+        record_skill_contributing_win(&vault, &skill, &new_receipt, 22)?;
+        project_skill_reliability_for_executor(&vault, &skill, "new@2", 23)?;
+    }
+    let new = skill_executor_reliability(&vault, &skill, "new@2")?;
+    assert_eq!(new.runs, 2);
+    assert!(!new.new_model);
+    assert_eq!(new.posterior.alpha, prior.alpha + 2.0);
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?,
+        Some(old_posterior)
+    );
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "new@3")?,
+        None
+    );
+    assert_eq!(
+        skill_selection_score_for_executor(&vault, &skill, "new@3", 8)?,
+        prior.ucb(8)
+    );
+
+    let failed = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.pair.swap",
+        "1.0.0",
+        Some(actor),
+        Some("new@2"),
+    );
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&failed, actor, AttemptOutcome::Failed, 24)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    project_skill_reliability(&vault, &judgments)?;
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "new@2")?
+            .unwrap()
+            .beta,
+        prior.beta + 1.0
+    );
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?,
+        Some(old_posterior)
+    );
+    Ok(())
+}
+
+#[test]
+fn executor_stamp_is_write_once_and_survives_terminal_receipt() -> crate::error::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
+        kind: "sk05.stamp".to_owned(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("fresh attempt")
+    };
+    queue.append_manifest_entry(
+        row.id,
+        ManifestEntry::new(ManifestKind::Skill, "skill-stamp", "1", 11),
+    )?;
+    assert!(
+        queue
+            .set_executor_model(row.id, "worker", 1, "provider/model@1")
+            .is_err()
+    );
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("leased")
+    };
+    assert!(
+        queue
+            .set_executor_model(row.id, "other", leased.attempt_count, "provider/model@1")
+            .is_err()
+    );
+    queue.set_executor_model(row.id, "worker", leased.attempt_count, "provider/model@1")?;
+    assert!(
+        queue
+            .set_executor_model(row.id, "worker", leased.attempt_count, "provider/model@2")
+            .is_err()
+    );
+    assert!(
+        queue
+            .set_executor_model(row.id, "worker", leased.attempt_count, "")
+            .is_err()
+    );
+    queue.complete(CompleteAttempt {
+        id: row.id,
+        lease_owner: "worker".to_owned(),
+        attempt_count: leased.attempt_count,
+        now: 13,
+    })?;
+    assert_eq!(
+        queue
+            .set_executor_model(row.id, "worker", leased.attempt_count, "provider/model@1")?
+            .executor_model
+            .as_deref(),
+        Some("provider/model@1")
+    );
+    assert!(
+        queue
+            .set_executor_model(row.id, "worker", leased.attempt_count, "provider/model@2")
+            .is_err()
+    );
+    let receipt =
+        crate::receipt::attempt_pack_receipt(&vault, &attempt_pack_receipt_id(&row.id))?.unwrap();
+    assert_eq!(
+        receipt.fields.get("model").map(String::as_str),
+        Some("provider/model@1")
+    );
+    Ok(())
+}
+
+#[test]
+fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crate::error::Result<()>
+{
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.displaced");
+    put_actor(&vault, &actor);
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.displaced",
+        "1.0.0",
+        Some(actor),
+        Some("executor@1"),
+    );
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    project_skill_reliability(&vault, &judgments)?;
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "executor@1")?.runs,
+        1
+    );
+    let marked = crate::skill_attribution::supersede_displaced_judge_receipts(
+        &vault,
+        "rule-attribution@1",
+        "replacement@2",
+        32,
+    )?;
+    assert_eq!(marked.len(), 1);
+    assert_eq!(marked[0].receipt_ref, receipt);
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "executor@1")?.runs,
+        0
+    );
+    assert_eq!(
+        crate::skill_attribution::attribution_judgments(&vault)?,
+        judgments
+    );
+    assert!(crate::receipt::attempt_pack_receipt(&vault, &receipt)?.is_some());
+    assert_eq!(
+        crate::skill_attribution::supersede_displaced_judge_receipts(
+            &vault,
+            "rule-attribution@1",
+            "replacement@2",
+            33
+        )?
+        .len(),
+        1
+    );
+    project_skill_reliability(&vault, &judgments)?;
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "executor@1")?.runs,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn shared_posterior_skill_contract_updates_samples_and_scores() {
     use crate::posterior::Posterior;
     use rand::{SeedableRng, rngs::StdRng};
@@ -1396,6 +1648,287 @@ fn skill_posterior_sample_rejects_invalid_public_parameters() {
             "invalid alpha {alpha:?} must be rejected"
         );
     }
+}
+
+#[test]
+fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::Result<()> {
+    use crate::skill_attribution::{
+        AttributionJudge, RuleAttributionJudge, run_attribution_projector_with_judge,
+    };
+    struct Unknown;
+    impl AttributionJudge for Unknown {
+        fn judge(
+            &self,
+            evidence: &OutcomeEvidence,
+        ) -> crate::error::Result<Option<AttributionVerdict>> {
+            RuleAttributionJudge.judge(evidence)
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.unknown-judge");
+    put_actor(&vault, &actor);
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.unknown-judge",
+        "1.0.0",
+        Some(actor),
+        Some("model@1"),
+    );
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let rows = run_attribution_projector_with_judge(&vault, 0, &Unknown)?;
+    project_skill_reliability(&vault, &rows)?;
+    run_attribution_projector_with_judge(&vault, 0, &RuleAttributionJudge)?;
+    assert!(
+        crate::skill_attribution::supersede_displaced_judge_receipts(
+            &vault,
+            "rule-attribution@1",
+            "rule-attribution@2",
+            40
+        )?
+        .is_empty()
+    );
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn displaced_floor_crossing_retires_only_its_own_proposal() -> crate::error::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.displaced-floor");
+    put_actor(&vault, &actor);
+    for _ in 0..9 {
+        let receipt = stamped_receipt_for_as_model(
+            &vault,
+            "sk05.displaced-floor",
+            "1.0.0",
+            Some(actor),
+            Some("old@1"),
+        );
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+                .with_skill(skill)
+                .with_routing_facts(true, true),
+        )?;
+        let rows = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        project_skill_reliability(&vault, &rows)?;
+    }
+    let open = claims(
+        &vault,
+        &skill,
+        PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+        ClaimLifecycleStatus::Active,
+    );
+    assert_eq!(open.len(), 1);
+    let original = open[0].clone();
+    crate::skill_attribution::supersede_displaced_judge_receipts(
+        &vault,
+        "rule-attribution@1",
+        "new-judge@2",
+        50,
+    )?;
+    assert!(
+        claims(
+            &vault,
+            &skill,
+            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+            ClaimLifecycleStatus::Active
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        claims(
+            &vault,
+            &skill,
+            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+            ClaimLifecycleStatus::Superseded
+        )
+        .len(),
+        1
+    );
+    assert_eq!(original.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(skill_executor_reliability(&vault, &skill, "old@1")?.runs, 0);
+    Ok(())
+}
+
+#[test]
+fn displacement_between_batch_read_and_writer_cannot_restore_loss() -> crate::error::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.race");
+    put_actor(&vault, &actor);
+    let receipt =
+        stamped_receipt_for_as_model(&vault, "sk05.race", "1.0.0", Some(actor), Some("model@1"));
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let rows = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+    std::thread::scope(|scope| -> crate::error::Result<()> {
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let projector = scope.spawn(|| {
+            super::projector::set_pre_write_hook(Box::new(move || {
+                ready_tx.send(()).expect("notify before writer");
+                resume_rx.recv().expect("wait for judge displacement");
+            }));
+            project_skill_reliability(&vault, &rows)
+        });
+        ready_rx.recv().expect("projector completed its pre-read");
+        crate::skill_attribution::supersede_displaced_judge_receipts(
+            &vault,
+            "rule-attribution@1",
+            "replacement@2",
+            31,
+        )?;
+        resume_tx.send(()).expect("release projector");
+        projector.join().expect("projector thread")?;
+        Ok(())
+    })?;
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
+        0
+    );
+    assert_eq!(
+        crate::skill_attribution::displaced_judge_receipts(&vault)?.len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn displaced_attribution_judge_cannot_commit_a_new_inflight_verdict() -> crate::error::Result<()> {
+    use crate::skill_attribution::{
+        AttributionJudge, RuleAttributionJudge, run_attribution_projector_with_judge,
+    };
+    struct SlowOld<'a> {
+        vault: &'a Vault,
+        displaced: std::cell::Cell<bool>,
+    }
+    impl AttributionJudge for SlowOld<'_> {
+        fn judge_revision(&self) -> Option<&str> {
+            Some("old-attribution@1")
+        }
+        fn judge(
+            &self,
+            evidence: &OutcomeEvidence,
+        ) -> crate::error::Result<Option<AttributionVerdict>> {
+            if !self.displaced.replace(true) {
+                crate::skill_attribution::supersede_displaced_judge_receipts(
+                    self.vault,
+                    "old-attribution@1",
+                    "new-attribution@2",
+                    30,
+                )?;
+            }
+            RuleAttributionJudge.judge(evidence)
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.inflight-judge");
+    put_actor(&vault, &actor);
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.inflight-judge",
+        "1.0.0",
+        Some(actor),
+        Some("model@1"),
+    );
+    record_attribution_evidence(
+        &vault,
+        &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 29)
+            .with_skill(skill)
+            .with_routing_facts(true, true),
+    )?;
+    let old = SlowOld {
+        vault: &vault,
+        displaced: std::cell::Cell::new(false),
+    };
+    assert!(run_attribution_projector_with_judge(&vault, 0, &old).is_err());
+    assert!(crate::skill_attribution::attribution_judgments(&vault)?.is_empty());
+    assert!(
+        project_skill_reliability_for_executor(&vault, &skill, "model@1", 31)?.observations()
+            == skill_reliability_prior(&vault, &skill)?.observations()
+    );
+    Ok(())
+}
+
+#[test]
+fn displacement_scan_cannot_miss_a_judgment_committed_before_its_writer() -> crate::error::Result<()>
+{
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let actor = EntityId::now();
+    put_active_import(&vault, &skill, "sk05.replacement-scan");
+    put_actor(&vault, &actor);
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.replacement-scan",
+        "1.0.0",
+        Some(actor),
+        Some("model@1"),
+    );
+    std::thread::scope(|scope| -> crate::error::Result<()> {
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let replacement = scope.spawn(|| {
+            crate::skill_attribution::set_pre_writer_hook(Box::new(move || {
+                ready_tx.send(()).expect("replacement about to take writer");
+                resume_rx.recv().expect("wait for new J1 judgment");
+            }));
+            crate::skill_attribution::supersede_displaced_judge_receipts(
+                &vault,
+                "rule-attribution@1",
+                "new-judge@2",
+                40,
+            )
+        });
+        ready_rx.recv().expect("replacement prepared");
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
+                .with_skill(skill)
+                .with_routing_facts(true, true),
+        )?;
+        let rows = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
+        assert_eq!(rows.len(), 1);
+        resume_tx.send(()).expect("release replacement");
+        let displaced = replacement.join().expect("replacement thread")?;
+        assert_eq!(displaced.len(), 1);
+        project_skill_reliability(&vault, &rows)?;
+        Ok(())
+    })?;
+    assert_eq!(
+        skill_executor_reliability(&vault, &skill, "model@1")?.runs,
+        0
+    );
+    assert!(
+        claims(
+            &vault,
+            &skill,
+            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
+            ClaimLifecycleStatus::Active
+        )
+        .is_empty()
+    );
+    Ok(())
 }
 
 mod resident;

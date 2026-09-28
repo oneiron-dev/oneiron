@@ -110,7 +110,7 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
 
     // A Person-backed agent has a valid actor binding, but this explicit
     // ceiling still prevents the Auto request from attaching.
-    let mut manifest = crate::gate::default_policy_manifest();
+    let mut manifest = crate::gate::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(manifest.as_slice());
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode")
     else {
@@ -607,6 +607,7 @@ fn put_structural_carries_text_index_fields_and_edges() {
     let view = facade
         .get_entity(&person.entity_ref)
         .expect("get")
+        .value
         .expect("exists");
     assert_eq!(view.kind, "PERSON");
     assert_eq!(view.body.unwrap()["name"], serde_json::json!("Chihiro"));
@@ -639,9 +640,9 @@ fn put_structural_carries_text_index_fields_and_edges() {
         .expect_err("CLAIM kind must go through commit");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
-    // Entities land with correct type bytes. The four bootstrap seed skills
-    // each persist one source carrier ASSET alongside the fixture ASSET.
-    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 5);
+    // Entities land with correct type bytes. Four bootstrap skill carriers and
+    // four built-in pack sources persist alongside the fixture ASSET.
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 9);
 }
 
 #[test]
@@ -684,6 +685,7 @@ fn put_habit_checkin_appends_child_with_pinned_role() {
     let view = facade
         .get_entity(&checkin.entity_ref)
         .unwrap()
+        .value
         .expect("checkin view");
     let body = view.body.unwrap();
     assert_eq!(
@@ -783,8 +785,8 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
     }
 
     // Exactly one entity of each checked fixture kind exists, and no
-    // refusal minted a second row. The four bootstrap seed skills each persist
-    // one source carrier ASSET alongside the fixture ASSET.
+    // refusal minted a second row. Four bootstrap skill carriers and four
+    // built-in pack sources persist alongside the fixture ASSET.
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_TASK)
@@ -797,7 +799,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
             .entities_by_type(ENTITY_TYPE_ASSET)
             .expect("asset entities")
             .len(),
-        5
+        9
     );
 }
 
@@ -844,6 +846,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
     let view_before = facade
         .get_entity(&victim.entity_ref)
         .expect("get before")
+        .value
         .expect("view before");
     let text_before = vault.search_text("tsukimi", 10).expect("search before");
     assert!(edges_before.is_empty(), "victim starts with no edges");
@@ -897,6 +900,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
     let view_after = facade
         .get_entity(&victim.entity_ref)
         .expect("get after")
+        .value
         .expect("view after");
     assert_eq!(view_after.kind, "EVENT", "stored kind is unchanged");
     assert_eq!(view_after.id_hex, view_before.id_hex);
@@ -1115,6 +1119,9 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
     let (_dir, vault) = open_vault();
     let agent = put_person(&vault, 0x17);
     let subject = put_person(&vault, 0x18);
+    // An agent's facade reads are grant-bound: the agent re-reads its own
+    // parked proposals under an explicit read grant.
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex()]);
     let facade = vault.memory(agent, EdgeActorClass::Agent);
 
     let parked = facade
@@ -1130,6 +1137,7 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
         &facade
             .get_entity(&parked.claim_short_id)
             .expect("read parked claim")
+            .value
             .expect("parked claim exists")
             .id_hex,
     )
@@ -1148,6 +1156,7 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
         &facade
             .get_entity(&unrelated.claim_short_id)
             .expect("read unrelated claim")
+            .value
             .expect("unrelated claim exists")
             .id_hex,
     )
@@ -1246,32 +1255,13 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
 
 #[test]
 fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
+    use crate::{ClaimCandidate, ClaimSource, ClaimSubject};
     let (_dir, vault) = open_vault();
     let first_agent = put_person(&vault, 0x19);
-    let replacement_agent = put_machine(&vault, 0x1A);
+    let replacement_agent = put_person(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
-    let replacement_facade = vault.memory(replacement_agent, EdgeActorClass::System);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
-    let owner = put_person(&vault, 0x1D);
-    root_vault_binding(&vault, 0x1E, owner, "human");
-    let proof = vault
-        .authenticate_owner(
-            owner,
-            &owner.to_hex(),
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
-    facade_for(&vault, owner)
-        .delegate_memory_authoring(
-            &proof,
-            crate::write_envelope::WriteActor::new(replacement_agent, EdgeActorClass::System),
-            MemoryAuthoringAction::EditClaim,
-            claim_id,
-        )
-        .expect("exact delegated edit slice");
-
     let mut first = claim_input(
         "profile.mood",
         &subject,
@@ -1282,25 +1272,36 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     first_facade
         .claim_upsert(&first)
         .expect("first agent parks proposal");
-
-    let mut replacement = claim_input(
-        "profile.color",
-        &subject,
-        "observed",
-        serde_json::json!("teal"),
+    let replacement_envelope = crate::write_envelope::WriteEnvelope::new(
+        crate::WriteActor::new(replacement_agent, EdgeActorClass::Agent),
+        ClaimSource::Observed,
+        crate::WriteProvenance::new(rmpv::Value::from("replacement actor")).unwrap(),
+        ClaimApprovalStatus::Proposed,
     );
-    replacement.id = Some(claim_id.to_hex());
-    // Reproduce the former split-transaction race deterministically: the
-    // replacement lands after call setup but immediately before the retraction
-    // write transaction begins. The fixed path authorizes only after acquiring
-    // that transaction, so it observes and rejects the replacement author.
+    let replacement = ClaimCandidate::new(
+        "profile.color",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("teal"),
+        1.0,
+    );
+    // Reproduce a different, authenticated PERSON author replacing the same
+    // id between preflight and the retraction transaction. MACHINE births
+    // are immutable and instead use distinct claim ids + signed transitions.
     let err = first_facade
         .claim_retract_with_pre_txn_hook(&claim_id.to_hex(), || {
-            replacement_facade
-                .claim_upsert(&replacement)
-                .expect("delegated daemon replaces same id in former race window");
+            vault
+                .batch()
+                .claim_candidate(
+                    &claim_id,
+                    replacement.clone(),
+                    &replacement_envelope,
+                    test_time(1),
+                    1,
+                )
+                .commit()
+                .expect("second actor replaces the same id");
         })
-        .expect_err("prior author has no authority over same-id replacement");
+        .expect_err("prior author has no authority over replacement");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     let current = vault
         .get_claim(&claim_id)
@@ -1308,13 +1309,89 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
         .expect("replacement remains");
     assert_eq!(current.predicate, "profile.color");
     assert_eq!(current.lifecycle, ClaimLifecycleStatus::Active);
-    assert!(
+    assert_eq!(
+        crate::claim::session_claim_producer(&current),
+        Some(replacement_agent)
+    );
+}
+
+#[test]
+fn signed_machine_keyed_create_replace_and_delete() {
+    use ed25519_dalek::Signer;
+    let (_dir, vault) = open_vault();
+    let machine = put_machine(&vault, 0x1A);
+    let issuer =
+        crate::authority::HostSlipIssuer::from_secret(b"keyed-machine-history-root").unwrap();
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let machine_key = ed25519_dalek::SigningKey::from_bytes(&[0x2A; 32]);
+    vault
+        .enroll_machine_identity(
+            &issuer,
+            machine,
+            machine_key.verifying_key().to_bytes(),
+            [17; 32],
+            |transcript| Ok(machine_key.sign(transcript).to_bytes()),
+        )
+        .unwrap();
+    // A host-landed enrollment is live at once: the widen delay is dead.
+    assert_eq!(
+        vault.authority_fold().unwrap().actor_bindings
+            [&crate::authority::AuthorityKey::Ed25519(machine_key.verifying_key().to_bytes())]
+            .status,
+        crate::authority::ActorBindingStatus::Active
+    );
+    append_actor_ceiling_rows(
+        &vault,
+        vec![("system".into(), machine.to_hex(), "auto".into())],
+    );
+    let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
+    let facade = vault.memory_signed_machine(
+        machine,
+        machine_key.verifying_key().to_bytes(),
+        &machine_sign,
+    );
+    let key = crate::memory::KeyValuePut {
+        namespace: vec!["machine".into()],
+        key: "signed".into(),
+        value: serde_json::json!({"fact": 1}),
+        request_id: "signed-key-1".into(),
+        source: "user_stated".into(),
+    };
+    let first = facade
+        .key_value_put(&key)
+        .expect("machine-signed keyed create");
+    let mut next = key;
+    next.value = serde_json::json!({"fact": 2});
+    next.request_id = "signed-key-2".into();
+    let second = facade
+        .key_value_put(&next)
+        .expect("signed keyed replacement");
+    assert_ne!(first.item.revision, second.item.revision);
+    assert_eq!(
         vault
-            .pending_gate_consents(10)
-            .expect("pending consent")
-            .iter()
-            .any(|record| record.claim_id == *claim_id.as_bytes()),
-        "replacement agent's consent row remains actionable"
+            .get_claim(&EntityId::from_hex(&first.item.revision).unwrap())
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    let address = crate::memory::KeyValueAddress {
+        namespace: next.namespace,
+        key: next.key,
+    };
+    assert!(
+        facade
+            .key_value_delete(&address)
+            .expect("signed keyed deletion")
+            .existed
+    );
+    assert_eq!(
+        vault
+            .get_claim(&EntityId::from_hex(&second.item.revision).unwrap())
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ClaimLifecycleStatus::Retracted
     );
 }
 
@@ -1356,9 +1433,9 @@ fn hydrate_round_trips_witness_short_ids() {
 /// exposed at this engine seam.
 #[test]
 fn edge_kind_names_round_trip_including_blocked_by() {
-    assert_eq!(edge_kind_from_str("blocked_by"), Some(EdgeKind::BlockedBy));
-    assert_eq!(edge_kind_name(EdgeKind::BlockedBy), "blocked_by");
-    assert_eq!(edge_kind_from_str("blockedBy"), None);
+    assert_eq!(EdgeKind::from_name("blocked_by"), Some(EdgeKind::BlockedBy));
+    assert_eq!(EdgeKind::BlockedBy.name(), "blocked_by");
+    assert_eq!(EdgeKind::from_name("blockedBy"), None);
 
     for kind in [
         EdgeKind::AuthoredBy,
@@ -1385,9 +1462,9 @@ fn edge_kind_names_round_trip_including_blocked_by() {
         EdgeKind::SplitInto,
         EdgeKind::BlockedBy,
     ] {
-        let name = edge_kind_name(kind);
+        let name = kind.name();
         assert_eq!(
-            edge_kind_from_str(name),
+            EdgeKind::from_name(name),
             Some(kind),
             "{kind:?} name {name} must parse back to itself"
         );
@@ -1399,9 +1476,9 @@ fn edge_kind_names_round_trip_including_blocked_by() {
 /// exactly as for `blocked_by`.
 #[test]
 fn same_as_edge_kind_name_round_trips() {
-    assert_eq!(edge_kind_from_str("same_as"), Some(EdgeKind::SameAs));
-    assert_eq!(edge_kind_name(EdgeKind::SameAs), "same_as");
-    assert_eq!(edge_kind_from_str("sameAs"), None);
+    assert_eq!(EdgeKind::from_name("same_as"), Some(EdgeKind::SameAs));
+    assert_eq!(EdgeKind::SameAs.name(), "same_as");
+    assert_eq!(EdgeKind::from_name("sameAs"), None);
     assert_eq!(EdgeKind::SameAs as u8, 20);
 }
 
@@ -1496,4 +1573,255 @@ fn relationship_upserts_do_not_supersede_another_relationship() {
             ClaimLifecycleStatus::Active
         );
     }
+}
+
+#[test]
+fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
+    use crate::federation::{
+        FederationGrantPreset, FederationGrantRole, InitialSharedMember, ScopeAxis, ScopeId,
+        decode_federation_grant_body, encode_federation_grant_body,
+    };
+    use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+    use std::collections::BTreeSet;
+
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0xB1);
+    let member = put_person(&vault, 0xB2);
+    let viewer = put_person(&vault, 0xB3);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let created = vault
+        .initialize_shared_vault(
+            &authenticated,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: member,
+                    role: Some(FederationGrantRole::Member),
+                },
+                InitialSharedMember {
+                    member_ref: viewer,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            1,
+        )
+        .unwrap();
+    let task = || StructuralPutInput {
+        id: None,
+        kind: "TASK".into(),
+        body: serde_json::json!({"role": 4, "content": "shared task"}),
+        text_fields: None,
+        edges: None,
+        occurred_at: 10,
+        learned_at: None,
+    };
+    let member_facade = facade_for(&vault, member);
+    let habit = member_facade
+        .put_structural(&task())
+        .expect("in-scope member task");
+    let habit_id = EntityId::from_hex(&habit.id_hex).unwrap();
+    for at in [11, 12] {
+        let checkin = member_facade
+            .put_habit_checkin(&HabitCheckinInput {
+                habit_ref: habit.id_hex.clone(),
+                id: None,
+                data: Some(serde_json::json!({"note": "done"})),
+                occurred_at: at,
+                learned_at: None,
+            })
+            .expect("successive in-scope check-ins");
+        let child = EntityId::from_hex(&checkin.id_hex).unwrap();
+        assert!(
+            vault
+                .edges_out(&child)
+                .unwrap()
+                .iter()
+                .any(|edge| { edge.kind == EdgeKind::ChildOf && edge.target == habit_id })
+        );
+        assert!(vault.record_scope(&habit_id).unwrap().is_some());
+    }
+    let habit_body = member_facade
+        .get_entity(&habit.id_hex)
+        .unwrap()
+        .value
+        .unwrap()
+        .body
+        .unwrap();
+    assert_eq!(habit_body["currentStreak"], serde_json::json!(1));
+    assert_eq!(habit_body["longestStreak"], serde_json::json!(1));
+    let accepted = member_facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &member,
+            "user_stated",
+            serde_json::json!("in scope"),
+        ))
+        .expect("in-scope member claim");
+    let claim_id = vault
+        .claims_for_subject(&member)
+        .unwrap()
+        .into_iter()
+        .find(|id| {
+            vault
+                .get_claim(id)
+                .unwrap()
+                .is_some_and(|body| body.predicate == "profile.name")
+        })
+        .unwrap();
+    let before_tasks = vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len();
+    let before_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len();
+    let viewer_facade = facade_for(&vault, viewer);
+    assert!(viewer_facade.put_structural(&task()).is_err());
+    let refused_checkin = EntityId::now();
+    assert!(
+        viewer_facade
+            .put_habit_checkin(&HabitCheckinInput {
+                habit_ref: habit.id_hex,
+                id: Some(refused_checkin.to_hex()),
+                data: Some(serde_json::json!({"note": "forbidden"})),
+                occurred_at: 11,
+                learned_at: None,
+            })
+            .is_err()
+    );
+    assert!(vault.get_raw(&refused_checkin).unwrap().is_none());
+    assert!(vault.edges_out(&refused_checkin).unwrap().is_empty());
+    assert!(
+        viewer_facade
+            .claim_upsert(&claim_input(
+                "profile.color",
+                &member,
+                "user_stated",
+                serde_json::json!("denied"),
+            ))
+            .is_err()
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(),
+        before_tasks
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len(),
+        before_claims
+    );
+
+    let (id, mut grant) = created
+        .grant_refs
+        .iter()
+        .find_map(|hex| {
+            let id = EntityId::from_hex(hex).unwrap();
+            let raw = vault.get_raw(&id).unwrap().unwrap();
+            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+            (grant.member_ref == member).then_some((id, grant))
+        })
+        .unwrap();
+    let project_b = EntityId::now();
+    grant.authority_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(project_b)]));
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time(1),
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    assert!(member_facade.put_structural(&task()).is_err());
+    assert!(
+        member_facade
+            .claim_upsert(&claim_input(
+                "profile.color",
+                &member,
+                "user_stated",
+                serde_json::json!("outside"),
+            ))
+            .is_err()
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(),
+        before_tasks
+    );
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len(),
+        before_claims
+    );
+    // The new body is in project B, but the same ID still holds project A.
+    // Reject before replacing A, including its lookup indexes and receipts.
+    let mut replacement = claim_input(
+        "profile.name",
+        &member,
+        "user_stated",
+        serde_json::json!("replacement B"),
+    );
+    replacement.id = Some(claim_id.to_hex());
+    replacement.scope = Some(serde_json::json!({"scopeProjectId": project_b.to_hex()}));
+    let old_raw = vault.get_raw(&claim_id).unwrap();
+    let old_index = vault.claims_for_subject(&member).unwrap();
+    let old_receipts = member_facade.receipts(100).unwrap();
+    assert!(member_facade.claim_upsert(&replacement).is_err());
+    assert_eq!(vault.get_raw(&claim_id).unwrap(), old_raw);
+    assert_eq!(vault.claims_for_subject(&member).unwrap(), old_index);
+    assert_eq!(member_facade.receipts(100).unwrap(), old_receipts);
+
+    // Same-ID replacement remains possible when BOTH positions are in B.
+    let mut in_b = claim_input(
+        "profile.color",
+        &member,
+        "user_stated",
+        serde_json::json!("first"),
+    );
+    let in_b_id = EntityId::now();
+    in_b.id = Some(in_b_id.to_hex());
+    in_b.scope = Some(serde_json::json!({"scopeProjectId": project_b.to_hex()}));
+    member_facade.claim_upsert(&in_b).expect("project B claim");
+    in_b.value = serde_json::json!("second");
+    member_facade
+        .claim_upsert(&in_b)
+        .expect("project B replacement");
+    assert_eq!(
+        vault.get_claim(&in_b_id).unwrap().unwrap().value.as_str(),
+        Some("second")
+    );
+
+    grant.role = FederationGrantRole::Viewer;
+    grant.preset = FederationGrantPreset::ReadOnly;
+    grant.authority_scope = crate::federation::scope_codec::read_preset();
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time(1),
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let prior_claim = vault.get_raw(&claim_id).unwrap();
+    let prior_receipts = member_facade.receipts(100).unwrap();
+    assert!(
+        member_facade
+            .claim_retract(&accepted.claim_short_id)
+            .is_err()
+    );
+    assert_eq!(vault.get_raw(&claim_id).unwrap(), prior_claim);
+    assert_eq!(
+        vault.get_claim(&claim_id).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(member_facade.receipts(100).unwrap(), prior_receipts);
 }

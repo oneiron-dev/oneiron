@@ -96,7 +96,7 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
     let weak = signed(action(1), 1, true);
     let strong = signed(action(2), 3, false);
     let mut entries = vec![genesis, enroll, floor, weak.clone(), strong.clone()];
-    let expected = fold_authority_log_without_seen_time_delay(&entries);
+    let expected = fold_legacy_authority_log(&entries);
     assert!(
         !expected
             .valid_entries
@@ -109,14 +109,11 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
     );
     assert_eq!(expected.tier_floor, Some(AuthorityTier::Hardware));
     entries.reverse();
-    assert_eq!(
-        expected,
-        fold_authority_log_without_seen_time_delay(&entries)
-    );
+    assert_eq!(expected, fold_legacy_authority_log(&entries));
 }
 
 #[test]
-fn floor_softening_is_delayed_vetoable_and_causal() {
+fn floor_softening_applies_at_once_and_stays_causal() {
     let hardware = p256_key(92);
     let key = authority_key_from_p256(&hardware);
     let delay = DEFAULT_PENDING_WIDEN_DELAY_SECS;
@@ -157,31 +154,18 @@ fn floor_softening_is_delayed_vetoable_and_causal() {
         &hardware,
     );
     let soften_hash = authority_entry_hash(&soften).unwrap();
+    // First seen NOW: the lowered floor still lands at once, because the
+    // delayed-widen ceremony is dead (identity canon, "Device-key widen
+    // ceremony (dead 2026-08-05)").
     let seen = BTreeMap::from([(soften_hash, 10)]);
     let entries = vec![genesis.clone(), soften.clone()];
-    let pending = fold_authority_log_with_seen_times(&entries, &seen, 10 + delay - 1);
-    assert_eq!(pending.tier_floor, Some(AuthorityTier::Hardware));
-    assert!(pending.pending_widens.contains_key(&soften_hash));
-    let mature = fold_authority_log_with_seen_times(&entries, &seen, 10 + delay);
-    assert_eq!(mature.tier_floor, Some(AuthorityTier::Software));
-    assert!(mature.pending_widens.is_empty());
-    let veto = sign_p256(
-        unsigned_entry(
-            Some(vault),
-            2,
-            vec![genesis_hash],
-            AuthorityOp::VetoPendingWiden {
-                pending_widen_hash: soften_hash,
-            },
-            key.clone(),
-            3,
-        ),
-        &hardware,
+    let lowered = fold_legacy_authority_log_with_seen_times(&entries, &seen, 10);
+    assert_eq!(lowered.tier_floor, Some(AuthorityTier::Software));
+    assert!(lowered.valid_entries.contains(&soften_hash));
+    assert_eq!(
+        fold_legacy_authority_log(&entries).tier_floor,
+        Some(AuthorityTier::Software)
     );
-    let vetoed =
-        fold_authority_log_with_seen_times(&[genesis.clone(), soften.clone(), veto], &seen, 20);
-    assert_eq!(vetoed.tier_floor, Some(AuthorityTier::Hardware));
-    assert!(vetoed.vetoed_widens.contains(&soften_hash));
     let concurrent = sign_p256(
         unsigned_entry(
             Some(vault),
@@ -196,11 +180,11 @@ fn floor_softening_is_delayed_vetoable_and_causal() {
         &hardware,
     );
     let mut fork = vec![genesis, soften, concurrent];
-    let constrained = fold_authority_log_with_seen_times(&fork, &seen, 10 + delay);
+    let constrained = fold_legacy_authority_log_with_seen_times(&fork, &seen, 10);
     assert_eq!(constrained.tier_floor, Some(AuthorityTier::Hardware));
     fork.reverse();
     assert_eq!(
         constrained,
-        fold_authority_log_with_seen_times(&fork, &seen, 10 + delay)
+        fold_legacy_authority_log_with_seen_times(&fork, &seen, 10)
     );
 }

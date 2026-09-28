@@ -1,5 +1,5 @@
 //! Core server state: the `SyncServer` struct, construction, and shared helpers.
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -8,7 +8,7 @@ use oneiron::DreamerAttemptProgressProducer;
 use oneiron::SyncEngineContext;
 #[cfg(test)]
 use oneiron::sync::WindowKey;
-use oneiron::sync::bridge::Materializer;
+use oneiron::sync::bridge::{LiveQueryTee, Materializer};
 use oneiron::sync::lease::ROOT_LEASES_MAP;
 use oneiron::sync::schema::{
     add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
@@ -31,8 +31,19 @@ use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 pub(crate) enum BroadcastPayload {
     /// Sender zero denotes a local write; other senders use echo suppression.
     Frame(u32, Vec<u8>),
+    /// Committed entity changes from Observer B, for local reads only.
+    LocalDocs(Vec<oneiron::EntityId>),
     /// A producer lost notifications before they reached this channel.
     Resync { missed: u64 },
+}
+
+/// One host-resolved agent run and the prefix this session actually emitted.
+/// The host advances the epoch only after a real fold; an HTTP request cannot.
+pub(crate) struct HostSelfBriefSession {
+    pub(crate) state: oneiron::context_board::SelfBriefState,
+    pub(crate) render: oneiron::context_board::SelfBriefSession,
+    pub(crate) epoch: u64,
+    pub(crate) emitted_epoch: Option<u64>,
 }
 
 /// Core sync server state shared across all connections.
@@ -56,6 +67,8 @@ pub struct SyncServer {
     pub(crate) lease_registrar: Mutex<()>,
     /// Window manager used by server-side safe-point maintenance jobs.
     pub(crate) reassert_manager: Arc<WindowManager>,
+    /// Keep the weakly attached Observer B local-read tee alive for this server.
+    _reactive_tee: Arc<dyn LiveQueryTee>,
     /// Process-local session component for lifecycle job debounce keys.
     pub(super) lifecycle_session_id: u64,
     /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
@@ -74,6 +87,9 @@ pub struct SyncServer {
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
+    /// Host-resolved run briefs, keyed by authenticated actor and session.
+    pub(crate) self_brief_sessions:
+        Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -91,6 +107,8 @@ pub struct SyncServer {
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
     pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
+    /// Host-injected, request-by-request egress decision for nonlocal extraction.
+    pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -128,6 +146,8 @@ impl SyncServer {
         {
             let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
             vault.ensure_host_root_slip(&issuer)?;
+            // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+            vault.provision_engine_machine_identities(&issuer)?;
         }
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
@@ -147,8 +167,8 @@ impl SyncServer {
                 // fresh server docs, root-doc creation, and client decoding
                 // cannot drift.
                 init_window_list(&doc, &[]);
-                // Device-lease registry map (ONE-1140, OD-3) — server-write
-                // only; lazily present on docs persisted before v2.
+                // Historical receipt-key verification records. This map
+                // grants no transport authority and has no live mint path.
                 let _leases = doc.get_map(ROOT_LEASES_MAP);
                 doc.commit();
                 // Boot is pre-connection/single-threaded; no root-writer
@@ -164,7 +184,10 @@ impl SyncServer {
             .map(|k| k.as_str().to_string())
             .collect();
         let mut reconciled = false;
-        for key in server_state::persisted_window_keys(&vault)? {
+        for key in server_state::persisted_window_keys(&vault)?
+            .into_iter()
+            .chain(oneiron::sync::discover_local_window_keys(&vault)?)
+        {
             if !known.contains(key.as_str()) {
                 add_window_to_root(&root_doc, &key);
                 reconciled = true;
@@ -187,6 +210,7 @@ impl SyncServer {
             SERVER_USER_ID,
         ));
         reassert_manager.attach_to_vault();
+        let reactive_tee = super::windows::attach_local_read_tee(&reassert_manager, &broadcast_tx);
         // Detached on purpose: the relay ends by itself when the manager (and
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
@@ -208,6 +232,7 @@ impl SyncServer {
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
             reassert_manager,
+            _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: Mutex::new(HashSet::new()),
             standing_block_cache: Mutex::new(
@@ -219,12 +244,46 @@ impl SyncServer {
             mcp_registry,
             mcp_code_host: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
+            self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,
             llm: None,
+            extraction_egress: None,
             #[cfg(test)]
             booking_test_now_secs: None,
         })
+    }
+
+    /// Install an already resolved run snapshot from the trusted host. The
+    /// HTTP request never supplies scope, class verdicts, or budget. Advancing
+    /// `epoch` happens only when the host has completed a real fold.
+    pub async fn install_self_brief_session(
+        &self,
+        actor: oneiron::EntityId,
+        session_id: String,
+        epoch: u64,
+        state: oneiron::context_board::SelfBriefState,
+    ) -> oneiron::Result<()> {
+        if state.self_ref != actor || session_id.is_empty() || session_id.len() > 256 {
+            return Err(oneiron::Error::InvariantViolation(
+                "self brief actor or session mismatch",
+            ));
+        }
+        let mut runs = self.self_brief_sessions.lock().await;
+        let entry = runs
+            .entry((actor, session_id))
+            .or_insert_with(|| HostSelfBriefSession {
+                state: state.clone(),
+                render: oneiron::context_board::SelfBriefSession::default(),
+                epoch,
+                emitted_epoch: None,
+            });
+        if epoch < entry.epoch {
+            return Err(oneiron::Error::InvariantViolation("stale self brief epoch"));
+        }
+        entry.state = state;
+        entry.epoch = epoch;
+        Ok(())
     }
 
     /// Bind a readiness-verified QuickJS provider before exposing this vault's
@@ -275,6 +334,16 @@ impl SyncServer {
         budget: oneiron::BudgetGuard,
     ) -> Self {
         self.llm = Some((backend, budget));
+        self
+    }
+
+    /// Install the host's extraction egress predicate. An absent predicate
+    /// refuses nonlocal extraction rather than trusting an editable default.
+    pub fn with_extraction_egress(
+        mut self,
+        predicate: Arc<dyn oneiron::llm::ExtractionEgressPredicate>,
+    ) -> Self {
+        self.extraction_egress = Some(predicate);
         self
     }
 

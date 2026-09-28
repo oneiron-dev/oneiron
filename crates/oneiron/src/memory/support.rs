@@ -138,22 +138,12 @@ pub(crate) fn verify_actor_binding_in_txn(
 ///
 /// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
 /// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
-/// the one-shot migration ran, the readonly fold cannot decide whether a
-/// delayable widen elapsed — and a `RotateKey` or `ReRoot` left
-/// un-applied keeps the key it RETIRES live and owner-bound. So the fold
-/// refuses instead of guessing, and the refusal surfaces here as INVALID_STATE
-/// (the vault's authority is broken, not the caller's request), suspending
-/// every owner verb until the log is re-folded through the write path.
-///
-/// A PRE-MIGRATION log takes the same door for the same reason. There the
-/// first-seen time is not lost but never recorded, and the only other candidate
-/// — the header's `learned_at` — is peer-written: trusting it lets a legacy
-/// `EnrollDevice(learned_at = 0)` present as long matured, so a child
-/// `BindActor` on the freshly owner-capable key would fold ACTIVE with no veto
-/// window. The fold assumes first-seen-now instead, which leaves the affected
-/// widens pending, and refuses while any of them is load-bearing. Unlike the
-/// lost-sidecar case this clears itself: one write-path fold records the
-/// observation and the delay runs from there.
+/// the one-shot migration ran, the readonly fold cannot decide whether an
+/// approval resting on a revoked roster has outlived its stale-roster window.
+/// So the fold refuses instead of guessing, and the refusal surfaces here as
+/// INVALID_STATE (the vault's authority is broken, not the caller's request),
+/// suspending every owner verb until the log is re-folded through the write
+/// path.
 pub(crate) fn verify_owner_actor_binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -166,17 +156,7 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
                 format!("{err}; owner verbs are suspended"),
                 &[
                     "Restore this vault's sync_state from backup, or re-import the authority log into a fresh vault so first-seen times are observed again.",
-                    "A widen whose local first-seen time is lost cannot be judged elapsed or pending; no binding authorizes until it can.",
-                ],
-            );
-        }
-        if crate::authority::is_indeterminate_first_seen(&err) {
-            return MemoryError::new(
-                MEMORY_CODE_INVALID_STATE,
-                format!("{err}; owner verbs are suspended"),
-                &[
-                    "Run a write-path authority fold (any authority-log write, or `authority_fold`) so this vault records when it first observed the pending entries.",
-                    "The delay then runs from that local observation; a widen's first-seen time is never taken from the peer-claimed learned_at metadata.",
+                    "An approval whose local first-seen time is lost cannot be judged stale or live; no binding authorizes until it can.",
                 ],
             );
         }
@@ -392,7 +372,15 @@ pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
+    /// Private signer stays with the machine host; only the transcript crosses
+    /// this callback, and each commit re-signs after its final approval choice.
+    pub(super) machine_signer: Option<([u8; 32], &'v MachineSignFn<'v>)>,
+    /// The verified credential this actor presented, when a host bound one:
+    /// every read verb then reads under the key that proof builds.
+    pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
 }
+
+type MachineSignFn<'a> = dyn Fn(&[u8]) -> crate::Result<[u8; 64]> + Send + Sync + 'a;
 
 impl Vault {
     /// Binds this vault's [`Memory`] surface to an actor. The actor entity
@@ -409,6 +397,27 @@ impl Vault {
             vault: self,
             actor,
             actor_class,
+            machine_signer: None,
+            read_proof: None,
+        }
+    }
+
+    /// Binds a MACHINE's claim writes to its enrolled software signing key.
+    /// Transport authentication alone cannot supply this proof. Other memory
+    /// verbs remain subject to their own authorization and write doors.
+    #[must_use]
+    pub fn memory_signed_machine<'a>(
+        &'a self,
+        machine: EntityId,
+        public_key: [u8; 32],
+        sign: &'a (dyn Fn(&[u8]) -> crate::Result<[u8; 64]> + Send + Sync),
+    ) -> Memory<'a> {
+        Memory {
+            vault: self,
+            actor: machine,
+            actor_class: EdgeActorClass::System,
+            machine_signer: Some((public_key, sign)),
+            read_proof: None,
         }
     }
 }
@@ -416,6 +425,17 @@ impl Vault {
 impl Memory<'_> {
     pub(crate) fn vault(&self) -> &Vault {
         self.vault
+    }
+
+    /// Binds this surface's reads to the verified credential the actor
+    /// presented (ONE-1187-D6: a render read runs under the principal's
+    /// already-held key). Every read verb then reads under the key that proof
+    /// builds, never a broader one — not even the owner's. The proof's holder
+    /// must be the bound actor; a read refuses otherwise.
+    #[must_use]
+    pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
+        self.read_proof = Some(proof.clone());
+        self
     }
 
     /// The bound actor entity id.
@@ -456,12 +476,59 @@ impl Memory<'_> {
         verify_owner_actor_binding_in_txn(self.vault, txn, self.actor)
     }
 
+    /// One actor-bound content writer. Its interface exposes read-only
+    /// observation and typed content programs; ordinary content cannot take
+    /// a raw mutable transaction from this entry.
+    pub(crate) fn with_actor_content_write_txn<T>(
+        &self,
+        write: impl FnOnce(&mut crate::federation::ActorContentTxn<'_, '_, '_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        self.with_actor_content_write_txn_as(
+            crate::WriteActor::new(self.actor, self.actor_class),
+            write,
+        )
+    }
+
+    /// Preserve the observed authority frontier when a typed Vault NOTE door
+    /// is called with an already-bound WriteActor rather than the facade's
+    /// ordinary actor pair.
+    pub(crate) fn with_actor_content_write_txn_as<T>(
+        &self,
+        actor: crate::WriteActor,
+        write: impl FnOnce(&mut crate::federation::ActorContentTxn<'_, '_, '_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        if actor.entity_ref() != self.actor || actor.actor_class() != self.actor_class {
+            return Err(
+                Error::InvalidClaimBody("content actor does not match bound facade").into(),
+            );
+        }
+        self.vault.try_with_write_txn(|wtxn| {
+            verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
+            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, actor)?;
+            let result = write(&mut content)?;
+            content.finish()?;
+            Ok(result)
+        })
+    }
+
+    /// Legacy domain-specific actor writes that do not yet expose a resolved
+    /// record position require a full content-write grant in a shared vault.
+    /// A scoped writer uses `with_actor_content_write_txn` and its typed
+    /// effects instead. No caller may use raw access to bypass membership.
     pub(crate) fn with_verified_actor_write_txn<T>(
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
         self.vault.try_with_write_txn(|wtxn| {
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+            if let Some(creation) = self.vault.shared_vault_creation_in_txn(wtxn)? {
+                self.vault.authorize_shared_vault_write_in_txn(
+                    wtxn,
+                    creation.vault_id,
+                    &crate::WriteActor::new(self.actor, self.actor_class),
+                    &crate::federation::SharedVaultWrite::Content(crate::federation::Scope::top()),
+                )?;
+            }
             write(wtxn)
         })
     }

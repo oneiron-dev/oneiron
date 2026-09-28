@@ -11,10 +11,8 @@ impl OutboundDispatchPipeline {
         request: &ArtifactPublishVerbRequest,
     ) -> Result<ArtifactPublishVerbOutcome> {
         validate_artifact_id(&request.artifact)?;
-        let key = publish_admission_key(request.publish_id);
         let mut wtxn = vault.store.env.write_txn()?;
-        if let Some(raw) = vault.store.vault_meta.get(&wtxn, &key)? {
-            let admission = decode_publish_admission(&raw)?;
+        if let Some(admission) = read_publish_admission(vault, &wtxn, &request.publish_id)? {
             check_replay_binding(&admission, request)?;
             let gate = admitted_gate(vault, &wtxn, &admission)?;
             let receipt = publish_receipt(request.publish_id, &admission, &gate);
@@ -25,7 +23,9 @@ impl OutboundDispatchPipeline {
             let pointer = vault
                 .artifact_pointer(&request.artifact, request.channel)?
                 .filter(|pointer| {
-                    pointer.export == admission.export && owner == Some(admission.export_entity_id)
+                    pointer.export == admission.export
+                        && pointer.serve_tier == admission.serve_tier
+                        && owner == Some(admission.export_entity_id)
                 });
             return Ok(ArtifactPublishVerbOutcome {
                 status: ArtifactPublishVerbStatus::Published,
@@ -67,13 +67,20 @@ impl OutboundDispatchPipeline {
             });
         }
         let pointer = if let Some(snapshot) = &snapshot {
-            publish_artifact_pointer_in_txn(vault, &mut wtxn, snapshot, request.channel)?
+            publish_artifact_pointer_in_txn(
+                vault,
+                &mut wtxn,
+                snapshot,
+                request.channel,
+                request.serve_tier,
+            )?
         } else {
             vault.publish_export_pointer_in_txn(
                 &mut wtxn,
                 &request.artifact,
                 request.channel,
                 request.export,
+                request.serve_tier,
             )?
         };
         let admission = ArtifactPublishAdmission {
@@ -86,10 +93,9 @@ impl OutboundDispatchPipeline {
             gate_id,
             occurred_at: request.occurred_at,
             stale_taint_override: pointer.stale_taint_override,
+            serve_tier: request.serve_tier,
         };
-        let bytes = serde_json::to_vec(&admission)
-            .map_err(|_| Error::InvariantViolation("artifact publish admission encode"))?;
-        vault.store.vault_meta.put(&mut wtxn, &key, &bytes)?;
+        ARTIFACT_ADMISSIONS.put(&vault.store, &mut wtxn, &request.publish_id, &admission)?;
         wtxn.commit()?;
         let rtxn = vault.store.env.read_txn()?;
         let gate = admitted_gate(vault, &rtxn, &admission)?;
@@ -119,6 +125,12 @@ pub(super) fn artifact_publish_approval_digest(
 }
 
 fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInput {
+    let tier = match request.serve_tier {
+        ArtifactServeTier::Private => "private".to_owned(),
+        ArtifactServeTier::Public => "public".to_owned(),
+        ArtifactServeTier::LinkToken(capability) => format!("link:{}", artifact_hex(&capability.0)),
+        ArtifactServeTier::WorldMembers(world_id) => format!("world:{world_id}"),
+    };
     let export_ref = match request.export {
         ArtifactExportRef::ForkHash(hash) => artifact_hex(&hash),
         ArtifactExportRef::BlobVersion {
@@ -143,18 +155,20 @@ fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInp
         channel_identity_ref: None,
         counterparty: Some(request.artifact.clone()),
         brief_ref: Some(format!(
-            "artifact:{}:{}:{}:{}",
+            "artifact:{}:{}:{}:{}:{}",
             request.publish_id.to_hex(),
             request.artifact,
             request.channel.as_str(),
             export_ref,
+            tier,
         )),
         send_ref: Some(format!(
-            "artifact:{}:{}:{}:{}",
+            "artifact:{}:{}:{}:{}:{}",
             request.publish_id.to_hex(),
             request.artifact,
             request.channel.as_str(),
             export_ref,
+            tier,
         )),
         standing_grant_ref: None,
         scoped_mcp_call: None,
@@ -172,6 +186,7 @@ pub(super) fn publish_artifact_pointer_in_txn(
     wtxn: &mut RwTxn<'_>,
     snapshot: &ArtifactSnapshotRef,
     channel: ArtifactPointerChannel,
+    serve_tier: ArtifactServeTier,
 ) -> Result<ArtifactPointer> {
     if !crate::codebase::codebase_artifact_snapshot_matches_in_txn(
         &vault.store,
@@ -201,36 +216,52 @@ pub(super) fn publish_artifact_pointer_in_txn(
         channel,
         ArtifactExportRef::ForkHash(snapshot.fork_hash),
         stale_taint_override,
+        serve_tier,
     )?;
     Ok(ArtifactPointer {
         artifact: snapshot.artifact.clone(),
         channel,
         export: ArtifactExportRef::ForkHash(snapshot.fork_hash),
         stale_taint_override,
+        serve_tier,
     })
 }
 
-fn publish_admission_key(id: EntityId) -> Vec<u8> {
-    [ARTIFACT_PUBLISH_ADMISSION_PREFIX, id.as_bytes().as_slice()].concat()
+fn read_publish_admission(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<ArtifactPublishAdmission>> {
+    let admission = ARTIFACT_ADMISSIONS
+        .get(&vault.store, txn, id)
+        .map_err(|error| {
+            if error.kind() == crate::ErrorKind::SideTableRow {
+                Error::CorruptedIndex("artifact publish admission")
+            } else {
+                error
+            }
+        })?;
+    if let Some(record) = &admission {
+        check_publish_admission(record)?;
+    }
+    Ok(admission)
 }
 
-fn decode_publish_admission(raw: &[u8]) -> Result<ArtifactPublishAdmission> {
-    let admission: ArtifactPublishAdmission = serde_json::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("artifact publish admission"))?;
-    if admission.channel > ARTIFACT_CHANNEL_PREVIEW {
+fn check_publish_admission(record: &ArtifactPublishAdmission) -> Result<()> {
+    if record.channel > ARTIFACT_CHANNEL_PREVIEW {
         return Err(Error::CorruptedIndex("artifact publish channel"));
     }
     if let ArtifactExportRef::BlobVersion {
         artifact_id,
         version,
-    } = admission.export
+    } = record.export
         && (version == 0
-            || admission.artifact != artifact_id.to_hex()
-            || admission.export_entity_id != artifact_id)
+            || record.artifact != artifact_id.to_hex()
+            || record.export_entity_id != artifact_id)
     {
         return Err(Error::CorruptedIndex("artifact publish blob binding"));
     }
-    Ok(admission)
+    Ok(())
 }
 
 fn check_replay_binding(
@@ -243,6 +274,7 @@ fn check_replay_binding(
         || admission.actor != request.actor.entity_ref()
         || admission.actor_class != request.actor.actor_class().gate_actor_class()
         || admission.occurred_at != request.occurred_at
+        || admission.serve_tier != request.serve_tier
     {
         return Err(Error::InvariantViolation("artifact publish id rebound"));
     }
@@ -287,6 +319,10 @@ fn publish_receipt(
         ),
         ("gate_receipt_ref".to_owned(), gate_ref.clone()),
         (
+            "serve_tier".to_owned(),
+            format!("{:?}", admission.serve_tier),
+        ),
+        (
             "stale_taint_override".to_owned(),
             admission.stale_taint_override.to_string(),
         ),
@@ -323,28 +359,32 @@ fn publish_receipt(
     }
 }
 
+/// The admitted publish's original decision remains necessary for idempotent
+/// replay and its receipt even after pointer removal or snapshot eviction.
+pub(crate) fn artifact_publish_gate_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::HashSet<crate::store::GateDecisionId>> {
+    let mut ids = std::collections::HashSet::new();
+    for row in ARTIFACT_ADMISSIONS.iter_from(&vault.store, txn, &[])? {
+        let (_, admission) = row?;
+        check_publish_admission(&admission)?;
+        ids.insert(admission.gate_id);
+    }
+    Ok(ids)
+}
+
 pub(crate) fn artifact_publish_receipts(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut receipts = Vec::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, ARTIFACT_PUBLISH_ADMISSION_PREFIX)?
-    {
-        let (key, value) = row?;
-        let raw_id = key
-            .strip_prefix(ARTIFACT_PUBLISH_ADMISSION_PREFIX)
-            .ok_or(Error::CorruptedIndex("artifact publish admission key"))?;
-        let id = EntityId::from_bytes(
-            raw_id
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("artifact publish admission key"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("artifact publish admission key"))?;
-        let admission = decode_publish_admission(&value)?;
+    for row in ARTIFACT_ADMISSIONS.iter_from(&vault.store, txn, &[])? {
+        let (id, admission) = row?;
+        if admission.channel > ARTIFACT_CHANNEL_PREVIEW {
+            return Err(Error::CorruptedIndex("artifact publish channel"));
+        }
         let gate = admitted_gate(vault, txn, &admission)?;
         let receipt = publish_receipt(id, &admission, &gate);
         if query.matches(&receipt) {

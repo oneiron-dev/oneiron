@@ -349,3 +349,156 @@ fn copied_t3_bodies_under_other_entity_kinds_cannot_mint_evidence() -> Result<()
     assert!(vault.mint_t2(policy(2))?.is_none());
     Ok(())
 }
+
+#[test]
+fn failure_signals_accept_session_judge_window_and_revoke_changed_sources() -> Result<()> {
+    use crate::failure_signals::{
+        AgentKind, AgentSurface, FailureClassV1, FailureSignalInput, FailureTaxonomy,
+        VersionedComponent,
+    };
+    let dir = tempfile::tempdir()?;
+    let mut config = crate::VaultConfig::device();
+    config.embedding_model = Some("test/tiered@v1".into());
+    config.dimensions = 4;
+    config.failure_signals.export_opt_in = true;
+    let vault = Vault::open_owned(dir.path(), config)?;
+    let mut a = run(&vault, 20, true);
+    let mut b = run(&vault, 21, true);
+    let turn = crate::store::RetrievalTurn {
+        turn_id: [1; 16],
+        episode_id: [3; 16],
+        turn_idx: 1,
+    };
+    a.turn = Some(turn);
+    b.turn = Some(crate::store::RetrievalTurn {
+        turn_idx: 2,
+        ..turn
+    });
+    for item in [&a, &b] {
+        vault.store.delete_retrieval_run(item.run_id)?;
+        vault.store.record_retrieval_run(item)?;
+    }
+    let policy = DetectorPolicy {
+        family: "quality_other".into(),
+        class: DiagnosticEventClass::SilentConversationDegradation,
+        prompt: "configured at runtime".into(),
+        rubric: "configured".into(),
+        consecutive: 2,
+    };
+    let judged = vault
+        .judge_session_quality(&policy, &Grade(true), &[a, b.clone()])?
+        .expect("real model-judged window");
+    let observation = vault
+        .tier1_observation(judged.event_id)?
+        .expect("producer witness");
+    let input = |class| FailureSignalInput {
+        taxonomy: FailureTaxonomy::V1(class),
+        agent_surface: AgentSurface::Chat,
+        agent_kind: AgentKind::Custom,
+        agent: VersionedComponent {
+            name: "custom".into(),
+            version: "v1".into(),
+        },
+        agent_ref: None,
+    };
+    vault.record_failure_signal(&observation, input(FailureClassV1::SilentDegradation))?;
+    vault.record_failure_signal(&observation, input(FailureClassV1::Other))?;
+    let rows = vault.export_tier1_failure_counts()?;
+    assert_eq!(rows.len(), 2);
+    let other = rows
+        .iter()
+        .find(|row| row.dimensions().taxonomy() == FailureTaxonomy::V1(FailureClassV1::Other))
+        .expect("other count");
+    let wire = serde_json::to_value(other).expect("tier-1 wire");
+    assert!(
+        wire["detector_id"]
+            .as_str()
+            .is_some_and(|id| !id.contains("quality_other"))
+    );
+    vault.store.delete_retrieval_run(b.run_id)?;
+    assert!(
+        vault
+            .record_failure_signal(&observation, input(FailureClassV1::Other))
+            .is_err()
+    );
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn failure_signals_accept_centroid_window_only_while_snapshot_is_pinned() -> Result<()> {
+    use crate::failure_signals::{
+        AgentKind, AgentSurface, FailureClassV1, FailureSignalInput, FailureTaxonomy,
+        VersionedComponent,
+    };
+    use crate::store::RetrievalScoreBreakdown;
+    let dir = tempfile::tempdir()?;
+    let mut config = crate::VaultConfig::device();
+    config.embedding_model = Some("test/tiered@v1".into());
+    config.dimensions = 4;
+    config.failure_signals.export_opt_in = true;
+    let v = Vault::open_owned(dir.path(), config)?;
+    let center = EntityId::now();
+    let candidate = EntityId::now();
+    for id in [center, candidate] {
+        v.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"member",
+        )?;
+    }
+    v.put_vector(&center, &[1.0, 0.0, 0.0, 0.0])?;
+    v.put_vector(&candidate, &[0.98, 0.02, 0.0, 0.0])?;
+    let row = RetrievalRunRecord::new(
+        RetrievalRunId::now(),
+        RetrievalAction::Pipeline,
+        44,
+        1,
+        vec![RetrievalSignal::Vector],
+        vec![RetrievalScoreBreakdown {
+            result_id: *candidate.as_bytes(),
+            final_rank: 1,
+            final_score: 1.0,
+            components: vec![],
+            access_factor: None,
+        }],
+        1,
+        0,
+        None,
+    );
+    v.store.record_retrieval_run(&row)?;
+    let classified = v
+        .classify_centroid(&policy(1), &[center], candidate, &row, 0.9)?
+        .expect("centroid proposal");
+    let observation = v
+        .tier1_observation(classified.event_id)?
+        .expect("centroid producer witness");
+    let input = FailureSignalInput {
+        taxonomy: FailureTaxonomy::V1(FailureClassV1::MemoryIntrusion),
+        agent_surface: AgentSurface::Chat,
+        agent_kind: AgentKind::Custom,
+        agent: VersionedComponent {
+            name: "custom".into(),
+            version: "v1".into(),
+        },
+        agent_ref: None,
+    };
+    v.record_failure_signal(&observation, input.clone())?;
+    assert_eq!(v.export_tier1_failure_counts()?.len(), 1);
+    // The pinned vector snapshot is a source like the run: losing it revokes
+    // the witness even though the diagnostic and run are unchanged.
+    let key = [
+        b"self_heal:centroid_evidence:v1:".as_slice(),
+        &classified.event.replay.content_hash,
+    ]
+    .concat();
+    v.with_write_txn(|txn| {
+        v.store.vault_meta.delete(txn, &key)?;
+        Ok(())
+    })?;
+    assert!(v.record_failure_signal(&observation, input).is_err());
+    assert_eq!(v.export_tier1_failure_counts()?[0].count(), 1);
+    Ok(())
+}

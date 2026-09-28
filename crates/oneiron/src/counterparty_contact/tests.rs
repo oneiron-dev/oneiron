@@ -20,7 +20,7 @@ fn counterparty_contact_codec_and_claim_family_round_trip() -> Result<()> {
     validate_counterparty_contact_body_bytes(&encoded)?;
     assert_eq!(decode_counterparty_contact_body(&encoded)?, record);
 
-    let claims = record.claim_bodies(entity(0xC1));
+    let claims = record.claim_bodies(entity(0xC1))?;
     assert_eq!(claims.len(), COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len());
     for claim in &claims {
         validate_counterparty_contact_claim_structure(claim)?;
@@ -133,7 +133,7 @@ fn type_132_is_cache_not_truth() -> Result<()> {
         .expect("cache row");
     assert!(cached.is_opted_out());
     let mut projected = cached
-        .claim_bodies(contact_id)
+        .claim_bodies(contact_id)?
         .into_iter()
         .map(|body| (body.predicate, body.value))
         .collect::<Vec<_>>();
@@ -141,7 +141,7 @@ fn type_132_is_cache_not_truth() -> Result<()> {
     assert_eq!(heads, projected);
 
     let cached_bytes = encode_counterparty_contact_body(&cached)?;
-    let index_key = counterparty_contact_index_key(&identity, "kenji@example.com")?;
+    let index_key = storage::counterparty_contact_index_key_parts(&identity, "kenji@example.com")?;
 
     // Dropping the cache row takes the row and its index entries and NO claim.
     drop_contact_cache_row(&vault, &contact_id)?;
@@ -152,7 +152,7 @@ fn type_132_is_cache_not_truth() -> Result<()> {
     );
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.vault_meta.get(&rtxn, &index_key)?.is_none());
+        assert!(!storage::CONTACT_INDEX.contains(&vault.store, &rtxn, &index_key)?);
     }
     assert_eq!(live_claim_heads(&vault, &contact_id)?, heads);
 
@@ -335,20 +335,14 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
 /// Seeds one ChannelIdentity so a contact recorded through it resolves to a
 /// channel class.
 fn put_identity(vault: &Vault, id: EntityId, channel: &str, address: &str) -> Result<()> {
-    let identity = crate::channel_identity::ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
-        channel: channel.to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
-        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x6F)),
-        state: crate::channel_identity::ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::test_util::self_held_identity_in_state(
+        channel,
+        address,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(entity(0x6F)),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault.create_channel_identity(&id, &identity)
 }
 

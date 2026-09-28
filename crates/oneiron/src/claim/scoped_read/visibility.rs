@@ -67,6 +67,19 @@ impl ScopedRead<'_> {
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
+        // Grant bodies contain both private diary ids. They are authority,
+        // never a readable graph/search result of their own.
+        if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT
+            && !crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .is_ok_and(|grant| {
+                    !matches!(
+                        grant.scope,
+                        crate::access_grant::AccessGrantScope::DiaryCoreference { .. }
+                    )
+                })
+        {
+            return Ok(false);
+        }
         let deletion = match self.session_view {
             Some(view) => crate::ports::TombstoneStoreRead::port_deletion_state(view, rtxn, id)?,
             None => crate::ports::TombstoneStoreRead::port_deletion_state(self.vault, rtxn, id)?,
@@ -92,10 +105,13 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
+            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..], policy);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
+        } else if self.actor_key.vault_owner_ref().is_some() {
+            // The owner's ceiling is all of the owner's vault, stamped or not.
+            Ok(true)
         } else {
             let scope = match self.session_view {
                 Some(view) => {
@@ -127,79 +143,6 @@ impl ScopedRead<'_> {
     ) -> Result<bool> {
         let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
         self.is_entity_raw_readable_with_filter_in(rtxn, &policy, id, raw, &filter)
-    }
-
-    fn is_claim_raw_readable_with_policy_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        id: &EntityId,
-        raw: &[u8],
-        filter: &ResolvedRetrievalFilter,
-    ) -> Result<bool> {
-        if raw.len() == ENTITY_METADATA_HEADER_LEN
-            && self.vault.store.entity_deletion_present_in_txn(
-                rtxn,
-                id,
-                EntityMetadataHeader::parse(raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?
-                    .learned_at,
-            )?
-        {
-            return Ok(false);
-        }
-        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body, filter)
-    }
-
-    fn is_claim_readable_with_body_and_policy_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        id: &EntityId,
-        body: &ClaimBody,
-        filter: &ResolvedRetrievalFilter,
-    ) -> Result<bool> {
-        let principal = claim_principal_id(body)?;
-        let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
-        if principal.is_some() && principal != reader {
-            return Ok(false);
-        }
-        if crate::edit_distance::miner::is_mined_preference(&body.predicate) {
-            if principal.is_none() {
-                return Ok(false);
-            }
-            let learned_at = self
-                .entity_record_in(rtxn, id)?
-                .ok_or(Error::CorruptedIndex("preference entity"))?
-                .learned_at;
-            if !preference_in_force(body, learned_at, crate::unix_seconds_now())? {
-                return Ok(false);
-            }
-        }
-        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
-            return Ok(false);
-        }
-        if !crate::authority::claim_causal_admitted(
-            &self.vault.authority_fold_readonly_in_txn(rtxn)?,
-            body,
-        ) {
-            return Ok(false);
-        }
-        let admitted = crate::pipeline::retrieval_claim_allowed(filter, body);
-        if !admitted
-            || !self.audience_readable_in(rtxn, id)?
-            || !self.relationship_claim_allowed_in(rtxn, body)?
-        {
-            return Ok(false);
-        }
-        let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
-        Ok(crate::gate::scoped_read_claim_allowed(
-            policy,
-            &self.actor_key,
-            body,
-            &claim_facets,
-        ))
     }
 
     pub(crate) fn policy_manifest_in(

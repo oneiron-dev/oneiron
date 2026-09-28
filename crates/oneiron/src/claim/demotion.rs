@@ -174,6 +174,27 @@ impl Vault {
             Some(_) => return Err(Error::InvalidClaimBody("scope must be a map")),
         };
         body.scope = Some(Value::Map(scope));
+        if crate::authority::machine_claim_needs_history(&self.store, wtxn, &body)? {
+            let (kind, delta) = match action {
+                ClaimDemotionAction::Decay {
+                    new_claim_of_weight,
+                } => (
+                    super::transition::ClaimTransitionKind::Decay,
+                    super::transition::TransitionDelta::ClaimOfWeight(new_claim_of_weight),
+                ),
+                ClaimDemotionAction::Weaken { new_confidence } => (
+                    super::transition::ClaimTransitionKind::Weaken,
+                    super::transition::TransitionDelta::Confidence(new_confidence),
+                ),
+                ClaimDemotionAction::MarkStale => (
+                    super::transition::ClaimTransitionKind::Stale,
+                    super::transition::TransitionDelta::None,
+                ),
+            };
+            body = super::transition::stage_owner_machine_transition(
+                self, wtxn, *claim_id, kind, delta, now,
+            )?;
+        }
         let data = encode_claim_body(&body)?;
         let mut ops = vec![BatchOp::Put {
             id: *claim_id,

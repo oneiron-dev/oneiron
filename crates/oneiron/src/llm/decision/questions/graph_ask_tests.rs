@@ -39,7 +39,7 @@ fn identities(vault: &Vault) -> crate::Result<(EntityId, WriteActor)> {
 }
 
 fn grant_graph_reads(vault: &Vault, principal: EntityId) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
     manifest["scoped_grants"] = serde_json::json!([{
         "actor_ref": principal.to_hex(),
@@ -61,7 +61,7 @@ fn grant_graph_reads(vault: &Vault, principal: EntityId) -> crate::Result<()> {
 }
 
 fn grant_class_bound_graph_reads(vault: &Vault, principal: EntityId) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
     manifest["scoped_grants"] = serde_json::json!([{
         "actor_ref": principal.to_hex(),
@@ -134,6 +134,31 @@ impl GraphAnswerer for FixedAnswerer {
     }
 }
 
+struct RevokeDuringAnswer<'a> {
+    vault: &'a Vault,
+    actor: EntityId,
+    grant: EntityId,
+    neighbor: EntityId,
+    saw_neighbor: bool,
+}
+impl GraphAnswerer for RevokeDuringAnswer<'_> {
+    fn answer(
+        &mut self,
+        _: &DecisionQuestion,
+        context: &GraphUnitContext,
+    ) -> crate::Result<Option<GraphPrediction>> {
+        self.saw_neighbor = context
+            .sources
+            .iter()
+            .any(|source| source.id == self.neighbor);
+        self.vault
+            .memory(self.actor, EdgeActorClass::Human)
+            .revoke_diary_coreference_grant(self.grant)
+            .unwrap();
+        Ok(Some(prediction()))
+    }
+}
+
 fn scoped_claim(principal: EntityId, subject: EntityId) -> ClaimBody {
     let mut body = ClaimBody::new(
         "profile.note",
@@ -142,7 +167,8 @@ fn scoped_claim(principal: EntityId, subject: EntityId) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.scope = Some(Value::Map(vec![(
         Value::from("typed_question_principal"),
         Value::from(principal.to_hex()),
@@ -780,5 +806,142 @@ fn high_degree_unit_stops_after_bounded_readable_neighborhood() -> crate::Result
     assert_eq!(result.answers.len(), 1);
     assert_eq!(answerer.contexts.len(), 1);
     assert_eq!(answerer.contexts[0].sources.len(), 17);
+    Ok(())
+}
+
+#[test]
+fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crate::Result<()> {
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let (_temp, vault) = open_vault();
+    let (a, _) = identities(&vault)?;
+    let b = EntityId::now();
+    put_entity(&vault, b, ENTITY_TYPE_PERSON, b"other resident")?;
+    let am = vault.memory(a, EdgeActorClass::Human);
+    let bm = vault.memory(b, EdgeActorClass::Human);
+    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: owner },
+                markdown: "private diary text".into(),
+                source_revision_ref: [7; 16],
+                mask: None,
+            })
+            .unwrap();
+        EntityId::from_hex(&receipt.id_hex).unwrap()
+    };
+    let a1 = diary(&am, a);
+    let a2 = diary(&am, a);
+    let b_note = diary(&bm, b);
+    assert!(a2 < b_note);
+    am.link_diary_coreference(a1, b_note).unwrap();
+    am.link_diary_coreference(a2, b_note).unwrap();
+    am.grant_diary_coreference(a1, b_note).unwrap();
+    bm.grant_diary_coreference(a1, b_note).unwrap();
+    let revoked = am.grant_diary_coreference(a2, b_note).unwrap();
+    bm.grant_diary_coreference(a2, b_note).unwrap();
+
+    let mut answerer = RevokeDuringAnswer {
+        vault: &vault,
+        actor: a,
+        grant: revoked,
+        neighbor: b_note,
+        saw_neighbor: false,
+    };
+    let result = run_graph_ask(
+        &vault,
+        a,
+        WriteActor::new(a, EdgeActorClass::Human),
+        question(),
+        &[a2],
+        &mut answerer,
+        23,
+    )
+    .map_err(|failure| *failure.error)?;
+    assert!(
+        answerer.saw_neighbor,
+        "shared pair initially enters the callback"
+    );
+    assert!(result.answers.is_empty());
+    assert_eq!(result.abstained, vec![a2]);
+    // B remains independently readable through a1-b; only the a2-b edge
+    // was revoked. A node-level recheck alone would falsely admit this answer.
+    let scoped = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap(),
+    );
+    assert!(
+        scoped
+            .read(&[crate::claim::PointRead::id(b_note)], None)?
+            .single()
+            .value
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn independent_edge_keeps_graph_ask_target_when_same_as_pair_is_empty() -> crate::Result<()> {
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let (_temp, vault) = open_vault();
+    let (a, actor) = identities(&vault)?;
+    let b = EntityId::now();
+    put_entity(&vault, b, ENTITY_TYPE_PERSON, b"other resident")?;
+    let am = vault.memory(a, EdgeActorClass::Human);
+    let bm = vault.memory(b, EdgeActorClass::Human);
+    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| -> crate::Result<EntityId> {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: owner },
+                markdown: "independent edge diary".into(),
+                source_revision_ref: [9; 16],
+                mask: None,
+            })
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        EntityId::from_hex(&receipt.id_hex)
+    };
+    let a1 = diary(&am, a)?;
+    let a2 = diary(&am, a)?;
+    let b_note = diary(&bm, b)?;
+    am.link_diary_coreference(a1, b_note).unwrap();
+    am.grant_diary_coreference(a1, b_note).unwrap();
+    bm.grant_diary_coreference(a1, b_note).unwrap();
+    am.link_diary_coreference(a2, b_note).unwrap(); // remains Empty
+    vault
+        .batch()
+        .edge(&a2, EdgeKind::BlockedBy, &b_note, 1.0)
+        .commit()?;
+    let raw = vault.edges_out(&a2)?;
+    let hidden_at = raw
+        .iter()
+        .position(|edge| edge.kind == EdgeKind::SameAs && edge.target == b_note)
+        .unwrap();
+    let independent_at = raw
+        .iter()
+        .position(|edge| edge.kind == EdgeKind::BlockedBy && edge.target == b_note)
+        .unwrap();
+    assert!(
+        hidden_at < independent_at,
+        "Empty edge precedes admitted edge"
+    );
+    let read = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap(),
+    );
+    let direct = read.graph_ask_neighbors(&a2, 4, 4, 16_384)?.unwrap();
+    assert_eq!(direct.iter().filter(|row| row.0 == b_note).count(), 1);
+    let mut answerer = FixedAnswerer::returning(Some(prediction()));
+    let result = run_graph_ask(&vault, a, actor, question(), &[a2], &mut answerer, 29)
+        .map_err(|failure| *failure.error)?;
+    assert_eq!(result.answers.len(), 1);
+    assert_eq!(answerer.contexts.len(), 1);
+    assert_eq!(
+        answerer.contexts[0]
+            .sources
+            .iter()
+            .filter(|source| source.id == b_note)
+            .count(),
+        1
+    );
+    assert!(result.answers[0].decision.evidence.contains(&b_note));
     Ok(())
 }

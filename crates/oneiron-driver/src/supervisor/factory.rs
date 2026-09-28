@@ -1,20 +1,26 @@
 //! Per-pass attempt-executor factory trait and default implementation.
 use std::sync::Arc;
 
-use oneiron::Vault;
+use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
+use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationExecutor,
     ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, LlmBackend, ModelId,
     Result, WriteActor,
 };
+use oneiron::{Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 #[cfg(all(unix, feature = "voice"))]
 use oneiron_server::{
     managed::ManagedShutdown,
     voice_host::{VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceServeConnection},
 };
+
+/// Host-supplied consumer of the live ready TASK subset.
+pub type WaveReadyDispatcher =
+    Box<dyn FnMut(&Vault, WaveDispatchCandidate) -> Result<WaveHandoffOutcome> + Send>;
 
 /// Builds the per-pass attempt executor. Generic-associated so executors may
 /// borrow factory-owned state (the backend constructed at startup, the
@@ -33,6 +39,24 @@ pub trait PassExecutorFactory {
     /// `None` selects the legacy single-pool guard.
     fn actor(&self) -> Option<WriteActor> {
         None
+    }
+
+    /// Agent-authored wave planner registered by the host, if any. No
+    /// hardcoded plan or default external effect is supplied by the driver.
+    fn wave_planner(&self) -> Option<Arc<dyn WavePlanner + Send + Sync>> {
+        None
+    }
+
+    /// The existing host TASK dispatch path receives only the live ready set.
+    /// A factory that registers a planner must also supply this consumer.
+    fn dispatch_wave_candidate(
+        &mut self,
+        _vault: &Vault,
+        _candidate: WaveDispatchCandidate,
+    ) -> Result<WaveHandoffOutcome> {
+        Err(oneiron::Error::InvalidConfig(
+            "wave dispatcher not registered".into(),
+        ))
     }
 
     /// Optional process-local attachment, after the supervisor creates its guard.
@@ -63,6 +87,8 @@ pub struct ConsolidationExecutorFactory {
     strategy: DreamerClaimAuthoringStrategy,
     pub(super) actor: WriteActor,
     model: ModelId,
+    binding: HostInferenceBinding,
+    extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
     sink: Box<dyn ConsolidationSink>,
     /// CMT-3 (ONE-1540). `None` by DEFAULT, and the wrapper is installed
     /// either way: a tagged commitment event that reached the partition
@@ -71,6 +97,8 @@ pub struct ConsolidationExecutorFactory {
     /// factory must not offer.
     commitment_wake_planner: Option<Box<dyn CommitmentWakeProposalPlanner>>,
     weave_recipe_runtime: Option<Box<dyn WeaveRecipeRuntime>>,
+    wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
+    wave_dispatch: Option<WaveReadyDispatcher>,
     #[cfg(all(unix, feature = "voice"))]
     pub(super) voice: Option<VoiceHostConfig>,
 }
@@ -83,6 +111,8 @@ impl ConsolidationExecutorFactory {
         strategy: DreamerClaimAuthoringStrategy,
         actor: WriteActor,
         model: ModelId,
+        binding: HostInferenceBinding,
+        extraction_egress: Option<Arc<dyn ExtractionEgressPredicate>>,
         sink: Box<dyn ConsolidationSink>,
     ) -> Self {
         Self {
@@ -90,9 +120,13 @@ impl ConsolidationExecutorFactory {
             strategy,
             actor,
             model,
+            binding,
+            extraction_egress,
             sink,
             commitment_wake_planner: None,
             weave_recipe_runtime: None,
+            wave_planner: None,
+            wave_dispatch: None,
             #[cfg(all(unix, feature = "voice"))]
             voice: None,
         }
@@ -144,6 +178,20 @@ impl ConsolidationExecutorFactory {
         self
     }
 
+    /// Register the host's agent-side planner AND TASK dispatcher together.
+    /// A plan cut is agent policy; the supervisor owns only durable admission
+    /// and the computed-ready handoff, never a built-in plan or work DSL.
+    #[must_use]
+    pub fn with_wave_planner(
+        mut self,
+        planner: Arc<dyn WavePlanner + Send + Sync>,
+        dispatch: WaveReadyDispatcher,
+    ) -> Self {
+        self.wave_planner = Some(planner);
+        self.wave_dispatch = Some(dispatch);
+        self
+    }
+
     /// Constructs the crate's DEFAULT backend: the LOCAL adapter over a
     /// host-supplied runtime. Local on purpose — the default driver wiring
     /// must not imply network egress; hosts pick a remote adapter only by
@@ -163,7 +211,12 @@ impl ConsolidationExecutorFactory {
             Arc::new(LocalLlmBackend::from_registry(runtime, vault)?),
             strategy,
             actor,
-            model,
+            model.clone(),
+            HostInferenceBinding::Advertised {
+                model,
+                locality: oneiron::ModelLocality::OnDevice,
+            },
+            None,
             sink,
         ))
     }
@@ -182,6 +235,10 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
             strategy: self.strategy,
             actor: self.actor,
             model: self.model.clone(),
+            inference: HostInferenceContext {
+                binding: self.binding.clone(),
+                extraction_egress: self.extraction_egress.as_deref(),
+            },
             sink: self.sink.as_mut(),
             scope: None,
         };
@@ -210,6 +267,22 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
 
     fn actor(&self) -> Option<WriteActor> {
         Some(self.actor)
+    }
+
+    fn wave_planner(&self) -> Option<Arc<dyn WavePlanner + Send + Sync>> {
+        self.wave_planner.clone()
+    }
+
+    fn dispatch_wave_candidate(
+        &mut self,
+        vault: &Vault,
+        candidate: WaveDispatchCandidate,
+    ) -> Result<WaveHandoffOutcome> {
+        self.wave_dispatch
+            .as_mut()
+            .ok_or_else(|| oneiron::Error::InvalidConfig("wave dispatcher not registered".into()))?(
+            vault, candidate,
+        )
     }
 
     #[cfg(all(unix, feature = "voice"))]

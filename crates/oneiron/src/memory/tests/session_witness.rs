@@ -816,11 +816,12 @@ fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
     let turn = facade
         .get_entity(&turn_id.to_hex())
         .expect("get promoted turn")
+        .value
         .expect("promoted turn is a base row");
     assert_eq!(
         turn.body.expect("turn body"),
-        serde_json::json!({"speaker": "user"}),
-        "the promoted TURN body carries the canonical speaker"
+        serde_json::json!({"speaker": "user", "actor": actor.to_hex()}),
+        "the promoted TURN body carries the canonical speaker and PERSON author"
     );
     // — and the `ChildOf` binding `conversation_of` reads.
     let bound = vault

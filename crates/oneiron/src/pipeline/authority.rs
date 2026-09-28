@@ -1,6 +1,6 @@
 //! Enforcement of gate-resolved retrieval authority. No caller requests enter here.
 
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
+use crate::claim::ClaimBody;
 use crate::gate::ResolvedRetrievalFilter;
 use crate::registry::{ENTITY_TYPE_CLAIM, EntityClassification, entity_type_registry_entry};
 use crate::store::Store;
@@ -8,15 +8,17 @@ use crate::store::Store;
 use super::filters::claim_status_gate_allows;
 use super::types::{ClaimStatusGateCache, EntityMetadataCache, ScoredEntity};
 
-pub(crate) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
+/// Retrieval admission for one claim: the surfaceable status half and the
+/// resolved ceiling half, both required.
+pub(super) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
+    crate::claim::ClaimReadStatus::Surfaceable.admits(filter, body)
+        && claim_ceiling_allowed(filter, body)
+}
+
+/// The ceiling half of claim admission: the actor's resolved scalar floor
+/// (sensitivity band, confidence and salience minima), never a status rule.
+pub(crate) fn claim_ceiling_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
     !filter.deny_all
-        && crate::claim::claim_generic_readable(body)
-        && matches!(
-            body.approval,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        )
-        && body.lifecycle == ClaimLifecycleStatus::Active
-        && (filter.include_stale || !body.stale)
         && crate::claim::claim_sensitivity_band(body)
             .is_some_and(|band| band <= filter.max_sensitivity_band)
         && body.confidence.is_finite()

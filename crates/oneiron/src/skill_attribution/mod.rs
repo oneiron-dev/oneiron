@@ -30,7 +30,12 @@
 
 mod audit;
 mod codec;
+pub(crate) use self::codec::manifest_entry_names_skill;
 mod judge;
+mod judge_supersession;
+#[cfg(test)]
+pub(crate) use judge_supersession::set_pre_writer_hook;
+pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
 mod projector;
 mod types;
 
@@ -46,8 +51,8 @@ pub use self::projector::{
     record_attribution_evidence, run_attribution_projector, run_attribution_projector_with_judge,
 };
 pub use self::types::{
-    AttemptOutcome, AttributionJudgment, AttributionVerdict, OutcomeEvidence,
-    SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
+    AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
+    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
 };
 
 #[cfg(test)]
@@ -71,4 +76,8 @@ mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
     run_task_attribution_sweep, run_task_attribution_sweep_with_judge,
+};
+
+pub use self::judge_supersession::{
+    DisplacedJudgeReceipt, displaced_judge_receipts, supersede_displaced_judge_receipts,
 };

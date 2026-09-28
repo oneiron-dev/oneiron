@@ -13,11 +13,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        Ok(self
-            .store
-            .sync_state
-            .get(txn, &local_hard_delete_key(id))?
-            .is_some())
+        HARD_DELETE_MARKER.contains(&self.store, txn, &HexId(*id))
     }
 
     /// Removes a headerless tombstone replay's stale `dt:` poison once a
@@ -38,9 +34,7 @@ impl Vault {
                 "dt: poison neutralization requires a delete-protected engine record",
             ));
         }
-        self.store
-            .sync_state
-            .delete(wtxn, &local_hard_delete_key(id))
+        HARD_DELETE_MARKER.delete(&self.store, wtxn, &HexId(*id))
     }
 
     pub(in crate::deletion) fn active_delete_scope_exists_in_txn(
@@ -54,23 +48,28 @@ impl Vault {
             || crate::skill_hub::refinement_custody_exists_in_txn(&self.store, txn, id)?
             || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
-            || self.store.entities.get(txn, id.as_bytes())?.is_some()
+            || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?.is_some()
             || self.port_retrieval_delete_scope_exists(txn, id)?
             || self.port_short_id_mapping_exists(txn, id)?
         {
             return Ok(true);
         }
 
-        let mut edges_out = self.store.edges_out.prefix_iter(txn, id.as_bytes())?;
-        if edges_out.next().transpose()?.is_some() {
-            return Ok(true);
-        }
-        let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
-        if edges_in.next().transpose()?.is_some() {
+        if crate::ports::EdgeStoreRead::port_edge_has_any(
+            &self.store,
+            txn,
+            id,
+            crate::ports::EdgeDirection::Both,
+        )? {
             return Ok(true);
         }
 
-        if crate::note::erase::scope_exists(self, txn, id)? {
+        if crate::note::erase::scope_exists(self, txn, id)?
+            || !self
+                .store
+                .verify_claim_erasure_by_scan_in_txn(txn, id.as_bytes())?
+                .is_empty()
+        {
             return Ok(true);
         }
         vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)

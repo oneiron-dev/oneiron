@@ -69,6 +69,11 @@ pub(crate) fn mcp_admit_scoped_call(
         // ceiling. Never confuse the principal's grants with this credential.
         mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.request")?;
     }
+    if verb.payload.arguments.self_target == Some(true) {
+        // `describe(self)` renders the host-installed run brief whole: it has
+        // no world/facet projection, so a narrowed connector cannot read it.
+        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.self")?;
+    }
     if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }

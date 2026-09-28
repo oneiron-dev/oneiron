@@ -117,7 +117,7 @@ fn deferred_judge_import_with_capability(
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let imported = EntityId::now();
     let (name, markdown) = FILES[1];
@@ -152,13 +152,7 @@ fn deferred_judge_import_with_capability(
     drop(vault);
 
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, SEED_KEY)?
-            .is_none()
-    );
+    assert!(!SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
     vault.with_write_txn(|wtxn| {
         crate::batch::deindex_entity_for_test(&vault.store, wtxn, &manifest)
     })?;
@@ -211,13 +205,7 @@ fn open_succeeds_when_an_earlier_import_holds_a_seed_under_another_id() -> Resul
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     assert_ne!(imported, stable_id("judge")?);
     assert!(vault.get_skill_record(&imported)?.is_some());
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, SEED_KEY)?
-            .is_some()
-    );
+    assert!(SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
     assert_eq!(
         vault.count_entities_by_type(ENTITY_TYPE_SKILL)?,
         FILES.len() as u64
@@ -262,7 +250,7 @@ fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<(
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let (name, markdown) = FILES[1];
     let id = stable_id(name)?;
@@ -324,13 +312,7 @@ fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<(
     );
     assert_eq!(vault.hub_import_receipt(&id, &source)?, Some(receipt));
     assert!(vault.hub_import_receipt(&id, &bootstrap_source)?.is_none());
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, SEED_KEY)?
-            .is_some()
-    );
+    assert!(SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
     Ok(())
 }
 
@@ -341,7 +323,7 @@ fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Res
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let id = stable_id("judge")?;
     let other = package(
@@ -391,13 +373,7 @@ fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Res
         vault.count_entities_by_type(ENTITY_TYPE_SKILL)?,
         FILES.len() as u64
     );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, SEED_KEY)?
-            .is_some()
-    );
+    assert!(SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
     Ok(())
 }
 
@@ -483,7 +459,7 @@ fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let (name, markdown) = FILES[1];
     let package = package(name, markdown)?;
@@ -514,10 +490,7 @@ fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
             TimeRange { start: 2, end: 2 },
             2,
             data.clone(),
-            HubAdmissionProof {
-                id: old,
-                binding: blake3::hash(&data),
-            },
+            HubAdmissionProof::bootstrap(old, &data),
         )
     })?;
     record.lifecycle_status = SkillLifecycle::Stale;

@@ -56,6 +56,16 @@ fn fixture() -> (
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+    let mut policy = vault.purpose_default_table().expect("owner policy");
+    policy.extraction_max_locality = oneiron::ModelLocality::OwnServer;
+    policy
+        .purposes
+        .get_mut(&oneiron::CallPurpose::Extraction)
+        .expect("extraction row")
+        .locality = oneiron::ModelLocality::OwnServer;
+    vault
+        .set_purpose_default_table(&policy)
+        .expect("owner-pinned test egress");
     let actor = vault.dreamer_authority().unwrap();
     let (send, calls) = mpsc::unbounded_channel();
     let factory = ConsolidationExecutorFactory::new(
@@ -63,6 +73,11 @@ fn fixture() -> (
         DreamerClaimAuthoringStrategy::SinglePass,
         actor,
         ModelId::new("test/model@v1").unwrap(),
+        oneiron::llm::HostInferenceBinding::Advertised {
+            model: ModelId::new("test/model@v1").expect("host model"),
+            locality: oneiron::ModelLocality::OwnServer,
+        },
+        Some(Arc::new(|_: &oneiron::LlmRequest| true)),
         Box::new(UnusedSink),
     );
     (dir, vault, factory, calls)
@@ -128,8 +143,9 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(reader("agent"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::Agent);
@@ -138,15 +154,17 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(reader("system"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_some()
     );
     assert!(
         vault
             .scoped_read(reader("human"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     let other =
@@ -154,8 +172,9 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(other)
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     assert!(
@@ -208,6 +227,8 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 11_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let mut executor = factory.executor(&guard).unwrap();
     let execution = executor.execute(&admitted, &mut ctx);
@@ -554,7 +575,8 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
         let (read, mut write) = client.into_split();
         let mut read = BufReader::new(read);
         let tick = Tick::Hint(crate::tick::HintSignal::default());
-        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        // A hang guard, not a latency bound; a loaded host needs well over 10s.
+        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(60), async {
             let pass = run_pass_supervised(
                 &vault, &pass_config, "served:p0", &clock, &mut factory, &mut listener, &tick,
             );

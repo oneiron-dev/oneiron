@@ -9,14 +9,18 @@ declare namespace OneironCodeRun {
   interface WaitOutput { waitId: string; }
   interface SpeechOutput { order: number; isVisible: boolean; }
   interface BlockedOutput { receipt: string; }
+  interface AgentPutInput { id: string; definition: unknown; }
+  interface AgentPutOutput { id: string; disposition: string; }
   interface SupersedeInput { newId: string; oldId: string; now: number; }
   interface EdgeInput { src: string; kind: string; tgt: string; weight?: number | undefined; }
   interface PromptInput { prompt: string; }
   interface TextInput { text: string; }
   interface CredentialInput { operation: string; credentialHandle: string; args: unknown; }
   interface FileProposal { path: string; bytes: Uint8Array; }
+  interface FileDeleteProposal { path: string; }
+  interface FileRenameProposal { origin: string; destination: string; }
   interface StepResult { resultJson: string; proposals: Array<OneironCodeRun.ProposalDelta>; }
-  type ProposalDelta = { tag: "file-write"; val: OneironCodeRun.FileProposal } | { tag: "claim-candidate"; val: OneironCodeRun.ClaimInput };
+  type ProposalDelta = { tag: "file-write"; val: OneironCodeRun.FileProposal } | { tag: "claim-candidate"; val: OneironCodeRun.ClaimInput } | { tag: "file-delete"; val: OneironCodeRun.FileDeleteProposal } | { tag: "file-rename"; val: OneironCodeRun.FileRenameProposal };
 }
 declare namespace sandbox {
   namespace fs {
@@ -32,6 +36,11 @@ declare namespace oneiron {
   }
   namespace random {
     function bytes(length: number): Uint8Array;
+  }
+}
+declare namespace vault {
+  namespace agents {
+    function put(input: OneironCodeRun.AgentPutInput): Promise<OneironCodeRun.AgentPutOutput>;
   }
 }
 declare namespace self {

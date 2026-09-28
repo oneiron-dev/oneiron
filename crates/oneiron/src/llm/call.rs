@@ -21,9 +21,12 @@ pub struct CallEnvelope {
     pub tier: TierPrecedence,
     pub response_format: ResponseFormat,
     pub locality: ModelLocality,
+    /// Set only at seat birth; adapters make this pin authoritative over raw options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_effort: Option<super::ReasoningEffort>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallPurpose {
     Extraction,

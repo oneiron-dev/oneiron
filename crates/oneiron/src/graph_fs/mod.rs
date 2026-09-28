@@ -7,9 +7,12 @@
 
 mod claim_grep;
 mod coreutils;
+mod coreutils_text;
 mod model;
 mod paging;
 mod readdir;
+
+pub use self::readdir::GraphFsFileRead;
 
 pub use self::model::{
     GRAPH_FS_COREUTILS_DEFAULT_RESULT_CAP, GRAPH_FS_COREUTILS_MAX_RESULT_CAP,

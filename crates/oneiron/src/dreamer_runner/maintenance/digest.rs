@@ -1,14 +1,23 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-const CADENCE_KEY: &[u8] = b"settings:dreamer:proactivity:cadence:v1";
-const STATE_KEY: &[u8] = b"dreamer:proactivity:state:v1";
-const DIGEST_PREFIX: &[u8] = b"dreamer:proactivity:digest:v1:";
-const PRESENTATION_KEY: &[u8] = b"settings:dreamer:proactivity:presentation:v1";
-const POLICY_CONFIRMED_PREFIX: &[u8] = b"settings:dreamer:proactivity:confirmed:v1:";
+const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
+const STATE: SideTable<(), DigestState, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_STATE);
+const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_DIGEST);
+const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
+const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_CONFIRMED);
+/// Per-recipient time of the last digest that delivered judge asks.
+const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
 /// Generic proposed claim written through the existing gated agent memory
 /// verb. It changes NO settings until the owner confirms its exact revision.
 pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
@@ -103,8 +112,13 @@ pub struct DigestProposal {
 pub struct ProactivityDigest {
     pub id: [u8; 32],
     pub created_at: u64,
+    /// The authenticated reader the judge asks are addressed to; `None` for
+    /// the ownerless timer projection, which carries no asks.
+    #[serde(with = "crate::serialize::entity_ref::optional")]
+    pub recipient: Option<EntityId>,
     pub urgent: bool,
     pub groups: BTreeMap<String, Vec<DigestProposal>>,
+    pub judge_asks: Vec<crate::skill_optimize::JudgeAsk>,
     pub rendered: String,
     pub voice_style: String,
 }
@@ -124,10 +138,9 @@ impl Vault {
         if row.period_secs == 0 {
             return Err(invalid());
         }
-        let bytes = serde_json::to_vec(row).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, CADENCE_KEY, &bytes)?;
+            CADENCE.put(&self.store, txn, &(), row)?;
             Ok(())
         })?;
         self.store.notify_proactivity_changes();
@@ -141,10 +154,9 @@ impl Vault {
         row: &ProactivityPresentation,
     ) -> Result<()> {
         row.validate()?;
-        let bytes = serde_json::to_vec(row).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, PRESENTATION_KEY, &bytes)?;
+            PRESENTATION.put(&self.store, txn, &(), row)?;
             Ok(())
         })?;
         self.store.notify_proactivity_changes();
@@ -172,29 +184,18 @@ impl Vault {
         claim_ref: EntityId,
         expected_revision: [u8; 32],
     ) -> Result<()> {
-        let confirmed_key = [POLICY_CONFIRMED_PREFIX, claim_ref.as_bytes()].concat();
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            if self.store.vault_meta.get(&*txn, &confirmed_key)?.is_some() {
+            if POLICY_CONFIRMED.contains(&self.store, &*txn, &claim_ref)? {
                 return Err(invalid());
             }
             let proposal = load_policy_proposal(self, &*txn, owner.actor(), claim_ref)?;
             if proposal.revision != expected_revision {
                 return Err(invalid());
             }
-            self.store.vault_meta.put(
-                txn,
-                CADENCE_KEY,
-                &serde_json::to_vec(&proposal.request.cadence).map_err(|_| invalid())?,
-            )?;
-            self.store.vault_meta.put(
-                txn,
-                PRESENTATION_KEY,
-                &serde_json::to_vec(&proposal.request.presentation).map_err(|_| invalid())?,
-            )?;
-            self.store
-                .vault_meta
-                .put(txn, &confirmed_key, &expected_revision)?;
+            CADENCE.put(&self.store, txn, &(), &proposal.request.cadence)?;
+            PRESENTATION.put(&self.store, txn, &(), &proposal.request.presentation)?;
+            POLICY_CONFIRMED.put(&self.store, txn, &claim_ref, &expected_revision)?;
             Ok(())
         })?;
         self.store.notify_proactivity_changes();
@@ -230,6 +231,8 @@ impl Vault {
 
     /// The deadline source calls this on a timer wake. No owner credential is
     /// minted by the background job: this is a projection, not a policy edit.
+    /// Judge asks stay pending here; they reach only their responsible
+    /// human's authenticated digest read.
     pub fn emit_due_proactivity_digest(
         &self,
         now: u64,
@@ -285,6 +288,15 @@ impl Vault {
                 .last_regular
                 .map(|last| last.saturating_add(cadence.period_secs));
             let due = next.is_none_or(|next| now >= next);
+            // Judge asks spend one human's funded minutes, so each recipient
+            // keeps its own mark on the shared vault cadence: one person's
+            // digest never consumes another's.
+            let recipient = owner.map(crate::consent::AuthenticatedOwner::actor);
+            let asks_due = match &recipient {
+                Some(actor) => load_ask_mark(self, &*txn, actor)?
+                    .is_none_or(|last| now >= last.saturating_add(cadence.period_secs)),
+                None => false,
+            };
             let breakthrough = if let (Some(wake), Some(next), Some(owner)) = (urgent, next, owner)
             {
                 if cadence.urgent_breakthrough
@@ -310,12 +322,12 @@ impl Vault {
             } else {
                 false
             };
-            if !due && !breakthrough {
+            if !due && !breakthrough && !asks_due {
                 return Ok(None);
             }
             let mut groups: BTreeMap<String, Vec<DigestProposal>> = BTreeMap::new();
             for (group, proposal) in pending_proposals(self, txn, authority, &state, &cadence)? {
-                if !due && !presentation.urgent_groups.contains(&group) {
+                if !due && (!breakthrough || !presentation.urgent_groups.contains(&group)) {
                     continue;
                 }
                 let display_group = presentation
@@ -325,7 +337,13 @@ impl Vault {
                     .unwrap_or(group);
                 groups.entry(display_group).or_default().push(proposal);
             }
-            if groups.is_empty() {
+            let judge_asks = match recipient {
+                Some(actor) if asks_due => {
+                    crate::skill_optimize::take_digest_asks_in_txn(self, txn, actor, now)?
+                }
+                _ => Vec::new(),
+            };
+            if groups.is_empty() && judge_asks.is_empty() {
                 return Ok(None);
             }
             let mut rendered = String::new();
@@ -344,10 +362,12 @@ impl Vault {
                         .insert(proposal.claim_ref.to_hex(), proposal.revision);
                 }
             }
-            let is_urgent = !due && breakthrough;
+            let is_urgent = !due && breakthrough && !groups.is_empty();
             let identity = serde_json::to_vec(&(
                 now,
+                recipient,
                 &groups,
+                &judge_asks,
                 is_urgent,
                 &rendered,
                 &presentation.voice_style,
@@ -356,24 +376,26 @@ impl Vault {
             let digest = ProactivityDigest {
                 id: *blake3::hash(&identity).as_bytes(),
                 created_at: now,
+                recipient,
                 urgent: is_urgent,
                 groups,
+                judge_asks,
                 rendered,
                 voice_style: presentation.voice_style,
             };
-            let bytes = serde_json::to_vec(&digest).map_err(|_| invalid())?;
-            self.store
-                .vault_meta
-                .put(txn, &[DIGEST_PREFIX, &digest.id].concat(), &bytes)?;
-            if due {
-                state.last_regular = Some(now);
+            DIGEST.put(&self.store, txn, &digest.id, &digest)?;
+            // The vault state and board pointer follow the shared proposals;
+            // an asks-only digest is the recipient's and moves only its mark.
+            if !digest.groups.is_empty() {
+                if due {
+                    state.last_regular = Some(now);
+                }
+                state.last_digest_id = Some(digest.id);
+                STATE.put(&self.store, txn, &(), &state)?;
             }
-            state.last_digest_id = Some(digest.id);
-            self.store.vault_meta.put(
-                txn,
-                STATE_KEY,
-                &serde_json::to_vec(&state).map_err(|_| invalid())?,
-            )?;
+            if let Some(actor) = recipient.filter(|_| !digest.judge_asks.is_empty()) {
+                JUDGE_ASK_MARK.put(&self.store, txn, &actor, &now)?;
+            }
             Ok(Some(digest))
         })
     }
@@ -382,9 +404,7 @@ impl Vault {
     #[cfg(feature = "test-support")]
     pub fn corrupt_proactivity_state_for_test(&self) -> Result<()> {
         self.with_write_txn(|txn| {
-            self.store
-                .vault_meta
-                .put(txn, STATE_KEY, b"invalid digest state")?;
+            STATE.put_undecodable(&self.store, txn, &(), b"invalid digest state")?;
             Ok(())
         })
     }
@@ -394,9 +414,7 @@ impl Vault {
     #[cfg(feature = "test-support")]
     pub fn corrupt_proactivity_presentation_for_test(&self) -> Result<()> {
         self.with_write_txn(|txn| {
-            self.store
-                .vault_meta
-                .put(txn, PRESENTATION_KEY, b"invalid presentation")?;
+            PRESENTATION.put_undecodable(&self.store, txn, &(), b"invalid presentation")?;
             Ok(())
         })
     }
@@ -415,15 +433,14 @@ impl Vault {
 
     pub fn read_proactivity_digest(&self, id: [u8; 32]) -> Result<Option<ProactivityDigest>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &[DIGEST_PREFIX, &id].concat())?
-            .map(|bytes| {
-                let digest: ProactivityDigest =
-                    serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        DIGEST
+            .get(&self.store, &txn, &id)?
+            .map(|digest| {
                 let identity = serde_json::to_vec(&(
                     digest.created_at,
+                    digest.recipient,
                     &digest.groups,
+                    &digest.judge_asks,
                     digest.urgent,
                     &digest.rendered,
                     &digest.voice_style,
@@ -441,8 +458,8 @@ impl Vault {
 mod tests;
 
 fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCadence> {
-    let row: ProactivityCadence = match vault.store.vault_meta.get(txn, CADENCE_KEY)? {
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
+    let row: ProactivityCadence = match CADENCE.get(&vault.store, txn, &())? {
+        Some(row) => row,
         None => {
             serde_json::from_str(include_str!("digest_defaults.json")).map_err(|_| invalid())?
         }
@@ -453,17 +470,19 @@ fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCaden
     Ok(row)
 }
 fn load_state(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DigestState> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, STATE_KEY)?
-        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
-        .transpose()
-        .map(Option::unwrap_or_default)
+    Ok(STATE.get(&vault.store, txn, &())?.unwrap_or_default())
+}
+fn load_ask_mark(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<Option<u64>> {
+    JUDGE_ASK_MARK
+        .get(&vault.store, txn, actor)
+        .map_err(|error| match error {
+            crate::Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
+            other => other,
+        })
 }
 fn load_presentation(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityPresentation> {
-    let row: ProactivityPresentation = match vault.store.vault_meta.get(txn, PRESENTATION_KEY)? {
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
+    let row: ProactivityPresentation = match PRESENTATION.get(&vault.store, txn, &())? {
+        Some(row) => row,
         None => serde_json::from_str(include_str!("digest_presentation_defaults.json"))
             .map_err(|_| invalid())?,
     };
@@ -481,15 +500,10 @@ fn pending_proposals(
     // Stream the producer index rather than using its capped 10k-ID query:
     // previously displayed proposals remain Proposed and still occupy index
     // slots. A full tray must not disable the scheduler's other deadlines.
-    let prefix = crate::claim::producer_prefix(authority);
-    for row in vault.store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (key, _) = row?;
-        let id = EntityId::from_bytes(
-            key[prefix.len()..]
-                .try_into()
-                .map_err(|_| crate::Error::CorruptedIndex("claim projection index"))?,
-        )?;
-        let Some(bytes) = vault.store.entities.get(txn, id.as_bytes())? else {
+    for row in crate::claim::PENDING_PRODUCER.iter_from(&vault.store, txn, authority.as_bytes())? {
+        let ((_, id), _) = row?;
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&bytes).ok_or_else(invalid)?;
@@ -575,10 +589,7 @@ fn load_policy_proposal(
     owner: EntityId,
     claim_ref: EntityId,
 ) -> Result<ProactivityPolicyProposal> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, claim_ref.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &claim_ref)?
         .ok_or_else(invalid)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM

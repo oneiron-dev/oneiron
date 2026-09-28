@@ -67,6 +67,16 @@ impl JsCodeModeHost for Host {
     }
 }
 
+/// `self.json.validate` compiles the host's schema-validator module on the
+/// first call, inside the step's wall time. That compile is slow in debug
+/// builds on a loaded host; these tests check verdicts, not the deadline.
+fn validation_budget() -> ComponentBudget {
+    ComponentBudget {
+        wall_time: std::time::Duration::from_secs(60),
+        ..ComponentBudget::default()
+    }
+}
+
 fn run(
     runtime: &mut dyn JsCodeModeRuntime,
     script: &str,
@@ -173,8 +183,7 @@ fn quickjs_exposes_bare_ask_but_no_self_ask_alias() {
 
 fn quickjs_json_validate_returns_shared_allow_reject_verdicts_without_dispatch() {
     let (bytes, hash) = artifact("first-party");
-    let factory =
-        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
+    let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, validation_budget()).unwrap();
     let mut host = Host::default();
     let result = run(
         &mut factory.runtime().unwrap(),
@@ -202,9 +211,8 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
     const CHILD: &str = "ONEIRON_JSON_VALIDATE_RECURSIVE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let (bytes, hash) = artifact("first-party");
-        let factory =
-            QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default())
-                .expect("pinned component");
+        let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, validation_budget())
+            .expect("pinned component");
         let result = run(
             &mut factory.runtime().expect("runtime"),
             "const bad = {allOf:[{$ref:'#'}]}; \
@@ -251,7 +259,9 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
         .env(CHILD, "1")
         .spawn()
         .expect("spawn isolated sandbox regression");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // A hang guard, not a latency bound: the child compiles the component twice
+    // in a debug build and can take tens of seconds on a loaded host.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         if let Some(status) = child.try_wait().expect("child status") {
             assert!(
@@ -330,6 +340,32 @@ fn quickjs_foreign_exports_proposals_and_cannot_link_first_party() {
     assert_eq!(value["observation"], "proposals-only");
 }
 
+#[test]
+fn quickjs_foreign_delete_and_rename_are_canonical_proposals() {
+    use crate::code_sandbox::wasmtime_boundary::{WasmtimeBoundary, bindings};
+    let (bytes, _) = artifact("foreign");
+    let boundary = WasmtimeBoundary::new().expect("boundary");
+    let component = boundary.compile(&bytes).expect("pinned component");
+    let mut request = boundary
+        .request(&component, SandboxGuestTier::Foreign, ForeignHost)
+        .expect("foreign request");
+    let result = request.run_step("propose.delete('/mnt/workspace/old'); propose.rename('/mnt/workspace/moved', '/mnt/workspace/new'); finish('ok');".into())
+        .expect("real JS interpreter");
+    assert!(
+        matches!(&result.proposals[0], bindings::ProposalDelta::FileDelete(delete)
+        if delete.path == "/mnt/workspace/old")
+    );
+    assert!(
+        matches!(&result.proposals[1], bindings::ProposalDelta::FileRename(rename)
+        if rename.origin == "/mnt/workspace/moved" && rename.destination == "/mnt/workspace/new")
+    );
+    assert!(
+        request
+            .run_step("propose.delete('/mnt/uploads/secret')".into())
+            .is_err()
+    );
+}
+
 struct ForeignHost;
 impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignHost {
     fn clock_now_unix_ms(&mut self) -> u64 {
@@ -345,6 +381,13 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
         &mut self,
         _: crate::code_sandbox::wasmtime_boundary::bindings::CredentialInput,
     ) -> std::result::Result<String, String> {
+        Err("unlinked capability".into())
+    }
+    fn agents_put(
+        &mut self,
+        _: crate::code_sandbox::wasmtime_boundary::bindings::AgentPutInput,
+    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::AgentPutOutput, String>
+    {
         Err("unlinked capability".into())
     }
     fn json_validate(&mut self, _: String, _: String) -> std::result::Result<bool, String> {

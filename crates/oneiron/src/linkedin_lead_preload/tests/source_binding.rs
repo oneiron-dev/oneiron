@@ -63,10 +63,13 @@ fn linkedin_entity_id_is_domain_separated_and_stable() -> TestResult {
     let (temp, vault, _) = setup();
     let key = LinkedInExternalKey::person(" \tsynthetic-shared\r\n")?;
     assert_eq!(key.source_ref(), "linkedin:person:synthetic-shared");
-    let expected = blake3::hash(b"oneiron.linkedin.entity.v1linkedin:person:synthetic-shared");
+    let expected = EntityId::derive(
+        b"oneiron.linkedin.entity.v1",
+        &[b"linkedin:person:synthetic-shared"],
+    )?;
     let before = unix_seconds_now();
     let (person, disposition) = resolve_linkedin_entity(&vault, key.clone())?;
-    assert_eq!(person.as_bytes().as_slice(), &expected.as_bytes()[..16]);
+    assert_eq!(person, expected);
     assert_eq!(disposition, Disposition::Created);
     let raw = vault.get_raw(&person)?.expect("fixture");
     assert_eq!(

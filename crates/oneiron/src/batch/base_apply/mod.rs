@@ -1,4 +1,5 @@
 use super::claim_materialization::consume_claim_materialization;
+use super::verified_claim_transition::consume_next;
 use super::*;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -17,7 +18,10 @@ mod validation;
 
 use self::edge::{apply_edge_op, edge_op_endpoints};
 use self::indexes::{apply_text_index_update, finalize_batch_indexes};
-use self::validation::{birth_stamp_target, take_lapse_decisions, validate_put_type};
+use self::validation::{
+    birth_stamp_target, consume_preflight_decisions, mark_unapplied_preflight_decisions,
+    take_lapse_decisions, validate_put_type,
+};
 
 // Holds promotion's independent journal clone until apply completes. The
 // iterator retains every unconsumed op on early return; per-op payloads that
@@ -83,6 +87,30 @@ fn prepare_replay_op(
     result
 }
 
+fn require_gated_claim_materializations(
+    claim_gate_prechecked: bool,
+    materializations: &VecDeque<ClaimMaterialization>,
+) -> Result<()> {
+    if claim_gate_prechecked && !materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "owner-bound materialization cannot skip the gate",
+        ));
+    }
+    Ok(())
+}
+
+fn require_consumed_claim_bindings(
+    materializations: &VecDeque<ClaimMaterialization>,
+    transitions: &VecDeque<super::VerifiedClaimTransition>,
+) -> Result<()> {
+    if !materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "unconsumed claim materialization envelope",
+        ));
+    }
+    super::verified_claim_transition::require_consumed(transitions)
+}
+
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
 ///
 /// The narrow operation-shape check prevents the prechecked mode from being
@@ -94,6 +122,26 @@ pub(crate) fn apply_session_bundle_claim_puts(
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+) -> Result<()> {
+    apply_session_bundle_claim_puts_with_transitions(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        Vec::new(),
+        text_index_trusted,
+    )
+}
+
+pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    transitions: Vec<super::VerifiedClaimTransition>,
     text_index_trusted: bool,
 ) -> Result<()> {
     if ops.iter().any(|op| {
@@ -118,7 +166,9 @@ pub(crate) fn apply_session_bundle_claim_puts(
         wtxn,
         ops,
         text_index_trusted,
-        ApplyOpsGateMode::new(false, false).with_prechecked_claim_gate(),
+        ApplyOpsGateMode::new(false, false)
+            .with_prechecked_claim_gate()
+            .with_verified_claim_transitions(transitions),
     )
 }
 
@@ -133,6 +183,8 @@ pub(crate) fn apply_session_bundle_claim_puts(
     clippy::too_many_arguments,
     reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
 )]
+// One transaction applies every op and then its whole-batch validators in order.
+#[allow(clippy::too_many_lines)]
 pub(super) fn apply_ops_with_origin(
     store: &Store,
     config: &crate::config::VaultConfig,
@@ -140,26 +192,24 @@ pub(super) fn apply_ops_with_origin(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
-    gate_mode: ApplyOpsGateMode,
+    mut gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
-    let hub_admission = gate_mode.hub_admission;
-    let refinement_admission = gate_mode.refinement_admission;
+    let hub_admission = gate_mode.hub_admission.take();
+    let refinement_admission = gate_mode.refinement_admission.take();
+
     let birth_mask = gate_mode.birth_mask;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
-    let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
-    let mut claim_materializations = gate_mode.claim_materializations;
-    if claim_gate_prechecked && !claim_materializations.is_empty() {
-        return Err(Error::InvariantViolation(
-            "owner-bound materialization cannot skip the gate",
-        ));
-    }
-    let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
+    let mut claim_materializations = std::mem::take(&mut gate_mode.claim_materializations);
+    let mut claim_transitions = std::mem::take(&mut gate_mode.claim_transitions);
+    require_gated_claim_materializations(claim_gate_prechecked, &claim_materializations)?;
+    let mut preflight_gate_decision_ids =
+        std::mem::take(&mut gate_mode.preflight_gate_decision_ids);
 
     secret_scan::scan_batch_ops(&ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
@@ -180,6 +230,7 @@ pub(super) fn apply_ops_with_origin(
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
     let mut project_edge_endpoints = BTreeSet::new();
+    let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
     // inducing type-76 rows are gone, so the full reconciler's
     // surviving-events derivation can no longer reach them. Non-empty here
@@ -188,16 +239,13 @@ pub(super) fn apply_ops_with_origin(
     let mut evicted_shell_sources = BTreeSet::new();
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
-    let write_policy = if contains_local_claim_put(&ops) && !claim_gate_prechecked {
-        Some(crate::gate::resolve_policy_manifest(store, &*wtxn)?)
-    } else {
-        None
-    };
-    let pending_gate_consent_at_batch_start = if persist_gate_pending_consent {
-        pending_gate_consent_ids_at_batch_start(store, &*wtxn, &ops)?
-    } else {
-        HashSet::new()
-    };
+    let write_policy = (contains_local_claim_put(&ops) && !claim_gate_prechecked)
+        .then(|| crate::gate::resolve_policy_manifest(store, &*wtxn))
+        .transpose()?;
+    let pending_gate_consent_at_batch_start = persist_gate_pending_consent
+        .then(|| pending_gate_consent_ids_at_batch_start(store, &*wtxn, &ops))
+        .transpose()?
+        .unwrap_or_default();
     // Legacy (pre-symmetric-migration) graphs answer a vector refresh with a
     // full snapshot rebuild. Batched vector updates coalesce that into at
     // most ONE rebuild per transaction: once pending, per-op graph mutations
@@ -207,16 +255,24 @@ pub(super) fn apply_ops_with_origin(
     let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
     #[cfg(feature = "sync")]
     let mut pending_embedding_enqueue_priorities = HashMap::<EntityId, u8>::new();
-    let iter = ReplayIter {
+    // Preflight precedes every operation. Protect only future receipts from
+    // earlier deletes; successful nested applies consume their own markers.
+    mark_unapplied_preflight_decisions(store, wtxn, &preflight_gate_decision_ids)?;
+    let mut iter = ReplayIter {
         remaining: std::mem::take(&mut ops.ops).into_iter(),
         replay,
     };
-    for (op_index, mut op) in iter.enumerate() {
+    let mut op_index = 0;
+    while let Some(mut op) = iter.next() {
         // K4: the op-decode point, inside the applying transaction. Every arm
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
         let materialization =
             prepare_replay_op(store, &*wtxn, &mut claim_materializations, &mut op, origin)?;
+        let transition = consume_next(&mut claim_transitions, &op, iter.remaining.as_slice())?;
+        let mut put_options = PutOptions::for_batch_op(&op, &gate_mode);
+        put_options.indexing.later_text_op_covers = later_text_coverage_by_op[op_index];
+
         match op {
             BatchOp::Put {
                 id,
@@ -244,7 +300,7 @@ pub(super) fn apply_ops_with_origin(
                 {
                     let owner = crate::vault::embedded_owner_actor_id()?;
                     if birth_mask.is_none()
-                        && facet == crate::claim::substrate_facet_id(owner)
+                        && facet == crate::claim::substrate_facet_id(owner)?
                         && stored_entity_type(store, wtxn, &owner)?.is_none()
                     {
                         apply_ops_with_origin(
@@ -301,39 +357,35 @@ pub(super) fn apply_ops_with_origin(
                 } else {
                     None
                 };
+                put_options.consent.can_resolve_pending =
+                    pending_gate_consent_at_batch_start.contains(&id);
+                put_options.decision.preflight = preflight_decision_id;
                 let applied = apply_put(
                     store,
                     wtxn,
-                    id,
-                    entity_type,
-                    occurred,
-                    learned_at,
-                    &data,
-                    allow_reserved_predicate,
-                    // ONE-1141: `replicated_put_op` is the SINGLE constructor
-                    // that opens BOTH admit bands at once (see its doc), so
-                    // both-flags-set identifies the sync replay doors
-                    // (`put_replicated` → here). The replicated arm of
-                    // `apply_put` deindexes the loser's BM25F postings on a
-                    // body-changing overwrite, same-txn (ARCH-0031 amendment).
-                    replicated,
-                    hub_sync_imported,
-                    hub_admission.as_ref(),
-                    refinement_admission.as_ref(),
-                    later_text_coverage_by_op[op_index],
-                    write_policy.as_ref(),
-                    materialization
-                        .as_ref()
-                        .and_then(ClaimMaterialization::gate_envelope),
-                    false,
-                    record_gate_decisions,
-                    persist_gate_pending_consent,
-                    pending_gate_consent_at_batch_start.contains(&id),
-                    include_source_in_gate_input,
-                    claim_gate_prechecked,
-                    preflight_decision_id,
-                    origin,
+                    PutRequest {
+                        row: PutRow {
+                            id,
+                            entity_type,
+                            occurred,
+                            learned_at,
+                            data: &data,
+                        },
+                        options: put_options,
+                        context: PutContext {
+                            origin,
+                            write_policy: write_policy.as_ref(),
+                            write_envelope: materialization
+                                .as_ref()
+                                .and_then(ClaimMaterialization::gate_envelope),
+                            hub_admission: hub_admission.as_ref(),
+                            refinement_admission: refinement_admission.as_ref(),
+                            transition: transition.as_ref(),
+                            posture: config.privacy.posture,
+                        },
+                    },
                 )?;
+                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
                         store,
@@ -351,7 +403,8 @@ pub(super) fn apply_ops_with_origin(
                             hub_sync_imported: false,
                         }],
                         text_index_trusted,
-                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent)
+                            .with_birth_mask(birth_mask),
                         origin,
                     )?;
                 }
@@ -460,24 +513,27 @@ pub(super) fn apply_ops_with_origin(
                 } else {
                     None
                 };
+                put_options.consent.can_resolve_pending =
+                    pending_gate_consent_at_batch_start.contains(&id);
+                put_options.decision.preflight = preflight_decision_id;
                 let applied = apply_claim_candidate(
                     store,
+                    config,
+                    (analyzer, text_index_trusted),
                     wtxn,
-                    id,
-                    *candidate,
-                    &envelope,
-                    occurred,
-                    learned_at,
-                    later_text_coverage_by_op[op_index],
-                    write_policy.as_ref(),
-                    internal_lexical_query_hint,
-                    record_gate_decisions,
-                    persist_gate_pending_consent,
-                    pending_gate_consent_at_batch_start.contains(&id),
-                    include_source_in_gate_input,
-                    claim_gate_prechecked,
-                    preflight_decision_id,
+                    ClaimCandidateRequest {
+                        id,
+                        candidate: *candidate,
+                        envelope: &envelope,
+                        occurred,
+                        learned_at,
+                        decision: put_options.decision,
+                        consent: put_options.consent,
+                        indexing: put_options.indexing,
+                        write_policy: write_policy.as_ref(),
+                    },
                 )?;
+                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if !internal_lexical_query_hint {
                     claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
                 }
@@ -570,7 +626,7 @@ pub(super) fn apply_ops_with_origin(
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
-                    deindex_entity(store, wtxn, &id)?;
+                    deindex_entity_with_machine_history(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
                     store.let_go_pending_gate_consent_in_txn(wtxn, &id, mutation_recorded_at)?;
@@ -591,9 +647,9 @@ pub(super) fn apply_ops_with_origin(
                 envelope,
                 learned_at,
             } => {
-                // Hand each id its own preflight receipt identity, in the
-                // order the preflight recorded them, so the unconsumed-identity
-                // invariant below stays exact.
+                // Hand each id its preflight identity in recorded order. The
+                // nested ClaimCandidate applies consume its marker, not this
+                // outer arm; consuming here a second time aborts the lapse.
                 let lapse_decision_ids =
                     take_lapse_decisions(&mut preflight_gate_decision_ids, &ids);
                 crate::commitment::lapse_commitments_in_txn(
@@ -610,13 +666,10 @@ pub(super) fn apply_ops_with_origin(
                 )?;
             }
         }
+        op_index += 1;
     }
 
-    if !claim_materializations.is_empty() {
-        return Err(Error::InvariantViolation(
-            "unconsumed claim materialization envelope",
-        ));
-    }
+    require_consumed_claim_bindings(&claim_materializations, &claim_transitions)?;
     if preflight_gate_decision_ids
         .values()
         .any(|ids| !ids.is_empty())
@@ -636,6 +689,7 @@ pub(super) fn apply_ops_with_origin(
     )?;
     project_edge_endpoints.extend(&materialized_entity_ids);
     crate::workspace_roster::validate_project_graph(store, wtxn, &project_edge_endpoints)?;
+    crate::workspace_roster::validate_local_leader_chat_turns(store, wtxn, &local_chat_turns)?;
 
     // STO-03: derived Habit counters, recomputed from the FINAL child state of
     // this transaction — after every op, so an add and a delete of the same

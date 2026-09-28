@@ -63,10 +63,7 @@ impl DeleteEntityPreview {
     }
 
     fn check_body(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
-        let raw = vault
-            .store
-            .entities
-            .get(txn, self.entity.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &self.entity)?
             .ok_or(Error::ConcurrentWrite("delete preview stale"))?;
         if blake3::hash(&raw).as_bytes() != &self.fingerprint
             || crate::note::storage::delete_preview_fingerprint(vault, txn, self.entity, &raw)?
@@ -85,10 +82,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<DeleteEntityPreview> {
-        let raw = self
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let shared_with = crate::share::active_brief_shares_for(
             &self.store,

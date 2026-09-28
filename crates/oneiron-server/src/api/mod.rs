@@ -3,7 +3,7 @@
 //! These routes provide server-side query capabilities for clients
 //! that don't have a local LMDB vault (e.g., web dashboard).
 //!
-//! Auth: shared secret header for Phase 1.
+//! Auth: logged capability slips, bound to the holder key.
 
 #[cfg(test)]
 use crate::config::SyncServerConfig;
@@ -181,8 +181,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
-        .route("/api/lease/register", post(lease_register))
-        .route("/api/lease/rotate", post(lease_rotate))
         .route_layer(middleware::from_fn_with_state(
             idempotency.clone(),
             idempotency_middleware,
@@ -204,6 +202,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route(
             "/conversations/{conversation_id}/records/{record}/thread",
             post(reply_in_thread),
+        )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread/summary",
+            post(summarize_thread),
         )
         .route("/sessions/{id}", axum::routing::patch(sessions::mode))
         .route("/sessions/{id}/presence", post(sessions::presence))
@@ -234,6 +236,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_routes = Router::new()
+        // A consumed approval must never replay a cached 200, even with an idempotency key.
+        .route("/consent/widen/accept", post(core_accept_widen))
         .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
@@ -313,6 +317,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let companion_routes = Router::new()
+        .route("/personas", get(list_personas))
+        .route("/personas/access-requests", get(list_access_requests))
         .route(
             "/profiles/{persona_ref}",
             get(get_companion_profile).post(refresh_companion_profile),
@@ -332,6 +338,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/.well-known/oneiron", get(pairing::descriptor))
         .route("/v1/core/pairing/links", post(pairing::create_link))
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
+        .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
         .route("/a/{artifact}", get(serve_artifact_root))
         .route("/a/{artifact}/", get(serve_artifact_root))
@@ -381,11 +388,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             get(get_usage_rollup),
         )
         .merge(legacy_mutation_routes)
-        .layer(axum::middleware::from_fn_with_state(
-            server.clone(),
-            hosted_vault_binding,
-        ))
-        // Config-only CIMD documents must be public before OAuth/lease bootstrap.
+        // Config-only CIMD documents remain public before OAuth bootstrap.
         .route("/oauth/client/native.json", get(client_metadata::native))
         .route("/oauth/client/web.json", get(client_metadata::web))
         // The public ceremony bypasses the hosted device lease but retains
@@ -395,9 +398,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             server.clone(),
             crate::wire_telemetry::observe_http,
         ))
-        // Published anonymous booking capabilities are not tenant-device access.
-        // Their closed router validates a live owner publication and scoped tokens;
-        // keep it outside the tenant lease layer, never a generic path exemption.
+        // Published anonymous booking capabilities validate a live owner publication
+        // and scoped tokens; they do not authorize access to private vault routes.
         .merge(self::booking::public_booking_router())
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
@@ -500,26 +502,9 @@ fn require_entity_type(
     }
 }
 
-// ─── Lease revocation (ONE-1140, OD-8) ────────────────────────────────────────
+// ─── Receipt-provenance key revocation ────────────────────────────────────────
 
 // ─── Context Pack ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests;
-
-async fn hosted_vault_binding(
-    axum::extract::State(server): axum::extract::State<Arc<SyncServer>>,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    // Bootstrap is owner-authenticated and never returns vault data.
-    if !matches!(
-        request.uri().path(),
-        "/api/lease/register" | "/api/lease/rotate" | "/api/lease/revoke" | "/api/health"
-    ) && let Err(error) = server.require_vault_binding(request.headers())
-    {
-        return error.into_response();
-    }
-    next.run(request).await
-}

@@ -38,6 +38,11 @@ pub enum AuthorityOp {
         genesis_nonce: [u8; 32],
         recovery: GenesisRecoveryStep,
         tier_floor: AuthorityTier,
+        /// Legacy signed field with no fold effect. It stays on the wire (and
+        /// in the entry hash) and keeps its 24-48h band validation so old and
+        /// new peers agree on which genesis entries are valid, but nothing
+        /// waits on it: the delayed-widen ceremony died 2026-08-05 (identity
+        /// canon, "Device-key widen ceremony (dead 2026-08-05)").
         pending_widen_delay_secs: u64,
     },
     /// Enrolls a new authority key.
@@ -63,15 +68,19 @@ pub enum AuthorityOp {
     SetTierFloor {
         tier_floor: AuthorityTier,
     },
-    /// In-chain host migration. Replaces the roster without a new genesis,
-    /// a floor reset, or recovered instant-widen authority.
+    /// In-chain host migration. Replaces the roster without a new genesis or
+    /// a floor reset.
     ReRoot {
         new_device: DeviceAuthority,
     },
     /// Federation confirm that travels with authority fold verification.
     FederationConfirm(AuthorityConfirmAction),
     CriticalWriteConfirm(CriticalWriteConfirmAction),
-    /// Owner veto for a software-tier widen that is still pending.
+    /// Legacy owner veto of a pending software-tier widen. Kept so existing
+    /// signed logs still decode and hash identically; the fold always rejects
+    /// it as [`AuthorityFoldIssue::InvalidEntry`] because no widen is ever
+    /// pending (the delayed-broadcast-veto ceremony died 2026-08-05, ARCH-0040
+    /// ONE-AUTHLOG-F6). Nothing in this crate produces it.
     VetoPendingWiden {
         /// Target authority entry hash to suppress under most-restrictive-wins.
         pending_widen_hash: AuthorityEntryHash,

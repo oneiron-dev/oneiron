@@ -69,7 +69,7 @@ pub(super) fn claim_burst_inputs(
         recent,
         window,
         baseline,
-        store.entities.len(txn)?,
+        crate::ports::EntityStoreRead::port_entity_count(store, txn)?,
         streak,
     ))
 }

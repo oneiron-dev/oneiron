@@ -10,6 +10,16 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v21: every deterministic id is derived by one rule, `EntityId::derive`
+/// (BLAKE3 derive-key over the domain, length-prefixed parts, UUID version 8).
+/// Ids derived before it (the owner PERSON and its facets, bootstrap skills,
+/// projector claims, home rooms, ask records, calendar and connector actors)
+/// no longer match what this engine derives. The same version writes a pact
+/// world set holding only the base world as `base` (it had two spellings), so
+/// an authority-log entry or slip carrying the old `worlds` spelling is
+/// refused where its bytes are re-encoded and compared. ABI 20 vaults fail
+/// closed at the ABI gate — there is no migration pass; rebuild the vault.
+///
 /// v20: the pairing link row stores an 8-character code hashed at rest with
 /// the server origin and the intended holder in place of the 64-hex ticket,
 /// and the replay table holds one row per admitted proof, bounded by the
@@ -97,7 +107,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 20;
+pub const STORAGE_ABI_VERSION: u16 = 21;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 
@@ -194,12 +204,21 @@ pub(in crate::store) const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] =
 /// [`STORAGE_ABI_VERSION`] bump.
 pub(in crate::store) const RECEIPT_FAMILY_INDEX_VERSION: u8 = 1;
 
+/// Production reads/writes of these rows now go through the typed
+/// `side_table::{TEXT_INDEX_SCHEMA_VERSION, TEXT_ANALYZER_MANIFEST,
+/// TEXT_BM25_FIELD_SCHEMA_HASH}` tables bound in `vault::doctor_manifest`; the
+/// raw key constants themselves are now named only from the store test suite
+/// (corrupt/legacy-row fixtures), so they stay `#[cfg(test)]`.
+#[cfg(test)]
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"text_index_schema_version";
 
+#[cfg(test)]
 pub(crate) const TEXT_ANALYZER_MANIFEST_KEY: &[u8] = b"text_analyzer_manifest";
 
+#[cfg(test)]
 pub(crate) const TEXT_ANALYZER_MANIFEST_HASH_KEY: &[u8] = b"text_analyzer_manifest_hash";
 
+#[cfg(test)]
 pub(crate) const TEXT_BM25_FIELD_SCHEMA_HASH_KEY: &[u8] = b"text_bm25_field_schema_hash";
 
 /// Current text-index schema version written on new vaults.

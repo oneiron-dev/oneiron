@@ -73,7 +73,8 @@ impl AudienceCache {
         {
             return Ok(false);
         }
-        let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        else {
             return Ok(false);
         };
         let h =
@@ -97,27 +98,35 @@ impl AudienceCache {
                 }
                 Err(error) => return Err(error),
             }
-            let revision = membership::revision_in(&vault.store, txn, room)?;
-            if !self.rows.contains_key(&(room, revision)) {
-                if self.rows.len() >= 1024 {
-                    self.rows.clear();
-                }
-                self.rows.insert(
-                    (room, revision),
-                    membership::rows_in(&vault.store, txn, room)?,
-                );
-                self.ledger_reads = self.ledger_reads.saturating_add(1);
-            }
-            let rows = self
-                .rows
-                .get(&(room, revision))
-                .ok_or(Error::CorruptedIndex("audience snapshot"))?;
-            for person in audience {
-                if !membership::windows_rows(rows, *person)?
-                    .iter()
-                    .any(|w| w.contains(h.occurred_start))
-                {
+            if let Some(readable) =
+                crate::workspace_roster::project_room_audience_in(vault, txn, room, audience)?
+            {
+                if !readable {
                     return Ok(false);
+                }
+            } else {
+                let revision = membership::revision_in(&vault.store, txn, room)?;
+                if !self.rows.contains_key(&(room, revision)) {
+                    if self.rows.len() >= 1024 {
+                        self.rows.clear();
+                    }
+                    self.rows.insert(
+                        (room, revision),
+                        membership::rows_in(&vault.store, txn, room)?,
+                    );
+                    self.ledger_reads = self.ledger_reads.saturating_add(1);
+                }
+                let rows = self
+                    .rows
+                    .get(&(room, revision))
+                    .ok_or(Error::CorruptedIndex("audience snapshot"))?;
+                for person in audience {
+                    if !membership::windows_rows(rows, *person)?
+                        .iter()
+                        .any(|w| w.contains(h.occurred_start))
+                    {
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -222,7 +231,8 @@ pub(crate) fn room_for_record_in(
         if seen.len() > MAX_ANCESTOR_DEPTH {
             return Err(state("room ancestor depth bound"));
         }
-        let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        else {
             return Err(Error::EntityNotFound);
         };
         let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("room ancestor"))?;

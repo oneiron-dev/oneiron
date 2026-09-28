@@ -182,7 +182,8 @@ fn put_member(vault: &Vault, claim_seed: u8, value: &CampaignMemberValue) {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .expect("fixture"),
             TimeRange { start: 1, end: 1 },
             1,
         )
@@ -659,7 +660,8 @@ fn replacement_stage_supersedes_prior_head() {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .expect("fixture"),
             TimeRange {
                 start: REPLY_AT,
                 end: REPLY_AT,
@@ -933,7 +935,8 @@ fn call_held_cites_the_claim_the_outcome_was_read_from() {
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     planted.valid_from = Some(OUTCOME_AT + 60);
     vault
         .put_claim(

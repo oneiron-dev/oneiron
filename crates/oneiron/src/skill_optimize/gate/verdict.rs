@@ -15,10 +15,19 @@ use super::*;
 pub enum SkillEditDisposition {
     /// Strict improvement, unprotected tier, within cap.
     Accepted,
-    /// `after <= before`. Ties live here: there is no epsilon.
+    /// A non-floor tradeoff approved by an authenticated owner decision.
+    AcceptedTradeoff,
+    /// A floor regression, a dominated vector or a full tie; no epsilon.
     Rejected,
+    /// A tradeoff rejected by the authenticated decision door.
+    RejectedTradeoff,
+    /// Non-floor gain and loss on different axes. No automatic decision is
+    /// authorized; a host can route this typed, vector-bearing receipt through
+    /// the preference / decision / responsible-person ladder. The proposal
+    /// remains open until that decision is made outside this gate.
+    NeedsTradeoffDecision,
     /// Improving, but this cycle already spent its accepts. The proposal stays
-    /// OPEN — a later cycle may admit it. The ONLY durable open disposition.
+    /// OPEN — a later cycle may score it under a fresh cap.
     DeferredCycleCap,
     /// Identity- or alignment-tier at accept time, on the TARGET or on the
     /// PROPOSAL itself — protected, ambiguous, or moved since the basis was
@@ -47,7 +56,10 @@ impl SkillEditDisposition {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
+            Self::AcceptedTradeoff => "accepted_tradeoff",
             Self::Rejected => "rejected",
+            Self::RejectedTradeoff => "rejected_tradeoff",
+            Self::NeedsTradeoffDecision => "needs_tradeoff_decision",
             Self::DeferredCycleCap => "deferred_cycle_cap",
             Self::RefusedProtectedTier => "refused_protected_tier",
             Self::RefusedStaleTarget => "refused_stale_target",
@@ -60,7 +72,10 @@ impl SkillEditDisposition {
     pub(super) fn parse(value: &str) -> Option<Self> {
         match value {
             "accepted" => Some(Self::Accepted),
+            "accepted_tradeoff" => Some(Self::AcceptedTradeoff),
             "rejected" => Some(Self::Rejected),
+            "rejected_tradeoff" => Some(Self::RejectedTradeoff),
+            "needs_tradeoff_decision" => Some(Self::NeedsTradeoffDecision),
             "deferred_cycle_cap" => Some(Self::DeferredCycleCap),
             // "deferred_evidence_changed" is deliberately ABSENT: the evidence
             // race is a retryable abort that commits nothing, so a row
@@ -85,30 +100,25 @@ impl SkillEditDisposition {
     /// Whether this verdict makes the proposal eligible for admission.
     #[must_use]
     pub const fn admits(self) -> bool {
-        matches!(self, Self::Accepted)
+        matches!(self, Self::Accepted | Self::AcceptedTradeoff)
     }
 
     /// Whether the proposal remains an open question a later cycle may answer.
     ///
-    /// Exactly ONE ruling leaves it open, and it is the cap deferral: a ruling
-    /// that says nothing about the proposal except that this wake's budget was
-    /// already spent. A rejection and a refusal are both ANSWERS — the evidence
-    /// said no — and re-asking them next wake would be the nagging ONE-1448's
-    /// open-question rule already refuses.
+    /// A cap deferral says only that this wake's budget was spent; a tradeoff
+    /// waits for an external preference decision. Neither is a final answer.
+    /// A rejection or refusal closes the proposal so the loop may try another
+    /// draft rather than nag on the same rejected edit.
     ///
-    /// A raced snapshot is NOT on this list, because it is not a ruling at all:
-    /// it commits nothing and returns [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry), leaving
-    /// the proposal in its pre-call state. A second durable open class would
-    /// have grown one more row on every raced retry and made "open" mean two
-    /// different things.
+    /// A raced snapshot is NOT on this list: it commits nothing and returns
+    /// [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry), leaving
+    /// the proposal in its pre-call state.
     ///
-    /// The complement is [`Self::closes_proposal`], and every answer that is
-    /// not this deferral closes: a terminal ruling that left the record
-    /// `candidate + proposed` would wedge the skill forever, because the
-    /// drafting job skips a skill with an open proposed revision.
+    /// The complement is [`Self::closes_proposal`]: terminal rulings close,
+    /// because the drafting job skips a skill with an open proposed revision.
     #[must_use]
     pub const fn leaves_proposal_open(self) -> bool {
-        matches!(self, Self::DeferredCycleCap)
+        matches!(self, Self::DeferredCycleCap | Self::NeedsTradeoffDecision)
     }
 
     /// Whether this ruling ANSWERS the proposal, and so must close it.
@@ -123,7 +133,7 @@ impl SkillEditDisposition {
 
     /// Whether the caller is told by an `Err` as well as by the ledger.
     ///
-    /// Reject and defer are ordinary answers a loop keeps running after, so
+    /// Reject, defer and tradeoff are ordinary outcomes, so
     /// they return `Ok`. A refusal says the proposal should never have reached
     /// the gate in this shape, so it is also a typed error.
     pub(super) const fn is_refusal(self) -> bool {
@@ -159,6 +169,24 @@ impl SkillEditDisposition {
     }
 }
 
+/// Owner-authenticated resolution of one exact pending vector. The evidence is
+/// an opaque host decision reference, not an unverified permission by itself.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TradeoffResolution {
+    pub pending: EntityId,
+    pub owner: EntityId,
+    pub authentication: String,
+    pub evidence: String,
+}
+
+/// The owner decision on a mixed (non-floor) goal vector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeoffChoice {
+    Approve,
+    Reject,
+}
+
 /// One durable gate ruling.
 ///
 /// The three blueprint fields (`before`, `after`, `accepted`) are the headline;
@@ -171,11 +199,23 @@ pub struct HeldOutVerdict {
     pub before: f32,
     /// Score of the PROPOSED instructions over the same reserved evidence.
     pub after: f32,
+    /// Complete scored goal vector. Empty only on an unscored stale-target refusal.
+    pub goal_axes: BTreeMap<String, GoalAxisScore>,
+    /// Authenticated goal-definition revision this vector was scored against.
+    pub goal_revision: String,
+    /// Portable goal identity; absent only on an unscored refusal.
+    pub goal_id: Option<EntityId>,
+    /// Decision evidence only on an owner-resolved tradeoff.
+    pub tradeoff_resolution: Option<TradeoffResolution>,
     /// Both receipt-only audits and judge agreement with available world labels.
     /// None only when a terminal refusal happened before any judging.
     pub measurements: Option<JudgeMeasurements>,
     /// `after > before`, and nothing refused or deferred it.
     pub accepted: bool,
+    /// Immutable candidate-scoring skill revision; absent only before scoring.
+    pub judge_revision: Option<String>,
+    /// Replacement that retired this judge's score. Stored as a separate marker.
+    pub displaced_by_revision: Option<String>,
     /// Ledger row id; the receipt's id is derived from it.
     pub id: EntityId,
     /// The gated proposal this ruling is about.

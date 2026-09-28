@@ -16,6 +16,7 @@ pub(super) struct BoundSource {
 
 struct CursorDocument {
     doc: LoroDoc,
+    journal: LoroDoc,
     commits: usize,
     current: BTreeMap<String, String>,
     history: super::history::History,
@@ -46,6 +47,7 @@ impl BoundSource {
             document,
             doc: Mutex::new(CursorDocument {
                 doc: LoroDoc::new(),
+                journal: LoroDoc::new(),
                 commits: 0,
                 current: BTreeMap::new(),
                 history: super::history::History::new(session, hub),
@@ -92,6 +94,34 @@ struct ViewFilter {
 }
 
 impl LiveQuerySource for BoundSource {
+    fn pending_at_open(
+        &self,
+        dependencies: &BTreeSet<String>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        let server = self.server()?;
+        let mut missing = Vec::new();
+        for path in dependencies {
+            let Some(entity) = path
+                .strip_prefix("e:")
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+            else {
+                continue;
+            };
+            let live = server
+                .vault()
+                .get_raw(&entity)
+                .map_err(|_| AppError::internal_server_error("live revision read failed"))?;
+            let indexed = server
+                .vault()
+                .get_raw_with_mode(&entity, oneiron::memory::ReadMode::Indexed)
+                .map_err(|_| AppError::internal_server_error("indexed revision read failed"))?;
+            if live != indexed {
+                missing.push(entity);
+            }
+        }
+        Ok(missing)
+    }
+
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError> {
         let server = self.server()?;
         let filter: ViewFilter =
@@ -218,7 +248,25 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        let encoded = serde_json::to_string(&(view, channel, &value))
+        // A view is pinned to the index publication of every served entity.
+        // A live edit cannot move this cursor while its index is still behind.
+        let indexed = dependencies
+            .iter()
+            .filter(|path| path.starts_with("e:"))
+            .map(|path| {
+                let id = oneiron::EntityId::from_hex(path.strip_prefix("e:").ok_or_else(|| {
+                    AppError::internal_server_error("invalid indexed dependency")
+                })?)
+                .map_err(|_| AppError::internal_server_error("invalid indexed dependency"))?;
+                Ok((
+                    id.to_hex(),
+                    server.vault().indexed_revision(&id).map_err(|_| {
+                        AppError::internal_server_error("indexed position read failed")
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let encoded = serde_json::to_string(&(view, channel, &value, &indexed))
             .map_err(|_| AppError::internal_server_error("view encoding failed"))?;
         if encoded.len() > 8 * 1024 * 1024 {
             return Err(AppError::bad_request(
@@ -239,8 +287,16 @@ impl LiveQuerySource for BoundSource {
                 state.doc = LoroDoc::new();
                 state.current.clear();
                 state.history.clear();
+                state.journal = LoroDoc::new();
                 state.commits = 0;
             }
+            let indexed_bytes = rmp_serde::to_vec(&indexed)
+                .map_err(|_| AppError::internal_server_error("indexed position encoding failed"))?;
+            state
+                .doc
+                .get_map("indexed")
+                .insert(&key, indexed_bytes.as_slice())
+                .map_err(|_| AppError::internal_server_error("indexed position commit failed"))?;
             state
                 .doc
                 .get_map("views")
@@ -335,13 +391,16 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        let CursorDocument { doc, history, .. } = &mut *state;
-        if !history.record(doc, view, channel, pushes)? {
+        let CursorDocument {
+            journal, history, ..
+        } = &mut *state;
+        if !history.record(journal, view, channel, pushes)? {
             // Expire Loro and payload retention together, so a missing journal
             // is never presented as a retained cursor with a silent gap.
             state.doc = LoroDoc::new();
             state.current.clear();
             state.history.clear();
+            state.journal = LoroDoc::new();
             state.commits = 0;
         }
         Ok(())
@@ -361,7 +420,7 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        super::history::History::value_at(&state.doc, view, channel, cursor)
+        super::history::History::value_at(&state.journal, view, channel, cursor)
     }
 
     fn replay(
@@ -380,7 +439,7 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
-        super::history::History::replay(&state.doc, view, channel, cursor)
+        super::history::History::replay(&state.journal, view, channel, cursor)
     }
 
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {

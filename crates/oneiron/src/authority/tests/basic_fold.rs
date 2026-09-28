@@ -97,7 +97,7 @@ fn fold_rejects_rotation_that_leaves_no_authority_consent() {
 }
 
 #[test]
-fn delayed_rotation_that_would_leave_no_authority_consent_is_not_pending() {
+fn rotation_that_would_leave_no_authority_consent_is_rejected_by_the_seen_time_fold() {
     let owner = ed_key(115);
     let owner_key = authority_key_from_ed(&owner);
     let genesis = genesis_entry(115, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
@@ -121,9 +121,8 @@ fn delayed_rotation_that_would_leave_no_authority_consent_is_not_pending() {
     let rotate_hash = authority_entry_hash(&rotate).unwrap();
     let first_seen = BTreeMap::from([(rotate_hash, 10)]);
 
-    let fold = fold_authority_log_with_seen_times(&[genesis, rotate], &first_seen, 10);
+    let fold = fold_legacy_authority_log_with_seen_times(&[genesis, rotate], &first_seen, 10);
 
-    assert!(!fold.pending_widens.contains_key(&rotate_hash));
     assert!(!fold.roster.contains_key(&agent_key));
     assert!(fold.issues.iter().any(|issue| matches!(
         issue,
@@ -197,7 +196,7 @@ fn dangling_sibling_does_not_block_valid_ancestor() {
     let ready_hash = authority_entry_hash(&ready).unwrap();
     let dangling_hash = authority_entry_hash(&dangling).unwrap();
 
-    let fold = fold_authority_log(&[dangling, ready, genesis]);
+    let fold = fold_legacy_authority_log(&[dangling, ready, genesis]);
     assert!(fold.valid_entries.contains(&ready_hash));
     assert!(!fold.valid_entries.contains(&dangling_hash));
     assert_eq!(fold.tier_floor, Some(AuthorityTier::Hardware));
@@ -233,7 +232,7 @@ fn fold_rejects_entries_signed_by_revoked_key() {
     );
     let invalid_child = enroll_entry(vault_id, &revoke, &revoked_signer, 7, 1, 4);
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_legacy_authority_log(&[
         invalid_child.clone(),
         revoke,
         enroll_cosigner,
@@ -267,7 +266,7 @@ fn fold_rejects_revoke_without_surviving_quorum() {
         2,
     );
 
-    let fold = fold_authority_log_without_seen_time_delay(&[revoke.clone(), enroll, genesis]);
+    let fold = fold_legacy_authority_log(&[revoke.clone(), enroll, genesis]);
     assert!(fold.issues.iter().any(|issue| matches!(
     issue,
     AuthorityFoldIssue::MissingQuorum(hash)
@@ -285,7 +284,7 @@ fn same_signer_same_sequence_siblings_fold_by_ancestry_without_quarantine() {
     let left_hash = authority_entry_hash(&left).unwrap();
     let right_hash = authority_entry_hash(&right).unwrap();
     let entries = [genesis, left, right];
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_legacy_authority_log(&entries);
 
     assert!(fold.valid_entries.contains(&left_hash), "{:?}", fold.issues);
     assert!(
@@ -297,7 +296,7 @@ fn same_signer_same_sequence_siblings_fold_by_ancestry_without_quarantine() {
     assert!(fold.issues.is_empty(), "{:?}", fold.issues);
 
     let reversed: Vec<_> = entries.into_iter().rev().collect();
-    assert_eq!(fold_authority_log_without_seen_time_delay(&reversed), fold);
+    assert_eq!(fold_legacy_authority_log(&reversed), fold);
 }
 
 #[test]
@@ -334,11 +333,7 @@ fn fold_allows_newly_enrolled_signer_to_start_at_seq_zero() {
     );
     let first_hash = authority_entry_hash(&first_new_signer_entry).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        first_new_signer_entry,
-        enroll_admin,
-        genesis,
-    ]);
+    let fold = fold_legacy_authority_log(&[first_new_signer_entry, enroll_admin, genesis]);
     assert!(fold.valid_entries.contains(&first_hash));
     assert!(!fold.issues.iter().any(|issue| matches!(
         issue,
@@ -360,4 +355,101 @@ fn fold_rejects_cross_vault_root_contamination() {
             .iter()
             .any(|issue| matches!(issue, AuthorityFoldIssue::ConflictingVaultRoot { .. }))
     );
+}
+
+#[test]
+fn timestamp_is_advisory_for_fold_output() {
+    let owner = ed_key(7);
+    let genesis_a = genesis_entry(7, 86_400, 1);
+    let genesis_b = genesis_entry(7, 86_400, 999_999);
+    let vault_a = genesis_vault_id(&genesis_a).unwrap();
+    let vault_b = genesis_vault_id(&genesis_b).unwrap();
+    let enroll_a = enroll_entry(vault_a, &genesis_a, &owner, 8, 1, 2);
+    let enroll_b = enroll_entry(vault_b, &genesis_b, &owner, 8, 1, 999_998);
+
+    let fold_a = fold_authority_log(&[genesis_a, enroll_a]);
+    let fold_b = fold_authority_log(&[genesis_b, enroll_b]);
+    let roles_a: Vec<_> = fold_a
+        .roster
+        .values()
+        .map(|device| (device.roles, device.revoked))
+        .collect();
+    let roles_b: Vec<_> = fold_b
+        .roster
+        .values()
+        .map(|device| (device.roles, device.revoked))
+        .collect();
+    assert_eq!(roles_a, roles_b);
+}
+
+proptest! {
+    #[test]
+    fn divergent_same_sequence_entries_are_permutation_invariant(
+        perm in prop::collection::vec(0_usize..4, 4),
+    ) {
+        let owner = ed_key(90);
+        let genesis = genesis_entry(90, 86_400, 1);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let enroll = enroll_entry(vault_id, &genesis, &owner, 91, 1, 2);
+        let left = set_ceiling_entry(vault_id, &enroll, &owner, 2, 3);
+        let right = set_tier_floor_entry(vault_id, &enroll, &owner, 2, AuthorityTier::Hardware);
+        let entries = vec![genesis, enroll, left, right];
+        let baseline = fold_authority_log(&entries);
+
+        let mut permuted = Vec::new();
+        for index in perm {
+            if let Some(entry) = entries.get(index % entries.len()) {
+                permuted.push(entry.clone());
+            }
+        }
+        for entry in &entries {
+            if !permuted.iter().any(|candidate| candidate == entry) {
+                permuted.push(entry.clone());
+            }
+        }
+
+        let folded = fold_authority_log(&permuted);
+        prop_assert_eq!(folded.valid_entries, baseline.valid_entries);
+    }
+
+    #[test]
+    fn fold_permutation_property_across_legacy_genesis_delay_values(
+        delay in 86_400_u64..=172_800,
+        include_revoke in any::<bool>(),
+        perm in prop::collection::vec(0_usize..4, 4),
+    ) {
+        let owner = ed_key(10);
+        let genesis = genesis_entry(10, delay, 11);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let enroll_a = enroll_entry(vault_id, &genesis, &owner, 11, 1, 12);
+        let enroll_b = enroll_entry(vault_id, &genesis, &owner, 12, 2, 13);
+        let revoke = revoke_entry(
+            vault_id,
+            &enroll_a,
+            &owner,
+            authority_key_from_ed(&ed_key(11)),
+            3,
+        );
+        let mut entries = vec![genesis, enroll_a, enroll_b];
+        if include_revoke {
+            entries.push(revoke);
+        }
+        let baseline = fold_authority_log(&entries);
+
+        let mut permuted = Vec::new();
+        for index in perm {
+            if let Some(entry) = entries.get(index % entries.len()) {
+                permuted.push(entry.clone());
+            }
+        }
+        for entry in &entries {
+            if !permuted.iter().any(|candidate| candidate == entry) {
+                permuted.push(entry.clone());
+            }
+        }
+        let folded = fold_authority_log(&permuted);
+        prop_assert_eq!(folded.vault_id, baseline.vault_id);
+        prop_assert_eq!(folded.roster, baseline.roster);
+        prop_assert_eq!(folded.tier_floor, baseline.tier_floor);
+    }
 }

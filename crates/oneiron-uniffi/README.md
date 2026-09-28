@@ -76,6 +76,10 @@ The declared verbs, in canonical SDK spelling:
 `dreamerJobStatus` uses the SDK spelling; the runtime arm maps it to
 the core attempt-status accessor, as the direct-link binding already does.
 `scheduleOutbound` schedules only — it never becomes a send transport.
+The read verbs (`getEntity`, `hydrate`, `claimList`, `claimHistory`,
+`queryBm25`, `neighbors`) return `{value, narrowing}`: their rows plus the
+read's mandatory `ReadReceipt`, the same `narrowing` every other surface
+carries.
 Blob content crosses as bytes (`Data` in Swift); `appendBlobVersion` takes
 optional `i64` Unix-second timestamps, and `readBlobVersion` is
 version-addressed with `version: u64`.

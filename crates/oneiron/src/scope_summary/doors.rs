@@ -8,7 +8,8 @@ use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::conversation_dag::{
     AppendRecord, ScopePath, ScopeSelector, actor_in_txn, append_in_txn, conversation_of, edge_ids,
-    is_sub_session_record, require_type, resolve_in_txn,
+    is_sub_session_record, prove_branch_anchor, prove_branch_span, require_type, resolve_in_txn,
+    selected_thread_in_txn,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
@@ -48,12 +49,20 @@ fn summary_in_txn(vault: &Vault, txn: &RoTxn<'_>, summary: &EntityId) -> Result<
 
 fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBody) -> Result<()> {
     let scope = &body.scope;
+    if let ScopePath::BranchSpan { after, through } = scope.path {
+        let exact = prove_branch_span(&vault.store, txn, scope, after, through)?;
+        if body.covers != exact {
+            return Err(invalid("summary covers differ from bounded reply span"));
+        }
+        return Ok(());
+    }
     require_type(
         &vault.store,
         txn,
         &scope.conversation,
         ENTITY_TYPE_CONVERSATION,
     )?;
+    let mut verified_worker_branch = None;
     let session = match scope.path {
         ScopePath::SubSession(session) => {
             require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
@@ -67,14 +76,11 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
             Some(session)
         }
         ScopePath::Branch(anchor) => {
-            if conversation_of(&vault.store, txn, &anchor)? != scope.conversation
-                || is_sub_session_record(&vault.store, txn, &anchor)?
-            {
-                return Err(invalid("summary branch belongs to another scope"));
-            }
+            verified_worker_branch = prove_branch_anchor(&vault.store, txn, scope, anchor)?;
             scope.session
         }
         ScopePath::Canonical => scope.session,
+        ScopePath::BranchSpan { .. } => unreachable!("validated above"),
     };
     if let Some(session) = session {
         require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
@@ -90,7 +96,10 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
             return Err(invalid("summary cover belongs to another session"));
         }
         if is_sub_session_record(&vault.store, txn, covered)?
-            != matches!(scope.path, ScopePath::SubSession(_))
+            && !matches!(scope.path, ScopePath::SubSession(_))
+            && !(matches!(scope.path, ScopePath::Branch(_))
+                && verified_worker_branch.is_some()
+                && verified_worker_branch == session)
         {
             return Err(invalid("summary cover belongs to another path"));
         }
@@ -106,6 +115,11 @@ fn validate_landing_in_txn(
 ) -> Result<()> {
     if conversation_of(&vault.store, txn, turn)? != scope.conversation {
         return Err(invalid("landing turn is in another conversation"));
+    }
+    if let ScopePath::BranchSpan { after, .. } = scope.path
+        && after != *turn
+    {
+        return Err(invalid("bounded thread summary must land on its trunk"));
     }
     if let ScopePath::SubSession(session) = scope.path
         && edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)? != [*turn]
@@ -124,7 +138,7 @@ pub(crate) fn validate_summary_put(
     kind: u8,
     bytes: &[u8],
 ) -> Result<()> {
-    let previous = store.entities.get(txn, id.as_bytes())?;
+    let previous = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     let was_summary = previous.as_ref().is_some_and(|raw| {
         raw.first() == Some(&ENTITY_TYPE_SUMMARY)
             && raw
@@ -265,6 +279,8 @@ fn land_in_txn(
                 conversation: body.scope.conversation,
                 parent: head,
                 reply_to: Some(*turn),
+                address: crate::conversation_dag::AddressMode::Broadcast,
+                recipients: vec![],
                 advance: true,
                 kind: ENTITY_TYPE_TURN,
                 occurred: TimeRange {
@@ -418,6 +434,37 @@ impl Vault {
                 actor,
                 self.store.clock.now_recorded_at(),
             )
+        })
+    }
+
+    /// Projects the first thread chain and lands its header on the trunk atomically.
+    pub fn mint_and_land_thread_summary(
+        &self,
+        trunk: EntityId,
+        text: &str,
+        actor: WriteActor,
+    ) -> Result<(EntityId, LandedHeader)> {
+        self.with_write_txn(|txn| {
+            let selected = selected_thread_in_txn(self, txn, trunk)?
+                .ok_or_else(|| invalid("trunk has no thread"))?;
+            let scope = ScopeSelector {
+                conversation: selected.conversation,
+                session: None,
+                path: ScopePath::BranchSpan {
+                    after: selected.trunk,
+                    through: selected.tip,
+                },
+                include_forks: false,
+            };
+            if prove_branch_span(&self.store, txn, &scope, selected.trunk, selected.tip)?
+                != selected.replies
+            {
+                return Err(invalid("selected thread differs from bounded span"));
+            }
+            let now = self.store.clock.now_recorded_at();
+            let summary = mint_in_txn(self, txn, &scope, text, actor, now)?;
+            let landed = land_in_txn(self, txn, &summary, &trunk, actor, false, now)?;
+            Ok((summary, landed))
         })
     }
 

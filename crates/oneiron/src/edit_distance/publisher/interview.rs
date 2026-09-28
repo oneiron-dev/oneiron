@@ -2,12 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{PublisherResult, put_meta};
+use super::PublisherResult;
 use crate::Vault;
 #[cfg(feature = "sync")]
 use crate::edit_distance::proposal_text::ProposalTextArtifact;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 #[cfg(feature = "sync")]
 use crate::write_envelope::WriteActor;
 
@@ -61,7 +62,9 @@ pub struct InterviewSession {
     pub state: InterviewState,
 }
 
-const INTERVIEW_KEY_PREFIX: &[u8] = b"edit_distance/interview_session/v1\0";
+/// Interview session, keyed by its digest artifact.
+const INTERVIEW: SideTable<EntityId, InterviewRow, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_INTERVIEW_SESSION);
 
 /// On-disk shape of a session, keyed by its digest artifact.
 #[derive(Serialize, Deserialize)]
@@ -77,10 +80,15 @@ fn interview_corrupt() -> Error {
     Error::CorruptedIndex("interview session record")
 }
 
-fn interview_key(digest_artifact: EntityId) -> Vec<u8> {
-    let mut key = INTERVIEW_KEY_PREFIX.to_vec();
-    key.extend_from_slice(digest_artifact.as_bytes());
-    key
+impl RawValue for InterviewRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        crate::llm::canonical_json_bytes(self)
+            .map_err(|_| Error::InvariantViolation("interview session encode").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        serde_json::from_slice(bytes).map_err(|_| interview_corrupt().into())
+    }
 }
 
 fn put_interview(vault: &Vault, session: InterviewSession) -> Result<()> {
@@ -89,9 +97,7 @@ fn put_interview(vault: &Vault, session: InterviewSession) -> Result<()> {
         topic_ref: session.topic_ref.to_hex(),
         state: session.state.as_str().to_owned(),
     };
-    let value = crate::llm::canonical_json_bytes(&row)
-        .map_err(|_| Error::InvariantViolation("interview session encode"))?;
-    put_meta(vault, &interview_key(session.digest_artifact), &value)
+    vault.with_write_txn(|wtxn| INTERVIEW.put(&vault.store, wtxn, &session.digest_artifact, &row))
 }
 
 /// Reads the session recorded against `digest_artifact`.
@@ -105,14 +111,9 @@ pub fn interview_session(
     digest_artifact: EntityId,
 ) -> PublisherResult<Option<InterviewSession>> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &interview_key(digest_artifact))?
-    else {
+    let Some(row) = INTERVIEW.get(&vault.store, &rtxn, &digest_artifact)? else {
         return Ok(None);
     };
-    let row: InterviewRow = serde_json::from_slice(&raw).map_err(|_| interview_corrupt())?;
     if row.schema_version != INTERVIEW_SCHEMA_VERSION {
         return Err(interview_corrupt().into());
     }

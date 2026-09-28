@@ -18,7 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::TrapRef;
 use crate::off_record::OffRecordSession;
-use crate::store::Store;
+use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
 pub(crate) use self::envelope::check_write_gate_against_vault;
@@ -35,6 +35,7 @@ pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 /// cannot spoof actor, source, or approval fields through this skeleton.
 pub struct HostSelfDispatcher<'a> {
     pub(super) agent_parent: Option<crate::attempt_queue::AttemptId>,
+    pub(super) agent_lease: Option<crate::agent_def::AgentAuthorLease>,
     pub(super) storage: ExecutorStorage<'a>,
     pub(super) actor: WriteActor,
     pub(super) run_ref: String,
@@ -144,6 +145,7 @@ impl<'a> HostSelfDispatcher<'a> {
 
         Ok(Self {
             agent_parent: None,
+            agent_lease: None,
             storage,
             actor,
             run_ref,
@@ -182,9 +184,9 @@ impl<'a> HostSelfDispatcher<'a> {
         self.storage.session_ref()
     }
 
-    /// Identity-only projection of the store this dispatcher writes into.
-    pub(crate) fn store_identity(&self) -> *const Store {
-        self.storage.store_identity()
+    /// Identity of the vault this dispatcher writes into.
+    pub(crate) fn vault_id(&self) -> VaultId {
+        self.storage.vault_id()
     }
 
     /// The session-owned conversation container for K-EXEC turns, created by
@@ -248,8 +250,22 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
+            SelfCall::AgentsPut(call) => {
+                let disposition = self.put_agent_definition(
+                    &call.id,
+                    &call.definition,
+                    call.occurred,
+                    call.learned_at,
+                )?;
+                Ok(SelfDispatchOutcome::AgentDefinitionPut(
+                    crate::code_run::SelfAgentDefinitionPutResult {
+                        id: call.id,
+                        disposition,
+                    },
+                ))
+            }
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
-            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call),
+            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
@@ -271,8 +287,42 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
             SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
+            SelfCall::InferenceDefaultsRead => self.dispatch_inference_defaults(None),
+            SelfCall::InferenceDefaultsReplace(json) => {
+                self.dispatch_inference_defaults(Some(&json))
+            }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
         }
+    }
+}
+
+impl HostSelfDispatcher<'_> {
+    fn dispatch_inference_defaults(
+        &self,
+        replacement: Option<&str>,
+    ) -> Result<SelfDispatchOutcome> {
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(crate::Error::InvalidConfig(
+                "inference defaults require canonical vault".into(),
+            ));
+        };
+        // The shared action registry is not the only caller of SelfDispatcher.
+        // Re-check the host-bound actor here so a raw SelfCall cannot bypass
+        // the owner's Auto ceiling or a narrowed agent definition.
+        crate::code_run::actions::check_ceiling(
+            vault,
+            self.actor,
+            crate::agent_def::AgentCeiling::Auto,
+        )?;
+        if let Some(json) = replacement {
+            let next = crate::llm::PurposeDefaultTable::from_json(json.as_bytes())?;
+            vault.set_resident_purpose_default_table(&next)?;
+        }
+        let active = vault.purpose_default_table()?;
+        Ok(SelfDispatchOutcome::InferenceDefaults(
+            serde_json::to_string(&active)
+                .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
+        ))
     }
 }
 

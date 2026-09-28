@@ -83,13 +83,14 @@ fn hold_rows_key_on_the_session_and_never_on_the_token() {
     let receipt = execute_hold(&vault, &hold_spec(session), NOW, None).expect("hold");
 
     let rtxn = read_txn(&vault).expect("read txn");
-    let key = hold_key(&session);
+    let digest = super::token::hold_digest(&session);
     assert!(
-        read_meta_bytes(&vault, &rtxn, &key)
-            .expect("hold row read")
-            .is_some(),
+        super::storage::HOLD
+            .contains(&vault.store, &rtxn, &digest)
+            .expect("hold row read"),
         "the row is reachable from the session alone"
     );
+    let key = super::storage::HOLD.key_bytes(&digest);
     assert!(
         !contains(&key, &token_digest(&receipt.token)),
         "the hold key is derived from the session, not from the credential"
@@ -114,6 +115,7 @@ fn booking_lifecycle_validator_is_exact_at_the_family_door() {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let status = encode_claim_value(&BookingStatusValue {
         status: BookingStatus::Confirmed,

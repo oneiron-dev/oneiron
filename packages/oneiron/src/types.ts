@@ -162,6 +162,8 @@ export type MemoryPack = {
   /** Always equal to the engine's `MEMORY_PACK_VERSION`, and to this package's major. */
   packVersion: number
   rendered?: string
+  /** The actor-scoped read receipt for candidates and rendered content. */
+  narrowing: ReadReceipt
 }
 
 /** One gate decision receipt. */

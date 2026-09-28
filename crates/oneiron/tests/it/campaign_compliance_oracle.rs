@@ -152,7 +152,7 @@ fn put_claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&test_id(seed), &body, TimeRange { start: 1, end: 1 }, 1)
 }
 
@@ -418,7 +418,7 @@ fn campaign_compliance_gate_oracle_jurisdiction_rows_are_channel_local() -> Resu
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     jurisdiction.evidence = Some(Value::from("owner attestation"));
     vault.put_claim(
         &test_id(JURISDICTION_SEED),

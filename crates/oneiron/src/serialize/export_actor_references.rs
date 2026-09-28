@@ -55,7 +55,8 @@ mod tests {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(ClaimSource::Observed);
         body.scope = Some(Value::Map(vec![
             ("skill".into(), Value::Binary(skill.as_bytes().to_vec())),

@@ -5,7 +5,13 @@ use super::partition::{ConsolidationPartitionPlan, encode_partition_payload};
 use super::support::invalid_consolidation;
 use crate::Result;
 use crate::llm::Scope;
+use crate::side_table::{self, LegacyJson, SideTable};
 use rmpv::Value;
+
+/// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
+/// successors. Key: id16 (the attempt id).
+const SELECTION_SCOPE: SideTable<[u8; 16], Option<Scope>, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_SELECTION_SCOPE);
 
 pub(super) const KEY_BRANCH_SCOPE: &str = "branch_scope";
 
@@ -142,12 +148,59 @@ fn stored_parent_scope(
     Ok(bound)
 }
 
-fn execution_scope_key(attempt: crate::attempt_queue::AttemptId) -> Vec<u8> {
-    [
-        b"dreamer:selection_scope:v1:".as_slice(),
-        attempt.as_bytes(),
-    ]
-    .concat()
+/// Reconstruct exact durable scope at the wake's one read revision. A saved
+/// caller attenuation and parent chain supply rights only by narrowing.
+pub(super) fn execution_scope_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: crate::attempt_queue::AttemptId,
+    parent: Option<crate::attempt_queue::AttemptId>,
+    queued: Option<Scope>,
+    caller: Option<&Scope>,
+) -> Result<Option<Scope>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut chain = Vec::new();
+    let mut cursor = parent;
+    while let Some(id) = cursor {
+        if !seen.insert(*id.as_bytes()) {
+            return Err(invalid_consolidation("cyclic branch scope lineage"));
+        }
+        let row = crate::attempt_queue::AttemptQueue::new(vault)
+            .get_in_txn(txn, id)?
+            .ok_or_else(|| invalid_consolidation("branch parent is missing"))?;
+        let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&row.payload)?;
+        let bound = if payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+            crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)?.scope
+        } else if [
+            crate::dreamer_runner::DreamerConsolidationScope::Micro,
+            crate::dreamer_runner::DreamerConsolidationScope::Meso,
+            crate::dreamer_runner::DreamerConsolidationScope::Macro,
+        ]
+        .into_iter()
+        .any(|scope| row.kind == scope.attempt_kind() && payload.attempt_type == scope.as_str())
+        {
+            decode_branch_scope(&payload.input)?
+        } else {
+            chain.push(Some(Scope::default()));
+            break;
+        };
+        chain.push(bound);
+        cursor = payload.parent_attempt;
+    }
+    let inherited = if parent.is_some() {
+        let mut bound = chain.pop().flatten().unwrap_or_default();
+        for child in chain.into_iter().rev().flatten() {
+            bound = bound.attenuate(child)?;
+        }
+        effective_scope(Some(bound), queued.as_ref())?
+    } else {
+        queued
+    };
+    let stored = SELECTION_SCOPE
+        .get(&vault.store, txn, attempt.as_bytes())?
+        .flatten();
+    let bound = effective_scope(inherited, caller)?;
+    effective_scope(stored, bound.as_ref())
 }
 
 /// Persist a caller's attenuation before work can produce a scheduled retry.
@@ -158,21 +211,11 @@ pub(super) fn pin_execution_scope(
     requested: Option<&Scope>,
 ) -> Result<Option<Scope>> {
     vault.with_write_txn(|txn| {
-        let key = execution_scope_key(attempt);
-        let stored: Option<Scope> = vault
-            .store
-            .vault_meta
-            .get(txn, &key)?
-            .map(|raw| {
-                serde_json::from_slice(&raw)
-                    .map_err(|_| invalid_consolidation("invalid execution scope"))
-            })
-            .transpose()?
+        let stored = SELECTION_SCOPE
+            .get(&vault.store, txn, attempt.as_bytes())?
             .flatten();
         let effective = effective_scope(stored, requested)?;
-        let bytes = serde_json::to_vec(&effective)
-            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
-        vault.store.vault_meta.put(txn, &key, &bytes)?;
+        SELECTION_SCOPE.put(&vault.store, txn, attempt.as_bytes(), &effective)?;
         Ok(effective)
     })
 }
@@ -183,19 +226,8 @@ pub(crate) fn inherit_retry_scope_in_txn(
     source: crate::attempt_queue::AttemptId,
     successor: crate::attempt_queue::AttemptId,
 ) -> Result<()> {
-    if let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(txn, &execution_scope_key(source))?
-    {
-        let scope: Option<Scope> = serde_json::from_slice(&raw)
-            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
-        let bytes = serde_json::to_vec(&scope)
-            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &execution_scope_key(successor), &bytes)?;
+    if let Some(scope) = SELECTION_SCOPE.get(&vault.store, txn, source.as_bytes())? {
+        SELECTION_SCOPE.put(&vault.store, txn, successor.as_bytes(), &scope)?;
     }
     Ok(())
 }

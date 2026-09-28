@@ -145,6 +145,9 @@ impl crate::dreamer_wake::DreamerAttemptExecutor for UnreachableWeaveDelegate {
 
 struct RecipeInterpreter;
 impl crate::dreamer_wake::WeaveRecipeRuntime for RecipeInterpreter {
+    fn executor(&self) -> Result<&str> {
+        Ok("recipe-interpreter@1")
+    }
     fn draft(
         &mut self,
         markdown: &str,
@@ -251,7 +254,14 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
     // A candidate cannot run and cannot inherit the actor's authority from its bytes.
     assert!(
         vault
-            .load_attempt_skill_pack(crate::attempt_queue::AttemptId::now(), &skill, 2)
+            .load_attempt_skill_pack(
+                crate::attempt_queue::AttemptId::now(),
+                &skill,
+                "recipe-worker",
+                1,
+                "recipe-interpreter@1",
+                2,
+            )
             .is_err()
     );
     let owner = vault.authenticate_owner(
@@ -289,6 +299,7 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
             budget_total_units: 10_000,
             reserve_units: 100,
             now: 4,
+            host_scope: None,
         },
         &mut worker,
         &WakeCancellation::new(),

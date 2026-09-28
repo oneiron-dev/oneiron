@@ -8,29 +8,92 @@ use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::skill::SkillRecord;
 
 use super::audit::AttributionAuditReport;
 use super::types::{
-    AttemptOutcome, AttributionJudgment, AttributionVerdict, OutcomeEvidence,
-    SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
+    AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
+    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
 };
 
-pub(super) const EVIDENCE_PREFIX: &[u8] = b"skill_attribution:evidence:v1:"; // + sequence(8 BE)
+/// One recorded outcome-evidence row, keyed by sequence. The sequence is
+/// stored redundantly inside the MessagePack map as well as in the key
+/// (`encode_evidence` takes it as a separate argument), so the value type
+/// carries it too — that IS the row's existing byte layout.
+pub(super) struct EvidenceRow {
+    pub(super) sequence: u64,
+    pub(super) evidence: OutcomeEvidence,
+}
 
-pub(super) const JUDGMENT_PREFIX: &[u8] = b"skill_attribution:judgment:v1:"; // + sequence(8 BE)
+impl RawValue for EvidenceRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&encode_evidence(
+            &self.evidence,
+            self.sequence,
+        ))?)
+    }
 
-pub(super) const AUDIT_PREFIX: &[u8] = b"skill_attribution:audit:v1:"; // + at(8 BE) + seq(8 BE)
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (sequence, evidence) = decode_evidence(bytes)?;
+        Ok(Self { sequence, evidence })
+    }
+}
 
-// + judgment sequence(8 BE): one proposal per discovery judgment, so a
-// re-projection of the same evidence re-mints the same key rather than a
-// duplicate proposal.
-pub(super) const EDIT_PROPOSAL_PREFIX: &[u8] = b"skill_attribution:edit_proposal:v1:";
+impl RawValue for AttributionJudgment {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&encode_judgment(self))?)
+    }
 
-const EVIDENCE_SEQUENCE_KEY: &[u8] = b"skill_attribution:evidence_sequence:v1";
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_judgment(bytes)?)
+    }
+}
 
-pub(super) const CURSOR_KEY: &[u8] = b"skill_attribution:cursor:v1";
+impl RawValue for SkillEditProposal {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&encode_edit_proposal(self))?)
+    }
 
-pub(super) const SEQUENCE_LEN: usize = 8;
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_edit_proposal(bytes)?)
+    }
+}
+
+impl RawValue for AttributionAuditReport {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&encode_audit(self))?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_audit(bytes)?)
+    }
+}
+
+/// One recorded outcome-evidence row awaiting attribution routing. Key: u64be sequence.
+pub(super) const EVIDENCE: SideTable<u64, EvidenceRow, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_EVIDENCE);
+
+/// The next evidence sequence to mint. Key: ().
+const EVIDENCE_SEQUENCE: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE);
+
+/// One durable attribution verdict routed from evidence. Key: u64be evidence sequence.
+pub(super) const JUDGMENT: SideTable<u64, AttributionJudgment, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_JUDGMENT);
+
+/// One minted skill-edit proposal awaiting gated apply. Key: u64be judgment sequence.
+pub(super) const EDIT_PROPOSAL: SideTable<u64, SkillEditProposal, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_EDIT_PROPOSAL);
+
+/// Persisted audit report of a judge run, keyed by run time then evidence sequence.
+/// Key: u64be `at` + u64be sequence.
+pub(super) const AUDIT: SideTable<(u64, u64), AttributionAuditReport, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_AUDIT);
+
+/// Highest evidence sequence the attribution projector has already routed. Key: ().
+pub(super) const CURSOR: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_CURSOR);
 
 const KEY_SCHEMA_VERSION: &str = "schema_version";
 
@@ -45,6 +108,12 @@ const KEY_SKILL: &str = "skill";
 const KEY_OUTCOME: &str = "outcome";
 
 const KEY_FOLLOWED_SKILL: &str = "followed_skill";
+
+const KEY_FOLLOWED_STATE: &str = "followed_state";
+
+const KEY_REASON: &str = "reason";
+
+const KEY_CAUSE: &str = "cause";
 
 const KEY_SKILL_COVERED_STEP: &str = "skill_covered_step";
 
@@ -79,6 +148,24 @@ const fn invalid(reason: &'static str) -> Error {
 /// rows) would inherit it as fact. Every reference is resolved here, at the
 /// door, so the projector downstream can trust what it reads.
 pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<()> {
+    if evidence.followed_state.is_some() && evidence.followed_skill.is_some() {
+        return Err(invalid("attribution followed states conflict"));
+    }
+    if let Some(FollowedState::DeviatedWithReason { reason, .. }) = &evidence.followed_state {
+        if reason.trim().is_empty() {
+            return Err(invalid("attribution deviation needs a stated reason"));
+        }
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let limits = policy
+            .attribution_limits()
+            .ok_or(invalid("attribution deviation policy is malformed"))?;
+        if (reason.len() as u64) > limits.reason_bytes_for(&evidence.actor) {
+            return Err(invalid(
+                "attribution deviation exceeds policy reason budget",
+            ));
+        }
+    }
     if evidence.receipt_ref.is_empty() {
         return Err(invalid("attribution evidence must cite a receipt"));
     }
@@ -136,7 +223,7 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     };
     if !manifest
         .iter()
-        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id))
+        .any(|entry| manifest_entry_names_skill(entry, &record))
     {
         return Err(invalid(
             "attribution evidence names a skill absent from the receipt manifest",
@@ -145,34 +232,24 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     Ok(())
 }
 
-/// A manifest wire form is `reference@version` and the reference of a SKILL
-/// row is its `skill_id`. [`ManifestEntry::parse_wire_form`] owns the split.
-fn manifest_entry_names_skill(wire_form: &str, skill_id: &str) -> bool {
-    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, _)| reference == skill_id)
-}
-
-pub(super) fn sequenced_key(prefix: &[u8], sequence: u64) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + SEQUENCE_LEN);
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(&sequence.to_be_bytes());
-    key
+/// The one exact-revision check shared by evidence admission, sweep capture
+/// and the downstream reliability doors. Empty versions on historical receipt
+/// fixtures carry no revision fact; the attempt write door now refuses them.
+pub(crate) fn manifest_entry_names_skill(wire_form: &str, record: &SkillRecord) -> bool {
+    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, version)| {
+        reference == record.skill_id && (version.is_empty() || version == record.version)
+    })
 }
 
 pub(super) fn next_evidence_sequence_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
-    let current = match vault.store.vault_meta.get(wtxn, EVIDENCE_SEQUENCE_KEY)? {
-        Some(raw) => decode_u64(&raw, "attribution evidence sequence")?,
-        None => 0,
-    };
+    let current = EVIDENCE_SEQUENCE.get(&vault.store, wtxn, &())?.unwrap_or(0);
     let next = current
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("attribution evidence sequence"))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, EVIDENCE_SEQUENCE_KEY, &next.to_be_bytes())?;
+    EVIDENCE_SEQUENCE.put(&vault.store, wtxn, &(), &next)?;
     Ok(next)
 }
 
@@ -181,33 +258,16 @@ pub(super) fn evidence_after(
     since_cursor: u64,
 ) -> Result<Vec<(u64, OutcomeEvidence)>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&rtxn, EVIDENCE_PREFIX)? {
-        let (key, raw) = row?;
-        let sequence = evidence_sequence_from_key(&key)?;
-        if sequence <= since_cursor {
-            continue;
-        }
-        out.push((sequence, decode_evidence(&raw)?));
-    }
+    let mut out: Vec<(u64, OutcomeEvidence)> = EVIDENCE
+        .scan_from(&vault.store, &rtxn, &[])?
+        .into_iter()
+        .filter(|(sequence, _)| *sequence > since_cursor)
+        .map(|(sequence, row)| (sequence, row.evidence))
+        .collect();
     // Big-endian sequence suffixes already sort in routing order; sorting keeps
     // the contract explicit rather than implied by the key encoding.
     out.sort_by_key(|(sequence, _)| *sequence);
     Ok(out)
-}
-
-fn evidence_sequence_from_key(key: &[u8]) -> Result<u64> {
-    let suffix = key
-        .get(EVIDENCE_PREFIX.len()..)
-        .ok_or(invalid("attribution evidence key is truncated"))?;
-    decode_u64(suffix, "attribution evidence key")
-}
-
-pub(super) fn decode_u64(raw: &[u8], _context: &'static str) -> Result<u64> {
-    let bytes: [u8; SEQUENCE_LEN] = raw
-        .try_into()
-        .map_err(|_| invalid("attribution counter must be 8 bytes"))?;
-    Ok(u64::from_be_bytes(bytes))
 }
 
 fn optional_entity(id: Option<EntityId>) -> Value {
@@ -218,7 +278,70 @@ fn optional_bool(flag: Option<bool>) -> Value {
     flag.map_or(Value::Nil, Value::Boolean)
 }
 
-pub(super) fn encode_evidence(evidence: &OutcomeEvidence, sequence: u64) -> Value {
+fn encode_followed_state(state: Option<&FollowedState>) -> Value {
+    match state {
+        None => Value::Nil,
+        Some(FollowedState::Followed) => Value::from("followed"),
+        Some(FollowedState::Partly) => Value::from("partly"),
+        Some(FollowedState::Ignored) => Value::from("ignored"),
+        Some(FollowedState::DeviatedWithReason { reason, cause }) => Value::Map(vec![
+            (Value::from(KEY_REASON), Value::from(reason.as_str())),
+            (
+                Value::from(KEY_CAUSE),
+                cause.map_or(Value::Nil, |cause| {
+                    Value::from(match cause {
+                        DeviationCause::IncorrectInstruction => "incorrect_instruction",
+                        DeviationCause::MissingInstruction => "missing_instruction",
+                        DeviationCause::ExecutorError => "executor_error",
+                    })
+                }),
+            ),
+        ]),
+    }
+}
+
+fn decode_followed_state(value: &Value) -> Result<Option<FollowedState>> {
+    match value {
+        Value::Nil => Ok(None),
+        Value::String(_) => match value.as_str() {
+            Some("followed") => Ok(Some(FollowedState::Followed)),
+            Some("partly") => Ok(Some(FollowedState::Partly)),
+            Some("ignored") => Ok(Some(FollowedState::Ignored)),
+            _ => Err(invalid("unknown attribution followed state")),
+        },
+        Value::Map(entries) => {
+            let mut reason = None;
+            let mut cause = None;
+            for (key, value) in entries {
+                match expect_key(key)? {
+                    KEY_REASON => reason = value.as_str().map(str::to_owned),
+                    KEY_CAUSE => {
+                        cause = match value {
+                            Value::Nil => None,
+                            _ => Some(match value.as_str() {
+                                Some("incorrect_instruction") => {
+                                    DeviationCause::IncorrectInstruction
+                                }
+                                Some("missing_instruction") => DeviationCause::MissingInstruction,
+                                Some("executor_error") => DeviationCause::ExecutorError,
+                                _ => return Err(invalid("unknown attribution deviation cause")),
+                            }),
+                        };
+                    }
+                    _ => return Err(invalid("unknown attribution followed state key")),
+                }
+            }
+            let reason = reason.ok_or(invalid("attribution deviation missing reason"))?;
+            if reason.trim().is_empty() {
+                return Err(invalid("attribution deviation needs a stated reason"));
+            }
+            Ok(Some(FollowedState::DeviatedWithReason { reason, cause }))
+        }
+        _ => Err(invalid("invalid attribution followed state")),
+    }
+}
+
+fn encode_evidence(evidence: &OutcomeEvidence, sequence: u64) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -243,6 +366,10 @@ pub(super) fn encode_evidence(evidence: &OutcomeEvidence, sequence: u64) -> Valu
             optional_bool(evidence.followed_skill),
         ),
         (
+            Value::from(KEY_FOLLOWED_STATE),
+            encode_followed_state(evidence.followed_state.as_ref()),
+        ),
+        (
             Value::from(KEY_SKILL_COVERED_STEP),
             optional_bool(evidence.skill_covered_step),
         ),
@@ -250,42 +377,52 @@ pub(super) fn encode_evidence(evidence: &OutcomeEvidence, sequence: u64) -> Valu
     ])
 }
 
-fn decode_evidence(raw: &[u8]) -> Result<OutcomeEvidence> {
+/// Decodes one evidence row, along with the sequence carried redundantly
+/// inside its MessagePack map (the same value the key spells).
+fn decode_evidence(raw: &[u8]) -> Result<(u64, OutcomeEvidence)> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value)?;
+    let mut sequence = None;
     let mut receipt_ref = None;
     let mut actor = None;
     let mut skill = None;
     let mut outcome = None;
     let mut followed_skill = None;
+    let mut followed_state = None;
     let mut skill_covered_step = None;
     let mut at = None;
     for (key, value) in entries {
         match expect_key(key)? {
             KEY_SCHEMA_VERSION => require_schema_version(value)?,
-            KEY_SEQUENCE => {}
+            KEY_SEQUENCE => sequence = value.as_u64(),
             KEY_RECEIPT_REF => receipt_ref = value.as_str().map(str::to_owned),
             KEY_ACTOR => actor = Some(decode_entity(value)?),
             KEY_SKILL => skill = decode_optional_entity(value)?,
             KEY_OUTCOME => outcome = value.as_str().and_then(AttemptOutcome::parse),
             KEY_FOLLOWED_SKILL => followed_skill = value.as_bool(),
+            KEY_FOLLOWED_STATE => followed_state = decode_followed_state(value)?,
             KEY_SKILL_COVERED_STEP => skill_covered_step = value.as_bool(),
             KEY_AT => at = value.as_u64(),
             _ => return Err(invalid("attribution evidence key is not pinned")),
         }
     }
-    Ok(OutcomeEvidence {
+    let evidence = OutcomeEvidence {
         receipt_ref: receipt_ref.ok_or(invalid("attribution evidence missing receipt"))?,
         actor: actor.ok_or(invalid("attribution evidence missing actor"))?,
         skill,
         outcome: outcome.ok_or(invalid("attribution evidence missing outcome"))?,
         followed_skill,
+        followed_state,
         skill_covered_step,
         at: at.ok_or(invalid("attribution evidence missing timestamp"))?,
-    })
+    };
+    Ok((
+        sequence.ok_or(invalid("attribution evidence missing sequence"))?,
+        evidence,
+    ))
 }
 
-pub(super) fn encode_judgment(judgment: &AttributionJudgment) -> Value {
+fn encode_judgment(judgment: &AttributionJudgment) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -314,7 +451,7 @@ pub(super) fn encode_judgment(judgment: &AttributionJudgment) -> Value {
     ])
 }
 
-pub(super) fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
+fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value)?;
     let mut sequence = None;
@@ -358,7 +495,7 @@ fn decode_receipt_array(value: &Value) -> Result<Vec<String>> {
     Ok(receipts)
 }
 
-pub(super) fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
+fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -386,7 +523,7 @@ pub(super) fn encode_edit_proposal(proposal: &SkillEditProposal) -> Value {
     ])
 }
 
-pub(super) fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
+fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value)?;
     let mut judgment_sequence = None;
@@ -413,7 +550,7 @@ pub(super) fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
     })
 }
 
-pub(super) fn encode_audit(report: &AttributionAuditReport) -> Value {
+fn encode_audit(report: &AttributionAuditReport) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -429,7 +566,7 @@ pub(super) fn encode_audit(report: &AttributionAuditReport) -> Value {
     ])
 }
 
-pub(super) fn decode_audit(raw: &[u8]) -> Result<AttributionAuditReport> {
+fn decode_audit(raw: &[u8]) -> Result<AttributionAuditReport> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value)?;
     let mut total = None;
@@ -481,7 +618,7 @@ fn decode_optional_entity(value: &Value) -> Result<Option<EntityId>> {
     decode_entity(value).map(Some)
 }
 
-pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
+fn encode_value(value: &Value) -> Result<Vec<u8>> {
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, value)
         .map_err(|_| invalid("skill attribution MessagePack encode failed"))?;

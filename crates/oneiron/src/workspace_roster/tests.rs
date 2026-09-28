@@ -27,7 +27,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::{ErrorKind, RecordError};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
-use crate::test_util::{entity, open_test_vault_with};
+use crate::test_util::entity;
 
 const VAULT_ID: u64 = 7;
 const AT: u64 = 1_700_000_000;
@@ -51,7 +51,9 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     cfg.map_size = 32 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
-    open_test_vault_with(cfg)
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), cfg).unwrap();
+    (dir, vault)
 }
 
 fn writer(seed: u8) -> WriteActor {
@@ -450,7 +452,7 @@ fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()
         );
         assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_none());
         assert_ne!(
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.map(|row| row.step),
+            read_journal(&vault, &intent.onboarding_id)?.map(|row| row.step),
             Some(MemberOnboardingStep::Complete)
         );
     }
@@ -528,13 +530,13 @@ fn optional_delegated_mailbox_uses_custody_ref_only() -> Result<()> {
         .expect("delegated identity");
     assert!(identity.is_delegated());
     assert_eq!(
-        identity.binding,
+        identity.binding(),
         ChannelIdentityBinding::agent(entity(MEMBER_ACTOR)),
         "the member's actor holds the mailbox"
     );
-    assert_eq!(identity.state, ChannelIdentityState::Requested);
+    assert_eq!(identity.state(), ChannelIdentityState::Requested);
     assert!(!identity.may_send());
-    let grant = identity.grant.expect("custody handle");
+    let grant = identity.grant().expect("custody handle");
     assert_eq!(grant.custody_record_ref, requested.custody_name);
     assert_eq!(grant.scopes, requested.scopes);
 
@@ -568,7 +570,7 @@ fn unprivileged_writer_rejected() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     // No journal, no actor, no grant: the refusal left no trace to resume from.
-    assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
+    assert!(read_journal(&vault, &intent.onboarding_id)?.is_none());
     assert_eq!(vault.get_entity_type(&entity(MEMBER_ACTOR))?, None);
     assert_eq!(vault.get_entity_type(&entity(MEMBER_GRANT))?, None);
     assert!(vault.workspace_roster("antevon-slack", AT)?.is_empty());
@@ -700,6 +702,25 @@ fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
         }]
     });
     let bytes = rmp_serde::to_vec_named(&manifest).expect("fixture policy");
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture manifest map")
+    else {
+        panic!("fixture policy must be a map")
+    };
+    let default = crate::gate::default_policy_manifest().unwrap();
+    let rmpv::Value::Map(default_entries) =
+        rmpv::decode::read_value(&mut default.as_slice()).expect("seeded manifest")
+    else {
+        panic!("seeded policy must be a map")
+    };
+    let rows = default_entries
+        .into_iter()
+        .find(|(key, _)| key.as_str() == Some(crate::federation::grant_policy::ROWS_KEY))
+        .expect("seeded grant rows");
+    entries.push(rows);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .expect("fixture policy with grant rows");
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
@@ -735,7 +756,7 @@ fn bind_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
             .identity
             .as_ref()
             .expect("identity")
-            .pending_fulfillment,
+            .pending_fulfillment(),
         Some(crate::channel_identity::ChannelIdentityFulfillment::Manual)
     );
     assert_mailbox_lifecycle_receipt(vault, identity, &result, "bind", Some("allow"))
@@ -755,7 +776,7 @@ fn fulfill_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
             .identity
             .as_ref()
             .expect("identity")
-            .pending_fulfillment,
+            .pending_fulfillment(),
         None
     );
     assert_mailbox_lifecycle_receipt(vault, identity, &result, "fulfill", None)
@@ -780,7 +801,7 @@ fn assert_mailbox_waiting(
         Error::Record(RecordError::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode })
             if identity_ref == mailbox.identity_ref && requested_mode == mailbox.autonomy.rung.as_str()
     ));
-    let journal = read_journal(vault, &onboarding_key(&intent.onboarding_id))?.expect("journal");
+    let journal = read_journal(vault, &intent.onboarding_id)?.expect("journal");
     assert_eq!(journal.step, MemberOnboardingStep::CompanionBorn);
     assert_eq!(journal.completed_at, None);
     assert_eq!(

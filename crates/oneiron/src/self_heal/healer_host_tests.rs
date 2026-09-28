@@ -147,10 +147,30 @@ fn set_proposal_threshold(vault: &Vault, threshold: u64) {
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map")
     };
-    entries.push((
-        Value::from("proposal_check_threshold"),
-        Value::from(threshold),
-    ));
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        panic!("value rows")
+    };
+    let Value::Map(fields) = rows
+        .iter_mut()
+        .find(|row| match row {
+            Value::Map(fields) => fields.iter().any(|(key, value)| {
+                key.as_str() == Some("key") && value.as_str() == Some("proposal_check_threshold")
+            }),
+            _ => false,
+        })
+        .unwrap()
+    else {
+        panic!("threshold row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from(threshold);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
     crate::test_util::put_policy_manifest_bytes(vault, id, &bytes).unwrap();
@@ -366,6 +386,48 @@ fn production_refs_refuse_encoded_namespace_components() {
             .unwrap()
             .is_none()
     );
+}
+#[test]
+fn healer_diagnostic_events_read_returns_its_receipt() {
+    let (_d, v, _owner, actor) = fixture();
+    let event = DiagnosticEvent {
+        detector_id: "test.failure".into(),
+        event_class: DiagnosticEventClass::TestFailure,
+        actor_class: "system".into(),
+        actor_ref: None,
+        source: DiagnosticSourceKind::Receipt,
+        criticality: DiagnosticCriticality::Critical,
+        expected: Value::from(1),
+        actual: Value::from(0),
+        delta: Value::from(-1),
+        replay: DiagnosticReplayCoordinate {
+            content_hash: [2; 32],
+            run_ref: Some("build".into()),
+            checkpoint_ref: None,
+        },
+        evidence_refs: vec![],
+        untrusted_detail: None,
+        valid_from: 1,
+        valid_to: None,
+    };
+    let id = diagnostic_event_id(
+        &event.detector_id,
+        &encode_diagnostic_event_body(&event).unwrap(),
+    );
+    v.emit_diagnostic_event(&id, &event).unwrap();
+    let registration = v
+        .register_dev_healer(HealerDeployment::Daemon, actor)
+        .unwrap();
+    // Before the manifest grants the runner, the stored event is withheld and
+    // the corpus says so rather than reading as an empty history.
+    let withheld = registration.failure_corpus().unwrap();
+    assert!(withheld.value.is_empty());
+    assert_eq!(withheld.receipt.suppressed_count, 1);
+    crate::test_util::authorize_readers(&v, &[actor.entity_ref().to_hex().as_str()]);
+    let corpus = registration.failure_corpus().unwrap();
+    assert_eq!(corpus.value.len(), 1);
+    assert_eq!(corpus.value[0].0, id);
+    assert_eq!(corpus.receipt.suppressed_count, 0);
 }
 
 #[test]

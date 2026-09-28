@@ -158,10 +158,7 @@ impl Vault {
             )],
         )?;
         let after = self.authority_fold_readonly_in_txn(&txn)?;
-        if after.vault_id != before.vault_id
-            || !after.valid_entries.contains(&hash)
-            || after.pending_widens.contains_key(&hash)
-        {
+        if after.vault_id != before.vault_id || !after.valid_entries.contains(&hash) {
             return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
                 "re-root transition refused",
             )));

@@ -1,8 +1,8 @@
 //! Reverse rematerialization plus skip/policy predicates and carrier removal.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
-use super::bridge::{self, BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
+use super::bridge::{self, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
     map_contains_binary, map_delete, map_for_each_tombstone_value, map_for_each_value_bytes,
     map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
@@ -29,6 +29,23 @@ use loro::{CommitOptions, LoroDoc, LoroMap};
 /// are left alone: this pass inserts missing records only.
 ///
 /// Returns the number of entities newly mirrored into the CRDT.
+pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return false;
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
+        return false;
+    }
+    // A ChannelIdentity carrier is portable only after the strict body decoder
+    // positively establishes a valid self-held identity. Damage to a delegated
+    // map (including truncated MessagePack) must never open the export seal.
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    !matches!(
+        crate::channel_identity::decode_channel_identity_body(body),
+        Ok(identity) if !identity.is_delegated()
+    )
+}
+
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -38,7 +55,39 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
 
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
-    let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
+    super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
+    super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
+    let redacted_authors = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
+    };
+    // Partition before either carrier or edge backfill. A month-only scan in a
+    // world window would duplicate every other project's payload into it.
+    let mut entities_in_range = Vec::new();
+    let mut base_edge_sources = Vec::new();
+    for id in vault.entities_in_learned_range(start_ts, end_ts)? {
+        if let Some(raw) = vault.get_raw_unsealed(&id)? {
+            let belongs = super::types::entity_belongs_to_window(&raw, window_key);
+            let retained = if belongs {
+                false
+            } else {
+                let txn = vault.store.env.read_txn()?;
+                super::types::retained_world_shell_belongs_to_window(
+                    vault, &txn, doc, &id, &raw, window_key, false,
+                )?
+            };
+            if belongs || retained {
+                entities_in_range.push(id);
+            } else if window_key.world().is_some()
+                && super::types::entity_world(&raw).ok() == Some(None)
+            {
+                // Base rows do not duplicate into this world document, but an
+                // outgoing base→world edge belongs beside its world target.
+                // Unassignable local rows cannot enter a world partition.
+                base_edge_sources.push(id);
+            }
+        }
+    }
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
         crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
@@ -50,6 +99,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     let mut count = 0u32;
     let mut wrote_any = false;
+    let mut mirror_sources = BTreeMap::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
@@ -68,7 +118,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     });
     for (id, key, tombstone) in entity_tombstones {
-        let Some(raw) = vault.get_raw_unsealed(&id)? else {
+        let Some((raw, source_revision)) = vault.get_raw_and_revision_unsealed(&id)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -104,6 +154,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // A rejected peer overwrite is not a valid protected carrier.
             // Restore the fixed Dreamer bytes, not merely a missing key.
             map_insert_bytes(&entities_map, &hex_id, &raw)?;
+            if let Some(revision) = source_revision {
+                mirror_sources.insert(id, revision);
+            }
             wrote_any = true;
             count += 1;
         }
@@ -135,15 +188,33 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        let Some(raw) = vault.get_raw_unsealed(id)? else {
+        let Some((raw, source_revision)) = vault.get_raw_and_revision_unsealed(id)? else {
             continue;
         };
 
+        if crate::identity_topology::attribution_carrier_key(&raw)
+            .is_some_and(|key| redacted_authors.contains(&key))
+        {
+            let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
+            if removed {
+                super::egress::require_history_free_window(vault, window_key)?;
+            }
+            wrote_any |= removed;
+            continue;
+        }
+
+        let retained_shell = {
+            let txn = vault.store.env.read_txn()?;
+            super::types::retained_world_shell_belongs_to_window(
+                vault, &txn, doc, id, &raw, window_key, false,
+            )?
+        };
         // Excluded credentials and the local default manifest have no live
         // carrier or incident edge. Scrub history as well as the live map when
         // a local dial narrows an existing portable credential.
-        if !claim_sync_allowed(&raw)
+        if (!claim_sync_allowed(&raw) && !retained_shell)
             || is_unsyncable_secret_custody(&raw)
+            || is_delegated_channel_identity_carrier(&raw)
             || *id == crate::gate::default_policy_manifest_id()?
         {
             let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
@@ -160,7 +231,8 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
         let protected_tombstone = protected_tombstones.contains(id);
-        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
+        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) && !retained_shell
+        {
             continue;
         }
 
@@ -206,6 +278,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
                 } else {
                     map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
                 }
+                if let Some(revision) = source_revision {
+                    mirror_sources.insert(*id, revision);
+                }
                 wrote_any = true;
                 count += 1;
             }
@@ -243,6 +318,19 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         backfill_sources.push(*id);
     }
 
+    // A base source is resident in the shared monthly document, not here.
+    // Only its edges reaching this world are packed below. Apply the same
+    // locality and egress gates before adding it to the edge-only pass.
+    for id in base_edge_sources {
+        if window_packing_excludes_entity(vault, &device_only, &id)?
+            || !local_claim_sync_allowed(vault, &id)?
+            || local_entity_is_unsyncable_companion(vault, &id)?
+        {
+            continue;
+        }
+        backfill_sources.push(id);
+    }
+
     // PHASE 2 — edge backfill for every source that cleared phase 1's gates
     // (egress door, tombstone, unsyncable-companion, missing local row). Ordered
     // after ALL dominance sweeps, so an edge with local backing is always
@@ -269,6 +357,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             {
                 continue;
             }
+            if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)? {
+                continue;
+            }
             if !local_claim_sync_allowed(vault, &edge.target)?
                 || local_entity_is_unsyncable_companion(vault, &edge.target)?
             {
@@ -289,13 +380,59 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     }
 
+    // Base→world edges live in the world TARGET's birth month, not the
+    // older base source's month. The target index finds those sources without
+    // scanning every historic base row or inventing edge-only world windows.
+    if window_key.world().is_some() {
+        for target in &entities_in_range {
+            if tombstone_map_contains_id(&tombstones_map, target) {
+                continue;
+            }
+            for edge in vault.edges_in(target)? {
+                let source = edge.target; // edges_in names the source as its neighbor.
+                let Some(source_raw) = vault.get_raw_unsealed(&source)? else {
+                    continue;
+                };
+                if super::types::entity_world(&source_raw)?.is_some()
+                    || is_unsyncable_secret_custody(&source_raw)
+                    || edge.kind == EdgeKind::Blocks
+                    || window_packing_excludes_entity(vault, &device_only, &source)?
+                    || window_packing_excludes_entity(vault, &device_only, target)?
+                    || !local_claim_sync_allowed(vault, &source)?
+                    || !local_claim_sync_allowed(vault, target)?
+                    || local_entity_is_unsyncable_companion(vault, &source)?
+                    || local_entity_is_unsyncable_companion(vault, target)?
+                    || !super::types::edge_belongs_to_window(vault, &source, target, window_key)?
+                {
+                    continue;
+                }
+                let key = format_edge_key(&source, edge.kind, target);
+                if map_contains_binary(&edges_map, &key) {
+                    continue;
+                }
+                let value = encode_edge_value_for_crdt(
+                    edge.kind,
+                    edge.weight,
+                    edge.created_at,
+                    edge.vad,
+                    edge.provenance,
+                )?;
+                map_insert_bytes(&edges_map, &key, &value)?;
+                wrote_any = true;
+            }
+        }
+    }
+
     // NOTE text, mutable workflows and head moves change even when the
     // entity carrier already exists. Refresh through the same export gates.
-    wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+    if window_key.world().is_none() {
+        wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+    }
 
     // Commit all bridge writes with origin tag
     if wrote_any {
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+        let origin = bridge::origin_for_mirrors(&mirror_sources)?;
+        doc.commit_with(CommitOptions::new().origin(&origin));
     }
     Ok(count)
 }

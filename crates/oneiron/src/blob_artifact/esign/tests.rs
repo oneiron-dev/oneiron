@@ -77,6 +77,9 @@ fn setup_with(
         1,
         b"owner",
     )?;
+    // The artifact actor is a MACHINE: it signs with a host-held key, so the
+    // vault is host-rooted and its owner verbs need a human binding (ONE-1634).
+    crate::test_util::provision_engine_machines(&vault);
     let artifact = EntityId::now();
     vault.put_blob_artifact(
         &artifact,
@@ -117,6 +120,7 @@ fn capability_preview_and_signature_share_injected_time_and_ids() -> Result<()> 
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -276,7 +280,7 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     forged.source = Some(crate::claim::ClaimSource::Observed);
     assert!(
         vault
@@ -353,6 +357,7 @@ fn ceremony_setup() -> Result<(
         now,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     doc.recipients[0].principal_ref = Some(owner.to_hex());
     event(
         &vault,
@@ -1701,7 +1706,7 @@ fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locki
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     claim.source = Some(crate::claim::ClaimSource::Observed);
     vault.with_write_txn(|txn| {
         vault.put_reserved_claim_in_txn(
@@ -1945,14 +1950,14 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         &rmp_serde::to_vec_named(&manifest).unwrap(),
     )?;
     let put_sender = |sender_id: EntityId| {
-        let mut identity = crate::channel_identity::ChannelIdentity::requested(
+        let identity = crate::test_util::self_held_identity_in_state(
             "email",
-            format!("sender-{}@example.com", sender_id.to_hex()),
+            &format!("sender-{}@example.com", sender_id.to_hex()),
             crate::channel_identity::SelfHeldShape::DedicatedAddress,
             crate::channel_identity::ChannelIdentityBinding::actor(sender),
+            crate::channel_identity::ChannelIdentityState::Active,
             1_000,
         );
-        identity.state = crate::channel_identity::ChannelIdentityState::Active;
         vault.create_channel_identity(&sender_id, &identity)
     };
     let original_sender = EntityId::now();

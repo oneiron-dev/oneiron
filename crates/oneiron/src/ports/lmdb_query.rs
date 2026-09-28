@@ -19,6 +19,20 @@ impl<T: ManifestDbs> EntityStoreRead for T {
             .get(txn, id.as_bytes())?
             .map(|bytes| bytes.to_vec()))
     }
+    fn port_entity_raw_records<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+    ) -> Result<PortRows<'a, (EntityId, Vec<u8>)>> {
+        Ok(Box::new(self.entities().iter(txn)?.map(|row| {
+            let (key, value) = row?;
+            let id = EntityId::from_bytes(
+                key.as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("entity key"))?,
+            )?;
+            Ok((id, value.to_vec()))
+        })))
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a RoTxn<'_>,
@@ -150,6 +164,12 @@ impl EntityStoreRead for Vault {
     fn port_entity_raw(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
         self.store.port_entity_raw(txn, id)
     }
+    fn port_entity_raw_records<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+    ) -> Result<PortRows<'a, (EntityId, Vec<u8>)>> {
+        self.store.port_entity_raw_records(txn)
+    }
     fn port_entity_records<'a>(
         &self,
         txn: &'a RoTxn<'_>,
@@ -210,6 +230,58 @@ pub(super) fn decode_record(raw: &[u8]) -> Result<EntityRecord> {
 }
 
 impl<T: ManifestDbs> super::EdgeStoreRead for T {
+    fn port_edge_has_any(
+        &self,
+        txn: &RoTxn<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+    ) -> Result<bool> {
+        for (enabled, db) in [
+            (direction != super::EdgeDirection::In, self.edges_out()),
+            (direction != super::EdgeDirection::Out, self.edges_in()),
+        ] {
+            if enabled
+                && db
+                    .prefix_iter(txn, center.as_bytes())?
+                    .next()
+                    .transpose()?
+                    .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    fn port_edge_peers<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+        kind: crate::EdgeKind,
+    ) -> Result<PortRows<'a, EntityId>> {
+        let mut prefix = center.as_bytes().to_vec();
+        prefix.push(kind as u8);
+        let streams: Vec<PortRows<'a, EntityId>> = [
+            (direction != super::EdgeDirection::In, self.edges_out()),
+            (direction != super::EdgeDirection::Out, self.edges_in()),
+        ]
+        .into_iter()
+        .filter(|(enabled, _)| *enabled)
+        .map(|(_, db)| {
+            let prefix = prefix.clone();
+            let center = *center;
+            Ok(Box::new(db.prefix_iter(txn, &prefix)?.map(move |row| {
+                let (key, _) = row?;
+                let (source, stored_kind, peer) = crate::edge::parse_strict_edge_record_key(&key)?;
+                if source != center || stored_kind != kind {
+                    return Err(Error::CorruptedIndex("centered edge stream"));
+                }
+                Ok(peer)
+            })) as PortRows<'a, EntityId>)
+        })
+        .collect::<Result<_>>()?;
+        Ok(Box::new(streams.into_iter().flatten()))
+    }
     fn port_edge_cursor<'a>(
         &self,
         txn: &'a RoTxn<'_>,
@@ -340,6 +412,23 @@ impl<T: ManifestDbs> super::EdgeStoreRead for T {
     }
 }
 impl super::EdgeStoreRead for Vault {
+    fn port_edge_has_any(
+        &self,
+        txn: &RoTxn<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+    ) -> Result<bool> {
+        self.store.port_edge_has_any(txn, center, direction)
+    }
+    fn port_edge_peers<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+        kind: crate::EdgeKind,
+    ) -> Result<PortRows<'a, EntityId>> {
+        self.store.port_edge_peers(txn, center, direction, kind)
+    }
     fn port_edge_cursor<'a>(
         &self,
         txn: &'a RoTxn<'_>,

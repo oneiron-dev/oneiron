@@ -26,10 +26,19 @@ fn put_actor(vault: &Vault, id: EntityId) -> Result<EntityId> {
 /// The vault-resident SKILL an evidence row names, under `skill_id` so the
 /// receipt manifest's `reference@version` rows can be matched against it.
 fn put_skill(vault: &Vault, id: EntityId, skill_id: &str) -> Result<EntityId> {
+    put_skill_version(vault, id, skill_id, "1.0.0")
+}
+
+fn put_skill_version(
+    vault: &Vault,
+    id: EntityId,
+    skill_id: &str,
+    version: &str,
+) -> Result<EntityId> {
     let record = SkillRecord::new(
         skill_id,
         "attribution fixture skill",
-        "1.0.0",
+        version,
         ClaimApprovalStatus::Approved,
         SkillLifecycle::Candidate,
         ClaimSource::Imported,
@@ -74,6 +83,12 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Result<Str
         panic!("the enqueued attempt is claimable");
     };
     assert_eq!(leased.id, attempt.id, "one attempt in flight per fixture");
+    queue.set_executor_model(
+        attempt.id,
+        "fixture-worker",
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     queue.complete(CompleteAttempt {
         id: attempt.id,
         lease_owner: "fixture-worker".to_owned(),
@@ -427,6 +442,7 @@ fn fabricated_evidence_references_are_refused_at_the_door() -> Result<()> {
     let Grounded { actor, skill } = ground(&vault, 0x31, 0x32)?;
     let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID, actor)?;
     let unloaded_skill = put_skill(&vault, entity(0x33), "attribution.fixture.other")?;
+    let wrong_revision = put_skill_version(&vault, entity(0x36), FIXTURE_SKILL_ID, "2.0.0")?;
 
     let cases = [
         evidence(
@@ -457,6 +473,14 @@ fn fabricated_evidence_references_are_refused_at_the_door() -> Result<()> {
             &receipt,
             actor,
             unloaded_skill,
+            AttemptOutcome::Failed,
+            true,
+            true,
+        ),
+        evidence(
+            &receipt,
+            actor,
+            wrong_revision,
             AttemptOutcome::Failed,
             true,
             true,
@@ -689,3 +713,43 @@ fn an_empty_fixture_set_scores_zero() {
 
 mod resident;
 mod sweep;
+
+#[test]
+fn stated_deviation_causes_route_differently_and_empty_reasons_are_refused() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x71, 0x72)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID, actor)?;
+    for (cause, expected) in [
+        (
+            DeviationCause::IncorrectInstruction,
+            AttributionVerdict::SkillDefect,
+        ),
+        (
+            DeviationCause::MissingInstruction,
+            AttributionVerdict::Discovery,
+        ),
+        (
+            DeviationCause::ExecutorError,
+            AttributionVerdict::ExecutionLapse,
+        ),
+    ] {
+        let row = OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 13)
+            .with_skill(skill)
+            .with_followed_state(FollowedState::DeviatedWithReason {
+                reason: "stated departure".to_owned(),
+                cause: Some(cause),
+            });
+        assert_eq!(RuleAttributionJudge.judge(&row)?, Some(expected));
+    }
+    let invalid = OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 13)
+        .with_skill(skill)
+        .with_followed_state(FollowedState::DeviatedWithReason {
+            reason: "   ".to_owned(),
+            cause: Some(DeviationCause::ExecutorError),
+        });
+    assert!(matches!(
+        record_attribution_evidence(&vault, &invalid),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    Ok(())
+}

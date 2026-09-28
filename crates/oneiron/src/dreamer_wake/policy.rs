@@ -1,5 +1,6 @@
 //! Row-backed wake admission. The host supplies liveness; the vault owns the decision.
 use crate::Vault;
+use crate::agent_def::{AgentDefinition, AgentWakeCadence};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, decode_claim_body};
 use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
@@ -7,12 +8,17 @@ use crate::dreamer_runner::{
 use crate::error::{Error, Result};
 use crate::ports::{ChangeLogRecord, EntityStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::side_table::{self, LegacyJson, Named, SideTable};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 
-const POLICY_KEY: &[u8] = b"settings:dreamer:wake-policy:v1";
-const STATE_KEY: &[u8] = b"dreamer:wake-policy:state:v1";
-const OUTBOX_PREFIX: &[u8] = b"dreamer:wake-policy:recipe-input:v1:";
+const POLICY: SideTable<(), DreamerWakePolicy, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_WAKE_POLICY);
+const STATE: SideTable<(), WakeState, LegacyJson> = SideTable::new(&side_table::DREAMER_WAKE_STATE);
+const OUTBOX: SideTable<[u8; 1], WakePolicyTrigger, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_WAKE_RECIPE_INPUT);
+const CHANGE: SideTable<[u8; 16], ChangeLogRecord, Named> =
+    SideTable::new(&side_table::PORTS_CHANGE);
 const DEFAULT_POLICY: &str = include_str!("wake_policy_defaults.json");
 
 fn invalid() -> Error {
@@ -25,6 +31,8 @@ fn invalid() -> Error {
 #[serde(deny_unknown_fields)]
 pub struct DreamerWakePolicy {
     pub wake_grain_turns: u64,
+    /// Resident trigger table, missing-role rule and nested rate precedence.
+    pub agent_cadence: AgentWakePolicy,
     /// New explicit CLAIMs plus user TURNs since the last weave.
     pub new_records: u64,
     pub longest_wait_secs: u64,
@@ -45,6 +53,93 @@ pub enum WeaveRecipePriority {
     BeforeConnectorEvent,
     AfterConnectorEvent,
 }
+/// Which role a definition without an explicit cadence dial receives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWakeRole {
+    Companion,
+    Leader,
+    Worker,
+}
+
+/// The owner-selected cadence precedence. The shipped default prevents a
+/// nested definition from making cadence more frequent than its vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CadencePrecedence {
+    VaultFloor,
+    AgentOverride,
+}
+
+/// Which signal classes admit a wake for one role. Each bit is policy data,
+/// not a hardcoded role switch in the scheduler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWakeTriggers {
+    pub cadence: bool,
+    pub surprise: bool,
+    pub agency: bool,
+    pub event: bool,
+}
+
+/// Role table on the owner-editable wake-policy row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWakePolicy {
+    pub absent_role: AgentWakeRole,
+    pub precedence: CadencePrecedence,
+    pub companion: AgentWakeTriggers,
+    pub leader: AgentWakeTriggers,
+    pub worker: AgentWakeTriggers,
+}
+
+/// Trigger facts supplied to the engine scheduler; the policy selects which
+/// facts a resident role may use. Cadence is derived, never caller asserted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentWakeSignals {
+    pub surprise: bool,
+    pub agency: bool,
+    pub event: bool,
+}
+
+impl AgentWakePolicy {
+    /// Resolve role, interval and trigger permissions under a single row.
+    #[must_use]
+    pub fn due(
+        self,
+        definition: &AgentDefinition,
+        vault_grain: u64,
+        ordinal: u64,
+        signals: AgentWakeSignals,
+    ) -> bool {
+        if !definition.enabled || definition.dreaming_mode() == crate::agent_def::DreamingMode::Off
+        {
+            return false;
+        }
+        let (role, interval) = match definition.wake_cadence {
+            Some(AgentWakeCadence::Companion { every_turns }) => {
+                (AgentWakeRole::Companion, every_turns)
+            }
+            Some(AgentWakeCadence::Leader { every_turns }) => (AgentWakeRole::Leader, every_turns),
+            Some(AgentWakeCadence::Worker) => (AgentWakeRole::Worker, None),
+            None => (self.absent_role, None),
+        };
+        let triggers = match role {
+            AgentWakeRole::Companion => self.companion,
+            AgentWakeRole::Leader => self.leader,
+            AgentWakeRole::Worker => self.worker,
+        };
+        let interval = match self.precedence {
+            CadencePrecedence::VaultFloor => interval.unwrap_or(vault_grain).max(vault_grain),
+            CadencePrecedence::AgentOverride => interval.unwrap_or(vault_grain),
+        };
+        (triggers.cadence && ordinal != 0 && interval != 0 && ordinal.is_multiple_of(interval))
+            || (triggers.surprise && signals.surprise)
+            || (triggers.agency && signals.agency)
+            || (triggers.event && signals.event)
+    }
+}
+
 impl DreamerWakePolicy {
     pub(crate) fn validate(self) -> Result<Self> {
         if self.wake_grain_turns == 0
@@ -164,22 +259,28 @@ struct WakeState {
     pending_nightly: std::collections::BTreeMap<String, u64>,
 }
 
-fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DreamerWakePolicy> {
-    let row = vault.store.vault_meta.get(txn, POLICY_KEY)?;
-    let policy: DreamerWakePolicy = match row {
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
+fn row_error(error: Error, invalid_row: Error) -> Error {
+    match error {
+        Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid_row,
+        other => other,
+    }
+}
+
+pub(crate) fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DreamerWakePolicy> {
+    let policy = match POLICY
+        .get(&vault.store, txn, &())
+        .map_err(|e| row_error(e, invalid()))?
+    {
+        Some(row) => row,
         None => serde_json::from_str(DEFAULT_POLICY).map_err(|_| invalid())?,
     };
     policy.validate()
 }
 fn state_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<WakeState> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, STATE_KEY)?
-        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
-        .transpose()
-        .map(Option::unwrap_or_default)
+    Ok(STATE
+        .get(&vault.store, txn, &())
+        .map_err(|e| row_error(e, invalid()))?
+        .unwrap_or_default())
 }
 
 /// Read one snapshot of live rows. Full role/source validation happens before
@@ -195,36 +296,23 @@ struct WakeCounts {
 }
 
 fn count_new(vault: &Vault, txn: &heed::RoTxn<'_>, state: &mut WakeState) -> Result<WakeCounts> {
-    let prefix = crate::ports::CHANGE_LOG_KEY_PREFIX;
-    let mut start = prefix.to_vec();
-    if let Some(id) = state.processed_change_id {
-        start.extend_from_slice(&id);
-    }
-    let mut upper = prefix.to_vec();
-    *upper.last_mut().expect("nonempty prefix") += 1;
     let mut last = state.processed_change_id;
     let mut changed = std::collections::BTreeSet::new();
-    for entry in vault.store.vault_meta.range(
-        txn,
-        &(
-            if state.processed_change_id.is_some() {
-                std::ops::Bound::Excluded(start.as_slice())
-            } else {
-                std::ops::Bound::Included(start.as_slice())
-            },
-            std::ops::Bound::Excluded(upper.as_slice()),
-        ),
-    )? {
-        let (key, value) = entry?;
-        let id: [u8; 16] = key
-            .get(prefix.len()..)
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or(Error::CorruptedIndex("dreamer wake mutation cursor"))?;
+    let start = state
+        .processed_change_id
+        .as_ref()
+        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+    for entry in CHANGE.iter_range(&vault.store, txn, start, std::ops::Bound::Unbounded)? {
+        let (id, change) = entry.map_err(|error| match error {
+            Error::Store(crate::error::StoreError::SideTableRow {
+                problem: crate::error::SideTableRowProblem::KeyShape,
+                ..
+            }) => Error::CorruptedIndex("dreamer wake mutation cursor"),
+            other => row_error(other, Error::CorruptedIndex("dreamer wake mutation row")),
+        })?;
         if last.is_some_and(|last| id <= last) {
             return Err(Error::CorruptedIndex("dreamer wake mutation order"));
         }
-        let change: ChangeLogRecord = rmp_serde::from_slice(&value)
-            .map_err(|_| Error::CorruptedIndex("dreamer wake mutation row"))?;
         if change.id != id {
             return Err(Error::CorruptedIndex("dreamer wake mutation identity"));
         }
@@ -379,12 +467,13 @@ fn merge_component(
 /// still durably reachable. A newer coalesced input covers the older range.
 pub(crate) fn wake_policy_input_covers(vault: &Vault, trigger: &WakePolicyTrigger) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    let key = [OUTBOX_PREFIX, &[trigger.recipe.key()]].concat();
-    let Some(bytes) = vault.store.vault_meta.get(&txn, &key)? else {
+    let key = [trigger.recipe.key()];
+    let Some(pending) = OUTBOX
+        .get(&vault.store, &txn, &key)
+        .map_err(|e| row_error(e, Error::CorruptedIndex("dreamer wake recipe input row")))?
+    else {
         return Ok(false);
     };
-    let pending: WakePolicyTrigger = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::CorruptedIndex("dreamer wake recipe input row"))?;
     Ok(pending.recipe == trigger.recipe
         && pending.through >= trigger.through
         && pending.after_turn <= trigger.after_turn
@@ -408,13 +497,33 @@ impl Vault {
         policy: DreamerWakePolicy,
     ) -> Result<()> {
         policy.validate()?;
-        let bytes = serde_json::to_vec(&policy).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, POLICY_KEY, &bytes)?;
+            POLICY
+                .put(&self.store, txn, &(), &policy)
+                .map_err(|e| row_error(e, invalid()))?;
             Ok(())
         })
     }
+    /// Update just the grain on the same owner-authenticated policy row used
+    /// by the host tick scheduler and the projector's turn door.
+    pub fn set_wake_grain(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        grain: super::grain::WakeGrain,
+    ) -> Result<()> {
+        super::grain::WakeGrain::new(grain.turns_per_wake)?;
+        self.with_write_txn(|txn| {
+            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
+            let mut policy = policy_in_txn(self, txn)?;
+            policy.wake_grain_turns = grain.turns_per_wake;
+            POLICY
+                .put(&self.store, txn, &(), &policy)
+                .map_err(|e| row_error(e, invalid()))?;
+            Ok(())
+        })
+    }
+
     pub fn dreamer_wake_policy(&self) -> Result<DreamerWakePolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
@@ -440,11 +549,11 @@ impl Vault {
     pub fn dreamer_wake_recipe_inputs(&self) -> Result<Vec<WakePolicyTrigger>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&txn, OUTBOX_PREFIX)? {
-            let (key, raw) = entry?;
-            let trigger: WakePolicyTrigger = serde_json::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("dreamer wake recipe input row"))?;
-            if key.get(OUTBOX_PREFIX.len()..) != Some(&[trigger.recipe.key()][..]) {
+        for entry in OUTBOX.iter_from(&self.store, &txn, &[])? {
+            let (key, trigger) = entry.map_err(|e| {
+                row_error(e, Error::CorruptedIndex("dreamer wake recipe input row"))
+            })?;
+            if key != [trigger.recipe.key()] {
                 return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
             }
             rows.push(trigger);
@@ -488,11 +597,9 @@ impl Vault {
                     changed = true;
                 }
                 if changed || state.processed_change_id != previous_processed {
-                    self.store.vault_meta.put(
-                        txn,
-                        STATE_KEY,
-                        &serde_json::to_vec(&state).map_err(|_| invalid())?,
-                    )?;
+                    STATE
+                        .put(&self.store, txn, &(), &state)
+                        .map_err(|e| row_error(e, invalid()))?;
                 }
                 return Ok(WakePolicyOutcome {
                     decision,
@@ -520,11 +627,12 @@ impl Vault {
             };
             let attempt =
                 DreamerRunnerStore::new(self).enqueue_policy_wake_in_txn(txn, &trigger, now)?;
-            let key = [OUTBOX_PREFIX, &[recipe.key()]].concat();
+            let key = [recipe.key()];
             let mut pending = trigger;
-            if let Some(bytes) = self.store.vault_meta.get(txn, &key)? {
-                let prior: WakePolicyTrigger = serde_json::from_slice(&bytes)
-                    .map_err(|_| Error::CorruptedIndex("dreamer wake recipe input row"))?;
+            if let Some(prior) = OUTBOX
+                .get(&self.store, txn, &key)
+                .map_err(|e| row_error(e, Error::CorruptedIndex("dreamer wake recipe input row")))?
+            {
                 if prior.recipe != recipe {
                     return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
                 }
@@ -553,11 +661,9 @@ impl Vault {
                 pending.after_record = prior.after_record;
                 pending.after_nightly = prior.after_nightly;
             }
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&pending).map_err(|_| invalid())?,
-            )?;
+            OUTBOX
+                .put(&self.store, txn, &key, &pending)
+                .map_err(|e| row_error(e, invalid()))?;
             match recipe {
                 WakeRecipe::Continuous => {
                     state.turn_change_id = counts.last;
@@ -583,11 +689,9 @@ impl Vault {
             if counts.nightly == 0 {
                 state.nightly_change_id = counts.last;
             }
-            self.store.vault_meta.put(
-                txn,
-                STATE_KEY,
-                &serde_json::to_vec(&state).map_err(|_| invalid())?,
-            )?;
+            STATE
+                .put(&self.store, txn, &(), &state)
+                .map_err(|e| row_error(e, invalid()))?;
             Ok(WakePolicyOutcome {
                 decision,
                 attempt: Some(attempt),

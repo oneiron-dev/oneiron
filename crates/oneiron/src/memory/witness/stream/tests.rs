@@ -56,7 +56,7 @@ fn assert_no_seed(vault: &Vault) {
         vault
             .store
             .vault_meta
-            .prefix_iter(&txn, storage::ACTIVE)
+            .prefix_iter(&txn, storage::ACTIVE.decl().prefix)
             .unwrap()
             .next()
             .is_none()
@@ -106,7 +106,7 @@ fn durable_substrates(vault: &Vault) -> Vec<Vec<(Vec<u8>, Vec<u8>)>> {
             .unwrap()
             .filter_map(|r| {
                 let (k, v) = r.unwrap();
-                (!k.starts_with(storage::ACTIVE)).then(|| (k.to_vec(), v.to_vec()))
+                (!k.starts_with(storage::ACTIVE.decl().prefix)).then(|| (k.to_vec(), v.to_vec()))
             })
             .collect(),
     );

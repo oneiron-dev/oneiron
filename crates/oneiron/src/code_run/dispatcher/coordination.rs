@@ -1,17 +1,23 @@
 //! Code-mode composition: host-bound agents.spawn / tasks.ask / tasks.wait.
 use super::HostSelfDispatcher;
+use crate::EntityId;
+use crate::agent_def::{
+    AgentAuthorLease, AgentDefinition, AgentDefinitionPutDisposition, AgentScope,
+};
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, DispatchAgent, agent_dispatch_actor,
     decode_agent_dispatch_input,
 };
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult,
+    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDispatchOutcome, SelfEffect,
+    SelfFailedResult,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
 use crate::task_verb::{TaskAskHandle, TaskAskSpec, TaskAskWait};
+use crate::temporal::TimeRange;
 use crate::{Vault, WriteActor};
 
 fn invalid() -> Error {
@@ -49,12 +55,74 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(dispatcher)
     }
 
+    /// The SDK authoring door needs the worker's actual acquired lease.
+    /// A caller that only knows the attempt id may spawn, but cannot author.
+    pub fn for_leased_agent_attempt(
+        vault: &'a Vault,
+        actor: WriteActor,
+        leased: &AttemptRecord,
+    ) -> Result<Self> {
+        let mut dispatcher = Self::for_agent_attempt(vault, actor, leased.id)?;
+        let binding = AgentAuthorLease::from_leased(leased)?;
+        let current = DreamerRunnerStore::new(vault)
+            .status(leased.id)?
+            .ok_or_else(invalid)?;
+        if current.attempt.state != AttemptState::Leased
+            || current.attempt.lease_owner.as_deref() != Some(binding.owner.as_str())
+            || current.attempt.attempt_count != binding.generation
+        {
+            return Err(invalid());
+        }
+        dispatcher.agent_lease = Some(binding);
+        Ok(dispatcher)
+    }
+
     fn coordination_vault(&self) -> Result<&Vault> {
         match &self.storage {
             ExecutorStorage::Canonical(vault) => Ok(vault),
             // No durable-record shortcut around an off-record session route.
             ExecutorStorage::Session(_) => Err(invalid()),
         }
+    }
+
+    /// Author `vault.agents.put` from this running agent's host-bound identity.
+    /// This is an SDK host door, not a `self.spawn` bridge: no child is launched.
+    pub fn put_agent_definition(
+        &self,
+        id: &EntityId,
+        definition: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<AgentDefinitionPutDisposition> {
+        let vault = self.coordination_vault()?;
+        let parent = self.agent_parent.ok_or_else(invalid)?;
+        let live = DreamerRunnerStore::new(vault)
+            .status(parent)?
+            .ok_or_else(invalid)?;
+        let input = decode_agent_dispatch_input(&live.payload.input)?;
+        if live.attempt.state != AttemptState::Leased || agent_dispatch_actor(&input)? != self.actor
+        {
+            return Err(invalid());
+        }
+        let scope_widens = input
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.world)
+            .is_some_and(|world| match &definition.scope {
+                AgentScope::Base => false,
+                AgentScope::World(id) => *id != world,
+                AgentScope::All => true,
+            });
+        let lease = self.agent_lease.as_ref().ok_or_else(invalid)?;
+        vault.put_agent_definition_for_author_with_scope(
+            &self.actor.entity_ref(),
+            id,
+            definition,
+            scope_widens,
+            Some(lease),
+            occurred,
+            learned_at,
+        )
     }
 
     pub(super) fn dispatch_agents_spawn(
@@ -124,14 +192,45 @@ impl<'a> HostSelfDispatcher<'a> {
         })
     }
 
-    pub(super) fn dispatch_tasks_wait(&self, handle: TaskAskHandle) -> Result<SelfDispatchOutcome> {
+    pub(super) fn dispatch_tasks_wait(
+        &self,
+        handle: TaskAskHandle,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
         let vault = self.coordination_vault()?;
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
-        Ok(match memory.tasks_wait(handle, None) {
+        // Only a persisted bridge result acknowledges a void. If the process
+        // died after returning Changed but before replay append, it is offered
+        // again; a later distinct void has a higher generation and re-wakes.
+        let mut observed = 0;
+        if let Some(run_id) = run_id
+            && let Some(record) = vault.get_code_run_replay_record(&run_id)?
+        {
+            let request =
+                super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
+            for call in &record.bridge_calls {
+                if call.effect == SelfEffect::TasksWait
+                    && call.request == request
+                    && let SelfDispatchOutcome::TaskAskStatus(
+                        crate::task_verb::TaskAskStatus::Changed { generation, .. },
+                    ) = super::super::payload::decode_self_dispatch_outcome(&call.outcome)?
+                {
+                    observed = observed.max(generation);
+                }
+            }
+            crate::task_verb::ack_option_void_generation(vault, handle.group_ref, observed)?;
+        }
+        Ok(match memory.tasks_wait_observing(handle, None, observed) {
             Ok(TaskAskWait::Ready(result)) => {
                 SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Settled(result))
             }
             Ok(TaskAskWait::Park(wait)) => SelfDispatchOutcome::DurableWait(wait),
+            Ok(TaskAskWait::Changed { voided, generation }) => {
+                SelfDispatchOutcome::TaskAskStatus(crate::task_verb::TaskAskStatus::Changed {
+                    voided,
+                    generation,
+                })
+            }
             Ok(TaskAskWait::Pending { .. }) => failed(
                 SelfEffect::TasksWait,
                 crate::memory::MemoryError::bad_request("external wait on engine step"),

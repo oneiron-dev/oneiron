@@ -77,10 +77,7 @@ impl Vault {
         {
             let (index, _) = row?;
             let id = crate::vault::entity_id_from_type_index_key(&index)?;
-            let raw = self
-                .store
-                .entities
-                .get(&txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
                 .ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&raw).is_none_or(|header| {
                 header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT
@@ -88,7 +85,8 @@ impl Vault {
                 return Err(invalid());
             }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if grant.scope == FederationGrantScope::vault(vault_id)
+            if !grant.role.is_guest()
+                && grant.scope == FederationGrantScope::vault(vault_id)
                 && grant.member_ref == holder.actor()
                 && grant.is_admin()
                 && grant.confers_at(now)
@@ -128,7 +126,7 @@ impl Vault {
             previous_value: previous.map(|p| p.value.clone()),
         };
         let anchor = ruling_anchor_id(vault_id)?;
-        if self.store.entities.get(&txn, anchor.as_bytes())?.is_none() {
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &anchor)?.is_none() {
             self.batch_in()
                 .put(
                     &anchor,
@@ -202,7 +200,8 @@ impl Vault {
         // The put-maintained predicate index keeps detached rows discoverable.
         for id in crate::claim::claim_ids_for_predicate_in_txn(&self.store, txn, RULING_PREDICATE)?
         {
-            let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+            else {
                 continue;
             };
             let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;

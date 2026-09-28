@@ -17,13 +17,13 @@ pub(super) struct Element {
 }
 
 impl Element {
-    fn attribute(&self, name: &str) -> Option<&str> {
+    pub(super) fn attribute(&self, name: &str) -> Option<&str> {
         self.attrs
             .iter()
             .find(|(key, ns, _)| key == name && ns.is_none())
             .map(|(_, _, value)| value.as_str())
     }
-    fn relationship_id(&self) -> Option<&str> {
+    pub(super) fn relationship_id(&self) -> Option<&str> {
         self.attrs
             .iter()
             .find(|(key, ns, _)| {
@@ -31,7 +31,7 @@ impl Element {
             })
             .map(|(_, _, value)| value.as_str())
     }
-    fn is(&self, name: &str, namespace: &[u8]) -> bool {
+    pub(super) fn is(&self, name: &str, namespace: &[u8]) -> bool {
         self.name == name
             && self
                 .namespace

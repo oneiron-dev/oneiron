@@ -97,14 +97,7 @@ fn park_and_rule(
 fn all_stats(vault: &Vault) -> Vec<ScopeOutcomeStats> {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let mut rows = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, RAMP_STATS_KEY_PREFIX)
-        .expect("scan stats")
-    {
-        let (_, raw) = entry.expect("stats row");
-        let row: StoredScopeStats = decode_row(&raw, "ramp stats row").expect("decode");
+    for (_, row) in RAMP_STATS.scan(&vault.store, &rtxn).expect("scan stats") {
         let (scope, counters) = stats_row_parts(row).expect("parts");
         let state = derive_state_in_txn(vault, &rtxn, &scope, counters).expect("state");
         rows.push(stats_view(scope, counters, state));
@@ -690,4 +683,49 @@ fn state_strings_round_trip() {
         assert_eq!(DemotionReason::parse(reason.as_str()), Some(reason));
     }
     assert_eq!(DemotionReason::parse("nonsense"), None);
+}
+
+#[test]
+fn mail_09_cold_mail_graduation_bound_is_identity_scoped() -> crate::Result<()> {
+    let identity = EntityId::now();
+    let scope = RampScope::new(
+        "send",
+        format!("recipient:cold_external:{}", identity.to_hex()),
+        "agent-a",
+    )?;
+    let bound = scope.to_grant_bound()?;
+    let second = RampScope::new(
+        "send",
+        format!("recipient:cold_external:{}", EntityId::now().to_hex()),
+        "agent-a",
+    )?;
+    assert_ne!(bound.digest(), second.to_grant_bound()?.digest());
+    assert_eq!(scope.grant_ref()?, bound.digest().to_hex());
+    assert!(RampScope::new("send", "recipient:cold_external:invalid", "agent-a").is_err());
+    Ok(())
+}
+
+#[test]
+fn mail_09_malformed_scope_never_commits_or_hides_valid_offers() -> crate::Result<()> {
+    let (_tmp, vault) = open_vault();
+    let valid = eligible_scope();
+    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault.record_proposal_outcome_for_ramp(&valid, ProposalOutcome::ApprovedUntouched)?;
+    }
+    let malformed = RampScope {
+        op_kind: "send".into(),
+        target_class: "recipient:cold_external:not-an-id".into(),
+        actor: "agent-a".into(),
+    };
+    assert!(malformed.validate().is_err());
+    assert!(
+        vault
+            .record_proposal_outcome_for_ramp(&malformed, ProposalOutcome::ApprovedUntouched)
+            .is_err()
+    );
+    assert!(vault.scope_stats(&malformed)?.is_none());
+    assert!(vault.graduation_offers()?.contains(&valid));
+    vault.rebuild_ramp_stats_from_receipts()?;
+    assert!(vault.graduation_offers()?.contains(&valid));
+    Ok(())
 }

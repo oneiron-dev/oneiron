@@ -190,7 +190,8 @@ mod tests {
                 1.0,
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .unwrap();
             body.world = if n == 1008 {
                 None
             } else if n < 1005 && n % 2 == 1 {

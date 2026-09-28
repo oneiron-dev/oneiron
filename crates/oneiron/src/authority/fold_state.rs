@@ -25,19 +25,6 @@ pub struct FoldedDevice {
     pub revoked: bool,
 }
 
-/// Local pending-widen state exposed by the fold.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorityPendingWiden {
-    /// Pending authority entry.
-    pub entry_hash: AuthorityEntryHash,
-    /// Local first-seen monotonic timestamp, if the caller supplied one.
-    pub first_seen_at_secs: Option<u64>,
-    /// Local timestamp at which the entry becomes eligible.
-    pub eligible_at_secs: Option<u64>,
-    /// Delay window chosen by genesis for this vault.
-    pub delay_secs: u64,
-}
-
 /// Fold issue retained for diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityFoldIssue {
@@ -125,10 +112,6 @@ pub struct AuthorityFold {
     pub tier_floor: Option<AuthorityTier>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
     pub genesis_fragile: bool,
-    /// Software-tier widens that are valid but not yet locally eligible.
-    pub pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
-    /// Pending widen hashes killed by a valid owner veto.
-    pub vetoed_widens: BTreeSet<AuthorityEntryHash>,
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Consumed federation confirmation ids and nonces, bound to signed entries.
@@ -244,20 +227,10 @@ pub(super) struct FoldState {
     pub(super) vault_id: AuthorityVaultId,
     pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
     pub(super) tier_floor: AuthorityTier,
-    pub(super) migrated_roots: BTreeSet<AuthorityKey>,
     pub(super) genesis_recovery_dismissed: bool,
     pub(super) recovery_redundancy_established: bool,
     pub(super) tier_floor_events:
         BTreeMap<AuthorityEntryHash, (AuthorityTier, BTreeSet<AuthorityEntryHash>)>,
-    pub(super) pending_widen_delay_secs: u64,
-    pub(super) pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
-    pub(super) vetoed_widens: BTreeSet<AuthorityEntryHash>,
-    /// Delayed software rotations that revoked old owner/admin keys.
-    ///
-    /// These keys are retained only to validate vetoes against widens that were
-    /// concurrent with, or older than, the delayed rotation that revoked them.
-    pub(super) delayed_rotation_veto_revocations:
-        BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     pub(super) federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub(super) critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
@@ -381,9 +354,6 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     debug_assert_eq!(left.vault_id, right.vault_id);
     let mut merged = left.clone();
     merged.slips.merge_from(&right.slips);
-    merged
-        .migrated_roots
-        .extend(right.migrated_roots.iter().cloned());
     merged.genesis_recovery_dismissed |= right.genesis_recovery_dismissed;
     merged.recovery_redundancy_established |= right.recovery_redundancy_established;
     merged
@@ -432,28 +402,6 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
         .extend(right.tier_floor_events.clone());
     merged.tier_floor = effective_tier_floor(&merged.tier_floor_events)
         .unwrap_or_else(|| most_restrictive_tier_floor(left.tier_floor, right.tier_floor));
-    merged.pending_widen_delay_secs = left
-        .pending_widen_delay_secs
-        .max(right.pending_widen_delay_secs);
-    merged.pending_widens.extend(
-        right
-            .pending_widens
-            .iter()
-            .map(|(hash, pending)| (*hash, pending.clone())),
-    );
-    merged
-        .vetoed_widens
-        .extend(right.vetoed_widens.iter().copied());
-    for (key, revocations) in &right.delayed_rotation_veto_revocations {
-        merged
-            .delayed_rotation_veto_revocations
-            .entry(key.clone())
-            .or_default()
-            .extend(revocations.iter().copied());
-    }
-    for vetoed in &merged.vetoed_widens {
-        merged.pending_widens.remove(vetoed);
-    }
     for (pact_id, right_pact) in &right.federation_pacts {
         match merged.federation_pacts.get_mut(pact_id) {
             Some(left_pact) => {

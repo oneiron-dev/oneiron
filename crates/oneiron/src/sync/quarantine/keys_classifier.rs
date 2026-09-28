@@ -143,6 +143,11 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::DreamerActorImmutable
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
+        // A remote MACHINE claim's origin proof is invalid. Keep the generic
+        // actor-authority denial local: it also covers local enrollment and
+        // folded-roster failures, which must never be mistaken for peer bytes.
+        | ErrorKind::InvalidMachineClaimProof
+        | ErrorKind::RemoteMachineHistoryPending
         // Replicated rooms carry only body metadata, not the local ledger.
         // Invalid incoming codecs are remote rejections, not window failures.
         | ErrorKind::InvalidConversationBody
@@ -150,7 +155,13 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody
+        // CONNECTOR_KEY authority is local to the host: a peer cannot
+        // introduce, replace or clear its approved manifest through replay.
+        | ErrorKind::InvalidConnectorKeyBody
         | ErrorKind::InvalidTaskBody
+        // An ask word or receipt that arrived before its group or person is
+        // remote data waiting on a dependency; forward remat keeps its retry.
+        | ErrorKind::AskDependencyPending
         | ErrorKind::InvalidProjectBody
         | ErrorKind::InvalidProjectRoomBody
         | ErrorKind::ProjectDependencyPending

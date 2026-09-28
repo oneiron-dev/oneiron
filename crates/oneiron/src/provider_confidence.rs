@@ -60,8 +60,8 @@ use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 
 use indexes::{
-    active_provider_prior_in_txn, prior_claims_for_actor_in_txn, provider_prior_head_index_key,
-    resolve_or_create_provider_actor_in_txn, resolve_provider_actor_in_txn,
+    PROVIDER_PRIOR_HEAD_INDEX, active_provider_prior_in_txn, prior_claims_for_actor_in_txn,
+    provider_key_hash, resolve_or_create_provider_actor_in_txn, resolve_provider_actor_in_txn,
 };
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
@@ -233,7 +233,7 @@ pub(crate) fn write_provider_prior_in_txn(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.evidence = Some(Value::from(evidence));
     body.valid_from = Some(now);
     body.source = Some(ClaimSource::Observed);
@@ -255,11 +255,7 @@ pub(crate) fn write_provider_prior_in_txn(
     // at a claim this transaction is about to supersede — survivable (the
     // read revalidates and falls back) but pointless churn, and a rollback
     // would strand it pointing at a claim that never landed.
-    vault.store.vault_meta.put(
-        wtxn,
-        &provider_prior_head_index_key(provider),
-        claim_id.as_bytes(),
-    )?;
+    PROVIDER_PRIOR_HEAD_INDEX.put(&vault.store, wtxn, &provider_key_hash(provider), &claim_id)?;
     Ok(claim_id)
 }
 
@@ -327,7 +323,7 @@ pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) ->
             confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.valid_from = Some(now);
         body.source = Some(ClaimSource::Observed);
         vault.put_claim_in_txn(

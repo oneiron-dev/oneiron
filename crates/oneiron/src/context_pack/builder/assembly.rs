@@ -99,6 +99,42 @@ impl<'a> ContextPackBuilder<'a> {
         ))
     }
 
+    /// Filter the actor's pack before rendering or finalizing telemetry, including rooms.
+    pub(crate) fn run_scoped_with_vector_status(
+        self,
+        lane: &crate::claim::ScopedRead<'_>,
+    ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, bool)> {
+        let run = self.run_unfinalized()?;
+        let vector_completed = run.vector_completed;
+        let mut pending = UnfinalizedContextPack {
+            value: run.pack,
+            telemetry_run_id: run.telemetry_run_id,
+            telemetry: run.telemetry,
+            total_in_scope: run.total_in_scope,
+            clamped_out: run.clamped_out,
+            capture_replay: run.capture_replay,
+            replay_config: run.replay_config,
+        };
+        lane.end_recall_plan()?;
+        let receipt = match lane.filter_context_pack(&mut pending.value) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                pending.discard_telemetry();
+                return Err(error);
+            }
+        };
+        // Counts exposed by recall refer only to rows admitted by this read.
+        pending.value.stats.candidates_considered = pending.value.results.len();
+        let pack = pending.finish_post_filter()?.value;
+        Ok((
+            crate::claim::ScopedReadResult {
+                value: pack,
+                receipt,
+            },
+            vector_completed,
+        ))
+    }
+
     pub fn run_projected_json_with_telemetry(
         self,
         config: &SerializeConfig,

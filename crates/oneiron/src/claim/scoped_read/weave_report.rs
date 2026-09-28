@@ -11,18 +11,16 @@ use crate::workspace_roster::ProjectRecord;
 use crate::{EdgeKind, EntityId};
 use std::collections::{BTreeMap, BTreeSet};
 
-const MAX_SECTIONS: usize = 16;
-const MAX_PREDICATES: usize = 32;
-const MAX_ROWS: usize = 10_000;
-
 /// Reader role is a constraint on the projection, never a claim of new read authority.
+#[derive(Clone, Copy)]
 pub enum WeaveReader<'a> {
     Person(EntityId),
     Owner(&'a crate::consent::AuthenticatedOwner),
     Agent(EntityId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WeaveSectionKind {
     Changes,
     Projects,
@@ -91,21 +89,18 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
     ) -> Result<ScopedReadResult<WeaveReport>> {
-        if recipe.len() > MAX_SECTIONS
-            || recipe.iter().any(|section| {
-                section.predicates.len() > MAX_PREDICATES
-                    || section.edge_kinds.len() > MAX_PREDICATES
-                    || (!section.edge_kinds.is_empty() && section.kind != WeaveSectionKind::Links)
-                    || section
-                        .predicates
-                        .iter()
-                        .any(|p| p.is_empty() || p.len() > 128)
-                    || !section.kind.allowed_for(&reader)
-            })
-        {
-            return Err(Error::InvalidConfig("invalid weave report recipe".into()));
-        }
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
+        self.weave_report_in_txn(&txn, reader, recipe)
+    }
+
+    /// Run the same live report admission against a caller-owned transaction.
+    /// Correction writes and receipt reads need admission and effects in one snapshot.
+    pub(super) fn weave_report_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader: WeaveReader<'_>,
+        recipe: &[WeaveSectionSpec],
+    ) -> Result<ScopedReadResult<WeaveReport>> {
         let subject = match reader {
             WeaveReader::Person(id) | WeaveReader::Agent(id) => {
                 if self.actor_key.actor_ref() != id.to_hex() {
@@ -116,7 +111,7 @@ impl ScopedRead<'_> {
                 Some(id)
             }
             WeaveReader::Owner(owner) => {
-                owner.revalidate_in_txn(self.vault, &txn)?;
+                owner.revalidate_in_txn(self.vault, txn)?;
                 if self.actor_key.actor_ref() != owner.actor().to_hex()
                     && self.actor_key.actor_ref() != owner.principal_ref()
                 {
@@ -127,7 +122,12 @@ impl ScopedRead<'_> {
                 None
             }
         };
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        validate_weave_recipe(&policy, &reader, recipe)?;
+        let max_rows =
+            crate::gate::weave_policy::effective_resolved(&policy, reader.role(), reader.id())
+                .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?
+                .max_rows;
         let mut project_ids = BTreeSet::new();
         let mut projects = Vec::new();
         if (recipe.iter().any(|s| {
@@ -140,22 +140,22 @@ impl ScopedRead<'_> {
         {
             let mut scanned = 0;
             let project_rows = match self.session_view {
-                Some(view) => view.port_entity_ids_by_type(&txn, kind, None)?,
-                None => self.vault.port_entity_ids_by_type(&txn, kind, None)?,
+                Some(view) => view.port_entity_ids_by_type(txn, kind, None)?,
+                None => self.vault.port_entity_ids_by_type(txn, kind, None)?,
             };
             for row in project_rows {
                 let id = row?;
                 scanned += 1;
-                if scanned > MAX_ROWS {
+                if scanned > max_rows {
                     return Err(Error::IndexOverflow("weave projects"));
                 }
                 // A project id must be readable before its body or membership
                 // becomes available to the projection.
-                if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &id)? {
+                if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
                     continue;
                 }
                 let raw = self
-                    .entity_record_in(&txn, &id)?
+                    .entity_record_in(txn, &id)?
                     .ok_or(Error::CorruptedIndex("weave project index"))?
                     .encode();
                 let header = EntityMetadataHeader::parse(&raw)
@@ -186,7 +186,7 @@ impl ScopedRead<'_> {
                         Some(value) => {
                             let goal_id = EntityId::from_hex(value)?;
                             self.is_entity_retrievable_with_policy_in(
-                                &txn, &policy, &filter, &goal_id,
+                                txn, &policy, &filter, &goal_id,
                             )?
                             .then(|| value.clone())
                         }
@@ -199,7 +199,7 @@ impl ScopedRead<'_> {
                     if let Some(budget) = &row.budget {
                         let budget_ref = EntityId::from_hex(budget)?;
                         if self.is_entity_retrievable_with_policy_in(
-                            &txn,
+                            txn,
                             &policy,
                             &filter,
                             &budget_ref,
@@ -214,20 +214,18 @@ impl ScopedRead<'_> {
             } else {
                 let mut seen = BTreeSet::new();
                 for predicate in &spec.predicates {
-                    for id in self.weave_claim_ids_in(&txn, predicate)? {
+                    for id in self.weave_claim_ids_in(txn, predicate, max_rows)? {
                         if !seen.insert(id) {
                             continue;
                         }
-                        if seen.len() > MAX_ROWS {
+                        if seen.len() > max_rows {
                             return Err(Error::IndexOverflow("weave claim rows"));
                         }
-                        if !self
-                            .is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &id)?
-                        {
+                        if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
                             continue;
                         }
                         let raw = self
-                            .entity_record_in(&txn, &id)?
+                            .entity_record_in(txn, &id)?
                             .ok_or(Error::CorruptedIndex("weave claim index"))?
                             .encode();
                         let header = EntityMetadataHeader::parse(&raw)
@@ -256,17 +254,7 @@ impl ScopedRead<'_> {
                         }
                         // An edge claim must not launder an unreadable endpoint
                         // (or a deleted edge) into a report about the reader.
-                        if let ClaimSubject::Edge {
-                            source,
-                            kind,
-                            target,
-                        } = body.subject
-                            && (!self.is_entity_retrievable_with_policy_in(
-                                &txn, &policy, &filter, &source,
-                            )? || !self.is_entity_retrievable_with_policy_in(
-                                &txn, &policy, &filter, &target,
-                            )? || !self.live_weave_edge_in(&txn, source, kind, target)?)
-                        {
+                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, &body)? {
                             continue;
                         }
                         items.push(WeaveItem::Claim {
@@ -278,13 +266,20 @@ impl ScopedRead<'_> {
             }
             if spec.kind == WeaveSectionKind::Links && !spec.edge_kinds.is_empty() {
                 items.extend(self.weave_links_in(
-                    &txn,
+                    txn,
                     &policy,
                     &filter,
-                    subject,
-                    &project_ids,
+                    (subject, &project_ids),
                     &spec.edge_kinds,
+                    max_rows,
                 )?);
+            }
+            if items.len()
+                > crate::gate::weave_policy::effective_resolved(&policy, reader.role(), reader.id())
+                    .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?
+                    .max_rows
+            {
+                return Err(Error::IndexOverflow("weave policy rows"));
             }
             sections.push(WeaveSection {
                 kind: spec.kind,
@@ -302,16 +297,26 @@ impl ScopedRead<'_> {
     /// The base predicate index is not part of a session's write overlay.
     /// A composed type scan sees overlay-only, shadowed and removed rows under
     /// the same snapshot as hydration. Refuse an oversized scan, never page it.
-    fn weave_claim_ids_in(&self, txn: &heed::RoTxn<'_>, predicate: &str) -> Result<Vec<EntityId>> {
+    fn weave_claim_ids_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        predicate: &str,
+        max_rows: usize,
+    ) -> Result<Vec<EntityId>> {
         let Some(view) = self.session_view else {
-            return crate::claim::claim_ids_for_predicate_in_txn(&self.vault.store, txn, predicate);
+            return crate::claim::claim_ids_for_predicate_bounded_in_txn(
+                &self.vault.store,
+                txn,
+                predicate,
+                max_rows,
+            );
         };
         let mut matches = Vec::new();
         let mut scanned = 0;
         for row in view.port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)? {
             let id = row?;
             scanned += 1;
-            if scanned > MAX_ROWS {
+            if scanned > max_rows {
                 return Err(Error::IndexOverflow("weave session claims"));
             }
             let Some(record) = self.entity_record_in(txn, &id)? else {
@@ -333,15 +338,85 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         policy: &crate::gate::PolicyManifestResolution,
         filter: &crate::gate::ResolvedRetrievalFilter,
-        subject: Option<EntityId>,
-        project_ids: &BTreeSet<EntityId>,
+        anchors: (Option<EntityId>, &BTreeSet<EntityId>),
         kinds: &[EdgeKind],
+        max_rows: usize,
     ) -> Result<Vec<WeaveItem>> {
+        let (subject, project_ids) = anchors;
         let mut links = BTreeMap::new();
-        let mut add = |source: EntityId, kind: EdgeKind, target: EntityId| -> Result<()> {
-            if self.is_entity_retrievable_with_policy_in(txn, policy, filter, &source)?
-                && self.is_entity_retrievable_with_policy_in(txn, policy, filter, &target)?
+        let mut scanned = 0;
+        if let Some(person) = subject {
+            for anchor in std::iter::once(&person).chain(project_ids.iter()) {
+                for direction in [EdgeDirection::Out, EdgeDirection::In] {
+                    for (index, &kind) in kinds.iter().enumerate() {
+                        if kinds[..index].contains(&kind) {
+                            continue;
+                        }
+                        // One extra eligible row proves completeness at the cap.
+                        // Hidden pairs never consume a visible row slot.
+                        let admitted = self.admitted_edges_in(
+                            txn,
+                            policy,
+                            filter,
+                            anchor,
+                            direction,
+                            Some(kind),
+                            max_rows.saturating_add(1),
+                            max_rows.saturating_add(1),
+                            false,
+                        )?;
+                        for edge in admitted.edges {
+                            let edge = edge.info();
+                            if !weave_edge_live(edge.provenance) {
+                                continue;
+                            }
+                            scanned += 1;
+                            if scanned > max_rows {
+                                return Err(Error::IndexOverflow("weave link rows"));
+                            }
+                            let (source, target) = if direction == EdgeDirection::Out {
+                                (*anchor, edge.target)
+                            } else {
+                                (edge.target, *anchor)
+                            };
+                            links.insert(
+                                (source, edge.kind as u8, target),
+                                WeaveItem::Link {
+                                    source,
+                                    kind: edge.kind,
+                                    target,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // Owner-global view still uses the canonical cursor, but hidden
+            // relations cannot consume its visible scan budget either.
+            if self.session_view.is_some() {
+                return Err(Error::InvalidConfig(
+                    "owner weave links need a canonical read".into(),
+                ));
+            }
+            for row in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.vault.store, txn)?
             {
+                let (key, value) = row?;
+                let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
+                if !kinds.contains(&edge.kind) || !weave_edge_live(edge.decoded.provenance) {
+                    continue;
+                }
+                let (source, kind, target) = (edge.source, edge.kind, edge.target);
+                if !self
+                    .admit_stored_edge_in(txn, policy, filter, source, edge.into_edge_info())?
+                    .visible()
+                {
+                    continue;
+                }
+                scanned += 1;
+                if scanned > max_rows {
+                    return Err(Error::IndexOverflow("weave link rows"));
+                }
                 links.insert(
                     (source, kind as u8, target),
                     WeaveItem::Link {
@@ -351,78 +426,50 @@ impl ScopedRead<'_> {
                     },
                 );
             }
-            Ok(())
-        };
-        let mut scanned = 0;
-        if let Some(person) = subject {
-            for anchor in std::iter::once(&person).chain(project_ids.iter()) {
-                for direction in [EdgeDirection::Out, EdgeDirection::In] {
-                    let rows = match self.session_view {
-                        Some(view) => view.port_edges(txn, anchor, direction, None, None)?,
-                        None => self.vault.port_edges(txn, anchor, direction, None, None)?,
-                    };
-                    for row in rows {
-                        let edge = row?;
-                        scanned += 1;
-                        if scanned > MAX_ROWS {
-                            return Err(Error::IndexOverflow("weave link rows"));
-                        }
-                        if !kinds.contains(&edge.kind) || !weave_edge_live(edge.provenance) {
-                            continue;
-                        }
-                        let (source, target) = match direction {
-                            EdgeDirection::Out => (*anchor, edge.target),
-                            EdgeDirection::In => (edge.target, *anchor),
-                            EdgeDirection::Both => unreachable!("only directed scans"),
-                        };
-                        add(source, edge.kind, target)?;
-                    }
-                }
-            }
-        } else {
-            // Owner-only global view. A canonical edge cursor, bounded before
-            // filtering, prevents a truncated report from claiming completeness.
-            // Session overlays have no global edge cursor; refuse instead of
-            // silently showing edges that the overlay removed.
-            if self.session_view.is_some() {
-                return Err(Error::InvalidConfig(
-                    "owner weave links need a canonical read".into(),
-                ));
-            }
-            for row in self.vault.store.edges_out.iter(txn)? {
-                let (key, value) = row?;
-                scanned += 1;
-                if scanned > MAX_ROWS {
-                    return Err(Error::IndexOverflow("weave link rows"));
-                }
-                let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
-                if kinds.contains(&edge.kind) && weave_edge_live(edge.decoded.provenance) {
-                    add(edge.source, edge.kind, edge.target)?;
-                }
-            }
         }
         Ok(links.into_values().collect())
     }
 
-    fn live_weave_edge_in(
+    /// An edge-subject claim is admitted only while its exact edge is live and
+    /// passes the same pair admission as a Links row; endpoint readability
+    /// alone is not pair authority. Entity-subject claims pass through.
+    pub(super) fn weave_claim_edge_admitted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        let ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = body.subject
+        else {
+            return Ok(true);
+        };
+        let Some(edge) = self.live_weave_edge_in(txn, source, kind, target)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .admit_stored_edge_in(txn, policy, filter, source, edge)?
+            .visible())
+    }
+
+    /// Exact edge-key lookup: a known relation never scans its source's
+    /// adjacency, so no compiled scan ceiling stands in for policy.
+    pub(super) fn live_weave_edge_in(
         &self,
         txn: &heed::RoTxn<'_>,
         source: EntityId,
         kind: crate::EdgeKind,
         target: EntityId,
-    ) -> Result<bool> {
-        let mut count = 0;
-        for edge in self.out_edges_in(txn, &source, Some(kind))? {
-            count += 1;
-            if count > crate::vault::MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("weave link edges"));
-            }
-            let edge = edge?;
-            if edge.target == target {
-                return Ok(weave_edge_live(edge.provenance));
-            }
-        }
-        Ok(false)
+    ) -> Result<Option<crate::EdgeInfo>> {
+        let edge = match self.session_view {
+            Some(view) => view.port_edge_get(txn, &source, kind, &target)?,
+            None => self.vault.port_edge_get(txn, &source, kind, &target)?,
+        };
+        Ok(edge.filter(|edge| weave_edge_live(edge.provenance)))
     }
 }
 
@@ -432,25 +479,60 @@ fn weave_edge_live(flags: Option<crate::edge::EdgeProvenanceFlags>) -> bool {
     })
 }
 
-impl WeaveSectionKind {
-    fn allowed_for(self, reader: &WeaveReader<'_>) -> bool {
-        match reader {
-            WeaveReader::Person(_) => matches!(
-                self,
-                Self::Changes | Self::Projects | Self::OpenAsks | Self::Links
-            ),
-            WeaveReader::Owner(_) => matches!(
-                self,
-                Self::Links
-                    | Self::Conflicts
-                    | Self::Exceptions
-                    | Self::Admissions
-                    | Self::Budgets
-                    | Self::SieveScore
-            ),
-            WeaveReader::Agent(_) => self == Self::Digest,
+impl WeaveReader<'_> {
+    pub(super) fn role(&self) -> &'static str {
+        match self {
+            Self::Person(_) => "person",
+            Self::Owner(_) => "owner",
+            Self::Agent(_) => "agent",
         }
     }
+    pub(super) fn id(&self) -> EntityId {
+        match self {
+            Self::Person(id) | Self::Agent(id) => *id,
+            Self::Owner(owner) => owner.actor(),
+        }
+    }
+}
+impl WeaveSectionKind {
+    pub(super) fn policy_name(self) -> &'static str {
+        match self {
+            Self::Changes => "changes",
+            Self::Projects => "projects",
+            Self::OpenAsks => "open_asks",
+            Self::Links => "links",
+            Self::Conflicts => "conflicts",
+            Self::Exceptions => "exceptions",
+            Self::Admissions => "admissions",
+            Self::Budgets => "budgets",
+            Self::SieveScore => "sieve_score",
+            Self::Digest => "digest",
+        }
+    }
+}
+
+pub(super) fn validate_weave_recipe(
+    policy: &crate::gate::PolicyManifestResolution,
+    reader: &WeaveReader<'_>,
+    recipe: &[WeaveSectionSpec],
+) -> Result<()> {
+    let row = crate::gate::weave_policy::effective_resolved(policy, reader.role(), reader.id())
+        .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?;
+    if recipe.len() > row.max_sections
+        || recipe.iter().any(|section| {
+            section.predicates.len() > row.max_predicates
+                || section.edge_kinds.len() > row.max_edge_kinds
+                || (!section.edge_kinds.is_empty() && section.kind != WeaveSectionKind::Links)
+                || section
+                    .predicates
+                    .iter()
+                    .any(|p| p.is_empty() || p.len() > 128)
+                || !row.sections.contains(section.kind.policy_name())
+        })
+    {
+        return Err(Error::InvalidConfig("invalid weave report recipe".into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

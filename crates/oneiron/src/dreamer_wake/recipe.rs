@@ -23,6 +23,9 @@ use super::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext}
 /// The host's workflow interpreter. It receives the exact actor-readable
 /// evidence and admitted SKILL.md bytes, never a vault handle or approval lane.
 pub trait WeaveRecipeRuntime {
+    /// The interpreter's `id@revision`. The skill load stamps it on the
+    /// attempt, so recipe reliability forks by executor like any skill run.
+    fn executor(&self) -> Result<&str>;
     fn draft(&mut self, markdown: &str, evidence: &[u8]) -> Result<WeaveRecipeDraft>;
 }
 
@@ -33,12 +36,18 @@ pub struct WeaveRecipeDraft {
 }
 
 impl<T: WeaveRecipeRuntime + ?Sized> WeaveRecipeRuntime for &mut T {
+    fn executor(&self) -> Result<&str> {
+        (**self).executor()
+    }
     fn draft(&mut self, markdown: &str, evidence: &[u8]) -> Result<WeaveRecipeDraft> {
         (**self).draft(markdown, evidence)
     }
 }
 
 impl WeaveRecipeRuntime for Option<&mut dyn WeaveRecipeRuntime> {
+    fn executor(&self) -> Result<&str> {
+        self.as_deref().ok_or_else(invalid)?.executor()
+    }
     fn draft(&mut self, markdown: &str, evidence: &[u8]) -> Result<WeaveRecipeDraft> {
         self.as_deref_mut()
             .ok_or_else(invalid)?
@@ -244,9 +253,18 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         {
             return Err(invalid());
         }
+        let lease_owner = attempt
+            .status
+            .attempt
+            .lease_owner
+            .as_deref()
+            .ok_or_else(invalid)?;
         let loaded = vault.load_attempt_skill_pack(
             attempt.status.attempt.id,
             &pin.skill,
+            lease_owner,
+            attempt.status.attempt.attempt_count,
+            self.runtime.executor()?,
             ctx.now_ms / 1000,
         )?;
         if loaded.record.version != pin.version

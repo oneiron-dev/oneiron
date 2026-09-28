@@ -78,7 +78,7 @@ impl Fixture {
                     ClaimApprovalStatus::Approved
                 },
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             claim.source = Some(source);
             claim.scope = Some(Value::Map(vec![(
                 "evidence_taint".into(),
@@ -178,6 +178,8 @@ impl Fixture {
                 deadline: &deadline,
                 budget_id: "wake",
                 now_ms: 5_000,
+                prepared_wake: None,
+                prepared_attempt: None,
             },
         ))
     }
@@ -211,6 +213,9 @@ impl CountingRuntime {
     }
 }
 impl WeaveRecipeRuntime for CountingRuntime {
+    fn executor(&self) -> Result<&str> {
+        Ok("counting-runtime@1")
+    }
     fn draft(&mut self, _: &str, _: &[u8]) -> Result<WeaveRecipeDraft> {
         if self.panic {
             panic!("a settled recipe must not run the interpreter");
@@ -244,7 +249,7 @@ fn read_grant_is_live_and_bound_to_the_system_class() -> Result<()> {
     crate::test_util::put_policy_manifest_bytes(
         &fixture.vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest()?,
     )?;
     let mut runtime = CountingRuntime::new();
     assert!(fixture.run(&mut runtime).is_err());
@@ -308,6 +313,7 @@ fn committed_result_resumes_without_runtime_skill_or_evidence() -> Result<()> {
             budget_total_units: 1_000,
             reserve_units: 100,
             now: now + 2,
+            host_scope: None,
         },
         &mut worker,
         &crate::dreamer_wake::WakeCancellation::new(),
@@ -337,7 +343,7 @@ fn a_colliding_claim_without_a_result_cannot_satisfy_retry() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     fixture
         .vault
         .batch()
@@ -434,6 +440,9 @@ struct ChangingEvidence<'a> {
     evidence: EntityId,
 }
 impl WeaveRecipeRuntime for ChangingEvidence<'_> {
+    fn executor(&self) -> Result<&str> {
+        Ok("changing-evidence@1")
+    }
     fn draft(&mut self, _: &str, _: &[u8]) -> Result<WeaveRecipeDraft> {
         self.vault.put_entity(
             &self.evidence,
@@ -468,6 +477,8 @@ fn changed_source_between_draft_and_commit_refuses_the_write() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 5_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         },
     ));
     assert!(result.is_err());

@@ -39,7 +39,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             json!({
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Bearer credential for protected routes: the configured trust-root secret (owner-grade) or a minted `v2.<claims>.<mac>` scoped token. The protected legacy `/api/*` routes (all except the public `/api/health`), and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
+                "description": "Bearer credential for protected routes: a logged `v2.slip.*` capability slip with its holder proof in `x-oneiron-binding`. The issuer secret and device lease never authorize requests. The protected legacy `/api/*` routes (all except the public `/api/health`), and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
             }),
         );
 
@@ -67,8 +67,6 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/usage/events", "post"),
         ("/v1/usage/owners/{owner}/vaults/{vault_id}/rollup", "get"),
         ("/api/lease/revoke", "post"),
-        ("/api/lease/register", "post"),
-        ("/api/lease/rotate", "post"),
         ("/v1/companion/memory/reason", "post"),
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
@@ -120,6 +118,8 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/turns/annotate", "post"),
         ("/v1/companion/access-grants", "post"),
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
+        ("/v1/companion/personas", "get"),
+        ("/v1/companion/personas/access-requests", "get"),
         ("/v1/companion/profiles/{persona_ref}", "get"),
         ("/v1/companion/profiles/{persona_ref}", "post"),
     ] {

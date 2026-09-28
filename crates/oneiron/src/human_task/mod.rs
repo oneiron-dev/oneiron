@@ -32,7 +32,7 @@ pub use self::followup::{
 };
 pub(crate) use self::followup::{
     register_human_followup_in_txn, resolve_native_human_route_for_actor_in,
-    run_human_followups_on_wake,
+    resolve_native_human_route_in, run_human_followups_on_wake,
 };
 pub use self::model::{
     HUMAN_FOLLOWUP_STAGE_DIGEST, HUMAN_FOLLOWUP_STAGE_ESCALATION, HUMAN_FOLLOWUP_STAGE_REMINDER,
@@ -56,13 +56,12 @@ mod signal_tests;
 #[cfg(test)]
 use self::{
     model::{ESCALATION_AFTER_SECONDS, HUMAN_FOLLOWUP_VERB, REMINDER_AFTER_SECONDS},
-    storage::{followup_key, put_followup_record_in_txn, wait_signal_marker},
+    storage::{FOLLOWUPS, put_followup_record_in_txn, wait_signal_marker},
     wait::stored_human_wait_binding,
 };
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::channel_identity::ChannelIdentityState;
 #[cfg(test)]
 use crate::edge::EdgeActorClass;
 #[cfg(test)]

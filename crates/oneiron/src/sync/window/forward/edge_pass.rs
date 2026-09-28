@@ -9,7 +9,6 @@ use super::{RematCtx, RematLedger};
 use crate::batch::EdgeValueFields;
 use crate::edge::decode_edge_value_for_kind;
 use crate::error::{Error, Result};
-use crate::store::Store;
 
 /// Run the edge pass: iterate the window `edges` map, filter tombstoned
 /// endpoints, byte-compare against LMDB, and write what differs.
@@ -135,6 +134,59 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             };
 
+            let soft_addressing = kind == crate::edge::EdgeKind::AddressedTo
+                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_some();
+            if soft_addressing {
+                // Ordinary peer replay has no body proof after a soft erase.
+                // Only canonical recovery's validated BaseEdge may retain it.
+                let Some(snapshot) = ctx.trusted else {
+                    return;
+                };
+                match crate::recovery::trusted_soft_addressing_edge(snapshot, &src, &tgt, buf) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        edge_error = Some(
+                            crate::error::RegistryError::ReservedEdgeKind("conversation_dag")
+                                .into(),
+                        );
+                        return;
+                    }
+                    Err(error) => {
+                        edge_error = Some(error);
+                        return;
+                    }
+                }
+            }
+
+            let residence = (|| {
+                let txn = vault.store.env.read_txn()?;
+                crate::sync::types::edge_belongs_to_window_in(
+                    vault, &txn, ctx.doc, &src, &tgt, window_key,
+                )
+            })();
+            match residence {
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Err(err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &Error::InvalidConfig("edge outside window residence".into()),
+                        buf,
+                    ) {
+                        edge_error = Some(err);
+                    } else {
+                        terminal_quarantines.push(src);
+                    }
+                    return;
+                }
+                Err(err) => {
+                    edge_error = Some(err);
+                    return;
+                }
+            }
+
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.
@@ -175,6 +227,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         crate::edge::EdgeKind::Parent
                             | crate::edge::EdgeKind::SpawnedBy
                             | crate::edge::EdgeKind::RepliesTo
+                            | crate::edge::EdgeKind::AddressedTo
                     )
                 {
                     let mandated_at = vault
@@ -196,8 +249,12 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     }
                 }
 
-                let src_exists = vault.store.entities.get(&*wtxn, src.as_bytes())?.is_some();
-                let tgt_exists = vault.store.entities.get(&*wtxn, tgt.as_bytes())?.is_some();
+                let src_exists =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &src)?
+                        .is_some();
+                let tgt_exists =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, &tgt)?
+                        .is_some();
                 if !src_exists || !tgt_exists {
                     if kind == crate::edge::EdgeKind::SpawnedBy {
                         bridge::defer_spawned_by(
@@ -213,6 +270,15 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
+                if soft_addressing
+                    && crate::batch::stored_entity_type(&vault.store, &*wtxn, &tgt)?
+                        != Some(crate::registry::ENTITY_TYPE_PERSON)
+                {
+                    return Err(crate::error::ArtifactError::InvalidRecoveryArtifact(
+                        "retained addressing recipient missing or not a PERSON",
+                    )
+                    .into());
+                }
                 if matches!(
                     kind,
                     crate::edge::EdgeKind::SpawnedBy | crate::edge::EdgeKind::RepliesTo
@@ -225,6 +291,28 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         tgt,
                         decoded,
                     )?;
+                }
+
+                if kind == crate::edge::EdgeKind::AddressedTo
+                    && !soft_addressing
+                    && !crate::conversation_dag::addressed_to_echo_in_txn(
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        &tgt,
+                        decoded,
+                    )?
+                {
+                    quarantine::quarantine_rejected_op_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
+                        buf,
+                    )?;
+                    return Ok(EdgeRematOutcome::Quarantined);
                 }
 
                 // ONE-1645 replay door for the FacetOf type table. The batch
@@ -276,19 +364,24 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     Err(local) => return Err(local),
                 }
 
-                let out_key = Store::encode_edge_key(&src, kind, &tgt);
-                let in_key = Store::encode_edge_key(&tgt, kind, &src);
-                let out_matches = vault
-                    .store
-                    .edges_out
-                    .get(&*wtxn, &out_key)?
-                    .is_some_and(|value| value == buf);
-                let in_matches = vault
-                    .store
-                    .edges_in
-                    .get(&*wtxn, &in_key)?
-                    .is_some_and(|value| value == buf);
-                if out_matches && in_matches {
+                let out_matches = crate::ports::EdgeStoreStaging::port_edge_encoded(
+                    &vault.store,
+                    &*wtxn,
+                    &src,
+                    kind,
+                    &tgt,
+                )?
+                .as_deref()
+                    == Some(buf);
+                if out_matches
+                    && crate::ports::EdgeStoreRead::port_edge_consistent(
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        kind,
+                        &tgt,
+                    )?
+                {
                     if kind == crate::edge::EdgeKind::ChildOf {
                         bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
                     }

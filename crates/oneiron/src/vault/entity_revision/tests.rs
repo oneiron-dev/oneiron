@@ -140,7 +140,18 @@ fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
             drifted: true
         }
     );
-    let memory = vault.memory(EntityId::now(), crate::EdgeActorClass::Human);
+    // Facade reads verify the bound actor row, so the reader is a stored person.
+    let reader = EntityId::now();
+    vault
+        .put_entity(
+            &reader,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )
+        .unwrap();
+    let memory = vault.memory(reader, crate::EdgeActorClass::Human);
     assert_eq!(
         memory
             .get_entity_with_mode(
@@ -148,6 +159,7 @@ fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
                 ReadMode::Pinned(citation.source_revision_ref)
             )
             .unwrap()
+            .value
             .unwrap()
             .body,
         Some(serde_json::json!({"content": "alpha zebra"}))
@@ -172,6 +184,40 @@ impl IndexedRevisionEmbedder for EditingEmbedder<'_> {
 }
 
 #[test]
+fn scoped_asset_text_indexed_read_survives_live_body_restamp() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::authorize_readers(&vault, &["reader"]);
+    let id = EntityId::now();
+    put(&vault, &id, "indexed scope old");
+    let indexed = vault.pin_entity_revision(&id).unwrap();
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
+    assert!(
+        reader
+            .get_entity_parts_with_mode_with_receipt(&id, ReadMode::Indexed, None)
+            .unwrap()
+            .value
+            .is_some()
+    );
+    put(&vault, &id, "indexed scope live");
+    let retained = reader
+        .get_entity_parts_with_mode_with_receipt(&id, ReadMode::Pinned(indexed), None)
+        .unwrap()
+        .value
+        .unwrap();
+    assert_eq!(retained.2, body("indexed scope old"));
+    assert_eq!(
+        reader
+            .get_entity_parts_with_mode_with_receipt(&id, ReadMode::Indexed, None)
+            .unwrap()
+            .value
+            .unwrap()
+            .2,
+        body("indexed scope old")
+    );
+}
+
+#[test]
 fn concurrent_edit_discards_embedding_without_advancing_indexed_frontier() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
@@ -191,6 +237,55 @@ fn concurrent_edit_discards_embedding_without_advancing_indexed_frontier() {
         vault.get_vector(&id).unwrap().unwrap(),
         vec![1.0, 0.0, 0.0, 0.0]
     );
+}
+
+#[test]
+fn each_index_commit_is_published_before_a_later_provider_failure() {
+    struct FailsSecond(EntityId);
+    impl IndexedRevisionEmbedder for FailsSecond {
+        fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+            if input.entity == self.0 {
+                Err(crate::Error::UpstreamToolFailure {
+                    tool: "indexed test provider",
+                    code: "unavailable".into(),
+                })
+            } else {
+                Ok(vec![0.0, 1.0, 0.0, 0.0])
+            }
+        }
+    }
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let a = EntityId::from_bytes([0xD4; 16]).unwrap();
+    let b = EntityId::from_bytes([0xD5; 16]).unwrap();
+    put(&vault, &a, "first old");
+    put(&vault, &b, "second old");
+    let indexed_a = vault.indexed_revision(&a).unwrap().unwrap();
+    let indexed_b = vault.indexed_revision(&b).unwrap();
+    put(&vault, &a, "first new");
+    put(&vault, &b, "second new");
+    let live_a = vault.pin_entity_revision(&a).unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let mut published: Vec<crate::memory::IndexedPublication> = Vec::new();
+    let error =
+        vault.refresh_indexed_at_idle_with_publication(u64::MAX, &FailsSecond(b), |publication| {
+            published.push(publication);
+        });
+    assert!(matches!(
+        error,
+        Err(crate::Error::UpstreamToolFailure { .. })
+    ));
+    assert_eq!(
+        published,
+        vec![crate::memory::IndexedPublication {
+            entity: a,
+            previous_indexed: indexed_a,
+            indexed: live_a,
+        }]
+    );
+    assert_eq!(vault.indexed_revision(&a).unwrap(), Some(live_a));
+    assert_eq!(vault.indexed_revision(&b).unwrap(), indexed_b);
 }
 
 #[test]
@@ -253,7 +348,8 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::Observed);
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
@@ -265,16 +361,24 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
         value,
         receipt: _receipt,
     } = scoped
-        .get_entity_parts_with_mode_with_receipt(&claim, ReadMode::Pinned(pin), None)
-        .unwrap();
+        .read(
+            &[crate::claim::PointRead::id(claim).at(ReadMode::Pinned(pin))],
+            None,
+        )
+        .unwrap()
+        .single();
     assert!(value.is_some());
     vault.retract_claim(&claim, 2).unwrap();
     let crate::claim::ScopedReadResult {
         value,
         receipt: _receipt,
     } = scoped
-        .get_entity_parts_with_mode_with_receipt(&claim, ReadMode::Pinned(pin), None)
-        .unwrap();
+        .read(
+            &[crate::claim::PointRead::id(claim).at(ReadMode::Pinned(pin))],
+            None,
+        )
+        .unwrap()
+        .single();
     assert!(value.is_none());
 }
 

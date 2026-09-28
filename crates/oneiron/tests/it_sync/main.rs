@@ -12,6 +12,7 @@
 mod common;
 mod sync_harness;
 
+mod ask_option_link_replication;
 mod rung0_cold_start_conformance;
 mod sync_bridge;
 mod sync_byzantine_lww;
@@ -29,4 +30,5 @@ mod sync_replay_reason;
 mod sync_sweep_executor;
 mod sync_tombstone_v2;
 mod sync_window_manager;
+mod sync_world_residence;
 mod task_authority_convergence;

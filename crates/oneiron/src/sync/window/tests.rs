@@ -15,6 +15,556 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
+fn delegated_identity_fixture(
+    vault: &Vault,
+    name: &str,
+    address: &str,
+    learned_at: u64,
+) -> Result<(
+    crate::channel_identity::DelegatedGrant,
+    crate::channel_identity::ChannelIdentityBinding,
+)> {
+    use crate::channel_identity::{DelegatedGrant, DelegatedGrantScope, delegated_custody_scopes};
+    use crate::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
+        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    };
+
+    let record = SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: name.to_owned(),
+        class: CustodyClass::CustodyDeviceBound,
+        device_only: true,
+        value_bytes: b"locally-held-oauth-token".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: learned_at,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: "connector:gmail".to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: delegated_custody_scopes("email", address),
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    };
+    vault.register_secret(record)?;
+    let grant = DelegatedGrant::new(name, vec![DelegatedGrantScope::MailRead]);
+    vault.verify_delegated_custody("email", address, &grant)?;
+    Ok((
+        grant,
+        crate::channel_identity::ChannelIdentityBinding::agent(EntityId::from_bytes([0xA1; 16])?),
+    ))
+}
+
+fn release_local_delegated_identity(
+    vault: &Vault,
+    id: EntityId,
+    learned_at: u64,
+    address: &str,
+    grant: crate::channel_identity::DelegatedGrant,
+    binding: crate::channel_identity::ChannelIdentityBinding,
+) -> Result<(
+    crate::channel_identity::ChannelIdentity,
+    crate::channel_identity::ChannelIdentity,
+)> {
+    use crate::channel_identity::{
+        ChannelIdentityFulfillment, ChannelIdentityStep, DelegatedProvisionRequest,
+    };
+
+    vault.provision_delegated_identity(
+        &id,
+        DelegatedProvisionRequest {
+            channel: "email".to_owned(),
+            address_or_handle: address.to_owned(),
+            binding,
+            grant,
+        },
+        learned_at,
+    )?;
+    vault.step_channel_identity(
+        &id,
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
+        learned_at + 1,
+    )?;
+    let active = vault.step_channel_identity(&id, ChannelIdentityStep::Fulfill, learned_at + 2)?;
+    let retired = vault.step_channel_identity(&id, ChannelIdentityStep::Release, learned_at + 3)?;
+    Ok((retired, active))
+}
+
+#[test]
+fn typed_addressing_edge_survives_reverse_and_forward_replay_but_forged_peer_edge_does_not()
+-> Result<()> {
+    let (_dir, source, conversation, actor) = crate::conversation_dag::fixtures::fixture();
+    let recipient = EntityId::now();
+    let forged = EntityId::now();
+    for person in [recipient, forged] {
+        source.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::conversation_dag::fixtures::body("person"),
+        )?;
+    }
+    let mut input = crate::conversation_dag::fixtures::input(conversation, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input)?.id;
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let doc = create_window_doc("addressing-source", &key);
+    reverse_rematerialize(&source, &doc, &key)?;
+    let honest = format_edge_key(&record, EdgeKind::AddressedTo, &recipient);
+    assert!(map_contains_binary(&doc.get_map("edges"), &honest));
+    let forged_key = format_edge_key(&record, EdgeKind::AddressedTo, &forged);
+    map_insert_bytes(
+        &doc.get_map("edges"),
+        &forged_key,
+        &encode_edge_value_for_crdt(EdgeKind::AddressedTo, 1.0, input.learned_at, None, None)?,
+    )?;
+    doc.commit();
+    let (_peer_dir, peer) = test_vault();
+    forward_rematerialize(&peer, &doc, &Materializer::new(), &key)?;
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    assert!(!peer.edge_exists(&record, EdgeKind::AddressedTo, &forged)?);
+    let rejected = crate::sync::quarantine::quarantined_records(&peer)?;
+    assert!(
+        rejected
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Edges
+                && row.reason_code == "ReservedEdgeKind")
+    );
+    // An untrusted edges-map removal cannot tear a locally stamped edge.
+    let materializer = std::sync::Arc::new(Materializer::new());
+    let _subscription =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    crate::sync::loro_support::map_delete(&doc.get_map("edges"), &honest)?;
+    doc.commit();
+    assert!(peer.edge_exists(&record, EdgeKind::AddressedTo, &recipient)?);
+    Ok(())
+}
+
+#[test]
+fn typed_addressing_recovery_restores_only_body_proved_edges() -> Result<()> {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let person = EntityId::now();
+    source.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::conversation_dag::fixtures::body("recipient"),
+    )?;
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![person];
+    let record = source.append_dag_record(&input)?.id;
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let doc = create_window_doc("source", &key);
+    // Keep the artifact at the conversation boundary: a test policy fixture
+    // minted for the append door is not a recovery dependency of the TURN.
+    for id in [conv, actor.entity_ref(), person, record] {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &source.get_raw_unsealed(&id)?.unwrap(),
+        )?;
+    }
+    for edge in source.edges_out(&record)? {
+        let raw = encode_edge_value_for_crdt(
+            edge.kind,
+            edge.weight,
+            edge.created_at,
+            edge.vad,
+            edge.provenance,
+        )?;
+        map_insert_bytes(
+            &doc.get_map("edges"),
+            &format_edge_key(&record, edge.kind, &edge.target),
+            &raw,
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, key.as_str(), &doc)?;
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|edge| edge.source == *record.as_bytes()
+                && edge.kind == EdgeKind::AddressedTo as u8
+                && edge.target == *person.as_bytes())
+    );
+    let dest_dir = tempfile::tempdir()?;
+    let peer = Vault::open(dest_dir.path(), VaultConfig::device())?;
+    let path = dest_dir.path().join("manifest");
+    std::fs::write(&path, b"corrupt")?;
+    crate::recovery::recover_vault_window(
+        &peer,
+        &Materializer::new(),
+        &path,
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [person]
+    );
+    let mut forged = snapshot;
+    let entry = forged
+        .base_edges
+        .iter_mut()
+        .find(|edge| edge.source == *record.as_bytes() && edge.kind == EdgeKind::AddressedTo as u8)
+        .unwrap();
+    entry.target = *actor.entity_ref().as_bytes();
+    forged
+        .base_edges
+        .sort_by_key(|row| (row.source, row.kind, row.target));
+    let fresh_dir = tempfile::tempdir()?;
+    let fresh = Vault::open(fresh_dir.path(), VaultConfig::device())?;
+    assert!(
+        crate::recovery::recover_vault_window(
+            &fresh,
+            &Materializer::new(),
+            fresh_dir.path().join("manifest"),
+            &forged,
+            crate::recovery::RecoveryBudget::default(),
+        )
+        .is_err()
+    );
+    assert_eq!(fresh.get_entity_type(&record)?, None);
+    Ok(())
+}
+
+#[test]
+fn soft_deleted_addressed_turn_keeps_its_edge_across_canonical_recovery() -> Result<()> {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let recipient = EntityId::now();
+    source.put_entity(
+        &recipient,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::conversation_dag::fixtures::body("person"),
+    )?;
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input)?.id;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 100,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    source.apply_replayed_tombstone(&record, &tombstone)?;
+    assert_eq!(
+        source.get_raw_unsealed(&record)?.unwrap().len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN
+    );
+    assert_eq!(
+        source.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let doc = create_window_doc("source", &key);
+    for id in [conv, actor.entity_ref(), recipient] {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &source.get_raw_unsealed(&id)?.unwrap(),
+        )?;
+    }
+    apply_tombstone_to_window_doc(&doc, &record, &tombstone)?;
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, key.as_str(), &doc)?;
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|edge| edge.source == *record.as_bytes()
+                && edge.kind == EdgeKind::AddressedTo as u8
+                && edge.target == *recipient.as_bytes())
+    );
+    let dir = tempfile::tempdir()?;
+    let peer = Vault::open(dir.path(), VaultConfig::device())?;
+    let path = dir.path().join("manifest");
+    std::fs::write(&path, b"corrupt")?;
+    crate::recovery::recover_vault_window(
+        &peer,
+        &Materializer::new(),
+        &path,
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(
+        peer.get_raw_unsealed(&record)?.unwrap().len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN
+    );
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    let mut forged = snapshot;
+    let edge = forged
+        .base_edges
+        .iter_mut()
+        .find(|edge| edge.source == *record.as_bytes() && edge.kind == EdgeKind::AddressedTo as u8)
+        .unwrap();
+    edge.value[..4].copy_from_slice(&0.0_f32.to_le_bytes()); // not the door's 1.0 weight
+    let other_dir = tempfile::tempdir()?;
+    let other = Vault::open(other_dir.path(), VaultConfig::device())?;
+    assert!(
+        crate::recovery::recover_vault_window(
+            &other,
+            &Materializer::new(),
+            other_dir.path().join("manifest"),
+            &forged,
+            crate::recovery::RecoveryBudget::default()
+        )
+        .is_err()
+    );
+    assert_eq!(other.get_entity_type(&record)?, None);
+    Ok(())
+}
+
+#[test]
+fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let jan = 1_768_435_200_u64; // 2026-01-15 UTC
+    let feb = 1_771_113_600_u64; // 2026-02-15 UTC
+    let recipient = EntityId::now();
+    source.put_entity(
+        &recipient,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: jan,
+            end: jan,
+        },
+        jan,
+        &crate::conversation_dag::fixtures::body("recipient"),
+    )?;
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.occurred = TimeRange {
+        start: feb,
+        end: feb,
+    };
+    input.learned_at = feb;
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input)?.id;
+    let jan_key = WindowKey::from_timestamp(jan);
+    let jan_doc = create_window_doc("source", &jan_key);
+    reverse_rematerialize(&source, &jan_doc, &jan_key)?;
+    assert!(map_contains_binary(
+        &jan_doc.get_map("entities"),
+        &recipient.to_hex()
+    ));
+    let feb_key = WindowKey::from_timestamp(feb);
+    let feb_doc = create_window_doc("source", &feb_key);
+    reverse_rematerialize(&source, &feb_doc, &feb_key)?;
+    assert!(!map_contains_binary(
+        &feb_doc.get_map("entities"),
+        &recipient.to_hex()
+    ));
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: feb + 10,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    source.apply_replayed_tombstone(&record, &tombstone)?;
+    apply_tombstone_to_window_doc(&feb_doc, &record, &tombstone)?;
+    feb_doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, feb_key.as_str(), &feb_doc)?;
+    assert!(
+        !snapshot
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *recipient.as_bytes())
+    );
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|row| row.source == *record.as_bytes()
+                && row.kind == EdgeKind::AddressedTo as u8
+                && row.target == *recipient.as_bytes())
+    );
+    let wrong_dir = tempfile::tempdir()?;
+    let wrong = Vault::open(wrong_dir.path(), VaultConfig::device())?;
+    for id in [conv, actor.entity_ref()] {
+        let raw = source.get_raw_unsealed(&id)?.unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        wrong
+            .batch()
+            .put_replicated(
+                &id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()?;
+    }
+    wrong.put_entity(
+        &recipient,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        TimeRange {
+            start: jan,
+            end: jan,
+        },
+        jan,
+        &crate::conversation_dag::fixtures::body("wrong-kind"),
+    )?;
+    assert!(
+        crate::recovery::recover_vault_window(
+            &wrong,
+            &Materializer::new(),
+            wrong_dir.path().join("feb-manifest"),
+            &snapshot,
+            crate::recovery::RecoveryBudget::default()
+        )
+        .is_err()
+    );
+    assert_eq!(wrong.get_entity_type(&record)?, None);
+    let dir = tempfile::tempdir()?;
+    let peer = Vault::open(dir.path(), VaultConfig::device())?;
+    for id in [conv, actor.entity_ref()] {
+        let raw = source.get_raw_unsealed(&id)?.unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()?;
+    }
+    forward_rematerialize(&peer, &jan_doc, &Materializer::new(), &jan_key)?;
+    assert_eq!(
+        peer.get_entity_type(&recipient)?,
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+    crate::recovery::recover_vault_window(
+        &peer,
+        &Materializer::new(),
+        dir.path().join("feb-manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(
+        peer.get_raw_unsealed(&record)?.unwrap().len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN
+    );
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    assert_eq!(
+        source.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_recipient_recovery_keeps_conversation_readable_without_resurrecting_hard_edge()
+-> Result<()> {
+    for reason in [
+        crate::deletion::TombstoneReason::UserDelete,
+        crate::deletion::TombstoneReason::GdprDelete,
+    ] {
+        let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+        let recipient = EntityId::now();
+        source.put_entity(
+            &recipient,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::conversation_dag::fixtures::body("person"),
+        )?;
+        let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+        input.address = crate::conversation_dag::AddressMode::Direct;
+        input.recipients = vec![recipient];
+        let record = source.append_dag_record(&input)?.id;
+        let tombstone = crate::deletion::TombstoneValueV2 {
+            reason,
+            deleted_at: 100,
+            request_id: *EntityId::now().as_bytes(),
+        }
+        .encode();
+        source.apply_replayed_tombstone(&recipient, &tombstone)?;
+        let key = WindowKey::from_timestamp(input.learned_at);
+        let doc = create_window_doc("source", &key);
+        for id in [conv, actor.entity_ref(), record] {
+            map_insert_bytes(
+                &doc.get_map("entities"),
+                &id.to_hex(),
+                &source.get_raw_unsealed(&id)?.unwrap(),
+            )?;
+        }
+        for edge in source.edges_out(&record)? {
+            let bytes = encode_edge_value_for_crdt(
+                edge.kind,
+                edge.weight,
+                edge.created_at,
+                edge.vad,
+                edge.provenance,
+            )?;
+            map_insert_bytes(
+                &doc.get_map("edges"),
+                &format_edge_key(&record, edge.kind, &edge.target),
+                &bytes,
+            )?;
+        }
+        apply_tombstone_to_window_doc(&doc, &recipient, &tombstone)?;
+        doc.commit();
+        let mut snapshot = crate::recovery::capture_canonical_window(&source, key.as_str(), &doc)?;
+        // This bounded fixture captures the room's record graph, not other
+        // outgoing PERSON substrate edges whose targets were not imported.
+        snapshot.base_edges.retain(|edge| {
+            edge.source == *record.as_bytes()
+                && (edge.target == *conv.as_bytes() || edge.target == *recipient.as_bytes())
+        });
+        let dir = tempfile::tempdir()?;
+        let peer = Vault::open(dir.path(), VaultConfig::device())?;
+        crate::recovery::recover_vault_window(
+            &peer,
+            &Materializer::new(),
+            dir.path().join("manifest"),
+            &snapshot,
+            crate::recovery::RecoveryBudget::default(),
+        )?;
+        assert_eq!(
+            peer.main_line(&conv, Default::default())?.main_line,
+            [record]
+        );
+        assert_eq!(peer.head(&conv)?, Some(record));
+        let restored = peer.targets(&record, EdgeKind::AddressedTo, None)?;
+        if reason == crate::deletion::TombstoneReason::UserDelete {
+            assert_eq!(restored, [recipient]);
+        } else {
+            assert!(
+                restored.is_empty(),
+                "hard deletion must not restore addressing edge"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
 /// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
 /// byte-equality is exact).
@@ -739,6 +1289,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
         encode_redaction_audit_receipt(
             RedactionReceiptInput {
                 actor_principal: None,
+                room_authority: None,
                 request_id: request_id.to_owned(),
                 scope: RedactionScope::entity(subject),
                 reason: crate::DeleteReason::GdprDelete,
@@ -877,6 +1428,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
         encode_redaction_audit_receipt(
             RedactionReceiptInput {
                 actor_principal: None,
+                room_authority: None,
                 request_id: request_id.to_owned(),
                 scope: RedactionScope::entity(subject),
                 reason: crate::DeleteReason::GdprDelete,
@@ -1026,6 +1578,7 @@ fn forward_remat_quarantines_receipt_when_lease_revoked_between_check_and_write(
     let vault_id = crate::sync::lease::DEFAULT_LEASE_VAULT_ID;
     let input = crate::deletion::RedactionReceiptInput {
         actor_principal: None,
+        room_authority: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1104,6 +1657,7 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
 
     let remote_input = crate::deletion::RedactionReceiptInput {
         actor_principal: None,
+        room_authority: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1120,6 +1674,7 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
 
     let local_input = crate::deletion::RedactionReceiptInput {
         actor_principal: None,
+        room_authority: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5d".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1206,6 +1761,10 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
     let event_id = EntityId::from_bytes([0x70; 16])?;
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -1228,6 +1787,18 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
             crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
             200,
             &body,
+        ),
+    )?;
+    let (fact_id, fact) =
+        crate::identity_topology::signed_validated_row_for_test(&vault, event_id, &record)?;
+    let fact_body = crate::identity_topology::encode_identity_topology_event_body(&fact)?;
+    map_insert_bytes(
+        &entities,
+        &fact_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            200,
+            &fact_body,
         ),
     )?;
     // A forged reserved-kind row no ledger event mandates.
@@ -1337,6 +1908,182 @@ fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() 
         record.payload_hash,
         crate::sync::quarantine::payload_hash(&forged_value)
     );
+    Ok(())
+}
+
+#[test]
+fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityState, encode_channel_identity_body,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let address = "member@example.test";
+    let (grant, binding) =
+        delegated_identity_fixture(&vault, "member-custody", address, learned_at)?;
+    let retired_id = EntityId::from_bytes([0xB1; 16])?;
+    let (retired, peer_identity) = release_local_delegated_identity(
+        &vault,
+        retired_id,
+        learned_at,
+        address,
+        grant.clone(),
+        binding,
+    )?;
+    assert_eq!(retired.state(), ChannelIdentityState::Released);
+    // The local custody record remains active and really covers this mailbox;
+    // it is not missing custody that makes the peer's row invalid.
+    vault.verify_delegated_custody("email", address, &grant)?;
+
+    // A peer can replay the byte-exact ACTIVE body this vault previously held
+    // under a fresh id. It names the freed key and locally valid custody, but
+    // the peer did not perform this vault's provision/bind/fulfillment.
+    let peer_body = encode_channel_identity_body(&peer_identity)?;
+    let peer_id = EntityId::from_bytes([0xB2; 16])?;
+
+    // Self-held identities remain ordinary replicated rows.
+    let self_held_id = EntityId::from_bytes([0xB3; 16])?;
+    let self_held = ChannelIdentity::own_app_home(EntityId::from_bytes([0xB4; 16])?, learned_at);
+    let self_held_body = encode_channel_identity_body(&self_held)?;
+    let doc = create_window_doc("peer-authored", &window_key);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &peer_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+            learned_at + 4,
+            &peer_body,
+        ),
+    )?;
+    map_insert_bytes(
+        &entities,
+        &self_held_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+            learned_at,
+            &self_held_body,
+        ),
+    )?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(count, 1, "the self-held control row still replays");
+    assert!(
+        vault.get_raw_unsealed(&peer_id)?.is_none(),
+        "a peer-authored delegated row must not occupy the freed assignment key"
+    );
+    assert_eq!(
+        vault
+            .get_channel_identity(&self_held_id)?
+            .map(|row| row.state()),
+        Some(ChannelIdentityState::Active),
+        "self-held active identity replication stays supported"
+    );
+    let rejected = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].1.reason_code, "InvalidChannelIdentityBody");
+    Ok(())
+}
+
+#[test]
+fn malformed_channel_identity_carriers_are_scrubbed_before_export() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, DelegatedGrant, DelegatedGrantScope, encode_channel_identity_body,
+    };
+    let (_dir, vault) = test_vault();
+    let window = WindowKey::new("2026-03");
+    let at = window.start_timestamp().expect("window") + 60;
+    let grant = DelegatedGrant::new("oauth/gmail/member", vec![DelegatedGrantScope::MailRead]);
+    let (grant, binding) =
+        delegated_identity_fixture(&vault, &grant.custody_record_ref, "member@example.test", at)?;
+    let id = EntityId::from_bytes([0xD8; 16])?;
+    let (_, active) =
+        release_local_delegated_identity(&vault, id, at, "member@example.test", grant, binding)?;
+    let valid_delegated = encode_channel_identity_body(&active)?;
+    let mut damaged = valid_delegated;
+    // MessagePack fixmap: claim one additional entry but leave all existing
+    // grant-ref/scope bytes intact. Neither strict nor fallback decode succeeds.
+    match damaged[0] {
+        0x80..=0x8e => damaged[0] += 1,
+        0xde => {
+            let count = u16::from_be_bytes([damaged[1], damaged[2]]) + 1;
+            damaged[1..3].copy_from_slice(&count.to_be_bytes());
+        }
+        0xdf => {
+            let count = u32::from_be_bytes(damaged[1..5].try_into().expect("map32 header")) + 1;
+            damaged[1..5].copy_from_slice(&count.to_be_bytes());
+        }
+        other => panic!("identity body is not a MessagePack map: {other:#x}"),
+    }
+    assert!(crate::channel_identity::decode_channel_identity_body(&damaged).is_err());
+    let damaged_blob =
+        make_entity_blob(crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY, at, &damaged);
+    let healthy = ChannelIdentity::own_app_home(EntityId::from_bytes([0xD9; 16])?, at);
+    let healthy_blob = make_entity_blob(
+        crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+        at,
+        &encode_channel_identity_body(&healthy)?,
+    );
+    assert!(!is_delegated_channel_identity_carrier(&healthy_blob));
+    assert!(is_delegated_channel_identity_carrier(&damaged_blob));
+    for (label, key) in [
+        ("canonical", EntityId::from_bytes([0xDA; 16])?.to_hex()),
+        ("noncanonical", "not-an-entity-key".to_owned()),
+    ] {
+        let doc = create_window_doc(label, &window);
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        map_insert_bytes(&entities, &key, &damaged_blob)?;
+        let healthy_id = EntityId::from_bytes([0xDB; 16])?;
+        map_insert_bytes(&entities, &healthy_id.to_hex(), &healthy_blob)?;
+        let edge_key = format_edge_key(
+            &EntityId::from_bytes([0xDA; 16])?,
+            EdgeKind::Mentions,
+            &healthy_id,
+        );
+        if label == "canonical" {
+            map_insert_bytes(
+                &edges,
+                &edge_key,
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 1.0, at, None, None)?,
+            )?;
+        }
+        doc.commit();
+        // Even a peer at the initial frontier receives only a history-free
+        // snapshot. Import it to prove the damaged carrier and incident edge
+        // cannot be reconstructed from the exported bytes.
+        let exported =
+            export_window_updates_since(&vault, &window, &doc, &VersionVector::default().encode())?;
+        let peer = LoroDoc::new();
+        import_doc(&peer, &exported)?;
+        assert!(
+            peer.is_shallow(),
+            "scrubbed history never goes out as raw deltas"
+        );
+        assert!(map_get_bytes(&peer.get_map("entities"), &key).is_none());
+        assert!(map_get_bytes(&peer.get_map("entities"), &healthy_id.to_hex()).is_some());
+        if label == "canonical" {
+            assert!(map_get_bytes(&peer.get_map("edges"), &edge_key).is_none());
+        }
+        assert!(history_free_window_required(&vault, &window)?);
+        assert!(
+            map_get_bytes(&entities, &key).is_none(),
+            "{label} damaged identity removed"
+        );
+        assert!(
+            map_get_bytes(&entities, &healthy_id.to_hex()).is_some(),
+            "valid self-held identity stays portable"
+        );
+        if label == "canonical" {
+            assert!(
+                map_get_bytes(&edges, &edge_key).is_none(),
+                "incident edge removed"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1508,7 +2255,11 @@ fn reverse_rematerialization_restores_protected_row_against_hostile_tombstone() 
     map_insert_bytes(&doc.get_map("tombstones"), &event.to_hex(), &tombstone)?;
     doc.commit();
 
-    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
+    assert_eq!(
+        reverse_rematerialize(&vault, &doc, &window_key)?,
+        2,
+        "the immutable decision and its signed admission fact are both recovered"
+    );
     assert_eq!(
         map_get_bytes(&doc.get_map("entities"), &event.to_hex()),
         Some(raw),
@@ -1573,6 +2324,10 @@ fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Resul
     let event_id = EntityId::from_bytes([0x70; 16])?;
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3467,7 +4222,7 @@ fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(Entit
         1.0,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     vault
@@ -3569,5 +4324,1399 @@ fn dreamer_actor_conflicting_peer_put_and_tombstone_quarantine_without_disabling
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::device())?;
     assert_eq!(reopened.get_raw(&actor)?.as_deref(), Some(raw.as_slice()));
+    Ok(())
+}
+
+/// Forward rematerialization must apply the same MACHINE origin-proof verdict
+/// as Observer B, without checking whether the signer was locally enrolled.
+#[test]
+fn forward_remat_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Result<()> {
+    use crate::authority::HostSlipIssuer;
+    use crate::claim::ClaimSubject;
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, vault) = test_vault();
+    let machine = EntityId::from_bytes([0x40; 16])?;
+    let bad_id = EntityId::from_bytes([0x41; 16])?;
+    let good_id = EntityId::from_bytes([0x42; 16])?;
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"stored machine",
+    )?;
+    vault.ensure_host_root_slip(&HostSlipIssuer::from_secret(b"forward machine root")?)?;
+    let signing = SigningKey::from_bytes(&[0x45; 32]);
+    let candidate = ClaimCandidate::new(
+        "test.machine.replay",
+        ClaimSubject::Entity(machine),
+        Value::from("signed fact"),
+        1.0,
+    );
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("peer observation"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let transcript = vault.machine_claim_transcript(&good_id, &candidate, &envelope)?;
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    let facet = crate::claim::default_facet_in(&vault.store, &vault.store.env.read_txn()?)?;
+    let body = crate::claim::encode_claim_body(&candidate.into_claim_body(&signed, facet)?)?;
+    let at = 1_772_400_000;
+    let blob = make_entity_blob(ENTITY_TYPE_CLAIM, at, &body);
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote-machine-proof", &window_key);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(&entities, &bad_id.to_hex(), &blob)?;
+    map_insert_bytes(&entities, &good_id.to_hex(), &blob)?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(
+        count, 1,
+        "the sibling must commit despite the rejected proof"
+    );
+    assert!(vault.get_raw(&bad_id)?.is_none());
+    assert_eq!(vault.get_raw(&good_id)?.as_deref(), Some(blob.as_slice()));
+    let records = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(records.len(), 1);
+    let rejected = &records[0].1;
+    assert_eq!(rejected.container, QuarantineContainer::Entities);
+    assert_eq!(rejected.reason_code, "InvalidMachineClaimProof");
+    assert_eq!(
+        (rejected.crdt_key_hash, rejected.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&bad_id.to_hex())
+    );
+    assert_eq!(
+        rejected.payload_hash,
+        crate::sync::quarantine::payload_hash(&blob)
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let root = vault.root_project()?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB2)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB2)?;
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    let (edit, mut forged) = crate::gate::project_depth::contributions_for_test(&vault, root)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed edit");
+    forged.push(0x01);
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    let stamp = window_key.start_timestamp().expect("window start") + 60;
+    doc.get_map("entities")
+        .insert(
+            edit.to_hex().as_str(),
+            make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &forged)
+                .as_slice(),
+        )
+        .expect("forged manifest");
+    doc.commit();
+    assert_eq!(
+        forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?,
+        0
+    );
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    assert!(
+        quarantine::quarantined_records(&vault)?
+            .iter()
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<()> {
+    let (_a_dir, a) = test_vault();
+    let root_a = a.root_project()?;
+    let lead = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+    let project = EntityId::now();
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB6)?;
+    crate::workspace_roster::create_project_signed_for_test(
+        &a, project, root_a, lead, &owner, 1, 0xB6,
+    )?;
+    let history = a.export_signed_authority_history()?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB6)?;
+    assert_eq!(a.project(project)?.unwrap().depth, 2);
+    let contributions = crate::gate::project_depth::contributions_for_test(&a, project)?;
+    assert_eq!(contributions.len(), 2); // immutable birth + signed edit
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window timestamp") + 60;
+    let body = rmp_serde::to_vec_named(&a.project(project)?.unwrap()).expect("member body");
+
+    let prepare = |b: &Vault, existing: bool| -> Result<()> {
+        let root_b = b.root_project()?;
+        let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+        b.put_project(
+            root_a,
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader)
+                .unwrap(),
+            1,
+        )?;
+        b.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        b.import_signed_authority_history(&history)?;
+        if existing {
+            let (birth_id, birth_bytes) = contributions
+                .iter()
+                .find(|(_, bytes)| {
+                    matches!(
+                        crate::gate::project_depth::decode_contribution(bytes).ok(),
+                        Some(crate::gate::project_depth::ProjectDepthContribution::Birth(
+                            _
+                        ))
+                    )
+                })
+                .ok_or(Error::EntityNotFound)?;
+            b.with_write_txn(|txn| {
+                b.batch_in()
+                    .put_replicated(
+                        birth_id,
+                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                        TimeRange { start: 1, end: 1 },
+                        1,
+                        birth_bytes,
+                    )
+                    .apply(txn)
+            })?;
+            b.put_project(
+                project,
+                &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
+                    .unwrap(),
+                1,
+            )?;
+        }
+        Ok(())
+    };
+    for existing in [true, false] {
+        let (dir, b) = test_vault();
+        prepare(&b, existing)?;
+        let doc = create_window_doc("owner-edit", &key);
+        for (id, bytes) in &contributions {
+            doc.get_map("entities")
+                .insert(
+                    id.to_hex().as_str(),
+                    make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, bytes)
+                        .as_slice(),
+                )
+                .expect("policy fact");
+        }
+        doc.get_map("entities")
+            .insert(
+                project.to_hex().as_str(),
+                make_entity_blob(b.project_type_byte()?, stamp, &body).as_slice(),
+            )
+            .expect("project membership");
+        doc.commit();
+        let materializer = Materializer::new();
+        forward_rematerialize(&b, &doc, &materializer, &key)?;
+        forward_rematerialize(&b, &doc, &materializer, &key)?; // dependency order is immaterial
+        assert_eq!(b.project(project)?.unwrap().depth, 2);
+        drop(b);
+        let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+        forward_rematerialize(&reopened, &doc, &Materializer::new(), &key)?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+        // The immutable birth and edit survive deletion of the mutable
+        // membership row. The unchanged synchronized window can restore it.
+        reopened.batch().delete(&project).commit()?;
+        assert!(reopened.project(project)?.is_none());
+        forward_rematerialize(&reopened, &doc, &Materializer::new(), &key)?;
+        assert_eq!(reopened.project(project)?.unwrap().depth, 2);
+    }
+    let (_forged_dir, forged_vault) = test_vault();
+    prepare(&forged_vault, false)?;
+    let tampered_doc = create_window_doc("tampered-owner-edit", &key);
+    for (id, bytes) in &contributions {
+        let mut raw = bytes.clone();
+        if id == &contributions[1].0 {
+            raw.push(0x01);
+        } // content id/codec cannot change
+        tampered_doc
+            .get_map("entities")
+            .insert(
+                id.to_hex().as_str(),
+                make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &raw)
+                    .as_slice(),
+            )
+            .expect("tampered policy fact");
+    }
+    tampered_doc
+        .get_map("entities")
+        .insert(
+            project.to_hex().as_str(),
+            make_entity_blob(forged_vault.project_type_byte()?, stamp, &body).as_slice(),
+        )
+        .expect("project membership");
+    tampered_doc.commit();
+    forward_rematerialize(&forged_vault, &tampered_doc, &Materializer::new(), &key)?;
+    assert_ne!(
+        forged_vault.project(project)?.map(|body| body.depth),
+        Some(2)
+    );
+    assert!(
+        quarantine::quarantined_records(&forged_vault)?
+            .iter()
+            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}
+
+#[test]
+fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()> {
+    let (_source_dir, source) = test_vault();
+    let source_root = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(source_root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    source.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(id, Some(source_root), source_root, leader)
+            .unwrap(),
+        1,
+    )?;
+    let human = EntityId::now();
+    source.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(human, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xBA)?;
+    let history = source.export_signed_authority_history()?;
+    assert_eq!(history.len(), 2);
+    crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 2, &writer, 2, 0xBA)?;
+    let (edit, body) = crate::gate::project_depth::contributions_for_test(&source, id)?
+        .into_iter()
+        .find(|(_, bytes)| {
+            matches!(
+                crate::gate::project_depth::decode_contribution(bytes).ok(),
+                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
+                    _
+                ))
+            )
+        })
+        .expect("signed depth contribution");
+
+    let (_target_dir, target) = test_vault();
+    let target_root = target.root_project()?;
+    let target_leader = EntityId::from_hex(&target.project(target_root)?.unwrap().leader)?;
+    target.put_project(
+        source_root,
+        &crate::workspace_roster::ProjectRecord::new(
+            source_root,
+            Some(target_root),
+            target_root,
+            target_leader,
+        )
+        .unwrap(),
+        1,
+    )?;
+    target.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(
+            id,
+            Some(source_root),
+            source_root,
+            target_leader,
+        )
+        .unwrap(),
+        1,
+    )?;
+    target.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    target.import_signed_authority_history(&history[..1])?; // rooted, but no BindActor
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window start") + 60;
+    let doc = create_window_doc("project-first", &key);
+    doc.get_map("entities")
+        .insert(
+            edit.to_hex().as_str(),
+            make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &body).as_slice(),
+        )
+        .expect("insert signed depth fact");
+    doc.commit();
+    let materializer = Materializer::new();
+    forward_rematerialize(&target, &doc, &materializer, &key)?;
+    assert_eq!(target.project(id)?.unwrap().depth, 0);
+    assert!(
+        target.get(&edit)?.is_some(),
+        "contribution persists while signer dependency is missing"
+    );
+    forward_rematerialize(&target, &doc, &materializer, &key)?;
+    assert_eq!(target.project(id)?.unwrap().depth, 0);
+    target.import_signed_authority_history(&history[1..])?;
+    assert_eq!(target.project(id)?.unwrap().depth, 2);
+    Ok(())
+}
+
+#[test]
+fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_order() -> Result<()>
+{
+    // The Loro winner is now the union of independent manifest keys, NOT one
+    // whole-project blob. Equal/unequal offline edit counts must fold alike.
+    for unequal in [false, true] {
+        for reverse in [false, true] {
+            let (_a_dir, a) = test_vault();
+            let (_b_dir, b) = test_vault();
+            let root_a = a.root_project()?;
+            let root_b = b.root_project()?;
+            let leader = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+            let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+            b.put_project(
+                root_a,
+                &crate::workspace_roster::ProjectRecord::new(
+                    root_a,
+                    Some(root_b),
+                    root_b,
+                    leader_b,
+                )
+                .unwrap(),
+                1,
+            )?;
+            let project = EntityId::now();
+            let base =
+                crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
+                    .unwrap();
+            let owner_id = EntityId::now();
+            let writer = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+            for vault in [&a, &b] {
+                vault.put_entity(
+                    &owner_id,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"owner",
+                )?;
+            }
+            crate::subject_model::tests::authorization::root_owner(&a, writer, 0xBC)?;
+            let authority = a.export_signed_authority_history()?;
+            b.import_signed_authority_history(&authority)?;
+            crate::workspace_roster::create_project_signed_for_test(
+                &a, project, root_a, leader, &writer, 1, 0xBC,
+            )?;
+            crate::workspace_roster::create_project_signed_for_test(
+                &b, project, root_a, leader_b, &writer, 1, 0xBC,
+            )?;
+            crate::workspace_roster::set_project_depth_signed_for_test(
+                &a, project, 2, &writer, 2, 0xBC,
+            )?;
+            if unequal {
+                crate::workspace_roster::set_project_depth_signed_for_test(
+                    &a, project, 6, &writer, 3, 0xBC,
+                )?;
+            }
+            crate::workspace_roster::set_project_depth_signed_for_test(
+                &b, project, 0, &writer, 2, 0xBC,
+            )?;
+            assert_eq!(
+                a.project(project)?.unwrap().depth,
+                if unequal { 6 } else { 2 }
+            );
+            assert_eq!(b.project(project)?.unwrap().depth, 0);
+            let from_a = crate::gate::project_depth::contributions_for_test(&a, project)?;
+            let from_b = crate::gate::project_depth::contributions_for_test(&b, project)?;
+            assert_eq!(from_a.len(), if unequal { 3 } else { 2 });
+            assert_eq!(from_b.len(), 2);
+            let window = WindowKey::new("2026-03");
+            let stamp = window.start_timestamp().expect("window start") + 60;
+            let doc_a = create_window_doc("offline-a", &window);
+            let doc_b = create_window_doc("offline-b", &window);
+            doc_a.set_peer_id(1).expect("peer A");
+            doc_b.set_peer_id(2).expect("peer B");
+            for (doc, entries) in [(&doc_a, &from_a), (&doc_b, &from_b)] {
+                for (id, bytes) in entries {
+                    doc.get_map("entities")
+                        .insert(
+                            id.to_hex().as_str(),
+                            make_entity_blob(
+                                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                                stamp,
+                                bytes,
+                            )
+                            .as_slice(),
+                        )
+                        .expect("immutable contribution");
+                }
+                doc.get_map("entities")
+                    .insert(
+                        project.to_hex().as_str(),
+                        make_entity_blob(
+                            a.project_type_byte()?,
+                            stamp,
+                            &rmp_serde::to_vec_named(&base).expect("project members"),
+                        )
+                        .as_slice(),
+                    )
+                    .expect("mutable membership");
+                doc.commit();
+            }
+            let update_a = loro_support::export_all_updates(&doc_a)?;
+            let update_b = loro_support::export_all_updates(&doc_b)?;
+            let first = create_window_doc("first-merge", &window);
+            let second = create_window_doc("second-merge", &window);
+            if reverse {
+                import_doc(&first, &update_b)?;
+                import_doc(&first, &update_a)?;
+                import_doc(&second, &update_a)?;
+                import_doc(&second, &update_b)?;
+            } else {
+                import_doc(&first, &update_a)?;
+                import_doc(&first, &update_b)?;
+                import_doc(&second, &update_b)?;
+                import_doc(&second, &update_a)?;
+            }
+            let mut ids = std::collections::BTreeSet::new();
+            for (id, _) in from_a.iter().chain(from_b.iter()) {
+                ids.insert(*id);
+            }
+            for id in ids {
+                let first_body =
+                    loro_support::map_get_bytes(&first.get_map("entities"), &id.to_hex());
+                let second_body =
+                    loro_support::map_get_bytes(&second.get_map("entities"), &id.to_hex());
+                assert!(first_body.is_some());
+                assert_eq!(
+                    first_body, second_body,
+                    "every immutable fact survives both Loro orders"
+                );
+            }
+            // Observer B applies the merged map to A while it still holds its
+            // permissive local branch. Forward materialization applies it to B.
+            let observer_doc = create_window_doc("observer", &window);
+            let materializer = std::sync::Arc::new(Materializer::new());
+            let _subscriptions =
+                bridge::register_observer_b(&observer_doc, &a, &materializer, window.as_str());
+            import_doc(&observer_doc, &update_a)?;
+            import_doc(&observer_doc, &update_b)?;
+            forward_rematerialize(&a, &observer_doc, &Materializer::new(), &window)?;
+            forward_rematerialize(&b, &second, &Materializer::new(), &window)?;
+            assert_eq!(a.project(project)?.unwrap().depth, 0);
+            assert_eq!(b.project(project)?.unwrap().depth, 0);
+            // A third replica first sees the already-merged contribution set.
+            let (dir, fresh) = test_vault();
+            let root_f = fresh.root_project()?;
+            let lead_f = EntityId::from_hex(&fresh.project(root_f)?.unwrap().leader)?;
+            fresh.put_project(
+                root_a,
+                &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_f), root_f, lead_f)
+                    .unwrap(),
+                1,
+            )?;
+            fresh.put_entity(
+                &owner_id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"owner",
+            )?;
+            fresh.import_signed_authority_history(&authority)?;
+            for _ in 0..2 {
+                forward_rematerialize(&fresh, &first, &Materializer::new(), &window)?;
+            }
+            assert_eq!(fresh.project(project)?.unwrap().depth, 0);
+            drop(fresh);
+            let fresh = Vault::open(dir.path(), VaultConfig::device())?;
+            assert_eq!(fresh.project(project)?.unwrap().depth, 0);
+            let agent = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+            for (vault, local_root) in [(&*a, root_a), (&*b, root_b), (&fresh, root_f)] {
+                let dispatcher = crate::agent_dispatch::AgentDispatcher::new(vault);
+                let root = dispatcher.dispatch(crate::agent_dispatch::DispatchAgent {
+                    target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                    parent_attempt: None,
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 4,
+                })?;
+                let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(root) = root else {
+                    panic!("root")
+                };
+                let parent = if local_root == root_a {
+                    root.attempt.id
+                } else {
+                    let intermediate = dispatcher.dispatch_with_context(
+                        crate::agent_dispatch::DispatchAgent {
+                            target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                            parent_attempt: Some(root.attempt.id),
+                            dedupe_key: None,
+                            run_id: None,
+                            now: 5,
+                        },
+                        crate::agent_dispatch::AgentSpawnContext::default().with_project(root_a),
+                    )?;
+                    let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(intermediate) =
+                        intermediate
+                    else {
+                        panic!("ancestor")
+                    };
+                    intermediate.attempt.id
+                };
+                let child = dispatcher.dispatch_with_context(
+                    crate::agent_dispatch::DispatchAgent {
+                        target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                        parent_attempt: Some(parent),
+                        dedupe_key: None,
+                        run_id: None,
+                        now: 6,
+                    },
+                    crate::agent_dispatch::AgentSpawnContext::default().with_project(project),
+                )?;
+                let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(child) = child else {
+                    panic!("child")
+                };
+                assert_eq!(child.input.depth_remaining, Some(0));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// ARCH-0040's revoke-then-regrant window: an edit signed before the owner's
+/// revoke stays non-authorizing after the regrant on a replica, through the
+/// forward pass and through Observer B, until an edit that observed the
+/// regrant supersedes it.
+#[test]
+fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()> {
+    use ed25519_dalek::Signer;
+    let (_a_dir, a) = test_vault();
+    let root_a = a.root_project()?;
+    let owner_id = EntityId::now();
+    a.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&a, owner, 0xC7)?;
+    // The root's birth is implicit, so the pre-revoke edit is its only fact.
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, root_a, 12, &owner, 2, 0xC7)?;
+    let stale = crate::gate::project_depth::contributions_for_test(&a, root_a)?;
+    assert_eq!(stale.len(), 1);
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[0xC7; 32]);
+    let bind: crate::authority::AuthorityLogEntry =
+        crate::authority::decode_authority_log_entry_body(
+            &a.export_signed_authority_history()?[1],
+        )?;
+    let mut revoke = crate::authority::AuthorityLogEntry {
+        schema_version: bind.schema_version,
+        vault_id: bind.vault_id,
+        seq: 2,
+        parent_hashes: vec![crate::authority::authority_entry_hash(&bind)?],
+        op: crate::authority::AuthorityOp::RevokeActor {
+            authority_key: bind.signer.public_key.clone(),
+            epoch: 1,
+        },
+        signer: bind.signer.clone(),
+        cosigns: Vec::new(),
+        ts: 102,
+    };
+    revoke.signer.signature = signing
+        .sign(&crate::authority::authority_transcript(&revoke)?)
+        .to_bytes()
+        .to_vec();
+    a.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    let mut regrant = crate::authority::AuthorityLogEntry {
+        schema_version: bind.schema_version,
+        vault_id: bind.vault_id,
+        seq: 3,
+        parent_hashes: vec![crate::authority::authority_entry_hash(&revoke)?],
+        op: crate::authority::AuthorityOp::BindActor {
+            authority_key: bind.signer.public_key.clone(),
+            actor_ref: owner_id,
+            actor_class: "human".into(),
+            epoch: 2,
+        },
+        signer: bind.signer,
+        cosigns: Vec::new(),
+        ts: 103,
+    };
+    regrant.signer.signature = signing
+        .sign(&crate::authority::authority_transcript(&regrant)?)
+        .to_bytes()
+        .to_vec();
+    a.put_authority_log_entry(
+        &regrant,
+        TimeRange {
+            start: 103,
+            end: 103,
+        },
+        103,
+    )?;
+    let history = a.export_signed_authority_history()?;
+    assert_eq!(a.project(root_a)?.unwrap().depth, 0);
+    let current = a.observed_write_actor(owner)?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&a, root_a, 5, &current, 4, 0xC7)?;
+    assert_eq!(a.project(root_a)?.unwrap().depth, 5);
+    let observed: Vec<_> = crate::gate::project_depth::contributions_for_test(&a, root_a)?
+        .into_iter()
+        .filter(|(id, _)| !stale.iter().any(|(old, _)| old == id))
+        .collect();
+    assert_eq!(observed.len(), 1);
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window timestamp") + 60;
+    let source = create_window_doc("regrant-source", &key);
+    let insert = |facts: &[(EntityId, Vec<u8>)]| {
+        for (id, bytes) in facts {
+            source
+                .get_map("entities")
+                .insert(
+                    id.to_hex().as_str(),
+                    make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, bytes)
+                        .as_slice(),
+                )
+                .expect("policy fact");
+        }
+        source.commit();
+    };
+    insert(&stale);
+    let stage_stale = loro_support::export_all_updates(&source)?;
+    insert(&observed);
+    let stage_observed = loro_support::export_all_updates(&source)?;
+    for observer in [false, true] {
+        let (_b_dir, b) = test_vault();
+        let root_b = b.root_project()?;
+        let leader = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+        b.put_project(
+            root_a,
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader)
+                .unwrap(),
+            1,
+        )?;
+        b.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        b.import_signed_authority_history(&history)?;
+        assert_eq!(b.project(root_a)?.unwrap().depth, 10);
+        let live = create_window_doc("regrant-live", &key);
+        let materializer = Arc::new(Materializer::new());
+        let _subscriptions =
+            observer.then(|| bridge::register_observer_b(&live, &b, &materializer, key.as_str()));
+        for (stage, depth) in [(&stage_stale, 0), (&stage_observed, 5)] {
+            import_doc(&live, stage)?;
+            if !observer {
+                forward_rematerialize(&b, &live, &materializer, &key)?;
+            }
+            assert_eq!(
+                b.project(root_a)?.unwrap().depth,
+                depth,
+                "observer={observer}: a regrant never blesses a pre-regrant edit"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Result<()> {
+    let (_source_dir, source) = test_vault();
+    let root = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(root)?.unwrap().leader)?;
+    let person = EntityId::now();
+    source.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xC2)?;
+    let project = EntityId::now();
+    crate::workspace_roster::create_project_signed_for_test(
+        &source, project, root, leader, &writer, 1, 0xC2,
+    )?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &source, project, 2, &writer, 2, 0xC2,
+    )?;
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &source, project, 12, &writer, 3, 0xC2,
+    )?;
+    let mut birth = None;
+    let mut first = None;
+    let mut second = None;
+    for (id, body) in crate::gate::project_depth::contributions_for_test(&source, project)? {
+        match crate::gate::project_depth::decode_contribution(&body)? {
+            crate::gate::project_depth::ProjectDepthContribution::Birth(_) => {
+                birth = Some((id, body));
+            }
+            crate::gate::project_depth::ProjectDepthContribution::Edit(edit) if edit.depth == 2 => {
+                first = Some((id, body));
+            }
+            crate::gate::project_depth::ProjectDepthContribution::Edit(edit)
+                if edit.depth == 12 =>
+            {
+                second = Some((id, body));
+            }
+            _ => return Err(Error::InvalidConfig("project predecessor fixture".into())),
+        }
+    }
+    let (birth, first, second) = (
+        birth.ok_or(Error::EntityNotFound)?,
+        first.ok_or(Error::EntityNotFound)?,
+        second.ok_or(Error::EntityNotFound)?,
+    );
+    let (_target_dir, target) = test_vault();
+    let local_root = target.root_project()?;
+    let local_leader = EntityId::from_hex(&target.project(local_root)?.unwrap().leader)?;
+    target.put_project(
+        root,
+        &crate::workspace_roster::ProjectRecord::new(
+            root,
+            Some(local_root),
+            local_root,
+            local_leader,
+        )
+        .unwrap(),
+        1,
+    )?;
+    target.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    target.import_signed_authority_history(&source.export_signed_authority_history()?)?;
+    let window = WindowKey::new("2026-03");
+    let stamp = window.start_timestamp().expect("window start") + 60;
+    let doc = create_window_doc("out-of-order-project-policy", &window);
+    let manifest_blob =
+        |body: &[u8]| make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, body);
+    doc.get_map("entities")
+        .insert(
+            birth.0.to_hex().as_str(),
+            manifest_blob(&birth.1).as_slice(),
+        )
+        .expect("birth");
+    doc.get_map("entities")
+        .insert(
+            project.to_hex().as_str(),
+            make_entity_blob(
+                target.project_type_byte()?,
+                stamp,
+                &rmp_serde::to_vec_named(&source.project(project)?.unwrap()).expect("member body"),
+            )
+            .as_slice(),
+        )
+        .expect("member row");
+    doc.commit();
+    let materializer = Materializer::new();
+    for _ in 0..2 {
+        forward_rematerialize(&target, &doc, &materializer, &window)?;
+    }
+    assert_eq!(target.project(project)?.unwrap().depth, 10);
+    doc.get_map("entities")
+        .insert(
+            second.0.to_hex().as_str(),
+            manifest_blob(&second.1).as_slice(),
+        )
+        .expect("later edit arrives first");
+    doc.commit();
+    forward_rematerialize(&target, &doc, &materializer, &window)?;
+    assert_eq!(target.project(project)?.unwrap().depth, 0);
+    forward_rematerialize(&target, &doc, &materializer, &window)?; // retry drain before predecessor
+    assert_eq!(target.project(project)?.unwrap().depth, 0);
+    assert!(
+        target.get(&second.0)?.is_some(),
+        "dependency-pending fact remains stored"
+    );
+    doc.get_map("entities")
+        .insert(
+            first.0.to_hex().as_str(),
+            manifest_blob(&first.1).as_slice(),
+        )
+        .expect("predecessor arrives later");
+    doc.commit();
+    forward_rematerialize(&target, &doc, &materializer, &window)?;
+    assert_eq!(target.project(project)?.unwrap().depth, 12);
+    Ok(())
+}
+
+/// An erased author is absent from LMDB, revisions, live CRDT state, and both
+/// empty/populated outbound snapshots. The immutable topology decision stays.
+#[test]
+fn identity_author_redaction_scrubs_personal_carriers_and_loro_history() -> Result<()> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        StoredIdentityOpAction, SurvivorshipPlan,
+    };
+    use crate::write_envelope::WriteActor;
+
+    let (_dir, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let author = EntityId::from_bytes([0x91; 16])?;
+    let source = EntityId::from_bytes([0x92; 16])?;
+    let survivor = EntityId::from_bytes([0x93; 16])?;
+    for id in [author, source, survivor] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person fixture",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![source],
+            survivor,
+            evidence: IdentityOpEvidence::default(),
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(author, EdgeActorClass::Human)),
+        at,
+    )?;
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("authored merge must apply");
+    };
+    let decision_before = vault.get_raw(&event)?.expect("decision row");
+    let (carrier_id, carrier_bytes) = {
+        let txn = vault.store.env.read_txn()?;
+        let mut found = None;
+        for entry in vault.store.type_index.prefix_iter(
+            &txn,
+            &[crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT],
+        )? {
+            let (index_key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&index_key)?;
+            let raw = vault
+                .store
+                .entities
+                .get(&txn, id.as_bytes())?
+                .expect("indexed row");
+            let row = crate::identity_topology::decode_identity_topology_event_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            if matches!(row.action, StoredIdentityOpAction::AuthorAttribution { target, .. } if target == event)
+            {
+                found = Some((id, raw.to_vec()));
+            }
+        }
+        found.expect("independent author carrier")
+    };
+    let revision = vault.pin_entity_revision(&carrier_id)?;
+    vault.with_write_txn(|txn| {
+        crate::identity_topology::redact_author_attribution_in_txn(&vault, txn, event, at + 1)?;
+        Ok(())
+    })?;
+    assert!(vault.get_raw(&carrier_id)?.is_none());
+    assert_eq!(vault.get_raw(&event)?, Some(decision_before.clone()));
+    assert!(vault.edge_exists(&source, EdgeKind::MergedInto, &survivor)?);
+    let txn = vault.store.env.read_txn()?;
+    assert!(
+        crate::identity_topology::effective_author_in_txn(&vault.store, &txn, event)?.is_none()
+    );
+    drop(txn);
+    assert!(
+        vault
+            .get_raw_with_mode(&carrier_id, crate::vault::ReadMode::Pinned(revision))?
+            .is_none()
+    );
+
+    // Simulate a pre-erasure mirror, including a personal row in old Loro
+    // history. The full snapshot and subsequent empty-live-state delta must
+    // never carry that history to a fresh peer.
+    let doc = create_window_doc("source", &key);
+    map_insert_bytes(&doc.get_map("entities"), &event.to_hex(), &decision_before)?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &carrier_id.to_hex(),
+        &carrier_bytes,
+    )?;
+    doc.commit();
+    for populated in [true, false] {
+        let bytes =
+            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?;
+        let peer = LoroDoc::new();
+        import_doc(&peer, &bytes)?;
+        assert!(peer.is_shallow());
+        assert!(map_get_bytes(&peer.get_map("entities"), &carrier_id.to_hex()).is_none());
+        assert_eq!(
+            map_get_bytes(&peer.get_map("entities"), &event.to_hex()),
+            populated.then(|| decision_before.clone())
+        );
+        assert!(
+            !bytes
+                .windows(carrier_bytes.len())
+                .any(|window| window == carrier_bytes)
+        );
+        if populated {
+            map_delete(&doc.get_map("entities"), &event.to_hex())?;
+            doc.commit();
+        }
+    }
+    assert!(history_free_window_required(&vault, &key)?);
+    Ok(())
+}
+
+#[test]
+fn world_month_recovery_mirrors_only_its_project_and_base_excludes_world_claims() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let month = WindowKey::new("2026-03");
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    let person = EntityId::from_bytes([0x51; 16])?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    let mut pairs = Vec::new();
+    for i in 1..=5 {
+        let world = EntityId::from_bytes([i; 16])?;
+        let claim = EntityId::from_bytes([i + 20; 16])?;
+        vault.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"world",
+        )?;
+        let mut body = crate::claim::ClaimBody::new(
+            "test.project_fact",
+            crate::claim::ClaimSubject::Entity(person),
+            Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = Some(world);
+        vault.put_claim(&claim, &body, occurred, at)?;
+        vault
+            .batch()
+            .edge(&claim, EdgeKind::About, &person, 1.0)
+            .commit()?;
+        pairs.push((world, claim));
+    }
+    let base = crate::sync::schema::create_window_doc("owner", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    for (_, claim) in &pairs {
+        assert!(base.get_map("entities").get(&claim.to_hex()).is_none());
+        let edge = crate::sync::bridge::format_edge_key(claim, EdgeKind::About, &person);
+        assert!(base.get_map("edges").get(&edge).is_none());
+    }
+    for (world, claim) in &pairs {
+        let key = WindowKey::for_month_world(&month, *world);
+        let doc = crate::sync::schema::create_window_doc("owner", &key);
+        reverse_rematerialize(&vault, &doc, &key)?;
+        assert!(doc.get_map("entities").get(&claim.to_hex()).is_some());
+        let edge = crate::sync::bridge::format_edge_key(claim, EdgeKind::About, &person);
+        assert!(doc.get_map("edges").get(&edge).is_some());
+        for (_, other) in &pairs {
+            if other != claim {
+                assert!(doc.get_map("entities").get(&other.to_hex()).is_none());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn world_window_admission_refuses_other_project_even_hidden_history() -> Result<()> {
+    let world_a = EntityId::from_bytes([0x31; 16])?;
+    let world_b = EntityId::from_bytes([0x32; 16])?;
+    let claim = EntityId::from_bytes([0x33; 16])?;
+    let key = WindowKey::for_month_world(&WindowKey::new("2026-03"), world_a);
+    let mut body = crate::claim::ClaimBody::new(
+        "test.window_boundary",
+        crate::claim::ClaimSubject::Entity(world_b),
+        Value::from("other world"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world_b);
+    let raw = make_entity_blob(
+        crate::registry::ENTITY_TYPE_CLAIM,
+        key.start_timestamp().unwrap() + 1,
+        &crate::claim::encode_claim_body(&body)?,
+    );
+    let source = create_window_doc("source", &key);
+    map_insert_bytes(&source.get_map("entities"), &claim.to_hex(), &raw)?;
+    source.commit();
+    let target = create_window_doc("target", &key);
+    let snapshot = source.export(loro::ExportMode::snapshot()).unwrap();
+    assert!(validate_window_update_residence(&target, &snapshot, &key).is_err());
+    // The same world still cannot smuggle a March row into February's doc.
+    let own_world_key = WindowKey::for_month_world(&WindowKey::new("2026-03"), world_b);
+    let same_world = create_window_doc("source", &own_world_key);
+    map_insert_bytes(&same_world.get_map("entities"), &claim.to_hex(), &raw)?;
+    same_world.commit();
+    let same_world_snapshot = same_world.export(loro::ExportMode::snapshot()).unwrap();
+    let february = own_world_key.previous_month().unwrap();
+    assert!(
+        validate_window_update_residence(
+            &create_window_doc("target", &february),
+            &same_world_snapshot,
+            &february,
+        )
+        .is_err()
+    );
+    let before = source.oplog_vv();
+    map_delete(&source.get_map("entities"), &claim.to_hex())?;
+    source.commit();
+    let updates = source.export(loro::ExportMode::all_updates()).unwrap();
+    assert!(validate_window_update_residence(&target, &updates, &key).is_err());
+    assert_ne!(before, source.oplog_vv());
+    assert_eq!(target.get_map("entities").len(), 0);
+    Ok(())
+}
+
+#[test]
+fn foreign_and_unknown_world_tombstones_do_not_delete_or_poison_other_projects() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let materializer = Arc::new(Materializer::new());
+    let world_a = EntityId::from_bytes([0x61; 16])?;
+    let world_b = EntityId::from_bytes([0x62; 16])?;
+    let existing = EntityId::from_bytes([0x63; 16])?;
+    let absent = EntityId::from_bytes([0x64; 16])?;
+    let month = WindowKey::new("2026-03");
+    let key = WindowKey::for_month_world(&month, world_a);
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world_b,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"project",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.world_tombstone",
+        crate::claim::ClaimSubject::Entity(world_b),
+        Value::from("world B"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world_b);
+    vault.put_claim(&existing, &body, occurred, at)?;
+    let window = LoadedWindow::new("owner", key, &vault, &materializer);
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: at,
+        request_id: [0x39; 16],
+    }
+    .encode();
+    for id in [existing, absent] {
+        map_insert_bytes(&window.doc.get_map("tombstones"), &id.to_hex(), &tombstone)?;
+        window.doc.commit();
+    }
+    assert!(vault.get_raw_unsealed(&existing)?.is_some());
+    let txn = vault.store.env.read_txn()?;
+    for id in [existing, absent] {
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(&txn, &crate::deletion::local_hard_delete_key(&id))?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(&txn, &format!("m:dw:{}", id.to_hex()))?
+                .is_none()
+        );
+    }
+    drop(txn);
+    // The unproven A tombstone may stay in A's CRDT, but cannot poison the
+    // globally keyed delete marker before a later valid B claim arrives.
+    vault.put_claim(&absent, &body, occurred, at)?;
+    assert!(vault.get_raw_unsealed(&absent)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn world_window_admission_rejects_cross_project_edges_before_relay() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let month = WindowKey::new("2026-03");
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    let world_a = EntityId::from_bytes([0x41; 16])?;
+    let world_b = EntityId::from_bytes([0x42; 16])?;
+    let claim_a = EntityId::from_bytes([0x43; 16])?;
+    let claim_b = EntityId::from_bytes([0x44; 16])?;
+    let person = EntityId::from_bytes([0x45; 16])?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    for (world, claim) in [(world_a, claim_a), (world_b, claim_b)] {
+        vault.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"project",
+        )?;
+        let mut body = crate::claim::ClaimBody::new(
+            "test.edge_residence",
+            crate::claim::ClaimSubject::Entity(person),
+            Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = Some(world);
+        vault.put_claim(&claim, &body, occurred, at)?;
+    }
+    let key = WindowKey::for_month_world(&month, world_a);
+    let source = create_window_doc("source", &key);
+    let good = crate::sync::bridge::format_edge_key(&claim_a, EdgeKind::About, &person);
+    let foreign = crate::sync::bridge::format_edge_key(&claim_a, EdgeKind::About, &claim_b);
+    map_insert_bytes(&source.get_map("edges"), &good, b"value")?;
+    source.commit();
+    let target = create_window_doc("target", &key);
+    assert!(
+        validate_window_update_residence_with_vault(
+            &vault,
+            &target,
+            &source.export(loro::ExportMode::all_updates()).unwrap(),
+            &key
+        )
+        .is_ok()
+    );
+    map_insert_bytes(&source.get_map("edges"), &foreign, b"value")?;
+    source.commit();
+    map_delete(&source.get_map("edges"), &foreign)?;
+    source.commit();
+    assert!(
+        validate_window_update_residence_with_vault(
+            &vault,
+            &target,
+            &source.export(loro::ExportMode::all_updates()).unwrap(),
+            &key
+        )
+        .is_err()
+    );
+    assert!(target.get_map("edges").get(&foreign).is_none());
+    Ok(())
+}
+
+#[test]
+fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<()> {
+    let (_dir, source) = test_vault();
+    let owner = source.ensure_embedded_owner_actor().unwrap();
+    let actor = crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human);
+    let note = source
+        .create_note("research", "shared note", actor)
+        .unwrap();
+    let raw = source.get_raw_unsealed(&note)?.unwrap();
+    let at = crate::batch::EntityMetadataHeader::parse(&raw)
+        .unwrap()
+        .learned_at;
+    let world = EntityId::now();
+    let claim = EntityId::now();
+    let occurred = TimeRange { start: at, end: at };
+    source.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.note_partition",
+        crate::claim::ClaimSubject::Entity(world),
+        Value::from("world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    source.put_claim(&claim, &body, occurred, at)?;
+    let world_key = WindowKey::for_world(at, world);
+    let world_doc = create_window_doc("owner", &world_key);
+    reverse_rematerialize(&source, &world_doc, &world_key)?;
+    let exported = export_window_updates_since(
+        &source,
+        &world_key,
+        &world_doc,
+        &VersionVector::default().encode(),
+    )?;
+    let (_peer_dir, peer) = test_vault();
+    // The shared base endpoint is already loaded before its world edge.
+    peer.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    let received = create_window_doc("peer", &world_key);
+    validate_window_update_residence_with_vault(&peer, &received, &exported, &world_key)?;
+    import_doc(&received, &exported)?;
+    assert!(received.get_map("entities").get(&claim.to_hex()).is_some());
+    assert!(received.get_map("entities").get(&note.to_hex()).is_none());
+
+    let base_key = WindowKey::from_timestamp(at);
+    let base = create_window_doc("owner", &base_key);
+    reverse_rematerialize(&source, &base, &base_key)?;
+    export_window_updates_since(
+        &source,
+        &base_key,
+        &base,
+        &VersionVector::default().encode(),
+    )?;
+    assert!(base.get_map("entities").get(&note.to_hex()).is_some());
+    Ok(())
+}
+
+#[test]
+fn late_follow_accepts_deleted_world_claim_edge_history_without_foreign_edges() -> Result<()> {
+    for reason in [
+        crate::deletion::TombstoneReason::UserDelete,
+        crate::deletion::TombstoneReason::UserHardDelete,
+    ] {
+        let (_dir, source) = test_vault();
+        let (_peer_dir, peer) = test_vault();
+        let key = WindowKey::for_world(1_771_027_200, EntityId::from_bytes([0x91; 16])?);
+        let world = key.world().unwrap();
+        let person = EntityId::from_bytes([0x92; 16])?;
+        let deleted = EntityId::from_bytes([0x93; 16])?;
+        let survivor = EntityId::from_bytes([0x94; 16])?;
+        let at = key.start_timestamp().unwrap() + 60;
+        let occurred = TimeRange { start: at, end: at };
+        for vault in [&source, &peer] {
+            vault.put_entity(
+                &world,
+                crate::registry::ENTITY_TYPE_WORLD,
+                occurred,
+                at,
+                b"world",
+            )?;
+            vault.put_entity(
+                &person,
+                crate::registry::ENTITY_TYPE_PERSON,
+                occurred,
+                at,
+                b"person",
+            )?;
+        }
+        for id in [deleted, survivor] {
+            let mut body = crate::claim::ClaimBody::new(
+                "test.world_history",
+                crate::claim::ClaimSubject::Entity(person),
+                Value::from("fact"),
+                1.0,
+                ClaimApprovalStatus::Proposed,
+                crate::claim::ClaimLifecycleStatus::Active,
+            )
+            .unwrap();
+            body.world = Some(world);
+            source.put_claim(&id, &body, occurred, at)?;
+        }
+        source
+            .batch()
+            .edge(&deleted, EdgeKind::About, &person, 1.0)
+            .commit()?;
+        let doc = create_window_doc("source", &key);
+        reverse_rematerialize(&source, &doc, &key)?;
+        let value = crate::deletion::TombstoneValueV2 {
+            reason,
+            deleted_at: at + 1,
+            request_id: [7; 16],
+        }
+        .encode();
+        apply_tombstone_to_window_doc(&doc, &deleted, &value)?;
+        doc.commit();
+        let update =
+            export_window_updates_since(&source, &key, &doc, &VersionVector::default().encode())?;
+        let received = create_window_doc("peer", &key);
+        validate_window_update_residence_with_vault(&peer, &received, &update, &key)?;
+        import_doc(&received, &update)?;
+        forward_rematerialize(&peer, &received, &Materializer::new(), &key)?;
+        assert!(
+            received
+                .get_map("tombstones")
+                .get(&deleted.to_hex())
+                .is_some()
+        );
+        assert_eq!(peer.get(&survivor)?, source.get(&survivor)?);
+    }
     Ok(())
 }

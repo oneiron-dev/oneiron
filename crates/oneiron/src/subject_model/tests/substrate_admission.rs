@@ -62,7 +62,7 @@ fn substrate_shared_decoder_rejects_invalid_values_and_edge_subjects() -> Result
         Value::from("model"),
         writer(),
         100,
-    );
+    )?;
     for value in [
         Value::Nil,
         Value::from(1),
@@ -116,7 +116,7 @@ fn substrate_admission_rejects_hostile_values_without_creating_or_overwriting_ro
             Value::Nil,
             Value::from(3),
         ] {
-            let body = subject_fact(PREDICATE_PERSON_SUBSTRATE, person, value, writer(), 100);
+            let body = subject_fact(PREDICATE_PERSON_SUBSTRATE, person, value, writer(), 100)?;
             for id in [new_id, existing] {
                 let error = admit(&vault, door, &id, &body).expect_err("hostile value");
                 assert_eq!(error.kind(), ErrorKind::InvalidClaimBody, "{door:?}");
@@ -152,7 +152,7 @@ fn substrate_admission_rejects_non_person_and_edge_subjects() -> Result<()> {
                 Value::from("meat"),
                 writer(),
                 100,
-            );
+            )?;
             for claim_subject in [
                 ClaimSubject::Entity(subject),
                 ClaimSubject::Edge {
@@ -185,7 +185,7 @@ fn substrate_missing_person_is_rejected_until_the_actual_row_arrives() -> Result
             Value::from("model"),
             writer(),
             100,
-        );
+        )?;
         assert!(admit(&vault, door, &id, &body).is_err(), "{door:?}");
         assert!(vault.get(&id)?.is_none());
         assert!(vault.get(&person)?.is_none());
@@ -210,7 +210,7 @@ fn substrate_replicated_batch_checks_subject_at_the_applying_op_and_rolls_back()
                 Value::from(value),
                 writer(),
                 100,
-            );
+            )?;
             let data = encode_claim_body(&body)?;
             let occurred = TimeRange {
                 start: 100,
@@ -272,7 +272,7 @@ fn substrate_session_batch_uses_the_same_value_and_person_admission() -> Result<
             Value::from(value),
             writer(),
             100,
-        );
+        )?;
         let occurred = TimeRange {
             start: 100,
             end: 100,

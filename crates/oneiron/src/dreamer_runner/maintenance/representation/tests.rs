@@ -143,7 +143,8 @@ fn seed_source(
 }
 fn install_policy(vault: &Vault, actor: EntityId, allow_send: bool) {
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap();
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .unwrap();
     let Value::Map(ref mut entries) = manifest else {
         panic!("default manifest map");
     };
@@ -269,6 +270,7 @@ fn drive(vault: &Vault, now: u64) {
             budget_total_units: 1000,
             reserve_units: 10,
             now,
+            host_scope: None,
         },
         &mut executor,
         &cancel,
@@ -516,4 +518,75 @@ fn generic_inbox_approval_cannot_arm_representation_delivery() {
         Err(crate::Error::InvalidClaimBody(_))
     ));
     assert!(f.vault.connector_send_tasks().unwrap().is_empty());
+}
+#[test]
+fn representation_context_read_keeps_its_receipt() {
+    let f = Fixture::new(true);
+    let request = f.request(RepresentationKind::Introduction);
+    let context = f
+        .vault
+        .representation_context(&request)
+        .expect("scoped source context");
+    // The context carries the Dreamer actor's own receipt for the sources it
+    // read: the same ceiling a direct scoped read by that actor reports.
+    let dreamer = crate::claim::ScopedReadActorKey::with_actor_class(
+        f.vault.dreamer_authority().unwrap().entity_ref().to_hex(),
+        "agent",
+    )
+    .unwrap();
+    assert_eq!(
+        context.receipt,
+        f.vault.scoped_read(dreamer).read_receipt(None, 0).unwrap()
+    );
+    assert_eq!(context.receipt.suppressed_count, 0);
+    // A source outside that ceiling never yields a context with a quieter receipt.
+    seed_source(
+        &f.vault,
+        id(0x65),
+        id(0x51),
+        "Outside the actor's worlds.",
+        Some(id(0x71)),
+    );
+    let mut hidden = request;
+    hidden.evidence[0].claim = id(0x65);
+    assert!(f.vault.representation_context(&hidden).is_err());
+}
+
+#[test]
+fn receipt_retention_keeps_the_owner_bundle_receipt_for_load_and_schedule() {
+    let f = Fixture::new(true);
+    let proposal = f.propose(RepresentationKind::Reply, 100);
+    let review = f.vault.review_representation(&f.owner, &proposal).unwrap();
+    let approved = f
+        .vault
+        .approve_representation(&f.owner, &review, 101)
+        .unwrap();
+    crate::test_util::backdate_claim_gate_decisions(&f.vault, 1).unwrap();
+    f.vault
+        .set_gate_decision_retention_secs(&f.owner, Some(60))
+        .unwrap();
+    f.vault.sweep_gate_decision_retention().unwrap();
+    assert_eq!(
+        f.vault.approved_representation(&proposal).unwrap(),
+        approved
+    );
+    let facade = f.vault.memory(
+        f.vault.dreamer_authority().unwrap().entity_ref(),
+        EdgeActorClass::Agent,
+    );
+    let context = crate::memory::OutboundScheduleContext {
+        utc_offset_minutes: Some(0),
+        ..Default::default()
+    };
+    let receipt = schedule_approved_representation(&facade, approved, &context, 102).unwrap();
+    assert_eq!(receipt.gate_outcome.as_deref(), Some("allow"));
+    let mut sink = RecordingSink {
+        vault: &f.vault,
+        sent: Vec::new(),
+    };
+    assert_eq!(
+        f.vault.run_connector_task_executor(&mut sink, 103).unwrap(),
+        1
+    );
+    assert_eq!(sink.sent.len(), 1);
 }

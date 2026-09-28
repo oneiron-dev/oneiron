@@ -43,7 +43,8 @@ pub(super) fn put_domain_claim(
                 1.0,
                 crate::claim::ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -158,7 +159,8 @@ pub(super) fn f6_claim(
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = world;
     vault
         .put_claim(

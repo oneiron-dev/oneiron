@@ -10,9 +10,8 @@ use super::lifecycle::{
     supersede_family_owned_claim_in_txn,
 };
 use super::storage::{
-    counterparty_contact_channel_class, counterparty_contact_index_key,
-    counterparty_contact_index_key_for_record, decode_counterparty_contact_index_value,
-    encode_counterparty_contact_index_value, put_counterparty_contact_party_channel_index,
+    CONTACT_INDEX, counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
+    counterparty_contact_index_key_parts, put_counterparty_contact_party_channel_index,
     read_counterparty_contact_in_txn,
 };
 use super::types::{CounterpartyContactRecord, CounterpartyOptOutReason};
@@ -186,7 +185,7 @@ impl Vault {
             }
         }
 
-        for body in record.claim_bodies(*contact_id) {
+        for body in record.claim_bodies(*contact_id)? {
             let existing = live
                 .iter()
                 .find(|(_, live_body)| live_body.predicate == body.predicate);
@@ -316,9 +315,8 @@ impl Vault {
         identity_ref: &EntityId,
         counterparty: &str,
     ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
-        let index_key = counterparty_contact_index_key(identity_ref, counterparty)?;
-        if let Some(raw_id) = self.store.vault_meta.get(rtxn, &index_key)? {
-            let id = decode_counterparty_contact_index_value(&raw_id)?;
+        let index_key = counterparty_contact_index_key_parts(identity_ref, counterparty)?;
+        if let Some(id) = CONTACT_INDEX.get(&self.store, rtxn, &index_key)? {
             let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
                 return Err(Error::CorruptedIndex(
                     "counterparty contact lookup index entity row",
@@ -393,11 +391,10 @@ impl Vault {
         record: &CounterpartyContactRecord,
     ) -> Result<bool> {
         let index_key = counterparty_contact_index_key_for_record(record)?;
-        if let Some(raw_id) = self.store.vault_meta.get(txn, &index_key)? {
-            let existing_id = decode_counterparty_contact_index_value(&raw_id)?;
-            if existing_id != *id {
-                return Ok(true);
-            }
+        if let Some(existing_id) = CONTACT_INDEX.get(&self.store, txn, &index_key)?
+            && existing_id != *id
+        {
+            return Ok(true);
         }
 
         for entry in
@@ -432,11 +429,10 @@ impl Vault {
     ) -> Result<()> {
         let record = decode_counterparty_contact_body(&data)?;
         let new_index_key = counterparty_contact_index_key_for_record(&record)?;
-        if let Some(raw_id) = self.store.vault_meta.get(&*wtxn, &new_index_key)? {
-            let existing_id = decode_counterparty_contact_index_value(&raw_id)?;
-            if existing_id != *id {
-                return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
-            }
+        if let Some(existing_id) = CONTACT_INDEX.get(&self.store, &*wtxn, &new_index_key)?
+            && existing_id != *id
+        {
+            return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
         }
 
         let old_index_key = if let Some(raw) = self
@@ -458,7 +454,7 @@ impl Vault {
         if let Some(old_index_key) = old_index_key.as_ref()
             && old_index_key != &new_index_key
         {
-            self.store.vault_meta.delete(wtxn, old_index_key)?;
+            CONTACT_INDEX.delete(&self.store, wtxn, old_index_key)?;
         }
 
         apply_ops(
@@ -484,10 +480,7 @@ impl Vault {
             false,
             true,
         )?;
-        let index_value = encode_counterparty_contact_index_value(id);
-        self.store
-            .vault_meta
-            .put(wtxn, &new_index_key, &index_value)?;
+        CONTACT_INDEX.put(&self.store, wtxn, &new_index_key, id)?;
 
         // Identity-independent leg. A record whose identity has no resolvable
         // channel class is simply not indexed — the send-time full scan is what

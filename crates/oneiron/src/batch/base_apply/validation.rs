@@ -4,6 +4,28 @@ use crate::secret_custody::validate_replicated_custody_put;
 
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;
 
+pub(super) fn mark_unapplied_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: &PreflightDecisionIds,
+) -> Result<()> {
+    for id in ids.values().flat_map(|queue| queue.iter().flatten()) {
+        store.mark_unapplied_preflight_decision_in_txn(wtxn, *id)?;
+    }
+    Ok(())
+}
+
+pub(super) fn consume_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: impl IntoIterator<Item = Option<crate::store::GateDecisionId>>,
+) -> Result<()> {
+    for id in ids.into_iter().flatten() {
+        store.consume_unapplied_preflight_decision_in_txn(wtxn, id)?;
+    }
+    Ok(())
+}
+
 pub(super) fn take_lapse_decisions(
     preflight: &mut PreflightDecisionIds,
     ids: &[EntityId],
@@ -79,6 +101,11 @@ pub(super) fn validate_put_type(
     } else {
         store.validate_public_entity_type(entity_type)?;
     }
+    // A local write to a thin-cached id waits for its window's promotion.
+    #[cfg(feature = "sync")]
+    if !(allow_maintenance && allow_reserved_predicate) {
+        crate::sync::residence::require_promoted_for_cached_id(store, wtxn, id)?;
+    }
     Ok(entity_type)
 }
 
@@ -99,7 +126,7 @@ pub(super) fn birth_stamp_target(
             entity_type,
             crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
         )
-        || store.entities.get(txn, id.as_bytes())?.is_some()
+        || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some()
     {
         return Ok(None);
     }

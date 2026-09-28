@@ -115,10 +115,14 @@ pub(crate) async fn get_entity(
 
     let scoped_read = scoped_read_for_legacy_api(&server)?;
     let read = scoped_read
-        .get_entity_parts_with_receipt(&id, None)
+        .read(&[oneiron::claim::PointRead::id(id)], None)
         .inspect_err(|error| tracing::error!(%error,"get entity failed"))
-        .map_err(|_| ApiError::internal_server_error("get entity failed"))?;
-    let response = match read.value {
+        .map_err(|_| ApiError::internal_server_error("get entity failed"))?
+        .single();
+    let response = match read
+        .value
+        .and_then(|row| row.body.map(|data| (row.entity_type, row.learned_at, data)))
+    {
         None => ApiError::not_found("entity", Some(&id_hex)).into_response(),
         Some((_, _, data)) if view == View::Standard => {
             (StatusCode::OK, redacted_payload(data)?).into_response()
@@ -188,11 +192,7 @@ mod credential_tests {
     #[tokio::test]
     async fn edge_transport_keeps_its_array_and_receipts_missing_and_live_sources() {
         let (_dir, server) = crate::api::tests::auth_test_server();
-        let mut owner = HeaderMap::new();
-        owner.insert(
-            axum::http::header::AUTHORIZATION,
-            crate::api::tests::owner_bearer().parse().unwrap(),
-        );
+        let (slip, key) = crate::test_credentials::credential(&server, "jti=edge-transport");
         let id = oneiron::EntityId::from_bytes([0x31; 16]).unwrap();
         for present in [false, true] {
             if present {
@@ -207,8 +207,16 @@ mod credential_tests {
                     )
                     .unwrap();
             }
+            let signed = crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
+                axum::http::Request::builder()
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            );
             let response = get_edges(
-                owner.clone(),
+                signed.headers().clone(),
                 State(server.clone()),
                 Path(id.to_hex()),
                 Ok(Query(ViewQuery {
@@ -242,7 +250,7 @@ mod credential_tests {
                 assert_eq!(edges[0]["kind"], oneiron::EdgeKind::HasFacet as u8);
                 assert_eq!(
                     edges[0]["target"],
-                    oneiron::claim::substrate_facet_id(id).to_hex()
+                    oneiron::claim::substrate_facet_id(id).unwrap().to_hex()
                 );
             }
         }

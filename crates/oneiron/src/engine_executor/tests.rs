@@ -19,6 +19,7 @@ use crate::{
 use super::*;
 
 mod output_decay;
+mod seat_routing;
 mod speech_identity_regressions;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -102,6 +103,7 @@ fn executor_config(run_id: EntityId, limits: EngineExecutorLimits) -> EngineExec
         prompt_package_root: prompt_package_root(),
         model: model(),
         model_locality: ModelLocality::OwnServer,
+        seat_effort: None,
         global_tier: ModelTierRef("executor-tier".to_owned()),
         determinism: determinism(),
         limits,
@@ -3145,8 +3147,14 @@ fn executor_boundary_and_prompt_advertise_the_speech_family() {
 /// and the MESSAGEs it writes are readable through the ordinary facade — the
 /// same rows an off-record run would put in its overlay, through the same
 /// door. Returns every executor MESSAGE the run left, in `order`.
-fn executor_bubbles(vault: &Vault, actor: EntityId) -> Vec<(String, String, bool, u64)> {
-    let facade = vault.memory(actor, EdgeActorClass::Agent);
+///
+/// The rows are read by the vault owner: the agent's own facade reads are
+/// grant-bound, and these fixtures grant it none
+/// (`session_speech_bubbles_are_authored_by_companion` pins that narrowing).
+/// `actor` only names the run; the rows are every MESSAGE in the vault.
+fn executor_bubbles(vault: &Vault, _actor: EntityId) -> Vec<(String, String, bool, u64)> {
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
+    let facade = vault.memory(owner, EdgeActorClass::Human);
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let mut ids = Vec::new();
     for row in vault
@@ -3169,6 +3177,7 @@ fn executor_bubbles(vault: &Vault, actor: EntityId) -> Vec<(String, String, bool
             let view = facade
                 .get_entity(&id.to_hex())
                 .expect("get message")
+                .value
                 .expect("message exists");
             let body = view.body.expect("message body decodes");
             (
@@ -3804,7 +3813,8 @@ fn session_speech_bubbles_are_authored_by_companion() {
     )
     .actor;
 
-    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
+    let facade = vault.memory(owner, EdgeActorClass::Human);
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let mut ids = Vec::new();
     for row in vault
@@ -3822,9 +3832,24 @@ fn session_speech_bubbles_are_authored_by_companion() {
     drop(rtxn);
     assert_eq!(ids.len(), 1, "one speech call, one bubble");
 
+    // The agent's own facade read is grant-bound and this vault grants it
+    // no read: the bubble is withheld, and the receipt says so.
+    let agent_read = vault
+        .memory(actor, EdgeActorClass::Agent)
+        .get_entity(&ids[0].to_hex())
+        .expect("agent read");
+    assert!(agent_read.value.is_none());
+    assert!(agent_read.receipt.applied.deny_all);
+    assert!(
+        agent_read
+            .receipt
+            .narrowed_axes
+            .contains(&"deny_all".to_owned())
+    );
     let view = facade
         .get_entity(&ids[0].to_hex())
         .expect("get message")
+        .value
         .expect("message exists");
     let body = view.body.expect("message body decodes");
     assert_eq!(body["author"], serde_json::json!("companion"));

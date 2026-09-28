@@ -10,11 +10,17 @@ use crate::memory::MemoryResult;
 use crate::ports::EdgeStoreRead;
 use crate::ports::{EntityStore, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_TURN};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use rmpv::Value;
+
+/// Marker that a derived EVENT's source was erased. Key: the event id; value:
+/// the erased source's id.
+const INVALIDATED_EVENT: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CALENDAR_INVALIDATED_EVENT);
 
 /// Origin-specific EVENT fields. An absent origin is a write refusal, never a default.
 #[derive(Debug, Clone, Default)]
@@ -222,7 +228,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         // Recorded projector fact, not a user-authored assertion about origin.
         claim.evidence = Some(Value::Map(vec![
             (Value::from("kind"), Value::from("calendar_projector")),
@@ -515,9 +521,6 @@ pub(crate) fn survives_source_deletion(
     Ok(live_origin(store, txn, event)? == Some(CalendarOrigin::Native))
 }
 
-fn invalid_key(event: EntityId) -> Vec<u8> {
-    [b"calendar_invalid:v1:".as_slice(), event.as_bytes()].concat()
-}
 pub(crate) fn invalidate_dependents(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -555,21 +558,14 @@ pub(crate) fn invalidate_dependents(
         }
     }
     for event in dependents {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &invalid_key(event), source.as_bytes())?;
+        INVALIDATED_EVENT.put(&vault.store, txn, &event, source)?;
     }
     Ok(())
 }
 pub(in crate::calendar) fn invalidated(vault: &Vault, event: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     Ok(!replay_origin_bound(&vault.store, &txn, event)?
-        || vault
-            .store
-            .vault_meta
-            .get(&txn, &invalid_key(event))?
-            .is_some())
+        || INVALIDATED_EVENT.contains(&vault.store, &txn, &event)?)
 }
 
 #[cfg(test)]

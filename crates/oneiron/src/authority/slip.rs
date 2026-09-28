@@ -173,18 +173,9 @@ impl VerifiedSlip {
                 .is_none_or(|ids| ids.len() != 1)
             || !crate::federation::Ceiling::new(requested.clone())
                 .is_within(&crate::federation::Ceiling::new(effective.clone()))
-            || matches!(
-                effective.worlds,
-                crate::federation::FederationScopeWorlds::Bottom
-            )
-            || matches!(
-                effective.facets,
-                crate::federation::FederationScopeFacets::Bottom
-            )
-            || matches!(
-                effective.bands,
-                crate::federation::FederationScopeBands::Bottom
-            )
+            || effective.worlds.is_bottom()
+            || effective.facets.is_bottom()
+            || effective.bands.is_bottom()
         {
             return Err(invalid_authority());
         }

@@ -8,8 +8,10 @@ fn fixture() -> (
     AuthenticatedOwner,
     AuthenticatedOwner,
 ) {
-    let (dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    // Membership defaults are manifest policy. Keep the seeded manifest
+    // rather than using the legacy test opener that removes every policy row.
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
     let mut owners = Vec::new();
     for _ in 0..2 {
         let id = EntityId::now();
@@ -99,6 +101,27 @@ fn every_preset_persists_explicit_grants_and_policy_once() -> Result<()> {
     assert_eq!(explicit.policy_ref, None);
     Ok(())
 }
+#[test]
+fn ask_guest_role_is_not_shared_vault_membership() -> Result<()> {
+    let (_dir, vault, owner, companion) = fixture();
+    assert!(
+        vault
+            .initialize_shared_vault(
+                &owner,
+                42,
+                None,
+                &[InitialSharedMember {
+                    member_ref: companion.actor(),
+                    role: Some(FederationGrantRole::Guest),
+                }],
+                1,
+            )
+            .is_err()
+    );
+    assert_eq!(vault.shared_vault_creation()?, None);
+    Ok(())
+}
+
 #[test]
 fn equal_admins_keep_both_rulings_and_newest_wins_in_any_fold_order() -> Result<()> {
     let (_dir, vault, owner, admin) = fixture();
@@ -318,6 +341,7 @@ fn replicated_rulings_require_real_admin_grant_and_supported_causal_order() -> R
         "viewer",
         "other_vault",
         "future_grant",
+        "guest",
         "order",
     ] {
         let (_dir, source, owner, _) = fixture();
@@ -351,6 +375,15 @@ fn replicated_rulings_require_real_admin_grant_and_supported_causal_order() -> R
             if fault == "viewer" {
                 grant.role = FederationGrantRole::Viewer;
                 grant.preset = FederationGrantPreset::ReadOnly;
+            }
+            if fault == "guest" {
+                grant = FederationGrant::ask_guest(
+                    EntityId::now(),
+                    owner.actor(),
+                    EntityId::now(),
+                    EntityId::now(),
+                    std::collections::BTreeSet::from([EntityId::now()]),
+                )?;
             }
             let at = if fault == "future_grant" { 3 } else { 1 };
             target
@@ -404,5 +437,41 @@ fn replicated_rulings_require_real_admin_grant_and_supported_causal_order() -> R
             assert_eq!(target.live_admin_ruling(42, "setting")?, Some(next.ruling));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn ask_guest_does_not_count_as_existing_shared_membership() -> Result<()> {
+    let (_dir, vault, owner, _) = fixture();
+    let grant = FederationGrant::ask_guest(
+        EntityId::now(),
+        EntityId::now(),
+        owner.actor(),
+        EntityId::now(),
+        std::collections::BTreeSet::from([EntityId::now()]),
+    )?;
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant)?,
+        )
+        .commit()?;
+    let creation = vault.initialize_shared_vault(
+        &owner,
+        42,
+        None,
+        &[InitialSharedMember {
+            member_ref: owner.actor(),
+            role: Some(FederationGrantRole::Admin),
+        }],
+        2,
+    )?;
+    assert_eq!(creation.grant_refs.len(), 1);
+    assert_ne!(creation.grant_refs[0], id.to_hex());
     Ok(())
 }

@@ -8,28 +8,20 @@ pub(super) const POLICY_PACK_ID_KEY: &str = "pack_id";
 pub(super) const POLICY_PACK_VERSION_KEY: &str = "pack_version";
 pub(super) const POLICY_MIN_ENGINE_VERSION_KEY: &str = "min_engine_version";
 pub(super) const POLICY_DEFAULTS_KEY: &str = "defaults";
+pub(super) const POLICY_CREDENTIAL_LIFETIMES_KEY: &str = "credential_lifetimes";
 pub(super) const POLICY_RULES_KEY: &str = "rules";
+/// Separate from claim axes: optimizer goals are typed admission policy rows.
+pub(super) const POLICY_SKILL_EDIT_GOAL_KEY: &str = "skill_edit_goal_policy";
 pub(super) const POLICY_ACTOR_CEILINGS_KEY: &str = "actor_ceilings";
 pub(super) const POLICY_DELEGATED_GRANTS_KEY: &str = "delegated_grants";
 pub(super) const MAX_DELEGATION_DEPTH: u8 = 8;
 pub(super) const POLICY_SOURCE_TRUST_KEY: &str = "source_trust";
+pub(super) const POLICY_WEAVE_CORRECTION_POLICY_KEY: &str = "weave_correction_policy";
 pub(super) const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 pub(super) const POLICY_SIGNATURE_KEY: &str = "signature";
 pub(super) const POLICY_SIGNATURES_KEY: &str = "signatures";
 pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
-/// Optional TOP-LEVEL manifest key (never a rule-scoped axis) carrying the
-/// vault's posture toward a send to an opted-out counterparty that carries no
-/// `comm.send_override`: `escalate` (the default when the key is absent
-/// anywhere) holds the send for the owner, `allow_with_receipt` sends it
-/// immediately with the opt-out receipt trail.
-///
-/// It is DEC-0005 policy data, so it resolves restrictively across matching
-/// packs — any pack saying `escalate` wins — and it is hashed into
-/// `hash_policy_frontier_v0`, because a posture change moves gate outcomes and
-/// must invalidate standing grants exactly like every other frontier input. An
-/// unrecognized token fails the whole manifest closed at parse time, in the
-/// same class as an invalid `on_budget_exhausted` token.
-pub(super) const POLICY_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
+pub(super) const POLICY_PROJECT_COLLABORATION_KEY: &str = "project_collaboration";
 /// Optional top-level manifest key naming the HOST's auto checker (ONE-1296).
 ///
 /// The value is an opaque non-empty string the engine never interprets: it
@@ -40,6 +32,9 @@ pub(super) const POLICY_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
 /// different checkers, both fail the gate closed; two manifests naming the
 /// same checker are one configuration stated twice.
 pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
+/// Optional table of shared-vault act-policy rows, keyed by act name. Only a
+/// trusted manifest contributes rows; two differing tables fail closed.
+pub(crate) const POLICY_SHARED_ACT_POLICIES_KEY: &str = "shared_act_policies";
 /// Optional top-level manifest key whose value is an ordered MessagePack
 /// array of row maps. Each row selects exactly one call set — one `purpose`
 /// string (a pinned `CallPurpose` snake-case name, or any other non-empty
@@ -66,13 +61,84 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// # One autonomous agent is guaranteed a slice but cannot consume the vault.
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
+/// Attribution admission/work budgets are policy data, not evidence codec law.
+/// Multiple trusted packs narrow these rows; holder rows can only narrow the
+/// vault's reason limit, never raise it.
+pub(super) const POLICY_ATTRIBUTION_LIMITS_KEY: &str = "attribution_limits";
+pub(super) const ATTRIBUTION_PRECEDENCE_KEY: &str = "precedence";
+pub(super) const ATTRIBUTION_REASON_MAX_BYTES_KEY: &str = "reason_max_bytes";
+pub(super) const ATTRIBUTION_RECEIPTS_PER_PASS_KEY: &str = "receipts_per_pass";
+pub(super) const ATTRIBUTION_HOLDER_REASON_BYTES_KEY: &str = "holder_reason_bytes";
+pub(super) const ATTRIBUTION_HOLDER_ACTOR_KEY: &str = "actor_ref";
+pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
+/// Vault-resident extraction-teacher quality floor, in F1 millionths.
+/// The seeded default is data in `default_policy_manifest`; nested holder
+/// floors only narrow it, and independent trusted packs compose by max.
+pub(super) const POLICY_TEACHER_PROBE_KEY: &str = "teacher_probe";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
+/// Bounded policy rows for foreign connector admission, not persisted-body codec bounds.
+pub(super) const POLICY_CONNECTOR_ADMISSION_KEY: &str = "connector_admission";
+/// Optional trusted DEC-0005 manifest setting for gate-decision age pruning.
+/// The seeded default has a null horizon (no pruning), and an owner-authored
+/// row overrides it. Conflicting owner rows are ambiguous and fail closed.
+pub(super) const POLICY_GATE_DECISION_RETENTION_KEY: &str = "gate_decision_retention";
+pub(super) const GATE_RETENTION_HORIZON_SECS_KEY: &str = "horizon_secs";
+pub(super) const GATE_RETENTION_MAX_SWEEP_ROWS_KEY: &str = "max_sweep_rows";
+pub(super) const GATE_RETENTION_PRECEDENCE_KEY: &str = "precedence";
+pub(super) const GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY: &str = "holder_override_ceiling";
+/// Complete typed conversion policy map; an absent row keeps the default.
+pub(super) const POLICY_PROJECT_CONVERSION_KEY: &str = "project_conversion";
+/// Per-format edit resource budgets; precedence is a required manifest row.
+pub(crate) const POLICY_PPTX_COMMENT_LIMITS_KEY: &str = "pptx_comment_limits";
+/// Ordered restrict-only rows: vault, artifact, and named sheet caps compose
+/// by minimum. The shipped vault row bounds holder overrides.
+pub(super) const POLICY_SHEET_ANSWER_LIMITS_KEY: &str = "sheet_answer_limits";
+/// The shipped scope-composition row, distinct from the numeric limit rows.
+pub(super) const POLICY_SHEET_ANSWER_PRECEDENCE_KEY: &str = "sheet_answer_precedence";
+pub(super) const POLICY_DREAMER_FAILURE_RULES_KEY: &str = "dreamer_failure_rules";
+pub(super) const POLICY_DREAMER_FAILURE_PRECEDENCE_KEY: &str = "dreamer_failure_precedence";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
+/// Vault and holder rows for artifact-review operating limits and precedence.
+pub(super) const POLICY_SLIDE_REVIEW_KEY: &str = "slide_review_policy";
+/// Vault-wide resource ceilings for bounded office package parsing.
+pub(super) const POLICY_DOCEDIT_RESOURCE_KEY: &str = "docedit_resource_policy";
+/// Trusted vault-level DOCX ZIP workload row. Every dimension only narrows
+/// the shipped upper default; per-call holders may narrow it again.
+pub(super) const POLICY_DOCX_ARCHIVE_LIMITS_KEY: &str = "docx_archive_limits";
+
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";
 pub(super) const BUDGET_POLICY_CAP_KEY: &str = "cap";
+/// Optional manifest table carrying HOW LONG a named wait must run
+/// (DEC-0005 floors-and-ceilings, owner rule 2026-09-27). A row is
+/// `{ wait_class, min_secs, max_secs?, holder_ref?, holder_precedence? }`:
+/// `min_secs` is the floor a caller cannot go under, `max_secs` the ceiling
+/// that also caps how far a holder row may raise the floor. A class no row
+/// names is ungoverned, and the caller keeps its own shipped default.
+pub(super) const POLICY_WAIT_POLICY_KEY: &str = "wait_policy";
+pub(super) const WAIT_POLICY_CLASS_KEY: &str = "wait_class";
+pub(super) const WAIT_POLICY_MIN_SECS_KEY: &str = "min_secs";
+pub(super) const WAIT_POLICY_MAX_SECS_KEY: &str = "max_secs";
+/// Optional manifest table carrying WHETHER a named act class may run for a
+/// named subject class. A row is
+/// `{ act_class, subject_class, posture, holder_ref?, holder_precedence? }`
+/// with posture `deny` (the restrictive pole) or `require_capability` (the
+/// class is not barred; the substrate check still has to find the capability).
+pub(super) const POLICY_ACT_POLICY_KEY: &str = "act_policy";
+pub(super) const ACT_POLICY_CLASS_KEY: &str = "act_class";
+pub(super) const ACT_POLICY_SUBJECT_CLASS_KEY: &str = "subject_class";
+pub(super) const ACT_POLICY_POSTURE_KEY: &str = "posture";
+/// Shared by both class tables: the actor a HOLDER-scoped row names, and what
+/// the vault row lets holder rows do (`nested_narrowing`, the default, or
+/// `vault_only`).
+pub(super) const CLASS_POLICY_HOLDER_REF_KEY: &str = "holder_ref";
+pub(super) const CLASS_POLICY_PRECEDENCE_KEY: &str = "holder_precedence";
 pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
+/// Manifest-authored owner row composition. Absence resolves to nested narrowing.
+pub(crate) const POLICY_OWNER_POLICY_PRECEDENCE_KEY: &str = "owner_policy_precedence";
+/// Manifest-resident delivery rule for owner-policy change receipts.
+pub(crate) const POLICY_OWNER_POLICY_NOTIFY_KEY: &str = "owner_policy_change_notifications";
 pub(crate) const POLICY_OWNER_POLICY_ENABLED_KEY: &str = "owner_policy_enabled";
 /// The owner plane's POLICY DOCUMENT: the text the vault owner wrote, sent to
 /// their safeguard model verbatim as the system message. Absent by default —
@@ -101,6 +167,13 @@ pub(super) const POLICY_PATTERN_ROLE_KEY: &str = "role";
 /// therefore bricks every pre-existing vault on upgrade. It stays listed, and
 /// nothing reads its value.
 pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
+/// Retired flat top-level keys (ONE-2673). Both values moved to typed
+/// `policy_values` rows, and the engine reads only rows. Decode still accepts
+/// the names, for the same upgrade reason as `legal_floor_rows` above: a
+/// manifest written before the move must not fail the whole gate closed.
+/// Nothing reads their values.
+pub(super) const POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY: &str = "comm_opt_out_posture";
+pub(super) const POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY: &str = "proposal_check_threshold";
 
 pub(super) const AXIS_CRITICALITY_KEY: &str = "criticality";
 pub(super) const AXIS_SENSITIVITY_KEY: &str = "sensitivity";
@@ -150,3 +223,13 @@ pub(crate) const POLICY_ROW_WORLD_REF_KEY: &str = "world_ref";
 pub(super) const LOCAL_WRITE_ACTOR_CLASS: &str = "first_party";
 pub(super) const LOCAL_WRITE_ACTOR_ENTITY_REF: [u8; ENTITY_ID_LEN] = [0x47; ENTITY_ID_LEN];
 pub(crate) const FIRST_PARTY_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE1; ENTITY_ID_LEN];
+
+pub(super) const POLICY_CONNECTOR_CLASS_CARRY_KEY: &str = "connector_class_carry";
+pub(super) const POLICY_CONNECTOR_CLASS_ROLE_KEY: &str = "connector_class_role";
+pub(super) const POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY: &str = "connector_class_precedence";
+/// Trusted policy rows for cross-vault ask limits, surface and retry cadence.
+pub(super) const POLICY_ASK_POLICY_KEY: &str = "ask_policy";
+
+/// Optional trusted manifest ceiling for device world-window subscriptions.
+pub(crate) const POLICY_SYNC_WORLD_CEILING_KEY: &str = "sync_world_ceiling";
+pub(crate) const POLICY_SYNC_WORLD_DEFAULT_KEY: &str = "sync_world_default";

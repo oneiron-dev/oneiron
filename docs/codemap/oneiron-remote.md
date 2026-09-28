@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `examples/provision-fixture-actor.rs` | src | s | — | — | Provisions the wire fixture's owner actor on a PRE-SERVER vault |
-| `src/agent_verbs.rs` | src | m | 25 fn | — | — |
+| `src/agent_verbs.rs` | src | m | 29 fn | — | — |
 | `src/caps.rs` | src | s | 1 re-export | — | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `src/embedded.rs` | src | m | 1 fn · 14 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/origin.rs` | src | s | 2 crate-vis | — | — |
 | `src/remote/pairing.rs` | src | s | 2 crate-vis | — | — |
 | `src/remote/response.rs` | src | s | 6 crate-vis | — | — |
-| `src/remote/tests.rs` | test | s | — | — | — |
+| `src/remote/tests.rs` | test | m | — | — | — |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
 | `tests/facade_contract.rs` | test | s | — | — | ONE-1441 shared-backend contract tests (blueprint §Test/Shared #1–#4) |

@@ -1,9 +1,10 @@
 //! Idempotency validators: turn/message existence, parent/actor binding, order collision axes.
 
 use super::super::*;
+use super::codec::decode_witness_turn_person;
 use super::decode_witness_turn_speaker;
 use crate::ports::EdgeStoreRead;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityRecord, EntityStoreRead};
 
 use std::collections::HashSet;
 
@@ -43,18 +44,19 @@ pub(crate) fn sole_edge_target(
     Ok(target)
 }
 
-/// Checks whether a deterministic TURN already exists and, when it does,
-/// proves that retrying it cannot move it under another conversation or
-/// speaker.
+/// Reads a deterministic TURN and, when it exists, proves that retrying it
+/// cannot move it under another conversation or speaker. `Some` is the
+/// verified stored row.
 pub(super) fn validate_existing_witness_turn(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     turn_id: &EntityId,
     conversation_id: &EntityId,
     incoming_speaker: Option<&str>,
-) -> MemoryResult<bool> {
+    _incoming_person: Option<EntityId>,
+) -> MemoryResult<Option<EntityRecord>> {
     let Some(raw) = dbs.port_entity_record(txn, turn_id)? else {
-        return Ok(false);
+        return Ok(None);
     };
 
     if raw.entity_type != ENTITY_TYPE_TURN {
@@ -62,6 +64,11 @@ pub(super) fn validate_existing_witness_turn(
             "the witnessed turn ref resolves to a non-TURN entity",
         ));
     }
+    // The first writer's PERSON byline is immutable. A later witness call may
+    // append messages under a different actor (including a SYSTEM interleave)
+    // without claiming to become the author of the existing TURN. The re-put
+    // below preserves these bytes exactly; malformed stored bylines still fail.
+    decode_witness_turn_person(&raw.body)?;
     let stored_speaker = decode_witness_turn_speaker(&raw.body)?;
     if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
         return Err(MemoryError::bad_request(
@@ -73,7 +80,7 @@ pub(super) fn validate_existing_witness_turn(
             "the witnessed turn already belongs to another conversation",
         ));
     }
-    Ok(true)
+    Ok(Some(raw))
 }
 
 /// Checks whether a deterministic MESSAGE already exists. Its canonical body

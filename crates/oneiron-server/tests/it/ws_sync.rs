@@ -3,7 +3,7 @@
 //! WebSocket integration tests for the sync server (ONE-1129).
 //!
 //! Covers the M4 server-durability + auth acceptance criteria:
-//! - `/ws` upgrade auth (Phase-1 shared secret, fail-closed when configured)
+//! - `/ws` upgrade auth (logged holder-bound slips, fail-closed when configured)
 //! - update relay between two live clients + sync_state durability literals
 //! - restart durability: a relayed update AND a relayed tombstone survive a
 //!   server restart (the cross-device delete-propagation case)
@@ -42,7 +42,7 @@ use oneiron::sync::transport::{
 };
 use oneiron::sync::{
     ConnectionConfig, EphemeralStore, EphemeralWireState, LoroValue, SyncClient, SyncClientConfig,
-    SyncConnection, SyncEvent, SyncStatus, WindowManager,
+    SyncConnection, SyncEvent, SyncStatus, SyncTransportCredential, WindowManager,
 };
 use oneiron::{EdgeKind, EntityId, TimeRange, VaultConfig};
 use oneiron_server::build_app;
@@ -195,6 +195,58 @@ async fn connect_without_hello(
         .map(|(ws, _resp)| ws)
 }
 
+/// Fresh proof for the logged host root; never send the issuer secret as a bearer.
+fn root_auth_headers(server: &SyncServer, secret: &str) -> String {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+    let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let timestamp = server.vault().now_recorded_at();
+    let nonce = EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .unwrap()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let binding = serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature});
+    format!(
+        "Authorization: Bearer {}\r\nx-oneiron-binding: {}\r\n",
+        slip.to_token().unwrap(),
+        binding
+    )
+}
+
+async fn connect_root(
+    addr: SocketAddr,
+    server: &SyncServer,
+    secret: &str,
+) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
+    let mut ws = connect_root_without_hello(addr, server, secret).await?;
+    send_protocol_hello(&mut ws).await?;
+    Ok(ws)
+}
+
+/// Host-root upgrade with no protocol hello, for tests that pick their own.
+async fn connect_root_without_hello(
+    addr: SocketAddr,
+    server: &SyncServer,
+    secret: &str,
+) -> Result<WsStream, tokio_tungstenite::tungstenite::Error> {
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    let headers = root_auth_headers(server, secret);
+    for line in headers.lines() {
+        let Some((name, value)) = line.split_once(": ") else {
+            continue;
+        };
+        request.headers_mut().insert(
+            name.parse::<axum::http::header::HeaderName>().unwrap(),
+            value.parse().unwrap(),
+        );
+    }
+    let (ws, _response) = tokio_tungstenite::connect_async(request).await?;
+    Ok(ws)
+}
+
 /// Phase 0 (ONE-1127): the FIRST frame must be the protocol-version hello, or
 /// the server closes with 4006 before any sync payload flows. These
 /// integration tests exercise the legacy unscoped full-window lane; selector
@@ -208,6 +260,35 @@ async fn send_protocol_hello(
     .await
 }
 
+/// Current owner protocol requires an explicit per-window VV subscription.
+/// These fixtures intentionally test broadcast delivery, not legacy v6.
+async fn subscribe_owner_window(ws: &mut WsStream, key: &str) {
+    send_window_vv_request(ws, key).await;
+    drain_vv_request_responses(ws, key).await;
+    // The first request also announces its new key in the root manifest.
+    let root = next_binary(ws).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+}
+
+async fn connect_subscribed_owner(
+    addr: SocketAddr,
+    server: &SyncServer,
+    secret: &str,
+    key: &str,
+) -> WsStream {
+    let mut ws = connect_root_without_hello(addr, server, secret)
+        .await
+        .unwrap();
+    ws.send(Message::Binary(
+        transport::encode_chunk_full_window_protocol_hello().into(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
+    subscribe_owner_window(&mut ws, key).await;
+    ws
+}
+
 async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
     loop {
         let msg = tokio::time::timeout(Duration::from_secs(10), ws.next())
@@ -219,6 +300,19 @@ async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
             Message::Binary(data) => return data.to_vec(),
             Message::Ping(_) | Message::Pong(_) => continue,
             other => panic!("unexpected WebSocket message: {other:?}"),
+        }
+    }
+}
+
+/// A first window touch also advertises its new root-index entry. Legacy
+/// window assertions drain that distinct root notice before the update.
+async fn next_window_frame(ws: &mut WsStream) -> Vec<u8> {
+    loop {
+        let frame = next_binary(ws).await;
+        match frame.first().copied() {
+            Some(TAG_SYNC_UPDATE) => continue,
+            Some(TAG_WINDOW_SYNC) => return frame,
+            _ => panic!("unexpected frame while waiting for window sync"),
         }
     }
 }
@@ -290,6 +384,18 @@ async fn http_get_bytes(addr: SocketAddr, path: &str, secret: Option<&str>) -> V
         .unwrap_or_default();
     http_get_with_headers(addr, path, &secret_header).await
 }
+async fn http_get_root(addr: SocketAddr, path: &str, server: &SyncServer, secret: &str) -> String {
+    String::from_utf8(http_get_root_bytes(addr, path, server, secret).await).unwrap()
+}
+async fn http_get_root_bytes(
+    addr: SocketAddr,
+    path: &str,
+    server: &SyncServer,
+    secret: &str,
+) -> Vec<u8> {
+    let headers = root_auth_headers(server, secret);
+    http_get_with_headers(addr, path, &headers).await
+}
 async fn http_get_with_headers(addr: SocketAddr, path: &str, secret_header: &str) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let request =
@@ -304,22 +410,30 @@ async fn http_get_with_headers(addr: SocketAddr, path: &str, secret_header: &str
     response
 }
 
-async fn http_post(
+async fn http_post_root(
     addr: SocketAddr,
     path: &str,
     body: &str,
-    secret: Option<&str>,
+    server: &SyncServer,
+    secret: &str,
+    idempotency_key: Option<&str>,
+) -> String {
+    let headers = root_auth_headers(server, secret);
+    http_post_with_headers(addr, path, body, &headers, idempotency_key).await
+}
+async fn http_post_with_headers(
+    addr: SocketAddr,
+    path: &str,
+    body: &str,
+    auth_header: &str,
     idempotency_key: Option<&str>,
 ) -> String {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let secret_header = secret
-        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
-        .unwrap_or_default();
     let idempotency_header = idempotency_key
         .map(|key| format!("Idempotency-Key: {key}\r\n"))
         .unwrap_or_default();
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{secret_header}{idempotency_header}\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth_header}{idempotency_header}\r\n{body}",
         body.len()
     );
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -401,8 +515,7 @@ async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
 
 async fn drain_vv_request_responses(ws: &mut WsStream, expected_key: &str) {
     for _ in 0..2 {
-        let frame = next_binary(ws).await;
-        assert_eq!(frame[0], TAG_WINDOW_SYNC);
+        let frame = next_window_frame(ws).await;
         let (window_key, _sub_tag, _payload) = transport::decode_window_sync(&frame[1..]).unwrap();
         assert_eq!(window_key, expected_key);
     }
@@ -485,7 +598,7 @@ fn apply_ephemeral_frame(store: &EphemeralStore, frame: &[u8]) {
 #[tokio::test]
 async fn ws_upgrade_rejects_unauthenticated_when_secret_configured() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("test-secret-aaaa")),
     )
@@ -495,14 +608,15 @@ async fn ws_upgrade_rejects_unauthenticated_when_secret_configured() {
     let err = connect(addr, None).await.unwrap_err();
     assert_unauthorized(&err);
 
-    // Wrong secret of the SAME length → 401 (exercises the constant-time
-    // comparison branch, not just the length check).
+    // A wrong issuer secret is never a bearer credential.
     let err = connect(addr, Some("test-secret-bbbb")).await.unwrap_err();
     assert_unauthorized(&err);
 
-    // Correct secret → upgrade succeeds and the Phase-1 root snapshot
+    // A logged owner slip and fresh holder proof → upgrade and the Phase-1 root snapshot
     // (TAG_SYNC_UPDATE) arrives.
-    let mut ws = connect(addr, Some("test-secret-aaaa")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "test-secret-aaaa")
+        .await
+        .unwrap();
     let first = next_binary(&mut ws).await;
     assert_eq!(first[0], TAG_SYNC_UPDATE);
 
@@ -622,9 +736,11 @@ async fn ws_upgrade_rejects_a_live_scoped_token_that_works_on_v1() {
     let err = connect_bound(addr, &scoped, true).await.unwrap_err();
     assert_unauthorized(&err);
 
-    // The owner-grade half: the same server admits a device credential and
+    // The owner-grade half: the same server admits a logged slip and
     // serves it the Phase-1 root snapshot.
-    let mut ws = connect(addr, Some("scoped-ws-secret")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "scoped-ws-secret")
+        .await
+        .unwrap();
     assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
 
     handle.abort();
@@ -817,8 +933,7 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
     // Both are drained here, so the post-revocation assertion below cannot
     // pass on a frame that was merely still in flight from the baseline.
     for expected_sub_tag in [window_sub_tags::UPDATE, window_sub_tags::VV_RESPONSE] {
-        let served = next_binary(&mut ws).await;
-        assert_eq!(served[0], TAG_WINDOW_SYNC);
+        let served = next_window_frame(&mut ws).await;
         let (_key, sub_tag, _payload) = transport::decode_window_sync(&served[1..]).unwrap();
         assert_eq!(
             sub_tag, expected_sub_tag,
@@ -826,6 +941,11 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
         );
     }
 
+    // A first window touch also publishes a root-index delta. The direct
+    // catch-up is deliberately sent first; drain that pre-revocation delta
+    // before asserting the socket serves nothing after revocation.
+    let index_notice = next_binary(&mut ws).await;
+    assert_eq!(index_notice[0], TAG_SYNC_UPDATE);
     // The operator revokes THIS token while the socket stays open.
     revoke_owner_slip(&server, "live-revoke-secret", &jti);
 
@@ -860,9 +980,18 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
 
     // A holds the token that gets revoked; B holds the trust root and stays
     // live, so it keeps authoring the updates A must stop receiving.
-    let mut client_a = connect_bound(addr, &revoked_token, true).await.unwrap();
-    let mut client_b = connect(addr, Some("fanout-revoke-secret")).await.unwrap();
+    let mut client_a = connect_bound(addr, &revoked_token, false).await.unwrap();
+    client_a
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
+    let mut client_b = connect_root(addr, &server, "fanout-revoke-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut client_a).await;
+    subscribe_owner_window(&mut client_a, "2026-02").await;
     let _ = next_binary(&mut client_b).await;
 
     let author = LoroDoc::new();
@@ -880,7 +1009,7 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
         .unwrap();
 
     // Baseline: A is on the fan-out path before the revocation.
-    let relayed = next_binary(&mut client_a).await;
+    let relayed = next_window_frame(&mut client_a).await;
     assert_eq!(
         relayed[0], TAG_WINDOW_SYNC,
         "A receives relayed updates while its token is live"
@@ -981,7 +1110,9 @@ async fn revocation_between_upgrade_and_hello_serves_no_snapshot() {
     // Seed hub ephemeral state, so the late-join snapshot this socket would
     // otherwise receive is non-empty and its absence below is a real refusal
     // rather than an empty-store no-op.
-    let mut seeder = connect(addr, Some("pre-hello-secret")).await.unwrap();
+    let mut seeder = connect_root(addr, &server, "pre-hello-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut seeder).await;
     seeder
         .send(Message::Binary(
@@ -1032,7 +1163,7 @@ async fn revoked_token_cannot_publish_ephemeral_state_to_peers() {
     // A holds the token that gets revoked; B holds the trust root and is the
     // live peer A must stop reaching.
     let mut client_a = connect_bound(addr, &token, true).await.unwrap();
-    let mut client_b = connect(addr, Some("ephemeral-revoke-secret"))
+    let mut client_b = connect_root(addr, &server, "ephemeral-revoke-secret")
         .await
         .unwrap();
     let _ = next_binary(&mut client_a).await; // root snapshot
@@ -1072,7 +1203,7 @@ async fn revoked_token_cannot_publish_ephemeral_state_to_peers() {
     // (c) The hub store never took the write. A late joiner still receives
     // the pre-revocation snapshot, so this asserts the revoked key's absence
     // from a snapshot that is otherwise present — not an empty-store no-op.
-    let mut client_c = connect(addr, Some("ephemeral-revoke-secret"))
+    let mut client_c = connect_root(addr, &server, "ephemeral-revoke-secret")
         .await
         .unwrap();
     let root = next_binary(&mut client_c).await;
@@ -1214,12 +1345,13 @@ async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response = http_get_bytes(
+    let response = http_get_root_bytes(
         addr,
         &format!("/api/entity/{}?view=summary", id.to_hex()),
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status_bytes(&response, 200);
@@ -1258,10 +1390,15 @@ async fn http_entity_default_returns_standard_raw_body() {
             &body,
         )
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response =
-        http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), Some(SECRET)).await;
+    let response = http_get_root_bytes(
+        addr,
+        &format!("/api/entity/{}", id.to_hex()),
+        &server,
+        SECRET,
+    )
+    .await;
     assert_http_status_bytes(&response, 200);
     assert_eq!(http_body(&response), body.as_slice());
 
@@ -1293,17 +1430,18 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     const SECRET: &str = "memory-lifecycle-secret";
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
-    let (addr, _server, handle) =
+    let (addr, server, handle) =
         spawn_server(vault.clone(), config_with_secret(Some(SECRET))).await;
     let id = EntityId::now();
     let entity_path = format!("/api/entity/{}", id.to_hex());
 
     // Remember at a client-chosen id.
-    let response = http_post(
+    let response = http_post_root(
         addr,
         "/v1/core/memory/verbs/remember",
         &remember_turn_request(&id, "memory lifecycle first body", 1_000).to_string(),
-        Some(SECRET),
+        &server,
+        SECRET,
         None,
     )
     .await;
@@ -1316,7 +1454,7 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     assert_eq!(created["entity"]["entity_type"], ENTITY_TYPE_TURN);
 
     // Read the requested persisted fields, allowing additive body fields.
-    let response = http_get_bytes(addr, &entity_path, Some(SECRET)).await;
+    let response = http_get_root_bytes(addr, &entity_path, &server, SECRET).await;
     assert_http_status_bytes(&response, 200);
     let body = rmp_serde::from_slice::<Value>(http_body(&response)).unwrap();
     let expected = remembered_turn_body("memory lifecycle first body", 1_000);
@@ -1325,11 +1463,12 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     }
 
     // Remember again at the same id: replace the served body.
-    let response = http_post(
+    let response = http_post_root(
         addr,
         "/v1/core/memory/verbs/remember",
         &remember_turn_request(&id, "memory lifecycle updated body", 2_000).to_string(),
-        Some(SECRET),
+        &server,
+        SECRET,
         None,
     )
     .await;
@@ -1338,7 +1477,7 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     assert_eq!(updated["operation"], "put_entity");
     assert_eq!(updated["entity"]["id"], id.to_hex());
 
-    let response = http_get_bytes(addr, &entity_path, Some(SECRET)).await;
+    let response = http_get_root_bytes(addr, &entity_path, &server, SECRET).await;
     assert_http_status_bytes(&response, 200);
     let body = rmp_serde::from_slice::<Value>(http_body(&response)).unwrap();
     let expected = remembered_turn_body("memory lifecycle updated body", 2_000);
@@ -1347,11 +1486,12 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     }
 
     // Forget must find the record written above.
-    let response = http_post(
+    let response = http_post_root(
         addr,
         "/v1/core/memory/verbs/forget",
         &serde_json::json!({ "id": id.to_hex() }).to_string(),
-        Some(SECRET),
+        &server,
+        SECRET,
         None,
     )
     .await;
@@ -1365,10 +1505,11 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     assert_eq!(forgotten["delete"]["hard"], false);
 
     // The timeline reports deletion without disclosing the body.
-    let response = http_get(
+    let response = http_get_root(
         addr,
         &format!("/v1/core/memory/{}/timeline", id.to_hex()),
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status(&response, 200);
@@ -1385,14 +1526,15 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     );
 
     // The same authenticated server serves WebSocket sync and remains live.
-    let mut ws = connect(addr, Some(SECRET)).await.unwrap();
+    let mut ws = connect_root(addr, &server, SECRET).await.unwrap();
     assert_eq!(next_binary(&mut ws).await[0], TAG_SYNC_UPDATE);
     let _ = ws.close(None).await;
     assert_ws_closes(&mut ws, "a clean client close must complete the handshake").await;
-    let response = http_get(
+    let response = http_get_root(
         addr,
         &format!("/v1/core/memory/{}/timeline", id.to_hex()),
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status(&response, 200);
@@ -1432,12 +1574,13 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
         )
         .unwrap();
     vault.put_vector(&id, &[1.0_f32, 0.0, 0.0, 0.0]).unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let summary_response = http_get_bytes(
+    let summary_response = http_get_root_bytes(
         addr,
         "/api/search/vector?query=1,0,0,0&limit=1",
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status_bytes(&summary_response, 200);
@@ -1449,10 +1592,11 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     );
     assert!(summary_hit.get("score").is_none());
 
-    let standard_response = http_get_bytes(
+    let standard_response = http_get_root_bytes(
         addr,
         "/api/search/vector?query=1,0,0,0&limit=1&view=standard",
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status_bytes(&standard_response, 200);
@@ -1463,10 +1607,11 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
         std::collections::BTreeSet::from(["id", "score"])
     );
 
-    let full_response = http_get_bytes(
+    let full_response = http_get_root_bytes(
         addr,
         "/api/search/vector?query=1,0,0,0&limit=1&view=full",
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status_bytes(&full_response, 200);
@@ -1510,12 +1655,13 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
     vault
         .put_edge(&source, EdgeKind::BelongsTo, &target, 0.5)
         .unwrap();
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let summary_response = http_get_bytes(
+    let summary_response = http_get_root_bytes(
         addr,
         &format!("/api/edges/{}", source.to_hex()),
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status_bytes(&summary_response, 200);
@@ -1526,10 +1672,11 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
         std::collections::BTreeSet::from(["kind", "target"])
     );
 
-    let standard_response = http_get_bytes(
+    let standard_response = http_get_root_bytes(
         addr,
         &format!("/api/edges/{}?view=standard", source.to_hex()),
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status_bytes(&standard_response, 200);
@@ -1592,12 +1739,13 @@ async fn http_search_text_estimate_counts_before_page_truncation() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_text_search_matches(&vault);
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response = http_get(
+    let response = http_get_root(
         addr,
         "/api/search/text?query=metaneedle&limit=2",
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status(&response, 200);
@@ -1669,12 +1817,13 @@ async fn http_search_vector_estimate_counts_before_page_truncation() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_search_vault(dir.path());
     seed_vector_search_matches(&vault);
-    let (addr, _server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
+    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
 
-    let response = http_get(
+    let response = http_get_root(
         addr,
         "/api/search/vector?query=1.0,0.0,0.0,0.0&limit=2",
-        Some(SECRET),
+        &server,
+        SECRET,
     )
     .await;
     assert_http_status(&response, 200);
@@ -1692,28 +1841,30 @@ async fn http_search_vector_estimate_counts_before_page_truncation() {
 #[tokio::test]
 async fn lease_revoke_route_uses_idempotency_key_replay_cache() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("route-secret")),
     )
     .await;
 
     let body = r#"{"client_id":"0000000000000001"}"#;
-    let first = http_post(
+    let first = http_post_root(
         addr,
         "/api/lease/revoke",
         body,
-        Some("route-secret"),
+        &server,
+        "route-secret",
         Some("lease-revoke-key"),
     )
     .await;
     assert_http_status(&first, 200);
 
-    let replay = http_post(
+    let replay = http_post_root(
         addr,
         "/api/lease/revoke",
         body,
-        Some("route-secret"),
+        &server,
+        "route-secret",
         Some("lease-revoke-key"),
     )
     .await;
@@ -1723,11 +1874,12 @@ async fn lease_revoke_route_uses_idempotency_key_replay_cache() {
         http_json_body(&replay).as_bytes()
     );
 
-    let conflict = http_post(
+    let conflict = http_post_root(
         addr,
         "/api/lease/revoke",
         r#"{"client_id":"0000000000000002"}"#,
-        Some("route-secret"),
+        &server,
+        "route-secret",
         Some("lease-revoke-key"),
     )
     .await;
@@ -1754,9 +1906,9 @@ async fn ephemeral_late_join_snapshot_prunes_expired_keys() {
         ephemeral_timeout_ms: 5,
         ..Default::default()
     };
-    let (addr, _server, handle) = spawn_server(open_vault(dir.path()), config).await;
+    let (addr, server, handle) = spawn_server(open_vault(dir.path()), config).await;
 
-    let mut client_a = connect(addr, Some("ttl-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server, "ttl-secret").await.unwrap();
     let _ = next_binary(&mut client_a).await; // root snapshot
     client_a
         .send(Message::Binary(
@@ -1766,7 +1918,7 @@ async fn ephemeral_late_join_snapshot_prunes_expired_keys() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(25)).await;
 
-    let mut client_b = connect(addr, Some("ttl-secret")).await.unwrap();
+    let mut client_b = connect_root(addr, &server, "ttl-secret").await.unwrap();
     let root = next_binary(&mut client_b).await;
     assert_eq!(root[0], TAG_SYNC_UPDATE);
     expect_no_binary(&mut client_b, Duration::from_millis(150)).await;
@@ -1777,14 +1929,18 @@ async fn ephemeral_late_join_snapshot_prunes_expired_keys() {
 #[tokio::test]
 async fn ephemeral_late_join_snapshot_includes_delete_tombstone() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("tombstone-secret")),
     )
     .await;
 
-    let mut client_a = connect(addr, Some("tombstone-secret")).await.unwrap();
-    let mut client_b = connect(addr, Some("tombstone-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server, "tombstone-secret")
+        .await
+        .unwrap();
+    let mut client_b = connect_root(addr, &server, "tombstone-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut client_a).await; // root snapshot
     let _ = next_binary(&mut client_b).await; // root snapshot
 
@@ -1805,7 +1961,9 @@ async fn ephemeral_late_join_snapshot_includes_delete_tombstone() {
         .await
         .unwrap();
 
-    let mut client_c = connect(addr, Some("tombstone-secret")).await.unwrap();
+    let mut client_c = connect_root(addr, &server, "tombstone-secret")
+        .await
+        .unwrap();
     let root = next_binary(&mut client_c).await;
     assert_eq!(root[0], TAG_SYNC_UPDATE);
     let tombstone_snapshot = next_binary(&mut client_c).await;
@@ -1821,13 +1979,15 @@ async fn ephemeral_late_join_snapshot_includes_delete_tombstone() {
 #[tokio::test]
 async fn ephemeral_relay_uses_hub_canonical_state_for_stale_payload() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("canonical-secret")),
     )
     .await;
 
-    let mut client_a = connect(addr, Some("canonical-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server, "canonical-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut client_a).await; // root snapshot
 
     let key = "presence:device-a";
@@ -1839,7 +1999,9 @@ async fn ephemeral_relay_uses_hub_canonical_state_for_stale_payload() {
         .await
         .unwrap();
 
-    let mut client_b = connect(addr, Some("canonical-secret")).await.unwrap();
+    let mut client_b = connect_root(addr, &server, "canonical-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut client_b).await; // root snapshot
     let _ = next_binary(&mut client_b).await; // late-join snapshot
 
@@ -1867,13 +2029,13 @@ async fn ephemeral_relay_uses_hub_canonical_state_for_stale_payload() {
 #[tokio::test]
 async fn ephemeral_rejects_far_future_timestamp_before_apply() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("future-secret")),
     )
     .await;
 
-    let mut ws = connect(addr, Some("future-secret")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "future-secret").await.unwrap();
     let _ = next_binary(&mut ws).await; // root snapshot
 
     ws.send(Message::Binary(
@@ -1893,7 +2055,7 @@ async fn ephemeral_rejects_far_future_timestamp_before_apply() {
     )
     .await;
 
-    let mut late = connect(addr, Some("future-secret")).await.unwrap();
+    let mut late = connect_root(addr, &server, "future-secret").await.unwrap();
     let root = next_binary(&mut late).await;
     assert_eq!(root[0], TAG_SYNC_UPDATE);
     expect_no_binary(&mut late, Duration::from_millis(150)).await;
@@ -1909,9 +2071,11 @@ async fn oversized_ephemeral_payload_is_rejected_before_apply() {
         max_ephemeral_payload_bytes: 4,
         ..Default::default()
     };
-    let (addr, _server, handle) = spawn_server(open_vault(dir.path()), config).await;
+    let (addr, server, handle) = spawn_server(open_vault(dir.path()), config).await;
 
-    let mut ws = connect(addr, Some("eph-size-secret")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "eph-size-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut ws).await; // root snapshot
     let mut oversized = vec![TAG_EPHEMERAL];
     oversized.extend_from_slice(&[0u8; 5]);
@@ -1923,7 +2087,9 @@ async fn oversized_ephemeral_payload_is_rejected_before_apply() {
     )
     .await;
 
-    let mut late = connect(addr, Some("eph-size-secret")).await.unwrap();
+    let mut late = connect_root(addr, &server, "eph-size-secret")
+        .await
+        .unwrap();
     let root = next_binary(&mut late).await;
     assert_eq!(root[0], TAG_SYNC_UPDATE);
     expect_no_binary(&mut late, Duration::from_millis(150)).await;
@@ -1952,10 +2118,14 @@ async fn ephemeral_snapshot_cap_rejects_growth_before_hub_apply() {
         ..Default::default()
     };
     assert!(config.max_ephemeral_snapshot_bytes >= first_snapshot_len);
-    let (addr, _server, handle) = spawn_server(open_vault(dir.path()), config).await;
+    let (addr, server, handle) = spawn_server(open_vault(dir.path()), config).await;
 
-    let mut client_a = connect(addr, Some("eph-hub-cap-secret")).await.unwrap();
-    let mut client_b = connect(addr, Some("eph-hub-cap-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server, "eph-hub-cap-secret")
+        .await
+        .unwrap();
+    let mut client_b = connect_root(addr, &server, "eph-hub-cap-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut client_a).await; // root snapshot
     let _ = next_binary(&mut client_b).await; // root snapshot
 
@@ -1978,7 +2148,9 @@ async fn ephemeral_snapshot_cap_rejects_growth_before_hub_apply() {
     )
     .await;
 
-    let mut late = connect(addr, Some("eph-hub-cap-secret")).await.unwrap();
+    let mut late = connect_root(addr, &server, "eph-hub-cap-secret")
+        .await
+        .unwrap();
     let root = next_binary(&mut late).await;
     assert_eq!(root[0], TAG_SYNC_UPDATE);
     let snapshot = next_binary(&mut late).await;
@@ -1993,16 +2165,15 @@ async fn ephemeral_snapshot_cap_rejects_growth_before_hub_apply() {
 #[tokio::test]
 async fn ephemeral_frames_coexist_with_window_sync_updates() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("coexist-secret")),
     )
     .await;
 
-    let mut client_a = connect(addr, Some("coexist-secret")).await.unwrap();
-    let mut client_b = connect(addr, Some("coexist-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server, "coexist-secret").await.unwrap();
+    let mut client_b = connect_subscribed_owner(addr, &server, "coexist-secret", "2026-02").await;
     let _ = next_binary(&mut client_a).await; // root snapshot
-    let _ = next_binary(&mut client_b).await; // root snapshot
 
     client_a
         .send(Message::Binary(
@@ -2028,13 +2199,145 @@ async fn ephemeral_frames_coexist_with_window_sync_updates() {
         .await
         .unwrap();
 
-    let relayed = next_binary(&mut client_b).await;
-    assert_eq!(relayed[0], TAG_WINDOW_SYNC);
+    let relayed = next_window_frame(&mut client_b).await;
     let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(key, "2026-02");
     assert_eq!(sub_tag, window_sub_tags::UPDATE);
     assert_eq!(payload, update.as_slice());
 
+    handle.abort();
+}
+
+#[tokio::test]
+async fn fresh_home_root_advertises_unopened_world_and_historical_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let world = seeded_entity(0x91);
+    let person = seeded_entity(0x92);
+    let claim = seeded_entity(0x93);
+    let older = 1_763_000_000;
+    let learned = 1_771_027_200;
+    vault
+        .put_entity(
+            &person,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            test_range(older),
+            older,
+            b"person",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            test_range(learned),
+            learned,
+            b"world",
+        )
+        .unwrap();
+    let mut body = oneiron::ClaimBody::new(
+        "test.world_discovery",
+        oneiron::ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Proposed,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .expect("fixture");
+    body.world = Some(world);
+    vault
+        .put_claim(&claim, &body, test_range(learned), learned)
+        .unwrap();
+    let world_key = oneiron::sync::WindowKey::for_world(learned, world);
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{world_key}"))
+            .unwrap()
+            .is_none()
+    );
+    let (addr, server, handle) =
+        spawn_server(vault, config_with_secret(Some("world-root-secret"))).await;
+    let mut client = connect_root(addr, &server, "world-root-secret")
+        .await
+        .unwrap();
+    let root = next_binary(&mut client).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    let doc = LoroDoc::from_snapshot(&root[1..]).unwrap();
+    let keys = oneiron::sync::schema::read_window_list(&doc);
+    assert!(keys.contains(&world_key));
+    assert!(keys.contains(&oneiron::sync::WindowKey::from_timestamp(older)));
+    handle.abort();
+}
+
+#[tokio::test]
+async fn subscribed_window_catchup_prefix_precedes_concurrent_live_delta() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let (addr, server, handle) =
+        spawn_server(vault.clone(), config_with_secret(Some("causal-secret"))).await;
+    let mut writer = connect_root_without_hello(addr, &server, "causal-secret")
+        .await
+        .unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
+    let _ = next_binary(&mut writer).await; // root
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("prefix", b"before".as_slice())
+        .unwrap();
+    author.commit();
+    let prefix = author.export(ExportMode::all_updates()).unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &prefix).into(),
+        ))
+        .await
+        .unwrap();
+    wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
+    let mut follower = connect_root_without_hello(addr, &server, "causal-secret")
+        .await
+        .unwrap();
+    follower
+        .send(Message::Binary(
+            transport::encode_chunk_full_window_protocol_hello().into(),
+        ))
+        .await
+        .unwrap();
+    let _ = next_binary(&mut follower).await; // root with the known window
+    send_window_vv_request(&mut follower, "2026-02").await;
+    let first = next_window_frame(&mut follower).await;
+    let (_, first_tag, first_bytes) = transport::decode_window_sync(&first[1..]).unwrap();
+    assert_eq!(first_tag, window_sub_tags::UPDATE);
+    let received = LoroDoc::new();
+    assert!(received.import(first_bytes).unwrap().pending.is_none());
+    // The catch-up VV response was queued before subscription. A live update
+    // arriving now must not overtake it on the single socket.
+    let before = author.oplog_vv();
+    author
+        .get_map("entities")
+        .insert("later", b"after".as_slice())
+        .unwrap();
+    author.commit();
+    let later = author.export(ExportMode::updates(&before)).unwrap();
+    writer
+        .send(Message::Binary(
+            transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &later).into(),
+        ))
+        .await
+        .unwrap();
+    let response = next_window_frame(&mut follower).await;
+    let (_, tag, _) = transport::decode_window_sync(&response[1..]).unwrap();
+    assert_eq!(tag, window_sub_tags::VV_RESPONSE);
+    let live = next_window_frame(&mut follower).await;
+    let (_, tag, bytes) = transport::decode_window_sync(&live[1..]).unwrap();
+    assert_eq!(tag, window_sub_tags::UPDATE);
+    assert!(received.import(bytes).unwrap().pending.is_none());
+    assert!(received.get_map("entities").get("later").is_some());
     handle.abort();
 }
 
@@ -2045,12 +2348,11 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
     let (addr, server, handle) =
         spawn_server(vault.clone(), config_with_secret(Some("relay-secret"))).await;
 
-    let mut client_a = connect(addr, Some("relay-secret")).await.unwrap();
-    let mut client_b = connect(addr, Some("relay-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server, "relay-secret").await.unwrap();
+    let mut client_b = connect_subscribed_owner(addr, &server, "relay-secret", "2026-02").await;
     // Drain the Phase-1 root snapshot on both connections; once B has its
     // snapshot, B's broadcast subscription is live.
     let _ = next_binary(&mut client_a).await;
-    let _ = next_binary(&mut client_b).await;
 
     // Author an update in a local Loro doc.
     let author = LoroDoc::new();
@@ -2065,7 +2367,7 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
     client_a.send(Message::Binary(msg.into())).await.unwrap();
 
     // B receives the relayed WindowSync UPDATE with the exact payload.
-    let relayed = next_binary(&mut client_b).await;
+    let relayed = next_window_frame(&mut client_b).await;
     assert_eq!(relayed[0], TAG_WINDOW_SYNC);
     let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(key, "2026-02");
@@ -2114,7 +2416,9 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     // ── Session 1: client A relays an entity update, then a tombstone.
     let (addr, server1, handle1) =
         spawn_server(vault.clone(), config_with_secret(Some("restart-secret"))).await;
-    let mut client_a = connect(addr, Some("restart-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server1, "restart-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut client_a).await; // root snapshot
 
     let author = LoroDoc::new();
@@ -2150,9 +2454,11 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     drop(server1);
 
     // ── Session 2: a fresh SyncServer over the same vault.
-    let (addr2, _server2, handle2) =
+    let (addr2, server2, handle2) =
         spawn_server(vault.clone(), config_with_secret(Some("restart-secret"))).await;
-    let mut client_b = connect(addr2, Some("restart-secret")).await.unwrap();
+    let mut client_b = connect_root(addr2, &server2, "restart-secret")
+        .await
+        .unwrap();
 
     // The reloaded root doc still announces the window — decoded through the
     // REAL client path (SyncClient::server_windows, client.rs read path).
@@ -2163,9 +2469,10 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     let (mut sync_client, _events) =
         SyncClient::new(open_manager(client_vault), SyncClientConfig::default()).unwrap();
     sync_client.handle_server_message(&root_msg).unwrap();
-    assert_eq!(
-        sync_client.server_windows(),
-        vec!["2026-02".to_string()],
+    assert!(
+        sync_client
+            .server_windows()
+            .contains(&"2026-02".to_string()),
         "restarted server must still announce the persisted window in meta.windows"
     );
 
@@ -2201,10 +2508,10 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
 async fn persist_failure_evicts_window_so_vv_request_omits_unpersisted_update() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
-    let (addr, _server, handle) =
+    let (addr, server, handle) =
         spawn_server(vault.clone(), config_with_secret(Some("evict-secret"))).await;
 
-    let mut client_a = connect(addr, Some("evict-secret")).await.unwrap();
+    let mut client_a = connect_root(addr, &server, "evict-secret").await.unwrap();
     let _ = next_binary(&mut client_a).await; // root snapshot
 
     // First update persists fine (window created, appended at seq 1).
@@ -2257,7 +2564,7 @@ async fn persist_failure_evicts_window_so_vv_request_omits_unpersisted_update() 
     // (b) A second client's VV_REQUEST against the SAME live server (no
     // restart) must NOT contain the failed update: the mutated RAM doc was
     // evicted and the window reloaded from durable d:w:/u:w: state.
-    let mut client_b = connect(addr, Some("evict-secret")).await.unwrap();
+    let mut client_b = connect_root(addr, &server, "evict-secret").await.unwrap();
     let _ = next_binary(&mut client_b).await; // root snapshot
 
     let empty_vv = LoroDoc::new().oplog_vv().encode();
@@ -2297,7 +2604,7 @@ async fn oversized_update_is_rejected_before_any_state_mutates() {
     };
     let (addr, server, handle) = spawn_server(vault, config).await;
 
-    let mut ws = connect(addr, Some("payload-secret")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "payload-secret").await.unwrap();
     let _ = next_binary(&mut ws).await; // root snapshot
 
     let oversized = vec![0u8; 65];
@@ -2331,9 +2638,9 @@ async fn window_creation_cap_closes_on_fabricated_distinct_keys_only() {
         max_windows_per_connection: 2,
         ..Default::default()
     };
-    let (addr, _server, handle) = spawn_server(vault, config).await;
+    let (addr, server, handle) = spawn_server(vault, config).await;
 
-    let mut ws = connect(addr, Some("cap-secret")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "cap-secret").await.unwrap();
     let _ = next_binary(&mut ws).await; // root snapshot
 
     send_window_vv_request(&mut ws, "2026-01").await;
@@ -2365,9 +2672,9 @@ async fn inbound_message_burst_is_observed_without_rate_close() {
         max_messages_per_sec: 1,
         ..Default::default()
     };
-    let (addr, _server, handle) = spawn_server(vault, config).await;
+    let (addr, server, handle) = spawn_server(vault, config).await;
 
-    let mut ws = connect(addr, Some("rate-secret")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "rate-secret").await.unwrap();
     let _ = next_binary(&mut ws).await; // root snapshot
 
     ws.send(Message::Binary(vec![TAG_SYNC_UPDATE].into()))
@@ -2391,9 +2698,11 @@ async fn inbound_ping_pong_burst_does_not_rate_close() {
         max_messages_per_sec: 1,
         ..Default::default()
     };
-    let (addr, _server, handle) = spawn_server(vault, config).await;
+    let (addr, server, handle) = spawn_server(vault, config).await;
 
-    let mut ws = connect(addr, Some("control-rate-secret")).await.unwrap();
+    let mut ws = connect_root(addr, &server, "control-rate-secret")
+        .await
+        .unwrap();
     let _ = next_binary(&mut ws).await; // root snapshot
 
     ws.send(Message::Ping(Vec::new().into())).await.unwrap();
@@ -2406,13 +2715,19 @@ async fn inbound_ping_pong_burst_does_not_rate_close() {
 
 // ─── Client-side auth (SyncConnection sends auth_token) ──────────────────────
 
-async fn run_sync_connection_once(server_url: String, auth_token: &str) -> Vec<SyncEvent> {
+async fn run_sync_connection_once(
+    server_url: String,
+    auth_token: &str,
+    transport_credential: Option<SyncTransportCredential>,
+) -> Vec<SyncEvent> {
     let client_dir = tempfile::tempdir().unwrap();
     let client_vault = open_vault(client_dir.path());
     let config = ConnectionConfig {
         client_config: SyncClientConfig {
             server_url,
             auth_token: auth_token.to_string(),
+            transport_credential,
+            residence_mode: oneiron::sync::SyncResidenceMode::All,
             ..Default::default()
         },
         auto_reconnect: false,
@@ -2441,26 +2756,34 @@ async fn run_sync_connection_once(server_url: String, auth_token: &str) -> Vec<S
 }
 
 #[tokio::test]
-async fn sync_connection_sends_auth_token_on_upgrade() {
+async fn sync_connection_sends_holder_proof_on_upgrade() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
+    let (addr, server, handle) = spawn_server(
         open_vault(dir.path()),
         config_with_secret(Some("conn-secret")),
     )
     .await;
 
-    // Correct auth_token → handshake passes and the client reaches Synced.
-    let events = run_sync_connection_once(format!("ws://{addr}/ws"), "conn-secret").await;
+    // The host root is a logged slip, not a verbatim secret. A reconnect signs
+    // a new holder proof with the root's binding key.
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"conn-secret").unwrap();
+    let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        b"conn-secret",
+    ));
+    let credential = SyncTransportCredential::new(slip.to_token().unwrap(), key);
+    let events = run_sync_connection_once(format!("ws://{addr}/ws"), "", Some(credential)).await;
     assert!(
         events
             .iter()
             .any(|e| matches!(e, SyncEvent::StatusChanged(SyncStatus::Synced))),
-        "client with the correct auth_token must reach Synced; events: {events:?}"
+        "client with a signed owner slip must reach Synced; events: {events:?}"
     );
 
     // Wrong token → the server rejects the upgrade (fail-closed); the client
     // never syncs.
-    let events = run_sync_connection_once(format!("ws://{addr}/ws"), "wrong-secret").await;
+    let events = run_sync_connection_once(format!("ws://{addr}/ws"), "wrong-secret", None).await;
     assert!(
         !events
             .iter()
@@ -2481,12 +2804,14 @@ async fn sync_connection_sends_auth_token_on_upgrade() {
 async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
-    let (addr, _server, handle) =
+    let (addr, server, handle) =
         spawn_server(vault.clone(), config_with_secret(Some("diagnostic-secret"))).await;
-    let mut sender = connect(addr, Some("diagnostic-secret")).await.unwrap();
-    let mut receiver = connect(addr, Some("diagnostic-secret")).await.unwrap();
+    let mut sender = connect_root(addr, &server, "diagnostic-secret")
+        .await
+        .unwrap();
+    let mut receiver =
+        connect_subscribed_owner(addr, &server, "diagnostic-secret", "2026-02").await;
     let _ = next_binary(&mut sender).await;
-    let _ = next_binary(&mut receiver).await;
 
     let author = LoroDoc::new();
     author
@@ -2497,7 +2822,7 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
     let ordinary = author.export(ExportMode::all_updates()).unwrap();
     let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ordinary);
     sender.send(Message::Binary(frame.into())).await.unwrap();
-    let relayed = next_binary(&mut receiver).await;
+    let relayed = next_window_frame(&mut receiver).await;
     let (_, _, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(payload, ordinary.as_slice());
     let before = author.oplog_vv();

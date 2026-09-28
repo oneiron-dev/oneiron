@@ -5,7 +5,7 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, GateError, RecordError};
+use crate::error::{ArtifactError, ClaimError, GateError, RecordError};
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::bridge::{Materializer, format_edge_key};
@@ -118,6 +118,17 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
     );
     assert_eq!(remote_rejection_reason(&other_gate), None);
     assert_eq!(remote_rejection_reason(&pending_secret_scan), None);
+    assert_eq!(
+        remote_rejection_reason(&Error::Claim(ClaimError::InvalidMachineClaimProof)).as_deref(),
+        Some("InvalidMachineClaimProof")
+    );
+    assert_eq!(
+        remote_rejection_reason(&Error::Claim(ClaimError::ActorLacksClaimAuthority {
+            reason: "local enrollment denial",
+        })),
+        None,
+        "local authority failures must not be quarantined as remote proof failures"
+    );
     assert_eq!(
         remote_rejection_reason(&Error::Record(RecordError::CompanionRecordAlreadyExists))
             .as_deref(),
@@ -1823,14 +1834,11 @@ fn suppression_carrier_fixture(divergent: bool) -> (EntityId, Vec<u8>) {
         policy_trace: Vec::new(),
         fields,
     };
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.outbound.receipt_record.v1\0");
-    hash.update(&intent_id);
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x70;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let id = EntityId::from_bytes(bytes).expect("fixture id");
+    let id = EntityId::derive(
+        crate::entity_id::derived_domains::OUTBOUND_RECEIPT_RECORD,
+        &[&intent_id],
+    )
+    .expect("fixture id");
     let body = rmp_serde::to_vec_named(&SuppressionCarrierFixture {
         intent_id,
         receipt: &receipt,

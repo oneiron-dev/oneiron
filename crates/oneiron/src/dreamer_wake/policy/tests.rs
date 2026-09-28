@@ -91,16 +91,16 @@ fn idle(last: u64) -> WakeIdleState {
 fn row(vault: &Vault, row: DreamerWakePolicy) -> Result<()> {
     row.validate()?;
     let mut txn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .put(&mut txn, POLICY_KEY, &serde_json::to_vec(&row).unwrap())?;
+    POLICY.put(&vault.store, &mut txn, &(), &row)?;
     txn.commit()?;
     Ok(())
 }
 fn v3() -> DreamerWakePolicy {
     DreamerWakePolicy {
         wake_grain_turns: 1,
+        agent_cadence: serde_json::from_str::<DreamerWakePolicy>(DEFAULT_POLICY)
+            .expect("shipped wake policy")
+            .agent_cadence,
         new_records: 50,
         longest_wait_secs: 8 * 3600,
         nightly_secs: 24 * 3600,
@@ -239,7 +239,7 @@ fn bad_policy_rows_fail_closed() -> Result<()> {
     vault
         .store
         .vault_meta
-        .put(&mut txn, POLICY_KEY, b"{\"idle_secs\":0}")?;
+        .put(&mut txn, &POLICY.key_bytes(&()), b"{\"idle_secs\":0}")?;
     txn.commit()?;
     assert!(vault.evaluate_dreamer_wake(idle(0), 100).is_err());
     Ok(())
@@ -313,6 +313,7 @@ fn policy_wake_is_executable_and_completes_in_the_production_driver() -> Result<
             budget_total_units: 1_000,
             reserve_units: 10,
             now: 3601,
+            host_scope: None,
         },
         &mut NoPartitionExecutor,
         &crate::dreamer_wake::WakeCancellation::new(),
@@ -344,10 +345,7 @@ fn missing_recipe_input_cannot_complete_dispatch_receipt() -> Result<()> {
             .is_some()
     );
     vault.with_write_txn(|txn| {
-        vault
-            .store
-            .vault_meta
-            .delete(txn, &[OUTBOX_PREFIX, &[WakeRecipe::Weave.key()]].concat())?;
+        OUTBOX.delete(&vault.store, txn, &[WakeRecipe::Weave.key()])?;
         Ok(())
     })?;
     let mut driver = crate::dreamer_wake::DreamerWakeDriver::new(
@@ -364,6 +362,7 @@ fn missing_recipe_input_cannot_complete_dispatch_receipt() -> Result<()> {
             budget_total_units: 1_000,
             reserve_units: 10,
             now: 3601,
+            host_scope: None,
         },
         &mut NoPartitionExecutor,
         &crate::dreamer_wake::WakeCancellation::new(),
@@ -460,6 +459,7 @@ fn nightly_recipe_is_a_separate_row_dial() -> Result<()> {
         &vault,
         DreamerWakePolicy {
             wake_grain_turns: 100,
+            agent_cadence: v3().agent_cadence,
             new_records: 100,
             longest_wait_secs: 2 * 86_400,
             nightly_secs: 3_600,
@@ -660,16 +660,56 @@ fn recipe_priority_requires_an_owner_and_rejects_unknown_rows() -> Result<()> {
         let mut row = serde_json::to_value(policy)
             .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
         row["weave_recipe_priority"] = replacement;
+        let raw: crate::side_table::SideTable<(), Vec<u8>, crate::side_table::Raw> =
+            crate::side_table::SideTable::new(&crate::side_table::DREAMER_WAKE_POLICY);
         vault.with_write_txn(|txn| {
-            vault.store.vault_meta.put(
+            raw.put(
+                &vault.store,
                 txn,
-                POLICY_KEY,
+                &(),
                 &serde_json::to_vec(&row)
                     .map_err(|_| Error::InvalidConfig("encode policy".into()))?,
-            )?;
-            Ok(())
+            )
         })?;
         assert!(vault.dreamer_wake_policy().is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn public_grain_setting_paces_the_host_used_turn_enqueue_in_two_vaults() -> Result<()> {
+    let (_one_dir, one) = open();
+    let (_three_dir, three) = open();
+    let actor = EntityId::now();
+    three.put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"owner")?;
+    let proof = three.authenticate_owner(
+        actor,
+        &actor.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    three.set_wake_grain(&proof, crate::dreamer_wake::WakeGrain::new(3)?)?;
+    assert_eq!(one.wake_grain()?.turns_per_wake, 1);
+    assert_eq!(three.dreamer_wake_policy()?.wake_grain_turns, 3);
+    assert_eq!(three.wake_grain()?.turns_per_wake, 3);
+    for ordinal in 1..=3 {
+        user_turn(&one, ordinal)?;
+        user_turn(&three, ordinal)?;
+        let first = one.enqueue_due_dreamer_wake(idle(0), 100 + ordinal)?;
+        let second = three.enqueue_due_dreamer_wake(idle(0), 100 + ordinal)?;
+        assert_eq!(
+            first.decision,
+            WakePolicyDecision::Enqueue {
+                recipe: WakeRecipe::Continuous
+            }
+        );
+        assert_eq!(
+            second.decision
+                == WakePolicyDecision::Enqueue {
+                    recipe: WakeRecipe::Continuous
+                },
+            ordinal == 3
+        );
     }
     Ok(())
 }

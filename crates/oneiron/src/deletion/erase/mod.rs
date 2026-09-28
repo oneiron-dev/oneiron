@@ -15,11 +15,9 @@ use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::identity_topology::{
-    StoredIdentityOpAction, decode_identity_topology_event_body,
-    encode_identity_topology_event_body,
+use crate::ports::{
+    EntityStoreMaintenance, RetrievalIndexMaintenance, ScrubbedRecord, ShortIdStoreMaintenance,
 };
-use crate::ports::{RetrievalIndexMaintenance, ShortIdStoreMaintenance};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -29,14 +27,22 @@ use crate::provenance::decode_edge_provenance_body;
 use crate::provenance::downgrade_edge_to_bare;
 use crate::provenance::restamp_edge_flags;
 use crate::provenance::winner_index;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT};
-use crate::store::{GateDecisionId, Store};
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::store::GateDecisionId;
 
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone;
-use super::tombstone::{ReplayedTombstoneOutcome, decode_tombstone_value, local_hard_delete_key};
+use super::tombstone::{
+    HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, ReplayedTombstoneOutcome,
+    decode_tombstone_value,
+};
+use super::topology_delete_intent::{
+    clear_own_topology_delete_in_txn, guard_topology_delete_request_in_txn,
+    settled_topology_delete_in_txn,
+};
 use crate::error::{ClaimError, RegistryError};
+use crate::side_table::HexId;
 
 /// ARCH-0038 delete-interplay refs captured from an `edge.provenance` Claim
 /// BEFORE its body is purged or SoftErased: the subject EdgeRef whose cached
@@ -46,32 +52,6 @@ pub(super) struct CapturedProvenanceDelete {
     pub(super) subject: EdgeRef,
     source_revision_ref: Option<[u8; 16]>,
     body_snapshot_ref: Option<[u8; 16]>,
-}
-
-/// Whether a stored type-76 action names any of `touched` in the redirect
-/// topology it declares — the exact reach of the ARCH-0055 §9 erase walk.
-///
-/// ONLY the two shell-edge families answer yes: merge and split are the ops
-/// the redirect walk reads, so they are the ops whose payloads it touches.
-/// Facet, assert_distinct, undo and proposal resolution are outside that
-/// reach and stay untouched, which is what keeps the author-stamp rider from
-/// becoming a family-wide sweep.
-fn identity_op_event_touches(
-    action: &StoredIdentityOpAction,
-    touched: &BTreeSet<EntityId>,
-) -> bool {
-    match action {
-        StoredIdentityOpAction::Merge { sources, survivor } => {
-            touched.contains(survivor) || sources.iter().any(|source| touched.contains(source))
-        }
-        StoredIdentityOpAction::Split { entity, heads, .. } => {
-            touched.contains(entity) || heads.iter().any(|head| touched.contains(head))
-        }
-        StoredIdentityOpAction::Facet { .. }
-        | StoredIdentityOpAction::AssertDistinct { .. }
-        | StoredIdentityOpAction::Undo { .. }
-        | StoredIdentityOpAction::ProposalResolution { .. } => false,
-    }
 }
 
 /// Builds the queued sweep row's delete-interplay extras from a pre-purge
