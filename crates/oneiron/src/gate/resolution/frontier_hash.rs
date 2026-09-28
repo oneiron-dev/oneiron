@@ -125,6 +125,12 @@ pub(super) fn hash_policy_frontier_v0(
             }
         }
     }
+    if !resolution.booking_conversion_rows.is_empty() {
+        hash_str(hasher, "booking_conversion");
+        let bytes = rmp_serde::to_vec_named(&resolution.booking_conversion_rows)
+            .expect("validated booking policy rows encode");
+        hash_bytes(hasher, &bytes);
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
@@ -163,6 +169,47 @@ pub(super) fn hash_policy_frontier_v0(
             for value in crate::gate::docedit_resource::row_values(bounds) {
                 hash_u64(hasher, value);
             }
+        }
+    }
+    // A row resolving to shipped defaults has the historical frontier bytes.
+    // Only a behavior-changing override contributes new hash material.
+    if resolution.carry_forward_authored
+        || resolution.carry_forward_confidence
+            != crate::gate::carry_forward_policy::CarryForwardPolicy::default()
+    {
+        hash_str(hasher, "carry_forward_confidence");
+        hash_str(
+            hasher,
+            resolution.carry_forward_confidence.precedence.as_str(),
+        );
+        hash_bytes(
+            hasher,
+            &resolution
+                .carry_forward_confidence
+                .vault
+                .ordinary
+                .to_bits()
+                .to_be_bytes(),
+        );
+        hash_bytes(
+            hasher,
+            &resolution
+                .carry_forward_confidence
+                .vault
+                .care
+                .to_bits()
+                .to_be_bytes(),
+        );
+        let mut holders = resolution.carry_forward_confidence.holders.clone();
+        holders.sort_by_key(|row| row.actor);
+        hash_len(hasher, holders.len());
+        for row in holders {
+            hash_bytes(hasher, row.actor.as_bytes());
+            if let Some(parent) = row.parent {
+                hash_bytes(hasher, parent.as_bytes());
+            }
+            hash_bytes(hasher, &row.floors.ordinary.to_bits().to_be_bytes());
+            hash_bytes(hasher, &row.floors.care.to_bits().to_be_bytes());
         }
     }
     if let Some(bounds) = resolution.diagnostic_bounds {

@@ -69,23 +69,14 @@ fn attempt_pack_receipt_key(receipt_id: &str) -> Vec<u8> {
     key
 }
 
-/// Stamps the terminal pack receipt for an attempt that ran underneath a
-/// skill pack, inside the terminal transition's OWN write transaction.
+/// Stamps the terminal pack or resident receipt in the transition's OWN
+/// write transaction. Complete, fail, retry-source finalization, queued/paused
+/// cancel, landing cancellation, force-cancel and abandon all call this seam.
+/// An attempt with neither a manifest nor an actor binding mints no row.
 ///
-/// This is the production call path for [`append_pack_manifest_fields`]:
-/// [`AttemptQueue::complete`] and [`AttemptQueue::fail`] are the two doors
-/// every execute leaves through, so stamping there cannot be forgotten by a
-/// caller and cannot drift per lane. An attempt whose pack loaded nothing
-/// mints no row — the manifest IS the reason this receipt exists.
-///
-/// Atomic with the state seal: a terminal attempt with a manifest and no
-/// receipt (or the reverse) is not a reachable state. The row is written
-/// once, at the transition, and never rewritten — which is what makes
-/// "a closed attempt's manifest is the evidence its receipt already
-/// projected" true rather than aspirational.
-///
-/// [`AttemptQueue::complete`]: crate::attempt_queue::AttemptQueue::complete
-/// [`AttemptQueue::fail`]: crate::attempt_queue::AttemptQueue::fail
+/// Atomic with the state seal: a terminal attempt with a manifest or actor
+/// binding and no receipt (or the reverse) is not a reachable state. The row
+/// is written once at the transition and never rewritten.
 pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,

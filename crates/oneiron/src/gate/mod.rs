@@ -10,7 +10,8 @@ mod ceiling;
 pub(crate) mod manifest_authenticity;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
-pub(crate) use manifest_authenticity::trusted_manifest_key;
+pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
+mod carry_forward_policy;
 mod confirm;
 mod constants;
 mod decision;
@@ -33,6 +34,7 @@ mod resolution;
 mod tracker_limits;
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
+pub(crate) mod retrieval_retention;
 pub(crate) mod retry_source_policy;
 mod room_policy;
 mod room_thread;

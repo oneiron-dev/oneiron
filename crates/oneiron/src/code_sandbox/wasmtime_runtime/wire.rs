@@ -456,6 +456,11 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
     let reply = SelfDispatchResponse {
         outcome: SelfDispatchOutcome::WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy {
             wake_grain_turns: 1,
+            agent_cadence: serde_json::from_str::<crate::dreamer_wake::DreamerWakePolicy>(
+                include_str!("../../dreamer_wake/wake_policy_defaults.json"),
+            )
+            .expect("shipped wake policy")
+            .agent_cadence,
             new_records: 50,
             longest_wait_secs: 28_800,
             nightly_secs: 86_400,
