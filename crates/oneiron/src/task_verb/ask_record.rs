@@ -10,11 +10,19 @@ use crate::habit::TaskRole;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::{EntityId, Vault};
-pub(crate) use guard::guard_ask_fact_put;
+pub(crate) use guard::{guard_ask_fact_put, waits_for_ask_group};
 pub(super) use guard::validate_notice_companion;
 use guard::validate_word;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
+
+mod link_proof;
+mod word_admission;
+pub(super) use link_proof::{
+    mint_key as mint_link_key, sign_settlement as sign_link_settlement,
+    verify_settlement as verify_link_settlement,
+};
+pub(super) use word_admission::{admit_link_word, admit_word};
 
 const GROUP: &str = "tasks.ask_group";
 const ANSWER: &str = "tasks.ask_answer";
@@ -37,6 +45,7 @@ pub(super) struct AskGroup {
     pub effective: super::TaskAskSpec,
     pub context_class: Option<super::TaskAskClass>,
     pub question_digest: [u8; 32],
+    pub link_verify_key: [u8; 32],
     pub members: Vec<AskMember>,
     pub no_live_route: bool,
     pub created_at: u64,
@@ -54,6 +63,8 @@ struct AskAnswerFact {
     actor: EntityId,
     source: TaskAskSource,
     word: TaskAskWord,
+    #[serde(default)]
+    link_proof: Option<link_proof::LinkProof>,
     order: u64,
     #[serde(default)]
     delegation_grant_ref: Option<String>,
@@ -354,6 +365,10 @@ pub(super) fn evidence_in(
             || fact.at == 0
             || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
             || (fact.source == TaskAskSource::Inform && fact.actor.to_hex() != group.owner)
+            || (fact.source == TaskAskSource::ForeignStated
+                && (fact.word.inform_for.is_some()
+                    || vault.get_entity_type_in_txn(txn, &fact.actor)?
+                        != Some(crate::registry::ENTITY_TYPE_PERSON)))
             || (fact.source == TaskAskSource::Companion) != fact.word.companion_for.is_some()
             || (fact.source != TaskAskSource::Companion && fact.delegation_grant_ref.is_some())
             || fact.delegation_grant_ref.as_ref().is_some_and(|reference| {
@@ -372,6 +387,7 @@ pub(super) fn evidence_in(
             return Err(invalid());
         }
         validate_word(group, &fact.word).map_err(|_| Error::CorruptedIndex("tasks.ask.word"))?;
+        link_proof::validate_source(&vault.store, txn, word_ref, group, &fact)?;
         if fact.word.confirmation.is_some() {
             if fact.source != TaskAskSource::Human {
                 return Err(invalid());
@@ -428,13 +444,24 @@ pub(super) fn person_evidence_in(
         let selected = words
             .iter()
             .filter(|entry| entry.person_ref == who)
-            .max_by_key(|entry| (u8::from(entry.source == TaskAskSource::Human), entry.order));
+            .max_by_key(|entry| {
+                (
+                    u8::from(matches!(
+                        entry.source,
+                        TaskAskSource::Human | TaskAskSource::ForeignStated
+                    )),
+                    entry.order,
+                )
+            });
         if let Some(entry) = selected {
             let fact = read_answer(vault, txn, entry.answer.word_ref)?.ok_or_else(invalid)?;
             answers.push(TaskAskPersonEvidence {
                 who,
                 answer: Some(entry.word.clone()),
-                kind: if entry.source == TaskAskSource::Human {
+                kind: if matches!(
+                    entry.source,
+                    TaskAskSource::Human | TaskAskSource::ForeignStated
+                ) {
                     TaskAskPersonKind::Word
                 } else {
                     TaskAskPersonKind::Companion
@@ -453,165 +480,6 @@ pub(super) fn person_evidence_in(
         }
     }
     Ok(answers)
-}
-
-pub(super) fn admit_word(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: EntityId,
-    group: &AskGroup,
-    writer: crate::WriteActor,
-    word: &TaskAskWord,
-    now: u64,
-) -> Result<TaskAskAnswer> {
-    validate_word(group, word)?;
-    for reference in &word.provenance_refs {
-        if vault.get_entity_type_in_txn(txn, &reference.entity_ref())?
-            != Some(reference.entity_type())
-        {
-            return Err(invalid());
-        }
-    }
-    let actor = writer.entity_ref();
-    let person = word.inform_for.or(word.companion_for).unwrap_or(actor);
-    let source = if word.companion_for.is_some() {
-        if writer.actor_class() != crate::EdgeActorClass::Agent {
-            return Err(invalid());
-        }
-        super::ask_guest::check_companion_answer(vault, txn, id, group, actor, word, now)?;
-        TaskAskSource::Companion
-    } else if word.inform_for.is_some() {
-        if actor.to_hex() != group.owner || writer.actor_class() != crate::EdgeActorClass::Agent {
-            return Err(invalid());
-        }
-        TaskAskSource::Inform
-    } else if writer.actor_class() == crate::EdgeActorClass::Human {
-        TaskAskSource::Human
-    } else {
-        TaskAskSource::Executor
-    };
-    if word.confirmation.is_some() {
-        if source != TaskAskSource::Human {
-            return Err(invalid());
-        }
-        super::ask_soft_confirm::validate_confirmation(vault, txn, id, group, actor, word)?;
-    }
-    let member = group
-        .members
-        .iter()
-        .find(|member| member.actor == person.to_hex())
-        .ok_or_else(invalid)?;
-    let task = entity(&member.task)?;
-    let body =
-        super::create_validation::task_body_in_txn(vault, txn, task).map_err(|_| invalid())?;
-    let authority = vault
-        .task_authority_state_in(txn, task)?
-        .ok_or_else(invalid)?;
-    if body.owner_ref != group.owner
-        || authority.owner_ref.to_hex() != group.owner
-        || body.consult.as_ref().is_none_or(|payload| {
-            payload.correlation_ref != id || payload.question_ref != group.effective.what.reference
-        })
-        || (authority.cancelled && super::ask_settlement::read_result(vault, txn, id)?.is_none())
-    {
-        return Err(invalid());
-    }
-    let delegation_grant_ref = if source == TaskAskSource::Companion {
-        super::ask_guest::delegated_class(
-            vault,
-            txn,
-            person,
-            actor,
-            group.effective.what.class_key.as_deref(),
-        )?
-    } else {
-        None
-    };
-    let word_ref = answer_id(id, task, actor, source, word)?;
-    if source == TaskAskSource::Companion
-        && group.effective.what.commitment
-        && let Some(notice) = read::<super::TaskAskSoftConfirmNotice>(
-            vault,
-            txn,
-            derived_id(b"oneiron.tasks.ask.soft_confirm.v1", id, person.as_bytes())?,
-            super::ask_soft_confirm::SOFT_CONFIRM,
-        )?
-        && notice.companion_answer_ref != word_ref
-    {
-        return Err(invalid()); // A changed commitment needs a new ask revision.
-    }
-    let answer = TaskAskAnswer {
-        task_ref: task,
-        actor_ref: actor,
-        result_ref: word.result_ref,
-        word_ref,
-    };
-    if let Some(existing) = read_answer(vault, txn, word_ref)? {
-        if existing.group == id
-            && existing.task == task
-            && existing.actor == actor
-            && existing.source == source
-            && existing.word == *word
-        {
-            return Ok(answer);
-        }
-        return Err(invalid());
-    }
-    for reference in
-        std::iter::once(word.result_ref).chain(word.provenance_refs.iter().map(|r| r.entity_ref()))
-    {
-        crate::llm::decision::questions::validate_task_answer_unit(
-            vault,
-            txn,
-            entity(&group.owner)?,
-            actor,
-            reference,
-        )?;
-    }
-    let evidence = evidence_in(vault, txn, id, group)?;
-    if evidence.len() >= 4096 {
-        return Err(Error::IndexOverflow("ask words"));
-    }
-    let order = evidence
-        .iter()
-        .map(|entry| entry.order)
-        .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(invalid)?;
-    put(
-        vault,
-        txn,
-        word_ref,
-        ANSWER,
-        &AskAnswerFact {
-            group: id,
-            task,
-            actor,
-            source,
-            word: word.clone(),
-            order,
-            delegation_grant_ref,
-            at: now,
-        },
-        now,
-    )?;
-    vault
-        .batch_in()
-        .edge(&word_ref, crate::EdgeKind::About, &id, 1.0)
-        .apply(txn)?;
-    if source == TaskAskSource::Companion && group.effective.what.commitment {
-        super::ask_soft_confirm::put_notice(
-            vault,
-            txn,
-            (id, person),
-            &answer,
-            word,
-            &group.effective,
-            now,
-        )?;
-    }
-    Ok(answer)
 }
 
 /// The terminal register does not carry the option. A replay of an ask answer
