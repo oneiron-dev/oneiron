@@ -33,6 +33,9 @@ use super::constants::{
     SOURCE_TRUST_WARNED_KEY, WAIT_POLICY_CLASS_KEY, WAIT_POLICY_MIN_SECS_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
+use super::operational_policy::{
+    LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
+};
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
 use super::resolution::{
     DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
@@ -555,6 +558,29 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                         (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
                     ]),
                 ),
+            ]),
+        ),
+        (Value::from(PRECEDENCE_KEY), Value::from("nested_narrowing")),
+        (
+            Value::from(LINEAR_MIRROR_KEY),
+            Value::Map(vec![
+                (Value::from("poll_interval_secs"), Value::from(30_u64)),
+                (Value::from("request_timeout_secs"), Value::from(15_u64)),
+            ]),
+        ),
+        (
+            Value::from(LINEAR_SYNC_KEY),
+            Value::Map(vec![(
+                Value::from("max_pull_pages_per_pass"),
+                Value::from(64_u64),
+            )]),
+        ),
+        (
+            Value::from(WAVE_HANDOFF_KEY),
+            Value::Map(vec![
+                (Value::from("scan_limit"), Value::from(256_u64)),
+                (Value::from("retry_floor_ms"), Value::from(500_u64)),
+                (Value::from("retry_cap_ms"), Value::from(60_000_u64)),
             ]),
         ),
         // Hosted render resource limits are shipped POLICY rows, not adapter
