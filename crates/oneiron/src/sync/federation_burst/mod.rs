@@ -61,8 +61,16 @@ impl FederationPeer {
         hash.update(b"oneiron/federation-peer/v1");
         hash.update(self.principal.to_hex().as_bytes());
         hash.update(self.selector.grant_id.to_hex().as_bytes());
-        let FederationGrantScope::Vault { vault_id } = self.scope;
-        hash.update(&vault_id.to_be_bytes());
+        match self.scope {
+            FederationGrantScope::Vault { vault_id } => {
+                hash.update(b"vault");
+                hash.update(&vault_id.to_be_bytes());
+            }
+            FederationGrantScope::Ask { ask_ref } => {
+                hash.update(b"ask");
+                hash.update(ask_ref.as_bytes());
+            }
+        }
         *hash.finalize().as_bytes()
     }
 }
