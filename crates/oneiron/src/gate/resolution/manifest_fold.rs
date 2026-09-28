@@ -25,6 +25,8 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     let mut untrusted_source_rows = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    let mut shipped_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
+    let mut owner_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -146,6 +148,17 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.pack_install_policy = Some(policy);
                     }
                 }
+                if let Some(limits) = decoded.pptx_comment_limits {
+                    // The shipped row is a DEFAULT, not a permanent ceiling:
+                    // an authenticated vault row may adjust it up or down.
+                    // Multiple owner rows and holder caps compose restrictively.
+                    let slot = if id == crate::gate::default_policy_manifest_id()? {
+                        &mut shipped_pptx_limits
+                    } else {
+                        &mut owner_pptx_limits
+                    };
+                    *slot = Some(slot.map_or(limits, |previous| previous.narrow(limits)));
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
                 if let Some(bounds) = decoded.diagnostic_bounds {
@@ -197,6 +210,8 @@ pub(crate) fn resolve_policy_manifest(
             }
         }
     }
+
+    resolution.pptx_comment_limits = owner_pptx_limits.or(shipped_pptx_limits);
 
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);

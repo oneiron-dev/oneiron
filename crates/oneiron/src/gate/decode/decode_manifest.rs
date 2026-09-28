@@ -16,8 +16,9 @@ use crate::gate::constants::{
     POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
     POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
     POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
-    POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
+    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
+    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
     POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
@@ -63,6 +64,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
+    pub(in crate::gate) pptx_comment_limits:
+        Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
@@ -116,6 +119,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
+                | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | POLICY_HOSTED_TTS_KEY
 
                 | "diagnostic_bounds"
@@ -250,6 +254,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let pptx_comment_limits = match single_map_value(&entries, POLICY_PPTX_COMMENT_LIMITS_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => {
+            Some(crate::edit_roundtrip::pptx::PptxOperationalLimits::from_policy_row(value)?)
+        }
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
@@ -326,6 +337,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         pack_install_policy,
+        pptx_comment_limits,
         hosted_tts,
 
         diagnostic_bounds,
