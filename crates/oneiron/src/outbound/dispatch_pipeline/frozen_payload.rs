@@ -20,6 +20,10 @@ pub(super) struct FrozenOutboundPayload<'a> {
     pub(super) intent: &'a OutboundIntent,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) hygiene_headers: BTreeMap<String, String>,
+    /// Exact step identity: frozen into the intent hash so a retry cannot
+    /// name a different LLM result, and absent for non-step effects.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) dreamer_step: Option<serde_json::Value>,
     /// CAL-04's exact five-field iMIP body, elided for every send that is not
     /// a calendar invite. It carries `ics_blob_ref` and never the `.ics` bytes,
     /// so the frozen payload stays small and the document a retry re-sends is

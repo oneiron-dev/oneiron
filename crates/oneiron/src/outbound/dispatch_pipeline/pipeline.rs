@@ -23,7 +23,16 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, None)
+        self.dispatch_inner(vault, request, sink, None, None)
+    }
+    pub(in crate::outbound) fn dispatch_from_step<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        binding: crate::llm::StepEffectBinding,
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_inner(vault, request, sink, None, Some(binding))
     }
     pub(in crate::outbound) fn dispatch_with_verified_actor<S: OutboundExecutionSink>(
         self,
@@ -33,7 +42,7 @@ impl OutboundDispatchPipeline {
         actor: EntityId,
         actor_class: EdgeActorClass,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, Some((actor, actor_class)))
+        self.dispatch_inner(vault, request, sink, Some((actor, actor_class)), None)
     }
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
@@ -41,8 +50,10 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
+        step_binding: Option<crate::llm::StepEffectBinding>,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        let prepared = PreparedOutboundDispatch::prepare(vault, request, verified_actor)?;
+        let prepared =
+            PreparedOutboundDispatch::prepare(vault, request, verified_actor, step_binding)?;
         Ok(self.dispatch_prepared(vault, prepared, sink)?.result)
     }
     /// Observations are response evidence only. Even an exact stored success
@@ -58,7 +69,8 @@ impl OutboundDispatchPipeline {
         key: DispatchObservationKey,
         preflight: impl FnOnce() -> Result<(), OutboundDispatchError>,
     ) -> Result<RecordedDispatch, OutboundDispatchError> {
-        let mut prepared = PreparedOutboundDispatch::prepare(vault, request, Some(verified_actor))?;
+        let mut prepared =
+            PreparedOutboundDispatch::prepare(vault, request, Some(verified_actor), None)?;
         if prepared.replay_done() {
             prepared.freeze_and_validate(vault)?;
             if let Some(observation) = read_dispatch_observation(vault, key)? {

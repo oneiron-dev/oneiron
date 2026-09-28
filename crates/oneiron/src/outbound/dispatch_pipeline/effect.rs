@@ -71,6 +71,12 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         crate::outbound_intent_ledger::IntentLedgerError::InvalidBoundActor => {
             OutboundDispatchError::InvalidBoundActor
         }
+        crate::outbound_intent_ledger::IntentLedgerError::FailureResultIneligible => {
+            OutboundDispatchError::FailureResultIneligible
+        }
+        crate::outbound_intent_ledger::IntentLedgerError::Step(error) => {
+            OutboundDispatchError::Step(error)
+        }
         error => OutboundDispatchError::Chokepoint(error),
     })?;
     let gate_outcome = effect_result

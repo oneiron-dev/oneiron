@@ -100,11 +100,8 @@ impl FailureRules {
                     if !row.consolidation_eligible && !row.effector_eligible => {}
                 _ => return Err(invalid()),
             }
-            // A fallback never authorizes an outward effect; the ordinary
-            // trust/approval gate still decides effector eligibility.
-            if row.effector_eligible {
-                return Err(invalid());
-            }
+            // This is a holder choice, not an authority grant. Manifest
+            // defaults, vault ceiling and the ordinary effect Gate still apply.
         }
         if self.version != 1 || keys.len() != 6 {
             return Err(invalid());
@@ -165,7 +162,8 @@ fn valid_resident_actor(vault: &Vault, actor: WriteActor) -> Result<bool> {
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("resident actor entity header"))?;
-    Ok(crate::provenance::validate_actor_class(header.entity_type, actor.actor_class()).is_ok())
+    Ok(header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+        && crate::provenance::validate_actor_class(header.entity_type, actor.actor_class()).is_ok())
 }
 
 pub(crate) fn admitted_authored_claim(
@@ -211,10 +209,14 @@ pub(crate) fn resident_record(actor: WriteActor, json: &[u8]) -> Result<Vec<u8>>
 
 pub(super) fn load(vault: &Vault) -> Result<Option<FailureRules>> {
     let txn = vault.store.env.read_txn()?;
+    load_in_txn(vault, &txn)
+}
+
+fn load_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<FailureRules>> {
     vault
         .store
         .vault_meta
-        .get(&txn, KEY)?
+        .get(txn, KEY)?
         .map(|bytes| {
             let stored: StoredRules = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
             EntityId::from_hex(&stored.author).map_err(|_| invalid())?;
@@ -222,6 +224,45 @@ pub(super) fn load(vault: &Vault) -> Result<Option<FailureRules>> {
             Ok(stored.rules)
         })
         .transpose()
+}
+
+/// A fallback from either consolidation call site cannot turn an authored
+/// stage rule into outbound authority. The caller supplies the same transaction
+/// that resolves the manifest and the ordinary effect Gate.
+pub(crate) fn step_consolidation_eligible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    purpose: &str,
+    response: &LlmResponse,
+) -> Result<Option<bool>> {
+    let stage = match purpose {
+        "extraction" => Stage::Extraction,
+        "consolidation" => Stage::Conflict,
+        _ => return Ok(None),
+    };
+    if !matches!(&response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:"))
+    {
+        return Ok(None);
+    }
+    Ok(load_in_txn(vault, txn)?.map(|rules| rules.accepts(stage, response)))
+}
+
+pub(crate) fn step_effector_eligible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    purpose: &str,
+    response: &LlmResponse,
+) -> Result<Option<bool>> {
+    let stage = match purpose {
+        "extraction" => Stage::Extraction,
+        "consolidation" => Stage::Conflict,
+        _ => return Ok(None),
+    };
+    if !matches!(&response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:"))
+    {
+        return Ok(None);
+    }
+    Ok(load_in_txn(vault, txn)?.map(|rules| rules.row(stage, Failure::Fatal).effector_eligible))
 }
 
 impl Vault {

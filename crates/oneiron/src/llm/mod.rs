@@ -34,6 +34,12 @@ pub(crate) mod entity_refs;
 mod error;
 mod fallback;
 pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
+mod failure_policy;
+pub use failure_policy::{DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute};
+pub(crate) use failure_policy::{
+    DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
+    parse_failure_rules,
+};
 pub mod image;
 pub mod manifest;
 mod model_id;
@@ -57,8 +63,10 @@ pub use step::{
     validate_json_schema,
 };
 pub(crate) use step::{
-    consume_step_wait_in_txn, deindex_dreamer_step_claim, index_dreamer_step_claim_for_put,
-    open_step_wait_in_txn, register_detached_step_in_txn, signal_step_wait_in_txn,
+    StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim,
+    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
+    signal_step_wait_in_txn, verified_step_consolidation_eligible_in_txn,
+    verified_step_effector_eligible_in_txn,
 };
 
 pub use budget::{

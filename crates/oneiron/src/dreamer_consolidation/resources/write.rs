@@ -1,6 +1,6 @@
 //! Sealed resource handoff. Only the executor can construct one; every real
 //! promotion and attachment checks its pins inside the write transaction.
-use super::{BranchResources, SourcePin, document_version};
+use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
 #[cfg(test)]
 use crate::claim::ClaimSource;
 use crate::claim::ScopedReadActorKey;
@@ -28,6 +28,7 @@ impl ScopedConsolidationWrite {
 pub(crate) struct ConsolidationFence {
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
+    fallback_binding: Option<FallbackOutputPin>,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
     conversation: EntityId,
@@ -103,6 +104,7 @@ impl BranchResources<'_> {
                 crate::edge::EdgeActorClass::Agent,
             ),
             attempt: self.attempt,
+            fallback_binding: self.fallback_binding(),
             sources: self.sources.clone(),
             turns: self.turns.clone(),
             conversation: self.partition.conversation_ref,
@@ -147,6 +149,21 @@ impl ConsolidationFence {
         // Resolve fresh policy here. ScopedRead's cached manifest is not a
         // lease to retain a grant revoked during model or checker work.
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+        if let Some(binding) = self.fallback_binding
+            && !crate::llm::verified_step_consolidation_eligible_in_txn(
+                vault,
+                txn,
+                &policy,
+                binding.step,
+                self.actor.entity_ref(),
+                binding.response_hash,
+            )
+            .map_err(|_| invalid_consolidation("invalid extraction fallback checkpoint"))?
+        {
+            return Err(invalid_consolidation(
+                "extraction fallback eligibility revoked",
+            ));
+        }
         for (id, pin) in &self.sources {
             if !read.is_entity_readable_with_policy_in(txn, &policy, id)? {
                 return Err(invalid_consolidation("pinned source read revoked"));
