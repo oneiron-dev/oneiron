@@ -10834,7 +10834,7 @@
      "purpose": "Propose-only authority widening",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -41877,7 +41877,7 @@
      "path": "src/api/core/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -41908,6 +41908,16 @@
      "purpose": "OpenAPI shape for the engine-owned mandatory read receipt",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/core/widen.rs",
+     "purpose": "Host-only landing of a frozen widen proposal",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -42782,6 +42792,14 @@
      "notable": [],
      "path": "src/api/tests/reactive.rs",
      "purpose": "Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/relay_widen.rs",
+     "purpose": "Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it",
      "surface": {}
     },
     {
@@ -43816,7 +43834,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 1
      }
@@ -43846,7 +43864,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -43882,6 +43900,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -44538,13 +44557,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -44860,7 +44879,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 161,
+     "files": 163,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45009,7 +45028,7 @@
     "test_credentials": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
@@ -45037,8 +45056,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 236,
-   "test_files": 98
+   "source_files": 237,
+   "test_files": 99
   },
   "oneiron-uniffi": {
    "files": [
@@ -45316,12 +45335,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ManagedWidenAction"
+     ],
+     "path": "src/lib/managed_holder.rs",
+     "purpose": "Host-attested account action for one managed widen request",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
       "mod": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -45377,7 +45409,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -45386,7 +45418,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 11,
+   "source_files": 12,
    "test_files": 3
   }
  }

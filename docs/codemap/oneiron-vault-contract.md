@@ -20,7 +20,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_adapters/wasm_harness_tests.rs` | test | s | — | — | Actual WebAssembly capability fixture, using the host's preinstalled Node runtime |
 | `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
-| `src/lib/mod.rs` | src | s | 3 mod · 6 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/managed_holder.rs` | src | s | 1 struct · 2 fn | ManagedWidenAction | Host-attested account action for one managed widen request |
+| `src/lib/mod.rs` | src | s | 3 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
 | `src/lib/tests.rs` | test | m | — | — | Wire-compat and validation test suite |
 | `src/lib/version.rs` | src | s | 1 fn · 2 const | — | Wire version constants and SLIM gating |
