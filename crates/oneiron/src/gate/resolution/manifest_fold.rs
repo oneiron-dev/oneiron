@@ -22,6 +22,25 @@ use crate::gate::ceiling::{
 use crate::gate::decode::ConnectorClassRole;
 use crate::gate::decode::decode_policy_manifest;
 
+/// Resolve in the caller's mint/issuance transaction so policy and the
+/// resulting log or pending link observe one LMDB snapshot.
+pub(crate) fn resolve_credential_lifetimes(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<super::manifest_types::CredentialLifetimePolicy> {
+    let resolved = resolve_policy_manifest(store, txn)?;
+    if resolved.is_fail_closed() {
+        return Err(Error::InvalidConfig(
+            "credential lifetime policy is unavailable".into(),
+        ));
+    }
+    resolved.credential_lifetimes.ok_or_else(|| {
+        Error::InvalidConfig(
+            "credential lifetime policy missing from trusted vault manifests".into(),
+        )
+    })
+}
+
 pub(crate) fn resolve_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -118,6 +137,13 @@ pub(crate) fn resolve_policy_manifest(
                 if let Some(row) = decoded.teacher_probe {
                     resolution.teacher_probe_trusted = true;
                     merge_teacher_probe_row(&mut resolution, row);
+                }
+                if let Some(lifetimes) = decoded.credential_lifetimes {
+                    if let Some(resolved) = &mut resolution.credential_lifetimes {
+                        resolved.restrict(lifetimes);
+                    } else {
+                        resolution.credential_lifetimes = Some(lifetimes);
+                    }
                 }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution

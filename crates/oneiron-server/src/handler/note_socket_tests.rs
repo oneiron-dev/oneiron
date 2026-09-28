@@ -21,11 +21,9 @@ impl Drop for ServerTask {
     }
 }
 
-async fn socket(url: &str) -> Socket {
+async fn socket(server: &SyncServer, url: &str) -> Socket {
     let mut request = url.into_client_request().unwrap();
-    request
-        .headers_mut()
-        .insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
+    crate::test_credentials::bind_ws_request(server, &mut request, "jti=note-socket-upgrade");
     tokio_tungstenite::connect_async(request).await.unwrap().0
 }
 async fn send(socket: &mut Socket, bytes: Vec<u8>) {
@@ -209,7 +207,7 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
         },
     )
     .unwrap();
-    let mut socket = socket(&url).await;
+    let mut socket = socket(&server, &url).await;
     for frame in client.generate_initial_sync() {
         send(&mut socket, frame).await;
     }

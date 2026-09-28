@@ -4,6 +4,7 @@
 mod booking_agent_api;
 mod campaign_surface_oracle;
 mod core_discover;
+mod first_owner_bootstrap;
 mod mcp_booking;
 mod mcp_oracle;
 mod remote_pairing;

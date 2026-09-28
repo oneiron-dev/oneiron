@@ -69,10 +69,28 @@ pub struct HostInitArgs {
 
 #[derive(Subcommand)]
 pub enum TokenCommand {
+    /// Provision the first owner link while the self-host vault is stopped.
+    Bootstrap(Box<TokenBootstrapArgs>),
     /// Create a one-hour pairing link on the running server and print it.
     Pair(Box<TokenPairArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
+}
+
+/// Local-only bootstrap: the vault is opened exclusively from the host's
+/// configured path. No issuer secret is sent over HTTP or printed.
+#[derive(Args, Clone, Debug)]
+pub struct TokenBootstrapArgs {
+    /// Origin clients will contact after `serve` starts.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    pub url: String,
+
+    /// Optional shrink-only lifetime for the first owner slip (seconds).
+    #[arg(long)]
+    pub lifetime_secs: Option<u64>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 /// Pairing is the only enrollment. The owner fixes the holder, the class and
@@ -83,10 +101,14 @@ pub struct TokenPairArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
     pub url: String,
 
-    /// Environment variable holding the host secret. The secret is never a
-    /// positional argument, never printed, and never reaches curl's argv.
-    #[arg(long, default_value = "ONEIRON_SECRET")]
-    pub secret_env: String,
+    /// Environment variable holding a logged owner-grade capability slip.
+    #[arg(long, default_value = "ONEIRON_TOKEN")]
+    pub token_env: String,
+
+    /// Environment variable holding its Ed25519 binding seed (64 hex chars).
+    /// Neither credential reaches curl's argv.
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
 
     /// Verbs the paired slip carries, comma-separated (e.g.
     /// `core:read,core:write`). Omit for every verb.
@@ -131,13 +153,17 @@ pub struct ApiArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
     pub base_url: String,
 
-    /// Environment variable holding the bearer credential. The secret is never
+    /// Environment variable holding a bearer slip. The credential is never
     /// a positional argument, never printed, and never reaches curl's argv.
     /// When the variable is unset the request carries no `Authorization`
     /// header at all, which is what a public route and an
     /// `allow_unauthenticated` server answer.
     #[arg(long, default_value = "ONEIRON_SECRET")]
     pub secret_env: String,
+
+    /// Environment variable with the Ed25519 binding seed for a slip bearer.
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
 
     #[command(subcommand)]
     pub command: ApiCommand,
@@ -340,6 +366,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
         Command::Provenance(args) => commands::provenance(*args),
+        Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,

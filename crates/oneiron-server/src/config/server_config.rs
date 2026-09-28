@@ -40,13 +40,9 @@ pub struct SyncServerConfig {
     /// Maximum uncompressed BulkTransfer chunk size in bytes (M5 Phase-3
     /// bulk sender).
     pub bulk_chunk_size: usize,
-    /// Bearer trust root, checked on both the HTTP API and the `/ws` upgrade.
-    ///
-    /// Two roles: the constant-time-compared owner credential, and the
-    /// BLAKE3 `derive_key` input for v2 token MACs. Rotate by replacing the
-    /// value and restarting — rotation rewraps the MAC key, so previously
-    /// minted tokens and derived credential hashes stop resolving. Revoking
-    /// an individual token is a separate, explicit act.
+    /// Retained host issuer key material. Never accepted as a bearer credential.
+    /// Logged, holder-bound slips authorize HTTP and `/ws` on both transports;
+    /// rotation requires new slips, and a named slip may be revoked separately.
     pub auth_secret: Option<String>,
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,

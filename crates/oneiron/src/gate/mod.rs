@@ -136,7 +136,8 @@ pub use self::owner_policy_mutation::{
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
     GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
-    resolve_gate_decision_retention, resolve_policy_manifest, retention_edit_target,
+    resolve_credential_lifetimes, resolve_gate_decision_retention, resolve_policy_manifest,
+    retention_edit_target,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{

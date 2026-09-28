@@ -2,8 +2,8 @@
 //!
 //! Authorization carries the serialized slip. `x-oneiron-binding` carries
 //! the holder's short-lived Ed25519 proof. The configured retained host
-//! secret authenticates through its genuine logged root slip. Legacy
-//! string-claim MAC tokens never establish production authority.
+//! secret is issuer key material, never a bearer credential. Legacy string-claim
+//! MAC tokens never establish production authority.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -11,7 +11,6 @@ use std::sync::Arc;
 use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, request::Parts};
-use subtle::ConstantTimeEq;
 
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
@@ -60,9 +59,6 @@ pub(crate) trait RevokedTokenJtis {
     /// `Err` means the registry could not be read. Callers fail closed: a
     /// token whose liveness cannot be established is not authenticated.
     fn is_revoked(&self, jti: &str) -> Result<bool, ()>;
-    fn host_root(&self, _secret: &str) -> Result<oneiron::authority::VerifiedSlip, ()> {
-        Err(())
-    }
     fn verify_slip(
         &self,
         _slip: &oneiron::authority::CapabilitySlip,
@@ -77,11 +73,6 @@ pub(crate) trait RevokedTokenJtis {
 /// The server-local persistent registry: one `sync_state` row per revoked
 /// `jti`, where the key IS the fact and the value is empty.
 impl RevokedTokenJtis for oneiron::Vault {
-    fn host_root(&self, secret: &str) -> Result<oneiron::authority::VerifiedSlip, ()> {
-        let issuer =
-            oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).map_err(drop)?;
-        self.verified_host_root_slip(&issuer).map_err(drop)
-    }
     fn verify_slip(
         &self,
         slip: &oneiron::authority::CapabilitySlip,
@@ -228,8 +219,8 @@ pub(crate) struct CoreAuth {
 
 impl CoreAuth {
     /// Refuses an in-band token without its mandatory holder binding proof.
-    /// Neither the trust root (even a v2-shaped root) nor dev-mode unverified
-    /// credentials may establish app-tier authority. Claim grammar is unchanged.
+    /// Neither the issuer secret nor dev-mode unverified credentials may
+    /// establish app-tier authority.
     #[cfg(test)]
     pub(crate) fn from_bind_token(
         token: &str,
@@ -261,14 +252,6 @@ impl CoreAuth {
         revoked: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
         if let Some(token) = bearer_token(headers)? {
-            // Secrets are opaque, including one that resembles slip framing.
-            if config
-                .auth_secret
-                .as_deref()
-                .is_some_and(|secret| constant_time_eq(token, secret))
-            {
-                return bearer_auth(token, config, revoked);
-            }
             if token.starts_with("v2.slip.") {
                 return Self::from_slip_token(
                     token,
@@ -297,6 +280,7 @@ impl CoreAuth {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn from_oauth_relay(subject: String, scopes: BTreeSet<CoreScope>) -> Self {
         Self {
             principal: format!("oauth-relay:{subject}"),
@@ -360,8 +344,7 @@ impl CoreAuth {
     /// behaviour and the dev escape hatch is untouched. It exists because
     /// "authenticated" and "a registered actor" are different facts, and the
     /// origin's receive-pack door (ONE-1908, RC4) needs the second one: a
-    /// bare trust-root secret and the unauthenticated-dev fallthrough are both
-    /// authenticated and neither carries a `principal_ref`, so neither may
+    /// unauthenticated-dev fallthrough carries no `principal_ref`, so it may not
     /// push — on loopback exactly as much as anywhere else.
     pub(crate) fn require_registered_principal(&self) -> Result<&str, ApiError> {
         self.principal_ref
@@ -371,8 +354,7 @@ impl CoreAuth {
 
     /// The credential's revocable identity, when it carries one.
     ///
-    /// The bare secret carries the logged host-root slip id too. Only the
-    /// unauthenticated development fallthrough has no credential to revoke.
+    /// The unauthenticated development fallthrough has no credential to revoke.
     pub(crate) fn jti(&self) -> Option<&str> {
         self.jti.as_deref()
     }
@@ -445,7 +427,7 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
 
 /// Authenticates an owner-grade caller.
 ///
-/// The logged host root or an exact verified top-scope instrument reaches
+/// An exact verified top-scope instrument reaches
 /// full-vault routes. Scoped/org credentials remain `/v1`-plane instruments.
 /// The explicit unauthenticated development hatch is unchanged.
 pub(crate) fn require_owner_auth(
@@ -548,13 +530,7 @@ fn bearer_auth(
     config: &SyncServerConfig,
     revoked: &dyn RevokedTokenJtis,
 ) -> Result<CoreAuth, ApiError> {
-    let relay_configured = config.oauth_issuer.is_some()
-        && config.oauth_jwks_uri.is_some()
-        && config.oauth_resource_indicator.is_some();
-    let Some(expected) = config.auth_secret.as_ref() else {
-        if relay_configured && !token.starts_with(CORE_TOKEN_V2_PREFIX) {
-            return crate::oauth_relay::verify_oauth_relay_token(token, config);
-        }
+    let Some(issuer_key) = config.auth_secret.as_ref() else {
         if config.allow_unauthenticated {
             // No secret exists to verify against, so the MAC segment is
             // accepted unverified — but the v2 framing is still required, so
@@ -569,34 +545,10 @@ fn bearer_auth(
         }
         return Err(ApiError::unauthorized());
     };
-    if expected.is_empty() {
+    if issuer_key.is_empty() {
         return Err(ApiError::unauthorized());
     }
 
-    // The configured trust root is matched VERBATIM first, before any token
-    // parsing. A secret is an opaque operator-chosen string: one that happens
-    // to be shaped like `v2.<x>.<y>` is still the owner credential, and
-    // judging it as a token would compare its own tail against a MAC and
-    // break owner auth outright.
-    if constant_time_eq(token, expected) {
-        let verified = revoked
-            .host_root(expected)
-            .map_err(|_| ApiError::unauthorized())?;
-        let mut auth = CoreAuth::from_verified(verified, true)?;
-        if !auth.is_owner_grade() {
-            return Err(ApiError::unauthorized());
-        }
-        auth.principal = "bearer".to_owned();
-        return Ok(auth);
-    }
-
-    if config.oauth_issuer.is_some()
-        && config.oauth_jwks_uri.is_some()
-        && config.oauth_resource_indicator.is_some()
-        && !token.starts_with(CORE_TOKEN_V2_PREFIX)
-    {
-        return crate::oauth_relay::verify_oauth_relay_token(token, config);
-    }
     // String-claim tokens have neither a log mint nor a binding-key proof.
     Err(ApiError::unauthorized())
 }
@@ -681,9 +633,7 @@ fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
             // to, so a slip carrying a class but no scope list is refused for
             // the same reason a bare `principal_ref` is.
             //
-            // Reached only AFTER the MAC check in `bearer_auth`, so this arm
-            // reads bytes the trust root already authenticated and can never
-            // weaken the verbatim/MAC gate above it.
+            // This grammar is only used by the explicit development hatch.
             "actor_class" => {
                 saw_narrowing_claim = true;
                 claims.actor_class = Some(parse_actor_class(value)?);
@@ -761,10 +711,6 @@ fn parse_actor_class(value: &str) -> Result<String, ApiError> {
         "human" | "agent" | "system" => Ok(value.to_owned()),
         _ => Err(ApiError::unauthorized()),
     }
-}
-
-fn constant_time_eq(provided: &str, expected: &str) -> bool {
-    provided.len() == expected.len() && provided.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
 #[cfg(test)]

@@ -37,8 +37,8 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// Handles WebSocket upgrade requests.
 ///
 /// Auth: the upgrade request must present an owner-grade credential in the
-/// `Authorization: Bearer` header — the configured trust-root secret or an
-/// empty-claims v2 token. Scoped delegation tokens do not reach this surface.
+/// `Authorization: Bearer` header — a logged, holder-bound top-scope slip.
+/// Neither the issuer secret nor a device lease grants socket access.
 /// An unauthenticated upgrade is rejected with 401 BEFORE the socket upgrade
 /// (fail-closed) — without this gate any network peer could pull the full
 /// root snapshot and window exports. When no secret is configured, upgrades
@@ -55,9 +55,6 @@ async fn ws_upgrade_handler(
 ) -> Result<impl IntoResponse, StatusCode> {
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let vault_binding = server
-        .require_vault_binding(&headers)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
 
     let conn_id = server.alloc_conn_id();
@@ -73,9 +70,7 @@ async fn ws_upgrade_handler(
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| {
-            handle_connection(socket, server, conn_id, session_jti, vault_binding)
-        }))
+        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -87,10 +82,7 @@ async fn ws_upgrade_handler(
 /// already inside keeps full vault service. Fail-closed on an unreadable
 /// registry, matching the handshake: "we could not check" is not "still live".
 ///
-/// `None` means the credential carries no revocable identity — the bare trust
-/// root or the dev fallthrough — so there is nothing to consult and the
-/// lookup is skipped entirely. Those are retired by rotating `auth_secret`,
-/// which invalidates them without any registry read.
+/// `None` is possible only in explicit unauthenticated development mode.
 pub(super) fn session_credential_revoked(
     revoked: &dyn RevokedTokenJtis,
     session_jti: Option<&str>,
@@ -125,7 +117,6 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
-    vault_binding: Option<crate::server::vault_binding::VaultBinding>,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -137,8 +128,6 @@ async fn handle_connection(
         session_jti.clone(),
         conn_id,
     );
-
-    transport.vault_binding = vault_binding.map(|binding| (Arc::clone(server.vault()), binding));
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
     // must be a supported protocol hello. Malformed frames or unsupported

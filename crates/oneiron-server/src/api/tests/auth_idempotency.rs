@@ -405,12 +405,12 @@ async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403(
 }
 
 #[tokio::test]
-async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() {
+async fn v1_core_idempotency_owner_slip_replays_and_conflicts() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let turn = seed_turn(&server, "legacy idempotency");
+    let turn = seed_turn(&server, "owner-slip idempotency");
     let body = turn_annotation_request_body(&turn, 302);
 
     let (first_status, first_body) = idempotent_core_annotate(

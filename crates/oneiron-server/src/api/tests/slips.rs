@@ -685,3 +685,141 @@ async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_recor
     let (status, _) = route_json(server, request(&slip, paths[0])).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn proposed_write_checks_record_ceiling_independent_of_read_verb() {
+    use oneiron::authority::SlipCaveat;
+    let (_dir, server) = server();
+    let subject = seed_turn(&server, "proposal subject");
+    let body = json!({"subject":subject.to_hex(),"predicate":"profile.name","value":"candidate"});
+    let before = server
+        .vault()
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+        .unwrap()
+        .len();
+    for (index, verbs) in [
+        "core:propose",
+        "core:propose,core:read",
+        "core:write,core:propose",
+        "core:write,core:propose,core:read",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let recipe = format!("scope={verbs};jti=proposal-ceiling-{index}");
+        let (base, holder) = crate::test_credentials::credential(&server, &recipe);
+        for narrowing in ["world", "record", "channel"] {
+            let mut slip = base.clone();
+            let caveat = match narrowing {
+                "world" => SlipCaveat {
+                    scope: Some(Scope {
+                        worlds: ScopeAxis::Bottom,
+                        ..Scope::top()
+                    }),
+                    ..Default::default()
+                },
+                "record" => SlipCaveat {
+                    records: Some(BTreeSet::from([subject.to_hex()])),
+                    ..Default::default()
+                },
+                _ => SlipCaveat {
+                    channels: Some(BTreeSet::from(["proposal".to_owned()])),
+                    ..Default::default()
+                },
+            };
+            slip.attenuate(caveat, &holder).unwrap();
+            let request = json_request("POST", "/v1/core/propose", body.clone());
+            let request =
+                crate::test_credentials::bind_slip_request(&server, &slip, &holder, request);
+            let (status, _) = route_json(server.clone(), request).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{verbs} with {narrowing} must not escape"
+            );
+            assert_eq!(
+                server
+                    .vault()
+                    .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+                    .unwrap()
+                    .len(),
+                before
+            );
+        }
+        if verbs.contains("core:read") {
+            // First narrow the record world, then remove only `read`. Neither
+            // the parent nor its descendant may acquire proposal authority.
+            let mut changed = base.clone();
+            changed
+                .attenuate(
+                    SlipCaveat {
+                        scope: Some(Scope {
+                            worlds: ScopeAxis::Bottom,
+                            ..Scope::top()
+                        }),
+                        ..Default::default()
+                    },
+                    &holder,
+                )
+                .unwrap();
+            let narrowed_verbs = if verbs.contains("core:write") {
+                BTreeSet::from(["write".to_owned(), "core:propose".to_owned()])
+            } else {
+                BTreeSet::from(["core:propose".to_owned()])
+            };
+            changed
+                .attenuate(
+                    SlipCaveat {
+                        scope: Some(Scope {
+                            verbs: ScopeAxis::Some(narrowed_verbs),
+                            ..Scope::top()
+                        }),
+                        ..Default::default()
+                    },
+                    &holder,
+                )
+                .unwrap();
+            let request = crate::test_credentials::bind_slip_request(
+                &server,
+                &changed,
+                &holder,
+                json_request("POST", "/v1/core/propose", body.clone()),
+            );
+            let (status, _) = route_json(server.clone(), request).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "removing read from {verbs} must not widen"
+            );
+            assert_eq!(
+                server
+                    .vault()
+                    .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+                    .unwrap()
+                    .len(),
+                before
+            );
+        }
+    }
+    let (slip, holder) = crate::test_credentials::credential(
+        &server,
+        "scope=core:propose;jti=proposal-unrestricted-control",
+    );
+    let request = crate::test_credentials::bind_slip_request(
+        &server,
+        &slip,
+        &holder,
+        json_request("POST", "/v1/core/propose", body),
+    );
+    let (status, response) = route_json(server.clone(), request).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["approval"], "proposed");
+    assert_eq!(
+        server
+            .vault()
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .len(),
+        before + 1
+    );
+}

@@ -189,10 +189,6 @@ pub(super) struct GuardedTransport<S> {
     session_jti: Option<String>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
-    pub(super) vault_binding: Option<(
-        Arc<oneiron::Vault>,
-        crate::server::vault_binding::VaultBinding,
-    )>,
     conn_id: u32,
     /// The socket's own `write_buffer_size`, mirrored so the refusal below can
     /// be stated against it.
@@ -241,20 +237,12 @@ where
             revoked,
             session_jti,
             app_jti: None,
-            vault_binding: None,
             conn_id,
             write_through_threshold,
         }
     }
 
     fn credential_revoked(&self) -> bool {
-        if self
-            .vault_binding
-            .as_ref()
-            .is_some_and(|(vault, binding)| !binding.live(vault))
-        {
-            return true;
-        }
         session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref())
             || session_credential_revoked(self.revoked.as_ref(), self.app_jti.as_deref())
     }
