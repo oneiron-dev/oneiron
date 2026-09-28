@@ -103,6 +103,8 @@ pub struct SyncServer {
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
     pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
+    /// Host-injected, request-by-request egress decision for nonlocal extraction.
+    pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -235,6 +237,7 @@ impl SyncServer {
             deep_retrieval: None,
             embedder: None,
             llm: None,
+            extraction_egress: None,
             #[cfg(test)]
             booking_test_now_secs: None,
         })
@@ -320,6 +323,16 @@ impl SyncServer {
         budget: oneiron::BudgetGuard,
     ) -> Self {
         self.llm = Some((backend, budget));
+        self
+    }
+
+    /// Install the host's extraction egress predicate. An absent predicate
+    /// refuses nonlocal extraction rather than trusting an editable default.
+    pub fn with_extraction_egress(
+        mut self,
+        predicate: Arc<dyn oneiron::llm::ExtractionEgressPredicate>,
+    ) -> Self {
+        self.extraction_egress = Some(predicate);
         self
     }
 
