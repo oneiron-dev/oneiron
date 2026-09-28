@@ -1,4 +1,5 @@
 use super::*;
+use crate::channel_identity::ChannelIdentityStep;
 use crate::error::{GateError, RecordError};
 use crate::subject_model::tests::authorization::root_owner;
 
@@ -412,7 +413,7 @@ fn mailbox_retry_rechecks_custody_and_never_completes_autonomy() -> Result<()> {
     let identity = vault
         .get_channel_identity(&requested.identity_ref)?
         .expect("Requested row");
-    assert_eq!(identity.state, ChannelIdentityState::Requested);
+    assert_eq!(identity.state(), ChannelIdentityState::Requested);
     assert!(!identity.may_send());
     // A successful first provisioning does not authorize a later retry.
     seed_federation_grant(
@@ -772,19 +773,17 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
             ))
         ));
         if future_lifecycle {
-            vault.transition_channel_identity(
+            vault.step_channel_identity(
                 &requested.identity_ref,
-                ChannelIdentityState::PendingFulfillment,
-                Some(crate::channel_identity::ChannelIdentityFulfillment::Manual),
+                ChannelIdentityStep::Bind(
+                    crate::channel_identity::ChannelIdentityFulfillment::Manual,
+                ),
                 AT + 1,
-                None,
             )?;
-            vault.transition_channel_identity(
+            vault.step_channel_identity(
                 &requested.identity_ref,
-                ChannelIdentityState::Active,
-                None,
+                ChannelIdentityStep::Fulfill,
                 crate::unix_seconds_now() + 3_600,
-                None,
             )?;
         } else {
             activate_mailbox(&vault, requested.identity_ref)?;

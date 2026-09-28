@@ -295,6 +295,7 @@ fn authorized_agent_edits_inference_rows_and_next_call_uses_them() -> Result<()>
     let mut request = crate::llm::LlmRequest {
         model: crate::llm::ModelId::new("test/own@r1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,

@@ -66,8 +66,16 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let decoded = decode_tombstone_value(raw_value);
+        guard_topology_delete_request_in_txn(&self.store, wtxn, id, &decoded)?;
+        let settled = match decoded.request_id.as_ref() {
+            Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
+            None => false,
+        };
+        if decoded.is_hard() && !settled {
+            self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
+        }
+        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive
         // (or an unrelated row) without the cleanup predicate or owner decision.
@@ -83,6 +91,9 @@ impl Vault {
                 header.entity_type,
             )));
         }
+        // Receiver-only room MESSAGE content must be erased before the TURN
+        // loses its PartOf edges, even when the host never held the child.
+        crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub.
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
@@ -117,6 +128,10 @@ impl Vault {
             if existed && let Some(captured) = &captured {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
+            IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
+            if let Some(request) = decoded.request_id.as_ref() {
+                clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
+            }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
                 changed: ledger_changed
                     || had_body
@@ -129,6 +144,8 @@ impl Vault {
             });
         }
 
+        self.store
+            .reject_held_gate_partition_in_txn(wtxn, id.as_bytes())?;
         let marker_key = HexId(*id);
         let marker_value = decoded.local_hard_delete_marker_value();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
@@ -165,6 +182,10 @@ impl Vault {
                     );
                 }
             }
+            self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
+            if let Some(request) = decoded.request_id.as_ref() {
+                clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
+            }
             return Ok(ReplayedTombstoneOutcome::HardPurged {
                 erased: false,
                 receipt_id: None,
@@ -176,7 +197,7 @@ impl Vault {
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
         let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
-        self.purge_entity_active_store_in_txn(wtxn, id)?;
+        self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
@@ -214,6 +235,7 @@ impl Vault {
             &receipt_id,
             RedactionReceiptInput {
                 actor_principal: None,
+                room_authority: None,
                 request_id: decoded.receipt_request_id(),
                 scope,
                 reason: decoded.receipt_hard_reason(),
@@ -227,6 +249,9 @@ impl Vault {
             },
             sweep_extras(captured.as_ref()),
         )?;
+        if let Some(request) = decoded.request_id.as_ref() {
+            clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
+        }
         Ok(ReplayedTombstoneOutcome::HardPurged {
             erased: true,
             receipt_id: Some(receipt_id),

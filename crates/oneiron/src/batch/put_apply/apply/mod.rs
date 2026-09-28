@@ -243,8 +243,6 @@ pub(in crate::batch) fn apply_put(
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
-    } else if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
-        crate::channel_identity::validate_channel_identity_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COMM_RECORD {
@@ -628,6 +626,9 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
+    if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
+        crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     crate::skill_hub::stage_refinement_origin(
         store,

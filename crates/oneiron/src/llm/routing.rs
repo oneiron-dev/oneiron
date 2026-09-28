@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::registry::ModelWireFormat;
+use super::seat::{DescriptionSource, SeatPolicy};
 use super::{
     BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
@@ -58,14 +59,22 @@ pub struct ModelDescription {
 }
 
 impl ModelDescription {
-    fn line<'a>(&'a self, measurement: Option<&'a MeasuredDescription>) -> Option<&'a str> {
-        self.owner
-            .as_ref()
-            .filter(|line| line.model == self.model)
-            .map(|line| line.text.as_str())
-            .or_else(|| measurement.map(|line| line.text.as_str()))
-            .or(self.public_benchmark.as_deref())
-            .or(self.vendor.as_deref())
+    /// The first available line in the seat policy's evidence order.
+    fn line<'a>(
+        &'a self,
+        measurement: Option<&'a MeasuredDescription>,
+        order: &[DescriptionSource],
+    ) -> Option<&'a str> {
+        order.iter().find_map(|source| match source {
+            DescriptionSource::Owner => self
+                .owner
+                .as_ref()
+                .filter(|line| line.model == self.model)
+                .map(|line| line.text.as_str()),
+            DescriptionSource::Measured => measurement.map(|line| line.text.as_str()),
+            DescriptionSource::Benchmarks => self.public_benchmark.as_deref(),
+            DescriptionSource::Vendor => self.vendor.as_deref(),
+        })
     }
 }
 
@@ -185,6 +194,7 @@ impl RoutedSeat {
         request.model = self.model.clone();
         request.envelope.locality = self.locality;
         request.envelope.tier.per_seat = Some(self.tier.clone());
+        request.envelope.seat_effort = Some(self.effort);
         Ok(())
     }
 }
@@ -249,7 +259,7 @@ fn seat_key(id: &str) -> Result<Vec<u8>> {
     }
     Ok(SEATS.key_bytes(&id.to_owned()))
 }
-fn purpose_key(purpose: &CallPurpose) -> String {
+pub(crate) fn purpose_key(purpose: &CallPurpose) -> String {
     match purpose {
         CallPurpose::Other { name } => format!("other:{name}"),
         other => serde_json::to_value(other)
@@ -398,32 +408,18 @@ fn apply_controls(
     }
     Ok(())
 }
-fn effort_for(
-    policy: &DescriptionPolicy,
-    chosen: &ModelDescription,
-    settings: &SeatSettings,
-    purpose: &CallPurpose,
-) -> Result<ReasoningEffort> {
-    let effort = settings
-        .effort
-        .or(policy.vault_effort)
-        .or_else(|| policy.purpose_effort.get(&purpose_key(purpose)).copied())
-        .or(policy.global_effort)
-        .unwrap_or(chosen.effort_ladder[0]);
-    if !chosen.effort_ladder.contains(&effort) {
-        return Err(invalid("effort not supported by selected model"));
-    }
-    Ok(effort)
-}
-
+/// Seats and verdicts share the seat policy's composition, ceiling and
+/// evidence order; this router adds no default of its own.
 fn resolve<'a>(
     policy: &'a DescriptionPolicy,
+    seat_policy: &SeatPolicy,
     measurements: &'a BTreeMap<ModelId, MeasuredDescription>,
     settings: &SeatSettings,
     purpose: &CallPurpose,
     task: &str,
     judge: &dyn DescriptionJudge,
 ) -> Result<(&'a ModelDescription, DescriptionJudgment, ReasoningEffort)> {
+    let composed = seat_policy.compose_defaults(&purpose_key(purpose), Some(policy))?;
     policy
         .models
         .iter()
@@ -434,8 +430,10 @@ fn resolve<'a>(
                 .is_none_or(|allowed| allowed.contains(&row.model))
         })
         .filter_map(|row| {
-            let effort = effort_for(policy, row, settings, purpose).ok()?;
-            row.line(measurements.get(&row.model))
+            let effort = seat_policy
+                .choose(composed, settings.effort, &row.effort_ladder)
+                .ok()?;
+            row.line(measurements.get(&row.model), &seat_policy.evidence_order)
                 .map(|line| (row, judge.judge(task, &row.model, line, effort), effort))
         })
         .filter(|(_, verdict, _)| verdict.fitness > 0 && !verdict.reason.trim().is_empty())
@@ -600,9 +598,15 @@ impl Vault {
             .map(|bytes| MEASUREMENTS.decode_value(bytes))
             .transpose()?
             .unwrap_or_default();
-
-        let (chosen, verdict, effort) =
-            resolve(&policy, &measurements, settings, purpose, task, judge)?;
+        let (chosen, verdict, effort) = resolve(
+            &policy,
+            &self.seat_policy()?,
+            &measurements,
+            settings,
+            purpose,
+            task,
+            judge,
+        )?;
         let seat = RoutedSeat {
             id: id.into(),
             role: role.into(),
@@ -668,6 +672,7 @@ impl Vault {
         let measurements = self.description_measurements()?;
         let (chosen, _, effort) = resolve(
             &policy,
+            &self.seat_policy()?,
             &measurements,
             settings,
             &request.envelope.purpose,
@@ -695,6 +700,9 @@ impl Vault {
             effort,
             &settings.inference_overrides,
         )?;
+        // Schema verdicts are independent calls: replace the generating
+        // seat's wire pin with this verdict's actual judged effort.
+        request.envelope.seat_effort = Some(effort);
         request.messages = payload.messages()?;
         Ok(request)
     }

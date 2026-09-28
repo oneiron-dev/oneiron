@@ -66,6 +66,16 @@ fn seed_conversation(vault: &Vault, seed: u8) -> EntityId {
     id
 }
 
+/// Seeded turns carry no PERSON author, so only a room owner's
+/// `policy_delete` may remove one; this legacy fixture holds no policy
+/// manifest, where that door fails closed. Deletion is not under test here.
+fn hard_delete_turn(vault: &Vault, turn: EntityId) -> bool {
+    vault
+        .delete_room_record_unchecked_for_test(&turn, crate::DeleteReason::UserHardDelete)
+        .expect("hard-delete planned turn")
+        .existed
+}
+
 /// One admissible dirty turn (mirrors `dreamer_consolidation::tests`):
 /// a TURN entity with an extraction-admissible speaker and the structural
 /// ChildOf conversation edge the partition planner requires.
@@ -448,14 +458,7 @@ fn a_same_count_delete_and_insert_race_defers_the_whole_round_by_identity() {
     let deleted = wake.planned_turn_ids[0];
     let surviving = wake.planned_turn_ids[1];
 
-    assert!(
-        vault
-            .delete_entity_with_options(
-                &deleted,
-                crate::deletion::DeleteEntityOptions { purge: true }
-            )
-            .expect("hard-delete planned turn")
-    );
+    assert!(hard_delete_turn(&vault, deleted));
     let inserted = seed_dirty_turn(&vault, &conversation, 900);
     vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
@@ -939,11 +942,7 @@ fn a_vanished_dirty_snapshot_enqueues_none_of_the_stale_round() {
     let before = meso_attempt_count(&vault);
 
     // The whole planned snapshot vanishes before the close runs.
-    assert!(
-        vault
-            .delete_entity_with_options(&turn, crate::deletion::DeleteEntityOptions { purge: true })
-            .expect("hard-delete planned turn")
-    );
+    assert!(hard_delete_turn(&vault, turn));
 
     let ended = vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)

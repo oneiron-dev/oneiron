@@ -27,6 +27,23 @@ const SEEDED: SideTable<HexId, [u8; 32], Raw> =
 pub(crate) fn trusted_manifest_key(id: &EntityId) -> String {
     format!("manifest:trusted:{}", id.to_hex())
 }
+
+/// Separate proof that an authenticated vault owner authored an override
+/// row. A generic local manifest trust stamp is not holder authority.
+const RETENTION_HOLDER: SideTable<HexId, [u8; 32], Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_RETENTION_HOLDER);
+
+pub(in crate::gate) fn retention_holder_verified(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<bool> {
+    Ok(RETENTION_HOLDER
+        .get(store, txn, &HexId(*id))?
+        .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
+}
+
 /// The bootstrap seed's [`SEEDED`] row key, spelled for the same raw write as
 /// [`trusted_manifest_key`].
 pub(crate) fn seeded_manifest_key(id: &EntityId) -> String {
@@ -34,7 +51,7 @@ pub(crate) fn seeded_manifest_key(id: &EntityId) -> String {
 }
 
 pub(crate) fn manifest_is_seeded_default(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
@@ -83,7 +100,7 @@ pub(crate) fn stamp_manifest_origin(
 }
 
 pub(crate) fn manifest_is_trusted(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
@@ -93,8 +110,8 @@ pub(crate) fn manifest_is_trusted(
         .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
 }
 
-pub(in crate::gate) fn manifest_is_quarantined(
-    store: &Store,
+pub(crate) fn manifest_is_quarantined(
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
@@ -189,6 +206,7 @@ impl Vault {
                 ));
             }
         }
+        let holder_hash = blake3::hash(&data);
         crate::batch::apply_ops(
             &self.store,
             &self.config,
@@ -211,7 +229,9 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        RETENTION_HOLDER.put(&self.store, txn, &HexId(id), holder_hash.as_bytes())?;
+        Ok(())
     }
 
     /// Installs a locally authored policy manifest through the authenticated
@@ -275,6 +295,9 @@ pub(crate) fn update_manifest_origin(
     body: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    // Any generic write (including replay) invalidates the holder's exact
+    // body attestation. The authenticated owner door re-stamps it afterwards.
+    RETENTION_HOLDER.delete(store, txn, &HexId(*id))?;
     if kind == ENTITY_TYPE_POLICY_MANIFEST {
         stamp_manifest_origin(store, txn, id, body, replicated)?;
     } else {

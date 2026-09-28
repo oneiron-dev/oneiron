@@ -217,8 +217,15 @@ impl Vault {
             }
             record.desc = parsed.record.desc;
             record.version = parsed.record.version;
+            record.role = parsed.record.role;
+            record.call = parsed.record.call;
             record.content_hash = parsed.record.content_hash;
             let saved = HubPackage::new(record.clone(), parsed.files, parsed.capabilities);
+            super::folder::package_from_source(
+                &record,
+                saved.files.clone(),
+                super::SkillPackageFormat::Folder,
+            )?;
             self.put_skill_record_in_txn(txn, fork, &record, occurred, learned_at)?;
             self.persist_hub_package_in_txn(txn, fork, &saved)?;
             self.scan_and_ingest_on_import_in_txn(

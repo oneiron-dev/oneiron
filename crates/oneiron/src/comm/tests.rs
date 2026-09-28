@@ -2135,18 +2135,39 @@ fn malformed_person_bodies_do_not_wedge_party_resolution() -> CommResult<()> {
     Ok(())
 }
 
-fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+/// Topology DECISION event ids. Each applied decision also stores a separate
+/// admission-disposition fact (and, when attributed, an attribution fact) in
+/// the same engine-owned family; those are not decisions.
+fn identity_topology_decision_ids(vault: &Vault) -> CommResult<Vec<EntityId>> {
+    use crate::identity_topology::StoredIdentityOpAction;
     let rtxn = vault.store.env.read_txn()?;
-    let mut count = 0;
+    let mut ids = Vec::new();
     for entry in vault
         .store
         .type_index
         .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
     {
-        entry?;
-        count += 1;
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        let is_decision = vault
+            .identity_topology_event_in_txn(&rtxn, &id)?
+            .is_some_and(|event| {
+                !matches!(
+                    event.action,
+                    StoredIdentityOpAction::AdmissionDisposition(_)
+                        | StoredIdentityOpAction::AuthorAttribution { .. }
+                        | StoredIdentityOpAction::AuthorRedaction { .. }
+                )
+            });
+        if is_decision {
+            ids.push(id);
+        }
     }
-    Ok(count)
+    Ok(ids)
+}
+
+fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+    Ok(identity_topology_decision_ids(vault)?.len())
 }
 
 #[test]
@@ -2202,16 +2223,7 @@ fn twin_merge_records_sorted_evidence_and_the_stable_rationale_token() -> CommRe
     run_comm_projector(&vault)?;
 
     let event_id = {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for entry in vault
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-        {
-            let (key, _) = entry?;
-            ids.push(entity_id_from_type_index_key(&key)?);
-        }
+        let ids = identity_topology_decision_ids(&vault)?;
         assert_eq!(ids.len(), 1);
         ids[0]
     };
@@ -3548,20 +3560,14 @@ fn gate_holds_for_counterparty_opt_out(vault: &Vault, counterparty: &str) -> Com
 
 /// Seeds one email ChannelIdentity so a contact resolves to a channel class.
 fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<()> {
-    let identity = crate::channel_identity::ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
-        channel: "email".to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
-        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
-        state: crate::channel_identity::ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::test_util::self_held_identity_in_state(
+        "email",
+        address,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault
         .create_channel_identity(&id, &identity)
         .map_err(CommError::Engine)

@@ -28,6 +28,8 @@ pub struct ReplyStrip {
     pub text: Option<String>,
     /// Target is missing, deleted or no longer at the pinned revision.
     pub stale: bool,
+    /// Target has been erased (rather than merely edited or not yet received).
+    pub redacted: bool,
 }
 
 impl Vault {
@@ -79,10 +81,17 @@ impl Vault {
         if revision.len() != 64 || !revision.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(invalid("invalid reply hash"));
         }
-        if edge_ids(&self.store, &txn, record, EdgeKind::RepliesTo, false, 2)? != [target] {
+        let target_row = live_entity_row_in_txn(&self.store, &txn, &target)?;
+        let redacted = matches!(target_row, LiveEntityRow::DeletedShell)
+            || self.local_hard_delete_marker_exists_in_txn(&txn, &target)?;
+        let edges = edge_ids(&self.store, &txn, record, EdgeKind::RepliesTo, false, 2)?;
+        // HardErase tears incident edges. The pinned pointer survives in the
+        // immutable reply body, but must never hydrate erased content. A live
+        // target still requires the exact structural edge.
+        if edges != [target] && !(redacted && edges.is_empty()) {
             return Err(Error::CorruptedIndex("reply pointer index"));
         }
-        let (text, stale) = match live_entity_row_in_txn(&self.store, &txn, &target)? {
+        let (text, stale) = match target_row {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_TURN,
                 body,
@@ -114,6 +123,7 @@ impl Vault {
             revision,
             text,
             stale,
+            redacted,
         }))
     }
 }

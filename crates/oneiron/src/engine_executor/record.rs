@@ -253,6 +253,9 @@ fn executor_config_hash(storage: &ExecutorStorage<'_>, config: &EngineExecutorCo
     hash_str(&mut hasher, &config.task);
     hash_str(&mut hasher, config.model.as_str());
     hash_str(&mut hasher, model_locality_str(config.model_locality));
+    if let Some(effort) = config.seat_effort {
+        hash_str(&mut hasher, &format!("seat_effort:{effort:?}"));
+    }
     hash_str(&mut hasher, config.global_tier.as_str());
     hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
     hash_bytes(&mut hasher, &config.determinism.rng_seed);
@@ -314,6 +317,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "agents.spawn" => Ok(SelfEffect::AgentsSpawn),
+        "vault.agents.put" => Ok(SelfEffect::AgentsPut),
         "tasks.ask" => Ok(SelfEffect::TasksAsk),
         "tasks.wait" => Ok(SelfEffect::TasksWait),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),

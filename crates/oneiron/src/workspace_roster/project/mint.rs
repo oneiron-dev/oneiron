@@ -51,6 +51,19 @@ pub struct ProjectMintReceipt {
     pub grant_ref: String,
 }
 
+/// An exact tap replay re-proves its mint against the recorded Grant
+/// decision, so the retention sweep keeps each durable tap's decision.
+pub(crate) fn project_mint_gate_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::HashSet<GateDecisionId>> {
+    Ok(TAPS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, (_, receipt))| receipt.grant_decision_id)
+        .collect())
+}
+
 fn checked_ref(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

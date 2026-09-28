@@ -258,6 +258,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("openai/gpt-4.1@2026-07-02").expect("model id"),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::Durable {

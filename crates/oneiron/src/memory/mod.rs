@@ -67,6 +67,7 @@ pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
     ChatScope, ComposedChatAnswer,
 };
+pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
@@ -101,6 +102,7 @@ pub use recall::{
     RetrievalMeta, ScopeHonesty,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
+pub(crate) use skill_authoring::skill_author_proof_is_live_in_txn;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,

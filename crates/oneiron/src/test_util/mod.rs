@@ -13,6 +13,9 @@ pub(crate) mod row_dump;
 /// integration binaries mount the same file through `tests/common`.
 pub(crate) mod source_scan;
 
+mod channel_identity;
+pub(crate) use channel_identity::self_held_identity_in_state;
+
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
@@ -151,6 +154,41 @@ pub(crate) fn put_policy_manifest_bytes(
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
         vault.store.type_index.put(wtxn, &type_key, &[])?;
+        Ok(())
+    })
+}
+
+/// Pin a test model manifest with a passing teacher-probe receipt, the way
+/// the bench publishes one; a bare `set_model_manifest` refuses a new teacher.
+pub(crate) fn pin_model_manifest(
+    vault: &crate::Vault,
+    manifest: &crate::llm::manifest::ModelManifest,
+) -> crate::Result<()> {
+    let policy = vault.teacher_probe_policy(None)?;
+    let approval = crate::llm::manifest::TeacherProbeApproval::for_scored_checkpoint(
+        manifest, &policy, 1_000_000,
+    )?;
+    vault.set_model_manifest_with_teacher_approval(manifest, &approval)
+}
+
+/// Re-appends every live claim-bound gate decision as if created at
+/// `created_at`, so a test can age real receipts past a retention horizon.
+pub(crate) fn backdate_claim_gate_decisions(vault: &Vault, created_at: u64) -> crate::Result<()> {
+    vault.with_write_txn(|txn| {
+        let mut rows = Vec::new();
+        vault.store.for_each_gate_decision_in_txn(txn, |record| {
+            if record.claim_id.is_some() && record.redacted_at.is_none() {
+                rows.push(record);
+            }
+            Ok(())
+        })?;
+        for mut row in rows {
+            vault
+                .store
+                .delete_gate_decision_in_txn(txn, row.decision_id)?;
+            row.created_at = created_at;
+            vault.store.append_gate_decision_in_txn(txn, &row)?;
+        }
         Ok(())
     })
 }

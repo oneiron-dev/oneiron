@@ -214,7 +214,9 @@ pub(super) fn check_source_binding_update(
         && record.content_hash == Some(source.content_hash()?)
         && (record.skill_id != source.record.skill_id
             || record.version != source.record.version
-            || record.desc != source.record.desc)
+            || record.desc != source.record.desc
+            || record.role != source.record.role
+            || record.call != source.record.call)
     {
         return Err(invalid(
             "source-backed skill revision requires an owning source transaction",
@@ -236,6 +238,8 @@ impl Vault {
             || record.skill_id != package.record.skill_id
             || record.version != package.record.version
             || record.desc != package.record.desc
+            || record.role != package.record.role
+            || record.call != package.record.call
         {
             return Err(invalid("stored package differs from its native skill"));
         }
@@ -304,6 +308,8 @@ impl Vault {
             || package.record.skill_id != record.skill_id
             || package.record.version != record.version
             || package.record.desc != record.desc
+            || package.record.role != record.role
+            || package.record.call != record.call
         {
             return Err(invalid("replicated source differs from its native skill"));
         }
@@ -330,6 +336,8 @@ impl Vault {
             || record.skill_id != package.record.skill_id
             || record.version != package.record.version
             || record.desc != package.record.desc
+            || record.role != package.record.role
+            || record.call != package.record.call
         {
             return Err(invalid("runtime package differs from the admitted skill"));
         }

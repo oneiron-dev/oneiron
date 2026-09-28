@@ -254,7 +254,11 @@ fn erasing_turn_or_message_revokes_the_derived_sample() -> crate::Result<()> {
         } else {
             id
         };
-        assert!(vault.delete_entity(&source)?);
+        assert!(
+            vault
+                .delete_own_room_record(source, crate::DeleteReason::UserDelete)?
+                .existed
+        );
         assert!(read_tier2_samples(&vault)?.is_empty());
         let txn = vault.store.env.read_txn()?;
         assert!(
@@ -280,7 +284,11 @@ fn deletion_during_redaction_cannot_commit_a_stale_sample() -> crate::Result<()>
     }
     impl Tier2Redactor for DeleteDuringRedaction<'_> {
         fn detect(&self, _: &str) -> crate::Result<Option<Vec<RedactionSpan>>> {
-            assert!(self.vault.delete_entity(&self.source)?);
+            assert!(
+                self.vault
+                    .delete_own_room_record(self.source, crate::DeleteReason::UserDelete)?
+                    .existed
+            );
             Ok(Some(vec![]))
         }
     }
@@ -468,7 +476,11 @@ fn document_edit_or_erase_during_redaction_cannot_publish_stale_sample() -> crat
     impl Tier2Redactor for Change<'_> {
         fn detect(&self, _: &str) -> crate::Result<Option<Vec<RedactionSpan>>> {
             if self.erase {
-                assert!(self.vault.delete_entity(&self.message)?);
+                assert!(
+                    self.vault
+                        .delete_own_room_record(self.message, crate::DeleteReason::UserDelete)?
+                        .existed
+                );
             } else {
                 continue_stream(self.vault, self.actor, self.request, " changed");
             }

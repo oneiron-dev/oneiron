@@ -438,6 +438,26 @@ fn surfaced_failure_card_rejects_extra_canonical_membership_edges() -> Result<()
             ),
         )
     };
+    // Room bindings are immutable through the public writers (ARCH-0006a: a
+    // MESSAGE is an append-only Record and a TURN has one parent). Seed
+    // explicit corruption through the raw store so the card reader still
+    // faces the conflicting bindings.
+    let raw_edge = |source: EntityId, kind: EdgeKind, target: EntityId, present: bool| {
+        let key_out = Store::encode_edge_key(&source, kind, &target);
+        let key_in = Store::encode_edge_key(&target, kind, &source);
+        let value =
+            crate::edge::encode_edge_value(kind, 1.0, 100, crate::affect::Vad::NEUTRAL, None)?;
+        vault.with_write_txn(|wtxn| {
+            if present {
+                vault.store.edges_out.put(wtxn, &key_out, &value)?;
+                vault.store.edges_in.put(wtxn, &key_in, &value)?;
+            } else {
+                vault.store.edges_out.delete(wtxn, &key_out)?;
+                vault.store.edges_in.delete(wtxn, &key_in)?;
+            }
+            Ok(())
+        })
+    };
     for (source, kind, extra) in [
         (message, EdgeKind::PartOf, foreign_turn),
         (message, EdgeKind::BelongsTo, foreign),
@@ -445,26 +465,21 @@ fn surfaced_failure_card_rejects_extra_canonical_membership_edges() -> Result<()
     ] {
         assert!(card_for(turn).is_ok());
         assert!(card_for(conversation).is_ok());
-        if kind == EdgeKind::ChildOf {
-            // The public writer rejects a second parent. Seed explicit corruption
-            // through the raw store so the card reader still faces both bindings.
-            assert!(matches!(
+        match kind {
+            EdgeKind::ChildOf => assert!(matches!(
                 vault.put_edge(&source, kind, &extra, 1.0),
                 Err(Error::Registry(RegistryError::ChildOfCardinality))
-            ));
-            assert_eq!(vault.targets(&source, kind, None)?, vec![conversation]);
-            let key_out = Store::encode_edge_key(&source, kind, &extra);
-            let key_in = Store::encode_edge_key(&extra, kind, &source);
-            let value =
-                crate::edge::encode_edge_value(kind, 1.0, 100, crate::affect::Vad::NEUTRAL, None)?;
-            vault.with_write_txn(|wtxn| {
-                vault.store.edges_out.put(wtxn, &key_out, &value)?;
-                vault.store.edges_in.put(wtxn, &key_in, &value)?;
-                Ok(())
-            })?;
-        } else {
-            vault.put_edge(&source, kind, &extra, 1.0)?;
+            )),
+            EdgeKind::BelongsTo => assert!(matches!(
+                vault.put_edge(&source, kind, &extra, 1.0),
+                Err(Error::Record(crate::error::RecordError::ConversationDenied))
+            )),
+            _ => {}
         }
+        if kind != EdgeKind::PartOf {
+            assert_eq!(vault.targets(&source, kind, None)?, vec![conversation]);
+        }
+        raw_edge(source, kind, extra, true)?;
         assert!(vault.edge_exists(&source, kind, &extra)?);
         for requested in [turn, conversation, foreign_turn, foreign] {
             assert!(
@@ -472,28 +487,28 @@ fn surfaced_failure_card_rejects_extra_canonical_membership_edges() -> Result<()
                 "a matching thread must not mask an extra {kind:?} edge"
             );
         }
-        assert!(vault.delete_edge(&source, kind, &extra)?);
+        raw_edge(source, kind, extra, false)?;
     }
 
     // Uniqueness alone is not enough: the two sole conversation bindings disagree.
     for (source, kind) in [(message, EdgeKind::BelongsTo), (turn, EdgeKind::ChildOf)] {
-        assert!(vault.delete_edge(&source, kind, &conversation)?);
-        vault.put_edge(&source, kind, &foreign, 1.0)?;
+        raw_edge(source, kind, conversation, false)?;
+        raw_edge(source, kind, foreign, true)?;
         for requested in [turn, conversation, foreign] {
             assert!(matches!(card_for(requested), Err(Error::InvalidConfig(_))));
         }
-        assert!(vault.delete_edge(&source, kind, &foreign)?);
-        vault.put_edge(&source, kind, &conversation, 1.0)?;
+        raw_edge(source, kind, foreign, false)?;
+        raw_edge(source, kind, conversation, true)?;
     }
     assert!(card_for(turn).is_ok());
     assert!(card_for(conversation).is_ok());
 
     // A direct PartOf conversation cannot conflict with a sole BelongsTo edge.
-    assert!(vault.delete_edge(&message, EdgeKind::PartOf, &turn)?);
-    vault.put_edge(&message, EdgeKind::PartOf, &conversation, 1.0)?;
+    raw_edge(message, EdgeKind::PartOf, turn, false)?;
+    raw_edge(message, EdgeKind::PartOf, conversation, true)?;
     assert!(card_for(conversation).is_ok());
-    assert!(vault.delete_edge(&message, EdgeKind::BelongsTo, &conversation)?);
-    vault.put_edge(&message, EdgeKind::BelongsTo, &foreign, 1.0)?;
+    raw_edge(message, EdgeKind::BelongsTo, conversation, false)?;
+    raw_edge(message, EdgeKind::BelongsTo, foreign, true)?;
     for requested in [conversation, foreign] {
         assert!(matches!(card_for(requested), Err(Error::InvalidConfig(_))));
     }
@@ -722,11 +737,15 @@ fn surfaced_failure_card_rejects_deleted_containers_in_two_hop_membership() -> R
             }
 
             let deleted = if delete_turn { turn } else { conversation };
-            assert!(
-                vault
-                    .delete_entity_with_reason(&deleted, DeleteReason::UserDelete)?
-                    .existed
-            );
+            // A room TURN is deleted by its author or a room owner through the
+            // room door; this legacy fixture holds no policy manifest, where
+            // that door fails closed, so the TURN uses the unchecked fixture.
+            let outcome = if delete_turn {
+                vault.delete_room_record_unchecked_for_test(&turn, DeleteReason::UserDelete)?
+            } else {
+                vault.delete_entity_with_reason(&conversation, DeleteReason::UserDelete)?
+            };
+            assert!(outcome.existed);
             assert!(vault.is_deleted_shell(&deleted)?);
             assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
             assert!(vault.edge_exists(&turn, EdgeKind::ChildOf, &conversation)?);

@@ -12,7 +12,11 @@ use super::super::rendezvous::{
 };
 use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
-    DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2, window_label_from_timestamp,
+    DeleteReason, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, TombstoneValueV2,
+    window_label_from_timestamp,
+};
+use super::super::topology_delete_intent::{
+    TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
 use super::DeleteEntityOutcome;
 use crate::side_table::HexId;
@@ -57,6 +61,11 @@ impl Vault {
                 .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
         });
         let window_label = window_label_from_timestamp(requested_at);
+        if reason.active_store_hard_purge_v1() {
+            let txn = self.store.env.read_txn()?;
+            self.store
+                .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
+        }
         let crdt_persisted =
             self.write_crdt_tombstone(id, requested_at, &tombstone, gate_decision.as_ref(), gate)?;
         #[cfg(all(test, feature = "sync"))]
@@ -81,6 +90,21 @@ impl Vault {
         // its own view, atomically with the residue tear, the `dt:` marker, the
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
+        if reason.active_store_hard_purge_v1() {
+            self.store
+                .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+        }
+        if !crdt_persisted && reason.active_store_hard_purge_v1() {
+            self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
+        }
+        reserve_topology_delete_in_txn(
+            &self.store,
+            &mut wtxn,
+            id,
+            &tombstone,
+            requested_at,
+            TopologyDeletePhase::Committed,
+        )?;
         let marker_key = HexId(*id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
@@ -113,10 +137,20 @@ impl Vault {
             {
                 return Err(Error::CorruptedIndex("pending deletion gate decision"));
             }
+            // Nothing was erased and no cfg-off pt: marker was staged.
+            // Retire only this request in the same empty-commit txn.
+            clear_own_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone.request_id,
+                false,
+            )?;
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        let existed =
+            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -126,6 +160,11 @@ impl Vault {
             id,
             tombstone.reason,
         )?;
+        if reason == DeleteReason::UserDelete {
+            // A headerless soft deletion still retires proposals. Its
+            // cancellation and this evidence must become visible together.
+            IDENTITY_SOFT_DELETE_MARKER.put(&self.store, &mut wtxn, &HexId(*id), &Vec::new())?;
+        }
         if reason.active_store_hard_purge_v1() {
             // `dt:` local hard-delete marker (pinned: presence-only 25 B
             // `[reason:1][deleted_at:8 LE][request_id:16]` value, GLOBAL
@@ -145,7 +184,7 @@ impl Vault {
         if !reason.writes_receipt() {
             wtxn.commit()?;
             if crdt_persisted {
-                self.clear_pending_tombstone(&window_label, id)?;
+                self.finish_published_topology_delete(&window_label, id, &tombstone)?;
             }
             return Ok(DeleteEntityOutcome {
                 existed,
@@ -164,6 +203,7 @@ impl Vault {
             &receipt_id,
             RedactionReceiptInput {
                 actor_principal: gate.as_ref().map(|gate| gate.actor_principal()),
+                room_authority: gate.as_ref().and_then(|gate| gate.room_authority()),
                 request_id: request_uuid.to_string(),
                 scope: RedactionScope::entity(id),
                 reason,
@@ -178,7 +218,7 @@ impl Vault {
         )?;
         wtxn.commit()?;
         if crdt_persisted {
-            self.clear_pending_tombstone(&window_label, id)?;
+            self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
         Ok(DeleteEntityOutcome {
             existed,

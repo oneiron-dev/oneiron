@@ -41,6 +41,7 @@ pub use self::egress::{
 };
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
+pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::tombstones::{DeleteBearingUpdate, export_tombstone_commit_delta};
 pub use self::tombstones::{

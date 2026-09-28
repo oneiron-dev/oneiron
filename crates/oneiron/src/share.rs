@@ -37,6 +37,9 @@ const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
 const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_DELETE_RESERVATION);
 
+mod admission_refs;
+pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
+
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Share {

@@ -248,6 +248,7 @@ impl Memory<'_> {
                 return Ok(false);
             };
             Ok(claim_surfaceable(&body)
+                && crate::claim::has_live_support_in_txn(store, txn, &body)?
                 && body.world == world
                 && predicate.is_none_or(|predicate| body.predicate == predicate))
         };

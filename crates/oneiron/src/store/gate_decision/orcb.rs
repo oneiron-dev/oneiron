@@ -22,7 +22,9 @@ use super::types::{GateDecisionId, GateDecisionRecord};
 
 const MAGIC: &[u8; 4] = b"ORCB";
 const VERSION: u8 = 1;
+const ROTATED_VERSION: u8 = 2;
 const HEADER_LEN: usize = 4 + 1 + 16 + 16 + 12;
+const ROTATED_HEADER_LEN: usize = HEADER_LEN + 8;
 const MAX_PLAINTEXT: usize = 16 * 1024 * 1024;
 
 // RAW-CONTENT zstd dictionary (no live training or adaptive state). Every
@@ -92,8 +94,58 @@ pub(in crate::store) fn decode_custody_root(raw: &[u8]) -> Result<PathBuf> {
     }
 }
 
-fn claim_key_path(root: &Path, claim_id: &[u8; 16]) -> Result<PathBuf> {
-    Ok(key_directory(root)?.join(crate::entity_id::bytes_to_hex_lower(claim_id)))
+fn claim_key_path(root: &Path, claim_id: &[u8; 16], generation: u64) -> Result<PathBuf> {
+    let hex = crate::entity_id::bytes_to_hex_lower(claim_id);
+    let name = if generation == 0 {
+        hex
+    } else {
+        format!("{hex}.g{generation:016x}")
+    };
+    Ok(key_directory(root)?.join(name))
+}
+
+fn retired_marker(dir: &Path, claim_id: &[u8; 16], generation: u64) -> PathBuf {
+    let hex = crate::entity_id::bytes_to_hex_lower(claim_id);
+    let name = if generation == 0 {
+        format!(".retired-{hex}")
+    } else {
+        format!(".retired-{hex}.g{generation:016x}")
+    };
+    dir.join(name)
+}
+
+fn is_retired(dir: &Path, claim_id: &[u8; 16], generation: u64) -> Result<bool> {
+    let path = retired_marker(dir, claim_id, generation);
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            safe_open(&path, false, false)?;
+            Ok(true)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn current_generation(dir: &Path, claim_id: &[u8; 16]) -> Result<u64> {
+    let mut generation = 0_u64;
+    while is_retired(dir, claim_id, generation)? {
+        generation = generation
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("gate decision key generation"))?;
+    }
+    Ok(generation)
+}
+
+pub(super) fn key_generation(root: &Path, claim_id: &[u8; 16]) -> Result<u64> {
+    current_generation(&key_directory(root)?, claim_id)
+}
+
+pub(super) fn generation_retired(
+    root: &Path,
+    claim_id: &[u8; 16],
+    generation: u64,
+) -> Result<bool> {
+    is_retired(&key_directory(root)?, claim_id, generation)
 }
 
 #[cfg(unix)]
@@ -139,10 +191,30 @@ fn safe_open(path: &Path, write_new: bool, directory: bool) -> Result<File> {
     Ok(file)
 }
 
-fn read_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>> {
+#[cfg(test)]
+thread_local! {
+    static AFTER_KEY_MARKER_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_after_key_marker_check(callback: impl FnOnce() + 'static) {
+    AFTER_KEY_MARKER_CHECK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+fn read_key(root: &Path, claim_id: &[u8; 16], generation: u64) -> Result<Zeroizing<[u8; 32]>> {
     let dir = key_directory(root)?;
     let _ = safe_open(&dir, false, true)?;
-    let mut file = safe_open(&claim_key_path(root, claim_id)?, false, false)?;
+    if is_retired(&dir, claim_id, generation)? {
+        return Err(corrupt());
+    }
+    #[cfg(test)]
+    AFTER_KEY_MARKER_CHECK.with(|slot| {
+        if let Some(callback) = slot.borrow_mut().take() {
+            callback();
+        }
+    });
+    let mut file = safe_open(&claim_key_path(root, claim_id, generation)?, false, false)?;
     let mut key = Zeroizing::new([0; 32]);
     file.read_exact(&mut *key).map_err(|_| corrupt())?;
     let mut extra = [0];
@@ -173,7 +245,11 @@ fn clean_pending(dir: &Path, claim_id: &[u8; 16]) -> Result<()> {
 /// First claim-bound append syncs the exterior directory entry before LMDB
 /// may commit ciphertext. A short/zero final key is NEVER treated as absent.
 /// Only an unpublished temporary file may be discarded on retry.
-fn first_append_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>> {
+fn first_append_key(
+    root: &Path,
+    claim_id: &[u8; 16],
+    generation: u64,
+) -> Result<Zeroizing<[u8; 32]>> {
     let dir = key_directory(root)?;
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
@@ -193,9 +269,12 @@ fn first_append_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 3
     let directory = safe_open(&dir, false, true)?;
     clean_pending(&dir, claim_id)?;
     directory.sync_all()?;
-    let path = claim_key_path(root, claim_id)?;
+    if is_retired(&dir, claim_id, generation)? {
+        return Err(corrupt());
+    }
+    let path = claim_key_path(root, claim_id, generation)?;
     if path.exists() {
-        return read_key(root, claim_id);
+        return read_key(root, claim_id, generation);
     }
     let mut key = Zeroizing::new([0; 32]);
     rand::rngs::OsRng.fill_bytes(&mut *key);
@@ -221,13 +300,14 @@ fn first_append_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 3
     if published {
         Ok(key)
     } else {
-        read_key(root, claim_id)
+        read_key(root, claim_id, generation)
     }
 }
 
 pub(super) fn encode_hot(root: &Path, record: &GateDecisionRecord) -> Result<Vec<u8>> {
     let claim_id = record.claim_id.ok_or_else(corrupt)?;
-    let key = first_append_key(root, &claim_id)?;
+    let generation = key_generation(root, &claim_id)?;
+    let key = first_append_key(root, &claim_id, generation)?;
     let plain = encode_gate_decision(record)?;
     if plain.len() > MAX_PLAINTEXT {
         return Err(Error::InvariantViolation("gate decision ORCB size"));
@@ -237,14 +317,21 @@ pub(super) fn encode_hot(root: &Path, record: &GateDecisionRecord) -> Result<Vec
     let compressed = compressor
         .compress(&plain)
         .map_err(|_| Error::InvariantViolation("gate decision ORCB compress"))?;
-    let mut header = Vec::with_capacity(HEADER_LEN + compressed.len() + 16);
+    let mut header = Vec::with_capacity(ROTATED_HEADER_LEN + compressed.len() + 16);
     header.extend_from_slice(MAGIC);
-    header.push(VERSION);
+    header.push(if generation == 0 {
+        VERSION
+    } else {
+        ROTATED_VERSION
+    });
     header.extend_from_slice(&claim_id);
     header.extend_from_slice(&record.decision_id.as_bytes());
     let mut nonce = [0; 12];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     header.extend_from_slice(&nonce);
+    if generation != 0 {
+        header.extend_from_slice(&generation.to_be_bytes());
+    }
     let cipher = Aes256Gcm::new_from_slice(&*key).map_err(|_| corrupt())?;
     let encrypted = cipher
         .encrypt(
@@ -264,22 +351,37 @@ pub(super) fn decode_hot(
     decision_id: GateDecisionId,
     raw: &[u8],
 ) -> Result<GateDecisionRecord> {
-    if !raw.starts_with(MAGIC) || raw.len() < HEADER_LEN + 16 || raw[4] != VERSION {
+    if !raw.starts_with(MAGIC) || raw.len() < HEADER_LEN + 16 {
         return Err(corrupt());
     }
+    let (generation, header_len) = match raw[4] {
+        VERSION => (0, HEADER_LEN),
+        ROTATED_VERSION if raw.len() >= ROTATED_HEADER_LEN + 16 => {
+            let generation = u64::from_be_bytes(
+                raw[HEADER_LEN..ROTATED_HEADER_LEN]
+                    .try_into()
+                    .map_err(|_| corrupt())?,
+            );
+            if generation == 0 {
+                return Err(corrupt());
+            }
+            (generation, ROTATED_HEADER_LEN)
+        }
+        _ => return Err(corrupt()),
+    };
     let claim_id: [u8; 16] = raw[5..21].try_into().map_err(|_| corrupt())?;
     if raw[21..37] != decision_id.as_bytes() {
         return Err(corrupt());
     }
-    let key = read_key(root, &claim_id)?;
+    let key = read_key(root, &claim_id, generation)?;
     let cipher = Aes256Gcm::new_from_slice(&*key).map_err(|_| corrupt())?;
     let nonce: [u8; 12] = raw[37..49].try_into().map_err(|_| corrupt())?;
     let compressed = cipher
         .decrypt(
             &Nonce::from(nonce),
             Payload {
-                msg: &raw[HEADER_LEN..],
-                aad: &raw[..HEADER_LEN],
+                msg: &raw[header_len..],
+                aad: &raw[..header_len],
             },
         )
         .map_err(|_| corrupt())?;
@@ -317,6 +419,50 @@ pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Retire precisely the committed intent's generation. Later receipts use
+/// a new generation, and neither an old snapshot nor a delayed finisher can
+/// revive or destroy a different generation's key.
+pub(super) fn retire_claim_key(root: &Path, claim_id: &[u8; 16], generation: u64) -> Result<()> {
+    let dir = key_directory(root)?;
+    let directory = safe_open(&dir, false, true)?;
+    let marker = retired_marker(&dir, claim_id, generation);
+    match safe_open(&marker, true, false) {
+        Ok(file) => file.sync_all()?,
+        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !is_retired(&dir, claim_id, generation)? {
+                return Err(corrupt());
+            }
+        }
+        Err(err) => return Err(err),
+    }
+    directory.sync_all()?;
+    let path = claim_key_path(root, claim_id, generation)?;
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    directory.sync_all()?;
+    Ok(())
+}
+
+pub(super) fn raw_key_retired(root: &Path, raw: &[u8]) -> Result<bool> {
+    if !is_orcb(raw) || raw.len() < HEADER_LEN + 16 {
+        return Ok(false);
+    }
+    let claim: [u8; 16] = raw[5..21].try_into().map_err(|_| corrupt())?;
+    let generation = match raw[4] {
+        VERSION => 0,
+        ROTATED_VERSION if raw.len() >= ROTATED_HEADER_LEN + 16 => u64::from_be_bytes(
+            raw[HEADER_LEN..ROTATED_HEADER_LEN]
+                .try_into()
+                .map_err(|_| corrupt())?,
+        ),
+        _ => return Ok(false),
+    };
+    generation_retired(root, &claim, generation)
 }
 
 pub(super) fn is_orcb(raw: &[u8]) -> bool {

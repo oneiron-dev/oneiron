@@ -25,8 +25,11 @@ pub(super) fn reject_engine_authored_delete(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
+    crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
+    crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };
@@ -208,6 +211,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
             Err(error) => return Err(error),
         }
     }
+    crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,

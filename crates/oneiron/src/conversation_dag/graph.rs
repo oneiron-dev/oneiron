@@ -94,13 +94,29 @@ pub(crate) fn conversation_of(
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<EntityId> {
-    require_type(store, txn, record, ENTITY_TYPE_TURN)?;
-    let owners = edge_ids(store, txn, record, EdgeKind::ChildOf, false, 2)?;
-    if owners.len() != 1 {
-        return Err(invalid("record needs exactly one conversation"));
-    }
-    require_type(store, txn, &owners[0], ENTITY_TYPE_CONVERSATION)?;
-    Ok(owners[0])
+    let row = live_entity_row_in_txn(store, txn, record)?;
+    let pin = super::redacted::read(store, txn, record)?;
+    let room = match row {
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            ..
+        } => {
+            let owners = edge_ids(store, txn, record, EdgeKind::ChildOf, false, 2)?;
+            if owners.len() != 1 {
+                return Err(invalid("record needs exactly one conversation"));
+            }
+            if pin.as_ref().is_some_and(|pin| pin.room != owners[0]) {
+                return Err(Error::CorruptedIndex("DAG room pin"));
+            }
+            owners[0]
+        }
+        LiveEntityRow::DeletedShell | LiveEntityRow::Absent => {
+            pin.ok_or(Error::EntityNotFound)?.room
+        }
+        _ => return Err(invalid("unexpected entity type")),
+    };
+    require_type(store, txn, &room, ENTITY_TYPE_CONVERSATION)?;
+    Ok(room)
 }
 
 pub(super) fn require_member(
@@ -124,7 +140,14 @@ pub(super) fn parent(
     if parents.len() > 1 {
         return Err(invalid("record has multiple Parent edges"));
     }
-    Ok(parents.first().copied())
+    let pin = super::redacted::read(store, txn, record)?;
+    if let Some(edge) = parents.first() {
+        if pin.as_ref().is_some_and(|pin| pin.parent != Some(*edge)) {
+            return Err(Error::CorruptedIndex("DAG Parent pin"));
+        }
+        return Ok(Some(*edge));
+    }
+    Ok(pin.and_then(|pin| pin.parent))
 }
 
 /// Walks backwards from a leaf, proving live membership, cardinality and
@@ -158,8 +181,9 @@ pub(crate) fn is_sub_session_record(
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<bool> {
-    let Some(session) = crate::compaction::turn_session_membership_in_txn(store, txn, record)?
-    else {
+    let session = crate::compaction::turn_session_membership_in_txn(store, txn, record)?
+        .or(super::redacted::read(store, txn, record)?.and_then(|pin| pin.session));
+    let Some(session) = session else {
         return Ok(false);
     };
     let conversation = conversation_of(store, txn, record)?;
@@ -181,8 +205,18 @@ pub(crate) fn is_sub_session_record(
 }
 
 pub(super) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {
-    let body = require_type(store, txn, record, ENTITY_TYPE_TURN)?;
-    Ok(super::topology::record_kind(&body)? == Some(super::topology::RecordKind::Thread))
+    match live_entity_row_in_txn(store, txn, record)? {
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            body,
+        } => Ok(super::topology::record_kind(&body)? == Some(super::topology::RecordKind::Thread)),
+        LiveEntityRow::DeletedShell | LiveEntityRow::Absent => {
+            Ok(super::redacted::read(store, txn, record)?
+                .ok_or(Error::EntityNotFound)?
+                .thread)
+        }
+        _ => Err(invalid("unexpected entity type")),
+    }
 }
 
 pub(super) fn canonical_chain(

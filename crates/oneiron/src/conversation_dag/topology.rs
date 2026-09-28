@@ -197,12 +197,26 @@ pub(crate) fn classify_session(
         }
         _ => None,
     };
-    let spawned = graph::edge_ids(store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
+    // HardErase removes an anchor TURN's incident SpawnedBy edge. Only the
+    // content-free pin captured from that previously validated topology may
+    // restore its placement; a merely absent edge never invents an anchor.
+    let spawned = super::redacted::spawned_by(store, txn, &session)?
+        .into_iter()
+        .collect::<Vec<_>>();
     match (declaration, spawned.as_slice()) {
         (None, []) => Ok(Fact::Known(SessionPlacement::Ordinary { session })),
         (Some(_), []) => Ok(Fact::Wait(Dependency::SessionAnchor(session))),
         (declared, [anchor]) if declared.is_none_or(|expected| expected == *anchor) => {
-            match owner(store, txn, *anchor)? {
+            let anchor_owner = match live_entity_row_in_txn(store, txn, anchor)? {
+                LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+                    match super::redacted::read(store, txn, anchor)? {
+                        Some(pin) => Fact::Known(pin.room),
+                        None => owner(store, txn, *anchor)?,
+                    }
+                }
+                _ => owner(store, txn, *anchor)?,
+            };
+            match anchor_owner {
                 Fact::Known(actual) if actual == conversation => {
                     Ok(Fact::Known(SessionPlacement::Spawned {
                         session,

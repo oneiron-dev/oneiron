@@ -213,6 +213,7 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
             .map(|slot| (slot, ModelLocality::OwnServer))
             .collect(),
         verdict: None,
+        seat_policy: None,
     };
     let approval = TeacherProbeApproval::for_scored_checkpoint(
         &manifest,

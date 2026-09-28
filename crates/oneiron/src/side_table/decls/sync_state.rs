@@ -100,6 +100,10 @@ side_tables! {
     /// Cached HTTP response (status, headers, body) for one Idempotency-Key replay within its 24h
     /// TTL, keyed by principal and header value. Key: hex ":" hex (principal, idempotency key).
     HTTP_IDEMPOTENCY_REPLY: SyncState b"http:idempotency:" LegacyCompact;
+    /// Local evidence that a soft delete was applied; outlives the `pt:` propagation intent so an
+    /// out-of-order proposal cancellation never settles against a live entity. Presence-only,
+    /// empty value. Key: hex32 (entity id).
+    DELETION_IDENTITY_SOFT_DELETE_MARKER: SyncState b"it:deleted:" Raw;
     /// Durable provenance row (source/tier/thread/message/surface-event) for one ingested LinkedIn
     /// message. Key: hex16 (same hash as the seen marker).
     LINKEDIN_INBOX_SYNC_PROVENANCE: SyncState b"linkedin:inbox_sync:provenance:v1:" LegacyJson;
@@ -144,6 +148,9 @@ side_tables! {
     RC42_WIRE_MANIFEST: SyncState b"manifest:rc42:wire-observation:v1" Named;
     /// Maps a legacy policy-manifest id forward to its re-authored replacement id. Key: hex32.
     GATE_MANIFEST_REKEY: SyncState b"manifest:rekey:" Raw;
+    /// Body hash (blake3, 32 bytes) proving an authenticated vault owner authored a retention
+    /// override manifest; any generic write of the manifest clears it. Key: hex32.
+    GATE_MANIFEST_RETENTION_HOLDER: SyncState b"manifest:retention-holder:" Raw;
     /// Body hash (blake3, 32 bytes) of an engine-seeded default policy manifest; an owner write
     /// clears it. Key: hex32.
     GATE_MANIFEST_SEEDED_CONFIDENCE: SyncState b"manifest:seeded_confidence:" Raw;

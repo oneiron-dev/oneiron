@@ -95,6 +95,14 @@ pub(crate) fn append_in_txn(
     thread: bool,
 ) -> Result<AppendedRecord> {
     actor_in_txn(&vault.store, txn, input.actor)?;
+    if !crate::conversation::room_person_write_allowed(
+        &vault.store,
+        txn,
+        input.conversation,
+        input.actor.entity_ref(),
+    )? {
+        return Err(invalid("erased person cannot append to this room"));
+    }
     if thread && input.advance {
         return Err(invalid("HEAD never enters a thread"));
     }
@@ -319,6 +327,7 @@ pub(super) fn set_head_in_txn(
     conversation: &EntityId,
     record: EntityId,
 ) -> Result<()> {
+    require_type(&vault.store, txn, &record, ENTITY_TYPE_TURN)?;
     let path = chain(&vault.store, txn, conversation, record)?;
     for id in &path {
         if graph::is_thread_record(&vault.store, txn, id)? {
@@ -377,6 +386,13 @@ impl Vault {
             migrate_in_txn(self, txn, conversation)?;
             let head = read_id(&self.store, txn, HEAD, conversation)?;
             let path = graph::canonical_chain(&self.store, txn, conversation)?;
+            let mut visible = Vec::new();
+            for id in path {
+                if crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
+                    visible.push(id);
+                }
+            }
+            let path = visible;
             let start = match page.after {
                 Some(after) => {
                     path.iter()
