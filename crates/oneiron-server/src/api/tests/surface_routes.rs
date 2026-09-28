@@ -1941,6 +1941,32 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
             )
             .unwrap();
     }
+    // Upload before initialize_shared_vault roots the vault: a rooted vault
+    // admits a raw writer only through an authority binding (main #1119).
+    // The same grant law applies to pinned blob exports and their immutable
+    // version URL, not just CODE_ARTIFACT bundles.
+    let blob = oneiron::EntityId::now();
+    server
+        .vault
+        .put_blob_artifact(
+            &blob,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+        )
+        .unwrap();
+    let version = server
+        .vault
+        .append_blob_artifact_version(
+            &blob,
+            b"%PDF-1.7\ntiered",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            oneiron::WriteActor::new(member, oneiron::EdgeActorClass::Human),
+            oneiron::TimeRange { start: 11, end: 11 },
+            11,
+        )
+        .unwrap()
+        .version;
     let authenticated_owner = server
         .vault
         .authenticate_owner(
@@ -1971,30 +1997,6 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
             .unwrap(),
     )
     .await;
-    // The same grant law applies to pinned blob exports and their immutable
-    // version URL, not just CODE_ARTIFACT bundles.
-    let blob = oneiron::EntityId::now();
-    server
-        .vault
-        .put_blob_artifact(
-            &blob,
-            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
-            oneiron::TimeRange { start: 10, end: 10 },
-            10,
-        )
-        .unwrap();
-    let version = server
-        .vault
-        .append_blob_artifact_version(
-            &blob,
-            b"%PDF-1.7\ntiered",
-            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
-            oneiron::WriteActor::new(member, oneiron::EdgeActorClass::Human),
-            oneiron::TimeRange { start: 11, end: 11 },
-            11,
-        )
-        .unwrap()
-        .version;
     server
         .vault
         .publish_blob_artifact_pointer_with_tier(
