@@ -1493,7 +1493,7 @@ fn verified_revoke_survives_frozen_grant_and_concurrent_enrollment() {
         first_seen.insert(authority_entry_hash(entry).unwrap(), now);
     }
     first_seen.insert(winner_hash, 1);
-    let before = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+    let before = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, now);
     assert!(before.valid_entries.contains(&revoke_hash));
     assert!(before.pending_widens.contains_key(&widen_hash));
     assert!(!before.valid_entries.contains(&frozen_hash));
@@ -1507,7 +1507,7 @@ fn verified_revoke_survives_frozen_grant_and_concurrent_enrollment() {
     );
 
     entries.push(winner);
-    let after = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+    let after = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, now);
     assert!(after.valid_entries.contains(&winner_hash));
     assert!(after.valid_entries.contains(&loser_hash));
     assert!(after.valid_entries.contains(&widen_hash));
@@ -1524,14 +1524,14 @@ fn verified_revoke_survives_frozen_grant_and_concurrent_enrollment() {
     );
     let mut bad_entries = entries.clone();
     bad_entries[6].cosigns[0].signature[0] ^= 1;
-    let bad = fold_authority_log_with_seen_times(&bad_entries, &first_seen, now);
+    let bad = fold_legacy_authority_log_with_seen_times(&bad_entries, &first_seen, now);
     assert_eq!(
         folded_status(&bad, &consent_key),
         Some(ActorBindingStatus::Active)
     );
     entries.reverse();
     assert_eq!(
-        fold_authority_log_with_seen_times(&entries, &first_seen, now),
+        fold_legacy_authority_log_with_seen_times(&entries, &first_seen, now),
         after
     );
 }

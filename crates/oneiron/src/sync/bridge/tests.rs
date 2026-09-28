@@ -175,6 +175,35 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
 }
 
 #[cfg(feature = "sync")]
+fn authority_child_fixture(
+    vault_id: crate::authority::AuthorityVaultId,
+    parent: &crate::authority::AuthorityLogEntry,
+    signer: &SigningKey,
+    seq: u64,
+    ts: u64,
+    op: crate::authority::AuthorityOp,
+) -> crate::authority::AuthorityLogEntry {
+    let signer_key = authority_key_from_signing(signer);
+    let mut entry = crate::authority::AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(vault_id),
+        seq,
+        parent_hashes: vec![crate::authority::authority_entry_hash(parent).expect("parent hash")],
+        op,
+        signer: crate::authority::AuthoritySignature {
+            suite: signer_key.suite(),
+            public_key: signer_key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts,
+    };
+    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+#[cfg(feature = "sync")]
 fn authority_enroll_fixture(
     vault_id: crate::authority::AuthorityVaultId,
     parent: &crate::authority::AuthorityLogEntry,
@@ -182,27 +211,41 @@ fn authority_enroll_fixture(
     new_seed: u8,
     seq: u64,
 ) -> crate::authority::AuthorityLogEntry {
-    let signer_key = authority_key_from_signing(signer);
     let new_key = authority_key_from_signing(&authority_test_key(new_seed));
-    let mut entry = crate::authority::AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(vault_id),
+    authority_child_fixture(
+        vault_id,
+        parent,
+        signer,
         seq,
-        parent_hashes: vec![crate::authority::authority_entry_hash(parent).expect("parent hash")],
-        op: crate::authority::AuthorityOp::EnrollDevice {
+        u64::from(new_seed),
+        crate::authority::AuthorityOp::EnrollDevice {
             device: authority_test_device(new_key),
         },
-        signer: crate::authority::AuthoritySignature {
-            suite: signer_key.suite(),
-            public_key: signer_key,
-            signature: vec![0; 64],
+    )
+}
+
+/// Binds the signer's own roster key to `actor` as its human owner.
+#[cfg(feature = "sync")]
+fn authority_bind_owner_fixture(
+    vault_id: crate::authority::AuthorityVaultId,
+    parent: &crate::authority::AuthorityLogEntry,
+    signer: &SigningKey,
+    actor: EntityId,
+    seq: u64,
+) -> crate::authority::AuthorityLogEntry {
+    authority_child_fixture(
+        vault_id,
+        parent,
+        signer,
+        seq,
+        900 + seq,
+        crate::authority::AuthorityOp::BindActor {
+            authority_key: authority_key_from_signing(signer),
+            actor_ref: actor,
+            actor_class: "human".to_owned(),
+            epoch: 1,
         },
-        cosigns: Vec::new(),
-        ts: u64::from(new_seed),
-    };
-    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
-    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
-    entry
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -351,10 +394,16 @@ fn tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> 
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
     vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
 
-    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 44, 1);
-    let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
-    let id = crate::authority::authority_log_entity_id(&enroll)?;
-    let blob = authority_log_entity_blob(&enroll, 2)?;
+    let bind = authority_bind_owner_fixture(
+        vault_id,
+        &genesis,
+        &owner,
+        EntityId::from_bytes_unchecked([44; 16]),
+        1,
+    );
+    let bind_hash = crate::authority::authority_entry_hash(&bind)?;
+    let id = crate::authority::authority_log_entity_id(&bind)?;
+    let blob = authority_log_entity_blob(&bind, 2)?;
 
     // The tombstone lands first: no local row, no map carrier yet.
     let doc = LoroDoc::new();
@@ -384,170 +433,23 @@ fn tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> 
         None,
         "no dt: poison may survive over a delete-protected authority row"
     );
-    assert_eq!(vault.get_authority_log_entry(&id)?, Some(enroll));
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(bind));
     let fold = vault.authority_fold()?;
     assert!(
-        fold.pending_widens.contains_key(&enroll_hash) || fold.valid_entries.contains(&enroll_hash),
+        fold.valid_entries.contains(&bind_hash),
         "the fold must see the admitted entry"
     );
     Ok(())
 }
 
-/// Hardware-tier genesis: a hardware owner grants INSTANT widen authority, so
-/// the enroll below joins the roster immediately instead of sitting in
-/// `pending_widens`. The revocation regression needs a real two-device roster
-/// (revokes require peer quorum), not a pending one.
-#[cfg(feature = "sync")]
-fn authority_hardware_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
-    let signing = authority_test_key(seed);
-    let key = authority_key_from_signing(&signing);
-    let mut entry = crate::authority::AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: None,
-        seq: 0,
-        parent_hashes: Vec::new(),
-        op: crate::authority::AuthorityOp::Genesis {
-            device: crate::authority::DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [0; 32],
-                attestation: crate::authority::AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: crate::authority::AuthorityTier::Hardware,
-                roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
-            },
-            genesis_nonce: [seed.wrapping_add(1); 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: crate::authority::AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
-        },
-        signer: crate::authority::AuthoritySignature {
-            suite: key.suite(),
-            public_key: key,
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: u64::from(seed),
-    };
-    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
-    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
-    entry
-}
-
-/// Enrolls a second OWNER|ADMIN device so the roster can carry a quorum
-/// revocation (the shared `authority_enroll_fixture` mints ROLE_OWNER only).
-#[cfg(feature = "sync")]
-fn authority_enroll_admin_fixture(
-    vault_id: crate::authority::AuthorityVaultId,
-    parent: &crate::authority::AuthorityLogEntry,
-    signer: &SigningKey,
-    new_seed: u8,
-    seq: u64,
-) -> crate::authority::AuthorityLogEntry {
-    let signer_key = authority_key_from_signing(signer);
-    let new_key = authority_key_from_signing(&authority_test_key(new_seed));
-    let mut entry = crate::authority::AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(vault_id),
-        seq,
-        parent_hashes: vec![crate::authority::authority_entry_hash(parent).expect("parent hash")],
-        op: crate::authority::AuthorityOp::EnrollDevice {
-            device: crate::authority::DeviceAuthority {
-                key: new_key,
-                transport_key_binding: [0; 32],
-                attestation: crate::authority::AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: crate::authority::AuthorityTier::Software,
-                roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
-            },
-        },
-        signer: crate::authority::AuthoritySignature {
-            suite: signer_key.suite(),
-            public_key: signer_key,
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: u64::from(new_seed),
-    };
-    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
-    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
-    entry
-}
-
-/// Adds `cosigner`'s peer signature and re-signs both over the new
-/// transcript (the transcript binds the cosigner key set).
-#[cfg(feature = "sync")]
-fn authority_cosign(
-    mut entry: crate::authority::AuthorityLogEntry,
-    signer: &SigningKey,
-    cosigner: &SigningKey,
-) -> crate::authority::AuthorityLogEntry {
-    let cosigner_key = authority_key_from_signing(cosigner);
-    entry.cosigns.push(crate::authority::AuthoritySignature {
-        suite: cosigner_key.suite(),
-        public_key: cosigner_key.clone(),
-        signature: vec![0; 64],
-    });
-    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
-    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
-    for cosign in &mut entry.cosigns {
-        if cosign.public_key == cosigner_key {
-            cosign.signature = cosigner.sign(&transcript).to_bytes().to_vec();
-        }
-    }
-    entry
-}
-
-/// A cosigned RevokeDevice naming `revoked_key`, signed by `signer` and
-/// cosigned by `cosigner` (revocations need peer quorum in the fold).
-#[cfg(feature = "sync")]
-fn authority_revoke_fixture(
-    vault_id: crate::authority::AuthorityVaultId,
-    parent: &crate::authority::AuthorityLogEntry,
-    signer: &SigningKey,
-    cosigner: &SigningKey,
-    revoked_key: crate::authority::AuthorityKey,
-    seq: u64,
-) -> crate::authority::AuthorityLogEntry {
-    let signer_key = authority_key_from_signing(signer);
-    let cosigner_key = authority_key_from_signing(cosigner);
-    let mut entry = crate::authority::AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(vault_id),
-        seq,
-        parent_hashes: vec![crate::authority::authority_entry_hash(parent).expect("parent hash")],
-        op: crate::authority::AuthorityOp::RevokeDevice { revoked_key },
-        signer: crate::authority::AuthoritySignature {
-            suite: signer_key.suite(),
-            public_key: signer_key,
-            signature: vec![0; 64],
-        },
-        cosigns: vec![crate::authority::AuthoritySignature {
-            suite: cosigner_key.suite(),
-            public_key: cosigner_key,
-            signature: vec![0; 64],
-        }],
-        ts: 900 + seq,
-    };
-    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
-    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
-    for cosign in &mut entry.cosigns {
-        cosign.signature = cosigner.sign(&transcript).to_bytes().to_vec();
-    }
-    entry
-}
-
 /// ONE-1604-D1 (fix-leg 1, P2-a — adversarial revocation survival): the
 /// content-derived store key lives in the caller-chosen GLOBAL entity
-/// namespace, and RevokeDevice bodies are predictable under deterministic
-/// signing. A hostile peer — the revoked device itself, in the worst case —
+/// namespace, and revocation bodies are predictable under deterministic
+/// signing. A hostile peer — the revoked party itself, in the worst case —
 /// can therefore precompute a pending revocation's derived id and pre-squat
 /// it with an ordinary EVENT row. Before the fix the authority row lost that
 /// race as an `AuthorityLogAppendOnlyViolation`, the revocation never reached
-/// the fold, and the revoked key STAYED ACTIVE — the append-only guard
+/// the fold, and the revoked authority STAYED ACTIVE — the append-only guard
 /// suppressing the very evidence it exists to protect.
 ///
 /// A fully validated AUTHORITY_LOG row now dominates the squatter: it is admitted,
@@ -556,31 +458,37 @@ fn authority_revoke_fixture(
 #[test]
 fn presquatted_revocation_id_still_admits_the_revocation() -> Result<()> {
     let owner = authority_test_key(51);
-    let peer = authority_test_key(52);
-    let third = authority_test_key(55);
-    let genesis = authority_hardware_genesis_fixture(51);
+    let owner_key = authority_key_from_signing(&owner);
+    let genesis = authority_genesis_fixture(51);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
-    // A revoke must leave a surviving quorum, so the roster carries three
-    // devices before the hostile one is revoked.
-    let enroll_peer = authority_enroll_admin_fixture(vault_id, &genesis, &owner, 52, 1);
-    // Once two devices are active every non-genesis entry needs peer quorum.
-    let enroll_third = authority_cosign(
-        authority_enroll_admin_fixture(vault_id, &enroll_peer, &owner, 55, 2),
-        &owner,
-        &peer,
-    );
-    let peer_key = authority_key_from_signing(&peer);
+    // Client device keys are retired; the revocable authority here is the
+    // owner key's actor binding, revoked by a signed RevokeActor.
+    let actor = EntityId::from_bytes_unchecked([52; 16]);
+    let bind = authority_bind_owner_fixture(vault_id, &genesis, &owner, actor, 1);
 
     // Both an ordinary (absent) and an LWW-winner (already-materialized)
     // squatter variant must lose to the validated authority row.
     for squatter_is_lww_winner in [false, true] {
         let vault = test_vault();
         vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
-        vault.put_authority_log_entry(&enroll_peer, TimeRange { start: 2, end: 2 }, 2)?;
-        vault.put_authority_log_entry(&enroll_third, TimeRange { start: 3, end: 3 }, 3)?;
+        vault.put_authority_log_entry(&bind, TimeRange { start: 2, end: 2 }, 2)?;
+        assert!(crate::authority::actor_binding_is_active(
+            &vault.authority_fold()?,
+            &actor,
+            "human"
+        ));
 
-        let revoke =
-            authority_revoke_fixture(vault_id, &enroll_third, &owner, &third, peer_key.clone(), 3);
+        let revoke = authority_child_fixture(
+            vault_id,
+            &bind,
+            &owner,
+            2,
+            902,
+            crate::authority::AuthorityOp::RevokeActor {
+                authority_key: owner_key.clone(),
+                epoch: 1,
+            },
+        );
         let revoke_hash = crate::authority::authority_entry_hash(&revoke)?;
         // The attacker derives the pending revocation's id from its
         // predictable body — exactly what the engine will derive.
@@ -635,9 +543,7 @@ fn presquatted_revocation_id_still_admits_the_revocation() -> Result<()> {
             "the revocation must reach the fold despite the pre-squat"
         );
         assert!(
-            fold.roster
-                .get(&peer_key)
-                .is_some_and(|device| device.revoked),
+            !crate::authority::actor_binding_is_active(&fold, &actor, "human"),
             "the pre-squatted revocation must still disable the prior authority"
         );
     }

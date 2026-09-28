@@ -73,6 +73,40 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if !resolution.voice_serving.is_empty() {
+        hash_str(hasher, "voice_serving_nested_narrowing");
+        hash_len(hasher, resolution.voice_serving.len());
+        for row in &resolution.voice_serving {
+            for value in [
+                row.vault.max_text_bytes,
+                row.vault.max_pcm_bytes,
+                row.vault.max_ref_bytes,
+                row.vault.max_queued_renders,
+                row.vault.max_inflight_uploads,
+                row.vault.upload_read_deadline_ms,
+                row.vault.http_deadline_ms,
+                row.vault.max_header_bytes,
+            ] {
+                hash_u64(hasher, value);
+            }
+            hash_len(hasher, row.holders.len());
+            for (holder, limits) in &row.holders {
+                hash_bytes(hasher, holder.as_bytes());
+                for value in [
+                    limits.max_text_bytes,
+                    limits.max_pcm_bytes,
+                    limits.max_ref_bytes,
+                    limits.max_queued_renders,
+                    limits.max_inflight_uploads,
+                    limits.upload_read_deadline_ms,
+                    limits.http_deadline_ms,
+                    limits.max_header_bytes,
+                ] {
+                    hash_u64(hasher, value);
+                }
+            }
+        }
+    }
     // Default rows and owner-authored overrides both affect admission and its
     // consent frontier. Absent policy keeps the old frontier unchanged.
     if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
@@ -178,6 +212,47 @@ pub(super) fn hash_policy_frontier_v0(
             }
         }
     }
+    // A row resolving to shipped defaults has the historical frontier bytes.
+    // Only a behavior-changing override contributes new hash material.
+    if resolution.carry_forward_authored
+        || resolution.carry_forward_confidence
+            != crate::gate::carry_forward_policy::CarryForwardPolicy::default()
+    {
+        hash_str(hasher, "carry_forward_confidence");
+        hash_str(
+            hasher,
+            resolution.carry_forward_confidence.precedence.as_str(),
+        );
+        hash_bytes(
+            hasher,
+            &resolution
+                .carry_forward_confidence
+                .vault
+                .ordinary
+                .to_bits()
+                .to_be_bytes(),
+        );
+        hash_bytes(
+            hasher,
+            &resolution
+                .carry_forward_confidence
+                .vault
+                .care
+                .to_bits()
+                .to_be_bytes(),
+        );
+        let mut holders = resolution.carry_forward_confidence.holders.clone();
+        holders.sort_by_key(|row| row.actor);
+        hash_len(hasher, holders.len());
+        for row in holders {
+            hash_bytes(hasher, row.actor.as_bytes());
+            if let Some(parent) = row.parent {
+                hash_bytes(hasher, parent.as_bytes());
+            }
+            hash_bytes(hasher, &row.floors.ordinary.to_bits().to_be_bytes());
+            hash_bytes(hasher, &row.floors.care.to_bits().to_be_bytes());
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
@@ -273,6 +348,12 @@ pub(super) fn hash_policy_frontier_v0(
                 hash_str(hasher, precedence.as_str());
             }
         }
+    }
+
+    if let Some(policy) = resolution.judge_calibration {
+        hash_str(hasher, "judge_calibration");
+        hash_u64(hasher, u64::from(policy.ask_minutes));
+        hash_u64(hasher, u64::from(policy.max_context_bytes));
     }
 
     hash_len(hasher, resolution.packs.len());

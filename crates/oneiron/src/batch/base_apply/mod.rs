@@ -1,4 +1,5 @@
 use super::claim_materialization::consume_claim_materialization;
+use super::verified_claim_transition::consume_next;
 use super::*;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -86,6 +87,30 @@ fn prepare_replay_op(
     result
 }
 
+fn require_gated_claim_materializations(
+    claim_gate_prechecked: bool,
+    materializations: &VecDeque<ClaimMaterialization>,
+) -> Result<()> {
+    if claim_gate_prechecked && !materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "owner-bound materialization cannot skip the gate",
+        ));
+    }
+    Ok(())
+}
+
+fn require_consumed_claim_bindings(
+    materializations: &VecDeque<ClaimMaterialization>,
+    transitions: &VecDeque<super::VerifiedClaimTransition>,
+) -> Result<()> {
+    if !materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "unconsumed claim materialization envelope",
+        ));
+    }
+    super::verified_claim_transition::require_consumed(transitions)
+}
+
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
 ///
 /// The narrow operation-shape check prevents the prechecked mode from being
@@ -97,6 +122,26 @@ pub(crate) fn apply_session_bundle_claim_puts(
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+) -> Result<()> {
+    apply_session_bundle_claim_puts_with_transitions(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        Vec::new(),
+        text_index_trusted,
+    )
+}
+
+pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    transitions: Vec<super::VerifiedClaimTransition>,
     text_index_trusted: bool,
 ) -> Result<()> {
     if ops.iter().any(|op| {
@@ -121,7 +166,9 @@ pub(crate) fn apply_session_bundle_claim_puts(
         wtxn,
         ops,
         text_index_trusted,
-        ApplyOpsGateMode::new(false, false).with_prechecked_claim_gate(),
+        ApplyOpsGateMode::new(false, false)
+            .with_prechecked_claim_gate()
+            .with_verified_claim_transitions(transitions),
     )
 }
 
@@ -158,11 +205,8 @@ pub(super) fn apply_ops_with_origin(
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
     let mut claim_materializations = gate_mode.claim_materializations;
-    if claim_gate_prechecked && !claim_materializations.is_empty() {
-        return Err(Error::InvariantViolation(
-            "owner-bound materialization cannot skip the gate",
-        ));
-    }
+    let mut claim_transitions = gate_mode.claim_transitions;
+    require_gated_claim_materializations(claim_gate_prechecked, &claim_materializations)?;
     let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
 
     secret_scan::scan_batch_ops(&ops)?;
@@ -214,16 +258,18 @@ pub(super) fn apply_ops_with_origin(
     // Preflight precedes every operation. Protect only future receipts from
     // earlier deletes; successful nested applies consume their own markers.
     mark_unapplied_preflight_decisions(store, wtxn, &preflight_gate_decision_ids)?;
-    let iter = ReplayIter {
+    let mut iter = ReplayIter {
         remaining: std::mem::take(&mut ops.ops).into_iter(),
         replay,
     };
-    for (op_index, mut op) in iter.enumerate() {
+    let mut op_index = 0;
+    while let Some(mut op) = iter.next() {
         // K4: the op-decode point, inside the applying transaction. Every arm
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
         let materialization =
             prepare_replay_op(store, &*wtxn, &mut claim_materializations, &mut op, origin)?;
+        let transition = consume_next(&mut claim_transitions, &op, iter.remaining.as_slice())?;
         match op {
             BatchOp::Put {
                 id,
@@ -339,6 +385,7 @@ pub(super) fn apply_ops_with_origin(
                     include_source_in_gate_input,
                     claim_gate_prechecked,
                     preflight_decision_id,
+                    transition.as_ref(),
                     origin,
                     config.privacy.posture,
                 )?;
@@ -621,13 +668,10 @@ pub(super) fn apply_ops_with_origin(
                 )?;
             }
         }
+        op_index += 1;
     }
 
-    if !claim_materializations.is_empty() {
-        return Err(Error::InvariantViolation(
-            "unconsumed claim materialization envelope",
-        ));
-    }
+    require_consumed_claim_bindings(&claim_materializations, &claim_transitions)?;
     if preflight_gate_decision_ids
         .values()
         .any(|ids| !ids.is_empty())

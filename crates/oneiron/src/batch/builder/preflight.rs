@@ -88,6 +88,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         // own and nothing consults a host.
                         auto_checker: None,
                         defer_metrics_until_commit: true,
+                        transition: None,
                     },
                     &policy,
                     crate::gate::GateWriteMode {
@@ -135,6 +136,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                 // authorship to consult about.
                                 auto_checker: None,
                                 defer_metrics_until_commit: true,
+                                transition: None,
                             },
                             &policy,
                             crate::gate::GateWriteMode {
@@ -173,6 +175,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         auto_checker: checker
                             .filter(|_| body.approval == ClaimApprovalStatus::Auto),
                         defer_metrics_until_commit: true,
+                        transition: None,
                     },
                     &policy,
                     crate::gate::GateWriteMode {
