@@ -85,6 +85,16 @@ pub struct SettledAnchor {
     pub drifted: bool,
 }
 
+/// Selected Office author and the separate identities behind a review comment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PptxReviewIdentity {
+    pub thread_id: EntityId,
+    pub asked_by: EntityId,
+    pub answered_by: EntityId,
+    pub export_author_guid: String,
+    pub export_author_name: String,
+}
+
 /// The durable consume-once ledger entry for one settled proposal, and the
 /// substrate the settle receipt projects from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +122,10 @@ pub struct SettlementRecord {
     pub manifest_ref: Option<[u8; 32]>,
     /// Number of ops in the manifest (0 for a discard).
     pub manifest_ops: u64,
+    /// Slide creationIds minted as declared effects.
+    pub pptx_slide_creation_id_mints: Vec<(u64, u32)>,
+    /// Each exported review comment's asker and answerer, independent of its author name.
+    pub pptx_review_identities: Vec<PptxReviewIdentity>,
     /// The anchor set that moved on select (empty for a discard).
     pub anchors: Vec<SettledAnchor>,
     /// Why the proposal was discarded (discard only).

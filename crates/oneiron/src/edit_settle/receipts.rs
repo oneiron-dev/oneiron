@@ -89,6 +89,35 @@ pub(super) fn settlement_receipt_record(
                 FIELD_MANIFEST_OPS.to_owned(),
                 record.manifest_ops.to_string(),
             );
+            if !record.pptx_slide_creation_id_mints.is_empty() {
+                fields.insert(
+                    "pptx_slide_creation_id_mints".into(),
+                    serde_json::to_string(&record.pptx_slide_creation_id_mints).map_err(|_| {
+                        Error::InvariantViolation("settlement mint receipt encoding")
+                    })?,
+                );
+            }
+            if !record.pptx_review_identities.is_empty() {
+                let identities: Vec<_> = record
+                    .pptx_review_identities
+                    .iter()
+                    .map(|identity| {
+                        serde_json::json!({
+                            "thread_id": identity.thread_id.to_hex(),
+                            "asked_by": identity.asked_by.to_hex(),
+                            "answered_by": identity.answered_by.to_hex(),
+                            "export_author_guid": identity.export_author_guid,
+                            "export_author_name": identity.export_author_name,
+                        })
+                    })
+                    .collect();
+                fields.insert(
+                    "pptx_review_identities".into(),
+                    serde_json::to_string(&identities).map_err(|_| {
+                        Error::InvariantViolation("settlement review identity encoding")
+                    })?,
+                );
+            }
             let drifts = record.anchors.iter().filter(|a| a.drifted).count();
             let moves = record.anchors.len() - drifts;
             fields.insert(FIELD_ANCHOR_MOVES.to_owned(), moves.to_string());

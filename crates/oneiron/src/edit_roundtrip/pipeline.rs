@@ -172,6 +172,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
         touched_parts: diff_parts(&before, &after),
         mutation_mode,
         warnings,
+        pptx_holder_limits: None,
     };
 
     let report = validate(&before, &after, format);

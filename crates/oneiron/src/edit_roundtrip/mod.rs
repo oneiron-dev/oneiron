@@ -62,6 +62,7 @@ mod manifest;
 mod opc;
 mod ops;
 mod pipeline;
+pub mod pptx;
 mod session_validate;
 mod xml;
 
