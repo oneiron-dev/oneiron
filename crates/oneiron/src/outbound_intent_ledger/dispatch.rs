@@ -4,7 +4,7 @@ use super::codec::id_from_ledger_key;
 #[cfg(test)]
 use super::store::{
     abandon_record, complete_record, force_sync, hash_frozen_payload, insert_pending_or_read,
-    read_intent_record,
+    read_intent_record, record_possible_delivery,
 };
 use super::store::{decode_record_in_txn, ledger_rows};
 #[cfg(test)]
@@ -180,6 +180,7 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
         idempotency_key,
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
+        admitted_approval: None,
         binding_version: OUTBOUND_BINDING_VERSION,
         resolved_endpoint: call.resolved_endpoint.clone(),
         capability_provenance: call.capability_provenance.clone(),
@@ -191,6 +192,7 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
             accounted_at_ms: now_ms,
         },
         recorded_outcome: None,
+        delivery_uncertain: false,
         state: IntentState::Pending,
         created_ms: now_ms,
         updated_ms: now_ms,
@@ -458,9 +460,11 @@ fn finish_send(
             (Some(done.state), None)
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
+            record_possible_delivery(vault, record.id, now_ms)?;
             (Some(IntentState::Pending), None)
         }
         OutboundSendOutcome::Ambiguous => {
+            record_possible_delivery(vault, record.id, now_ms)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,

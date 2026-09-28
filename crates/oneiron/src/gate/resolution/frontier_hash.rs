@@ -54,6 +54,15 @@ pub(super) fn hash_policy_frontier_v0(
     // opted-out send holds or ships, so flipping it must move the frontier and
     // invalidate every standing grant bound to the old one.
     hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    // Absent native-mail rows do not alter an unrelated manifest's frontier.
+    // Present rows do: an owner policy edit must rebind affected authority.
+    if !resolution.native_mail_policy.is_empty() {
+        hash_str(hasher, "native_mail_policy");
+        hash_len(hasher, resolution.native_mail_policy.len());
+        for row in &resolution.native_mail_policy {
+            hash_bytes(hasher, &row.frontier_bytes());
+        }
+    }
     // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
     // names a checker keeps its exact no-checker frontier hash — and every
     // consent binding taken against it stays valid. A domain tag rides with
@@ -66,6 +75,20 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if let Some((vault, holders)) = resolution.connector_admission.rows_for_hash() {
+        hash_str(hasher, "connector_admission");
+        hash_str(hasher, "nested_narrow_holder_override_vault_cap");
+        hash_u64(hasher, vault.max_tools as u64);
+        hash_u64(hasher, vault.max_permissions_per_tool as u64);
+        hash_u64(hasher, vault.max_triggers_per_tool as u64);
+        hash_len(hasher, holders.len());
+        for (holder, quotas) in holders {
+            hash_str(hasher, holder);
+            hash_u64(hasher, quotas.max_tools as u64);
+            hash_u64(hasher, quotas.max_permissions_per_tool as u64);
+            hash_u64(hasher, quotas.max_triggers_per_tool as u64);
+        }
+    }
     if !resolution.voice_serving.is_empty() {
         hash_str(hasher, "voice_serving_nested_narrowing");
         hash_len(hasher, resolution.voice_serving.len());

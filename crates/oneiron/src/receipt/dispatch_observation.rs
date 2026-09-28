@@ -64,6 +64,7 @@ impl DispatchObservation {
             "suppressed" => OutboundDispatchOutcome::Suppressed,
             "let_go" => OutboundDispatchOutcome::LetGo,
             "failed" => OutboundDispatchOutcome::Failed,
+            "ambiguous" => OutboundDispatchOutcome::Ambiguous,
             _ => return Err(Error::CorruptedIndex("dispatch observation outcome")),
         };
         Ok(OutboundDispatchResult {
@@ -72,6 +73,9 @@ impl DispatchObservation {
             gate_outcome: self.gate_outcome.clone(),
             gate_reason_codes: self.gate_reason_codes.clone(),
             receipt: self.receipt.clone(),
+            // The observation is not resend authority; terminal consumers
+            // resolve the exact ledger row instead of trusting this echo.
+            resolution: None,
             // Runtime meter echoes belong to the originating call, not audit replay.
             effector_budget: None,
             budget_ladder_events: Vec::new(),

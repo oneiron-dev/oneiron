@@ -245,6 +245,14 @@ pub(super) fn validate_put_carriers(
     context: PutCarrierContext<'_>,
 ) -> Result<()> {
     validate_scope_carriers(store, txn, id, context.entity_type, data, context.origin)?;
+    super::connector_key_guard::validate_connector_manifest_put(
+        store,
+        txn,
+        id,
+        context.entity_type,
+        data,
+        context.replicated,
+    )?;
     super::owned_body::guard_storage_owned_body(
         store,
         txn,
