@@ -183,6 +183,8 @@ pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
     clippy::too_many_arguments,
     reason = "batch write plumbing keeps gate persistence modes and the write origin explicit at call sites"
 )]
+// One transaction applies every op and then its whole-batch validators in order.
+#[allow(clippy::too_many_lines)]
 pub(super) fn apply_ops_with_origin(
     store: &Store,
     config: &crate::config::VaultConfig,
