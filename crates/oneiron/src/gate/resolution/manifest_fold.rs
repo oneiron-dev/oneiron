@@ -16,7 +16,9 @@ use crate::gate::ceiling::{
     DelegationFoldCache, DelegationGrantRecord, PolicyOwnerPolicyRow, check_source_trust,
     fold_delegated_grants,
 };
-use crate::gate::decode::{DecodedManifestCarrier, decode_manifest_carrier};
+use crate::gate::decode::{
+    DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
+};
 
 /// The vault ceiling on any project's depth row: the resolved manifest row,
 /// capped by the shipped ceiling. A loaded malformed manifest fails closed to
