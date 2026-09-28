@@ -1,4 +1,5 @@
 //! Protected replicated ask facts. No winner index lives in vault_meta.
+mod guard;
 use super::ask_types::{
     TaskAskAnswer, TaskAskEvidence, TaskAskEvidenceReason, TaskAskHoldReason,
     TaskAskPersonEvidence, TaskAskPersonKind, TaskAskSource, TaskAskStatus, TaskAskWord,
@@ -9,6 +10,9 @@ use crate::habit::TaskRole;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::{EntityId, Vault};
+pub(crate) use guard::guard_ask_fact_put;
+pub(super) use guard::validate_notice_companion;
+use guard::validate_word;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +40,10 @@ pub(super) struct AskGroup {
     pub members: Vec<AskMember>,
     pub no_live_route: bool,
     pub created_at: u64,
+    /// Disjoint FEDERATION_GRANT entity IDs, keyed by the guest's person.
+    #[serde(default)]
+    pub guest_grants: std::collections::BTreeMap<EntityId, EntityId>,
+    pub policy_surface: super::TaskAskSurface,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +55,8 @@ struct AskAnswerFact {
     source: TaskAskSource,
     word: TaskAskWord,
     order: u64,
+    #[serde(default)]
+    delegation_grant_ref: Option<String>,
     at: u64,
 }
 
@@ -331,7 +341,11 @@ pub(super) fn evidence_in(
         if fact.group != id {
             continue;
         }
-        let person = fact.word.inform_for.unwrap_or(fact.actor);
+        let person = fact
+            .word
+            .inform_for
+            .or(fact.word.companion_for)
+            .unwrap_or(fact.actor);
         if !group
             .members
             .iter()
@@ -340,11 +354,37 @@ pub(super) fn evidence_in(
             || fact.at == 0
             || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
             || (fact.source == TaskAskSource::Inform && fact.actor.to_hex() != group.owner)
+            || (fact.source == TaskAskSource::Companion) != fact.word.companion_for.is_some()
+            || (fact.source != TaskAskSource::Companion && fact.delegation_grant_ref.is_some())
+            || fact.delegation_grant_ref.as_ref().is_some_and(|reference| {
+                !super::ask_guest::check_delegation_record(
+                    vault,
+                    txn,
+                    person,
+                    fact.actor,
+                    group.effective.what.class_key.as_deref(),
+                    reference,
+                )
+                .unwrap_or(false)
+            })
             || answer_id(id, fact.task, fact.actor, fact.source, &fact.word)? != word_ref
         {
             return Err(invalid());
         }
         validate_word(group, &fact.word).map_err(|_| Error::CorruptedIndex("tasks.ask.word"))?;
+        if fact.word.confirmation.is_some() {
+            if fact.source != TaskAskSource::Human {
+                return Err(invalid());
+            }
+            super::ask_soft_confirm::validate_confirmation(
+                vault, txn, id, group, fact.actor, &fact.word,
+            )?;
+        }
+        if fact.source == TaskAskSource::Companion {
+            super::ask_guest::validate_companion_fact(
+                vault, txn, id, group, fact.actor, &fact.word,
+            )?;
+        }
         evidence.push(TaskAskEvidence {
             answer: TaskAskAnswer {
                 task_ref: fact.task,
@@ -358,6 +398,9 @@ pub(super) fn evidence_in(
             order: fact.order,
             reason: TaskAskEvidenceReason::OutsideElectorate,
             ladder_changed: None,
+            soft_confirm: fact.source == TaskAskSource::Companion
+                && group.effective.what.commitment,
+            delegation_grant_ref: fact.delegation_grant_ref,
         });
     }
     evidence.sort_by_key(|entry| (entry.order, entry.answer.word_ref));
@@ -412,21 +455,6 @@ pub(super) fn person_evidence_in(
     Ok(answers)
 }
 
-fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
-    if word.provenance_refs.len() > 64 {
-        return Err(invalid());
-    }
-    if match &word.option {
-        Some(option) => !group.effective.what.options.contains_key(option),
-        None => !group.effective.what.options.is_empty(),
-    } {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "tasks.ask.option",
-        )));
-    }
-    Ok(())
-}
-
 pub(super) fn admit_word(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -445,8 +473,14 @@ pub(super) fn admit_word(
         }
     }
     let actor = writer.entity_ref();
-    let person = word.inform_for.unwrap_or(actor);
-    let source = if word.inform_for.is_some() {
+    let person = word.inform_for.or(word.companion_for).unwrap_or(actor);
+    let source = if word.companion_for.is_some() {
+        if writer.actor_class() != crate::EdgeActorClass::Agent {
+            return Err(invalid());
+        }
+        super::ask_guest::check_companion_answer(vault, txn, id, group, actor, word, now)?;
+        TaskAskSource::Companion
+    } else if word.inform_for.is_some() {
         if actor.to_hex() != group.owner || writer.actor_class() != crate::EdgeActorClass::Agent {
             return Err(invalid());
         }
@@ -456,6 +490,12 @@ pub(super) fn admit_word(
     } else {
         TaskAskSource::Executor
     };
+    if word.confirmation.is_some() {
+        if source != TaskAskSource::Human {
+            return Err(invalid());
+        }
+        super::ask_soft_confirm::validate_confirmation(vault, txn, id, group, actor, word)?;
+    }
     let member = group
         .members
         .iter()
@@ -476,7 +516,30 @@ pub(super) fn admit_word(
     {
         return Err(invalid());
     }
+    let delegation_grant_ref = if source == TaskAskSource::Companion {
+        super::ask_guest::delegated_class(
+            vault,
+            txn,
+            person,
+            actor,
+            group.effective.what.class_key.as_deref(),
+        )?
+    } else {
+        None
+    };
     let word_ref = answer_id(id, task, actor, source, word)?;
+    if source == TaskAskSource::Companion
+        && group.effective.what.commitment
+        && let Some(notice) = read::<super::TaskAskSoftConfirmNotice>(
+            vault,
+            txn,
+            derived_id(b"oneiron.tasks.ask.soft_confirm.v1", id, person.as_bytes())?,
+            super::ask_soft_confirm::SOFT_CONFIRM,
+        )?
+        && notice.companion_answer_ref != word_ref
+    {
+        return Err(invalid()); // A changed commitment needs a new ask revision.
+    }
     let answer = TaskAskAnswer {
         task_ref: task,
         actor_ref: actor,
@@ -528,6 +591,7 @@ pub(super) fn admit_word(
             source,
             word: word.clone(),
             order,
+            delegation_grant_ref,
             at: now,
         },
         now,
@@ -536,6 +600,17 @@ pub(super) fn admit_word(
         .batch_in()
         .edge(&word_ref, crate::EdgeKind::About, &id, 1.0)
         .apply(txn)?;
+    if source == TaskAskSource::Companion && group.effective.what.commitment {
+        super::ask_soft_confirm::put_notice(
+            vault,
+            txn,
+            (id, person),
+            &answer,
+            word,
+            &group.effective,
+            now,
+        )?;
+    }
     Ok(answer)
 }
 
@@ -575,6 +650,8 @@ pub(super) fn replay_answer_option_matches(
         result_ref: terminal.result_ref.ok_or_else(invalid)?,
         option: option.cloned(),
         inform_for: None,
+        companion_for: None,
+        confirmation: None,
         provenance_refs: evidence_refs.iter().copied().collect(),
     };
     validate_word(&group, &word)?;
@@ -630,6 +707,8 @@ pub(super) fn record_answer(
                 result_ref: terminal.result_ref.ok_or_else(invalid)?,
                 option: option.cloned(),
                 inform_for: None,
+                companion_for: None,
+                confirmation: None,
                 provenance_refs: evidence_refs.iter().copied().collect(),
             },
             now,
@@ -659,97 +738,6 @@ pub(crate) fn ask_is_terminal(vault: &Vault, id: EntityId) -> Result<Option<bool
     read_group(vault, &txn, id)?
         .map(|_| super::ask_settlement::read_result(vault, &txn, id).map(|result| result.is_some()))
         .transpose()
-}
-
-fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
-    let value = rmpv::decode::read_value(&mut &bytes[..]).ok()?;
-    value.as_map()?.iter().find_map(|(key, value)| {
-        if key.as_str() != Some("subkind") {
-            return None;
-        }
-        match value.as_str()? {
-            GROUP => Some(GROUP),
-            ANSWER => Some(ANSWER),
-            "tasks.ask_settlement" => Some("tasks.ask_settlement"),
-            _ => None,
-        }
-    })
-}
-
-pub(crate) fn guard_ask_fact_put(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    occurred: crate::TimeRange,
-    learned_at: u64,
-    data: &[u8],
-) -> Result<()> {
-    let kind = fact_kind(data);
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
-        let header = EntityMetadataHeader::parse(raw.as_ref()).ok_or_else(invalid)?;
-        let old = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
-        if kind.is_some() || fact_kind(old).is_some() {
-            // Identity pins BOTH body and header, including an identical-body
-            // metadata rewrite through sync replay or internal batch.
-            if old != data
-                || header.occurred_start != occurred.start
-                || header.occurred_end != occurred.end
-                || header.learned_at != learned_at
-            {
-                return Err(invalid());
-            }
-        }
-    }
-    match kind {
-        Some(GROUP) => {
-            let group: AskGroup = decode(data, GROUP)?.ok_or_else(invalid)?;
-            let who = group
-                .members
-                .iter()
-                .map(|member| entity(&member.actor))
-                .collect::<Result<std::collections::BTreeSet<_>>>()?;
-            if group.base_policy_version != 1
-                || group.members.len() != who.len()
-                || group
-                    .requested
-                    .effective(&who, group.created_at, group.context_class.clone())
-                    .map_err(|_| invalid())?
-                    != group.effective
-                || blake3::hash(&rmp_serde::to_vec_named(&group.requested).map_err(|_| invalid())?)
-                    .to_hex()
-                    .as_str()
-                    != group.request_digest
-            {
-                return Err(invalid());
-            }
-            for member in &group.members {
-                if entity(&member.task)? != member_id(id, entity(&member.actor)?)? {
-                    return Err(invalid());
-                }
-            }
-            entity(&group.owner)?;
-        }
-        Some(ANSWER) => {
-            let fact: AskAnswerFact = decode(data, ANSWER)?.ok_or_else(invalid)?;
-            if fact.order == 0
-                || fact.at == 0
-                || occurred.start != fact.at
-                || occurred.end != fact.at
-                || learned_at != fact.at
-                || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
-                || answer_id(fact.group, fact.task, fact.actor, fact.source, &fact.word)? != id
-            {
-                return Err(invalid());
-            }
-        }
-        Some("tasks.ask_settlement") => {
-            let result = decode::<super::TaskAskResult>(data, "tasks.ask_settlement")?
-                .ok_or_else(invalid)?;
-            super::ask_settlement::validate_result(id, &result)?;
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 /// An ask retains its deadline wake after its last notice. Ending a ladder

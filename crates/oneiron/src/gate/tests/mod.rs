@@ -42,6 +42,7 @@ mod pending_lookup;
 mod repair_tests;
 
 mod actor_fork;
+mod ask_policy;
 mod auto_checker;
 mod budget_policy;
 mod charter_ceiling;

@@ -76,6 +76,9 @@ pub(super) fn authorize_selector_export(
     }
 
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
+    }
     if grant.scope != grant_scope {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }

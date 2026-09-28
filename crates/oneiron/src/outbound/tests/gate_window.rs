@@ -270,6 +270,9 @@ fn dispatch_pipeline_rejects_unsupported_verbs_before_execution() {
         OutboundDispatchError::InvalidBoundActor => {
             panic!("unexpected facade-bound actor validation")
         }
+        OutboundDispatchError::ObsoleteAskConfirmation => {
+            panic!("unexpected stale ask confirmation")
+        }
         OutboundDispatchError::Engine(error) => panic!("unexpected engine error: {error}"),
         OutboundDispatchError::Chokepoint(error) => {
             panic!("unexpected chokepoint error: {error}")

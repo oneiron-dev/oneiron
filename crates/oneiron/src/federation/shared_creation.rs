@@ -55,8 +55,34 @@ fn role_preset(role: Role) -> Result<GrantPreset> {
                 "delegate needs a separately attenuated expiring grant",
             ));
         }
+        Role::Guest => return Err(invalid("ask guest is not shared-vault membership")),
     })
 }
+/// A guest grant is disjoint from member initialization even though both
+/// records carry the FEDERATION_GRANT kind byte.
+fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
+    {
+        let (key, _) = row?;
+        let id = crate::vault::entity_id_from_type_index_key(&key)?;
+        let raw = vault.get_raw_in(txn, &id)?.ok_or(Error::EntityNotFound)?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("federation grant header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
+            return Err(Error::CorruptedIndex("federation grant type"));
+        }
+        let grant =
+            super::decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+        if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Vault {
     /// Run once while creating shared membership. Reopening never reapplies defaults.
     /// No preset means exactly the explicitly supplied roles, without implicit grants.
@@ -73,14 +99,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        if self.store.vault_meta.get(&txn, CREATION_KEY)?.is_some()
-            || self
-                .store
-                .type_index
-                .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
-                .next()
-                .transpose()?
-                .is_some()
+        if self.store.vault_meta.get(&txn, CREATION_KEY)?.is_some() || has_member_grant(self, &txn)?
         {
             return Err(invalid("shared membership has already been initialized"));
         }

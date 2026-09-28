@@ -91,6 +91,11 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             calendar_invite,
             space_posting,
         };
+        if !crate::task_verb::validate_ask_soft_confirm_dispatch(self.vault, self.request)
+            .unwrap_or(false)
+        {
+            return invalid_frozen_call();
+        }
         let mut execution = self.sink.execute(&execution_request);
         // Only the pipeline may author the normalized re-arm authority, even
         // when the adapter's raw `retry_after` is missing or malformed.

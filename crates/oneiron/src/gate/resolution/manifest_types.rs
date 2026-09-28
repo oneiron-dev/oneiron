@@ -81,6 +81,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
+    pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
     pub(super) packs: Vec<PolicyPack>,

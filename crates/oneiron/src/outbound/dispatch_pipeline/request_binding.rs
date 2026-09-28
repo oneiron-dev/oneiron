@@ -48,6 +48,9 @@ impl PreparedOutboundDispatch {
         verified_actor: Option<(EntityId, EdgeActorClass)>,
     ) -> Result<Self, OutboundDispatchError> {
         crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
+        if !crate::task_verb::validate_ask_soft_confirm_dispatch(vault, &request)? {
+            return Err(OutboundDispatchError::ObsoleteAskConfirmation);
+        }
         // OF-326 talk-only (ONE-1546): an intent originating from a session
         // currently in off-record mode is rejected before verb resolution —
         // the typed error carries the exit-prompt semantics. Intents from a

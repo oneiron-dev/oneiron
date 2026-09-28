@@ -126,7 +126,8 @@ pub(super) fn admitted_ruling(
         return Ok(None);
     }
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if grant.scope != FederationGrantScope::vault(row.vault_id)
+    if grant.role.is_guest()
+        || grant.scope != FederationGrantScope::vault(row.vault_id)
         || grant.member_ref != holder
         || !grant.is_admin()
         || !grant.confers_at(row.learned_at)

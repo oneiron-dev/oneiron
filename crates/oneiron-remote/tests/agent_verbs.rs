@@ -37,6 +37,7 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
                 outcome_binding: None,
                 ladder_answer: None,
                 class_key: None,
+                commitment: false,
             },
             Some(u64::MAX),
             oneiron::task_verb::TaskAskDefault::AskMe,

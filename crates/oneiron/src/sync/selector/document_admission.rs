@@ -38,6 +38,9 @@ pub(super) fn authorize_in_txn(
         return Err(selector_err(SelectorError::GrantWrongType));
     }
     let grant = decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+    if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
+    }
     if grant.scope != scope {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
