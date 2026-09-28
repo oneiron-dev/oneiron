@@ -445,7 +445,11 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
         4,
     )?;
     let publisher = vault.admit_skill_publisher(&owner, "publisher:pack", hub)?;
+    let mut expected_sources = vault.list_pack_sources()?;
     let (id, pinned) = vault.fetch_pack_from_adapter(&http, &reference, &publisher, at, 4)?;
+    expected_sources.push((id, source.clone()));
+    expected_sources.sort_by_key(|(source_id, _)| *source_id.as_bytes());
+    assert_eq!(vault.list_pack_sources()?, expected_sources);
     assert_eq!(pinned, reference);
     assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
     assert!(vault.installed_pack("alice.mail")?.is_none());
@@ -461,7 +465,7 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
             .fetch_pack_from_adapter(&liar, &wrong, &publisher, at, 5)
             .is_err()
     );
-    assert_eq!(vault.list_pack_sources()?.len(), 1);
+    assert_eq!(vault.list_pack_sources()?, expected_sources);
     routes.insert("/knowledge/guide.md".into(), (200, b"drift".to_vec()));
     let drift = StaticHttp::new(routes);
     assert!(
@@ -469,6 +473,7 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
             .fetch_pack_source(&reference)
             .is_err()
     );
+    assert_eq!(vault.list_pack_sources()?, expected_sources);
     Ok(())
 }
 
