@@ -63,8 +63,8 @@ pub enum AuthorityOp {
     SetTierFloor {
         tier_floor: AuthorityTier,
     },
-    /// In-chain host migration. Replaces the roster without a new genesis,
-    /// a floor reset, or recovered instant-widen authority.
+    /// In-chain host migration. Replaces the roster without a new genesis
+    /// or a floor reset.
     ReRoot {
         new_device: DeviceAuthority,
     },
