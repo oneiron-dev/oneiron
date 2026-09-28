@@ -3,6 +3,7 @@ mod decode_manifest;
 mod decode_map_util;
 mod decode_policy_tables;
 mod decode_trust_budget;
+mod experiment_selection;
 mod policy_scope_migration;
 
 pub(super) use self::decode_manifest::{ConnectorClassRole, decode_policy_manifest};

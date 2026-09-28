@@ -1,0 +1,13 @@
+[
+  {
+    "scope": {"campaign_id": null, "holder_id": null},
+    "precedence": "nested_narrowing",
+    "policy": {
+      "expected_gain_floor": 0.05,
+      "plateau_rounds": 2,
+      "stagnation_rounds": 2,
+      "stagnation_action": "diversify",
+      "escalate_plateau": false
+    }
+  }
+]
