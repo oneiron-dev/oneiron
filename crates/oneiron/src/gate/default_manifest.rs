@@ -17,10 +17,11 @@ use super::constants::{
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
     POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
     POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
-    POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
-    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
-    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY,
+    SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY,
+    SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
@@ -136,6 +137,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from("oneiron-default-policy"),
         ),
         (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        skill_edit_goal_entry(),
         (
             Value::from(POLICY_WEAVE_CORRECTION_POLICY_KEY),
             Value::Map(vec![
@@ -774,6 +776,16 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// The shipped skill-edit goal policy row, kept as data beside this file.
+fn skill_edit_goal_entry() -> (Value, Value) {
+    let policy = rmpv::ext::to_value(
+        serde_json::from_str::<serde_json::Value>(include_str!("skill_edit_goal_default.json"))
+            .expect("shipped skill edit goal policy parses"),
+    )
+    .expect("shipped skill edit goal policy encodes");
+    (Value::from(POLICY_SKILL_EDIT_GOAL_KEY), policy)
 }
 
 /// Engine-authored vault policy DATA for grant creation. The grant codec and
