@@ -421,6 +421,16 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
             ])]),
         ),
         (v("scoped_grants"), rmpv::Value::Array(vec![])),
+        // A loaded manifest must spell the self-held sender posture: silence
+        // about `channel_identity.outbound_send` denies the send (ONE-1970).
+        (
+            v("act_policy"),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                (v("act_class"), v("channel_identity.outbound_send")),
+                (v("subject_class"), v("self_held")),
+                (v("posture"), v("require_capability")),
+            ])]),
+        ),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).expect("manifest fixture encoding");
@@ -631,6 +641,16 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
             ])]),
         ),
         (v("scoped_grants"), rmpv::Value::Array(vec![])),
+        // A loaded manifest must spell the self-held sender posture: silence
+        // about `channel_identity.outbound_send` denies the send (ONE-1970).
+        (
+            v("act_policy"),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                (v("act_class"), v("channel_identity.outbound_send")),
+                (v("subject_class"), v("self_held")),
+                (v("posture"), v("require_capability")),
+            ])]),
+        ),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).expect("manifest encoding");

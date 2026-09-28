@@ -167,6 +167,19 @@ fn mail_09_cold_send_asks_known_recipient_uses_ordinary_grant() -> Result<()> {
             Value::from("native_mail_policy"),
             Value::Array(vec![crate::gate::mail_policy::default_row()]),
         ),
+        // A loaded manifest must spell the self-held sender posture: silence
+        // about `channel_identity.outbound_send` denies the send (ONE-1970).
+        (
+            Value::from("act_policy"),
+            Value::Array(vec![Value::Map(vec![
+                (
+                    Value::from("act_class"),
+                    Value::from("channel_identity.outbound_send"),
+                ),
+                (Value::from("subject_class"), Value::from("self_held")),
+                (Value::from("posture"), Value::from("require_capability")),
+            ])]),
+        ),
         external_effect_scoped_grant_entry(
             "sender",
             "send",
