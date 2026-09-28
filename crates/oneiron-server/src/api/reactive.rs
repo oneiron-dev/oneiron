@@ -14,10 +14,11 @@
 //!    socket, a server request, or network access — a consumer may start
 //!    offline and call [`ReactiveLocalRead::snapshot`] immediately.
 //! 2. **Only persistent frames invalidate.** Ephemeral state, root version
-//!    vectors, lease traffic, WindowSync VV/selector requests, malformed and
-//!    unknown frames, and future app-tier RPC/SUB frames never re-run an LMDB
-//!    query. Classification happens in [`crate::broadcast`] through the
-//!    read-only `protocol::parse_message` seam.
+//!    vectors, lease traffic, all WindowSync frames (including UPDATE),
+//!    malformed and unknown frames, and future app-tier RPC/SUB frames never
+//!    directly re-run a local query. Observer B sends named entity notices
+//!    after ledger materialization; document frames name text edits.
+//!    Classification happens in [`crate::broadcast`].
 //! 3. **Coarse re-derive, not incremental view maintenance.** A matching notice
 //!    re-runs the whole query exactly once. A lagged receiver escalates to one
 //!    coarse full re-read rather than surfacing stale data or disconnecting.
@@ -42,9 +43,7 @@ use crate::server::{BroadcastPayload, SyncServer};
 pub(crate) enum ReactiveDependency {
     /// The root doc: window registry, schema version, lease registry.
     Root,
-    /// One specific window, keyed `YYYY-MM`.
-    Window(String),
-    /// One entity text document.
+    /// One entity document and its local indexed projections.
     Doc(oneiron::EntityId),
     /// Every persistent change, whichever store it lands in.
     AnyPersistent,
@@ -52,18 +51,13 @@ pub(crate) enum ReactiveDependency {
 
 /// A persistent-store invalidation notice derived from one broadcast frame.
 ///
-/// Only changes that can alter what an LMDB read returns are represented here;
+/// Only changes to the local read's persistent stores are represented here;
 /// [`crate::broadcast::ReactiveChangeSubscriber`] drops everything else before
 /// it ever becomes a `ReactiveChange`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ReactiveChange {
     /// A root-doc update landed.
     Root,
-    /// A window received a persisted CRDT update.
-    Window {
-        /// Window key (`YYYY-MM`) the update belongs to.
-        window_key: String,
-    },
     /// One or more entity documents changed in one frame.
     Doc { entities: Vec<oneiron::EntityId> },
     /// The notice channel dropped `missed` frames. Which stores changed is
@@ -78,8 +72,8 @@ impl ReactiveChange {
     /// Whether this notice invalidates a query with `dependencies`.
     ///
     /// `Root` matches [`ReactiveDependency::Root`] and
-    /// [`ReactiveDependency::AnyPersistent`]; a window update matches its exact
-    /// window plus `AnyPersistent`; `InvalidateAll` matches everything.
+    /// [`ReactiveDependency::AnyPersistent`]; document changes match their
+    /// entity IDs or `AnyPersistent`; `InvalidateAll` matches everything.
     pub(crate) fn invalidates(&self, dependencies: &[ReactiveDependency]) -> bool {
         match self {
             Self::Doc { entities } => dependencies.iter().any(|dependency| match dependency {
@@ -93,11 +87,6 @@ impl ReactiveChange {
                     dependency,
                     ReactiveDependency::Root | ReactiveDependency::AnyPersistent
                 )
-            }),
-            Self::Window { window_key } => dependencies.iter().any(|dependency| match dependency {
-                ReactiveDependency::Window(key) => key == window_key,
-                ReactiveDependency::AnyPersistent => true,
-                ReactiveDependency::Root | ReactiveDependency::Doc(_) => false,
             }),
         }
     }

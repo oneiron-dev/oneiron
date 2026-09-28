@@ -41,8 +41,10 @@ pub(super) fn materialize_entities_from_delta(
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
-) -> bool {
-    materialize_entities_with_changes(doc, delta, vault, window_key, lease_vault_id).0
+) -> Option<Vec<EntityId>> {
+    materialize_entities_with_changes(doc, delta, vault, window_key, lease_vault_id)
+        .0
+        .then(Vec::new)
 }
 
 /// Revision receipts are retained only after the nested savepoint and outer

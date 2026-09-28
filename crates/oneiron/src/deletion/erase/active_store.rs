@@ -1,12 +1,38 @@
 use super::*;
 
 impl Vault {
+    /// IDs whose local body or edge projection can change when this hard
+    /// deletion commits. Capture before deindex removes incident edges and
+    /// before the redirect walk scrubs shells. Callers publish only after
+    /// their owning transaction commits; a rolled-back delete publishes none.
+    pub(crate) fn hard_delete_affected_ids_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut affected = crate::identity_redirect::inbound_redirect_shells_in_txn(
+            &self.store,
+            txn,
+            &BTreeSet::from([*id]),
+        )?;
+        affected.insert(*id);
+        for index in [&self.store.edges_out, &self.store.edges_in] {
+            for row in index.prefix_iter(txn, id.as_bytes())? {
+                let (key, value) = row?;
+                affected.insert(crate::vault::parse_edge_record(&key, &value)?.target);
+            }
+        }
+        Ok(affected.into_iter().collect())
+    }
+
+    /// Returns whether local state existed, plus the citing NOTE documents
+    /// whose pins the erasure rewrote, for the caller's post-commit notice.
     pub(in crate::deletion) fn purge_entity_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         request_id: Option<&[u8; 16]>,
-    ) -> Result<bool> {
+    ) -> Result<(bool, Vec<EntityId>)> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         let settled = match request_id {
             Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
@@ -26,7 +52,7 @@ impl Vault {
         // CITED this id, not this id's own rows, and both acts belong to the
         // one transaction that destroys the evidence.
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
-        crate::note::erase_citations_in_txn(self, wtxn, id)?;
+        let citing = crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         self.scrub_identity_op_actor_in_txn(wtxn, id)?;
@@ -47,7 +73,10 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed || note_removed || had_refinement || had_merge_receipt)
+        Ok((
+            existed || note_removed || had_refinement || had_merge_receipt,
+            citing,
+        ))
     }
 
     pub(in crate::deletion) fn soft_erase_active_store_in_txn(

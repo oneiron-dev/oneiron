@@ -390,7 +390,10 @@ pub(in crate::sync) fn apply_replayed_tombstone_for_sync_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &crate::entity_id::EntityId,
     raw_value: &[u8],
-) -> Result<crate::deletion::ReplayedTombstoneOutcome> {
+) -> Result<(
+    crate::deletion::ReplayedTombstoneOutcome,
+    Vec<crate::entity_id::EntityId>,
+)> {
     #[cfg(test)]
     maybe_inject_purge_failure()?;
     vault.apply_replayed_tombstone_in_txn(wtxn, id, raw_value)

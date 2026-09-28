@@ -308,6 +308,38 @@ impl Vault {
         Ok(true)
     }
 
+    /// A separate local-read notice after the destructive LMDB transaction
+    /// commits. Tombstone publication is too early for hard purge, and a soft
+    /// scrub must notify even when later CRDT publication fails. The existing
+    /// tee is vault-scoped and has no recipient if no window manager is live.
+    pub(super) fn notify_local_delete_materialized(&self, ids: &[EntityId]) {
+        #[cfg(feature = "sync")]
+        {
+            let manager = self
+                .live_window_manager
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .upgrade();
+            if let Some(manager) = manager {
+                let path = "local_delete_committed";
+                manager.materializer().notify_live_queries(
+                    path,
+                    &crate::sync::bridge::MaterializedDiffSummary {
+                        containers: ids.iter().map(|id| format!("e:{}", id.to_hex())).collect(),
+                        bytes: 0,
+                        revision_events: Vec::new(),
+                    },
+                    &crate::sync::bridge::OriginMark {
+                        conn_id: None,
+                        origin: Some("local_delete_committed".to_owned()),
+                    },
+                );
+            }
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = ids;
+    }
+
     /// Publication notification only: never run from a Loro observer or before
     /// TXN1 commits. Hard-purge dependencies stay pending at the read consumer
     /// until the later purge has committed, including the transient-window path.

@@ -80,15 +80,18 @@ impl Vault {
     /// bytes changed, the endpoints' PPR caches are invalidated and the graph
     /// version bumped. A subject edge that no longer exists (deleted
     /// independently of its Claims) leaves nothing to refresh — no-op.
+    ///
+    /// Returns both endpoints when the edge bytes changed, so the caller's
+    /// post-commit notice reaches the `edges_out` and `edges_in` reads.
     pub(in crate::deletion) fn refresh_subject_edge_after_claim_delete_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         deleted_claim_id: &EntityId,
         subject: &EdgeRef,
-    ) -> Result<()> {
+    ) -> Result<Vec<EntityId>> {
         let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
         if self.store.edges_out.get(wtxn, &edge_key)?.is_none() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let survivors =
             self.live_edge_provenance_claims_in_txn(wtxn, subject, Some(deleted_claim_id))?;
@@ -110,11 +113,12 @@ impl Vault {
             // unauditable and the edge downgraded to bare.
             None => self.refresh_to_retracted_survivor_or_bare(wtxn, deleted_claim_id, subject)?,
         };
-        if changed {
-            ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
-            ppr::increment_graph_version(&self.store, wtxn)?;
+        if !changed {
+            return Ok(Vec::new());
         }
-        Ok(())
+        ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
+        ppr::increment_graph_version(&self.store, wtxn)?;
+        Ok(vec![subject.source, subject.target])
     }
 
     /// D16 fallback when the deleted Claim left NO active survivor: if a
