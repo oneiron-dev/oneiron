@@ -113,6 +113,8 @@ pub enum ScopedMcpEscalationReason {
     ConnectorKeySuspended,
     ConnectorKeyRevoked,
     ConnectorKeyCharterDrift,
+    ConnectorManifestDrift,
+    StaleConnectorManifest { current_manifest_hash: [u8; 32] },
     ConnectorKeyCharterNeverList,
     ConnectorKeyBudgetExhausted,
 }

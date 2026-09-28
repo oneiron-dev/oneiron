@@ -139,7 +139,7 @@ fn drive_effectful_mcp_call(vault: &Vault, crash_before_ack: bool) -> IntentLedg
         vault,
         &fixture.authority,
         OutboundEffectCommand::New(oracle_prepared_effect(
-            &fixture, attempt_id, 1, payload, true,
+            vault, &fixture, attempt_id, 1, payload, true,
         )),
         20,
         &mut transport,
@@ -224,6 +224,7 @@ fn drive_effectful_call_without_idempotency_support(vault: &Vault) -> AtMostOnce
         vault,
         &fixture.authority,
         OutboundEffectCommand::New(oracle_prepared_effect(
+            vault,
             &fixture,
             AttemptId::from_bytes(&[0x95; 16]).expect("attempt id"),
             1,
@@ -267,7 +268,7 @@ fn drive_crash_before_intent_journal(vault: &Vault) -> CrashBeforeJournalTrace {
     let attempt_id = AttemptId::from_bytes(&[0x96; 16]).expect("attempt id");
     let call_seq = 1;
     let payload = b"oracle pre-journal crash payload".to_vec();
-    let prepared = oracle_prepared_effect(&fixture, attempt_id, call_seq, payload, true);
+    let prepared = oracle_prepared_effect(vault, &fixture, attempt_id, call_seq, payload, true);
     let payload_hash = hash_frozen_payload(&prepared.payload);
     let missing_intent_id = derive_intent_id(
         attempt_id,

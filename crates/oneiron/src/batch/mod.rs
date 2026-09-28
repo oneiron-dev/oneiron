@@ -17,6 +17,7 @@ mod facet_identity;
 mod facet_validation;
 mod gate_mode;
 mod gate_staging;
+mod leader_chat_admission;
 mod lexical_query_hints;
 mod ops_pipeline;
 mod person_substrate;

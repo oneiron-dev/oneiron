@@ -66,6 +66,14 @@ pub struct CanonicalEntityDocument {
     pub birth_at: u64,
 }
 
+/// World proof retained when a soft-deleted CLAIM has only its header left.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalShellWorld {
+    pub id: [u8; 16],
+    pub world: [u8; 16],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalContainerManifest {
@@ -91,6 +99,7 @@ pub struct CanonicalSchemaManifest {
 pub struct CanonicalSnapshot {
     pub window: String,
     pub entity_blobs: Vec<CanonicalEntity>,
+    pub retained_claim_worlds: Vec<CanonicalShellWorld>,
     pub base_edges: Vec<CanonicalBaseEdge>,
     pub tombstones: Vec<CanonicalTombstone>,
     pub doc_snapshots: Vec<CanonicalDocument>,
@@ -143,6 +152,7 @@ impl CanonicalSnapshot {
             "entities",
             "edges",
             "tombstones",
+            "retained_claim_worlds",
             "documents",
             "entity_documents",
             "document_heads",
@@ -198,6 +208,7 @@ pub fn capture_canonical_window(
             "entities",
             "edges",
             "tombstones",
+            "retained_claim_worlds",
             "documents",
             "entity_documents",
             "document_heads",
@@ -212,6 +223,7 @@ pub fn capture_canonical_window(
     let mut snapshot = CanonicalSnapshot {
         window: window.to_owned(),
         entity_blobs: Vec::new(),
+        retained_claim_worlds: Vec::new(),
         base_edges: Vec::new(),
         tombstones: Vec::new(),
         doc_snapshots: Vec::new(),
@@ -428,6 +440,41 @@ pub fn capture_canonical_window(
     }
     snapshot.entity_documents.sort_by_key(|row| row.entity_id);
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    let carried: std::collections::BTreeMap<_, _> = binary_rows(doc, "retained_claim_worlds")?
+        .into_iter()
+        .collect();
+    if let Some((_, hex)) = window.split_once('@') {
+        let world = EntityId::from_hex(hex).map_err(|_| invalid("window world"))?;
+        for entity in &snapshot.entity_blobs {
+            let header = crate::batch::EntityMetadataHeader::parse(&entity.blob)
+                .ok_or(invalid("entity metadata"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || entity.blob.len() != crate::batch::ENTITY_METADATA_HEADER_LEN
+            {
+                continue;
+            }
+            let mapping = format!("m:dw:{}", id(entity.id)?.to_hex());
+            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes())
+                && carried.get(&id(entity.id)?.to_hex()).map(Vec::as_slice)
+                    != Some(world.as_bytes().as_slice())
+            {
+                return Err(invalid("soft claim world address"));
+            }
+            snapshot.retained_claim_worlds.push(CanonicalShellWorld {
+                id: entity.id,
+                world: *world.as_bytes(),
+            });
+        }
+    }
+    if carried.keys().any(|id| {
+        !snapshot.retained_claim_worlds.iter().any(|row| {
+            EntityId::from_bytes(row.id)
+                .ok()
+                .is_some_and(|entity| entity.to_hex() == *id)
+        })
+    }) {
+        return Err(invalid("orphan retained world witness"));
+    }
     snapshot
         .base_edges
         .sort_by_key(|row| (row.source, row.kind, row.target));
@@ -460,6 +507,14 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     let doc = LoroDoc::new();
     for entity in &snapshot.entity_blobs {
         insert(&doc, "entities", &id(entity.id)?.to_hex(), &entity.blob)?;
+    }
+    for shell in &snapshot.retained_claim_worlds {
+        insert(
+            &doc,
+            "retained_claim_worlds",
+            &id(shell.id)?.to_hex(),
+            &shell.world,
+        )?;
     }
     for edge in &snapshot.base_edges {
         insert(&doc, "edges", &edge.key()?, &edge.value)?;

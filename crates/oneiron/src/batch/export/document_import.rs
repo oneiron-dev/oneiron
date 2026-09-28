@@ -77,7 +77,7 @@ impl Vault {
             .classify_vault_import_manifest(&document.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
-        let omitted: BTreeSet<_> = document
+        let mut omitted: BTreeSet<_> = document
             .manifest
             .import_omissions
             .iter()
@@ -87,6 +87,7 @@ impl Vault {
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
         }
+        withhold_unborn_projects(self, &wtxn, &document, &mut omitted)?;
         for row in &mut document.evidence_ledger.entities {
             if let ExportBody::Pack(value) = &row.body {
                 let (handle, envelope) = self
@@ -365,6 +366,56 @@ fn validate_existing_source(
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault import: {reason}"))
+}
+
+/// An archived PROJECT row, which the archive marks as needing its owning
+/// adapter, goes through the generic door only where this vault derives its
+/// depth birth. Elsewhere, as in an owner-rooted vault that never knew it, the
+/// row and its home room are withheld instead of stranding the import.
+fn withhold_unborn_projects(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: &WholeVaultDocument,
+    omitted: &mut BTreeSet<EntityId>,
+) -> Result<()> {
+    let Ok(project_kind) = vault.project_type_byte() else {
+        return Ok(());
+    };
+    let mut withheld = BTreeSet::new();
+    for refusal in &document.manifest.import_refusals {
+        let super::ExportImportRefusal::Entity {
+            entity_id,
+            reason: super::ImportRefusalReason::OwningEntityAdapterRequired,
+        } = refusal
+        else {
+            continue;
+        };
+        let id = parse_id(entity_id)?;
+        if document
+            .entities()
+            .any(|row| row.id == *entity_id && row.entity_type == project_kind)
+            && crate::gate::project_depth::birth_for_project(&vault.store, txn, id)?.is_none()
+            && !crate::gate::project_depth::implicit_birth_applies(
+                &vault.store,
+                txn,
+                vault.privacy_posture(),
+                id,
+            )?
+        {
+            withheld.insert(id.to_hex());
+            omitted.insert(id);
+        }
+    }
+    for row in document.entities() {
+        if row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+            && let Ok(room) =
+                rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(&row.body.to_bytes()?)
+            && withheld.contains(&room.project_id)
+        {
+            omitted.insert(parse_id(&row.id)?);
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn parse_id(text: &str) -> Result<EntityId> {

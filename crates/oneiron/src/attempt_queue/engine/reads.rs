@@ -242,6 +242,26 @@ impl AttemptQueue<'_> {
         dreamer_run_root_id_in_txn(self.store, &rtxn, run_id)
     }
 
+    /// Non-mutating pending-dedupe lookup for callers that must compare intent
+    /// before a mutable live ceiling is re-evaluated. Enqueue remains the
+    /// authoritative, write-serialized dedupe check on a miss.
+    pub(crate) fn pending_dedupe(&self, kind: &str, key: &str) -> Result<Option<AttemptRecord>> {
+        let txn = self.store.env.read_txn()?;
+        let keys = DedupeIndexKeys::new(kind, None, key);
+        if let Some(row) =
+            self.read_existing_dedupe_in_read_txn(&txn, &keys.primary, kind, None, key)?
+        {
+            return Ok(Some(row));
+        }
+        self.read_existing_dedupe_in_read_txn(
+            &txn,
+            &legacy_dedupe_index_key(kind, key),
+            kind,
+            None,
+            key,
+        )
+    }
+
     pub(super) fn read_existing_dedupe_in_read_txn(
         &self,
         txn: &heed::RoTxn<'_>,

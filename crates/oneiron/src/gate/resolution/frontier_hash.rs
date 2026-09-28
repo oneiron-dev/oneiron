@@ -8,13 +8,17 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
-use super::manifest_types::{PolicyManifestDiagnostics, PolicyManifestResolution};
+use super::manifest_types::{
+    PolicyManifestDiagnostics, PolicyManifestResolution, ResidenceOperationBudgetLimits,
+};
 use crate::gate::ask_policy::AskPolicySurface;
 use crate::gate::ceiling::{
     DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality,
     PolicyOwnerPolicyRow, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
 
+// One hash step per manifest row, in manifest order: splitting it would scatter one frontier.
+#[allow(clippy::too_many_lines)]
 pub(super) fn hash_policy_frontier_v0(
     hasher: &mut Sha256,
     resolution: &PolicyManifestResolution,
@@ -49,11 +53,34 @@ pub(super) fn hash_policy_frontier_v0(
             hash_u64(hasher, u64::from(*minimum));
         }
     }
+    // A new project's birth and the vault ceiling read these resolved policy
+    // rows. A policy edit must move the frontier even if other gate axes agree.
+    if resolution.project_depth_default.is_some() || resolution.project_depth_max.is_some() {
+        hash_str(hasher, "project_depth_policy.v1");
+        hash_opt_u8(hasher, resolution.project_depth_default);
+        hash_opt_u8(hasher, resolution.project_depth_max);
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and
     // invalidate every standing grant bound to the old one.
     hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    // Absent native-mail rows do not alter an unrelated manifest's frontier.
+    // Present rows do: an owner policy edit must rebind affected authority.
+    if !resolution.native_mail_policy.is_empty() {
+        hash_str(hasher, "native_mail_policy");
+        hash_len(hasher, resolution.native_mail_policy.len());
+        for row in &resolution.native_mail_policy {
+            hash_bytes(hasher, &row.frontier_bytes());
+        }
+    }
+    if let Some(project) = resolution.project_collaboration {
+        hash_str(hasher, "project_collaboration");
+        hash_str(hasher, project.leader_chat_default.as_str());
+        hash_str(hasher, "nested_narrowing");
+        hash_str(hasher, "vault");
+        hash_str(hasher, project.widen_ask_fallback.as_str());
+    }
     // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
     // names a checker keeps its exact no-checker frontier hash — and every
     // consent binding taken against it stays valid. A domain tag rides with
@@ -66,6 +93,20 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if let Some((vault, holders)) = resolution.connector_admission.rows_for_hash() {
+        hash_str(hasher, "connector_admission");
+        hash_str(hasher, "nested_narrow_holder_override_vault_cap");
+        hash_u64(hasher, vault.max_tools as u64);
+        hash_u64(hasher, vault.max_permissions_per_tool as u64);
+        hash_u64(hasher, vault.max_triggers_per_tool as u64);
+        hash_len(hasher, holders.len());
+        for (holder, quotas) in holders {
+            hash_str(hasher, holder);
+            hash_u64(hasher, quotas.max_tools as u64);
+            hash_u64(hasher, quotas.max_permissions_per_tool as u64);
+            hash_u64(hasher, quotas.max_triggers_per_tool as u64);
+        }
+    }
     if !resolution.voice_serving.is_empty() {
         hash_str(hasher, "voice_serving_nested_narrowing");
         hash_len(hasher, resolution.voice_serving.len());
@@ -124,6 +165,26 @@ pub(super) fn hash_policy_frontier_v0(
                 },
             );
         }
+    }
+    // An explicit default and an omitted conversion row are equivalent. A
+    // narrowed conversion policy changes the frontier before standing grants
+    // bound to the old policy may be used again.
+    if resolution.project_conversion != Default::default() {
+        hash_str(hasher, "project_conversion");
+        hash_str(
+            hasher,
+            resolution.project_conversion.leader_fallback.as_str(),
+        );
+        hash_str(
+            hasher,
+            resolution.project_conversion.roster_selection.as_str(),
+        );
+        hash_str(
+            hasher,
+            resolution.project_conversion.task_holder_fallback.as_str(),
+        );
+        hash_u64(hasher, resolution.project_conversion.max_tasks as u64);
+        hash_bool(hasher, resolution.project_conversion.allow_holder_override);
     }
     // Default rows and owner-authored overrides both affect admission and its
     // consent frontier. Absent policy keeps the old frontier unchanged.
@@ -272,6 +333,17 @@ pub(super) fn hash_policy_frontier_v0(
             hash_bytes(hasher, &row.floors.care.to_bits().to_be_bytes());
         }
     }
+    if let Some(default_all) = resolution.sync_world_default {
+        hash_str(hasher, "sync_world_default");
+        hash_bool(hasher, default_all);
+    }
+    if let Some(worlds) = &resolution.sync_world_ceiling {
+        hash_str(hasher, "sync_world_ceiling");
+        hash_len(hasher, worlds.len());
+        for world in worlds {
+            hash_bytes(hasher, world.as_bytes());
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
@@ -313,6 +385,26 @@ pub(super) fn hash_policy_frontier_v0(
                 crate::gate::policy_values::WhySource::Drafted => "drafted",
             }),
         );
+    }
+
+    // Residence operation limits are resolved restrictive caps. Hash the
+    // effective vault/holder intersection, not raw manifest representation:
+    // absent holder maps inherit vault limits, and equivalent nested policies
+    // must produce the same read frontier. The shipped defaults change no
+    // decision and keep the established frontier bytes.
+    let residence = resolution.residence_operation_budgets;
+    if residence != ResidenceOperationBudgetLimits::default() {
+        hash_str(hasher, "residence_operation_budgets");
+        hash_u64(hasher, residence.rpc_timeout_ms);
+        hash_len(hasher, residence.index_page_limit);
+        hash_len(hasher, residence.max_index_pages);
+        hash_len(hasher, residence.current_window_count);
+        hash_len(hasher, residence.title_max_chars);
+        hash_len(hasher, residence.search_limit);
+        hash_len(hasher, residence.search_query_max_bytes);
+        hash_len(hasher, residence.offline_candidate_multiplier);
+        hash_u64(hasher, residence.ack_timeout_ms);
+        hash_len(hasher, residence.index_cache_bytes);
     }
 
     // An absent row and the shipped 4096 vault row have identical effective
