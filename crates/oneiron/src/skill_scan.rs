@@ -36,6 +36,8 @@ use crate::store::Store;
 /// provider, so its rows sit beside the v1 rows instead of silently superseding
 /// them under a shared key.
 pub const SCAN_PROVIDER_STATIC_V1: &str = "oneiron.static.v1";
+/// Static provider for the complete pack tree, including knowledge-only facets.
+pub(crate) const SCAN_PROVIDER_STATIC_PACK_V1: &str = "oneiron.static.pack.v1";
 
 /// `vault_meta` key for the activation risk threshold dial.
 ///
@@ -175,6 +177,50 @@ pub fn run_static_skill_scan(package: &HubPackage, scanned_at: u64) -> Result<Sk
             ScanCompleteness::Partial
         },
         if flagged {
+            SkillGovernance::Discouraged
+        } else {
+            SkillGovernance::Recommended
+        },
+    )
+}
+
+/// Scan the pack tree itself, independent of any bundled SKILL records.
+/// An unknown verdict is evidence of coverage, never a declaration of safety.
+pub(crate) fn run_static_pack_scan(
+    source: &crate::skill_hub::pack_catalog::PackSource,
+    scanned_at: u64,
+) -> Result<SkillScanReceipt> {
+    let mut risk = ScanRiskLevel::None;
+    let mut complete = !source.files().is_empty();
+    let mut remaining = MAX_SCAN_BYTES_PER_PACKAGE;
+    for file in source.files() {
+        let budget = MAX_SCAN_BYTES_PER_FILE.min(remaining);
+        let scanned = if file.content.len() > budget {
+            complete = false;
+            &file.content[..budget]
+        } else {
+            file.content.as_slice()
+        };
+        remaining -= scanned.len();
+        if carries_credential(scanned)? {
+            risk = ScanRiskLevel::High;
+        }
+    }
+    SkillScanReceipt::new(
+        SCAN_PROVIDER_STATIC_PACK_V1,
+        scanned_at,
+        if risk >= ScanRiskLevel::High {
+            ScanVerdict::Suspicious
+        } else {
+            ScanVerdict::Unknown
+        },
+        risk,
+        if complete {
+            ScanCompleteness::Complete
+        } else {
+            ScanCompleteness::Partial
+        },
+        if risk >= ScanRiskLevel::High {
             SkillGovernance::Discouraged
         } else {
             SkillGovernance::Recommended

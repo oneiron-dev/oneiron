@@ -1,4 +1,8 @@
 //! Vault-persisted, priced model catalogs. Scores are evidence, never routing authority.
+mod description;
+mod installed_pack;
+pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
+
 use super::{LlmCatalogEntry, ModelId};
 use crate::{
     Vault,
@@ -78,7 +82,15 @@ fn price(value: &str) -> bool {
         && value.bytes().any(|c| c.is_ascii_digit())
 }
 impl ModelRegistryRow {
+    /// Descriptions stay alongside the model entry; older host-created rows have no evidence.
+    pub fn description(&self) -> Result<ModelDescription> {
+        self.catalog.metadata.get("description").map_or_else(
+            || Ok(ModelDescription::default()),
+            |value| serde_json::from_value(value.clone()).map_err(|e| invalid(e.to_string())),
+        )
+    }
     pub fn validate(&self) -> Result<()> {
+        self.description()?.validate()?;
         let entry = &self.catalog;
         if self.version != 1
             || entry.display_name.trim().is_empty()
@@ -124,17 +136,22 @@ impl CatalogSeed {
         let mut ids = std::collections::BTreeSet::new();
         for row in &seed.rows {
             row.validate()?;
-            if !ids.insert(&row.catalog.model)
+            if !row.catalog.metadata.contains_key("description")
+                || row.catalog.capabilities.is_empty()
+                || row
+                    .catalog
+                    .capabilities
+                    .iter()
+                    .enumerate()
+                    .any(|(index, flag)| row.catalog.capabilities[..index].contains(flag))
+                || !ids.insert(&row.catalog.model)
                 || !row.scores.is_empty()
                 || !row.fetched_at.is_empty()
             {
-                return Err(invalid("duplicate seed model or seeded benchmark metadata"));
+                return Err(invalid("invalid seed fields or seeded benchmark metadata"));
             }
         }
         Ok(seed)
-    }
-    pub fn bundled() -> Result<Self> {
-        Self::from_json(include_bytes!("catalog-seed.json"))
     }
 }
 /// Read the registry in the caller's snapshot. Binding may already hold a
@@ -172,8 +189,23 @@ impl Vault {
         Ok(())
     }
     pub fn model_registry_row(&self, model: &ModelId) -> Result<Option<ModelRegistryRow>> {
-        let txn = self.store.env.read_txn()?;
-        read_model_registry_row(&self.store, &txn, model)
+        let stored = {
+            let txn = self.store.env.read_txn()?;
+            read_model_registry_row(&self.store, &txn, model)?
+        };
+        if stored.is_some() {
+            return Ok(stored);
+        }
+        if self
+            .installed_pack(crate::skill_hub::MODEL_PACK_NAME)?
+            .is_some()
+        {
+            return Ok(CatalogSeed::from_installed_pack(self)?
+                .rows
+                .into_iter()
+                .find(|row| &row.catalog.model == model));
+        }
+        Ok(None)
     }
     pub fn model_registry_rows(&self) -> Result<Vec<ModelRegistryRow>> {
         let txn = self.store.env.read_txn()?;
@@ -185,11 +217,26 @@ impl Vault {
         Ok(rows)
     }
     pub fn model_catalog_entries(&self, wire: ModelWireFormat) -> Result<Vec<LlmCatalogEntry>> {
-        Ok(self
-            .model_registry_rows()?
+        let mut rows = self.model_registry_rows()?;
+        if self
+            .installed_pack(crate::skill_hub::MODEL_PACK_NAME)?
+            .is_some()
+        {
+            // Installed pack data is visible to adapters even before it is copied
+            // into the priced registry. Local overrides and scores keep precedence.
+            let existing: std::collections::BTreeSet<_> =
+                rows.iter().map(|row| row.catalog.model.clone()).collect();
+            let additional = CatalogSeed::from_installed_pack(self)?
+                .rows
+                .into_iter()
+                .filter(|row| !existing.contains(&row.catalog.model))
+                .collect::<Vec<_>>();
+            rows.extend(additional);
+        }
+        Ok(rows
             .into_iter()
-            .filter(|r| r.wire == wire)
-            .map(|r| r.catalog)
+            .filter(|row| row.wire == wire)
+            .map(|row| row.catalog)
             .collect())
     }
     /// Atomic, insert-only seed. Existing host prices and scraped scores survive reseeding.
