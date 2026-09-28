@@ -1,19 +1,19 @@
-//! Engine-side AR-3 autoreason campaign configuration and report join.
+//! Engine-side AR-3 campaign reports and read-only experiment selection.
 //!
 //! The campaign compares the incumbent single-pass claim-authoring arm against
-//! the tournament arm over a pinned corpus. This module is a validated serde
-//! config plus a report join over two already-landed surfaces: the OF-366
+//! the tournament arm over a pinned corpus. Its configuration and report join
+//! sit over two already-landed surfaces: the OF-366
 //! claim-authoring admission machinery (`dreamer_runner::claim_authoring`,
 //! `dreamer_tournament`) and the OF-360 AR-3 metric tier
 //! (`extraction_eval::of360_ar3_metric_tier`).
 //!
-//! It owns no storage, mints no entity, and performs no writes. Every metric
-//! number is produced by the landed OF-360 evaluator and carried verbatim;
-//! every admission decision is produced by the landed OF-366 gate. The only
-//! numbers this module derives are the held-out comparison scalars, and each
-//! of them is recomputed from the reports rather than trusted on input, so a
-//! deserialized report cannot smuggle a fabricated verdict past
-//! [`CampaignComparisonReport::validate`].
+//! It owns no storage, mints no entity, and performs no writes. Every report
+//! metric is produced by the landed OF-360 evaluator and carried verbatim;
+//! every admission decision is produced by the landed OF-366 gate. The
+//! report's held-out comparison scalars are recomputed rather than trusted on
+//! input, so a deserialized report cannot smuggle a fabricated verdict past
+//! [`CampaignComparisonReport::validate`]. The independent [`selection`] floor
+//! scores measured run-tree branches but does not admit or launch a candidate.
 //!
 //! A third arm (`strong critic`) is declared but design-only: the executable
 //! boundary is a separate type ([`CampaignExecutableArm`]) that has no
@@ -26,6 +26,7 @@ mod config;
 pub mod general;
 mod judge;
 mod report;
+pub mod selection;
 mod verdict;
 
 pub use config::{

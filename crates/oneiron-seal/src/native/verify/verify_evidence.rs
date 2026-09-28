@@ -1,5 +1,6 @@
 //! Private, bounded evidence collected before trust, time, and profile decisions.
 use super::super::pdf::RevisionBoundary;
+use super::timestamp_evidence::TimestampResult;
 use super::verify_dss_core::EmbeddedCert;
 use crate::api::{ByteRangeEvidence, Coverage, SignatureKind, SignedRangeDigest, VerifyCheck};
 
@@ -33,7 +34,7 @@ pub(super) struct TrustedTimeProof {
 
 pub(super) struct CadesEvidence {
     pub signer_chain: Option<Vec<Vec<u8>>>,
-    pub timestamp: Option<ValidatedTimeToken>,
+    pub timestamp: TimestampResult,
 }
 
 /// Evidence has stable identity and a single structural revision binding,
@@ -49,6 +50,7 @@ pub(super) struct EnvelopeEvidence {
     pub checks: Vec<VerifyCheck>,
     pub signer_chain: Option<Vec<Vec<u8>>>,
     pub time_proof: Option<TrustedTimeProof>,
+    pub untrusted_time: Option<u64>,
     pub covered: Vec<EmbeddedCert>,
 }
 
@@ -94,7 +96,8 @@ pub(super) fn evaluate_envelope(
         let cades = verify_cades_sig(bytes, entry, ctx, anchors, &mut checks, &mut covered);
         (cades.signer_chain, cades.timestamp)
     };
-    let time_proof = token.and_then(|token| {
+    let untrusted_time = token.untrusted_time.filter(|_| revision.is_some());
+    let time_proof = token.trusted.and_then(|token| {
         let source = if entry.is_doc_ts {
             TimeSource::DocumentTimestamp {
                 envelope: index,
@@ -145,6 +148,7 @@ pub(super) fn evaluate_envelope(
         checks: checks.list,
         signer_chain,
         time_proof,
+        untrusted_time,
         covered,
     }
 }
