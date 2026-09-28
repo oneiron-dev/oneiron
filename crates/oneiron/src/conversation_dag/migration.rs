@@ -116,7 +116,42 @@ pub(crate) fn migrate_in_txn(
         turns.push((metadata.occurred_start, id));
     }
     turns.sort_unstable();
-    // Check every live TURN before writing the migration marker. Thread and
+    // A tombstone can arrive before this replica's first DAG adoption. The
+    // deleted ancestor is no longer in the room's ChildOf index, but its
+    // previously verified content-free pin preserves the Parent chain. Add
+    // only such pinned ghosts to the structural walk; never infer an absent
+    // root from a live child's unpaired Parent edge.
+    let mut pending: VecDeque<_> = all_parents.keys().copied().collect();
+    while let Some(id) = pending.pop_front() {
+        let Some(parent) = all_parents[&id] else {
+            continue;
+        };
+        if all_parents.contains_key(&parent) {
+            continue;
+        }
+        match live_entity_row_in_txn(&vault.store, txn, &parent)? {
+            LiveEntityRow::Absent | LiveEntityRow::DeletedShell
+                if super::redacted::read(&vault.store, txn, &parent)?.is_some() => {}
+            _ => {
+                return Err(graph::invalid(
+                    "received Parent is outside the live conversation",
+                ));
+            }
+        }
+        graph::require_member(&vault.store, txn, conversation, &parent)?;
+        if all_parents.len() >= MAX_ANCESTOR_DEPTH {
+            return Err(Error::IndexOverflow("conversation_dag_walk"));
+        }
+        if graph::is_thread_record(&vault.store, txn, &parent)?
+            || graph::is_sub_session_record(&vault.store, txn, &parent)?
+        {
+            non_trunk.insert(parent);
+        }
+        all_parents.insert(parent, graph::parent(&vault.store, txn, &parent)?);
+        pending.push_back(parent);
+    }
+    // Check every live TURN plus pinned erased ancestors before writing the
+    // migration marker. Thread and
     // sub-session records stay outside HEAD selection, not outside the DAG:
     // a cycle confined to either class must not be silently adopted. This
     // Kahn pass examines each record and Parent once, not every ancestor path.
@@ -155,18 +190,39 @@ pub(crate) fn migrate_in_txn(
         // This additional trunk-only pass stays linear. Rewalking every
         // ancestor path would reject a valid 142-record chain under a 10k
         // work budget even though the shared depth cap admits it.
-        let members: HashSet<_> = turns.iter().map(|(_, id)| *id).collect();
+        let live_members: HashSet<_> = turns.iter().map(|(_, id)| *id).collect();
+        let mut members = live_members.clone();
+        let mut pending: VecDeque<_> = live_members.iter().copied().collect();
         let mut children: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
         let mut ready = VecDeque::new();
-        for (_, id) in &turns {
-            if let Some(parent) = graph::parent(&vault.store, txn, id)? {
+        while let Some(id) = pending.pop_front() {
+            if let Some(parent) = graph::parent(&vault.store, txn, &id)? {
+                // A received hard/soft tombstone can remove the owner's
+                // ChildOf index before this replica has adopted a local HEAD.
+                // Admit only pinned, deleted ancestors: never reinterpret an
+                // unrelated live turn as a missing trunk member or hydrate a
+                // deleted body. Walk each ghost once, with the shared cap.
                 if !members.contains(&parent) {
+                    match live_entity_row_in_txn(&vault.store, txn, &parent)? {
+                        LiveEntityRow::Absent | LiveEntityRow::DeletedShell
+                            if super::redacted::read(&vault.store, txn, &parent)?.is_some() => {}
+                        _ => return Err(graph::invalid("trunk Parent is outside the trunk")),
+                    }
                     graph::require_member(&vault.store, txn, conversation, &parent)?;
-                    return Err(graph::invalid("trunk Parent is outside the live trunk"));
+                    if graph::is_thread_record(&vault.store, txn, &parent)?
+                        || graph::is_sub_session_record(&vault.store, txn, &parent)?
+                    {
+                        return Err(graph::invalid("trunk Parent is not a trunk record"));
+                    }
+                    if members.len() >= MAX_ANCESTOR_DEPTH {
+                        return Err(Error::IndexOverflow("conversation_dag_walk"));
+                    }
+                    members.insert(parent);
+                    pending.push_back(parent);
                 }
-                children.entry(parent).or_default().push(*id);
+                children.entry(parent).or_default().push(id);
             } else {
-                ready.push_back(*id);
+                ready.push_back(id);
             }
         }
         if ready.len() != 1 {
@@ -181,7 +237,7 @@ pub(crate) fn migrate_in_txn(
                 ready.extend(children);
             }
         }
-        if visited != turns.len() {
+        if visited != members.len() {
             return Err(graph::invalid("received DAG contains a Parent cycle"));
         }
     } else {

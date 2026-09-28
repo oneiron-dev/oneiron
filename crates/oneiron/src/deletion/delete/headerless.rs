@@ -157,6 +157,7 @@ impl Vault {
             &receipt_id,
             RedactionReceiptInput {
                 actor_principal: gate.as_ref().map(|gate| gate.actor_principal()),
+                room_authority: gate.as_ref().and_then(|gate| gate.room_authority()),
                 request_id: request_uuid.to_string(),
                 scope: RedactionScope::entity(id),
                 reason,

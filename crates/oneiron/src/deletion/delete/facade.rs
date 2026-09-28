@@ -51,7 +51,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, None)?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
     }
@@ -68,9 +68,73 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate))?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate), false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
+    }
+
+    /// Mechanical ARCH-0038 deletion of a room record without the actor-bound
+    /// room door: for replay reason transitions and for legacy fixtures that
+    /// hold no policy manifest (where the door fails closed). Never evidence
+    /// of room authority.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn delete_room_record_unchecked_for_test(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
+        while self.collect_lfs_garbage(32)? != 0 {}
+        Ok(outcome)
+    }
+
+    fn require_room_delete_gate(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        gate: Option<&GatedDeletion<'_>>,
+        allow_replay_test: bool,
+    ) -> Result<()> {
+        if allow_replay_test {
+            return Ok(());
+        }
+        // The owner pin survives removal of the ChildOf row and body scrub.
+        let room = crate::conversation_dag::room_turn_owner(&self.store, txn, id)?.or(
+            crate::conversation::room_message_owner_in(&self.store, txn, *id)?,
+        );
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+            if room.is_none()
+                || (room.is_some()
+                    && gate
+                        .and_then(GatedDeletion::room_authority)
+                        .map(|(id, _)| id)
+                        == room)
+            {
+                return Ok(());
+            }
+            return Err(Error::Record(crate::error::RecordError::ConversationDenied));
+        };
+        if raw.first() != Some(&crate::registry::ENTITY_TYPE_TURN)
+            && raw.first() != Some(&crate::registry::ENTITY_TYPE_MESSAGE)
+        {
+            return Ok(());
+        }
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("room deletion header"))?;
+        if room.is_none() && crate::conversation_dag::record_kind(body)?.is_none() {
+            return Ok(());
+        }
+        if room.is_some()
+            && gate
+                .and_then(GatedDeletion::room_authority)
+                .map(|(id, _)| id)
+                == room
+        {
+            return Ok(());
+        }
+        Err(Error::Record(crate::error::RecordError::ConversationDenied))
     }
 
     /// Under the single LMDB writer, refuse live grants and fence the target
@@ -112,10 +176,12 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
+        allow_replay_test: bool,
     ) -> Result<DeleteEntityOutcome> {
         {
             let rtxn = self.store.env.read_txn()?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
+            self.require_room_delete_gate(&rtxn, id, gate.as_ref(), allow_replay_test)?;
         }
         if reason == DeleteReason::ArchivedByCleanup {
             return Err(Error::InvariantViolation(
@@ -183,6 +249,7 @@ impl Vault {
             // side): a soft delete with NO cross-device record would leave
             // the deleted body live on every other device.
             let mut wtxn = self.store.env.write_txn()?;
+            self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
             // TOCTOU close: `user_delete` scrubs the body in THIS txn, so the
             // owner authority is re-proven against THIS txn's view. A
             // RevokeActor committed since the gate ran is visible here and
@@ -323,6 +390,7 @@ impl Vault {
             // bodiless shell ⇒ `None`). The purge txn below re-runs the
             // refresh as an idempotent second pass.
             let mut wtxn = self.store.env.write_txn()?;
+            self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
             // Conditional re-fold (fix-leg 7's ruling, refined by fix-leg 8).
             // WHEN THE PUBLISH COMMITTED: no re-fold. That commit is this
             // delete's linearization point; a `RevokeActor` ordered after it did
@@ -411,6 +479,7 @@ impl Vault {
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
         // The purge txn: the one that actually tears. It re-checks authority
         // ONLY if nothing has settled this delete yet — i.e. no publish commit
         // AND no earlier destructive commit of this call (fix-leg 8). On
@@ -515,6 +584,9 @@ impl Vault {
                 actor_principal: gate
                     .as_ref()
                     .map(super::super::gate::GatedDeletion::actor_principal),
+                room_authority: gate
+                    .as_ref()
+                    .and_then(super::super::gate::GatedDeletion::room_authority),
                 request_id: request_uuid.to_string(),
                 scope,
                 reason,

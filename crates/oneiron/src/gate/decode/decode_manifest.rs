@@ -72,6 +72,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
     pub(in crate::gate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
+    pub(in crate::gate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
     pub(in crate::gate) owner_policy_enabled: bool,
@@ -153,6 +154,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
                 | crate::federation::grant_policy::ROWS_KEY
+                | crate::gate::room_policy::KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
@@ -250,6 +252,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(Value::Boolean(value)) => *value,
         MapValue::Present(_) => return None,
+    };
+    let room_policy_rows = match single_map_value(&entries, crate::gate::room_policy::KEY) {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => crate::gate::room_policy::parse_rows(value)?,
     };
     let (owner_policy_rows, owner_policy_rows_dropped) =
         match single_map_value(&entries, POLICY_OWNER_POLICY_ROWS_KEY) {
@@ -569,6 +576,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         source_trust,
         scoped_grants,
         federation_grant_rows,
+        room_policy_rows,
         single_valued_predicates,
         owner_policy_rows,
         owner_policy_rows_dropped,

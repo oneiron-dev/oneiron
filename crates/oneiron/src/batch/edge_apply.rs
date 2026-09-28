@@ -202,7 +202,7 @@ pub(super) fn apply_edge_with_created_at(
     if kind == EdgeKind::RepliesTo {
         crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
     }
-    Ok(())
+    crate::conversation::pin_room_message_edge(store, wtxn, src, kind, tgt)
 }
 
 /// Applies one edge removal (`BatchOp::DeleteEdge`), clearing both LMDB
@@ -234,6 +234,17 @@ pub(super) fn apply_delete_edge(
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
     crate::workspace_roster::validate_project_edge_delete(store, wtxn, src, kind, tgt)?;
+    crate::conversation_dag::guard_room_membership_delete(store, wtxn, &src, kind, &tgt)?;
+    if matches!(
+        kind,
+        EdgeKind::PartOf | EdgeKind::BelongsTo | EdgeKind::AuthoredBy
+    ) && crate::conversation::room_message_owner_in(store, wtxn, src)?.is_some()
+    {
+        return Err(crate::error::RecordError::InvalidConversationDag(
+            "room MESSAGE membership requires the actor-bound door",
+        )
+        .into());
+    }
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     if kind == EdgeKind::RepliesTo {

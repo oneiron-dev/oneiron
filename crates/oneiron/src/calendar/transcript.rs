@@ -253,6 +253,9 @@ fn persist_turns(
         // and classify as `Unknown` — inadmissible, i.e. invisible to every
         // dirty scan. The source label stays verbatim beside them under
         // `speaker_label`, which is provenance-only and outside the alias set.
+        // Import provides no verified PERSON identity. Do not stamp `actor`:
+        // the string is not authorship, so only owner/admin policy can later
+        // authorize deletion of this unknown-author room TURN.
         let body = rmp_serde::to_vec_named(&serde_json::json!({
             "ordinal": turn.ordinal, "speaker": "user", "spkr": "user",
             "role": "user", "speaker_label": turn.speaker_label,

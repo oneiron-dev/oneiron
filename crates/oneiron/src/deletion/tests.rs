@@ -389,6 +389,7 @@ fn receipt_attestation_transcript_literal() {
     let subject = EntityId::from_hex("101112131415161718191a1b1c1d1e1f").unwrap();
     let input = RedactionReceiptInput {
         actor_principal: None,
+        room_authority: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
         scope: RedactionScope::entity(&subject),
         reason: DeleteReason::GdprDelete,

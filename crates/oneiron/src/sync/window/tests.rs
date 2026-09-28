@@ -1211,6 +1211,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
         encode_redaction_audit_receipt(
             RedactionReceiptInput {
                 actor_principal: None,
+                room_authority: None,
                 request_id: request_id.to_owned(),
                 scope: RedactionScope::entity(subject),
                 reason: crate::DeleteReason::GdprDelete,
@@ -1349,6 +1350,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
         encode_redaction_audit_receipt(
             RedactionReceiptInput {
                 actor_principal: None,
+                room_authority: None,
                 request_id: request_id.to_owned(),
                 scope: RedactionScope::entity(subject),
                 reason: crate::DeleteReason::GdprDelete,
@@ -1498,6 +1500,7 @@ fn forward_remat_quarantines_receipt_when_lease_revoked_between_check_and_write(
     let vault_id = crate::sync::lease::DEFAULT_LEASE_VAULT_ID;
     let input = crate::deletion::RedactionReceiptInput {
         actor_principal: None,
+        room_authority: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1576,6 +1579,7 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
 
     let remote_input = crate::deletion::RedactionReceiptInput {
         actor_principal: None,
+        room_authority: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,
@@ -1592,6 +1596,7 @@ fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
 
     let local_input = crate::deletion::RedactionReceiptInput {
         actor_principal: None,
+        room_authority: None,
         request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5d".to_owned(),
         scope: crate::deletion::RedactionScope::entity(&subject),
         reason: crate::DeleteReason::GdprDelete,

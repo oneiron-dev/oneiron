@@ -111,6 +111,10 @@ pub(super) fn claim_status_gate_allows(
                     )
                     && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
         });
+    let decision = match decision {
+        Some(body) if crate::claim::has_live_support_in_txn(store, rtxn, &body)? => Some(body),
+        _ => None,
+    };
     let allowed = decision.is_some();
     if !allowed {
         metadata_cache.read_suppressed.insert(*id);

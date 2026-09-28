@@ -23,6 +23,7 @@ impl Vault {
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
+        crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
@@ -43,6 +44,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool, bool)> {
+        crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;

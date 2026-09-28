@@ -83,6 +83,9 @@ impl Vault {
                 header.entity_type,
             )));
         }
+        // Receiver-only room MESSAGE content must be erased before the TURN
+        // loses its PartOf edges, even when the host never held the child.
+        crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub.
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
@@ -218,6 +221,7 @@ impl Vault {
             &receipt_id,
             RedactionReceiptInput {
                 actor_principal: None,
+                room_authority: None,
                 request_id: decoded.receipt_request_id(),
                 scope,
                 reason: decoded.receipt_hard_reason(),

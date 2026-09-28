@@ -236,7 +236,7 @@ fn denied_header_and_reply_roll_back_then_granted_late_result_advances_trunk() {
         [worker]
     );
     vault
-        .delete_entity_with_reason(&asking, crate::DeleteReason::UserDelete)
+        .delete_own_room_record(asking, crate::DeleteReason::UserDelete)
         .unwrap();
     let strip = vault.reply_strip(&reply).unwrap().unwrap();
     assert!(strip.stale);
