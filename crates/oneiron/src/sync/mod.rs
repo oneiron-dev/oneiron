@@ -47,6 +47,7 @@ pub mod quota;
 pub(crate) mod receipt_ingest;
 pub mod replay;
 pub mod residence;
+pub mod residence_operation_budgets;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
@@ -55,8 +56,8 @@ pub mod types;
 pub mod window;
 
 pub use client::{
-    EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus,
-    SyncTransportCredential,
+    EphemeralChangeOrigin, ResidenceHit, ResidenceSearch, SearchSource, SyncClient,
+    SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{ConnectionConfig, HomeNodeTopology, LocalUpdate, SyncConnection};
 pub use lease::{

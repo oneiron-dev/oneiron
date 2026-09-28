@@ -45,7 +45,7 @@ use oneiron::registry::{
     ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
-use oneiron::sync::client::{SyncClient, SyncClientConfig};
+use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncResidenceMode};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
@@ -526,7 +526,14 @@ fn observer_b_is_the_only_gate_on_the_plain_window_update_arm() {
         Arc::new(Materializer::new()),
         "test-user",
     ));
-    let (mut client, _rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+    let (mut client, _rx) = SyncClient::new(
+        manager,
+        SyncClientConfig {
+            residence_mode: SyncResidenceMode::All,
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let person = EntityId::from_bytes([0x75; 16]).unwrap();
     let event = EntityId::from_bytes([0x76; 16]).unwrap();

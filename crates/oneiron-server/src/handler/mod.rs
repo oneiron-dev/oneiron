@@ -16,6 +16,8 @@ mod hello;
 mod lfs_chunks;
 #[cfg(test)]
 mod note_socket_tests;
+#[cfg(test)]
+mod residence_socket_tests;
 mod transport;
 mod window_sync;
 
