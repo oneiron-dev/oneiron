@@ -262,7 +262,7 @@ pub(crate) fn run_in_txn(
             .iter()
             .find(|entity| entity.id == head.entity_id)
             .ok_or(invalid("NOTE recovery owner absent"))?;
-        if vault.store.entities.get(txn, owner.as_bytes())?.as_deref()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &owner)?.as_deref()
             != Some(entity.blob.as_slice())
         {
             return Err(invalid("document core was not admitted"));

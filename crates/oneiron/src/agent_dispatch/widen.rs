@@ -478,11 +478,7 @@ impl AgentDispatcher<'_> {
         if standing.cancelled || standing.owner_ref != owner {
             return Err(invalid("authenticated actor does not own the board above"));
         }
-        let raw = self
-            .vault
-            .store
-            .entities
-            .get(txn, owner.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, txn, &owner)?
             .ok_or_else(|| invalid("board owner is no longer present"))?;
         if crate::batch::EntityMetadataHeader::parse(&raw)
             .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)

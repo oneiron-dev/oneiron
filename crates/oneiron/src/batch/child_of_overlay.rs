@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use heed::RwTxn;
 
-use crate::edge::{EdgeKind, encode_edge_value, parse_strict_edge_record};
+use crate::edge::{EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::habit::TaskRole;
@@ -97,11 +97,15 @@ impl ChildOfBatchOverlay {
         child: &EntityId,
     ) -> Result<HashSet<EntityId>> {
         let mut parents = HashSet::new();
-        let prefix = child_of_prefix(child);
-
-        for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
-            let (key, value) = entry?;
-            let parent = parse_strict_edge_record(&key, &value)?.target;
+        for entry in crate::ports::EdgeStoreRead::port_edges(
+            store,
+            rtxn,
+            child,
+            crate::ports::EdgeDirection::Out,
+            Some(EdgeKind::ChildOf),
+            None,
+        )? {
+            let parent = entry?.target;
 
             if self.final_edge_override(child, &parent).unwrap_or(true) {
                 parents.insert(parent);
@@ -145,9 +149,15 @@ impl ChildOfBatchOverlay {
                 continue;
             }
             children.insert(*id);
-            for entry in store.edges_in.prefix_iter(rtxn, &child_of_prefix(id))? {
-                let (key, value) = entry?;
-                children.insert(parse_strict_edge_record(&key, &value)?.target);
+            for entry in crate::ports::EdgeStoreRead::port_edges(
+                store,
+                rtxn,
+                id,
+                crate::ports::EdgeDirection::In,
+                Some(EdgeKind::ChildOf),
+                None,
+            )? {
+                children.insert(entry?.target);
             }
         }
         Ok(children)
@@ -282,12 +292,15 @@ pub(super) fn resolve_replicated_child_of_slots(
             continue;
         }
 
-        for entry in store
-            .edges_out
-            .prefix_iter(rtxn, &child_of_prefix(&child))?
-        {
-            let (key, value) = entry?;
-            let record = parse_strict_edge_record(&key, &value)?;
+        for entry in crate::ports::EdgeStoreRead::port_edges(
+            store,
+            rtxn,
+            &child,
+            crate::ports::EdgeDirection::Out,
+            Some(EdgeKind::ChildOf),
+            None,
+        )? {
+            let record = entry?;
             // A stored parent this batch already deletes is not a contender —
             // the reparent's own delete leg is not something to re-decide.
             if deleted_in_batch.contains(&record.target) {
@@ -295,7 +308,7 @@ pub(super) fn resolve_replicated_child_of_slots(
             }
             candidates.push(ChildOfCandidate {
                 parent: record.target,
-                learned_at: record.decoded.created_at,
+                learned_at: record.created_at,
                 origin: ChildOfCandidateOrigin::Stored,
             });
         }
@@ -527,7 +540,7 @@ pub(super) fn stored_entity(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<EffectiveEntity> {
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
         return Ok(EffectiveEntity::Missing);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -592,9 +605,15 @@ pub(super) fn habit_streak_recompute_candidates(
             BatchOp::Delete { id } => id,
             _ => continue,
         };
-        for entry in store.edges_out.prefix_iter(rtxn, &child_of_prefix(child))? {
-            let (key, value) = entry?;
-            candidates.insert(parse_strict_edge_record(&key, &value)?.target);
+        for entry in crate::ports::EdgeStoreRead::port_edges(
+            store,
+            rtxn,
+            child,
+            crate::ports::EdgeDirection::Out,
+            Some(EdgeKind::ChildOf),
+            None,
+        )? {
+            candidates.insert(entry?.target);
         }
     }
     Ok(candidates)
@@ -670,15 +689,4 @@ pub(super) fn would_create_child_of_cycle(
     }
 
     Ok(false)
-}
-
-pub(super) fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
-    let mut prefix = [0u8; 17];
-    prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
-    prefix[ENTITY_ID_LEN] = kind as u8;
-    prefix
-}
-
-pub(crate) fn child_of_prefix(id: &EntityId) -> [u8; 17] {
-    edge_kind_prefix(id, EdgeKind::ChildOf)
 }

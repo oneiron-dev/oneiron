@@ -47,7 +47,7 @@ pub(crate) fn require_resident_in_txn(
     resident: &EntityId,
     defer_missing_candidate: bool,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(txn, resident.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, resident)? else {
         return if defer_missing_candidate {
             Ok(false)
         } else {
@@ -68,9 +68,7 @@ pub(crate) fn require_resident_in_txn(
 /// An attempt executor can also be a MACHINE system actor. This is NOT the
 /// resident-fork owner check above: MACHINE must never gain fork ownership.
 fn require_executor_in_txn(store: &Store, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<()> {
-    let raw = store
-        .entities
-        .get(txn, actor.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, actor)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("attempt executor entity header"))?;
@@ -136,7 +134,7 @@ pub(crate) fn validate_owner_put_in_txn(
         // state needs its owner before materialization and keeps a retry.
         if replicated
             && record.lifecycle_status != super::SkillLifecycle::Candidate
-            && store.entities.get(txn, resident.as_bytes())?.is_none()
+            && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &resident)?.is_none()
         {
             return Err(Error::Artifact(
                 ArtifactError::ResidentOwnerDependencyPending,

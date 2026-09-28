@@ -8,6 +8,7 @@ use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use heed::RoTxn;
 use std::collections::BTreeSet;
 
@@ -39,14 +40,18 @@ impl PipelineBuilder<'_> {
         let mut ids = BTreeSet::new();
         let mut scanned = 0usize;
         for subject in &subjects {
-            let prefix = crate::vault::edge_kind_prefix(subject, EdgeKind::ClaimOf);
-            for row in store.edges_in.prefix_iter(txn, prefix.as_slice())? {
+            for edge in store.port_edges(
+                txn,
+                subject,
+                EdgeDirection::In,
+                Some(EdgeKind::ClaimOf),
+                None,
+            )? {
                 scanned += 1;
                 if scanned > 2048 {
                     return Err(Error::IndexOverflow("L2 subject adjacency"));
                 }
-                let (key, value) = row?;
-                ids.insert(crate::vault::parse_edge_record(&key, &value)?.target);
+                ids.insert(edge?.target);
             }
         }
         let mut metadata = EntityMetadataCache::default();
@@ -54,7 +59,7 @@ impl PipelineBuilder<'_> {
         let mut evidence = Vec::new();
         let mut evidence_bytes = 0usize;
         for id in ids {
-            let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
                 continue;
             };
             if raw.len() > 256 * 1024 {

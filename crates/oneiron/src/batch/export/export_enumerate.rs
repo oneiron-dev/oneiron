@@ -17,13 +17,8 @@ impl Vault {
     pub fn whole_vault_export_rows(&self) -> Result<Vec<WholeVaultExportRow>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for row in self.store.entities.iter(&txn)? {
-            let (key, raw) = row?;
-            let bytes: [u8; 16] = key
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("export entity key"))?;
-            let entity_id = EntityId::from_bytes(bytes)?;
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
+            let (entity_id, raw) = row?;
             if whole_vault_export_excludes_entity(self, &entity_id)? {
                 continue;
             }

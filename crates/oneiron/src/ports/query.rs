@@ -29,6 +29,12 @@ pub trait EntityStoreRead: Transactions {
         query: TimelineQuery,
     ) -> Result<PortRows<'a, EntityTime>>;
 
+    /// Raw rows for export, repair, and fail-closed inventory scans. The
+    /// adapter checks keys but leaves corrupt bodies visible to the caller.
+    fn port_entity_raw_records<'a>(
+        &self,
+        txn: &'a Self::Read<'_>,
+    ) -> Result<PortRows<'a, (EntityId, Vec<u8>)>>;
     fn port_entity_records<'a>(
         &self,
         txn: &'a Self::Read<'_>,
@@ -50,6 +56,22 @@ pub trait EntityStoreRead: Transactions {
 /// Adjacency reads in storage order. The caller may stop after its own budget.
 /// The adapter decodes every visited row; no raw edge key or database escapes.
 pub trait EdgeStoreRead: Transactions {
+    /// Key-only presence; a malformed value still occupies graph topology.
+    fn port_edge_has_any(
+        &self,
+        txn: &Self::Read<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+    ) -> Result<bool>;
+    /// Key-only peer enumeration for mutation resolution. Corrupt values stay
+    /// unread until the caller actually needs the edge metadata.
+    fn port_edge_peers<'a>(
+        &self,
+        txn: &'a Self::Read<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+        kind: crate::EdgeKind,
+    ) -> Result<PortRows<'a, EntityId>>;
     fn port_edges<'a>(
         &self,
         txn: &'a Self::Read<'_>,

@@ -80,7 +80,7 @@ pub(super) fn recency_tiered_cache_ttl_secs(
 ) -> Result<u64> {
     let mut max_learned_at: Option<u64> = None;
     for seed in seeds {
-        let Some(raw) = store.entities().get(txn, seed.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, seed)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -369,27 +369,16 @@ fn seed_is_live_for_ppr(
     txn: &RoTxn<'_>,
     entity_id: &EntityId,
 ) -> Result<bool> {
-    if store.entities().get(txn, entity_id.as_bytes())?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, entity_id)?.is_some() {
         return Ok(true);
     }
 
-    if store
-        .edges_out()
-        .prefix_iter(txn, entity_id.as_bytes())?
-        .next()
-        .transpose()?
-        .is_some()
-    {
-        return Ok(true);
-    }
-
-    if store
-        .edges_in()
-        .prefix_iter(txn, entity_id.as_bytes())?
-        .next()
-        .transpose()?
-        .is_some()
-    {
+    if crate::ports::EdgeStoreRead::port_edge_has_any(
+        store,
+        txn,
+        entity_id,
+        crate::ports::EdgeDirection::Both,
+    )? {
         return Ok(true);
     }
 

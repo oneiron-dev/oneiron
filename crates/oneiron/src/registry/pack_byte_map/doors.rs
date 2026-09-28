@@ -101,7 +101,7 @@ impl Vault {
             };
             // The entity table, not a possibly stale secondary type index,
             // is the proof. Header-only shells deliberately block reuse.
-            for entry in self.store.entities.iter(txn)? {
+            for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)? {
                 let (_, bytes) = entry?;
                 let header = EntityMetadataHeader::parse(&bytes).ok_or(Error::CorruptedIndex(
                     "entity header during pack handle collection",
@@ -177,7 +177,7 @@ impl Store {
         entity_type: u8,
         data: &[u8],
     ) -> Result<()> {
-        let Some(raw) = self.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(self, txn, id)? else {
             return Ok(());
         };
         let header = EntityMetadataHeader::parse(&raw)

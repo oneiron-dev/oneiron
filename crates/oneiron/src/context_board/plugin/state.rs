@@ -142,11 +142,12 @@ fn require_live_section(
     if payload.manifest().map_err(|_| refused_block())? != *manifest.envelope() {
         return Err(refused_block());
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, payload.target.target_skill_ref().as_bytes())?
-        .ok_or_else(refused_block)?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(
+        &vault.store,
+        txn,
+        &payload.target.target_skill_ref(),
+    )?
+    .ok_or_else(refused_block)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(refused_block)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {
         return Err(refused_block());
@@ -209,12 +210,12 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::error::Error::from)?;
         // Actor binding and the private rows share one read snapshot.
-        let actor_raw = self
-            .vault()
-            .store
-            .entities
-            .get(&txn, self.actor().as_bytes())?
-            .ok_or_else(refused_block)?;
+        let actor_raw = crate::ports::EntityStoreRead::port_entity_raw(
+            &self.vault().store,
+            &txn,
+            &self.actor(),
+        )?
+        .ok_or_else(refused_block)?;
         let actor_header = EntityMetadataHeader::parse(&actor_raw).ok_or_else(refused_block)?;
         if crate::provenance::validate_actor_class(actor_header.entity_type, self.actor_class())
             .is_err()

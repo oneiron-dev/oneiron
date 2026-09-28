@@ -294,12 +294,10 @@ impl Vault {
         ask: &SharedSkillMergeAsk,
     ) -> Result<MergeSnapshot> {
         let snapshot = self.shared_merge_snapshot(txn, &ask.candidate)?;
-        let resident_is_agent = self
-            .store
-            .entities
-            .get(txn, ask.resident.as_bytes())?
-            .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
-            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF);
+        let resident_is_agent =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &ask.resident)?
+                .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF);
         if !resident_is_agent {
             return Err(invalid("merge resident is no longer an agent"));
         }

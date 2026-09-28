@@ -18,7 +18,7 @@ fn invalid() -> Error {
 }
 
 fn entity_type(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(None);
     };
     let header = EntityMetadataHeader::parse(&raw)
@@ -27,9 +27,7 @@ fn entity_type(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: EntityId) -> Resul
 }
 
 fn body(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: EntityId) -> Result<ProjectRecord> {
-    let raw = store
-        .entities()
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
         .ok_or(Error::CorruptedIndex("project edge source missing"))?;
     rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
         .map_err(|_| Error::CorruptedIndex("project edge source body"))

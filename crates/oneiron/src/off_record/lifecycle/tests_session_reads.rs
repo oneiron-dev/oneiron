@@ -50,13 +50,14 @@ impl OffRecordSession<'_> {
     ) -> Result<Vec<EntityId>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
-        let prefix = crate::vault::edge_kind_prefix(src, kind);
-        let mut targets = Vec::new();
-        for row in view.edges_out.prefix_iter(&rtxn, &prefix)? {
-            let (key, _) = row?;
-            let (_, _, target) = crate::edge::parse_strict_edge_record_key(&key)?;
-            targets.push(target);
-        }
+        let targets = crate::ports::EdgeStoreRead::port_edge_peers(
+            &view,
+            &rtxn,
+            src,
+            crate::ports::EdgeDirection::Out,
+            kind,
+        )?
+        .collect::<Result<Vec<_>>>()?;
         Ok(targets)
     }
 
@@ -66,7 +67,7 @@ impl OffRecordSession<'_> {
     pub(crate) fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
-        let Some(bytes) = view.entities.get(&rtxn, id.as_bytes())? else {
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&view, &rtxn, id)? else {
             return Ok(None);
         };
         if crate::batch::EntityMetadataHeader::parse(&bytes)
@@ -74,6 +75,6 @@ impl OffRecordSession<'_> {
         {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
-        Ok(Some(bytes.into_owned()))
+        Ok(Some(bytes))
     }
 }

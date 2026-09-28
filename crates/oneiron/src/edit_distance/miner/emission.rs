@@ -149,10 +149,7 @@ fn preference_is_stale(
     let Some(body) = vault.get_claim_in_txn(txn, claim_id)? else {
         return Ok(true);
     };
-    let learned_at = vault
-        .store
-        .entities
-        .get(txn, claim_id.as_bytes())?
+    let learned_at = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, claim_id)?
         .and_then(|raw| {
             crate::batch::EntityMetadataHeader::parse(&raw).map(|header| header.learned_at)
         })

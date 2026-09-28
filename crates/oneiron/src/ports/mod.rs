@@ -14,6 +14,7 @@ mod maintenance;
 pub(crate) use maintenance::*;
 mod lmdb_phonetic;
 mod lmdb_query;
+mod lmdb_staging;
 mod lmdb_timeline;
 mod lmdb_visibility;
 mod query;

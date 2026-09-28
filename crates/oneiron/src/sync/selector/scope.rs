@@ -237,8 +237,7 @@ fn edge_exists_in_txn(
     kind: EdgeKind,
     tgt: &EntityId,
 ) -> Result<bool> {
-    let key = crate::store::Store::encode_edge_key(src, kind, tgt);
-    Ok(vault.store.edges_out.get(rtxn, &key)?.is_some())
+    Ok(crate::ports::EdgeStoreRead::port_edge_get(&vault.store, rtxn, src, kind, tgt)?.is_some())
 }
 
 /// Resolve just the candidate link from the committing document writer.

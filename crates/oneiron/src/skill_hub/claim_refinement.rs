@@ -600,10 +600,7 @@ fn claim_binding(body: &ClaimBody) -> Result<String> {
     Ok(blake3::hash(&encode_claim_body(body)?).to_hex().to_string())
 }
 fn require_resident(vault: &Vault, txn: &heed::RoTxn<'_>, resident: EntityId) -> Result<()> {
-    let valid = vault
-        .store
-        .entities
-        .get(txn, resident.as_bytes())?
+    let valid = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &resident)?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
         .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF);
     if valid {
@@ -626,7 +623,7 @@ fn read_delta(
     if control.state == RefinementState::Erased || *proposal != id.to_hex() {
         return Ok(None);
     }
-    let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
         return Err(Error::CorruptedIndex("refinement candidate without claim"));
     };
     let header = EntityMetadataHeader::parse(&raw)

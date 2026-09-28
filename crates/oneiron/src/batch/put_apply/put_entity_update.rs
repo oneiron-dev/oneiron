@@ -95,12 +95,11 @@ pub(super) fn validate_local_skill_create(
             "forkedFrom cannot name the fork itself",
         )));
     }
-    let parent_raw = store
-        .entities
-        .get(wtxn, parent.as_bytes())?
-        .ok_or(Error::Artifact(ArtifactError::InvalidSkillBody(
+    let parent_raw = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &parent)?.ok_or(
+        Error::Artifact(ArtifactError::InvalidSkillBody(
             "forkedFrom parent must exist as a type-7 SKILL",
-        )))?;
+        )),
+    )?;
     let parent_header =
         EntityMetadataHeader::parse(&parent_raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if parent_header.entity_type != ENTITY_TYPE_SKILL {

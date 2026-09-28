@@ -97,24 +97,16 @@ impl Vault {
             if self.store.vault_meta.get(txn, BACKFILLED)?.is_some() {
                 return Ok(());
             }
-            let rows = self
-                .store
-                .entities
-                .iter(txn)?
+            let rows = crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)?
                 .filter_map(|entry| match entry {
-                    Err(e) => Some(Err(e)),
+                    Err(error) => Some(Err(error)),
                     Ok((id, raw)) if raw.first() == Some(&crate::registry::ENTITY_TYPE_TASK) => {
-                        Some(Ok((id.to_vec(), raw.to_vec())))
+                        Some(Ok((id, raw)))
                     }
                     _ => None,
                 })
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>>>()?;
             for (id, raw) in rows {
-                let id = EntityId::from_bytes(
-                    id.as_slice()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("task id"))?,
-                )?;
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("task header"))?;
                 index_owner_fact(
                     &self.store,

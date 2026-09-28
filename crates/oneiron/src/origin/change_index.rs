@@ -119,7 +119,7 @@ impl Vault {
         let change = origin_change_id(record.repo_id, &record.new_oid)?;
         // The first import owns the stable attribution; a second ref or trailer-stripped
         // replay cannot rewrite commit-hash provenance.
-        if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)? {
             let bytes = raw
                 .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("origin change entity header"))?;

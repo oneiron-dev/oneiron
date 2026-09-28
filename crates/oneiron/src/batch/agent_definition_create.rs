@@ -26,9 +26,7 @@ pub(super) fn validate_local_agent_definition_create(
                 "forkedFrom cannot name the fork itself",
             )));
         }
-        let parent_raw = store
-            .entities
-            .get(wtxn, parent.as_bytes())?
+        let parent_raw = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &parent)?
             .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "forkedFrom parent must exist as a type-17 AGENT_DEF",
             )))?;

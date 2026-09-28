@@ -3,8 +3,10 @@
 use super::Vault;
 use crate::affect::Vad;
 
-use crate::edge::{EdgeInfo, EdgeKind, parse_strict_edge_record};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::edge::{EdgeInfo, EdgeKind};
+#[cfg(test)]
+use crate::entity_id::ENTITY_ID_LEN;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
@@ -15,6 +17,7 @@ use crate::ports::EntityStoreRead;
 use crate::store::Store;
 
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
+#[cfg(test)]
 const EDGE_KIND_PREFIX_LEN: usize = ENTITY_ID_LEN + 1;
 
 /// Contract stored-weight prior for `claim_of` edges (contracts.ts
@@ -68,19 +71,12 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
+#[cfg(test)]
 pub(crate) fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
     let mut prefix = [0u8; EDGE_KIND_PREFIX_LEN];
     prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
     prefix[ENTITY_ID_LEN] = kind as u8;
     prefix
-}
-
-/// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`].
-///
-/// Compatibility wrapper over [`crate::edge::parse_strict_edge_record`] so
-/// Vault and context-pack readers classify malformed edge rows identically.
-pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
-    Ok(parse_strict_edge_record(key, value)?.into_edge_info())
 }
 
 impl Vault {

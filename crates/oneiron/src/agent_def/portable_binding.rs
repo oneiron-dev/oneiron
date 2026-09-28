@@ -5,6 +5,7 @@ use crate::batch::export::ExportEntity;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 use crate::serialize::ExportBody;
 use crate::skill::{SkillContentHash, decode_skill_record};
@@ -91,9 +92,7 @@ pub(crate) fn bind_agent_birth_in_txn(
         {
             return Ok(None);
         }
-        let raw = store
-            .entities
-            .get(txn, parent.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &parent)?
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("agent parent"))?;
@@ -155,9 +154,7 @@ fn read_portable_skills(
             if excluded(store, txn, &row_id)? {
                 continue;
             }
-            let raw = store
-                .entities
-                .get(txn, row_id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &row_id)?
                 .ok_or(Error::CorruptedIndex("agent skill index"))?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("agent skill header"))?;
@@ -177,18 +174,24 @@ fn read_portable_knowledge(
     source_id: &EntityId,
 ) -> Result<Vec<ExportEntity>> {
     let mut claims = Vec::new();
-    let mut prefix = source_id.as_bytes().to_vec();
-    prefix.push(crate::edge::EdgeKind::ClaimOf as u8);
-    for (scanned, entry) in store.edges_in.prefix_iter(txn, &prefix)?.enumerate() {
+    for (scanned, entry) in store
+        .port_edges(
+            txn,
+            source_id,
+            EdgeDirection::In,
+            Some(crate::edge::EdgeKind::ClaimOf),
+            None,
+        )?
+        .enumerate()
+    {
         if scanned >= SOURCE_SCAN_LIMIT {
             return Err(Error::IndexOverflow("agent selected knowledge"));
         }
-        let (key, value) = entry?;
-        let row_id = crate::edge::parse_strict_edge_record(&key, &value)?.target;
+        let row_id = entry?.target;
         if excluded(store, txn, &row_id)? {
             continue;
         }
-        let Some(raw) = store.entities.get(txn, row_id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &row_id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -224,9 +227,7 @@ pub(crate) fn import_agent_fork_hash_in_txn(
     id: &EntityId,
     hash: Option<&str>,
 ) -> Result<()> {
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("imported agent header"))?;

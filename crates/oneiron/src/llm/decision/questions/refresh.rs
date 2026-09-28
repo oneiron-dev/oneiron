@@ -434,10 +434,7 @@ fn source_actor_key(
     id: EntityId,
     declared: Option<crate::EdgeActorClass>,
 ) -> Result<ScopedReadActorKey> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         .ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("question actor header"))?;

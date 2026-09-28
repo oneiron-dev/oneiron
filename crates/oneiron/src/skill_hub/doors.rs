@@ -270,10 +270,7 @@ impl Vault {
             )));
         }
         if fresh
-            && (self
-                .store
-                .entities
-                .get(wtxn, preferred_id.as_bytes())?
+            && (crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &preferred_id)?
                 .is_some()
                 || self.local_hard_delete_marker_exists_in_txn(wtxn, &preferred_id)?)
         {

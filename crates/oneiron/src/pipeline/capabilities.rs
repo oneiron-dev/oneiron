@@ -26,7 +26,7 @@ pub(crate) fn capability_hit(
     txn: &RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<CapabilityHit>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -75,7 +75,8 @@ pub(super) fn partition_capabilities(
     let mut eligible = Vec::new();
     let mut skill_ids = HashSet::new();
     for scored in std::mem::take(scores) {
-        let Some(raw) = store.entities.get(txn, scored.id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &scored.id)?
+        else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -223,7 +224,7 @@ pub(super) fn memory_candidate_count(
 ) -> Result<usize> {
     let mut count = 0;
     for scored in scores {
-        if let Some(raw) = store.entities.get(txn, scored.id.as_bytes())?
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &scored.id)?
             && let Some(header) = EntityMetadataHeader::parse(&raw)
             && !is_capability(header.entity_type)
         {
@@ -243,7 +244,7 @@ pub(super) enum CapabilityLane {
 
 impl CapabilityLane {
     pub(super) fn admits(self, store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             return Ok(false);
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {

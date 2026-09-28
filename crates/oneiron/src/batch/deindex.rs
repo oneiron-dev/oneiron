@@ -6,6 +6,7 @@ use heed::RwTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result};
+use crate::ports::EntityStoreStaging;
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
@@ -20,7 +21,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
-    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(());
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -170,7 +171,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     delete_short_id_rows_for_id(store, wtxn, id)?;
     crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
 
-    let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(entity_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
+    else {
         let cleanup = crate::affect::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
         had_vector |= cleanup.had_vector;
         had_graph_mutation |= cleanup.had_graph_mutation;
@@ -233,7 +235,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
         .sync_state
         .delete(wtxn, &crate::gate::seeded_manifest_key(id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
-    store.entities.delete(wtxn, id.as_bytes())?;
+    store.port_remove_entity_row(wtxn, id)?;
     crate::ports::audit_mutation_in_txn(
         store,
         wtxn,

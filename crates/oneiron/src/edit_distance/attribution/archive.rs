@@ -82,10 +82,7 @@ impl Vault {
         {
             return Err(Error::EntityNotFound);
         }
-        let row = self
-            .store
-            .entities
-            .get(txn, skill.as_bytes())?
+        let row = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &skill)?
             .ok_or(Error::EntityNotFound)?;
         let header = crate::batch::EntityMetadataHeader::parse(&row)
             .ok_or(Error::CorruptedIndex("skill cost archive subject"))?;

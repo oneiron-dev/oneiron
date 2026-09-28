@@ -5,7 +5,7 @@ use heed::RoTxn;
 use crate::affect::Vad;
 #[cfg(test)]
 use crate::config::PPR_VAD_ALPHA_DEFAULT;
-use crate::edge::{EdgeKind, parse_strict_edge_record_key};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::ManifestDbs;
@@ -195,19 +195,23 @@ fn inbound_mentions_count(
     visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<u64> {
     let mut count = 0_u64;
-    for entry in store.edges_in().prefix_iter(txn, seed.as_bytes())? {
-        let (key, _) = entry?;
-        let (_, kind, source) = parse_strict_edge_record_key(&key)?;
-        if kind == EdgeKind::Mentions {
-            if let Some(visibility) = visibility
-                && !visibility.ppr_node_visible(txn, &source)?
-            {
-                continue;
-            }
-            count = count
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("ppr passage count"))?;
+    for entry in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        txn,
+        seed,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::Mentions),
+        None,
+    )? {
+        let source = entry?.target;
+        if let Some(visibility) = visibility
+            && !visibility.ppr_node_visible(txn, &source)?
+        {
+            continue;
         }
+        count = count
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("ppr passage count"))?;
     }
     Ok(count)
 }

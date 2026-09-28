@@ -121,7 +121,7 @@ pub(super) fn run(
     let actor = vault.dreamer_authority()?.entity_ref();
     let txn = vault.store.env.read_txn()?;
     let mut candidates = Vec::new();
-    for row in vault.store.entities.iter(&txn)? {
+    for row in crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, &txn)? {
         let (id, bytes) = row?;
         let Some(header) = EntityMetadataHeader::parse(&bytes) else {
             return Err(invalid());
@@ -143,8 +143,6 @@ pub(super) fn run(
         {
             continue;
         }
-        let id_bytes: &[u8] = &id;
-        let id = EntityId::from_bytes(id_bytes.try_into().map_err(|_| invalid())?)?;
         let prior_rung = claim_demotion_rung(&body)?;
         let action = match prior_rung {
             None => {

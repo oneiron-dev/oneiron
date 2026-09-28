@@ -24,7 +24,7 @@ impl Vault {
     ) -> Result<EntityId> {
         let bytes = codec::encode(source)?;
         let id = codec::source_id(source)?;
-        if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)? {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or_else(|| invalid("invalid source row header"))?;
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
@@ -56,7 +56,8 @@ impl Vault {
         {
             return Ok(None);
         }
-        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
+        else {
             return Ok(None);
         };
         let header =
@@ -95,10 +96,7 @@ impl Vault {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
                 continue;
             }
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or_else(|| invalid("source index row absent"))?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or_else(|| invalid("source index header"))?;

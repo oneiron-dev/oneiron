@@ -565,18 +565,20 @@ pub(super) fn supersedes_neighbor_in_txn(
     id: &EntityId,
     inbound: bool,
 ) -> Result<Option<EntityId>> {
-    let database = if inbound {
-        &vault.store.edges_in
+    let direction = if inbound {
+        crate::ports::EdgeDirection::In
     } else {
-        &vault.store.edges_out
+        crate::ports::EdgeDirection::Out
     };
-    let prefix = crate::vault::edge_kind_prefix(id, EdgeKind::Supersedes);
-    let mut edges = database.prefix_iter(rtxn, &prefix)?;
-    let neighbor = edges
-        .next()
-        .transpose()?
-        .map(|(key, value)| crate::vault::parse_edge_record(&key, &value).map(|edge| edge.target))
-        .transpose()?;
+    let mut edges = crate::ports::EdgeStoreRead::port_edges(
+        &vault.store,
+        rtxn,
+        id,
+        direction,
+        Some(EdgeKind::Supersedes),
+        None,
+    )?;
+    let neighbor = edges.next().transpose()?.map(|edge| edge.target);
     if edges.next().transpose()?.is_some() {
         return Err(invalid_trap("step-only trap supersession chain branches"));
     }

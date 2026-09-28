@@ -177,10 +177,7 @@ pub(super) fn owner_in_txn(
     validate_actor(vault, txn, actor)?;
     crate::memory::verify_owner_actor_binding_in_txn(vault, txn, owner.actor())
         .map_err(|_| invalid("owner authority is no longer active"))?;
-    let header = vault
-        .store
-        .entities
-        .get(txn, owner.actor().as_bytes())?
+    let header = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &owner.actor())?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw));
     if header.is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON) {
         return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(

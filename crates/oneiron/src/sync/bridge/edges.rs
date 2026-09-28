@@ -490,9 +490,8 @@ pub(super) fn materialize_edges_from_delta(
                     ) && (matches!(
                         crate::vault::live_entity_row_in_txn(&vault.store, &*wtxn, &src)?,
                         crate::vault::LiveEntityRow::Live { .. }
-                    ) || vault.store.edges_out.get(
-                        &*wtxn,
-                        &Store::encode_edge_key(&src, kind, &tgt),
+                    ) || crate::ports::EdgeStoreRead::port_edge_get(
+                        &vault.store, &*wtxn, &src, kind, &tgt,
                     )?.is_some()) {
                         let reserved = crate::edge::validate_public_edge_kind(kind)
                             .expect_err("DAG structural edge is reserved");
@@ -672,9 +671,14 @@ pub(super) fn committed_edge_state_matches(vault: &Vault, edge_key: &[u8; 33], b
     let Ok(rtxn) = vault.store.env.read_txn() else {
         return false;
     };
+    let Ok((source, kind, target)) = crate::edge::parse_strict_edge_record_key(edge_key) else {
+        return false;
+    };
     matches!(
-        vault.store.edges_out.get(&rtxn, edge_key),
-        Ok(Some(existing)) if *existing == *buf
+        crate::ports::EdgeStoreStaging::port_edge_encoded(
+            &vault.store, &rtxn, &source, kind, &target,
+        ),
+        Ok(Some(existing)) if existing == buf
     )
 }
 

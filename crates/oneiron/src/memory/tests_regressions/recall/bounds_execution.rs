@@ -75,10 +75,7 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
     value[4..12].copy_from_slice(&1_u64.to_le_bytes());
     vault
         .with_write_txn(|wtxn| {
-            let raw = vault
-                .store
-                .entities
-                .get(wtxn, center.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &center)?
                 .expect("readable person fixture")
                 .to_vec();
             for i in 0..edge_count {

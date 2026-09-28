@@ -141,10 +141,7 @@ fn pending_subject(
     {
         return Err(Error::EntityNotFound);
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("subject restore header"))?;
@@ -198,10 +195,7 @@ fn prior_fingerprints(
     };
     let mut rows = Vec::new();
     for (id, _) in heads {
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         rows.push((id, digest(&raw)));
     }

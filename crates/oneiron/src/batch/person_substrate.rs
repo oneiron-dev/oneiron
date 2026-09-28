@@ -18,7 +18,7 @@ pub(crate) fn ensure_person_substrate(
     learned_at: u64,
 ) -> Result<()> {
     let facet = crate::claim::substrate_facet_id(person);
-    if let Some(raw) = store.entities.get(txn, facet.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
         if header.entity_type != ENTITY_TYPE_FACET
@@ -111,19 +111,11 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
     if scope_done && policy_done {
         return Ok(());
     }
-    let rows: Vec<_> = store
-        .entities
-        .iter(&txn)?
-        .map(|row| row.map(|(key, raw)| (key.to_vec(), raw.into_owned())))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for (key, raw) in rows {
+    let rows = crate::ports::EntityStoreRead::port_entity_raw_records(store, &txn)?
+        .collect::<Result<Vec<_>>>()?;
+    for (id, raw) in rows {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("scope sweep header"))?;
-        let id = EntityId::from_bytes(
-            key.as_slice()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("scope sweep id"))?,
-        )?;
         let occurred = TimeRange {
             start: header.occurred_start,
             end: header.occurred_end,

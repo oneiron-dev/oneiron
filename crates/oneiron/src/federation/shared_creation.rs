@@ -125,7 +125,8 @@ impl Vault {
         };
         let mut ops = Vec::new();
         for (member, role) in rows {
-            if self.store.entities.get(&txn, member.as_bytes())?.is_none() {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &member)?.is_none()
+            {
                 return Err(Error::EntityNotFound);
             }
             let role = if role == Role::Auditor {
@@ -160,7 +161,7 @@ impl Vault {
         if preset.is_some() {
             let id = crate::gate::default_policy_manifest_id()?;
             let default = crate::gate::default_policy_manifest();
-            match self.store.entities.get(&txn, id.as_bytes())? {
+            match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)? {
                 Some(raw)
                     if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                         != Some(default.as_slice()) =>

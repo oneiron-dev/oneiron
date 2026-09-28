@@ -51,10 +51,7 @@ impl Vault {
                     .map_err(|_| Error::CorruptedIndex("repo reconciliation task index"))?,
             );
         }
-        if self
-            .store
-            .entities
-            .get(txn, conflict.claim_id.as_bytes())?
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &conflict.claim_id)?
             .is_none()
         {
             return Err(Error::EntityNotFound);

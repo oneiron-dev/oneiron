@@ -103,10 +103,7 @@ fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId, kinds: &[u8
     {
         return Err(Error::EntityNotFound);
     }
-    let row = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let row = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&row)
         .ok_or(Error::CorruptedIndex("actor archive reference"))?;

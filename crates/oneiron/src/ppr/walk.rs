@@ -7,7 +7,7 @@ use heed::RoTxn;
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::validate_ppr_vad_alpha;
-use crate::edge::{EdgeConfirmationStatus, EdgeKind, parse_strict_edge_record};
+use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
@@ -256,7 +256,6 @@ fn run_ppr_rounds(
     frontier: &mut BTreeMap<(EntityId, u32), f32>,
     dependencies: &mut HashSet<EntityId>,
 ) -> Result<()> {
-    let edge_dbs = [context.store.edges_out(), context.store.edges_in()];
     let vad_evidence = VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().clone());
 
     for _ in 0..rounds {
@@ -281,11 +280,22 @@ fn run_ppr_rounds(
             // forward scan over `edges_out` normalizes by s_out(u, τ) and the
             // reverse scan over `edges_in` by the symmetric s_in(u, τ), so
             // each database scan gates and groups its rows independently.
-            for db in edge_dbs {
+            for direction in [
+                crate::ports::EdgeDirection::Out,
+                crate::ports::EdgeDirection::In,
+            ] {
                 let mut groups = BTreeMap::<u8, Vec<GatedEdge>>::new();
-                for entry in db.prefix_iter(context.txn, node.as_bytes())? {
-                    let (key, value) = entry?;
-                    if let Some(edge) = gate_edge(context.store, context.txn, &key, &value, hops)? {
+                for entry in crate::ports::EdgeStoreRead::port_edges(
+                    context.store,
+                    context.txn,
+                    &node,
+                    direction,
+                    None,
+                    None,
+                )? {
+                    let entry = entry?;
+                    if let Some(edge) = gate_edge(context.store, context.txn, &node, &entry, hops)?
+                    {
                         // Gate 6 — actor visibility, on scoped walks only.
                         // Applied HERE, with the other gates and before the
                         // same-kind strength normalizer sums the group, so a
@@ -459,15 +469,12 @@ pub(super) struct GatedEdge {
 pub(super) fn gate_edge(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
-    key: &[u8],
-    value: &[u8],
+    current: &EntityId,
+    edge: &EdgeInfo,
     hops: u32,
 ) -> Result<Option<GatedEdge>> {
-    let edge = parse_strict_edge_record(key, value)?;
-    let current = edge.source;
     let kind = edge.kind;
     let neighbor = edge.target;
-    let decoded = edge.decoded;
 
     // Gate 1 — not-traversed kinds: `child_of` and `assigned_to` are NEVER
     // traversed, regardless of the stored weight bytes (contract
@@ -480,7 +487,7 @@ pub(super) fn gate_edge(
     // its own low budget; lowering only the stored weight would cancel under
     // same-kind normalization when the hub has one or many members.
     if kind == EdgeKind::BelongsTo
-        && (crate::workspace_roster::is_project_entity(store, txn, current)?
+        && (crate::workspace_roster::is_project_entity(store, txn, *current)?
             || crate::workspace_roster::is_project_entity(store, txn, neighbor)?)
     {
         lambda = crate::workspace_roster::HUB_BELONGS_TO_LAMBDA;
@@ -496,7 +503,7 @@ pub(super) fn gate_edge(
     // relation for cleanup/search compatibility, but they are derived text
     // index side records and must not consume PPR transition mass.
     if kind == EdgeKind::ClaimOf
-        && (entity_is_lexical_query_hint_claim(store, txn, &current)?
+        && (entity_is_lexical_query_hint_claim(store, txn, current)?
             || entity_is_lexical_query_hint_claim(store, txn, &neighbor)?)
     {
         return Ok(None);
@@ -506,7 +513,7 @@ pub(super) fn gate_edge(
     // are skipped entirely (factor 0), including their contribution to the
     // same-kind strength normalizer. proposed / confirmed / disputed
     // propagate at full weight in v1.
-    if let Some(flags) = decoded.provenance
+    if let Some(flags) = edge.provenance
         && flags.confirmation_status == EdgeConfirmationStatus::Retracted
     {
         return Ok(None);
@@ -517,7 +524,7 @@ pub(super) fn gate_edge(
     // pprWeight column / weight pin; `types::validate_edge_weight` on every
     // write path); gating `<= 0.0` keeps the strength normalizer strictly
     // positive for every edge that reaches the formula.
-    if decoded.weight <= 0.0 {
+    if edge.weight <= 0.0 {
         return Ok(None);
     }
 
@@ -536,8 +543,8 @@ pub(super) fn gate_edge(
     Ok(Some(GatedEdge {
         kind,
         lambda,
-        weight: decoded.weight,
-        vad: decoded.vad,
+        weight: edge.weight,
+        vad: edge.vad,
         neighbor,
         new_hops,
     }))
@@ -547,7 +554,7 @@ fn entity_is_lexical_query_hint_claim(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

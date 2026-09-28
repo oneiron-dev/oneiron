@@ -54,10 +54,7 @@ pub(super) fn require_docs_corpus_project(
     project: EntityId,
 ) -> Result<()> {
     let expected = vault.project_type_byte()?;
-    let raw = vault
-        .store
-        .entities
-        .get(txn, project.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &project)?
         .ok_or_else(|| invalid("docs corpus PROJECT missing"))?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("docs corpus PROJECT header"))?;
@@ -429,10 +426,7 @@ impl Vault {
             if let BatchOp::Put {
                 id, entity_type, ..
             } = op
-                && self
-                    .store
-                    .entities
-                    .get(&txn, id.as_bytes())?
+                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
                     .is_some_and(|raw| {
                         crate::batch::EntityMetadataHeader::parse(&raw)
                             .is_none_or(|header| header.entity_type != *entity_type)

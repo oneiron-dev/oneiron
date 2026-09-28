@@ -268,11 +268,12 @@ impl Vault {
                     "agent credential is no longer live",
                 )));
             }
-            let raw = self
-                .store
-                .entities
-                .get(&*txn, actor.entity_ref().as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(
+                &self.store,
+                &*txn,
+                &actor.entity_ref(),
+            )?
+            .ok_or(Error::EntityNotFound)?;
             let header = crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("entity header"))?;
             crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;

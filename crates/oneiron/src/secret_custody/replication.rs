@@ -22,7 +22,7 @@ pub(crate) fn plan_replicated_name_index(
         return Ok(None);
     }
     let incoming = decode_secret_custody_body(body)?;
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && raw.first() == Some(&crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
     {
         let previous = decode_secret_custody_body(
@@ -64,7 +64,7 @@ pub(crate) fn validate_replicated_custody_put(
     data: &[u8],
 ) -> Result<()> {
     let incoming_allowed = super::custody_sync_allowed(data);
-    let local_allowed = match store.entities.get(txn, id.as_bytes())? {
+    let local_allowed = match crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         Some(raw) if raw.first() == Some(&crate::registry::ENTITY_TYPE_SECRET_CUSTODY) => raw
             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
             .is_some_and(super::custody_sync_allowed),

@@ -12,7 +12,8 @@ use rmpv::Value;
 impl Vault {
     pub fn claim_write_disposition(&self, id: &EntityId) -> Result<Option<CausalWriteDisposition>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
+        else {
             return Ok(None);
         };
         if EntityMetadataHeader::parse(&raw)
@@ -82,7 +83,7 @@ pub(crate) fn check_materialized_claim_causality(
 ) -> Result<()> {
     let mut claims = Vec::new();
     for id in ids {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         if EntityMetadataHeader::parse(&raw)

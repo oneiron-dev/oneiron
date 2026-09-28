@@ -128,20 +128,16 @@ impl Vault {
             token_floor,
         };
         self.with_write_txn(|txn| {
-            let actor_row = self
-                .store
-                .entities
-                .get(&*txn, agent.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
+            let actor_row =
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &agent)?
+                    .ok_or(Error::EntityNotFound)?;
             let actor_kind = crate::batch::EntityMetadataHeader::parse(&actor_row)
                 .ok_or_else(invalid)?
                 .entity_type;
             crate::provenance::validate_actor_class(actor_kind, EdgeActorClass::Agent)?;
-            let world_row = self
-                .store
-                .entities
-                .get(&*txn, world.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
+            let world_row =
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &world)?
+                    .ok_or(Error::EntityNotFound)?;
             if crate::batch::EntityMetadataHeader::parse(&world_row)
                 .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_WORLD)
             {
