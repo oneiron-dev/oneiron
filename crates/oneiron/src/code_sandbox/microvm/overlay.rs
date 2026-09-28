@@ -225,11 +225,12 @@ pub fn collect_overlay_writes(
 }
 
 /// Keep directory effects separate from file effects, even if a real file is
-/// literally named `.opaque` in that directory.
+/// literally named `.opaque` in that directory. Opaque markers sort first, so
+/// a reviewer applying the list in order hides lower children before writes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum OverlayKey {
-    File(String),
     Opaque(String),
+    File(String),
 }
 
 pub(super) fn walk_overlay_dir(
