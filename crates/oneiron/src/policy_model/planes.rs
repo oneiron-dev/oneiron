@@ -86,6 +86,7 @@ pub struct PolicyRubricRow {
     pub category: String,
     pub action: PolicyClassifyDecision,
     pub text: String,
+    pub why: Option<String>,
 }
 
 /// What a hosted legal row does when it fires. There is no `RouteToHelp` arm:
@@ -275,7 +276,10 @@ pub(super) fn owner_rubric_rows(
         return Vec::new();
     }
     policy
-        .active_owner_policy_rows(request.world_ref.as_deref())
+        .active_owner_policy_rows_for_scope(
+            request.world_ref.as_deref(),
+            request.project_ref.as_deref(),
+        )
         .into_iter()
         .map(|row| PolicyRubricRow {
             row_ref: row.row_ref.clone(),
@@ -288,7 +292,8 @@ pub(super) fn owner_rubric_rows(
             } else {
                 owner_row_decision(row.action)
             },
-            text: row.text.clone(),
+            text: row.text,
+            why: row.why.map(|why| why.text),
         })
         .collect()
 }
@@ -304,6 +309,7 @@ pub(super) fn hosted_rubric_rows(policy: &HostedLegalPolicy) -> Vec<PolicyRubric
             category: hosted_category_label(&row.category),
             action: row.action.decision(),
             text: row.text.clone(),
+            why: None,
         })
         .collect()
 }

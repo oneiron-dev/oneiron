@@ -22,7 +22,6 @@ pub(super) fn demotion_body(
         CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, ClaimSubject, claim_demotion_rung,
     };
     use crate::edge::{EdgeKind, validate_edge_weight};
-    use crate::vault::{edge_kind_prefix, parse_edge_record};
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
         return Err(binding_error());
@@ -45,12 +44,15 @@ pub(super) fn demotion_body(
         ) if src == id && prior.subject == ClaimSubject::Entity(*tgt) => {
             validate_edge_weight(*weight)?;
             let mut current = None;
-            for entry in store
-                .edges_out
-                .prefix_iter(txn, &edge_kind_prefix(id, EdgeKind::ClaimOf))?
-            {
-                let (key, value) = entry?;
-                let edge = parse_edge_record(&key, &value)?;
+            for entry in crate::ports::EdgeStoreRead::port_edges(
+                store,
+                txn,
+                id,
+                crate::ports::EdgeDirection::Out,
+                Some(EdgeKind::ClaimOf),
+                None,
+            )? {
+                let edge = entry?;
                 if edge.target == *tgt && current.replace(edge.weight).is_some() {
                     return Err(binding_error());
                 }

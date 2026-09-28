@@ -37,8 +37,8 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// Handles WebSocket upgrade requests.
 ///
 /// Auth: the upgrade request must present an owner-grade credential in the
-/// `Authorization: Bearer` header — the configured trust-root secret or an
-/// empty-claims v2 token. Scoped delegation tokens do not reach this surface.
+/// `Authorization: Bearer` header — a logged, holder-bound top-scope slip.
+/// Neither the issuer secret nor a device lease grants socket access.
 /// An unauthenticated upgrade is rejected with 401 BEFORE the socket upgrade
 /// (fail-closed) — without this gate any network peer could pull the full
 /// root snapshot and window exports. When no secret is configured, upgrades
@@ -55,9 +55,6 @@ async fn ws_upgrade_handler(
 ) -> Result<impl IntoResponse, StatusCode> {
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let vault_binding = server
-        .require_vault_binding(&headers)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
 
     let conn_id = server.alloc_conn_id();
@@ -73,9 +70,7 @@ async fn ws_upgrade_handler(
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| {
-            handle_connection(socket, server, conn_id, session_jti, vault_binding)
-        }))
+        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -87,10 +82,7 @@ async fn ws_upgrade_handler(
 /// already inside keeps full vault service. Fail-closed on an unreadable
 /// registry, matching the handshake: "we could not check" is not "still live".
 ///
-/// `None` means the credential carries no revocable identity — the bare trust
-/// root or the dev fallthrough — so there is nothing to consult and the
-/// lookup is skipped entirely. Those are retired by rotating `auth_secret`,
-/// which invalidates them without any registry read.
+/// `None` is possible only in explicit unauthenticated development mode.
 pub(super) fn session_credential_revoked(
     revoked: &dyn RevokedTokenJtis,
     session_jti: Option<&str>,
@@ -125,7 +117,6 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
-    vault_binding: Option<crate::server::vault_binding::VaultBinding>,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -137,8 +128,6 @@ async fn handle_connection(
         session_jti.clone(),
         conn_id,
     );
-
-    transport.vault_binding = vault_binding.map(|binding| (Arc::clone(server.vault()), binding));
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
     // must be a supported protocol hello. Malformed frames or unsupported
@@ -215,9 +204,13 @@ async fn handle_connection(
     // revocation that should have stopped it.
     loop {
         let event = tokio::select! {
+            biased;
+            // A VV catch-up queues its UPDATE and VV_RESPONSE before binding
+            // the subscription. Drain those direct frames before a concurrent
+            // broadcast can overtake their causal prefix on this socket.
+            direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
             msg = transport.read_next(), if direct_rx.is_empty() => ConnEvent::Inbound(msg),
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
-            direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
             _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
         };
 
@@ -293,12 +286,66 @@ async fn handle_connection(
                             }
                             continue;
                         }
-                        if (should_forward_broadcast(protocol_version, &data)
-                            || (conn_state.window_sync_mode
-                                == super::conn_state::WindowSyncMode::FullWindow
-                                && data.first() == Some(&protocol::TAG_WINDOW_SYNC)))
-                            && !transport.send_binary(data).await
+                        if protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION
+                            && data.first() == Some(&protocol::TAG_WINDOW_SYNC)
                         {
+                            let Ok((raw_key, sub_tag, _)) =
+                                protocol::decode_window_sync(&data[1..])
+                            else {
+                                break;
+                            };
+                            if sub_tag == protocol::window_sub_tags::UPDATE {
+                                let Some(key) = oneiron::sync::WindowKey::try_new(raw_key) else {
+                                    break;
+                                };
+                                if let Some(selector) = conn_state.promoted_windows.get(&key) {
+                                    let Ok(auth) = require_bound_app_auth(&server, &conn_state)
+                                    else {
+                                        break;
+                                    };
+                                    let Ok(window) = server.reassert_manager.open_window(&key)
+                                    else {
+                                        break;
+                                    };
+                                    if super::window_sync::authorize_promoted_window(
+                                        &server,
+                                        auth,
+                                        &key,
+                                        selector,
+                                        &window.doc,
+                                    )
+                                    .is_err()
+                                    {
+                                        break;
+                                    }
+                                    let Ok(frame) = protocol::encode_window_sync(
+                                        raw_key,
+                                        protocol::window_sub_tags::PROMOTED_INVALIDATE,
+                                        &[],
+                                    )
+                                    .into_result() else {
+                                        break;
+                                    };
+                                    transport.app_jti = auth.jti().map(str::to_owned);
+                                    let sent = transport.send_binary(frame).await;
+                                    transport.app_jti = None;
+                                    if !sent {
+                                        break;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        // New owner peers receive only subscribed keys. Legacy
+                        // v6 peers cannot decode world-month keys, so they keep
+                        // base-month broadcasts but never receive world frames.
+                        let subscribed_window = if data.first() == Some(&protocol::TAG_WINDOW_SYNC)
+                        {
+                            window_broadcast_allowed(protocol_version, &conn_state, &data)
+                        } else {
+                            should_forward_broadcast(protocol_version, &data)
+                        };
+                        if subscribed_window && !transport.send_binary(data).await {
                             break;
                         }
                     }
@@ -306,7 +353,10 @@ async fn handle_connection(
                     Err(crate::broadcast::BroadcastError::Lagged(n)) => {
                         // Reconnect replays persisted document subscriptions and VVs.
                         // App replay alone cannot repair a missed text-document notice.
-                        if !conn_state.documents.is_empty() {
+                        if !conn_state.documents.is_empty()
+                            || conn_state.window_sync_mode
+                                == super::conn_state::WindowSyncMode::FullWindow
+                        {
                             transport.close().await;
                             break;
                         }
@@ -334,9 +384,12 @@ async fn handle_connection(
                             | oneiron::sync::transport::TAG_DOCUMENT
                             | oneiron::sync::transport::TAG_BATCH
                     )
-                ) || (conn_state.window_sync_mode
-                    == super::conn_state::WindowSyncMode::Selector
-                    && data.first().copied() == Some(protocol::TAG_WINDOW_SYNC));
+                ) || (matches!(
+                    conn_state.window_sync_mode,
+                    super::conn_state::WindowSyncMode::Selector
+                        | super::conn_state::WindowSyncMode::Residence
+                ) && data.first().copied()
+                    == Some(protocol::TAG_WINDOW_SYNC));
                 if app_frame
                     && conn_state.bound_auth.as_ref().is_none_or(|auth| {
                         session_credential_revoked(server.vault().as_ref(), auth.jti())
@@ -566,6 +619,23 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
     }
 }
 
+fn window_broadcast_allowed(
+    protocol_version: u8,
+    state: &super::conn_state::ConnState,
+    frame: &[u8],
+) -> bool {
+    let key = frame
+        .get(1..)
+        .and_then(|payload| oneiron::sync::transport::decode_window_sync(payload).ok())
+        .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key));
+    match protocol_version {
+        version if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION => {
+            key.is_some_and(|key| state.receives_window(&key))
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> bool {
     if matches!(
         data.first(),
@@ -576,4 +646,72 @@ pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> boo
     (protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
         || protocol_version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
+}
+
+#[cfg(test)]
+mod window_broadcast_tests {
+    use super::*;
+    use oneiron::sync::WindowKey;
+    use oneiron::sync::transport::{encode_window_sync, window_sub_tags};
+
+    #[test]
+    fn a_socket_only_receives_followed_project_windows() {
+        let mut device =
+            super::super::conn_state::ConnState::new(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION);
+        let month = WindowKey::new("2026-03");
+        let worlds: Vec<_> = (1..=5)
+            .map(|byte| oneiron::EntityId::from_bytes([byte; 16]).unwrap())
+            .collect();
+        let keys: Vec<_> = worlds
+            .iter()
+            .map(|world| WindowKey::for_month_world(&month, *world))
+            .collect();
+        let frames: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                encode_window_sync(key.as_str(), window_sub_tags::UPDATE, b"update")
+                    .into_result()
+                    .unwrap()
+            })
+            .collect();
+        device.touch_window(keys[0].clone(), 32).unwrap();
+        device.subscribe_window(&keys[0]);
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| window_broadcast_allowed(
+                    protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION,
+                    &device,
+                    frame
+                ))
+                .count(),
+            1
+        );
+        device.touch_window(keys[1].clone(), 32).unwrap();
+        device.subscribe_window(&keys[1]);
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| window_broadcast_allowed(
+                    protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION,
+                    &device,
+                    frame
+                ))
+                .count(),
+            2
+        );
+        assert!(frames.iter().all(|frame| !window_broadcast_allowed(
+            protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
+            &device,
+            frame
+        )));
+        let base = encode_window_sync(month.as_str(), window_sub_tags::UPDATE, b"base")
+            .into_result()
+            .unwrap();
+        assert!(!window_broadcast_allowed(
+            protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
+            &device,
+            &base
+        ));
+    }
 }

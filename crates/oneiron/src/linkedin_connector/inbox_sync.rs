@@ -7,24 +7,34 @@ use serde_json::Value;
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::surface_event::{
     InboundSurfaceEventInput, InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt,
 };
 
 use super::normalize_keys::{
-    first_conversation_thread_id, linkedin_inbox_provenance_key, linkedin_inbox_seen_key,
-    normalize_message_id, normalize_non_blank, normalize_thread_id, optional_section_text,
-    section_references, thread_id_from_payload_url,
+    first_conversation_thread_id, linkedin_inbox_message_key_hash, normalize_message_id,
+    normalize_non_blank, normalize_thread_id, optional_section_text, section_references,
+    thread_id_from_payload_url,
 };
 use super::verified_send::{normalize_whitespace, receipt_error_code};
 use super::{
     DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, LINKEDIN_CHANNEL,
-    LINKEDIN_INBOX_SYNC_CLAIMED_VALUE, LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX,
-    LINKEDIN_INBOX_SYNC_SOURCE, LINKEDIN_INBOX_SYNC_TIER, LINKEDIN_MCP_GET_CONVERSATION_TOOL,
-    LINKEDIN_MCP_GET_INBOX_TOOL, LinkedInMcpConnectorAdapter, MAX_LINKEDIN_ADDRESS_BYTES,
-    MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_THREAD, MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS,
-    MAX_LINKEDIN_SESSION_REF_BYTES,
+    LINKEDIN_INBOX_SYNC_CLAIMED_VALUE, LINKEDIN_INBOX_SYNC_SOURCE, LINKEDIN_INBOX_SYNC_TIER,
+    LINKEDIN_MCP_GET_CONVERSATION_TOOL, LINKEDIN_MCP_GET_INBOX_TOOL, LinkedInMcpConnectorAdapter,
+    MAX_LINKEDIN_ADDRESS_BYTES, MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_THREAD,
+    MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, MAX_LINKEDIN_SESSION_REF_BYTES,
 };
+
+/// The inbox-sync SEEN/claim marker for one message: a fixed presence flag
+/// during claim, then the surface-event id after finalization. Keyed by the
+/// message's stable hash.
+const INBOX_SYNC_SEEN: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::LINKEDIN_INBOX_SYNC_SEEN);
+
+/// The durable provenance marker persisted beside each seen message.
+const INBOX_SYNC_PROVENANCE: SideTable<String, LinkedInInboxSyncProvenanceRow, LegacyJson> =
+    SideTable::new(&side_table::LINKEDIN_INBOX_SYNC_PROVENANCE);
 
 /// Config persisted in each scheduled LinkedIn inbox-sync attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -614,15 +624,17 @@ fn claim_linkedin_inbox_message(
     config: &LinkedInInboxSyncConfig,
     message: &LinkedInConversationMessage,
 ) -> Result<bool> {
-    let seen_key = linkedin_inbox_seen_key(config, message);
+    let seen_key = linkedin_inbox_message_key_hash(config, message);
     vault.with_write_txn(|wtxn| {
-        if vault.store.sync_state.get(wtxn, &seen_key)?.is_some() {
+        if INBOX_SYNC_SEEN.contains(&vault.store, wtxn, &seen_key)? {
             return Ok(false);
         }
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &seen_key, LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)?;
+        INBOX_SYNC_SEEN.put(
+            &vault.store,
+            wtxn,
+            &seen_key,
+            &LINKEDIN_INBOX_SYNC_CLAIMED_VALUE.to_vec(),
+        )?;
         Ok(true)
     })
 }
@@ -632,15 +644,13 @@ fn release_linkedin_inbox_message_claim(
     config: &LinkedInInboxSyncConfig,
     message: &LinkedInConversationMessage,
 ) -> Result<()> {
-    let seen_key = linkedin_inbox_seen_key(config, message);
+    let seen_key = linkedin_inbox_message_key_hash(config, message);
     vault.with_write_txn(|wtxn| {
-        if vault
-            .store
-            .sync_state
-            .get(wtxn, &seen_key)?
-            .is_some_and(|value| *value == *LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)
+        if INBOX_SYNC_SEEN
+            .get(&vault.store, wtxn, &seen_key)?
+            .is_some_and(|value| value == LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)
         {
-            vault.store.sync_state.delete(wtxn, &seen_key)?;
+            INBOX_SYNC_SEEN.delete(&vault.store, wtxn, &seen_key)?;
         }
         Ok(())
     })
@@ -652,8 +662,8 @@ fn finalize_linkedin_inbox_seen_message(
     message: &LinkedInConversationMessage,
     event_input: &InboundSurfaceEventInput,
 ) -> Result<()> {
-    let seen_key = linkedin_inbox_seen_key(config, message);
-    let provenance_key = linkedin_inbox_provenance_key(config, message);
+    let seen_key = linkedin_inbox_message_key_hash(config, message);
+    let provenance_key = linkedin_inbox_message_key_hash(config, message);
     let row = LinkedInInboxSyncProvenanceRow {
         schema_version: 1,
         source: LINKEDIN_INBOX_SYNC_SOURCE.to_owned(),
@@ -668,31 +678,22 @@ fn finalize_linkedin_inbox_seen_message(
         received_at: event_input.received_at,
         occurred_at: message.occurred_at,
     };
-    let encoded = serde_json::to_vec(&row).map_err(|err| {
-        Error::InvalidConfig(format!(
-            "LinkedIn inbox sync provenance row did not encode: {err}"
-        ))
-    })?;
-
     vault.with_write_txn(|wtxn| {
-        if vault
-            .store
-            .sync_state
-            .get(wtxn, &seen_key)?
-            .is_none_or(|value| *value != *LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)
+        if INBOX_SYNC_SEEN
+            .get(&vault.store, wtxn, &seen_key)?
+            .is_none_or(|value| value != LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)
         {
             return Err(Error::ConcurrentWrite(
                 "LinkedIn inbox sync claim missing before finalization",
             ));
         }
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &seen_key, event_input.event_id.as_bytes())?;
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &provenance_key, &encoded)?;
+        INBOX_SYNC_SEEN.put(
+            &vault.store,
+            wtxn,
+            &seen_key,
+            &event_input.event_id.as_bytes().to_vec(),
+        )?;
+        INBOX_SYNC_PROVENANCE.put(&vault.store, wtxn, &provenance_key, &row)?;
         Ok(())
     })
 }
@@ -702,24 +703,11 @@ pub fn linkedin_inbox_sync_provenance_rows(
     vault: &Vault,
 ) -> Result<Vec<LinkedInInboxSyncProvenanceRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut rows = Vec::new();
-    for row in vault
-        .store
-        .sync_state
-        .prefix_iter(&rtxn, LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX)?
-    {
-        let (_, value) = row?;
-        let decoded: LinkedInInboxSyncProvenanceRow =
-            serde_json::from_slice(&value).map_err(|err| {
-                Error::CorruptedIndex(match err.classify() {
-                    serde_json::error::Category::Io => "LinkedIn inbox provenance io",
-                    serde_json::error::Category::Syntax => "LinkedIn inbox provenance syntax",
-                    serde_json::error::Category::Data => "LinkedIn inbox provenance data",
-                    serde_json::error::Category::Eof => "LinkedIn inbox provenance eof",
-                })
-            })?;
-        rows.push(decoded);
-    }
+    let mut rows: Vec<LinkedInInboxSyncProvenanceRow> = INBOX_SYNC_PROVENANCE
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect();
     rows.sort_by(|a, b| {
         a.thread_id
             .cmp(&b.thread_id)

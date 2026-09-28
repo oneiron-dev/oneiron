@@ -14,9 +14,7 @@ pub(super) fn reconcile_replicated_critical_confirm(
     data: &[u8],
     decoded_claim_body: &mut Option<ClaimBody>,
 ) -> Result<Option<Vec<u8>>> {
-    let body_changed = store
-        .entities
-        .get(wtxn, id.as_bytes())?
+    let body_changed = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
         .map(|old| {
             old.get(ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("entity header"))

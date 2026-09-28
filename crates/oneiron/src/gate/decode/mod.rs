@@ -1,12 +1,20 @@
+mod decode_class_policy;
 pub(in crate::gate) mod decode_docedit_resource;
 mod decode_manifest;
 mod decode_map_util;
 mod decode_policy_tables;
+mod decode_residence_operation_budgets;
 mod decode_trust_budget;
 mod experiment_selection;
 mod policy_scope_migration;
+mod project_collaboration;
 
-pub(super) use self::decode_manifest::{ConnectorClassRole, decode_policy_manifest};
+pub(super) use self::decode_manifest::{
+    ConnectorClassRole, DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
+};
+pub(super) use self::decode_residence_operation_budgets::{
+    POLICY_RESIDENCE_OPERATION_BUDGETS_KEY, parse_residence_operation_budgets,
+};
 // Test-only name the gate test seam reaches through `use self::decode::*`
 // (gate/mod.rs); gating the re-export keeps the non-test build warning-free.
 #[cfg(test)]

@@ -169,6 +169,7 @@ fn link<H: bindings::GuestImports + 'static>(
                 },
             )?,
             "oneiron.random.bytes" => unary!(root, wit, random_bytes, u32),
+            "vault.agents.put" => unary!(root, wit, agents_put, AgentPutInput),
             "self.json.validate" => root.func_wrap(
                 wit,
                 |_cx: StoreContextMut<'_, RequestState<H>>, (schema, value): (String, String)| {
@@ -244,6 +245,33 @@ pub fn validate_step_result(
                 bytes = bytes
                     .saturating_add(file.path.len())
                     .saturating_add(file.bytes.len());
+            }
+            bindings::ProposalDelta::FileDelete(delete) => {
+                let path = super::SandboxVirtualPath::try_new(&delete.path)?;
+                if path.mount() != super::SandboxMount::Workspace || path.relative_path().is_empty()
+                {
+                    return Err(wasmtime::Error::msg(
+                        "foreign delete path outside workspace",
+                    ));
+                }
+                bytes = bytes.saturating_add(delete.path.len());
+            }
+            bindings::ProposalDelta::FileRename(rename) => {
+                let from = super::SandboxVirtualPath::try_new(&rename.origin)?;
+                let to = super::SandboxVirtualPath::try_new(&rename.destination)?;
+                if from.mount() != super::SandboxMount::Workspace
+                    || to.mount() != super::SandboxMount::Workspace
+                    || from.relative_path().is_empty()
+                    || to.relative_path().is_empty()
+                    || from == to
+                {
+                    return Err(wasmtime::Error::msg(
+                        "foreign rename path outside workspace",
+                    ));
+                }
+                bytes = bytes
+                    .saturating_add(rename.origin.len())
+                    .saturating_add(rename.destination.len());
             }
             bindings::ProposalDelta::ClaimCandidate(claim) => {
                 crate::EntityId::from_hex(&claim.id)?;

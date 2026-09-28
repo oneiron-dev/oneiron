@@ -3,14 +3,11 @@ use super::*;
 use heed::RwTxn;
 
 use crate::affect::Vad;
-use crate::edge::{EdgeKind, parse_strict_edge_record};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
-use crate::temporal::TimeRange;
-use crate::write_envelope::ClaimCandidate;
-use crate::write_envelope::WriteEnvelope;
 
 pub(super) struct AppliedClaimCandidate {
     pub(super) had_graph_mutation: bool,
@@ -19,38 +16,31 @@ pub(super) struct AppliedClaimCandidate {
     pub(super) pending_embedding_token: Option<Vec<u8>>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "candidate writes thread existing apply_put context"
-)]
 pub(super) fn apply_claim_candidate(
     store: &Store,
     config: &crate::config::VaultConfig,
     birth_context: (&crate::analyzer::MultilingualAnalyzer, bool),
     wtxn: &mut RwTxn<'_>,
-    id: EntityId,
-    candidate: ClaimCandidate,
-    envelope: &WriteEnvelope,
-    occurred: TimeRange,
-    learned_at: u64,
-    has_later_covering_text_op: bool,
-    write_policy: Option<&crate::gate::PolicyManifestResolution>,
-    internal_lexical_query_hint: bool,
-    record_gate_decisions: bool,
-    persist_gate_pending_consent: bool,
-    can_resolve_pending_consent: bool,
-    include_source_in_gate_input: bool,
-    claim_gate_prechecked: bool,
-    preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    request: ClaimCandidateRequest<'_>,
 ) -> Result<AppliedClaimCandidate> {
+    let ClaimCandidateRequest {
+        id,
+        candidate,
+        envelope,
+        occurred,
+        learned_at,
+        decision,
+        consent,
+        indexing,
+        write_policy,
+    } = request;
     crate::gate::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
 
     let actor = envelope.actor();
-    let actor_raw = store
-        .entities
-        .get(wtxn, actor.entity_ref().as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
+    let actor_raw =
+        crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &actor.entity_ref())?
+            .ok_or(Error::EntityNotFound)?;
     let actor_header =
         EntityMetadataHeader::parse(&actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
     crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
@@ -64,15 +54,13 @@ pub(super) fn apply_claim_candidate(
         ));
     }
     if let crate::claim::ClaimSubject::Entity(subject_id) = subject
-        && store.entities.get(wtxn, subject_id.as_bytes())?.is_none()
+        && crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &subject_id)?.is_none()
     {
         return Err(Error::EntityNotFound);
     }
 
     if let Some(relationship) = candidate.relationship() {
-        let found = store
-            .entities
-            .get(wtxn, relationship.as_bytes())?
+        let found = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &relationship)?
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
         if found != Some(crate::registry::ENTITY_TYPE_RELATIONSHIP) {
             return Err(crate::error::RegistryError::InvalidRelationship {
@@ -85,8 +73,8 @@ pub(super) fn apply_claim_candidate(
     // The default stamps a birth. A candidate re-put over a stored claim keeps
     // the facet that claim was born with.
     let default_facet = claim_candidate_birth_facet(store, wtxn, &id)?;
-    let had_prior = store.entities.get(wtxn, id.as_bytes())?.is_some();
-    let body = candidate.into_claim_body(envelope, default_facet);
+    let had_prior = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?.is_some();
+    let body = candidate.into_claim_body(envelope, default_facet)?;
     let data = crate::claim::encode_claim_body(&body)?;
     if had_prior {
         crate::claim::history_store::close_machine_history_for_successor(
@@ -103,32 +91,36 @@ pub(super) fn apply_claim_candidate(
     }
     let applied_put = apply_put(
         store,
-        config,
         wtxn,
-        id,
-        crate::registry::ENTITY_TYPE_CLAIM,
-        occurred,
-        learned_at,
-        &data,
-        false,
-        false,
-        false,
-        None,
-        None,
-        has_later_covering_text_op,
-        write_policy,
-        Some(envelope),
-        internal_lexical_query_hint,
-        record_gate_decisions,
-        persist_gate_pending_consent,
-        can_resolve_pending_consent,
-        include_source_in_gate_input,
-        claim_gate_prechecked,
-        preflight_gate_decision_id,
-        None,
-        // A claim candidate is never part of a promotion closure: promote
-        // replays the session's typed journal, which stages no candidate op.
-        BaseWriteOrigin::Ordinary,
+        PutRequest {
+            row: PutRow {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred,
+                learned_at,
+                data: &data,
+            },
+            // A candidate opens no admit band and no hub inlet.
+            options: PutOptions {
+                decision,
+                consent,
+                indexing,
+                ..PutOptions::default()
+            },
+            context: PutContext {
+                // A claim candidate is never part of a promotion closure:
+                // promote replays the session's typed journal, which stages
+                // no candidate op.
+                origin: BaseWriteOrigin::Ordinary,
+                write_policy,
+                write_envelope: Some(envelope),
+                hub_admission: None,
+                refinement_admission: None,
+                // Carried-forward transitions bind only to exact claim Puts.
+                transition: None,
+                posture: config.privacy.posture,
+            },
+        },
     )?;
 
     crate::claim::history_store::stage_machine_birth_after_candidate(
@@ -194,9 +186,7 @@ pub(crate) fn claim_candidate_birth_facet(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<EntityId> {
-    let stored_facet = store
-        .entities
-        .get(txn, id.as_bytes())?
+    let stored_facet = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .filter(|raw| {
             EntityMetadataHeader::parse(raw)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
@@ -217,11 +207,16 @@ pub(super) fn reconcile_claim_of_edges(
     claim_id: &EntityId,
     new_subject: Option<EntityId>,
 ) -> Result<Vec<EntityId>> {
-    let prefix = edge_kind_prefix(claim_id, EdgeKind::ClaimOf);
     let mut stale_subjects = Vec::new();
-    for entry in store.edges_out.prefix_iter(wtxn, &prefix)? {
-        let (key, value) = entry?;
-        let subject = parse_strict_edge_record(&key, &value)?.target;
+    for entry in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        wtxn,
+        claim_id,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::ClaimOf),
+        None,
+    )? {
+        let subject = entry?.target;
         if Some(subject) != new_subject {
             stale_subjects.push(subject);
         }

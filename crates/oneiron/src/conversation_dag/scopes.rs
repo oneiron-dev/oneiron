@@ -7,10 +7,17 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::registry::ENTITY_TYPE_SESSION;
+use crate::side_table::{self, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+
+/// A read-only view of `crate::compaction`'s SESSION to TURN membership
+/// reverse index, from the DAG scope walk that consumes it. Owned there; this
+/// binds the SAME declaration to read it (two typed tables, one declaration).
+const SESSION_TURN_MEMBERS: SideTable<(EntityId, EntityId), [u8; 1], side_table::Raw> =
+    SideTable::new(&side_table::SESSION_TURNS);
 
 fn sub_session_records(
     vault: &Vault,
@@ -22,37 +29,36 @@ fn sub_session_records(
     if scope.session.is_some_and(|id| id != session) {
         return Err(invalid("conflicting session selectors"));
     }
-    let spawned = edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
+    let spawned = super::redacted::spawned_by(&vault.store, txn, &session)?
+        .into_iter()
+        .collect::<Vec<_>>();
     if spawned.len() != 1 {
         return Err(invalid("SubSession requires exactly one SpawnedBy edge"));
     }
     require_member(&vault.store, txn, &scope.conversation, &spawned[0])?;
-    let prefix = [b"session_turns:v1:".as_slice(), session.as_bytes()].concat();
     let mut records = Vec::new();
-    for (n, entry) in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, &prefix)?
+    for (n, entry) in SESSION_TURN_MEMBERS
+        .iter_from(&vault.store, txn, session.as_bytes())?
         .enumerate()
     {
         if n >= MAX_ANCESTOR_DEPTH {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
-        let (key, value) = entry?;
-        if key.len() != prefix.len() + 16 || value.as_ref() != [1] {
+        let ((_, id), value) = entry.map_err(|_| Error::CorruptedIndex("session turns index"))?;
+        if value != [1] {
             return Err(Error::CorruptedIndex("session turns index"));
         }
-        let id = EntityId::from_bytes(
-            key.as_ref()[prefix.len()..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("session turns index"))?,
-        )?;
         match live_entity_row_in_txn(&vault.store, txn, &id)? {
-            LiveEntityRow::DeletedShell | LiveEntityRow::Absent => continue,
+            LiveEntityRow::DeletedShell | LiveEntityRow::Absent
+                if super::redacted::read(&vault.store, txn, &id)?.is_none() =>
+            {
+                continue;
+            }
             _ => {}
         }
         require_member(&vault.store, txn, &scope.conversation, &id)?;
         if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &id)?
+            .or(super::redacted::read(&vault.store, txn, &id)?.and_then(|pin| pin.session))
             != Some(session)
         {
             return Err(Error::CorruptedIndex("session turns index"));
@@ -86,7 +92,13 @@ fn sub_session_records(
     if ordered.len() != records.len() {
         return Err(crate::error::RegistryError::CycleDetected.into());
     }
-    Ok(ordered)
+    let mut visible = Vec::new();
+    for id in ordered {
+        if live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+            visible.push(id);
+        }
+    }
+    Ok(visible)
 }
 
 pub(crate) fn resolve_in_txn(
@@ -156,21 +168,28 @@ pub(crate) fn resolve_in_txn(
         let mut queue: VecDeque<_> = records.iter().copied().collect();
         let mut examined = records.len();
         while let Some(parent) = queue.pop_front() {
-            let children = edge_ids(
+            let budget = MAX_ANCESTOR_DEPTH.saturating_sub(examined);
+            let mut children =
+                edge_ids(&vault.store, txn, &parent, EdgeKind::Parent, true, budget)?;
+            examined += children.len();
+            let retained = super::redacted::children(
                 &vault.store,
                 txn,
                 &parent,
-                EdgeKind::Parent,
-                true,
                 MAX_ANCESTOR_DEPTH.saturating_sub(examined),
             )?;
-            examined += children.len();
+            examined += retained.len();
+            children.extend(retained);
             for child in children {
                 if seen.contains(&child) {
                     continue;
                 }
                 match live_entity_row_in_txn(&vault.store, txn, &child)? {
-                    LiveEntityRow::Absent | LiveEntityRow::DeletedShell => continue,
+                    LiveEntityRow::Absent | LiveEntityRow::DeletedShell
+                        if super::redacted::read(&vault.store, txn, &child)?.is_none() =>
+                    {
+                        continue;
+                    }
                     _ => {}
                 }
                 require_member(&vault.store, txn, &scope.conversation, &child)?;
@@ -197,6 +216,13 @@ pub(crate) fn resolve_in_txn(
         }
         records = filtered;
     }
+    let mut visible = Vec::with_capacity(records.len());
+    for id in records {
+        if live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+            visible.push(id);
+        }
+    }
+    let records = visible;
     Ok(ResolvedScope {
         scope: scope.clone(),
         records,

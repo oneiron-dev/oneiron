@@ -1,6 +1,9 @@
 //! The proposal-delta channel a guest write becomes instead of a direct mutation.
 
-use super::{contract::SandboxGuestTier, paths::SandboxVirtualPath};
+use super::{
+    contract::SandboxGuestTier,
+    paths::{SandboxMount, SandboxVirtualPath},
+};
 use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result};
 
 /// Single write intent emitted by a propose-only guest.
@@ -8,6 +11,9 @@ use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result};
 pub enum SandboxProposalWrite {
     FileWrite(SandboxFileWriteProposal),
     FileEdit(SandboxFileEditProposal),
+    FileDelete(SandboxFileDeleteProposal),
+    FileRename(SandboxFileRenameProposal),
+    DirectoryOpaque(SandboxDirectoryOpaqueProposal),
     ClaimCandidate(SandboxClaimProposal),
 }
 
@@ -17,6 +23,9 @@ impl SandboxProposalWrite {
         match self {
             Self::FileWrite(_) => SandboxProposalKind::FileWrite,
             Self::FileEdit(_) => SandboxProposalKind::FileEdit,
+            Self::FileDelete(_) => SandboxProposalKind::FileDelete,
+            Self::FileRename(_) => SandboxProposalKind::FileRename,
+            Self::DirectoryOpaque(_) => SandboxProposalKind::DirectoryOpaque,
             Self::ClaimCandidate(_) => SandboxProposalKind::ClaimCandidate,
         }
     }
@@ -27,6 +36,9 @@ impl SandboxProposalWrite {
 pub enum SandboxProposalKind {
     FileWrite,
     FileEdit,
+    FileDelete,
+    FileRename,
+    DirectoryOpaque,
     ClaimCandidate,
 }
 
@@ -36,6 +48,9 @@ impl SandboxProposalKind {
         match self {
             Self::FileWrite => "file_write",
             Self::FileEdit => "file_edit",
+            Self::FileDelete => "file_delete",
+            Self::FileRename => "file_rename",
+            Self::DirectoryOpaque => "directory_opaque",
             Self::ClaimCandidate => "claim_candidate",
         }
     }
@@ -53,6 +68,28 @@ impl SandboxFileWriteProposal {
     pub const fn new(path: SandboxVirtualPath, bytes: Vec<u8>) -> Self {
         Self { path, bytes }
     }
+}
+
+/// A requested removal of a file. Review resolves document identity from this path;
+/// this does not erase the file's historical revisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxFileDeleteProposal {
+    pub path: SandboxVirtualPath,
+}
+
+/// A requested path move of one document, preserving its identity at review.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxFileRenameProposal {
+    pub from: SandboxVirtualPath,
+    pub to: SandboxVirtualPath,
+}
+
+/// Overlay directory hides lower-layer entries not replaced in the upper layer.
+/// Review must resolve the affected lower files at the pinned base frontier;
+/// this marker alone never grants authority to delete a directory or its history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxDirectoryOpaqueProposal {
+    pub path: SandboxVirtualPath,
 }
 
 /// A whole-file guest output lowered against the exact bytes supplied at boot.
@@ -117,6 +154,33 @@ impl SandboxProposalDelta {
             ));
         }
 
+        // Proposal variants are public input too, not only backend output.
+        // Validate at this door so a caller cannot bypass the backend's checks.
+        match &write {
+            SandboxProposalWrite::FileDelete(delete) if !workspace_file(&delete.path) => {
+                return Err(Error::InvalidClaimBody(
+                    "sandbox deletion must name a workspace file",
+                ));
+            }
+            SandboxProposalWrite::FileRename(rename)
+                if !workspace_file(&rename.from)
+                    || !workspace_file(&rename.to)
+                    || rename.from == rename.to =>
+            {
+                return Err(Error::InvalidClaimBody(
+                    "sandbox rename must name distinct workspace files",
+                ));
+            }
+            SandboxProposalWrite::DirectoryOpaque(opaque)
+                if opaque.path.mount() != SandboxMount::Workspace =>
+            {
+                return Err(Error::InvalidClaimBody(
+                    "opaque directory must be in workspace",
+                ));
+            }
+            _ => {}
+        }
+
         Ok(Self {
             id: EntityId::now(),
             tier,
@@ -149,4 +213,8 @@ impl SandboxProposalDelta {
     pub const fn write(&self) -> &SandboxProposalWrite {
         &self.write
     }
+}
+
+fn workspace_file(path: &SandboxVirtualPath) -> bool {
+    path.mount() == SandboxMount::Workspace && !path.relative_path().is_empty()
 }

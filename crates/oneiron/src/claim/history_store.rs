@@ -40,7 +40,7 @@ pub(crate) fn machine_history_claim(
     target: EntityId,
     birth: &ClaimBody,
     signed_bytes: Vec<u8>,
-) -> ClaimBody {
+) -> Result<ClaimBody> {
     let predicate = match kind {
         MachineHistoryKind::Birth => MACHINE_BIRTH_PREDICATE,
         MachineHistoryKind::Transition => MACHINE_TRANSITION_PREDICATE,
@@ -53,14 +53,14 @@ pub(crate) fn machine_history_claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     record.source = Some(ClaimSource::Observed);
     record.scope = birth.scope.clone();
     record.world = birth.world;
     record.rel = birth.rel;
     record.scope_facet = birth.scope_facet;
     record.scope_project = birth.scope_project;
-    record
+    Ok(record)
 }
 
 /// Control records cannot get a second lifecycle of their own. Semantic
@@ -75,8 +75,7 @@ pub(crate) fn machine_history_shape_matches(
         Value::Binary(bytes) => bytes.clone(),
         _ => return false,
     };
-    let expected = machine_history_claim(kind, target, birth, signed);
-    record == &expected
+    machine_history_claim(kind, target, birth, signed).is_ok_and(|expected| record == &expected)
 }
 
 pub(crate) fn machine_history_scope_bytes(body: &ClaimBody) -> Result<Vec<u8>> {
@@ -595,7 +594,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
         target,
         body,
         birth.encode().map_err(|_| invalid_history())?,
-    );
+    )?;
     let mut nonce = [0; 32];
     let mut challenge = [0; 32];
     rand_core::OsRng.fill_bytes(&mut nonce);
@@ -632,14 +631,14 @@ pub(crate) fn stage_machine_birth_after_candidate(
         target,
         body,
         packet_bytes.clone(),
-    );
+    )?;
     let at = occurred;
     let mut ops = Vec::new();
     // The controls carry the claim's facet as a FacetOf edge. A default stamp
     // may name the owner's substrate facet before the owner PERSON exists; as
     // a birth stamp does (batch::base_apply), create the owner first.
     let owner = crate::vault::embedded_owner_actor_id()?;
-    if body.scope_facet == super::substrate_facet_id(owner)
+    if body.scope_facet == super::substrate_facet_id(owner)?
         && store.entities.get(txn, owner.as_bytes())?.is_none()
     {
         ops.push(crate::batch::BatchOp::Put {

@@ -326,6 +326,7 @@ fn candidate_project_stamp_ignores_legacy_corpus_entry() -> crate::Result<()> {
         )
         .with_scope(Value::Map(scope))
         .into_claim_body(&envelope, actor().entity_ref())
+        .unwrap()
     };
     let corpus_entry = (
         Value::from("corpus_id"),

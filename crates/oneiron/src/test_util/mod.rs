@@ -8,9 +8,13 @@
 //! model, HNSW params); a copy that is value-identical to the shared
 //! helper is a drift hazard and must route through it.
 
+pub(crate) mod row_dump;
 /// Test-only-file classification for the source-scanning fences. The
 /// integration binaries mount the same file through `tests/common`.
 pub(crate) mod source_scan;
+
+mod channel_identity;
+pub(crate) use channel_identity::self_held_identity_in_state;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
@@ -154,11 +158,46 @@ pub(crate) fn put_policy_manifest_bytes(
     })
 }
 
+/// Pin a test model manifest with a passing teacher-probe receipt, the way
+/// the bench publishes one; a bare `set_model_manifest` refuses a new teacher.
+pub(crate) fn pin_model_manifest(
+    vault: &crate::Vault,
+    manifest: &crate::llm::manifest::ModelManifest,
+) -> crate::Result<()> {
+    let policy = vault.teacher_probe_policy(None)?;
+    let approval = crate::llm::manifest::TeacherProbeApproval::for_scored_checkpoint(
+        manifest, &policy, 1_000_000,
+    )?;
+    vault.set_model_manifest_with_teacher_approval(manifest, &approval)
+}
+
+/// Re-appends every live claim-bound gate decision as if created at
+/// `created_at`, so a test can age real receipts past a retention horizon.
+pub(crate) fn backdate_claim_gate_decisions(vault: &Vault, created_at: u64) -> crate::Result<()> {
+    vault.with_write_txn(|txn| {
+        let mut rows = Vec::new();
+        vault.store.for_each_gate_decision_in_txn(txn, |record| {
+            if record.claim_id.is_some() && record.redacted_at.is_none() {
+                rows.push(record);
+            }
+            Ok(())
+        })?;
+        for mut row in rows {
+            vault
+                .store
+                .delete_gate_decision_in_txn(txn, row.decision_id)?;
+            row.created_at = created_at;
+            vault.store.append_gate_decision_in_txn(txn, &row)?;
+        }
+        Ok(())
+    })
+}
+
 /// Copy the shipped teacher-probe policy row into a custom test policy. Tests
 /// that replace the seeded default must preserve this floor before pinning a
 /// teacher, without accidentally replacing their own Gate policy rows.
 pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, rmpv::Value)>) {
-    let default = crate::gate::default_policy_manifest();
+    let default = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(default_entries) =
         rmpv::decode::read_value(&mut default.as_slice()).expect("seeded policy map")
     else {
@@ -197,7 +236,7 @@ pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
             ])
         })
         .collect();
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
     else {

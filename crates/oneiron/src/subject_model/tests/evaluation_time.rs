@@ -43,7 +43,7 @@ fn subject_reads_apply_inclusive_start_exclusive_end_and_unbounded_absence() -> 
             } else {
                 Value::from(person.to_hex())
             };
-            let mut body = subject_fact(predicate, subject, value, writer(), 100);
+            let mut body = subject_fact(predicate, subject, value, writer(), 100)?;
             body.valid_from = from;
             body.valid_to = to;
             put_subject_fixture(&vault, &entity(0x95), &body)?;
@@ -94,13 +94,13 @@ fn earlier_subject_writes_reject_future_overlap_without_changing_any_head() -> R
                     Value::from(person.to_hex())
                 };
                 let future = entity(0xB4);
-                let body = subject_fact(predicate, subject, future_value.clone(), writer(), 300);
+                let body = subject_fact(predicate, subject, future_value.clone(), writer(), 300)?;
                 put_subject_fixture(&vault, &future, &body)?;
                 // Replacement also encounters a current target: rejecting the
                 // future overlap must leave that target active and byte-identical.
                 let current = entity(0xB5);
                 if replacing {
-                    let body = subject_fact(predicate, subject, next_value, writer(), 100);
+                    let body = subject_fact(predicate, subject, next_value, writer(), 100)?;
                     put_subject_fixture(&vault, &current, &body)?;
                 }
                 let before_future = vault.get(&future)?;
@@ -167,7 +167,7 @@ fn subject_supersession_closes_heads_at_the_inclusive_start_and_with_absent_boun
                 Value::from(person.to_hex())
             };
             let id = entity(0x96);
-            let mut body = subject_fact(predicate, subject, value, writer(), 100);
+            let mut body = subject_fact(predicate, subject, value, writer(), 100)?;
             body.valid_from = from;
             body.valid_to = to;
             put_subject_fixture(&vault, &id, &body)?;
@@ -299,7 +299,7 @@ fn only_bounded_superseded_history_is_readable_and_it_cannot_be_overwritten() ->
                 Value::from(person.to_hex())
             };
             let id = entity(0xB3);
-            let mut body = subject_fact(predicate, subject, value.clone(), writer(), 100);
+            let mut body = subject_fact(predicate, subject, value.clone(), writer(), 100)?;
             body.lifecycle = lifecycle;
             body.valid_to = end;
             put_subject_fixture(&vault, &id, &body)?;

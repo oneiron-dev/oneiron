@@ -4,37 +4,63 @@ use super::{attribution_judgments, projector::attribution_judgments_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-const JUDGE_PREFIX: &[u8] = b"skill_attribution:judge_revision:v1:";
-const DISPLACED_PREFIX: &[u8] = b"skill_attribution:displaced_judge:v1:";
-const REVISION_FENCE_PREFIX: &[u8] = b"skill_attribution:displaced_revision:v1:";
-fn revision_key(revision: &str) -> Vec<u8> {
-    let mut key = REVISION_FENCE_PREFIX.to_vec();
-    key.extend_from_slice(revision.as_bytes());
-    key
+/// The judge revision that routed one judgment, stamped once. Key: evidence sequence.
+const JUDGE_REVISION: SideTable<u64, JudgeProvenance, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_JUDGE_REVISION);
+
+/// A routed judgment whose judge was displaced: the replacement revision. Key: evidence sequence.
+const DISPLACED_JUDGE: SideTable<u64, DisplacedMarker, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_DISPLACED_JUDGE);
+
+/// The fence on a displaced judge revision: its replacement revision. Key: the displaced
+/// revision's text.
+const REVISION_FENCE: SideTable<String, String, Raw> =
+    SideTable::new(&side_table::SKILL_ATTRIBUTION_DISPLACED_REVISION);
+
+/// [`JUDGE_REVISION`]'s row: the revision as UTF-8. A row that is not UTF-8 is corrupt
+/// provenance, as it always read.
+struct JudgeProvenance(String);
+
+impl RawValue for JudgeProvenance {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        String::from_utf8(bytes.to_vec())
+            .map(Self)
+            .map_err(|_| Error::CorruptedIndex("displaced judge provenance").into())
+    }
 }
+
+/// [`DISPLACED_JUDGE`]'s row: the replacement revision as UTF-8.
+struct DisplacedMarker(String);
+
+impl RawValue for DisplacedMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        String::from_utf8(bytes.to_vec())
+            .map(Self)
+            .map_err(|_| Error::CorruptedIndex("displaced judge marker").into())
+    }
+}
+
 pub(crate) fn ensure_current_attribution_judge_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     revision: &str,
 ) -> Result<()> {
-    if vault
-        .store
-        .vault_meta
-        .get(txn, &revision_key(revision))?
-        .is_some()
-    {
+    if REVISION_FENCE.contains(&vault.store, txn, &revision.to_owned())? {
         return Err(Error::InvalidClaimBody(
             "attribution judge revision was displaced",
         ));
     }
     Ok(())
-}
-
-fn key(prefix: &[u8], sequence: u64) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(&sequence.to_be_bytes());
-    key
 }
 
 pub(super) fn stamp_judge_revision(
@@ -48,17 +74,20 @@ pub(super) fn stamp_judge_revision(
             "invalid attribution judge revision",
         ));
     }
-    let key = key(JUDGE_PREFIX, sequence);
-    if let Some(held) = vault.store.vault_meta.get(txn, &key)? {
-        if held.as_ref() != revision.as_bytes() {
+    if let Some(held) = JUDGE_REVISION.get(&vault.store, txn, &sequence)? {
+        if held.0 != revision {
             return Err(Error::InvalidClaimBody(
                 "attribution judgment cannot be rescored by a new judge",
             ));
         }
         return Ok(());
     }
-    vault.store.vault_meta.put(txn, &key, revision.as_bytes())?;
-    Ok(())
+    JUDGE_REVISION.put(
+        &vault.store,
+        txn,
+        &sequence,
+        &JudgeProvenance(revision.to_owned()),
+    )
 }
 
 pub(crate) fn judgment_displaced(vault: &Vault, sequence: u64) -> Result<bool> {
@@ -71,11 +100,7 @@ pub(crate) fn judgment_displaced_in_txn(
     txn: &heed::RoTxn<'_>,
     sequence: u64,
 ) -> Result<bool> {
-    Ok(vault
-        .store
-        .vault_meta
-        .get(txn, &key(DISPLACED_PREFIX, sequence))?
-        .is_some())
+    DISPLACED_JUDGE.contains(&vault.store, txn, &sequence)
 }
 
 /// One old judge's retained receipt. The original judgment and attempt receipt
@@ -94,22 +119,14 @@ pub fn displaced_judge_receipts(vault: &Vault) -> Result<Vec<DisplacedJudgeRecei
     let txn = vault.store.env.read_txn()?;
     let mut rows = Vec::new();
     for judgment in judgments {
-        let Some(replacement) = vault
-            .store
-            .vault_meta
-            .get(&txn, &key(DISPLACED_PREFIX, judgment.sequence))?
+        let Some(DisplacedMarker(replacement_revision)) =
+            DISPLACED_JUDGE.get(&vault.store, &txn, &judgment.sequence)?
         else {
             continue;
         };
-        let old = vault
-            .store
-            .vault_meta
-            .get(&txn, &key(JUDGE_PREFIX, judgment.sequence))?
+        let JudgeProvenance(displaced_revision) = JUDGE_REVISION
+            .get(&vault.store, &txn, &judgment.sequence)?
             .ok_or(Error::CorruptedIndex("displaced judge provenance"))?;
-        let displaced_revision = String::from_utf8(old.to_vec())
-            .map_err(|_| Error::CorruptedIndex("displaced judge provenance"))?;
-        let replacement_revision = String::from_utf8(replacement.to_vec())
-            .map_err(|_| Error::CorruptedIndex("displaced judge marker"))?;
         for receipt_ref in &judgment.evidence_receipts {
             rows.push(DisplacedJudgeReceipt {
                 judgment_sequence: judgment.sequence,
@@ -153,37 +170,32 @@ pub fn supersede_displaced_judge_receipts(
         // verdict committed before this lock is present here; one committed
         // afterward is refused by the revision fence in its own writer.
         let judgments = attribution_judgments_in_txn(vault, txn)?;
-        let fence = revision_key(displaced);
-        if let Some(held) = vault.store.vault_meta.get(txn, &fence)? {
-            if held.as_ref() != replacement.as_bytes() {
+        let fence = displaced.to_owned();
+        if let Some(held) = REVISION_FENCE.get(&vault.store, txn, &fence)? {
+            if held != replacement {
                 return Err(Error::InvalidClaimBody(
                     "attribution judge already displaced by another revision",
                 ));
             }
         } else {
-            vault
-                .store
-                .vault_meta
-                .put(txn, &fence, replacement.as_bytes())?;
+            REVISION_FENCE.put(&vault.store, txn, &fence, &replacement.to_owned())?;
         }
         for judgment in &judgments {
-            let origin = vault
-                .store
-                .vault_meta
-                .get(txn, &key(JUDGE_PREFIX, judgment.sequence))?;
-            if origin.as_deref() != Some(displaced.as_bytes()) {
+            let origin = JUDGE_REVISION.get(&vault.store, txn, &judgment.sequence)?;
+            if origin.as_ref().map(|origin| origin.0.as_str()) != Some(displaced) {
                 continue;
             }
-            let mark = key(DISPLACED_PREFIX, judgment.sequence);
-            if let Some(held) = vault.store.vault_meta.get(txn, &mark)? {
-                if held.as_ref() != replacement.as_bytes() {
+            if let Some(held) = DISPLACED_JUDGE.get(&vault.store, txn, &judgment.sequence)? {
+                if held.0 != replacement {
                     return Err(Error::InvalidClaimBody("judge verdict already displaced"));
                 }
             } else {
-                vault
-                    .store
-                    .vault_meta
-                    .put(txn, &mark, replacement.as_bytes())?;
+                DISPLACED_JUDGE.put(
+                    &vault.store,
+                    txn,
+                    &judgment.sequence,
+                    &DisplacedMarker(replacement.to_owned()),
+                )?;
             }
             // Also re-project on a repeated call: a crash after committing the
             // marker but before projecting must not strand a stale active claim.

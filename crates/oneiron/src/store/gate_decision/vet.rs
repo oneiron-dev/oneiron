@@ -226,12 +226,32 @@ pub(in crate::store) fn valid_gate_receipt_reason(reason: &str) -> bool {
             });
     }
 
+    // Policy-row IDs are bounded, lowercase manifest tokens. Keep them exact
+    // on the durable receipt, not a lossy hash; only these three shapes enter
+    // the new family. A malformed identifier cannot poison a ledger read.
+    if let Some(row) = reason
+        .strip_prefix("policy_row_")
+        .or_else(|| reason.strip_prefix("policy_precedence_row_"))
+    {
+        return !row.is_empty()
+            && reason.len() <= GATE_RECEIPT_REASON_MAX_LEN
+            && row.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'_' | b'.' | b'-')
+            });
+    }
+    if reason == "policy_precedence_shipped_default" {
+        return true;
+    }
+
     // Accepted receipt-reason prefix FAMILIES (everything else is rejected):
     // counterparty_* (OF-347 contact/consent), connector_key_* and
     // effector_budget_* (OF-277 GOV-01 status wall / budget exhaustion),
     // comm_send_override_* (ONE-1752 comm.send_override decision source;
     // blueprint SPINE-COMM/ONE-1752 Leg 4 item 8),
-    // charter_* (GOV-10 drift / never-list), checker_* (ONE-1296 host
+    // charter_* (GOV-10 drift / never-list), connector_manifest_drift
+    // (OF-189), checker_* (ONE-1296 host
     // auto-check hold). The charset and length rules below apply to every
     // family.
     //
@@ -246,6 +266,10 @@ pub(in crate::store) fn valid_gate_receipt_reason(reason: &str) -> bool {
             || reason.starts_with("connector_key_")
             || reason.starts_with("effector_budget_")
             || reason.starts_with("comm_send_override_")
+            || matches!(
+                reason,
+                "connector_manifest_drift" | "connector_manifest_stale"
+            )
             || reason.starts_with("charter_")
             || reason.starts_with(GATE_RECEIPT_REASON_CHECKER_PREFIX))
         && reason

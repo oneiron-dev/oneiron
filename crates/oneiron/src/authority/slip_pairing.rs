@@ -1,12 +1,19 @@
 //! Single-use pairing links bind a throwaway key and mint one log-backed slip.
-use super::slip::canonical;
 use super::slip_vault::{random_slip_id, require_host};
 use super::*;
 use crate::Vault;
 use crate::error::Result;
 use crate::federation::{OrgAdminPolicy, OrgAdminPower, Scope, ScopeAxis};
+use crate::side_table::{self, LegacyJson, SideTable};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
+
+/// One outstanding single-use pairing/enrollment link. Key: hex64 (keyed hash of the code).
+const PAIRING_PENDING: SideTable<String, PairingPending, LegacyJson> =
+    SideTable::new(&side_table::AUTHORITY_PAIRING_PENDING);
+/// Immutable one-time organization-administration power grant. Key: hex32 (org_ref).
+const ORG_ADMIN_POLICY: SideTable<String, OrgAdminPolicy, LegacyJson> =
+    SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
 /// Pairing descriptor is public liveness, not a credential or authority claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,7 +87,7 @@ fn normalize_code(code: &str) -> Result<String> {
 fn pairing_row_key(issuer: &HostSlipIssuer, code: &str) -> Result<String> {
     let key = blake3::derive_key(CODE_HASH_CONTEXT, issuer.secret());
     let hash = blake3::keyed_hash(&key, normalize_code(code)?.as_bytes());
-    Ok(format!("authority:pairing:{}", hash.to_hex()))
+    Ok(hash.to_hex().to_string())
 }
 /// Client signs this transcript with its newly generated connection key.
 /// Code possession without that private key cannot authenticate the result.
@@ -156,20 +163,22 @@ impl Vault {
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
     ) -> Result<PairingLink> {
-        if slip_lifetime_secs == 0 || slip_lifetime_secs > 365 * 24 * 60 * 60 {
+        if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
         let mut txn = self.store.env.write_txn()?;
         require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
         self.validate_pairing_principal_in_txn(&txn, &principal, &scope)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let (code, row_key) = loop {
             let code = draw_code();
             let row_key = pairing_row_key(issuer, &code)?;
-            let free = match self.store.sync_state.get(&txn, &row_key)? {
-                Some(raw) => serde_json::from_slice::<PairingPending>(&raw)
-                    .is_ok_and(|pending| now >= pending.expires_at),
-                None => true,
+            let free = match PAIRING_PENDING.get(&self.store, &txn, &row_key) {
+                Ok(Some(pending)) => now >= pending.expires_at,
+                Ok(None) => true,
+                Err(_) => false,
             };
             if free {
                 break (code, row_key);
@@ -183,9 +192,7 @@ impl Vault {
             host_key: issuer.binding_key(),
             principal,
         };
-        self.store
-            .sync_state
-            .put(&mut txn, &row_key, &canonical(&pending)?)?;
+        PAIRING_PENDING.put(&self.store, &mut txn, &row_key, &pending)?;
         txn.commit()?;
         Ok(PairingLink { code, expires_at })
     }
@@ -210,13 +217,10 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
         let row_key = pairing_row_key(issuer, code)?;
-        let raw = self
-            .store
-            .sync_state
-            .get(&txn, &row_key)?
+        let pending = PAIRING_PENDING
+            .get(&self.store, &txn, &row_key)
+            .map_err(|_| invalid_authority())?
             .ok_or_else(invalid_authority)?;
-        let pending: PairingPending =
-            serde_json::from_slice(&raw).map_err(|_| invalid_authority())?;
         if now >= pending.expires_at || pending.host_key != issuer.binding_key() {
             return Err(invalid_authority());
         }
@@ -229,6 +233,10 @@ impl Vault {
             return Err(invalid_authority());
         }
         self.validate_pairing_principal_in_txn(&txn, &pending.principal, &pending.scope)?;
+        // Recheck in the actual mint transaction: policy may have narrowed
+        // after link issuance while the one-hour link was still outstanding.
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let claims = SlipClaims {
@@ -239,8 +247,8 @@ impl Vault {
             binding_key,
             scope: pending.scope,
             issued_at: now,
-            expires_at: now.saturating_add(pending.slip_lifetime_secs),
-            ttl_secs: pending.slip_lifetime_secs,
+            expires_at: now.saturating_add(slip_lifetime_secs),
+            ttl_secs: slip_lifetime_secs,
             single_use: false,
             records: Default::default(),
             channels: Default::default(),
@@ -248,7 +256,7 @@ impl Vault {
             org_ref: pending.principal.org_ref,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
-        self.store.sync_state.delete(&mut txn, &row_key)?;
+        PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
         Ok(slip)
     }
@@ -289,7 +297,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let admin = holder.ok_or_else(invalid_authority)?;
-        if self.store.entities.get(txn, admin.as_bytes())?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &admin)?.is_none()
             || self.archive_tombstone_in_txn(txn, &admin)?.is_some()
         {
             return Err(invalid_authority());
@@ -301,14 +309,10 @@ impl Vault {
             return Err(invalid_authority());
         }
         // Read the fixed setup in the same snapshot as the enrollment/mint.
-        let key = format!("org.admin.v1.{}", org.to_hex());
-        let raw = self
-            .store
-            .vault_meta
-            .get(txn, key.as_bytes())?
+        let policy = ORG_ADMIN_POLICY
+            .get(&self.store, txn, &org.to_hex())
+            .map_err(|_| invalid_authority())?
             .ok_or_else(invalid_authority)?;
-        let policy: OrgAdminPolicy =
-            serde_json::from_slice(&raw).map_err(|_| invalid_authority())?;
         if policy.org_ref() != org {
             return Err(invalid_authority());
         }

@@ -420,6 +420,15 @@ fn check_claim_policy_for_write_with_record_inner(
                 // above into the ledger's token vocabulary: an owner reviewing
                 // a held write reads WHY the host held it, not just that
                 // something did.
+                .chain(
+                    decision
+                        .policy_row_ref()
+                        .map(|row| format!("policy_row_{row}")),
+                )
+                .chain(decision.precedence_row_ref().map(|row| match row {
+                    Some(row) => format!("policy_precedence_row_{row}"),
+                    None => "policy_precedence_shipped_default".to_owned(),
+                }))
                 .chain(checker_receipt_reasons)
                 .collect(),
             system_notices: Vec::new(),
@@ -446,6 +455,17 @@ fn check_claim_policy_for_write_with_record_inner(
             // A structural streak follows durable append order, including
             // ordinary receipts created within the same clock millisecond.
             store.append_fresh_gate_decision_in_txn(wtxn, &mut decision_record)?;
+            store.stamp_claim_gate_retention_context_in_txn(
+                wtxn,
+                decision_record.decision_id,
+                id,
+                crate::gate::GateRetentionContext {
+                    world: Some(body.world.unwrap_or_else(crate::claim::base_world_id)),
+                    project: Some(body.scope_project),
+                    sub_project: None,
+                    thread: None,
+                },
+            )?;
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),

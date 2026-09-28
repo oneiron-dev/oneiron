@@ -270,6 +270,9 @@ pub struct PersonaSnapshotCompile {
     pub stale_after_secs: u64,
     /// The persona compile stamp.
     pub stamp: PersonaSnapshotCompileStamp,
+    /// The audience's folded read of every candidate claim, when the card is
+    /// FOR someone. Claims the audience may not read are counted here.
+    pub read_receipt: Option<crate::claim::ScopedReadReceipt>,
 }
 
 /// Strike decisions applied at export over a compile's row list.

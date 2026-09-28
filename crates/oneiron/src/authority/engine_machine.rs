@@ -100,7 +100,7 @@ impl Vault {
     }
 
     fn ensure_commitment_projection_machine(&self, now: u64) -> Result<EntityId> {
-        let machine = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+        let machine = crate::commitment_schedule::commitment_projection_actor()?.entity_ref();
         match self.get_entity_type(&machine)? {
             Some(crate::registry::ENTITY_TYPE_MACHINE) => {}
             Some(_) => return Err(invalid_authority()),

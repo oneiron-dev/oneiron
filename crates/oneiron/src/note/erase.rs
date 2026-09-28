@@ -1,59 +1,40 @@
 //! Active-store erasure of NOTE snapshots and workflow text, including headerless residue.
 
-use super::documents::{head_key, invalid};
-use super::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
+use super::documents::{NOTE_HEAD, NOTE_PROPOSAL_DOC};
+use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_RECEIPT};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result};
 
-fn decoded<T: serde::de::DeserializeOwned>(raw: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| invalid("stored NOTE workflow"))
-}
+/// Marks a window whose peer-authored NOTE inbox residue was staged.
+const SYNC_NOTE_INBOX: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_NOTE_INBOX);
 
 pub(crate) fn scope_exists(vault: &Vault, txn: &heed::RoTxn<'_>, note: &EntityId) -> Result<bool> {
-    if vault
-        .store
-        .sync_state
-        .prefix_iter(txn, "note_inbox:v1:")?
-        .next()
-        .transpose()?
-        .is_some()
+    if !SYNC_NOTE_INBOX
+        .scan_keys(&vault.store, txn, &[])?
+        .is_empty()
     {
         return Ok(true);
     }
 
-    if vault.store.vault_meta.get(txn, &head_key(*note))?.is_some()
-        || vault
-            .store
-            .sync_state
-            .prefix_iter(txn, &format!("note_proposal_doc:v1:{}:", note.to_hex()))?
-            .next()
-            .transpose()?
-            .is_some()
+    if NOTE_HEAD.contains(&vault.store, txn, note)?
+        || !NOTE_PROPOSAL_DOC
+            .scan_keys(&vault.store, txn, format!("{}:", note.to_hex()).as_bytes())?
+            .is_empty()
     {
         return Ok(true);
     }
-    for row in vault.store.vault_meta.prefix_iter(txn, b"note_fork:v1:")? {
-        let (_, raw) = row?;
-        if decoded::<NoteFork>(&raw)?.note == *note {
+    for (_, fork) in NOTE_FORK.scan(&vault.store, txn)? {
+        if fork.note == *note {
             return Ok(true);
         }
     }
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_receipt:v1:")?
-    {
-        let (_, raw) = row?;
-        if decoded::<NoteLandingReceipt>(&raw)?.note == *note {
+    for (_, receipt) in NOTE_RECEIPT.scan(&vault.store, txn)? {
+        if receipt.note == *note {
             return Ok(true);
         }
     }
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_proposal:v1:")?
-    {
-        let (_, raw) = row?;
-        let bundle: NoteReviewBundle = decoded(&raw)?;
+    for (_, bundle) in NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
         if bundle.waiting.iter().any(|fork| fork.note == *note)
             || bundle.landed.iter().any(|receipt| receipt.note == *note)
         {
@@ -65,52 +46,31 @@ pub(crate) fn scope_exists(vault: &Vault, txn: &heed::RoTxn<'_>, note: &EntityId
 
 /// Runs for every id, not just rows whose NOTE type header survived.
 pub(crate) fn purge(vault: &Vault, txn: &mut heed::RwTxn<'_>, note: &EntityId) -> Result<bool> {
-    let mut removed = vault.store.vault_meta.delete(txn, &head_key(*note))?;
+    let mut removed = NOTE_HEAD.delete(&vault.store, txn, note)?;
     // Workflow markers can span several notes. Conservatively discard all on hard erasure.
-    let inbox = vault
-        .store
-        .sync_state
-        .prefix_iter(txn, "note_inbox:v1:")?
-        .map(|row| row.map(|(key, _)| key.to_string()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let inbox = SYNC_NOTE_INBOX.scan_keys(&vault.store, txn, &[])?;
     for key in inbox {
-        removed |= vault.store.sync_state.delete(txn, &key)?;
+        removed |= SYNC_NOTE_INBOX.delete(&vault.store, txn, &key)?;
     }
 
-    let keys = vault
-        .store
-        .sync_state
-        .prefix_iter(txn, &format!("note_proposal_doc:v1:{}:", note.to_hex()))?
-        .map(|row| row.map(|(key, _)| key.to_string()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let keys =
+        NOTE_PROPOSAL_DOC.scan_keys(&vault.store, txn, format!("{}:", note.to_hex()).as_bytes())?;
     for key in keys {
-        removed |= vault.store.sync_state.delete(txn, &key)?;
+        removed |= NOTE_PROPOSAL_DOC.delete(&vault.store, txn, &key)?;
     }
     let mut metadata = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(txn, b"note_fork:v1:")? {
-        let (key, raw) = row?;
-        if decoded::<NoteFork>(&raw)?.note == *note {
-            metadata.push(key.to_vec());
+    for (key, fork) in NOTE_FORK.scan(&vault.store, txn)? {
+        if fork.note == *note {
+            metadata.push(Metadata::Fork(key));
         }
     }
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_receipt:v1:")?
-    {
-        let (key, raw) = row?;
-        if decoded::<NoteLandingReceipt>(&raw)?.note == *note {
-            metadata.push(key.to_vec());
+    for (key, receipt) in NOTE_RECEIPT.scan(&vault.store, txn)? {
+        if receipt.note == *note {
+            metadata.push(Metadata::Receipt(key));
         }
     }
     let mut replacements = Vec::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_proposal:v1:")?
-    {
-        let (key, raw) = row?;
-        let mut bundle: NoteReviewBundle = decoded(&raw)?;
+    for (key, mut bundle) in NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
         let before = bundle.waiting.len() + bundle.landed.len();
         bundle.waiting.retain(|fork| fork.note != *note);
         bundle.landed.retain(|receipt| receipt.note != *note);
@@ -120,22 +80,29 @@ pub(crate) fn purge(vault: &Vault, txn: &mut heed::RwTxn<'_>, note: &EntityId) -
         }
         removed = true;
         if after == 0 {
-            metadata.push(key.to_vec());
+            metadata.push(Metadata::Bundle(key));
         } else {
             // The shared free-text explainer can quote any member. Keep only
             // unaffected membership, never its unpartitionable original text.
             bundle.explainer = "redacted".to_owned();
-            replacements.push((
-                key.to_vec(),
-                rmp_serde::to_vec_named(&bundle).map_err(|_| invalid("NOTE proposal encode"))?,
-            ));
+            replacements.push((key, bundle));
         }
     }
-    for key in metadata {
-        removed |= vault.store.vault_meta.delete(txn, &key)?;
+    for entry in metadata {
+        removed |= match entry {
+            Metadata::Fork(key) => NOTE_FORK.delete(&vault.store, txn, &key)?,
+            Metadata::Receipt(key) => NOTE_RECEIPT.delete(&vault.store, txn, &key)?,
+            Metadata::Bundle(key) => NOTE_PROPOSAL_BUNDLE.delete(&vault.store, txn, &key)?,
+        };
     }
-    for (key, bytes) in replacements {
-        vault.store.vault_meta.put(txn, &key, &bytes)?;
+    for (key, bundle) in replacements {
+        NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &key, &bundle)?;
     }
     Ok(removed)
+}
+
+enum Metadata {
+    Fork(EntityId),
+    Receipt(EntityId),
+    Bundle(EntityId),
 }

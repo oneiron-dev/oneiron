@@ -299,7 +299,7 @@ pub(crate) fn stage_machine_claim_transition(
                 target,
                 &original,
                 event_bytes,
-            ),
+            )?,
         ),
         (
             handoff_id,
@@ -308,7 +308,7 @@ pub(crate) fn stage_machine_claim_transition(
                 target,
                 &original,
                 handoff_bytes.clone(),
-            ),
+            )?,
         ),
     ] {
         ops.push(BatchOp::Put {

@@ -7,23 +7,238 @@ use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::ReceiptRecord;
+use crate::side_table::{self, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::skill::SkillRecord;
 
 use super::codec::{
-    ENTITY_ID_LEN, KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid,
-    map_entry, map_u64,
+    KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid, map_entry, map_u64,
 };
 use super::posterior::{SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior, count_weight};
 use super::read::read_skill;
 
-/// `skill_reliability:outcome:v1:` + skill id (16 B) + receipt id (UTF-8).
+/// Durable per-(skill, receipt) attributed-outcome ledger. Key: id16(skill) + string(receipt).
 ///
 /// The receipt id in the KEY is what makes the projector idempotent: an outcome
 /// already recorded re-writes its own row instead of incrementing a counter, so
 /// re-running a pass over the same judgments cannot double-count.
-const OUTCOME_PREFIX: &[u8] = b"skill_reliability:outcome:v1:";
-const PAIRED_OUTCOME_PREFIX: &[u8] = b"skill_reliability:outcome:v2:";
-const DISPLACED_PREFIX: &[u8] = b"skill_reliability:displaced_judge:v1:";
+const OUTCOME: SideTable<(EntityId, String), OutcomeRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_OUTCOME);
+
+/// [`OUTCOME`]'s row: the byte layout [`record_outcome_in_txn`] has always spelled. `at` is
+/// carried for round-trip fidelity only — no reader decodes it back out today.
+pub(super) struct OutcomeRow {
+    pub(super) win: bool,
+    at: u64,
+}
+
+impl RawValue for OutcomeRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        let row = Value::Map(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_WIN), Value::Boolean(self.win)),
+            (Value::from(KEY_AT), Value::from(self.at)),
+        ]);
+        Ok(encode_value(&row)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let value = decode_value(bytes)?;
+        if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
+            return Err(invalid("unsupported skill reliability outcome schema").into());
+        }
+        let win = map_entry(&value, KEY_WIN)
+            .and_then(Value::as_bool)
+            .ok_or(invalid("skill reliability outcome is missing win"))?;
+        Ok(Self {
+            win,
+            at: map_u64(&value, KEY_AT).unwrap_or(0),
+        })
+    }
+}
+
+/// The same outcome row for a named executor's arm: [`OUTCOME`]'s value, keyed by the arm and
+/// the receipt id, so one model's evidence never folds into another's or the legacy arm.
+const PAIRED_OUTCOME: SideTable<PairedOutcomeKey, OutcomeRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_PAIRED_OUTCOME);
+
+/// A named executor's arm of one skill: the skill id, then the model id framed by its big-endian
+/// `u16` byte length so model ids with common prefixes stay disjoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ExecutorArm {
+    pub(super) skill: EntityId,
+    pub(super) executor: String,
+}
+
+impl ExecutorArm {
+    pub(super) fn new(skill: &EntityId, executor: &str) -> Self {
+        Self {
+            skill: *skill,
+            executor: executor.to_owned(),
+        }
+    }
+
+    /// The arm's key bytes, the prefix every row of this arm starts with.
+    fn key_prefix(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode_into(&mut out);
+        out
+    }
+
+    /// Splits one arm off the front of `bytes`, returning it and the bytes after it.
+    fn decode_front(bytes: &[u8]) -> Option<(Self, &[u8])> {
+        let (skill, rest) = bytes.split_at_checked(<EntityId as FixedSideKey>::WIDTH)?;
+        let (length, rest) = rest.split_at_checked(2)?;
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        let (executor, rest) = rest.split_at_checked(length)?;
+        let arm = Self {
+            skill: EntityId::decode_key(skill)?,
+            executor: std::str::from_utf8(executor).ok()?.to_owned(),
+        };
+        Some((arm, rest))
+    }
+}
+
+impl SideKey for ExecutorArm {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.skill.encode_into(out);
+        let length = u16::try_from(self.executor.len()).expect("receipt model capped at 256 bytes");
+        out.extend_from_slice(&length.to_be_bytes());
+        out.extend_from_slice(self.executor.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (arm, rest) = Self::decode_front(bytes)?;
+        rest.is_empty().then_some(arm)
+    }
+}
+
+/// [`PAIRED_OUTCOME`]'s key: the executor arm, then the receipt id (the rest of the key).
+pub(super) struct PairedOutcomeKey {
+    arm: ExecutorArm,
+    receipt: String,
+}
+
+impl SideKey for PairedOutcomeKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.arm.encode_into(out);
+        out.extend_from_slice(self.receipt.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (arm, receipt) = ExecutorArm::decode_front(bytes)?;
+        Some(Self {
+            arm,
+            receipt: std::str::from_utf8(receipt).ok()?.to_owned(),
+        })
+    }
+}
+
+/// One outcome row, on the legacy unknown-executor arm or a named executor's arm.
+pub(super) enum OutcomeRef {
+    Unknown((EntityId, String)),
+    Paired(PairedOutcomeKey),
+}
+
+impl OutcomeRef {
+    pub(super) fn new(skill: &EntityId, executor: Option<&str>, receipt: &str) -> Self {
+        match executor {
+            None => Self::Unknown((*skill, receipt.to_owned())),
+            Some(executor) => Self::Paired(PairedOutcomeKey {
+                arm: ExecutorArm::new(skill, executor),
+                receipt: receipt.to_owned(),
+            }),
+        }
+    }
+
+    fn into_receipt(self) -> String {
+        match self {
+            Self::Unknown((_, receipt)) | Self::Paired(PairedOutcomeKey { receipt, .. }) => receipt,
+        }
+    }
+
+    fn get(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<OutcomeRow>> {
+        match self {
+            Self::Unknown(key) => OUTCOME.get(&vault.store, txn, key),
+            Self::Paired(key) => PAIRED_OUTCOME.get(&vault.store, txn, key),
+        }
+    }
+
+    pub(super) fn contains(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        match self {
+            Self::Unknown(key) => OUTCOME.contains(&vault.store, txn, key),
+            Self::Paired(key) => PAIRED_OUTCOME.contains(&vault.store, txn, key),
+        }
+    }
+
+    fn put(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &OutcomeRow) -> Result<()> {
+        match self {
+            Self::Unknown(key) => OUTCOME.put(&vault.store, txn, key, row),
+            Self::Paired(key) => PAIRED_OUTCOME.put(&vault.store, txn, key, row),
+        }
+    }
+}
+
+/// A displacement mark names its outcome row by the row's full stored key, table prefix included.
+impl SideKey for OutcomeRef {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Unknown(key) => out.extend_from_slice(&OUTCOME.key_bytes(key)),
+            Self::Paired(key) => out.extend_from_slice(&PAIRED_OUTCOME.key_bytes(key)),
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        if let Some(key) = bytes.strip_prefix(OUTCOME.decl().prefix) {
+            return <(EntityId, String)>::decode_key(key).map(Self::Unknown);
+        }
+        let key = bytes.strip_prefix(PAIRED_OUTCOME.decl().prefix)?;
+        PairedOutcomeKey::decode_key(key).map(Self::Paired)
+    }
+}
+
+/// Outcome rows whose judge was displaced: the row stays, its weight leaves every fold.
+const DISPLACED: SideTable<OutcomeRef, DisplacedMark, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_DISPLACED_JUDGE);
+
+/// [`DISPLACED`]'s row: the displaced and replacement judge revisions, as a MessagePack map.
+/// Only its presence is read today.
+struct DisplacedMark {
+    displaced: String,
+    replacement: String,
+}
+
+impl RawValue for DisplacedMark {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        let mark = Value::Map(vec![
+            (
+                Value::from("displaced"),
+                Value::from(self.displaced.as_str()),
+            ),
+            (
+                Value::from("replacement"),
+                Value::from(self.replacement.as_str()),
+            ),
+        ]);
+        Ok(encode_value(&mark)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let value = decode_value(bytes)?;
+        let field = |key: &str| {
+            map_entry(&value, key)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or(invalid("skill reliability displacement mark is malformed"))
+        };
+        Ok(Self {
+            displaced: field("displaced")?,
+            replacement: field("replacement")?,
+        })
+    }
+}
 
 pub(crate) fn mark_displaced_outcome_in_txn(
     vault: &Vault,
@@ -34,25 +249,18 @@ pub(crate) fn mark_displaced_outcome_in_txn(
     old: &str,
     replacement: &str,
 ) -> Result<bool> {
-    let outcome = outcome_key(skill, executor, receipt);
-    let mut key = DISPLACED_PREFIX.to_vec();
-    key.extend_from_slice(&outcome);
-    let mark = Value::Map(vec![
-        (Value::from("displaced"), Value::from(old)),
-        (Value::from("replacement"), Value::from(replacement)),
-    ]);
-    let existed = vault.store.vault_meta.get(txn, &outcome)?.is_some();
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key, &encode_value(&mark)?)?;
+    let outcome = OutcomeRef::new(skill, executor, receipt);
+    let mark = DisplacedMark {
+        displaced: old.to_owned(),
+        replacement: replacement.to_owned(),
+    };
+    let existed = outcome.contains(vault, txn)?;
+    DISPLACED.put(&vault.store, txn, &outcome, &mark)?;
     Ok(existed)
 }
 
-fn is_displaced(vault: &Vault, txn: &heed::RoTxn<'_>, outcome: &[u8]) -> Result<bool> {
-    let mut key = DISPLACED_PREFIX.to_vec();
-    key.extend_from_slice(outcome);
-    Ok(vault.store.vault_meta.get(txn, &key)?.is_some())
+fn is_displaced(vault: &Vault, txn: &heed::RoTxn<'_>, outcome: &OutcomeRef) -> Result<bool> {
+    DISPLACED.contains(&vault.store, txn, outcome)
 }
 
 /// The immutable model identity on the terminal receipt. Unstamped receipts
@@ -67,7 +275,7 @@ pub(super) fn receipt_executor(receipt: &ReceiptRecord) -> Option<&str> {
 
 /// Terminal attempt state that credits a contributing win
 /// (`AttemptState::Completed`'s wire string, as stamped on the pack receipt).
-const ATTEMPT_OUTCOME_COMPLETED: &str = "completed";
+pub(super) const ATTEMPT_OUTCOME_COMPLETED: &str = "completed";
 
 /// Upper bound on the receipts one reliability claim cites.
 ///
@@ -212,49 +420,14 @@ pub(super) fn record_outcome_in_txn(
     if let Some(model) = executor {
         super::read::validate_executor(model)?;
     }
-    let key = outcome_key(skill, executor, receipt_ref);
+    let key = OutcomeRef::new(skill, executor, receipt_ref);
     if win
-        && let Some(existing) = vault.store.vault_meta.get(wtxn, &key)?
-        && !decode_outcome_win(&existing)?
+        && let Some(existing) = key.get(vault, wtxn)?
+        && !existing.win
     {
         return Ok(());
     }
-    let row = Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
-        ),
-        (Value::from(KEY_WIN), Value::Boolean(win)),
-        (Value::from(KEY_AT), Value::from(at)),
-    ]);
-    let encoded = encode_value(&row)?;
-    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
-    Ok(())
-}
-
-fn outcome_prefix(skill: &EntityId, executor: Option<&str>) -> Vec<u8> {
-    let prefix = if executor.is_some() {
-        PAIRED_OUTCOME_PREFIX
-    } else {
-        OUTCOME_PREFIX
-    };
-    let mut key =
-        Vec::with_capacity(prefix.len() + ENTITY_ID_LEN + executor.map_or(0, str::len) + 2);
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(skill.as_bytes());
-    if let Some(executor) = executor {
-        // Length framing keeps model ids with common prefixes disjoint.
-        let length = u16::try_from(executor.len()).expect("receipt model capped at 256 bytes");
-        key.extend_from_slice(&length.to_be_bytes());
-        key.extend_from_slice(executor.as_bytes());
-    }
-    key
-}
-
-pub(super) fn outcome_key(skill: &EntityId, executor: Option<&str>, receipt_ref: &str) -> Vec<u8> {
-    let mut key = outcome_prefix(skill, executor);
-    key.extend_from_slice(receipt_ref.as_bytes());
-    key
+    key.put(vault, wtxn, &OutcomeRow { win, at })
 }
 
 /// Attributed-outcome counts for one skill, plus the citation trace.
@@ -293,7 +466,7 @@ impl OutcomeTally {
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on a non-UTF-8 outcome key.
+/// Storage errors; a typed side-table row error on a malformed outcome key.
 pub(crate) fn attributed_outcome_receipts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -315,50 +488,42 @@ pub(crate) fn attributed_outcome_receipts(
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on a non-UTF-8 outcome key; body
-/// errors on an undecodable outcome row.
+/// Storage errors; a typed side-table row error on a malformed outcome key or an
+/// undecodable outcome row; [`Error::CorruptedIndex`] on a paired key without a receipt.
 pub(crate) fn attributed_outcome_results(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, bool)>> {
-    let prefix = outcome_prefix(skill, None);
     let mut outcomes = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, raw) = row?;
-        if is_displaced(vault, rtxn, &key)? {
+    for (key, row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
+        let outcome = OutcomeRef::Unknown(key);
+        if is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
-        let receipt = key
-            .get(prefix.len()..)
-            .and_then(|suffix| std::str::from_utf8(suffix).ok())
-            .ok_or(Error::CorruptedIndex("skill reliability outcome key"))?;
-        outcomes.push((receipt.to_owned(), decode_outcome_win(&raw)?));
+        outcomes.push((outcome.into_receipt(), row.win));
     }
     // Optimization's split is over receipts, across all executors. Pair
     // measurements remain separate; this read only supplies the evidence basis.
-    let mut paired_prefix = PAIRED_OUTCOME_PREFIX.to_vec();
-    paired_prefix.extend_from_slice(skill.as_bytes());
-    for row in vault.store.vault_meta.prefix_iter(rtxn, &paired_prefix)? {
-        let (key, raw) = row?;
-        if is_displaced(vault, rtxn, &key)? {
+    for (key, row) in PAIRED_OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
+        if key.receipt.is_empty() {
+            return Err(Error::CorruptedIndex("skill reliability pair key"));
+        }
+        let outcome = OutcomeRef::Paired(key);
+        if is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
-        let suffix = key
-            .get(paired_prefix.len()..)
-            .ok_or(Error::CorruptedIndex("skill reliability pair key"))?;
-        let length = suffix
-            .get(..2)
-            .ok_or(Error::CorruptedIndex("skill reliability pair key"))?;
-        let len = usize::from(u16::from_be_bytes([length[0], length[1]]));
-        let receipt = suffix
-            .get(2 + len..)
-            .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .filter(|id| !id.is_empty())
-            .ok_or(Error::CorruptedIndex("skill reliability pair key"))?;
-        outcomes.push((receipt.to_owned(), decode_outcome_win(&raw)?));
+        outcomes.push((outcome.into_receipt(), row.win));
     }
     outcomes.sort_by(|a, b| a.0.cmp(&b.0));
+    // One receipt is one outcome for the split, even when several executors
+    // invoked a callable under it; a loss outranks a win, as in the ledger.
+    outcomes.dedup_by(|next, kept| {
+        next.0 == kept.0 && {
+            kept.1 &= next.1;
+            true
+        }
+    });
     Ok(outcomes)
 }
 
@@ -368,36 +533,36 @@ pub(super) fn tally_outcomes(
     skill: &EntityId,
     executor: Option<&str>,
 ) -> Result<OutcomeTally> {
-    let prefix = outcome_prefix(skill, executor);
+    let rows: Vec<(OutcomeRef, OutcomeRow)> = match executor {
+        None => OUTCOME
+            .scan_from(&vault.store, rtxn, skill.as_bytes())?
+            .into_iter()
+            .map(|(key, row)| (OutcomeRef::Unknown(key), row))
+            .collect(),
+        Some(executor) => PAIRED_OUTCOME
+            .scan_from(
+                &vault.store,
+                rtxn,
+                &ExecutorArm::new(skill, executor).key_prefix(),
+            )?
+            .into_iter()
+            .map(|(key, row)| (OutcomeRef::Paired(key), row))
+            .collect(),
+    };
     let mut tally = OutcomeTally::default();
-    for row in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, raw) = row?;
-        let receipt = key
-            .get(prefix.len()..)
-            .and_then(|suffix| std::str::from_utf8(suffix).ok())
-            .ok_or(Error::CorruptedIndex("skill reliability outcome key"))?;
-        if is_displaced(vault, rtxn, &key)? {
+    for (outcome, row) in rows {
+        if is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
-        if decode_outcome_win(&raw)? {
+        if row.win {
             tally.wins = tally.wins.saturating_add(1);
         } else {
             tally.losses = tally.losses.saturating_add(1);
         }
-        tally.cited.push(receipt.to_owned());
+        tally.cited.push(outcome.into_receipt());
         if tally.cited.len() > SKILL_RELIABILITY_MAX_CITED_RECEIPTS {
             tally.cited.remove(0);
         }
     }
     Ok(tally)
-}
-
-fn decode_outcome_win(raw: &[u8]) -> Result<bool> {
-    let value = decode_value(raw)?;
-    if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
-        return Err(invalid("unsupported skill reliability outcome schema"));
-    }
-    map_entry(&value, KEY_WIN)
-        .and_then(Value::as_bool)
-        .ok_or(invalid("skill reliability outcome is missing win"))
 }

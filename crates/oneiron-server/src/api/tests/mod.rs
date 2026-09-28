@@ -418,7 +418,8 @@ pub(super) fn seed_active_claim(
         0.9,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     server
         .vault
         .put_claim(
@@ -463,9 +464,9 @@ pub(super) fn test_bearer(claims: &str) -> String {
     format!("{}{claims}", slip_credentials::RECIPE_PREFIX)
 }
 
-/// Owner-grade credential: the bare trust root over the standard header.
+/// Owner-grade fixture credential: an unattenuated top-scope slip.
 pub(super) fn owner_bearer() -> String {
-    "Bearer secret".to_owned()
+    test_bearer("jti=owner-bearer")
 }
 
 pub(super) fn core_request(
@@ -883,6 +884,7 @@ pub(super) fn seed_disclosure_scope(
 ) {
     let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
+
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)
@@ -910,7 +912,8 @@ fn seed_disclosure_claim_in_world(
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = Some(world);
     // Tier B is required here: otherwise the tier check rejects this claim
     // before the test can exercise the contact's world clearance.
@@ -946,20 +949,40 @@ fn seed_disclosure_claim_in_world(
 pub(super) fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> String {
     let identity_ref = seeded_test_entity_id(counter);
     let agent_ref = seeded_test_entity_id(counter + 1);
-    let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+    let identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
         oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
         1_782_357_000,
     );
-    identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     server
         .vault
         .create_channel_identity(&identity_ref, &identity)
         .expect("seed channel identity");
+    // ACTIVE is reached by walking the machine, not by assigning the state: the
+    // fixture goes through the same two steps a provisioned identity does.
+    activate_seeded_identity(server, identity_ref, 1_782_357_000);
     agent_ref.to_hex()
+}
+
+/// Walks a freshly created self-held row `Requested -> Pending -> Active`.
+pub(super) fn activate_seeded_identity(
+    server: &SyncServer,
+    identity_ref: oneiron::EntityId,
+    at: u64,
+) {
+    for step in [
+        oneiron::channel_identity::ChannelIdentityStep::Bind(
+            oneiron::channel_identity::ChannelIdentityFulfillment::Api,
+        ),
+        oneiron::channel_identity::ChannelIdentityStep::Fulfill,
+    ] {
+        server
+            .vault
+            .step_channel_identity(&identity_ref, step, at)
+            .expect("activate seeded identity");
+    }
 }
 
 pub(super) fn surface_event_body(address: &str, correlation_id: &str) -> Value {
@@ -1045,6 +1068,16 @@ pub(super) fn reactive_window_frame(window_key: &str, sub_tag: u8) -> Vec<u8> {
 
 pub(super) fn reactive_window_update_frame(window_key: &str) -> Vec<u8> {
     reactive_window_frame(window_key, crate::protocol::window_sub_tags::UPDATE)
+}
+
+pub(super) fn reactive_doc_update_frame(id: oneiron::EntityId) -> Vec<u8> {
+    oneiron::sync::transport::encode_document(
+        id,
+        oneiron::sync::transport::document_sub_tags::UPDATE,
+        b"delta",
+    )
+    .into_result()
+    .expect("document update frame")
 }
 
 /// Every frame shape that reaches the broadcast channel yet must never re-run
@@ -1149,7 +1182,8 @@ pub(super) fn seed_world_claim(
         0.8,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     server
         .vault

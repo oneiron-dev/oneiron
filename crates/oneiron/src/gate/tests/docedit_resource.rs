@@ -35,7 +35,7 @@ fn write_policy(vault: &Vault, seed: u8, extra: Vec<(Value, Value)>) -> Result<(
 fn shipped_manifest_and_absent_row_have_same_six_ceiling_values() -> Result<()> {
     let shipped = crate::gate::default_manifest::default_docedit_resource_row();
     let baseline = parse_docedit_resource_policy(&shipped).expect("shipped six limits");
-    let decoded = crate::gate::decode::decode_policy_manifest(&default_policy_manifest())
+    let decoded = crate::gate::decode::decode_policy_manifest(&default_policy_manifest().unwrap())
         .expect("default manifest decodes");
     assert_eq!(decoded.docedit_resource_policy, Some(baseline));
     let (_tmp, vault) = temp_vault();

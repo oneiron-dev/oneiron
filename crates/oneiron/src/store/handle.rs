@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use heed::types::{Bytes, Str};
-use heed::{Database, Env, RoTxn, RwTxn};
+use heed::{Database, Env, RwTxn};
 
 use crate::authority::AuthorityLocalClock;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -111,6 +111,8 @@ pub struct StoreCore {
     /// Exterior key custody binding. On restore this remains the source vault's
     /// canonical path; it is never reset to the new LMDB image's location.
     pub(in crate::store) gate_custody_root: std::path::PathBuf,
+    /// Exterior retirement cannot race a live snapshot's decision decrypt.
+    pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
     pub(crate) env: Env,
@@ -361,31 +363,6 @@ impl SessionStoreView<'_> {
             crate::session_overlay::OverlayKeyspace::Entities,
         )
     }
-
-    /// Mode-aware VaultMeta write half consumed by
-    /// `OffRecordSession::vault_meta_put`. Reuses the existing raw key/value
-    /// representation; this pins routing, not a new encoding.
-    pub(crate) fn vault_meta_put_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<()> {
-        self.vault_meta.put(wtxn, key, value)
-    }
-
-    /// Composed VaultMeta read half consumed by
-    /// `OffRecordSession::vault_meta_get` — overlay ∪ base.
-    pub(crate) fn vault_meta_get_in_txn(
-        &self,
-        rtxn: &RoTxn<'_>,
-        key: &[u8],
-    ) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .vault_meta
-            .get(rtxn, key)?
-            .map(std::borrow::Cow::into_owned))
-    }
 }
 
 /// Generates [`ManifestDbs`] and its two implementations from ONE list of the
@@ -510,7 +487,7 @@ pub(super) fn seed_default_policy_manifest_in_txn(
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
     let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let body = crate::gate::default_policy_manifest();
+    let body = crate::gate::default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
     payload.extend_from_slice(&timestamp.to_be_bytes());

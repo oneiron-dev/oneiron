@@ -194,13 +194,13 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
         .unwrap()
         .id;
     crate::test_util::authorize_readers(&vault, &["viewer"]);
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = vault
+    let row = vault
         .scoped_read(ScopedReadActorKey::new("viewer").unwrap())
-        .get_entity_parts_with_receipt(&retired, None)?;
-    let mut skill = crate::skill::decode_skill_record(&value.unwrap().2)?;
+        .read(&[crate::claim::PointRead::id(retired)], None)?
+        .single()
+        .value
+        .expect("readable skill");
+    let mut skill = crate::skill::decode_skill_record(&row.body.expect("live body"))?;
     skill.lifecycle_status = SkillLifecycle::Superseded;
     vault.put_entity(
         &retired,
@@ -287,7 +287,8 @@ fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> 
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         posterior.source = Some(ClaimSource::Observed);
         vault.with_write_txn(|txn| {
             vault.put_reserved_claim_in_txn(
@@ -372,7 +373,8 @@ fn executor_pair_controls_production_pack_skill_ranking() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(ClaimSource::Observed);
         vault.with_write_txn(|txn| {
             vault.put_reserved_claim_in_txn(

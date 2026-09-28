@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use crate::booking::BOOKING_PASSPORT_SYSTEM;
-use crate::booking::lifecycle::{booking_writer, hex_lower, put_meta, read_meta_bytes};
+use crate::booking::lifecycle::{booking_writer, hex_lower};
 use crate::booking::{
     BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
     BookingError, BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus,
@@ -16,12 +16,26 @@ use crate::booking::{
 use crate::calendar::passport::live_passports_for_event;
 use crate::calendar::query::{CalendarRead, visit_calendar_events};
 use crate::claim::{ClaimSubject, claim_surfaceable};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
 /// Lane-owned explicit instruction rows. The suffix is the five-field content
 /// hash, not the three-field request verification hash.
 pub const EMERGENCY_INSTRUCTION_META_PREFIX: &[u8] = b"booking:emergency_instruction:v1:";
+
+/// One logged owner instruction. Key: hex64 (the five-field content hash
+/// [`instruction_key`] spells).
+const INSTRUCTION: SideTable<String, OwnerInstructionRecord, LegacyJson> =
+    SideTable::new(&side_table::EMERGENCY_INSTRUCTION);
+
+/// The [`INSTRUCTION`] table key: the hex suffix after a full raw
+/// `instruction_key`/`request_instruction_key` row key. `None` for a key
+/// under a foreign prefix or non-UTF8 suffix — never an error, matching this
+/// door's old "absent" behavior for an unrecognized key.
+fn instruction_hex(key: &[u8]) -> Option<&str> {
+    std::str::from_utf8(key.strip_prefix(EMERGENCY_INSTRUCTION_META_PREFIX)?).ok()
+}
 
 /// The owner chooses the action; discovery cannot silently change it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,15 +168,22 @@ fn append_owner_instruction(
         recorded_at,
     };
     let key = instruction_key(owner_ref, window, reason, action_policy, recorded_at)?;
-    let encoded = serde_json::to_vec(&record).map_err(storage_failure)?;
+    let hex = instruction_hex(&key)
+        .ok_or_else(|| refused("emergency instruction key is malformed"))?
+        .to_owned();
     booking_writer(vault, |wtxn| {
-        if let Some(prior) = read_meta_bytes(vault, &*wtxn, &key)? {
-            if prior != encoded {
+        if let Some(prior) = INSTRUCTION
+            .get(&vault.store, &*wtxn, &hex)
+            .map_err(storage_failure)?
+        {
+            if prior != record {
                 return Err(refused("instruction content conflicts with its stored row"));
             }
             return Ok(());
         }
-        put_meta(vault, wtxn, &key, &encoded)
+        INSTRUCTION
+            .put(&vault.store, wtxn, &hex, &record)
+            .map_err(storage_failure)
     })?;
     // Separate read after commit: an in-memory record alone is never authority.
     verify_logged_owner_instruction(
@@ -207,10 +228,13 @@ pub fn verify_logged_owner_instruction(
         request.action_policy,
         request.authority.recorded_at,
     )?;
+    let hex =
+        instruction_hex(&key).ok_or_else(|| refused("owner instruction has not been logged"))?;
     let rtxn = vault.store.env.read_txn().map_err(storage_failure)?;
-    let raw = read_meta_bytes(vault, &rtxn, &key)?
+    let stored = INSTRUCTION
+        .get(&vault.store, &rtxn, &hex.to_owned())
+        .map_err(storage_failure)?
         .ok_or_else(|| refused("owner instruction has not been logged"))?;
-    let stored: OwnerInstructionRecord = serde_json::from_slice(&raw).map_err(storage_failure)?;
     if stored != request.authority
         || stored.owner_ref != request.owner_ref
         || stored.request_hash != expected
@@ -241,14 +265,20 @@ pub(crate) fn append_instruction_in_txn(
         ));
     }
     let key = request_instruction_key(request)?;
-    let encoded = serde_json::to_vec(&request.authority).map_err(storage_failure)?;
-    if let Some(prior) = read_meta_bytes(vault, &*wtxn, &key)? {
-        if prior != encoded {
+    let hex =
+        instruction_hex(&key).ok_or_else(|| refused("emergency instruction key is malformed"))?;
+    if let Some(prior) = INSTRUCTION
+        .get(&vault.store, &*wtxn, &hex.to_owned())
+        .map_err(storage_failure)?
+    {
+        if prior != request.authority {
             return Err(refused("instruction content conflicts with its stored row"));
         }
         return Ok(());
     }
-    put_meta(vault, wtxn, &key, &encoded)
+    INSTRUCTION
+        .put(&vault.store, wtxn, &hex.to_owned(), &request.authority)
+        .map_err(storage_failure)
 }
 
 fn request_instruction_key(request: &EmergencyRescheduleRequest) -> Result<Vec<u8>, BookingError> {
@@ -272,9 +302,13 @@ fn verify_instruction_in_txn(
         &request.reason,
         request.action_policy,
     )?;
-    let raw = read_meta_bytes(vault, txn, &request_instruction_key(request)?)?
+    let key = request_instruction_key(request)?;
+    let hex =
+        instruction_hex(&key).ok_or_else(|| refused("owner instruction has not been logged"))?;
+    let stored = INSTRUCTION
+        .get(&vault.store, txn, &hex.to_owned())
+        .map_err(storage_failure)?
         .ok_or_else(|| refused("owner instruction has not been logged"))?;
-    let stored: OwnerInstructionRecord = serde_json::from_slice(&raw).map_err(storage_failure)?;
     if stored != request.authority
         || stored.owner_ref != request.owner_ref
         || stored.request_hash != expected

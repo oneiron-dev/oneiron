@@ -1,9 +1,9 @@
 //! Sealed resource handoff. Only the executor can construct one; every real
 //! promotion and attachment checks its pins inside the write transaction.
-use super::{BranchResources, SourcePin, document_version};
+use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
 #[cfg(test)]
 use crate::claim::ClaimSource;
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
 use crate::dreamer_consolidation::support::invalid_consolidation;
@@ -16,6 +16,7 @@ pub struct ScopedConsolidationWrite {
     pub(crate) candidate_evidence: Vec<VerifiedEvidenceSet>,
     pub(crate) attachments: Vec<(EntityId, PromotionCandidate, VerifiedEvidenceSet)>,
     pub(crate) fence: ConsolidationFence,
+    read_receipt: ScopedReadReceipt,
 }
 
 impl ScopedConsolidationWrite {
@@ -23,11 +24,19 @@ impl ScopedConsolidationWrite {
     pub fn candidates(&self) -> &[PromotionCandidate] {
         &self.candidates
     }
+
+    /// Every scoped read behind these candidates, folded: sources, priors,
+    /// graph signals and the wake's pinned read. Rows withheld from the Dreamer
+    /// actor are counted here, never silently dropped.
+    pub fn read_receipt(&self) -> &ScopedReadReceipt {
+        &self.read_receipt
+    }
 }
 
 pub(crate) struct ConsolidationFence {
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
+    fallback_binding: Option<FallbackOutputPin>,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
     conversation: EntityId,
@@ -93,6 +102,7 @@ impl BranchResources<'_> {
             candidate_evidence: written_evidence,
             attachments,
             fence: self.write_fence(),
+            read_receipt: self.read_receipt()?,
         })
     }
 
@@ -103,6 +113,7 @@ impl BranchResources<'_> {
                 crate::edge::EdgeActorClass::Agent,
             ),
             attempt: self.attempt,
+            fallback_binding: self.fallback_binding(),
             sources: self.sources.clone(),
             turns: self.turns.clone(),
             conversation: self.partition.conversation_ref,
@@ -131,30 +142,38 @@ impl ConsolidationFence {
         )
         .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
         let read = vault.scoped_read(actor);
-        let rules: crate::dreamer_consolidation::routing::PredicateKeyRules = match vault
-            .store
-            .vault_meta
-            .get(txn, b"dreamer:consolidation:keys:v1")?
-        {
-            Some(raw) => serde_json::from_slice(&raw)
-                .map_err(|_| invalid_consolidation("invalid key rules"))?,
-            None => serde_json::from_str(include_str!("../key_defaults.json"))
-                .map_err(|_| invalid_consolidation("invalid default key rules"))?,
-        };
+        let rules: crate::dreamer_consolidation::routing::PredicateKeyRules =
+            match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
+                Some(rules) => rules,
+                None => serde_json::from_str(include_str!("../key_defaults.json"))
+                    .map_err(|_| invalid_consolidation("invalid default key rules"))?,
+            };
         if rules != self.rules {
             return Err(invalid_consolidation("consolidation key rules changed"));
         }
         // Resolve fresh policy here. ScopedRead's cached manifest is not a
         // lease to retain a grant revoked during model or checker work.
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+        if let Some(binding) = self.fallback_binding
+            && !crate::llm::verified_step_consolidation_eligible_in_txn(
+                vault,
+                txn,
+                &policy,
+                binding.step,
+                self.actor.entity_ref(),
+                binding.response_hash,
+            )
+            .map_err(|_| invalid_consolidation("invalid extraction fallback checkpoint"))?
+        {
+            return Err(invalid_consolidation(
+                "extraction fallback eligibility revoked",
+            ));
+        }
         for (id, pin) in &self.sources {
             if !read.is_entity_readable_with_policy_in(txn, &policy, id)? {
                 return Err(invalid_consolidation("pinned source read revoked"));
             }
-            let raw = vault
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
                 .ok_or_else(|| invalid_consolidation("pinned source missing"))?;
             let header = crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or_else(|| invalid_consolidation("pinned source header"))?;
@@ -167,23 +186,15 @@ impl ConsolidationFence {
             }
         }
         for turn in &self.turns {
-            let prefix = [
-                turn.as_bytes().as_slice(),
-                &[crate::edge::EdgeKind::ChildOf as u8],
-            ]
-            .concat();
-            let expected = crate::store::Store::encode_edge_key(
+            let peers = crate::ports::EdgeStoreRead::port_edge_peers(
+                &vault.store,
+                txn,
                 turn,
+                crate::ports::EdgeDirection::Out,
                 crate::edge::EdgeKind::ChildOf,
-                &self.conversation,
-            );
-            let keys = vault
-                .store
-                .edges_out
-                .prefix_iter(txn, &prefix)?
-                .map(|row| row.map(|(key, _)| key.to_vec()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            if keys.len() != 1 || keys[0] != expected {
+            )?
+            .collect::<Result<Vec<_>>>()?;
+            if peers != [self.conversation] {
                 return Err(invalid_consolidation("pinned source partition changed"));
             }
         }

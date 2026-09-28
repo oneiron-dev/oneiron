@@ -1,7 +1,7 @@
 use super::*;
 use crate::Error;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
+    ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep, SelfHeldShape,
 };
 use crate::code_sandbox::microvm::{
     CredentialEgressProxy, CredentialReadTransport, MicroVmExit, MicroVmHandle,
@@ -103,7 +103,7 @@ fn setup_with_secret(
     // Keep the fixture's established normal-criticality gate posture while
     // supplying the seeded pack-install rows that local admission now reads.
     let (dir, vault) = crate::test_util::open_test_vault_with(config);
-    let defaults = crate::gate::default_policy_manifest();
+    let defaults = crate::gate::default_policy_manifest().unwrap();
     let mut manifest = rmpv::decode::read_value(&mut defaults.as_slice())
         .map_err(|_| crate::Error::InvariantViolation("decode test policy"))?;
     let rmpv::Value::Map(entries) = &mut manifest else {
@@ -224,15 +224,14 @@ fn setup_with_secret(
         key_id,
         destination: CredentialDestination::new("https", "api.example.com")?,
     };
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "agent@example.com",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(agent),
+        ChannelIdentityState::Active,
         1_800_000_000,
     );
-    identity.state = ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     vault.create_channel_identity(&entity(0xB3), &identity)?;
     let hub = entity(0xB4);
     vault.configure_skill_hub(
@@ -399,6 +398,7 @@ impl MicroVmBackend for OutputBackend {
         .collect::<Result<Vec<_>>>()
         .map(|edits| edits.into_iter().flatten().collect())
     }
+    fn cleanup(&self, _: &MicroVmHandle) {}
     fn proxy_credentials(&self, _: &MicroVmHandle, _: &dyn CredentialResolver) -> Result<()> {
         Ok(())
     }
@@ -555,15 +555,14 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
         1,
         b"other agent",
     )?;
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "other@example.com",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(other),
+        ChannelIdentityState::Active,
         1_800_000_000,
     );
-    identity.state = ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     vault.create_channel_identity(&entity(0xB6), &identity)?;
     let mut wrong: serde_json::Value = serde_json::from_slice(&output()).unwrap();
     wrong["inbound"][0]["receiving_address_or_handle"] = "other@example.com".into();
@@ -836,20 +835,12 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
         },
         1_800_000_000,
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &first,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_010,
-        None,
     )?;
-    vault.transition_channel_identity(
-        &first,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_020,
-        None,
-    )?;
+    vault.step_channel_identity(&first, ChannelIdentityStep::Fulfill, 1_800_000_020)?;
     let other = entity(0xBA);
     vault.put_entity(
         &other,
@@ -877,13 +868,7 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
             seen_secret: Arc::new(Mutex::new(Vec::new())),
             after_run: Some(Box::new(move || {
                 change
-                    .transition_channel_identity(
-                        &first,
-                        ChannelIdentityState::Released,
-                        None,
-                        1_800_000_030,
-                        None,
-                    )
+                    .step_channel_identity(&first, ChannelIdentityStep::Release, 1_800_000_030)
                     .unwrap();
                 let second = entity(0xBB);
                 change
@@ -899,22 +884,14 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
                     )
                     .unwrap();
                 change
-                    .transition_channel_identity(
+                    .step_channel_identity(
                         &second,
-                        ChannelIdentityState::PendingFulfillment,
-                        Some(ChannelIdentityFulfillment::Api),
+                        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
                         1_800_000_050,
-                        None,
                     )
                     .unwrap();
                 change
-                    .transition_channel_identity(
-                        &second,
-                        ChannelIdentityState::Active,
-                        None,
-                        1_800_000_060,
-                        None,
-                    )
+                    .step_channel_identity(&second, ChannelIdentityStep::Fulfill, 1_800_000_060)
                     .unwrap();
             })),
         }),

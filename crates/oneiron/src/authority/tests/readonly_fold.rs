@@ -209,17 +209,16 @@ fn backfill_ignores_future_learned_at_and_records_local_observation() {
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enrolled = ed_key(222);
     let enrolled_key = authority_key_from_ed(&enrolled);
+    // An agent-only enrollment: the vault door retires client enrollment
+    // (identity canon: enrollment is pairing-only), not the host enrolling a
+    // MACHINE writer.
     let enroll = sign_ed(
         unsigned_entry(
             Some(vault_id),
             1,
             vec![genesis_hash],
             AuthorityOp::EnrollDevice {
-                device: device(
-                    enrolled_key.clone(),
-                    ROLE_OWNER | ROLE_ADMIN,
-                    AuthorityTier::Software,
-                ),
+                device: device(enrolled_key.clone(), ROLE_AGENT, AuthorityTier::Software),
             },
             owner_key,
             2,
@@ -404,11 +403,31 @@ fn applied_rotation_with_corrupt_sidecar_refuses_public_and_snapshot_folds() {
             &owner,
         );
         let rotate_hash = authority_entry_hash(&rotate).unwrap();
+        // The retired rotation folds only as a signed handoff's ancestry.
+        let successor = ed_key(231);
+        let handoff = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                0,
+                vec![rotate_hash],
+                AuthorityOp::ReRoot {
+                    new_device: device(
+                        authority_key_from_ed(&ed_key(232)),
+                        ROLE_OWNER | ROLE_ADMIN,
+                        AuthorityTier::Software,
+                    ),
+                },
+                authority_key_from_ed(&successor),
+                4,
+            ),
+            &successor,
+        );
         vault
             .put_authority_log_entries(&[
                 (genesis, TimeRange { start: 1, end: 1 }, 1),
                 (bind, TimeRange { start: 2, end: 2 }, 2),
                 (rotate, TimeRange { start: 3, end: 3 }, 3),
+                (handoff, TimeRange { start: 4, end: 4 }, 4),
             ])
             .unwrap();
         // The rotation lands at once: no delay, no pending state.
@@ -572,4 +591,64 @@ fn authority_cache_is_bound_to_snapshot_and_abort_does_not_publish_a_mint() {
         &actor,
         "human"
     ));
+}
+
+/// A retired rotation still folds as a verified re-root's pre-handoff
+/// ancestry, and with the widen delay dead it lands at once: the handoff
+/// retires the old root on first observation, the cached view agrees, and a
+/// reopen keeps it.
+#[test]
+fn pre_handoff_rotation_and_its_handoff_land_at_once_and_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault_at(dir.path(), 1_000);
+    let owner = ed_key(126);
+    let replacement = ed_key(127);
+    let host = ed_key(128);
+    let owner_key = authority_key_from_ed(&owner);
+    let replacement_key = authority_key_from_ed(&replacement);
+    let host_key = authority_key_from_ed(&host);
+    let genesis = genesis_entry(126, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &owner, owner_key.clone(), 127, 1);
+    let rotation_hash = authority_entry_hash(&rotation).unwrap();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![rotation_hash],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host_key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            replacement_key.clone(),
+            3,
+        ),
+        &replacement,
+    );
+    let handoff_hash = authority_entry_hash(&handoff).unwrap();
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (rotation, TimeRange { start: 2, end: 2 }, 2),
+            (handoff, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let view = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    assert!(view.valid_entries.contains(&rotation_hash));
+    assert!(view.valid_entries.contains(&handoff_hash));
+    assert!(view.roster[&owner_key].revoked);
+    assert!(view.roster[&replacement_key].revoked);
+    assert!(!view.roster[&host_key].revoked);
+    assert_eq!(*vault.authority_view_readonly_in_txn(&txn).unwrap(), *view);
+    drop(txn);
+    assert_eq!(vault.authority_fold().unwrap(), *view);
+    drop(vault);
+    let reopened = open_vault_at(dir.path(), 1_000);
+    let fold = reopened.authority_fold().unwrap();
+    assert!(fold.valid_entries.contains(&handoff_hash));
+    assert!(fold.roster[&owner_key].revoked);
 }

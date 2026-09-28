@@ -36,6 +36,7 @@ fn first_party_connector_actor_ref() -> String {
     super::first_party_connector_actor_ref()
 }
 
+mod class_policy;
 mod pending_lookup;
 
 #[path = "../repair_tests.rs"]
@@ -52,6 +53,7 @@ mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;
+mod credential_lifetimes;
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
@@ -61,14 +63,20 @@ mod dreamer_precommit;
 mod effect_policy;
 mod evaluator_core;
 mod external_effect_grants;
+mod failure_policy;
 mod gate_door;
 mod hosted_tts_policy;
 mod isolation_persona;
 mod manifest_authenticity;
 mod manifest_auto;
+mod operational_policy;
 mod policy_inputs;
 mod posture_override;
 mod pptx_limits;
+mod project_collaboration;
+mod project_conversion;
+mod residence_operation_budgets;
+mod scoped_policy_values;
 mod scoped_read;
 mod slide_review_policy;
 mod special_doors;
@@ -76,6 +84,7 @@ mod support;
 mod tracker_limits;
 mod trust_boundary;
 mod vad_vetting;
+mod voice_serving;
 mod witness_message;
 
 mod auto_signals;

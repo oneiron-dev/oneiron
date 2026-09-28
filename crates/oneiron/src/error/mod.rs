@@ -27,7 +27,7 @@ pub use self::record::RecordError;
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
 pub use self::secret::SecretError;
-pub use self::store::{StoreError, VaultRootEntry, VaultRootProblem};
+pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem};
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
 pub use self::sync::{
@@ -305,6 +305,9 @@ pub enum ErrorKind {
     InvalidMachineClaimProof,
     MachineClaimHistoryIncomplete,
     RemoteMachineHistoryPending,
+    SideTableRow,
+    SideTableKeyUndeclared,
+    ScopedReadOwnerNotLive,
 }
 
 /// Crate error type.

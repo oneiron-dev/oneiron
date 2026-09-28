@@ -91,10 +91,7 @@ fn idle(last: u64) -> WakeIdleState {
 fn row(vault: &Vault, row: DreamerWakePolicy) -> Result<()> {
     row.validate()?;
     let mut txn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .put(&mut txn, POLICY_KEY, &serde_json::to_vec(&row).unwrap())?;
+    POLICY.put(&vault.store, &mut txn, &(), &row)?;
     txn.commit()?;
     Ok(())
 }
@@ -241,7 +238,7 @@ fn bad_policy_rows_fail_closed() -> Result<()> {
     vault
         .store
         .vault_meta
-        .put(&mut txn, POLICY_KEY, b"{\"idle_secs\":0}")?;
+        .put(&mut txn, &POLICY.key_bytes(&()), b"{\"idle_secs\":0}")?;
     txn.commit()?;
     assert!(vault.evaluate_dreamer_wake(idle(0), 100).is_err());
     Ok(())
@@ -347,10 +344,7 @@ fn missing_recipe_input_cannot_complete_dispatch_receipt() -> Result<()> {
             .is_some()
     );
     vault.with_write_txn(|txn| {
-        vault
-            .store
-            .vault_meta
-            .delete(txn, &[OUTBOX_PREFIX, &[WakeRecipe::Weave.key()]].concat())?;
+        OUTBOX.delete(&vault.store, txn, &[WakeRecipe::Weave.key()])?;
         Ok(())
     })?;
     let mut driver = crate::dreamer_wake::DreamerWakeDriver::new(

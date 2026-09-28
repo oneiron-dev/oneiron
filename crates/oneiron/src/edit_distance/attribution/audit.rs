@@ -1,9 +1,6 @@
 //! Held-out judge audit (Blind Curator guard).
 
-use super::stored::{
-    AUDIT_KEY_PREFIX, AUDIT_ROW_LABEL, ROW_VERSION, StoredAudit, decode_row, encode_row, meta_key,
-    next_audit_sequence_in_txn,
-};
+use super::stored::{AUDIT, AUDIT_ROW_LABEL, ROW_VERSION, StoredAudit, next_audit_sequence_in_txn};
 use super::taxonomy::{AmendmentCause, AmendmentClass, AmendmentEvidence, classify_amendment};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -74,23 +71,16 @@ pub fn run_judge_audit_with_judge(
         abstained,
         at,
     };
-    let encoded = encode_row(
-        &StoredAudit {
-            v: ROW_VERSION,
-            total: report.total as u64,
-            passed: report.passed as u64,
-            abstained: report.abstained as u64,
-            at,
-        },
-        AUDIT_ROW_LABEL,
-    )?;
+    let row = StoredAudit {
+        v: ROW_VERSION,
+        total: report.total as u64,
+        passed: report.passed as u64,
+        abstained: report.abstained as u64,
+        at,
+    };
     vault.with_write_txn(|wtxn| {
         let sequence = next_audit_sequence_in_txn(vault, wtxn)?;
-        let mut handle = Vec::with_capacity(16);
-        handle.extend_from_slice(&at.to_be_bytes());
-        handle.extend_from_slice(&sequence.to_be_bytes());
-        let key = meta_key(AUDIT_KEY_PREFIX, &handle);
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        AUDIT.put(&vault.store, wtxn, &(at, sequence), &row)?;
         Ok(())
     })?;
     Ok(report)
@@ -104,16 +94,7 @@ pub fn run_judge_audit_with_judge(
 pub fn judge_audit_reports(vault: &Vault) -> Result<Vec<AttributionAuditReport>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, AUDIT_KEY_PREFIX)?
-    {
-        let (_, raw) = entry?;
-        let row: StoredAudit = decode_row(&raw, AUDIT_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(Error::CorruptedIndex(AUDIT_ROW_LABEL));
-        }
+    for (_, row) in AUDIT.scan(&vault.store, &rtxn)? {
         let count = |value: u64| -> Result<usize> {
             usize::try_from(value).map_err(|_| Error::CorruptedIndex(AUDIT_ROW_LABEL))
         };

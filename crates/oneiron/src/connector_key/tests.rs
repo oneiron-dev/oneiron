@@ -1427,13 +1427,14 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
         drifted.used, expected_used,
         "drifted-time retry settles nothing"
     );
-    let event_key = connector_key_settle_event_key(&id, "settle:first-touch-ancient");
     {
         let rtxn = vault.store.env.read_txn()?;
-        let stored = vault
-            .store
-            .vault_meta
-            .get(&rtxn, &event_key)?
+        let stored = SETTLE_EVENT
+            .get(
+                &vault.store,
+                &rtxn,
+                &(id, "settle:first-touch-ancient".to_owned()),
+            )?
             .expect("settlement event row");
         assert_eq!(
             &stored[stored.len() - 8..],
@@ -2774,24 +2775,16 @@ fn connector_key_op_reasons(vault: &Vault) -> Result<Vec<String>> {
         .collect())
 }
 
-fn catalog_name_index_row(vault: &Vault, name: &str) -> Result<Option<Vec<u8>>> {
+fn catalog_name_index_row(vault: &Vault, name: &str) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&rtxn, &connector_catalog_name_index_key(name))?
-        .map(|bytes| bytes.to_vec()))
+    CATALOG_NAME_INDEX.get(&vault.store, &rtxn, &name.to_owned())
 }
 
 fn send_admit_row_count(vault: &Vault, id: &EntityId) -> Result<usize> {
     let rtxn = vault.store.env.read_txn()?;
-    let prefix = connector_key_send_admit_key(id, "");
-    let mut count = 0;
-    for entry in vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-        entry?;
-        count += 1;
-    }
-    Ok(count)
+    Ok(SEND_ADMIT
+        .scan_keys(&vault.store, &rtxn, id.as_bytes())?
+        .len())
 }
 
 #[test]
@@ -2876,6 +2869,8 @@ fn secret_ref_round_trip_additive() -> Result<()> {
                     | "slate_revision"
                     | "admission_epoch"
                     | "consent_required"
+                    | "retained_manifest"
+                    | "pending_manifest"
             )
         )
     });
@@ -3046,10 +3041,7 @@ fn register_connector_is_atomic() -> Result<()> {
     assert_eq!(entry.connector, "my_connector");
 
     // Permanent name index + generation-0 log row, both in the same commit.
-    assert_eq!(
-        catalog_name_index_row(&vault, "my_connector")?.as_deref(),
-        Some(id.as_bytes().as_slice()),
-    );
+    assert_eq!(catalog_name_index_row(&vault, "my_connector")?, Some(id),);
     let generation = vault
         .connector_key_generation(&id, 0)?
         .expect("generation 0");
@@ -3199,10 +3191,7 @@ fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
     )?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .vault_meta
-            .delete(&mut wtxn, &connector_key_generation_key(&legacy_id, 0))?;
+        GENERATION_LOG.delete(&vault.store, &mut wtxn, &(legacy_id, 0_u32.to_be_bytes()))?;
         wtxn.commit()?;
     }
     assert!(
@@ -3268,10 +3257,7 @@ fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()>
     );
 
     // The name-index row survives: the catalog keeps HISTORY.
-    assert_eq!(
-        catalog_name_index_row(&vault, "herald_slack")?.as_deref(),
-        Some(id.as_bytes().as_slice()),
-    );
+    assert_eq!(catalog_name_index_row(&vault, "herald_slack")?, Some(id),);
     assert!(
         vault.search_connector_catalog("herald")?.is_empty(),
         "the discovery lens is live-only"
@@ -3683,5 +3669,759 @@ fn refusal_does_not_poison_replay() -> Result<()> {
         ConnectorKeyStatus::Active
     );
     assert_eq!(send_admit_row_count(&vault, &refuse_id)?, 1);
+    Ok(())
+}
+
+#[test]
+fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
+    use serde_json::json;
+    use std::collections::BTreeSet;
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, manifest: &ResolvedConnectorManifest, revision: &str) -> Result<String> {
+            assert_eq!(manifest.tools().len(), 1);
+            assert!(!revision.is_empty());
+            Ok("a".repeat(64))
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xB9);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("mcp", None, Vec::new(), 100),
+    )?;
+    let source = || {
+        ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "read".into(), permissions: ["read".into()].into(),
+        triggers: BTreeSet::new(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer","default":10}}}),
+    }]).unwrap()
+    };
+    let first = vault
+        .stage_connector_manifest(&id, source(), "2026-07-28", &Suite, 101)?
+        .unwrap();
+    assert!(first.kinds.contains(&ConnectorDriftKind::Permission));
+    assert!(vault.connector_tool_requires_confirmation(&id, "read")?);
+    let initial = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(initial.status, ConnectorKeyStatus::Pending);
+    assert!(initial.retained_manifest.is_none());
+    assert!(initial.pending_manifest.is_some());
+    let candidate_id = initial.pending_manifest.as_ref().unwrap().candidate_id;
+    let mut staged = initial;
+    staged.retained_manifest = Some(source());
+    assert!(staged.validate().is_err());
+    let owner = test_id(0xB8);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xBA).as_bytes()),
+    )?;
+    assert!(
+        vault
+            .approve_connector_manifest(
+                &auth,
+                &id,
+                candidate_id,
+                source().hash()?,
+                &"f".repeat(64),
+                102
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, candidate_id, [0; 32], &"a".repeat(64), 102)
+            .is_err()
+    );
+    let approved = vault.approve_connector_manifest(
+        &auth,
+        &id,
+        candidate_id,
+        source().hash()?,
+        &"a".repeat(64),
+        102,
+    )?;
+    assert_eq!(approved.status, ConnectorKeyStatus::Active);
+    assert_eq!(vault.get_connector_key(&id)?, Some(approved));
+    assert!(!vault.connector_tool_requires_confirmation(&id, "read")?);
+    let revision = vault
+        .stage_connector_manifest(&id, source(), "2026-09-01", &Suite, 102)?
+        .unwrap();
+    assert!(revision.requires_reregistration);
+    let pending = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(pending.status, ConnectorKeyStatus::Pending);
+    assert_eq!(pending.protocol_revision.as_deref(), Some("2026-07-28"));
+    assert_eq!(pending.retained_manifest.as_ref(), Some(&source()));
+    assert!(vault.connector_tool_requires_confirmation(&id, "read")?);
+    assert!(vault.resume_connector_key(&id, 103).is_err());
+    let mut changed = source().tools()[0].clone();
+    changed.input_schema["properties"]["limit"]["default"] = json!(20);
+    let new_manifest = ResolvedConnectorManifest::resolve(vec![changed])?;
+    assert!(
+        vault
+            .stage_connector_manifest(&id, new_manifest.clone(), "2026-07-28", &Suite, 104)
+            .is_err()
+    );
+    let change = vault
+        .stage_connector_manifest(&id, new_manifest, "2026-09-01", &Suite, 104)?
+        .unwrap();
+    assert!(change.kinds.contains(&ConnectorDriftKind::ParameterDefault));
+    assert!(change.requires_reregistration);
+    Ok(())
+}
+
+fn drift_fixture_manifest(permission: &str, schema_bytes: usize) -> ResolvedConnectorManifest {
+    use serde_json::json;
+    ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "send".into(), permissions: [permission.into()].into(),
+        triggers: ["manual".into()].into(),
+        input_schema: json!({"type":"object", "properties":{"value":{"type":"string", "description":"x".repeat(schema_bytes)}}}),
+    }]).unwrap()
+}
+
+#[test]
+fn failed_suite_retains_hold_revert_clears_candidate_and_revision_is_exact() -> Result<()> {
+    struct Suite(bool);
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            if self.0 {
+                Ok("a".repeat(64))
+            } else {
+                Err(Error::InvalidConfig("qualification failed".into()))
+            }
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xC0);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("line", None, Vec::new(), 10),
+    )?;
+    let a = drift_fixture_manifest("read", 1);
+    let b = drift_fixture_manifest("write", 1);
+    vault.stage_connector_manifest(&id, a.clone(), "R1", &Suite(true), 11)?;
+    let owner = test_id(0xC1);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xC2).as_bytes()),
+    )?;
+    let pending = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap();
+    vault.approve_connector_manifest(
+        &auth,
+        &id,
+        pending.candidate_id,
+        a.hash()?,
+        &"a".repeat(64),
+        12,
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(&id, b.clone(), "R1", &Suite(false), 13)
+            .is_err()
+    );
+    let failed = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(failed.retained_manifest.as_ref(), Some(&a));
+    assert!(
+        failed
+            .pending_manifest
+            .as_ref()
+            .unwrap()
+            .qualification_report_hash
+            .is_none()
+    );
+    assert!(failed.tool_requires_confirmation("send"));
+    let failed_id = failed.pending_manifest.unwrap().candidate_id;
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, failed_id, b.hash()?, &"a".repeat(64), 14)
+            .is_err()
+    );
+    vault.stage_connector_manifest(&id, b.clone(), "R1", &Suite(true), 15)?;
+    let b_id = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    assert_eq!(
+        vault.stage_connector_manifest(&id, a.clone(), "R1", &Suite(true), 16)?,
+        None
+    );
+    let reverted = vault.get_connector_key(&id)?.unwrap();
+    assert!(reverted.pending_manifest.is_none());
+    assert!(!reverted.tool_requires_confirmation("send"));
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, b_id, b.hash()?, &"a".repeat(64), 17)
+            .is_err()
+    );
+    vault.stage_connector_manifest(&id, a.clone(), "R2", &Suite(true), 18)?;
+    let r2 = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap()
+        .candidate_id;
+    vault.stage_connector_manifest(&id, a.clone(), "R3", &Suite(true), 19)?;
+    let r3_record = vault.get_connector_key(&id)?.unwrap();
+    let r3 = r3_record.pending_manifest.as_ref().unwrap().candidate_id;
+    assert_ne!(r2, r3);
+    assert_eq!(r3_record.status, ConnectorKeyStatus::Pending);
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, r2, a.hash()?, &"a".repeat(64), 20)
+            .is_err()
+    );
+    let approved =
+        vault.approve_connector_manifest(&auth, &id, r3, a.hash()?, &"a".repeat(64), 20)?;
+    assert_eq!(approved.protocol_revision.as_deref(), Some("R3"));
+    assert_eq!(approved.status, ConnectorKeyStatus::Active);
+    assert!(
+        vault
+            .stage_connector_manifest(&id, a, "R4", &Suite(false), 21)
+            .is_err()
+    );
+    let failed_revision = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(failed_revision.status, ConnectorKeyStatus::Pending);
+    assert_eq!(failed_revision.protocol_revision.as_deref(), Some("R3"));
+    assert!(
+        failed_revision
+            .pending_manifest
+            .unwrap()
+            .qualification_report_hash
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn oversized_resolved_manifest_refuses_stage_before_touching_the_key() -> Result<()> {
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xD0);
+    let key =
+        vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    let template = drift_fixture_manifest("read", 60_000).tools()[0].clone();
+    let tools: Vec<_> = (0..80)
+        .map(|n| ConnectorToolSchema {
+            name: format!("tool_{n:03}"),
+            ..template.clone()
+        })
+        .collect();
+    let oversized = ResolvedConnectorManifest::resolve(tools)?;
+    assert!(
+        vault
+            .stage_connector_manifest(&id, oversized, "R1", &Suite, 11)
+            .is_err()
+    );
+    assert_eq!(vault.get_connector_key(&id)?, Some(key));
+    let accepted = drift_fixture_manifest("read", 50_000);
+    vault.stage_connector_manifest(&id, accepted.clone(), "R1", &Suite, 12)?;
+    assert_eq!(
+        vault
+            .get_connector_key(&id)?
+            .unwrap()
+            .pending_manifest
+            .unwrap()
+            .manifest,
+        accepted
+    );
+    Ok(())
+}
+
+#[test]
+fn replicated_connector_key_replacement_and_manifest_clear_are_rejected() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xD1);
+    vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    let approved = ConnectorKeyRecord {
+        retained_manifest: Some(drift_fixture_manifest("read", 0)),
+        protocol_revision: Some("R1".into()),
+        ..vault.get_connector_key(&id)?.unwrap()
+    };
+    vault.with_write_txn(|txn| rewrite_connector_key_in_txn(&vault.store, txn, &id, &approved))?;
+    for attempted in [
+        ConnectorKeyRecord {
+            retained_manifest: Some(drift_fixture_manifest("write", 0)),
+            protocol_revision: Some("R2".into()),
+            ..approved.clone()
+        },
+        ConnectorKeyRecord {
+            retained_manifest: None,
+            protocol_revision: None,
+            ..approved.clone()
+        },
+    ] {
+        let bytes = encode_connector_key_body(&attempted)?;
+        let rejected = vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_CONNECTOR_KEY,
+                crate::TimeRange { start: 10, end: 10 },
+                10,
+                &bytes,
+            )
+            .commit();
+        assert!(matches!(
+            rejected,
+            Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
+        ));
+        assert_eq!(vault.get_connector_key(&id)?, Some(approved.clone()));
+    }
+    Ok(())
+}
+
+#[test]
+fn catalog_key_manifest_stays_on_its_pinned_revision() -> Result<()> {
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let (id, _) = register_catalog(
+        &vault,
+        catalog_entry("herald", "herald"),
+        ConnectorKeySpec::new("herald"),
+        1_000,
+    )?;
+    let registered = vault.get_connector_key(&id)?.expect("pending key");
+    // A catalog revision change re-binds the owner slate through
+    // `revise_connector_protocol`, never through manifest staging.
+    assert!(
+        vault
+            .stage_connector_manifest(&id, drift_fixture_manifest("read", 0), "R2", &Suite, 1_001)
+            .is_err()
+    );
+    assert_eq!(vault.get_connector_key(&id)?, Some(registered));
+    vault.stage_connector_manifest(
+        &id,
+        drift_fixture_manifest("read", 0),
+        "2026-09-01",
+        &Suite,
+        1_002,
+    )?;
+    let staged = vault.get_connector_key(&id)?.expect("staged key");
+    assert_eq!(staged.status, ConnectorKeyStatus::Pending);
+    assert_eq!(staged.protocol_revision.as_deref(), Some("2026-09-01"));
+    assert!(staged.retained_manifest.is_none());
+    assert!(staged.pending_manifest.is_some());
+    Ok(())
+}
+
+#[test]
+fn strict_permission_narrow_and_tool_removal_qualify_without_reconsent() -> Result<()> {
+    use std::cell::Cell;
+    struct Suite(Cell<usize>);
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            self.0.set(self.0.get() + 1);
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xC3);
+    let suite = Suite(Cell::new(0));
+    vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    let tool = |name: &str, permissions: &[&str]| ConnectorToolSchema {
+        name: name.into(),
+        permissions: permissions
+            .iter()
+            .map(|permission| (*permission).to_owned())
+            .collect(),
+        triggers: Default::default(),
+        input_schema: serde_json::json!({"properties":{}}),
+    };
+    let full = ResolvedConnectorManifest::resolve(vec![
+        tool("send", &["read", "write"]),
+        tool("other", &["read"]),
+    ])?;
+    vault.stage_connector_manifest(&id, full.clone(), "R1", &suite, 11)?;
+    let owner = test_id(0xC4);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xC5).as_bytes()),
+    )?;
+    let pending = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap();
+    vault.approve_connector_manifest(
+        &auth,
+        &id,
+        pending.candidate_id,
+        full.hash()?,
+        &"a".repeat(64),
+        12,
+    )?;
+    let narrowed = ResolvedConnectorManifest::resolve(vec![
+        tool("send", &["read"]),
+        tool("other", &["read"]),
+    ])?;
+    let change = vault
+        .stage_connector_manifest(&id, narrowed.clone(), "R1", &suite, 13)?
+        .unwrap();
+    assert!(change.kinds.contains(&ConnectorDriftKind::Permission));
+    assert!(!change.needs_reconsent());
+    assert!(change.reconsent_tools.is_empty());
+    let record = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(record.retained_manifest.as_ref(), Some(&narrowed));
+    assert!(record.pending_manifest.is_none());
+    assert!(!record.tool_requires_confirmation("send"));
+    let removed = ResolvedConnectorManifest::resolve(vec![tool("send", &["read"])])?;
+    let change = vault
+        .stage_connector_manifest(&id, removed.clone(), "R1", &suite, 14)?
+        .unwrap();
+    assert!(!change.needs_reconsent());
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().retained_manifest,
+        Some(removed.clone())
+    );
+    assert!(vault.connector_tool_requires_confirmation(&id, "other")?);
+    let expansion = vault
+        .stage_connector_manifest(&id, full, "R1", &suite, 15)?
+        .unwrap();
+    assert!(expansion.needs_reconsent());
+    assert!(expansion.reconsent_tools.contains("send"));
+    assert!(expansion.reconsent_tools.contains("other"));
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().retained_manifest,
+        Some(removed)
+    );
+    assert_eq!(suite.0.get(), 4);
+    Ok(())
+}
+
+#[test]
+fn failed_or_malformed_revision_revert_keeps_the_qualified_hold() -> Result<()> {
+    use std::cell::Cell;
+    struct Suite<'a> {
+        calls: &'a Cell<usize>,
+        result: Option<&'a str>,
+    }
+    impl ConnectorManifestQualifier for Suite<'_> {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            self.calls.set(self.calls.get() + 1);
+            self.result
+                .map(str::to_owned)
+                .ok_or_else(|| Error::InvalidConfig("probe failed".into()))
+        }
+    }
+    let calls = Cell::new(0);
+    let (_dir, vault) = temp_vault();
+    let id = test_id(0xC6);
+    let manifest = drift_fixture_manifest("read", 0);
+    vault.register_connector_key(&id, ConnectorKeyRecord::active("line", None, vec![], 10))?;
+    vault.stage_connector_manifest(
+        &id,
+        manifest.clone(),
+        "R1",
+        &Suite {
+            calls: &calls,
+            result: Some(&"a".repeat(64)),
+        },
+        11,
+    )?;
+    let owner = test_id(0xC7);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xC8).as_bytes()),
+    )?;
+    let initial = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap();
+    vault.approve_connector_manifest(
+        &auth,
+        &id,
+        initial.candidate_id,
+        manifest.hash()?,
+        &"a".repeat(64),
+        12,
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(
+                &id,
+                manifest.clone(),
+                "R2",
+                &Suite {
+                    calls: &calls,
+                    result: None
+                },
+                13
+            )
+            .is_err()
+    );
+    let held = vault.get_connector_key(&id)?.unwrap();
+    let candidate = held.pending_manifest.as_ref().unwrap().candidate_id;
+    assert_eq!(held.status, ConnectorKeyStatus::Pending);
+    assert!(
+        vault
+            .stage_connector_manifest(
+                &id,
+                manifest.clone(),
+                "R1",
+                &Suite {
+                    calls: &calls,
+                    result: None
+                },
+                14
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(
+                &id,
+                manifest.clone(),
+                "R1",
+                &Suite {
+                    calls: &calls,
+                    result: Some("bad")
+                },
+                15
+            )
+            .is_err()
+    );
+    let still_held = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(still_held.status, ConnectorKeyStatus::Pending);
+    assert_eq!(
+        still_held.pending_manifest.as_ref().unwrap().candidate_id,
+        candidate
+    );
+    assert!(vault.connector_tool_requires_confirmation(&id, "send")?);
+    assert!(
+        vault
+            .approve_connector_manifest(
+                &auth,
+                &id,
+                candidate,
+                manifest.hash()?,
+                &"a".repeat(64),
+                16
+            )
+            .is_err()
+    );
+    assert_eq!(calls.get(), 4);
+    assert_eq!(
+        vault.stage_connector_manifest(
+            &id,
+            manifest,
+            "R1",
+            &Suite {
+                calls: &calls,
+                result: Some(&"a".repeat(64))
+            },
+            17
+        )?,
+        None
+    );
+    let recovered = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(recovered.status, ConnectorKeyStatus::Active);
+    assert!(recovered.pending_manifest.is_none());
+    assert_eq!(calls.get(), 5);
+    Ok(())
+}
+
+#[test]
+fn connector_admission_quota_policy_vault_and_holder_rows_narrow_without_poisoning_old_keys()
+-> Result<()> {
+    use rmpv::Value;
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("a".repeat(64))
+        }
+    }
+    let (_dir, vault) = temp_vault();
+    let holder = test_id(0xC9);
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
+        panic!("policy map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("connector_admission"));
+    let quotas = |scope: &str, max_tools: u64, holder: Option<EntityId>| {
+        let mut fields = vec![
+            (Value::from("scope"), Value::from(scope)),
+            (Value::from("max_tools"), Value::from(max_tools)),
+            (Value::from("max_permissions_per_tool"), Value::from(10)),
+            (Value::from("max_triggers_per_tool"), Value::from(10)),
+        ];
+        if let Some(holder) = holder {
+            fields.push((Value::from("holder_ref"), Value::from(holder.to_hex())));
+        }
+        Value::Map(fields)
+    };
+    entries.push((
+        Value::from("connector_admission"),
+        Value::Array(vec![
+            Value::Map(vec![
+                (Value::from("scope"), Value::from("precedence")),
+                (
+                    Value::from("mode"),
+                    Value::from("nested_narrow_holder_override_vault_cap"),
+                ),
+            ]),
+            quotas("vault", 300, None),
+            quotas("holder", 2, Some(holder)),
+        ]),
+    ));
+    let mut raw = Vec::new();
+    rmpv::encode::write_value(&mut raw, &Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &raw,
+    )?;
+    let tools = |count: usize| -> ResolvedConnectorManifest {
+        ResolvedConnectorManifest::resolve(
+            (0..count)
+                .map(|n| ConnectorToolSchema {
+                    name: format!("tool_{n:03}"),
+                    permissions: ["read".to_owned()].into(),
+                    triggers: Default::default(),
+                    input_schema: serde_json::json!({"properties":{}}),
+                })
+                .collect(),
+        )
+        .unwrap()
+    };
+    let general = test_id(0xCA);
+    vault.register_connector_key(
+        &general,
+        ConnectorKeyRecord::active("general", None, vec![], 10),
+    )?;
+    vault.stage_connector_manifest(&general, tools(257), "R1", &Suite, 11)?;
+    assert_eq!(
+        vault
+            .get_connector_key(&general)?
+            .unwrap()
+            .pending_manifest
+            .as_ref()
+            .unwrap()
+            .manifest
+            .tools()
+            .len(),
+        257
+    );
+    assert!(
+        vault
+            .stage_connector_manifest(&general, tools(301), "R1", &Suite, 12)
+            .is_err()
+    );
+    let bounded = test_id(0xCB);
+    vault.register_connector_key(
+        &bounded,
+        ConnectorKeyRecord::active("bounded", Some(holder), vec![], 10),
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(&bounded, tools(3), "R1", &Suite, 13)
+            .is_err()
+    );
+    vault.stage_connector_manifest(&bounded, tools(2), "R1", &Suite, 14)?;
+    assert_eq!(
+        vault
+            .get_connector_key(&bounded)?
+            .unwrap()
+            .pending_manifest
+            .unwrap()
+            .manifest
+            .tools()
+            .len(),
+        2
+    );
+    // A later policy decrease refuses NEW admissions, but the already stored
+    // 257-tool candidate stays decodable and available for its owner decision.
+    let mut reduced: Value = rmpv::decode::read_value(&mut raw.as_slice()).unwrap();
+    let Value::Map(ref mut reduced_entries) = reduced else {
+        panic!("policy map")
+    };
+    let (_, admission) = reduced_entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("connector_admission"))
+        .unwrap();
+    let Value::Array(rows) = admission else {
+        panic!("quota rows")
+    };
+    let Value::Map(vault_row) = &mut rows[1] else {
+        panic!("vault row")
+    };
+    let (_, limit) = vault_row
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("max_tools"))
+        .unwrap();
+    *limit = Value::from(100);
+    let mut reduced_bytes = Vec::new();
+    rmpv::encode::write_value(&mut reduced_bytes, &reduced).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &reduced_bytes,
+    )?;
+    assert!(
+        vault
+            .stage_connector_manifest(&general, tools(101), "R1", &Suite, 15)
+            .is_err()
+    );
+    assert_eq!(
+        vault
+            .get_connector_key(&general)?
+            .unwrap()
+            .pending_manifest
+            .unwrap()
+            .manifest
+            .tools()
+            .len(),
+        257
+    );
     Ok(())
 }

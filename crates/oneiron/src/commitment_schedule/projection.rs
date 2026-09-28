@@ -421,7 +421,7 @@ impl Vault {
         occurrence: &CommitmentOccurrence,
         report: &mut CommitmentProjectionReport,
     ) -> ScheduleResult<EntityId> {
-        let instance_ref = commitment_instance_id(&mint.series_ref, occurrence);
+        let instance_ref = commitment_instance_id(&mint.series_ref, occurrence)?;
         let payload = CommitmentSchedulePayload::instance(
             mint.payload.schedule.clone(),
             mint.payload.lead_seconds,

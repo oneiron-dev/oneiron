@@ -85,16 +85,6 @@ pub(super) fn validate_put_type(
             entity_type,
         )));
     }
-    // Connector admission is vault-local authority: peers cannot replace an
-    // indexed Pending key with a self-asserted Active body.
-    if allow_maintenance
-        && allow_reserved_predicate
-        && entity_type == crate::registry::ENTITY_TYPE_CONNECTOR_KEY
-    {
-        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-            entity_type,
-        )));
-    }
     // Same-vault custody replication is opt-out per credential. A
     // remote portable body cannot widen a locally narrowed record.
     if allow_maintenance
@@ -110,6 +100,11 @@ pub(super) fn validate_put_type(
         store.validate_entity_type(entity_type)?;
     } else {
         store.validate_public_entity_type(entity_type)?;
+    }
+    // A local write to a thin-cached id waits for its window's promotion.
+    #[cfg(feature = "sync")]
+    if !(allow_maintenance && allow_reserved_predicate) {
+        crate::sync::residence::require_promoted_for_cached_id(store, wtxn, id)?;
     }
     Ok(entity_type)
 }
@@ -131,7 +126,7 @@ pub(super) fn birth_stamp_target(
             entity_type,
             crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
         )
-        || store.entities.get(txn, id.as_bytes())?.is_some()
+        || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some()
     {
         return Ok(None);
     }

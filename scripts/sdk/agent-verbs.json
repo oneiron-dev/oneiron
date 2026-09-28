@@ -105,11 +105,13 @@
       "name": "describe",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
-      "call": "memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
+      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp": "tool-first",
       "mcp_fields": {
-        "task_ref": "task_ref"
+        "task_ref": "task_ref",
+        "self": "self",
+        "session_id": "session_id"
       },
       "mcp_required_fields": [],
       "mcp_result": "mcp_describe_result(server, actor, output)?",
@@ -752,7 +754,7 @@
         "args": {
           "filter": "ClaimListFilter"
         },
-        "output": "Vec<ClaimView>"
+        "output": "ClaimViews"
       },
       "context": "definition"
     },
@@ -762,7 +764,7 @@
         "args": {
           "claim_ref": "String"
         },
-        "output": "Vec<ClaimView>"
+        "output": "ClaimViews"
       },
       "context": "definition"
     },
@@ -793,7 +795,7 @@
         "args": {
           "refs": "Vec<String>"
         },
-        "output": "Vec<EntityView>"
+        "output": "EntityViews"
       },
       "context": "definition"
     },
@@ -803,7 +805,7 @@
         "args": {
           "entity_ref": "String"
         },
-        "output": "Option<EntityView>"
+        "output": "EntityRead"
       },
       "context": "definition"
     },
@@ -814,7 +816,7 @@
           "query": "String",
           "limit": "u32"
         },
-        "output": "Vec<LexicalHit>"
+        "output": "LexicalHits"
       },
       "context": "definition"
     },
@@ -825,7 +827,7 @@
           "entity_ref": "String",
           "opts": "NeighborOpts"
         },
-        "output": "Vec<NeighborHit>"
+        "output": "NeighborHits"
       },
       "context": "definition"
     },

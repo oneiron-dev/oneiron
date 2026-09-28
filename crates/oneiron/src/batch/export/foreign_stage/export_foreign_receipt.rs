@@ -2,12 +2,45 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::sync::selector::FederationAdmissionRole;
 use crate::sync::types::WindowKey;
 
 pub const VAULT_IMPORT_RECEIPT_KEY_PREFIX: &str = "vault_import_receipt:v1:";
 
 pub(super) const VAULT_IMPORT_CONTENT_KEY_PREFIX: &str = "vault_import_content:v1:";
+
+/// Admitted foreign-import payload retained only while its receipt is
+/// Pending. Key: hex64.
+pub(super) const CONTENT: SideTable<Hex64, Vec<u8>, Raw> =
+    SideTable::new(&side_table::VAULT_IMPORT_CONTENT);
+/// Terminal/pending status receipt for one foreign vault-import artifact.
+/// Key: hex64.
+pub(super) const RECEIPT: SideTable<Hex64, Vec<u8>, Raw> =
+    SideTable::new(&side_table::VAULT_IMPORT_RECEIPT);
+
+/// A 32-byte id spelled as 64 lower-case hex characters — this family's key
+/// shape, shared by [`RECEIPT`] and [`CONTENT`].
+#[derive(Clone, Copy)]
+pub(super) struct Hex64(pub(super) [u8; 32]);
+
+impl SideKey for Hex64 {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(super::hex_lower(&self.0).as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let text = std::str::from_utf8(bytes).ok()?;
+        if text.len() != 64 {
+            return None;
+        }
+        let mut out = [0_u8; 32];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(text.get(index * 2..index * 2 + 2)?, 16).ok()?;
+        }
+        Some(Self(out))
+    }
+}
 
 /// Verdict text `sync::selector::admit_federated_entity_blob` raises when a
 /// REMOTE entity blob is too short to carry its metadata header.

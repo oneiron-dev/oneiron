@@ -22,7 +22,7 @@ fn minted(outcome: SessionMintOutcome) -> EntityId {
 
 #[test]
 fn decode_session_record_rejects_an_unsupported_version() {
-    let encoded = encode_session_record(&SessionLifecycleRecord {
+    let record = SessionLifecycleRecord {
         version: SESSION_LIFECYCLE_RECORD_VERSION + 1,
         started_at: 1_000,
         last_activity: 1_000,
@@ -37,10 +37,18 @@ fn decode_session_record_rejects_an_unsupported_version() {
         }],
         activity_periods: Vec::new(),
         explicit_end_hint: None,
-    })
-    .expect("encode unsupported-version record");
+    };
+    // The `Named` codec has no opinion on `version`: an unsupported version
+    // still round-trips through encode/decode cleanly. The rejection is
+    // `validated_record`'s domain check, exercised here after a real decode.
+    let encoded = RECORDS
+        .encode_value(&record)
+        .expect("encode unsupported-version record");
+    let decoded = RECORDS
+        .decode_value(&encoded)
+        .expect("well-formed msgpack decodes");
 
-    let error = decode_session_record(&encoded).expect_err("unsupported version must fail closed");
+    let error = validated_record(decoded).expect_err("unsupported version must fail closed");
     assert!(matches!(error, Error::CorruptedIndex(_)));
 }
 
@@ -56,6 +64,16 @@ fn seed_conversation(vault: &Vault, seed: u8) -> EntityId {
         )
         .expect("seed conversation");
     id
+}
+
+/// Seeded turns carry no PERSON author, so only a room owner's
+/// `policy_delete` may remove one; this legacy fixture holds no policy
+/// manifest, where that door fails closed. Deletion is not under test here.
+fn hard_delete_turn(vault: &Vault, turn: EntityId) -> bool {
+    vault
+        .delete_room_record_unchecked_for_test(&turn, crate::DeleteReason::UserHardDelete)
+        .expect("hard-delete planned turn")
+        .existed
 }
 
 /// One admissible dirty turn (mirrors `dreamer_consolidation::tests`):
@@ -440,14 +458,7 @@ fn a_same_count_delete_and_insert_race_defers_the_whole_round_by_identity() {
     let deleted = wake.planned_turn_ids[0];
     let surviving = wake.planned_turn_ids[1];
 
-    assert!(
-        vault
-            .delete_entity_with_options(
-                &deleted,
-                crate::deletion::DeleteEntityOptions { purge: true }
-            )
-            .expect("hard-delete planned turn")
-    );
+    assert!(hard_delete_turn(&vault, deleted));
     let inserted = seed_dirty_turn(&vault, &conversation, 900);
     vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)
@@ -931,11 +942,7 @@ fn a_vanished_dirty_snapshot_enqueues_none_of_the_stale_round() {
     let before = meso_attempt_count(&vault);
 
     // The whole planned snapshot vanishes before the close runs.
-    assert!(
-        vault
-            .delete_entity_with_options(&turn, crate::deletion::DeleteEntityOptions { purge: true })
-            .expect("hard-delete planned turn")
-    );
+    assert!(hard_delete_turn(&vault, turn));
 
     let ended = vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)

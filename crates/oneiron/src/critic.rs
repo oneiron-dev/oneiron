@@ -23,13 +23,50 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::posterior::{Posterior, beta_mean};
+use crate::side_table::{self, Named, SideKey, SideTable};
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_RELIABILITY_CLAIM_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_RELIABILITY_PREDICATE_PREFIX: &str = "critic_reliability";
 
-const CRITIQUE_PRIVATE_ARTIFACT_PREFIX: &[u8] = b"dreamer:critic:v1:";
+/// Private run-tree-scoped critique artifact for one branch attempt, written independently by
+/// both the generic critic reviewer and the Dreamer tournament with the identical prefix and key
+/// layout. Key: id16(branch attempt) + u16be(artifact id length) + string(artifact id).
+pub(crate) const CRITIQUE_ARTIFACT: SideTable<CritiqueArtifactKey, CritiqueArtifact, Named> =
+    SideTable::new(&side_table::CRITIC_ARTIFACT);
+
+/// [`CRITIQUE_ARTIFACT`]'s key: the byte layout above, spelled exactly (a plain
+/// `(AttemptId, String)` tuple would drop the artifact id's length prefix).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CritiqueArtifactKey {
+    pub(crate) branch_attempt: AttemptId,
+    pub(crate) artifact_id: String,
+}
+
+impl SideKey for CritiqueArtifactKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.branch_attempt.as_bytes());
+        out.extend_from_slice(&(self.artifact_id.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.artifact_id.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (branch_bytes, rest) = bytes.split_at_checked(16)?;
+        let branch_attempt = AttemptId::from_bytes(branch_bytes).ok()?;
+        let (len_bytes, rest) = rest.split_at_checked(2)?;
+        let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
+        if rest.len() != len {
+            return None;
+        }
+        let artifact_id = String::from_utf8(rest.to_vec()).ok()?;
+        Some(Self {
+            branch_attempt,
+            artifact_id,
+        })
+    }
+}
+
 const MAX_CATALOG_LENSES: usize = 64;
 const MAX_ID_BYTES: usize = 64;
 const MAX_DOMAIN_BYTES: usize = 64;
@@ -531,11 +568,12 @@ impl<'a> CritiqueArtifactStore<'a> {
         if artifact.out_of_scope {
             return Ok(());
         }
-        let key = critique_artifact_key(artifact.branch_attempt, &artifact.artifact_id)?;
-        let encoded = rmp_serde::to_vec_named(artifact)
-            .map_err(|_| invalid_critic_config("critique artifact MessagePack encode failed"))?;
+        let key = CritiqueArtifactKey {
+            branch_attempt: artifact.branch_attempt,
+            artifact_id: artifact.artifact_id.clone(),
+        };
         let mut wtxn = self.vault.store.env.write_txn()?;
-        self.vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        CRITIQUE_ARTIFACT.put(&self.vault.store, &mut wtxn, &key, artifact)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -546,21 +584,26 @@ impl<'a> CritiqueArtifactStore<'a> {
         artifact_id: &str,
     ) -> Result<Option<CritiqueArtifact>> {
         validate_identifier(artifact_id, MAX_ARTIFACT_ID_BYTES, "critique artifact id")?;
-        let key = critique_artifact_key(branch_attempt, artifact_id)?;
+        let key = CritiqueArtifactKey {
+            branch_attempt,
+            artifact_id: artifact_id.to_owned(),
+        };
         let rtxn = self.vault.store.env.read_txn()?;
-        let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
+        let Some(artifact) = CRITIQUE_ARTIFACT.get(&self.vault.store, &rtxn, &key)? else {
             return Ok(None);
         };
-        decode_stored_critique_artifact(&raw).map(Some)
+        validate_critique_artifact(&artifact)?;
+        Ok(Some(artifact))
     }
 
     pub fn list_branch(&self, branch_attempt: AttemptId) -> Result<Vec<CritiqueArtifact>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let prefix = critique_branch_prefix(branch_attempt);
         let mut artifacts = Vec::new();
-        for row in self.vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (_key, raw) = row?;
-            artifacts.push(decode_stored_critique_artifact(&raw)?);
+        for (_, artifact) in
+            CRITIQUE_ARTIFACT.scan_from(&self.vault.store, &rtxn, branch_attempt.as_bytes())?
+        {
+            validate_critique_artifact(&artifact)?;
+            artifacts.push(artifact);
         }
         artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
         Ok(artifacts)
@@ -598,21 +641,14 @@ pub fn critic_reliability_claim_body(
             Value::from(reliability.observations),
         ),
     ]);
-    Ok(ClaimBody::new(
+    ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
         value,
         confidence,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    ))
-}
-
-fn decode_stored_critique_artifact(raw: &[u8]) -> Result<CritiqueArtifact> {
-    let artifact: CritiqueArtifact = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("critic critique artifact"))?;
-    validate_critique_artifact(&artifact)?;
-    Ok(artifact)
+    )
 }
 
 fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
@@ -625,165 +661,11 @@ fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
     }
 }
 
-fn critique_branch_prefix(branch_attempt: AttemptId) -> Vec<u8> {
-    let mut out = Vec::with_capacity(CRITIQUE_PRIVATE_ARTIFACT_PREFIX.len() + 16);
-    out.extend_from_slice(CRITIQUE_PRIVATE_ARTIFACT_PREFIX);
-    out.extend_from_slice(branch_attempt.as_bytes());
-    out
-}
-
-fn critique_artifact_key(branch_attempt: AttemptId, artifact_id: &str) -> Result<Vec<u8>> {
-    validate_identifier(artifact_id, MAX_ARTIFACT_ID_BYTES, "critique artifact id")?;
-    let mut out = critique_branch_prefix(branch_attempt);
-    out.extend_from_slice(&(artifact_id.len() as u16).to_be_bytes());
-    out.extend_from_slice(artifact_id.as_bytes());
-    Ok(out)
-}
-
-fn validate_catalog(catalog: &LensCatalog) -> Result<()> {
-    if catalog.schema_version != CRITIC_LENS_CATALOG_SCHEMA_VERSION {
-        return Err(invalid_critic_config(
-            "unsupported critic lens catalog schema_version",
-        ));
-    }
-    if catalog.lenses.is_empty() || catalog.lenses.len() > MAX_CATALOG_LENSES {
-        return Err(invalid_critic_config(
-            "critic lens catalog must contain 1..=64 lenses",
-        ));
-    }
-    let mut seen = BTreeSet::new();
-    for lens in &catalog.lenses {
-        validate_lens(lens)?;
-        if !seen.insert((lens.domain.as_str(), lens.id.as_str())) {
-            return Err(invalid_critic_config(
-                "critic lens catalog contains duplicate domain/id",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_lens(lens: &CriticLens) -> Result<()> {
-    validate_identifier(&lens.id, MAX_ID_BYTES, "lens id")?;
-    validate_identifier(&lens.domain, MAX_DOMAIN_BYTES, "domain")?;
-    validate_text(&lens.prompt_contract, MAX_CONTRACT_BYTES, "prompt_contract")?;
-    validate_text(
-        &lens.output_schema,
-        MAX_OUTPUT_SCHEMA_BYTES,
-        "output_schema",
-    )?;
-    Ok(())
-}
-
-fn validate_critique_artifact(artifact: &CritiqueArtifact) -> Result<()> {
-    if artifact.schema_version != CRITIQUE_ARTIFACT_SCHEMA_VERSION {
-        return Err(invalid_critic_config(
-            "unsupported critique artifact schema_version",
-        ));
-    }
-    validate_identifier(
-        &artifact.artifact_id,
-        MAX_ARTIFACT_ID_BYTES,
-        "critique artifact id",
-    )?;
-    validate_text(&artifact.run_id, MAX_RUN_ID_BYTES, "run_id")?;
-    validate_text(
-        &artifact.candidate_ref,
-        MAX_CANDIDATE_REF_BYTES,
-        "candidate_ref",
-    )?;
-    validate_identifier(&artifact.lens_id, MAX_ID_BYTES, "lens id")?;
-    validate_identifier(&artifact.domain, MAX_DOMAIN_BYTES, "domain")?;
-    validate_provenance(&artifact.provenance)?;
-    if artifact.evidence_refs.len() > MAX_EVIDENCE_REFS {
-        return Err(invalid_critic_config(
-            "critique evidence_refs exceeds 64 entries",
-        ));
-    }
-    for evidence_ref in &artifact.evidence_refs {
-        validate_text(evidence_ref, MAX_EVIDENCE_REF_BYTES, "evidence_ref")?;
-    }
-    if let Some(suggested_edit) = &artifact.suggested_edit {
-        validate_text(suggested_edit, MAX_SUGGESTED_EDIT_BYTES, "suggested_edit")?;
-    }
-    Ok(())
-}
-
-fn validate_provenance(provenance: &CritiqueProvenance) -> Result<()> {
-    validate_text(
-        &provenance.critic_ref,
-        MAX_PROVENANCE_REF_BYTES,
-        "critic_ref",
-    )?;
-    validate_text(&provenance.model_id, MAX_PROVENANCE_REF_BYTES, "model_id")?;
-    if let Some(model_revision) = &provenance.model_revision {
-        validate_text(model_revision, MAX_PROVENANCE_REF_BYTES, "model_revision")?;
-    }
-    Ok(())
-}
-
-fn validate_reliability_table(reliabilities: &[CriticReliability]) -> Result<()> {
-    let mut seen = BTreeSet::new();
-    for reliability in reliabilities {
-        validate_reliability(reliability)?;
-        if !seen.insert((reliability.domain.as_str(), reliability.lens_id.as_str())) {
-            return Err(invalid_critic_config(
-                "critic reliability table contains duplicate domain/id",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_reliability(reliability: &CriticReliability) -> Result<()> {
-    validate_identifier(&reliability.lens_id, MAX_ID_BYTES, "lens id")?;
-    validate_identifier(&reliability.domain, MAX_DOMAIN_BYTES, "domain")?;
-    if !reliability.alpha.is_finite()
-        || !reliability.beta.is_finite()
-        || reliability.alpha <= 0.0
-        || reliability.beta <= 0.0
-    {
-        return Err(invalid_critic_config(
-            "critic reliability alpha/beta must be finite and positive",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_identifier(text: &str, max_bytes: usize, field: &'static str) -> Result<()> {
-    validate_text(text, max_bytes, field)?;
-    let mut bytes = text.bytes();
-    let Some(first) = bytes.next() else {
-        return Err(invalid_critic_config(format!("{field} must not be empty")));
-    };
-    if !first.is_ascii_lowercase() {
-        return Err(invalid_critic_config(format!(
-            "{field} must start with an ASCII lowercase letter"
-        )));
-    }
-    if !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_') {
-        return Err(invalid_critic_config(format!(
-            "{field} must contain only ASCII lowercase letters, digits, or underscores"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_text(text: &str, max_bytes: usize, field: &'static str) -> Result<()> {
-    if text.is_empty() {
-        return Err(invalid_critic_config(format!("{field} must not be empty")));
-    }
-    if text.len() > max_bytes {
-        return Err(invalid_critic_config(format!(
-            "{field} exceeds {max_bytes} bytes"
-        )));
-    }
-    Ok(())
-}
-
-fn invalid_critic_config(message: impl Into<String>) -> Error {
-    Error::InvalidConfig(message.into())
-}
+mod validation;
+use self::validation::{
+    invalid_critic_config, validate_catalog, validate_critique_artifact, validate_identifier,
+    validate_lens, validate_provenance, validate_reliability, validate_reliability_table,
+};
 
 #[cfg(test)]
 mod tests;

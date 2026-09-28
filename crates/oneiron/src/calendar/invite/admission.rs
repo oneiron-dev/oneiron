@@ -147,7 +147,7 @@ impl CalendarInviteAdmission {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         let occurred = TimeRange {
             start: now,
             end: now,

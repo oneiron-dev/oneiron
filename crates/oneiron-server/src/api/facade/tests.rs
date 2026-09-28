@@ -205,7 +205,7 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         })
     };
     let (status, _) = post(&server, &format!("Bearer {SECRET}"), "tasks.ask", json!({})).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     for answer_first in [false, true] {
         let spec = ask_spec(format!("order-{answer_first}"));
         let (status, receipt) = post(&server, &owner_token, "tasks.ask", spec.clone()).await;
@@ -323,7 +323,8 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
         Some(vault.root_project().unwrap()),
         vault.root_project().unwrap(),
         owner,
-    );
+    )
+    .unwrap();
     spec.roster.extend([addressed.to_hex(), other.to_hex()]);
     vault.put_project(project, &spec, 1).unwrap();
     let room = EntityId::from_hex(&spec.home_room).unwrap();
@@ -588,7 +589,8 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
         Some(vault.root_project().unwrap()),
         vault.root_project().unwrap(),
         actor,
-    );
+    )
+    .unwrap();
     vault.put_project(project, &record, 1).unwrap();
     let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
     let server = Arc::new(
@@ -987,14 +989,21 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
     }
     // The host's logged root has no actor binding; its verified full-vault
     // instrument is still an owner, not a read-only scoped slip.
+    let (host_slip, host_key) =
+        crate::test_credentials::credential(&server, "jti=facade-export-host-root");
     let host = Request::builder()
         .method("POST")
         .uri("/v1/core/facade/export")
-        .header("Authorization", "Bearer facade-export")
         .header("Content-Type", "application/json")
         .body(Body::from(json!({"format":"json"}).to_string()))
         .unwrap();
-    let response = app.clone().oneshot(host).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(crate::test_credentials::bind_slip_request(
+            &server, &host_slip, &host_key, host,
+        ))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("private export owner diary"));

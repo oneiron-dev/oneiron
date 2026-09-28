@@ -20,6 +20,7 @@ fn birth() -> ClaimBody {
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 fn signed(

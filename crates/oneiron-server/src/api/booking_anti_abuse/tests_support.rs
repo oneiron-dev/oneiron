@@ -135,7 +135,8 @@ pub(crate) mod tests {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         server
             .vault
             .put_claim(

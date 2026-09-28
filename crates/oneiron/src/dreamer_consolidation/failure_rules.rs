@@ -5,13 +5,15 @@
 
 use crate::error::{Error, Result};
 use crate::llm::{CallClass, FinishReason, LlmRequest, LlmResponse};
+use crate::side_table::{self, Raw, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub(crate) const KEY: &[u8] = b"dreamer:consolidation:failure_rules:v1";
+pub(crate) const DREAMER_FAILURE_RULES: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::DREAMER_FAILURE_RULES);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -100,11 +102,8 @@ impl FailureRules {
                     if !row.consolidation_eligible && !row.effector_eligible => {}
                 _ => return Err(invalid()),
             }
-            // A fallback never authorizes an outward effect; the ordinary
-            // trust/approval gate still decides effector eligibility.
-            if row.effector_eligible {
-                return Err(invalid());
-            }
+            // This is a holder choice, not an authority grant. Manifest
+            // defaults, vault ceiling and the ordinary effect Gate still apply.
         }
         if self.version != 1 || keys.len() != 6 {
             return Err(invalid());
@@ -165,7 +164,8 @@ fn valid_resident_actor(vault: &Vault, actor: WriteActor) -> Result<bool> {
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("resident actor entity header"))?;
-    Ok(crate::provenance::validate_actor_class(header.entity_type, actor.actor_class()).is_ok())
+    Ok(header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+        && crate::provenance::validate_actor_class(header.entity_type, actor.actor_class()).is_ok())
 }
 
 pub(crate) fn admitted_authored_claim(
@@ -211,10 +211,12 @@ pub(crate) fn resident_record(actor: WriteActor, json: &[u8]) -> Result<Vec<u8>>
 
 pub(super) fn load(vault: &Vault) -> Result<Option<FailureRules>> {
     let txn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .get(&txn, KEY)?
+    load_in_txn(vault, &txn)
+}
+
+fn load_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<FailureRules>> {
+    DREAMER_FAILURE_RULES
+        .get(&vault.store, txn, &())?
         .map(|bytes| {
             let stored: StoredRules = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
             EntityId::from_hex(&stored.author).map_err(|_| invalid())?;
@@ -222,6 +224,45 @@ pub(super) fn load(vault: &Vault) -> Result<Option<FailureRules>> {
             Ok(stored.rules)
         })
         .transpose()
+}
+
+/// A fallback from either consolidation call site cannot turn an authored
+/// stage rule into outbound authority. The caller supplies the same transaction
+/// that resolves the manifest and the ordinary effect Gate.
+pub(crate) fn step_consolidation_eligible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    purpose: &str,
+    response: &LlmResponse,
+) -> Result<Option<bool>> {
+    let stage = match purpose {
+        "extraction" => Stage::Extraction,
+        "consolidation" => Stage::Conflict,
+        _ => return Ok(None),
+    };
+    if !matches!(&response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:"))
+    {
+        return Ok(None);
+    }
+    Ok(load_in_txn(vault, txn)?.map(|rules| rules.accepts(stage, response)))
+}
+
+pub(crate) fn step_effector_eligible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    purpose: &str,
+    response: &LlmResponse,
+) -> Result<Option<bool>> {
+    let stage = match purpose {
+        "extraction" => Stage::Extraction,
+        "consolidation" => Stage::Conflict,
+        _ => return Ok(None),
+    };
+    if !matches!(&response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:"))
+    {
+        return Ok(None);
+    }
+    Ok(load_in_txn(vault, txn)?.map(|rules| rules.row(stage, Failure::Fatal).effector_eligible))
 }
 
 impl Vault {
@@ -233,7 +274,7 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        self.store.vault_meta.put(&mut txn, KEY, &bytes)?;
+        DREAMER_FAILURE_RULES.put(&self.store, &mut txn, &(), &bytes)?;
         txn.commit()?;
         Ok(())
     }

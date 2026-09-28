@@ -153,7 +153,10 @@ pub(crate) fn bind_slip_request(
     key: &SigningKey,
     mut request: Request<Body>,
 ) -> Request<Body> {
-    let timestamp = server.vault().now_recorded_at();
+    // Freshness is judged on the authority plane's monotonic anchor, which a
+    // recording-clock step does not move; signing on the stepped recording
+    // clock would lock the holder out of a server whose wall clock jumped.
+    let timestamp = server.vault().capability_slip_now().unwrap();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature = hex(&key
@@ -174,6 +177,22 @@ pub(crate) fn bind_slip_request(
     );
     request
 }
+/// Signs a real top-scope slip for a WebSocket upgrade test.
+pub(crate) fn bind_ws_request(server: &SyncServer, request: &mut Request<()>, recipe: &str) {
+    let (slip, key) = credential(server, recipe);
+    let signed = bind_slip_request(
+        server,
+        &slip,
+        &key,
+        Request::builder().body(Body::empty()).unwrap(),
+    );
+    for name in ["authorization", "x-oneiron-binding"] {
+        request
+            .headers_mut()
+            .insert(name, signed.headers()[name].clone());
+    }
+}
+
 /// Engine-level reads carry the logged host root, as the authenticated server
 /// does. A plain actor key reads nothing until a trusted manifest grants it.
 pub(crate) fn host_reader(vault: &oneiron::Vault) -> oneiron::claim::ScopedReadActorKey {

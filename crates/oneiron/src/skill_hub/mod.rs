@@ -88,7 +88,7 @@ pub use self::index::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use self::package::{
     HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat,
 };
-pub(crate) use folder::package_from_source;
+pub(crate) use folder::{declared_role_call, package_from_source};
 mod fork_source;
 pub use self::record::{
     HUB_PIN_KEYS, HUB_REF_KEYS, HubPin, HubRef, HubSyncPolicy, SKILL_HUB_BODY_KEYS, SkillHubKind,
@@ -116,8 +116,8 @@ pub(crate) use self::verdict::{
 // the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
 use self::index::{
-    CONTENT_HASH_INDEX_SCHEMA_VERSION, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY,
-    MAX_HUB_SKILL_SCAN_ENTRIES, content_hash_index_key, same_hub_alias,
+    CONTENT_HASH_INDEX, CONTENT_HASH_INDEX_SCHEMA_VERSION, MAX_HUB_SKILL_SCAN_ENTRIES,
+    SCHEMA_VERSION, same_hub_alias,
 };
 #[cfg(test)]
 use self::support::{map_text, map_value};

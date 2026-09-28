@@ -165,7 +165,15 @@ pub(super) fn check_external_effect_policy_with_budget(
     policy: &PolicyManifestResolution,
     admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
-    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None, None)?;
+    let mut governance = evaluate_external_effect_policy(
+        store,
+        wtxn,
+        effect,
+        policy,
+        None,
+        None,
+        ApprovalContext::FirstAdmission,
+    )?;
     let mut charge = None;
     let mut exhausted = false;
     if governance.outcome() == GateOutcome::Allow
@@ -269,7 +277,7 @@ pub(super) fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<
 }
 
 pub(super) fn encode_first_party_default_policy_manifest() -> Vec<u8> {
-    default_policy_manifest()
+    default_policy_manifest().unwrap()
 }
 
 pub(super) fn rewrite_policy_manifest_entries(
@@ -503,7 +511,8 @@ pub(super) fn source_trust_claim(source: ClaimSource) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(source);
     body
 }

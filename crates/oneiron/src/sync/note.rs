@@ -99,9 +99,6 @@ fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<EntityId> {
         .chain(bundle.landed.iter().map(|row| row.note))
         .collect()
 }
-fn metadata_key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
 fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId) -> Result<bool> {
     if crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), note)
         || vault.local_hard_delete_marker_exists_in_txn(txn, note)?
@@ -109,11 +106,10 @@ fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId)
     {
         return Ok(true);
     }
-    Ok(vault
-        .store
-        .entities
-        .get(txn, note.as_bytes())?
-        .is_some_and(|row| row.len() == crate::batch::ENTITY_METADATA_HEADER_LEN))
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, note)?
+            .is_some_and(|row| row.len() == crate::batch::ENTITY_METADATA_HEADER_LEN),
+    )
 }
 
 impl State {

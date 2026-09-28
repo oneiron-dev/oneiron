@@ -1,6 +1,6 @@
 //! Cross-vault same_as links and per-pact share consent (FED-07).
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeStoreRead, EntityStoreRead};
 use rmpv::Value;
 
 use crate::affect::Vad;
@@ -106,7 +106,7 @@ pub fn put_coreference_link(
         other_person,
         Value::from(status.wire()),
         status.approval(),
-    );
+    )?;
     let mut ops = vec![BatchOp::Edge {
         src: local_person,
         kind: EdgeKind::SameAs,
@@ -163,7 +163,7 @@ pub fn coreference_share_consent(
             Value::from(bytes_to_hex_lower(pact_id)),
         )]),
         ClaimApprovalStatus::Approved,
-    );
+    )?;
     let ops = coreference_claim_ops(claim_id, source, &body, occurred, learned_at)?;
     apply_coreference_ops(vault, ops)?;
     Ok(claim_id)
@@ -201,8 +201,10 @@ pub(crate) fn coreference_shared_for_pact_in_txn(
         return Ok(false);
     }
     for (source, target) in [(a, b), (b, a)] {
-        let key = crate::store::Store::encode_edge_key(&source, EdgeKind::SameAs, &target);
-        if vault.store.edges_out.get(txn, &key)?.is_some()
+        if vault
+            .store
+            .port_edge_get(txn, &source, EdgeKind::SameAs, &target)?
+            .is_some()
             && coreference_consent_names_pact(vault, txn, source, target, pact_id)?
         {
             return Ok(true);
@@ -312,7 +314,7 @@ fn coreference_claim_body(
     target: EntityId,
     value: Value,
     approval: ClaimApprovalStatus,
-) -> ClaimBody {
+) -> Result<ClaimBody> {
     ClaimBody::new(
         predicate,
         ClaimSubject::Edge {

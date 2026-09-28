@@ -2,7 +2,7 @@
 //! replacement body as though it were the historical quotation.
 
 use super::graph::{
-    CANONICAL, conversation_of, edge_ids, invalid, key, read_id, require_member, require_type,
+    CANONICAL, conversation_of, edge_ids, invalid, read_id, require_member, require_type,
 };
 use super::thread_projection::{chain_in_txn, selected_thread_in_txn};
 use super::{AppendRecord, AppendedRecord};
@@ -10,6 +10,7 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::registry::ENTITY_TYPE_TURN;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
@@ -27,6 +28,8 @@ pub struct ReplyStrip {
     pub text: Option<String>,
     /// Target is missing, deleted or no longer at the pinned revision.
     pub stale: bool,
+    /// Target has been erased (rather than merely edited or not yet received).
+    pub redacted: bool,
 }
 
 impl Vault {
@@ -78,10 +81,17 @@ impl Vault {
         if revision.len() != 64 || !revision.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(invalid("invalid reply hash"));
         }
-        if edge_ids(&self.store, &txn, record, EdgeKind::RepliesTo, false, 2)? != [target] {
+        let target_row = live_entity_row_in_txn(&self.store, &txn, &target)?;
+        let redacted = matches!(target_row, LiveEntityRow::DeletedShell)
+            || self.local_hard_delete_marker_exists_in_txn(&txn, &target)?;
+        let edges = edge_ids(&self.store, &txn, record, EdgeKind::RepliesTo, false, 2)?;
+        // HardErase tears incident edges. The pinned pointer survives in the
+        // immutable reply body, but must never hydrate erased content. A live
+        // target still requires the exact structural edge.
+        if edges != [target] && !(redacted && edges.is_empty()) {
             return Err(Error::CorruptedIndex("reply pointer index"));
         }
-        let (text, stale) = match live_entity_row_in_txn(&self.store, &txn, &target)? {
+        let (text, stale) = match target_row {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_TURN,
                 body,
@@ -113,11 +123,14 @@ impl Vault {
             revision,
             text,
             stale,
+            redacted,
         }))
     }
 }
 
-const THREAD_META: &[u8] = b"conversation_dag:thread_meta:v1:";
+/// Cached thread projection of a trunk. Key: id16 (trunk).
+const THREAD_META: SideTable<EntityId, ThreadMeta, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_THREAD_META);
 
 /// Cached projection of a trunk's thread; absent for a trunk with no replies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,37 +140,39 @@ pub struct ThreadMeta {
     pub last_at: u64,
 }
 
+/// `[1]`, the root id, then the reply count and the last reply time, both big-endian.
+impl RawValue for ThreadMeta {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut value = Vec::with_capacity(33);
+        value.push(1);
+        value.extend_from_slice(self.root.as_bytes());
+        value.extend_from_slice(&self.count.to_be_bytes());
+        value.extend_from_slice(&self.last_at.to_be_bytes());
+        Ok(value)
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        let corrupt = || Error::CorruptedIndex("conversation thread metadata");
+        if raw.len() != 33 || raw[0] != 1 {
+            return Err(corrupt().into());
+        }
+        let root = EntityId::from_bytes(raw[1..17].try_into().map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+        let count = u64::from_be_bytes(raw[17..25].try_into().map_err(|_| corrupt())?);
+        let last_at = u64::from_be_bytes(raw[25..33].try_into().map_err(|_| corrupt())?);
+        if count == 0 {
+            return Err(corrupt().into());
+        }
+        Ok(ThreadMeta {
+            root,
+            count,
+            last_at,
+        })
+    }
+}
+
 fn meta_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: &EntityId) -> Result<Option<ThreadMeta>> {
-    let Some(raw) = vault.store.vault_meta.get(txn, &key(THREAD_META, trunk))? else {
-        return Ok(None);
-    };
-    if raw.len() != 33 || raw[0] != 1 {
-        return Err(Error::CorruptedIndex("conversation thread metadata"));
-    }
-    let root = EntityId::from_bytes(
-        raw[1..17]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("conversation thread metadata"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("conversation thread metadata"))?;
-    let count = u64::from_be_bytes(
-        raw[17..25]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("conversation thread metadata"))?,
-    );
-    let last_at = u64::from_be_bytes(
-        raw[25..33]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("conversation thread metadata"))?,
-    );
-    if count == 0 {
-        return Err(Error::CorruptedIndex("conversation thread metadata"));
-    }
-    Ok(Some(ThreadMeta {
-        root,
-        count,
-        last_at,
-    }))
+    THREAD_META.get(&vault.store, txn, trunk)
 }
 
 fn rebuild_thread_meta_in_txn(
@@ -171,21 +186,12 @@ fn rebuild_thread_meta_in_txn(
         count: selected.replies.len() as u64,
         last_at: selected.last_at,
     });
-    let meta_key = key(THREAD_META, &trunk);
     if let Some(ref meta) = meta {
-        let mut value = Vec::with_capacity(33);
-        value.push(1);
-        value.extend_from_slice(meta.root.as_bytes());
-        value.extend_from_slice(&meta.count.to_be_bytes());
-        value.extend_from_slice(&meta.last_at.to_be_bytes());
-        vault.store.vault_meta.put(txn, &meta_key, &value)?;
+        THREAD_META.put(&vault.store, txn, &trunk, meta)?;
     } else {
-        vault.store.vault_meta.delete(txn, &meta_key)?;
+        THREAD_META.delete(&vault.store, txn, &trunk)?;
     }
-    vault
-        .store
-        .vault_meta
-        .delete(txn, &key(THREAD_DIRTY, &trunk))?;
+    THREAD_DIRTY.delete(&vault.store, txn, &trunk)?;
     Ok(meta)
 }
 
@@ -226,7 +232,9 @@ pub struct Thread {
     pub last_at: Option<u64>,
 }
 
-const THREAD_DIRTY: &[u8] = b"conversation_dag:thread_meta_dirty:v1:";
+/// Single-byte `[1]` marker that a trunk's cached thread projection is stale. Key: id16.
+const THREAD_DIRTY: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_THREAD_META_DIRTY);
 
 /// Invalidates the cached projection of a reply's target and every ancestor.
 /// Called before edge removal and after edge/body materialization, in the same transaction.
@@ -244,7 +252,7 @@ pub(crate) fn invalidate_thread_meta(
         if seen.len() > MAX_ANCESTOR_DEPTH {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
-        store.vault_meta.put(txn, &key(THREAD_DIRTY, &id), &[1])?;
+        THREAD_DIRTY.put(store, txn, &id, &[1])?;
         let parents = edge_ids(store, txn, &id, EdgeKind::RepliesTo, false, 2)?;
         cursor = match parents.as_slice() {
             [] => None,
@@ -288,11 +296,7 @@ impl Vault {
     pub fn thread_meta(&self, trunk: EntityId) -> Result<Option<ThreadMeta>> {
         let txn = self.store.env.read_txn()?;
         conversation_of(&self.store, &txn, &trunk)?;
-        let dirty = self
-            .store
-            .vault_meta
-            .get(&txn, &key(THREAD_DIRTY, &trunk))?
-            .is_some();
+        let dirty = THREAD_DIRTY.contains(&self.store, &txn, &trunk)?;
         if dirty {
             drop(txn);
             return self.with_write_txn(|txn| rebuild_thread_meta_in_txn(self, txn, trunk));

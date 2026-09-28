@@ -8,12 +8,17 @@ use crate::dreamer_runner::{
 use crate::error::{Error, Result};
 use crate::ports::{ChangeLogRecord, EntityStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::side_table::{self, LegacyJson, Named, SideTable};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 
-const POLICY_KEY: &[u8] = b"settings:dreamer:wake-policy:v1";
-const STATE_KEY: &[u8] = b"dreamer:wake-policy:state:v1";
-const OUTBOX_PREFIX: &[u8] = b"dreamer:wake-policy:recipe-input:v1:";
+const POLICY: SideTable<(), DreamerWakePolicy, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_WAKE_POLICY);
+const STATE: SideTable<(), WakeState, LegacyJson> = SideTable::new(&side_table::DREAMER_WAKE_STATE);
+const OUTBOX: SideTable<[u8; 1], WakePolicyTrigger, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_WAKE_RECIPE_INPUT);
+const CHANGE: SideTable<[u8; 16], ChangeLogRecord, Named> =
+    SideTable::new(&side_table::PORTS_CHANGE);
 const DEFAULT_POLICY: &str = include_str!("wake_policy_defaults.json");
 
 fn invalid() -> Error {
@@ -243,22 +248,28 @@ struct WakeState {
     pending_nightly: std::collections::BTreeMap<String, u64>,
 }
 
+fn row_error(error: Error, invalid_row: Error) -> Error {
+    match error {
+        Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid_row,
+        other => other,
+    }
+}
+
 pub(crate) fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DreamerWakePolicy> {
-    let row = vault.store.vault_meta.get(txn, POLICY_KEY)?;
-    let policy: DreamerWakePolicy = match row {
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
+    let policy = match POLICY
+        .get(&vault.store, txn, &())
+        .map_err(|e| row_error(e, invalid()))?
+    {
+        Some(row) => row,
         None => serde_json::from_str(DEFAULT_POLICY).map_err(|_| invalid())?,
     };
     policy.validate()
 }
 fn state_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<WakeState> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, STATE_KEY)?
-        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
-        .transpose()
-        .map(Option::unwrap_or_default)
+    Ok(STATE
+        .get(&vault.store, txn, &())
+        .map_err(|e| row_error(e, invalid()))?
+        .unwrap_or_default())
 }
 
 /// Read one snapshot of live rows. Full role/source validation happens before
@@ -274,36 +285,23 @@ struct WakeCounts {
 }
 
 fn count_new(vault: &Vault, txn: &heed::RoTxn<'_>, state: &mut WakeState) -> Result<WakeCounts> {
-    let prefix = crate::ports::CHANGE_LOG_KEY_PREFIX;
-    let mut start = prefix.to_vec();
-    if let Some(id) = state.processed_change_id {
-        start.extend_from_slice(&id);
-    }
-    let mut upper = prefix.to_vec();
-    *upper.last_mut().expect("nonempty prefix") += 1;
     let mut last = state.processed_change_id;
     let mut changed = std::collections::BTreeSet::new();
-    for entry in vault.store.vault_meta.range(
-        txn,
-        &(
-            if state.processed_change_id.is_some() {
-                std::ops::Bound::Excluded(start.as_slice())
-            } else {
-                std::ops::Bound::Included(start.as_slice())
-            },
-            std::ops::Bound::Excluded(upper.as_slice()),
-        ),
-    )? {
-        let (key, value) = entry?;
-        let id: [u8; 16] = key
-            .get(prefix.len()..)
-            .and_then(|bytes| bytes.try_into().ok())
-            .ok_or(Error::CorruptedIndex("dreamer wake mutation cursor"))?;
+    let start = state
+        .processed_change_id
+        .as_ref()
+        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+    for entry in CHANGE.iter_range(&vault.store, txn, start, std::ops::Bound::Unbounded)? {
+        let (id, change) = entry.map_err(|error| match error {
+            Error::Store(crate::error::StoreError::SideTableRow {
+                problem: crate::error::SideTableRowProblem::KeyShape,
+                ..
+            }) => Error::CorruptedIndex("dreamer wake mutation cursor"),
+            other => row_error(other, Error::CorruptedIndex("dreamer wake mutation row")),
+        })?;
         if last.is_some_and(|last| id <= last) {
             return Err(Error::CorruptedIndex("dreamer wake mutation order"));
         }
-        let change: ChangeLogRecord = rmp_serde::from_slice(&value)
-            .map_err(|_| Error::CorruptedIndex("dreamer wake mutation row"))?;
         if change.id != id {
             return Err(Error::CorruptedIndex("dreamer wake mutation identity"));
         }
@@ -458,12 +456,13 @@ fn merge_component(
 /// still durably reachable. A newer coalesced input covers the older range.
 pub(crate) fn wake_policy_input_covers(vault: &Vault, trigger: &WakePolicyTrigger) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    let key = [OUTBOX_PREFIX, &[trigger.recipe.key()]].concat();
-    let Some(bytes) = vault.store.vault_meta.get(&txn, &key)? else {
+    let key = [trigger.recipe.key()];
+    let Some(pending) = OUTBOX
+        .get(&vault.store, &txn, &key)
+        .map_err(|e| row_error(e, Error::CorruptedIndex("dreamer wake recipe input row")))?
+    else {
         return Ok(false);
     };
-    let pending: WakePolicyTrigger = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::CorruptedIndex("dreamer wake recipe input row"))?;
     Ok(pending.recipe == trigger.recipe
         && pending.through >= trigger.through
         && pending.after_turn <= trigger.after_turn
@@ -487,10 +486,11 @@ impl Vault {
         policy: DreamerWakePolicy,
     ) -> Result<()> {
         policy.validate()?;
-        let bytes = serde_json::to_vec(&policy).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, POLICY_KEY, &bytes)?;
+            POLICY
+                .put(&self.store, txn, &(), &policy)
+                .map_err(|e| row_error(e, invalid()))?;
             Ok(())
         })
     }
@@ -506,11 +506,9 @@ impl Vault {
             crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
             let mut policy = policy_in_txn(self, txn)?;
             policy.wake_grain_turns = grain.turns_per_wake;
-            self.store.vault_meta.put(
-                txn,
-                POLICY_KEY,
-                &serde_json::to_vec(&policy).map_err(|_| invalid())?,
-            )?;
+            POLICY
+                .put(&self.store, txn, &(), &policy)
+                .map_err(|e| row_error(e, invalid()))?;
             Ok(())
         })
     }
@@ -540,11 +538,11 @@ impl Vault {
     pub fn dreamer_wake_recipe_inputs(&self) -> Result<Vec<WakePolicyTrigger>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&txn, OUTBOX_PREFIX)? {
-            let (key, raw) = entry?;
-            let trigger: WakePolicyTrigger = serde_json::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("dreamer wake recipe input row"))?;
-            if key.get(OUTBOX_PREFIX.len()..) != Some(&[trigger.recipe.key()][..]) {
+        for entry in OUTBOX.iter_from(&self.store, &txn, &[])? {
+            let (key, trigger) = entry.map_err(|e| {
+                row_error(e, Error::CorruptedIndex("dreamer wake recipe input row"))
+            })?;
+            if key != [trigger.recipe.key()] {
                 return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
             }
             rows.push(trigger);
@@ -588,11 +586,9 @@ impl Vault {
                     changed = true;
                 }
                 if changed || state.processed_change_id != previous_processed {
-                    self.store.vault_meta.put(
-                        txn,
-                        STATE_KEY,
-                        &serde_json::to_vec(&state).map_err(|_| invalid())?,
-                    )?;
+                    STATE
+                        .put(&self.store, txn, &(), &state)
+                        .map_err(|e| row_error(e, invalid()))?;
                 }
                 return Ok(WakePolicyOutcome {
                     decision,
@@ -620,11 +616,12 @@ impl Vault {
             };
             let attempt =
                 DreamerRunnerStore::new(self).enqueue_policy_wake_in_txn(txn, &trigger, now)?;
-            let key = [OUTBOX_PREFIX, &[recipe.key()]].concat();
+            let key = [recipe.key()];
             let mut pending = trigger;
-            if let Some(bytes) = self.store.vault_meta.get(txn, &key)? {
-                let prior: WakePolicyTrigger = serde_json::from_slice(&bytes)
-                    .map_err(|_| Error::CorruptedIndex("dreamer wake recipe input row"))?;
+            if let Some(prior) = OUTBOX
+                .get(&self.store, txn, &key)
+                .map_err(|e| row_error(e, Error::CorruptedIndex("dreamer wake recipe input row")))?
+            {
                 if prior.recipe != recipe {
                     return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
                 }
@@ -653,11 +650,9 @@ impl Vault {
                 pending.after_record = prior.after_record;
                 pending.after_nightly = prior.after_nightly;
             }
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&pending).map_err(|_| invalid())?,
-            )?;
+            OUTBOX
+                .put(&self.store, txn, &key, &pending)
+                .map_err(|e| row_error(e, invalid()))?;
             match recipe {
                 WakeRecipe::Continuous => {
                     state.turn_change_id = counts.last;
@@ -683,11 +678,9 @@ impl Vault {
             if counts.nightly == 0 {
                 state.nightly_change_id = counts.last;
             }
-            self.store.vault_meta.put(
-                txn,
-                STATE_KEY,
-                &serde_json::to_vec(&state).map_err(|_| invalid())?,
-            )?;
+            STATE
+                .put(&self.store, txn, &(), &state)
+                .map_err(|e| row_error(e, invalid()))?;
             Ok(WakePolicyOutcome {
                 decision,
                 attempt: Some(attempt),

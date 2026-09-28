@@ -26,7 +26,7 @@ impl Memory<'_> {
                 wtxn,
                 &id,
             )?,
-        );
+        )?;
         let transcript = crate::authority::machine_claim_transcript(&vault_id, &id, &body)?;
         *envelope = envelope
             .clone()

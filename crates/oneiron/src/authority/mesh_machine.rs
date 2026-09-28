@@ -13,6 +13,7 @@ use crate::{
     federation::{Scope, ScopeAxis},
     ports::{EntityRecord, EntityStore, EntityStoreRead, TombstoneStoreRead},
     registry::ENTITY_TYPE_MACHINE,
+    side_table::{self, HexId, Named, SideTable},
     temporal::TimeRange,
 };
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -71,9 +72,9 @@ struct SignedMeshAuthority {
     claims: MeshAuthorityClaims,
     signature: Vec<u8>,
 }
-fn authority_key(machine: EntityId) -> String {
-    format!("authority:mesh-machine:v1:{}", machine.to_hex())
-}
+/// Host-signed authority projection. The key is the MACHINE's lower-case hex id.
+const MESH_AUTHORITY: SideTable<HexId, SignedMeshAuthority, Named> =
+    SideTable::new(&side_table::AUTHORITY_MESH_MACHINE);
 fn transcript(claims: &MeshAuthorityClaims) -> Result<Vec<u8>> {
     let mut bytes = AUTH_DOMAIN.to_vec();
     bytes.extend(rmp_serde::to_vec_named(claims).map_err(|_| invalid_authority())?);
@@ -170,11 +171,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         machine: EntityId,
     ) -> Result<Option<MeshAuthorityClaims>> {
-        let Some(raw) = self.store.sync_state.get(txn, &authority_key(machine))? else {
+        let Some(signed) = MESH_AUTHORITY
+            .get(&self.store, txn, &HexId(machine))
+            .map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid_authority()
+                } else {
+                    error
+                }
+            })?
+        else {
             return Ok(None);
         };
-        let signed: SignedMeshAuthority =
-            rmp_serde::from_slice(&raw).map_err(|_| invalid_authority())?;
         let claims = signed.claims;
         if claims.version != 1
             || claims.machine != machine
@@ -272,14 +280,15 @@ impl Vault {
         claims: MeshAuthorityClaims,
     ) -> Result<()> {
         let signature = issuer.sign_mesh(&transcript(&claims)?);
-        let bytes = rmp_serde::to_vec_named(&SignedMeshAuthority {
-            claims: claims.clone(),
-            signature: signature.to_vec(),
-        })
-        .map_err(|_| invalid_authority())?;
-        self.store
-            .sync_state
-            .put(txn, &authority_key(claims.machine), &bytes)?;
+        MESH_AUTHORITY.put(
+            &self.store,
+            txn,
+            &HexId(claims.machine),
+            &SignedMeshAuthority {
+                claims,
+                signature: signature.to_vec(),
+            },
+        )?;
         Ok(())
     }
     /// Enroll a paired device. Both pairing and transport keys prove the same binding.
@@ -320,11 +329,7 @@ impl Vault {
             host_key: issuer.binding_key(),
         };
         if !self.mesh_pairing_live(&fold, &txn, &claims)?
-            || self
-                .store
-                .sync_state
-                .get(&txn, &authority_key(machine))?
-                .is_some()
+            || MESH_AUTHORITY.contains(&self.store, &txn, &HexId(machine))?
         {
             return Err(invalid_authority());
         }

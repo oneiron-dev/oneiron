@@ -14,6 +14,9 @@ use super::tombstones::materialize_tombstones_from_delta;
 use crate::entity_id::EntityId;
 use crate::sync::queue::SyncQueue;
 use crate::sync::types::LocalUpdate;
+use crate::sync::window_rows::{
+    WINDOW_SHALLOW_FENCE, WINDOW_UPDATE, WINDOW_UPDATE_SEQ, WindowUpdateKey, WindowUpdateSeq,
+};
 use crate::{Error, Result, Vault};
 
 thread_local! {
@@ -245,8 +248,14 @@ impl ObserverAState {
     }
 }
 
+// Reached only from this module's own test lane now that production reads
+// route through the typed `WINDOW_UPDATE_SEQ` table (whose own `RawValue`
+// impl mirrors this exact decode), so a plain fn/const would read as unused
+// in a non-test build of the library.
+#[cfg(test)]
 pub(super) const ERR_OBSERVER_A_U_SEQ_ROW: &str = "observer a u_seq row";
 
+#[cfg(test)]
 pub(super) fn decode_observer_u_seq(raw: &[u8]) -> Result<u32> {
     let bytes: [u8; 4] = raw
         .try_into()
@@ -280,15 +289,15 @@ pub(crate) fn persist_window_update_in_txn(
     window_key: &str,
     update_bytes: &[u8],
 ) -> Result<()> {
-    let seq_key = format!("m:u_seq:w:{window_key}");
+    let seq_key = window_key.to_owned();
     // Distinguish a missing key (fresh window — start at 0) from a
     // present-but-malformed seq row (on-disk corruption). The latter
     // must not silently reset to 0; doing so would let next_seq=1
     // collide with whatever update was already persisted at
     // `u:w:{window}:00000001` before the row was corrupted.
-    let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
+    let seq: u32 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
         None => 0,
-        Some(raw) => decode_observer_u_seq(&raw)?,
+        Some(WindowUpdateSeq(seq)) => seq,
     };
     // checked_add surfaces overflow as a typed error rather than
     // `wrapping_add`-ing to 0 and silently overwriting update key
@@ -297,19 +306,19 @@ pub(crate) fn persist_window_update_in_txn(
     let next_seq = seq
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("observer a u_seq"))?;
-    vault
-        .store
-        .sync_state
-        .put(wtxn, &seq_key, &next_seq.to_le_bytes())?;
+    WINDOW_UPDATE_SEQ.put(&vault.store, wtxn, &seq_key, &WindowUpdateSeq(next_seq))?;
 
-    let update_key = format!("u:w:{window_key}:{next_seq:08x}");
-    vault
-        .store
-        .sync_state
-        .put(wtxn, &update_key, update_bytes)?;
+    WINDOW_UPDATE.put(
+        &vault.store,
+        wtxn,
+        &WindowUpdateKey {
+            window: window_key.to_owned(),
+            seq: next_seq,
+        },
+        &update_bytes.to_vec(),
+    )?;
 
-    let svf_key = format!("svf:w:{window_key}");
-    vault.store.sync_state.put(wtxn, &svf_key, &[0u8])?;
+    WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &window_key.to_owned(), &[0u8])?;
 
     Ok(())
 }
@@ -469,7 +478,13 @@ fn subscribe_map_observer(
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
     window_key: &str,
-    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64) -> bool,
+    materialize: fn(
+        &LoroDoc,
+        &loro::event::MapDelta<'_>,
+        &Vault,
+        &str,
+        u64,
+    ) -> Option<Vec<EntityId>>,
     live_query: (&'static str, Option<Arc<dyn LiveQueryTee>>),
 ) -> Subscription {
     let callback_doc = doc.clone();
@@ -521,16 +536,18 @@ fn subscribe_map_observer(
             }
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    let (committed, changes) = {
+                    let (replayed_entities, changes) = {
                         let _guard = materializer.lock();
                         if live_query.0 == "entities" {
-                            super::entities::materialize_entities_with_changes(
-                                &callback_doc,
-                                map_delta,
-                                &vault,
-                                &window_key,
-                                lease_vault_id,
-                            )
+                            let (committed, changes) =
+                                super::entities::materialize_entities_with_changes(
+                                    &callback_doc,
+                                    map_delta,
+                                    &vault,
+                                    &window_key,
+                                    lease_vault_id,
+                                );
+                            (committed.then(Vec::new), changes)
                         } else {
                             (
                                 materialize(
@@ -544,9 +561,16 @@ fn subscribe_map_observer(
                             )
                         }
                     };
-                    if committed {
+                    if let Some(replayed_entities) = replayed_entities {
                         let path = format!("w:{window_key}/{}", live_query.0);
                         let mut diff = entity_document_diff(&path, live_query.0, map_delta);
+                        diff.containers.extend(
+                            replayed_entities
+                                .iter()
+                                .map(|id| format!("e:{}", id.to_hex())),
+                        );
+                        diff.containers.sort_unstable();
+                        diff.containers.dedup();
                         diff.revision_events = changes
                             .into_iter()
                             .map(super::RevisionEvent::Original)

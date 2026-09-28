@@ -1046,7 +1046,7 @@ fn the_lineage_guard_is_reached_from_every_claim_write_door() -> Result<()> {
         0.7,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Generated);
     body.scope = Some(lineage_scope(ClaimSource::ToolOutput));
     let error = vault
@@ -1536,6 +1536,7 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
                 floor: ConfidenceBand::High,
                 mode,
             }),
+            seat_policy: None,
         };
         assert!(vault.set_model_manifest(&manifest).is_err());
         let approval = TeacherProbeApproval::for_scored_checkpoint(

@@ -138,7 +138,7 @@ fn peer_roster_consent_keys(fold: &AuthorityFold) -> BTreeSet<AuthorityKey> {
 #[test]
 fn peer_fold_derives_the_host_root_roster_from_relayed_entries() {
     let fixture = peer_log_fixture(180);
-    let fold = fold_peer_authority_log(&fixture.entries);
+    let fold = fold_legacy_peer_authority_log(&fixture.entries);
 
     assert_eq!(
         fold.vault_id,
@@ -255,7 +255,7 @@ fn peer_entries_bind_only_the_authority_transcript_domain() {
         enroll.signer.signature = host_signing.sign(&transcript).to_bytes().to_vec();
 
         let hash = authority_entry_hash(&enroll).unwrap();
-        let fold = fold_peer_authority_log(&[fixture.genesis.clone(), enroll]);
+        let fold = fold_legacy_peer_authority_log(&[fixture.genesis.clone(), enroll]);
         assert!(
             fold.issues
                 .contains(&AuthorityFoldIssue::InvalidEntry(hash)),
@@ -271,7 +271,7 @@ fn peer_entries_bind_only_the_authority_transcript_domain() {
 #[test]
 fn peer_roster_is_permutation_invariant() {
     let fixture = peer_log_fixture(184);
-    let canonical = fold_peer_authority_log(&fixture.entries);
+    let canonical = fold_legacy_peer_authority_log(&fixture.entries);
     assert!(!canonical.roster.is_empty());
 
     let len = fixture.entries.len();
@@ -279,27 +279,30 @@ fn peer_roster_is_permutation_invariant() {
         let mut permuted = fixture.entries.clone();
         permuted.rotate_left(rotation);
         assert_eq!(
-            fold_peer_authority_log(&permuted).roster,
+            fold_legacy_peer_authority_log(&permuted).roster,
             canonical.roster,
             "relay-chosen arrival order must not move the peer roster"
         );
     }
     let mut reversed = fixture.entries;
     reversed.reverse();
-    assert_eq!(fold_peer_authority_log(&reversed).roster, canonical.roster);
+    assert_eq!(
+        fold_legacy_peer_authority_log(&reversed).roster,
+        canonical.roster
+    );
 }
 
 #[test]
 fn withheld_peer_entries_cannot_mint_a_key_or_unrevoke_one() {
     let fixture = peer_log_fixture(185);
-    let full = fold_peer_authority_log(&fixture.entries);
+    let full = fold_legacy_peer_authority_log(&fixture.entries);
     let revoke_hash = authority_entry_hash(fixture.entries.last().unwrap()).unwrap();
 
     // The log is a chain, so its ancestry-closed subsets are exactly its
     // prefixes.
     for length in 1..=fixture.entries.len() {
         let subset = &fixture.entries[..length];
-        let fold = fold_peer_authority_log(subset);
+        let fold = fold_legacy_peer_authority_log(subset);
         for key in fold.roster.keys() {
             assert!(
                 full.roster.contains_key(key),
@@ -340,7 +343,7 @@ fn forged_peer_entry_signed_off_roster_never_enters_the_peer_roster() {
 
     let mut entries = fixture.entries.clone();
     entries.push(forged);
-    let fold = fold_peer_authority_log(&entries);
+    let fold = fold_legacy_peer_authority_log(&entries);
 
     assert!(
         !fold.roster.contains_key(&forged_device),
@@ -353,7 +356,35 @@ fn forged_peer_entry_signed_off_roster_never_enters_the_peer_roster() {
     );
     assert_eq!(
         fold.roster,
-        fold_peer_authority_log(&fixture.entries).roster,
+        fold_legacy_peer_authority_log(&fixture.entries).roster,
         "the forgery leaves the derived roster byte-identical"
     );
+}
+
+#[test]
+fn peer_fold_never_imports_an_unpaired_client_authority_key() {
+    let owner = ed_key(123);
+    let genesis = genesis_entry(123, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let enroll = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 124,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Hardware,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let hash = authority_entry_hash(&enroll).unwrap();
+    let fold = fold_peer_authority_log(&[genesis, enroll]);
+    assert!(!fold.valid_entries.contains(&hash));
+    assert!(
+        !fold
+            .roster
+            .contains_key(&authority_key_from_ed(&ed_key(124)))
+    );
+    assert!(fold.roster.contains_key(&authority_key_from_ed(&owner)));
 }

@@ -13,7 +13,8 @@ fn put(vault: &Vault, id: u8, predicate: &str, subject: ClaimSubject) -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     if let ClaimSubject::Entity(target) = subject
         && vault.get_entity_type(&target)? == Some(vault.project_type_byte()?)
     {
@@ -69,7 +70,7 @@ fn person_sees_only_self_and_member_project_rows_and_touching_live_links() -> Re
     let root_record = vault.project(root)?.unwrap();
     let leader = EntityId::from_hex(&root_record.leader)?;
     for (id, member) in [(project, person), (outsider_project, stranger)] {
-        let mut row = ProjectRecord::new(id, Some(root), root, leader);
+        let mut row = ProjectRecord::new(id, Some(root), root, leader).unwrap();
         row.roster.push(member.to_hex());
         // No goal pointer: only the goal-intake interview may set one.
         vault.put_project(id, &row, 2)?;
@@ -203,7 +204,7 @@ fn owner_and_agent_have_distinct_sections_and_actor_bound_reads() -> Result<()> 
     let project = entity(0x57);
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-    let mut row = ProjectRecord::new(project, Some(root), root, leader);
+    let mut row = ProjectRecord::new(project, Some(root), root, leader).unwrap();
     row.budget = Some(budget_ref.to_hex());
     vault.put_project(project, &row, 2)?;
     let owner = vault.authenticate_owner(
@@ -291,7 +292,8 @@ fn report_cannot_widen_world_scoped_grant_or_count_hidden_rows() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         vault.put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
         Ok(id)
@@ -301,7 +303,7 @@ fn report_cannot_widen_world_scoped_grant_or_count_hidden_rows() -> Result<()> {
     let authority = crate::federation::scope_codec::encode_scope_value(
         &crate::federation::scope_codec::read_preset(),
     )?;
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
     else {
@@ -440,12 +442,12 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
     let project_change = entity(0x95);
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-    let mut project_record = ProjectRecord::new(project, Some(root), root, leader);
+    let mut project_record = ProjectRecord::new(project, Some(root), root, leader).unwrap();
     project_record.roster.push(person.to_hex());
     let kind = vault.project_type_byte()?;
     let project_body = rmp_serde::to_vec_named(&project_record).expect("project encodes");
-    let scope_key = [b"scope:record:v1:".as_slice(), project.as_bytes()].concat();
-    // Derive the ordinary digest-bound project stamp, but keep it in the
+    let scope_key = [b"scope:record:v2:".as_slice(), project.as_bytes()].concat();
+    // Derive the ordinary identity-bound project stamp, but keep it in the
     // overlay only: a base read must not be able to resolve this project.
     let scope_stamp = vault.with_write_txn(|txn| {
         crate::federation::record_scope::stamp_put(
@@ -487,7 +489,8 @@ fn session_weave_uses_composed_claim_and_project_candidates_without_changing_bas
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         overlay.put(
             OverlayKeyspace::Entities,
             id.as_bytes(),
@@ -706,5 +709,97 @@ fn weave_exact_pair_admission_keeps_independent_link_to_same_target() -> Result<
     let restored = &report().value.sections[0].items;
     assert!(!restored.contains(&hidden));
     assert!(restored.contains(&independent));
+    Ok(())
+}
+
+fn replace_weave_policy(vault: &Vault, policy: Value) -> Result<()> {
+    let invalid = || Error::InvalidConfig("default policy manifest".into());
+    let id = crate::gate::default_policy_manifest_id()?;
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&txn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            .map_err(|_| invalid())?
+    else {
+        return Err(invalid());
+    };
+    drop(txn);
+    entries
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some(crate::gate::weave_policy::KEY))
+        .ok_or_else(invalid)?
+        .1 = policy;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).map_err(|_| invalid())?;
+    crate::test_util::put_policy_manifest_bytes(vault, id, &bytes)
+}
+
+#[test]
+fn wrong_link_correction_follows_weave_report_policy() -> Result<()> {
+    use crate::provenance::EdgeRef;
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let person = entity(0xb4);
+    let peer = entity(0xb5);
+    for id in [person, peer] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+    }
+    vault.put_edge(&person, EdgeKind::Mentions, &peer, 0.5)?;
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);
+    let auth = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+    let link = EdgeRef::new(person, EdgeKind::Mentions, peer);
+    let filed = read.report_wrong_link(&auth, WeaveReader::Person(person), link)?;
+    assert_eq!(
+        read.weave_link_corrections(WeaveReader::Person(person), link)?,
+        vec![filed]
+    );
+
+    // The manifest's person row stops granting the links section: the
+    // correction doors re-run the report under the same resolved policy.
+    let Value::Array(mut roles) = crate::gate::weave_policy::default_value() else {
+        panic!("policy array")
+    };
+    for role in &mut roles {
+        let Value::Map(fields) = role else { continue };
+        if fields
+            .iter()
+            .any(|(k, v)| k.as_str() == Some("role") && v.as_str() == Some("person"))
+        {
+            for (k, v) in fields.iter_mut() {
+                if k.as_str() == Some("sections") {
+                    *v = Value::Array(vec![Value::from("changes")]);
+                }
+            }
+        }
+    }
+    replace_weave_policy(&vault, Value::Array(roles))?;
+
+    assert!(matches!(
+        read.weave_link_corrections(WeaveReader::Person(person), link),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(
+        read.report_wrong_link(&auth, WeaveReader::Person(person), link)
+            .is_err()
+    );
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
     Ok(())
 }

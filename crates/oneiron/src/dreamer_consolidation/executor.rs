@@ -6,7 +6,7 @@ mod merge_resolution;
 use merge_resolution::{MergeResolution, decode_merge_resolution};
 
 use super::evidence::{ExtractedCandidate, VerifiedCandidate, VerifiedEvidenceSet};
-use super::resources::BranchResources;
+use super::resources::{BranchResources, FallbackOutputPin};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
@@ -31,7 +31,8 @@ use crate::error::Result;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepEffectBinding, StepOutcome,
+    TierPrecedence, call_as_step,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
@@ -125,12 +126,16 @@ impl ConsolidationExecutor<'_> {
             .into_request();
         let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
-        let response = match outcome {
-            Ok(StepOutcome::Finished { response, .. }) => {
+        let (response, failure_policy) = match outcome {
+            Ok(StepOutcome::Finished {
+                response,
+                failure_policy,
+                ..
+            }) => {
                 charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
-                response
+                (response, failure_policy)
             }
-            Ok(StepOutcome::Trapped(_)) => return Ok(PartitionRun::Trapped),
+            Ok(StepOutcome::Trapped { .. }) => return Ok(PartitionRun::Trapped),
             Err(crate::llm::DurableStepError::SpentFinalizeRefused { usage }) => {
                 charges.record_usage(&usage);
                 return Ok(PartitionRun::Checkpoint);
@@ -146,9 +151,25 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
-        let accepted = rules
-            .as_ref()
-            .is_none_or(|rules| rules.accepts(Stage::Extraction, &response));
+        // Both resident policies restrict a fallback: the step-level failure
+        // class must permit consolidation AND the Dreamer stage rule must
+        // accept the deterministic response. Neither is a Gate bypass.
+        let accepted = failure_policy.is_none_or(|decision| {
+            decision.consolidation_with_stage(
+                rules
+                    .as_ref()
+                    .map(|rules| rules.accepts(Stage::Extraction, &response)),
+            )
+        });
+        if accepted && failure_policy.is_some() {
+            resources.bind_fallback(FallbackOutputPin::new(
+                StepEffectBinding {
+                    attempt_id,
+                    step_hash,
+                },
+                &response,
+            )?)?;
+        }
         let candidates = if accepted {
             self.decode_candidates(
                 &partition,
@@ -165,6 +186,12 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
+        #[cfg(test)]
+        if accepted {
+            ctx.vault
+                .test_hooks()
+                .run_before_dreamer_person_mint(ctx.vault);
+        }
         let mint = if accepted {
             super::extracted_people::mint_extracted_people(
                 ctx.vault,
@@ -172,6 +199,9 @@ impl ConsolidationExecutor<'_> {
                 &turn_ids,
                 resources.scope(),
                 ctx.now_ms,
+                resources
+                    .fallback_binding()
+                    .map(|binding| (binding, self.actor.entity_ref())),
                 Some(ctx.deadline),
             )
             .map(|_| ())
@@ -295,7 +325,7 @@ impl ConsolidationExecutor<'_> {
                     )?;
                     response
                 }
-                Ok(StepOutcome::Trapped(_)) => {
+                Ok(StepOutcome::Trapped { .. }) => {
                     // Suspended mid-merge: the attempt is parked. STOP and surface
                     // the trap. Writing a contradiction gap here would fabricate
                     // a `ContradictionLeftStanding` for a merge that never
@@ -464,6 +494,7 @@ impl ConsolidationExecutor<'_> {
         Ok(LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: scope.clone(),
                 purpose: CallPurpose::Consolidation,
                 class: CallClass::Durable {
@@ -564,7 +595,7 @@ fn merged_candidate(
         conflict.identity.facet,
         conflict.identity.rel,
         conflict.identity.topic.as_deref(),
-    );
+    )?;
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),
         ClaimSubject::Entity(conflict.identity.subject),

@@ -66,9 +66,10 @@ async fn context_board_hides_fresh_default_policy_manifest() {
                 oneiron::registry::ENTITY_TYPE_SKILL.to_string(),
                 Value::from(4)
             ),
+            // Four bootstrap skill carriers plus four built-in pack sources.
             (
                 oneiron::registry::ENTITY_TYPE_ASSET.to_string(),
-                Value::from(4)
+                Value::from(8)
             ),
             (
                 oneiron::registry::ENTITY_TYPE_CONVERSATION.to_string(),
@@ -1170,8 +1171,7 @@ fn bind_artifact_member_to_divergent_pacts(
         sign_federation_pact_gesture,
     };
     use oneiron::federation::{
-        FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
-        FederationScopeWorlds, encode_federation_pact_scope,
+        FederationDirectionScope, FederationPactScope, ScopeAxis, encode_federation_pact_scope,
     };
     let signing = SigningKey::from_bytes(&blake3::derive_key(
         "oneiron/host-authority-signing/v2",
@@ -1204,9 +1204,9 @@ fn bind_artifact_member_to_divergent_pacts(
     let peer_key = AuthorityKey::Ed25519(peer.verifying_key().to_bytes());
     let peer_id = [0x6e; 32];
     let half = FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     };
     let scope = FederationPactScope {
         lo_to_hi: half.clone(),

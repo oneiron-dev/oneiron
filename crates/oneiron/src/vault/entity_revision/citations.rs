@@ -174,16 +174,9 @@ fn resolve_reference(
     reference: &str,
     revision: RevisionRef,
 ) -> Result<Option<EntityId>> {
-    let key = [b"entity_revision:identity:".as_slice(), &revision.0].concat();
-    let Some(bytes) = vault.store.vault_meta.get(txn, &key)? else {
+    let Some(id) = super::storage::IDENTITY.get(&vault.store, txn, &revision.0)? else {
         return Ok(None);
     };
-    let id = EntityId::from_bytes(
-        bytes
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("revision identity"))?,
-    )?;
     let Some(raw) = read_entity_revision_in_txn(vault, txn, &id, ReadMode::Pinned(revision))?
     else {
         return Ok(None);

@@ -39,7 +39,7 @@ fn anchor_sync_waits_for_both_entities_in_every_arrival_order() -> Result<()> {
                 Value::from(subject.to_hex()),
                 writer(),
                 100,
-            );
+            )?;
             let rows = [
                 (actor, blob(ENTITY_TYPE_PERSON, b"actor")),
                 (subject, blob(ENTITY_TYPE_ORG, b"subject")),
@@ -99,7 +99,7 @@ fn anchor_sync_rejects_hostile_actor_or_subject_without_overwriting_valid_anchor
                 value,
                 writer(),
                 100,
-            );
+            )?;
             let bytes = blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&body)?);
             let doc = LoroDoc::new();
             let materializer = Arc::new(Materializer::new());
@@ -141,7 +141,7 @@ fn anchor_sync_wrong_type_arrival_is_terminal_even_with_another_missing_dependen
                 Value::from(subject.to_hex()),
                 writer(),
                 100,
-            );
+            )?;
             map_insert_bytes(
                 &doc.get_map("entities"),
                 &id.to_hex(),
@@ -184,7 +184,7 @@ fn anchor_sync_edge_outcomes_do_not_discharge_missing_reference_retry() -> Resul
             Value::from(missing.to_hex()),
             writer(),
             100,
-        );
+        )?;
         let doc = LoroDoc::new();
         let materializer = Materializer::new();
         map_insert_bytes(

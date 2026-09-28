@@ -4,8 +4,6 @@ use rmpv::Value;
 
 use crate::error::{ArtifactError, Error, Result};
 
-pub(super) const ENTITY_ID_LEN: usize = 16;
-
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
 
 pub(super) const KEY_WIN: &str = "win";

@@ -81,6 +81,52 @@ pub(super) fn authorize_in_txn(
     })
 }
 
+/// Authorize an exact existing item edit under a promoted canonical window.
+/// Read selection (facet closure) and write authority are independent checks.
+pub(in crate::sync) fn admit_promoted_entity_write_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    new_blob: &[u8],
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    proof: &crate::authority::VerifiedSlip,
+) -> Result<()> {
+    let old = vault.get_raw_in(txn, &id)?.ok_or_else(denied)?;
+    let old_header = EntityMetadataHeader::parse(&old).ok_or_else(denied)?;
+    let new_header = EntityMetadataHeader::parse(new_blob).ok_or_else(denied)?;
+    if old_header.entity_type != new_header.entity_type
+        || old_header.learned_at != new_header.learned_at
+        || proof.claims().holder_ref != selector.member_ref.to_hex()
+        || !proof.allows_verb("write")
+    {
+        return Err(denied());
+    }
+    let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
+    admit_selected_in_txn(vault, txn, id, selector, &admission)?;
+    let mut record = crate::federation::record_scope::scope_for_blob(&vault.store, txn, id, &old)?
+        .ok_or_else(denied)?;
+    record.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["write".to_string()]));
+    if !admission
+        .grant
+        .authority_scope
+        .admits("write", &record, &crate::federation::Scope::top())
+        || !proof
+            .scope()
+            .admits("write", &record, &crate::federation::Scope::top())
+    {
+        return Err(denied());
+    }
+    crate::federation::record_scope::validate_edit_birth_scope(
+        &vault.store,
+        txn,
+        id,
+        new_header.entity_type,
+        &new_blob[ENTITY_METADATA_HEADER_LEN..],
+    )
+}
+
 pub(in crate::sync) fn admit_document_write_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -117,30 +163,34 @@ pub(super) fn admit_selected_in_txn(
     // The export's facet closure is ONE hop from a selected seed, never a
     // transitive walk. Re-read both endpoint rows and every live facet stamp
     // from this writer; a stale window cannot preserve a removed seed.
-    for edges in [&vault.store.edges_out, &vault.store.edges_in] {
-        for row in edges.prefix_iter(txn, id.as_bytes())? {
-            spend(&mut budget)?;
-            let (key, value) = row?;
-            let edge = crate::vault::parse_edge_record(&key, &value)?;
-            if edge.kind == EdgeKind::SameAs
-                && !super::scope::document_coreference_context_in_txn(
-                    vault,
-                    txn,
-                    &admission.fold,
-                    selector,
-                    id,
-                    edge.target,
-                )?
-                .allows(id, edge.target)
-            {
-                continue;
-            }
-            if selection
-                .candidate(edge.target, &mut budget)?
-                .is_some_and(|(_, seed)| seed)
-            {
-                return Ok(());
-            }
+    for row in crate::ports::EdgeStoreRead::port_edges(
+        &vault.store,
+        txn,
+        &id,
+        crate::ports::EdgeDirection::Both,
+        None,
+        None,
+    )? {
+        spend(&mut budget)?;
+        let edge = row?;
+        if edge.kind == EdgeKind::SameAs
+            && !super::scope::document_coreference_context_in_txn(
+                vault,
+                txn,
+                &admission.fold,
+                selector,
+                id,
+                edge.target,
+            )?
+            .allows(id, edge.target)
+        {
+            continue;
+        }
+        if selection
+            .candidate(edge.target, &mut budget)?
+            .is_some_and(|(_, seed)| seed)
+        {
+            return Ok(());
         }
     }
     Err(denied())
@@ -227,11 +277,16 @@ impl StoredSelection<'_, '_> {
         };
         let mut seed = false;
         if let Some(facets) = facet_filter(self.admission.position.as_scope()) {
-            let prefix = crate::vault::edge_kind_prefix(&id, EdgeKind::FacetOf);
-            for row in self.vault.store.edges_out.prefix_iter(self.txn, &prefix)? {
+            for row in crate::ports::EdgeStoreRead::port_edges(
+                &self.vault.store,
+                self.txn,
+                &id,
+                crate::ports::EdgeDirection::Out,
+                Some(EdgeKind::FacetOf),
+                None,
+            )? {
                 spend(budget)?;
-                let (key, value) = row?;
-                let edge = crate::vault::parse_edge_record(&key, &value)?;
+                let edge = row?;
                 let target_type = self.vault.get_entity_type_in_txn(self.txn, &edge.target)?;
                 // The same stored endpoint type table used by the export
                 // mirror: off-table rows neither seed nor suppress selection.
@@ -240,7 +295,7 @@ impl StoredSelection<'_, '_> {
                 }) {
                     continue;
                 }
-                if !facets.contains(&edge.target) {
+                if !facets.contains(&crate::federation::ScopeId(edge.target)) {
                     return Ok(None);
                 }
                 seed = true;

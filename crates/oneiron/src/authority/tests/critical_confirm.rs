@@ -484,7 +484,7 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
         (authority_entry_hash(&enroll_second).unwrap(), 1_000),
         (authority_entry_hash(&enroll_peer).unwrap(), 1_000),
     ]);
-    let fold = fold_authority_log_with_seen_times(
+    let fold = fold_legacy_authority_log_with_seen_times(
         &[genesis, enroll_second, enroll_peer, revoke, confirm.clone()],
         &seen,
         1_000,
@@ -532,8 +532,11 @@ fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
     );
     let mut seen = BTreeMap::new();
     seen.insert(authority_entry_hash(&enroll).unwrap(), 1_000);
-    let fold =
-        fold_authority_log_with_seen_times(&[genesis, enroll, confirm.clone()], &seen, 1_000);
+    let fold = fold_legacy_authority_log_with_seen_times(
+        &[genesis, enroll, confirm.clone()],
+        &seen,
+        1_000,
+    );
     let device = &fold.roster[&authority_key_from_ed(&admin)];
     assert!(!device.revoked && device.roles & ROLE_ADMIN != 0 && device.roles & ROLE_OWNER == 0);
     assert!(fold.issues.iter().any(|issue| matches!(issue,
@@ -680,7 +683,8 @@ fn put_critical_confirm_claim(vault: &crate::Vault, id: EntityId) {
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let data = crate::claim::encode_claim_body(&body).unwrap();
     let payload = crate::test_util::entity_record(
         crate::registry::ENTITY_TYPE_CLAIM,

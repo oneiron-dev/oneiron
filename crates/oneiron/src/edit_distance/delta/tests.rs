@@ -455,12 +455,7 @@ fn attachment_surfaces_a_failed_capture_as_its_own_marker() {
     let (_tmp, vault) = crate::edit_distance::tests::temp_vault();
     vault
         .with_write_txn(|wtxn| {
-            put_amendment_row_in_txn(
-                &vault,
-                wtxn,
-                "gate:unmeasured",
-                AMENDMENT_DELTA_UNCAPTURED_ROW,
-            )
+            put_amendment_row_in_txn(&vault, wtxn, "gate:unmeasured", &DeltaRow::Uncaptured)
         })
         .expect("write the uncaptured marker");
 

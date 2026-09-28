@@ -38,7 +38,7 @@ use crate::Vault;
 #[cfg(test)]
 use crate::access_grant::{AccessGrant, AccessGrantCapability};
 #[cfg(test)]
-use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
+use crate::channel_identity::ChannelIdentityBinding;
 #[cfg(test)]
 use crate::channel_identity_selection::RelationshipContext;
 #[cfg(test)]

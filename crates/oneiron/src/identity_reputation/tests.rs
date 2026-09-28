@@ -15,7 +15,7 @@ fn email_webhook_signal_updates_health_claims() -> Result<()> {
     assert_eq!(reputation.bounce_rate, 20.0 / 1_020.0);
     assert_eq!(reputation.status(), IdentityReputationStatus::Constrained);
 
-    for claim in reputation.claim_bodies(identity_ref) {
+    for claim in reputation.claim_bodies(identity_ref)? {
         validate_identity_reputation_claim_structure(&claim)?;
         assert_eq!(claim.subject, ClaimSubject::Entity(identity_ref));
     }
@@ -84,7 +84,7 @@ fn complaint_spike_clamps_and_lands_rotate_proposal_only() -> Result<()> {
     assert_eq!(clamp.effective_daily_cap, DEGRADED_REPUTATION_DAILY_CAP);
 
     let proposal = reputation
-        .rotation_proposal_claim(identity_ref)
+        .rotation_proposal_claim(identity_ref)?
         .expect("degraded identity proposes rotation");
     assert_eq!(proposal.approval, ClaimApprovalStatus::Proposed);
     assert_eq!(proposal.source, Some(ClaimSource::Generated));
@@ -107,7 +107,8 @@ fn malformed_reputation_claims_fail_closed() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     assert!(validate_identity_reputation_claim_structure(&bad_rate).is_err());
 
     let bad_proposal = ClaimBody::new(
@@ -135,6 +136,7 @@ fn malformed_reputation_claims_fail_closed() {
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     assert!(validate_identity_reputation_claim_structure(&bad_proposal).is_err());
 }

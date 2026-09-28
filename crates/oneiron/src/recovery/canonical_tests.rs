@@ -401,6 +401,206 @@ fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() ->
 }
 
 #[test]
+fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let world = EntityId::from_bytes([0x81; 16])?;
+    let claim = EntityId::from_bytes([0x82; 16])?;
+    let at = 1_771_027_200;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.canonical_world",
+        crate::claim::ClaimSubject::Entity(world),
+        rmpv::Value::from("fact"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let window = format!("2026-02@{}", world.to_hex());
+    let doc = LoroDoc::new();
+    canonical::insert(
+        &doc,
+        "entities",
+        &claim.to_hex(),
+        &vault.get_raw(&claim)?.unwrap(),
+    )?;
+    doc.commit();
+    let snapshot = capture_canonical_window(&vault, &window, &doc)?;
+    let encoded = snapshot.encode()?;
+    assert_eq!(CanonicalSnapshot::decode(&encoded)?, snapshot);
+    let rebuilt = rebuild_vault_window_from_canonical(&snapshot)?;
+    assert_eq!(
+        capture_canonical_window(&vault, &window, &rebuilt)?,
+        snapshot
+    );
+    let mut wrong = snapshot.clone();
+    wrong.window = format!("2026-02@{}", EntityId::from_bytes([0x83; 16])?.to_hex());
+    assert!(wrong.validate().is_err());
+    let mut contaminated = snapshot;
+    contaminated.entity_blobs.push(CanonicalEntity {
+        id: *world.as_bytes(),
+        blob: vault.get_raw(&world)?.unwrap(),
+    });
+    contaminated.entity_blobs.sort_by_key(|row| row.id);
+    assert!(contaminated.validate().is_err());
+    #[cfg(feature = "sync")]
+    {
+        let peer_dir = tempfile::tempdir()?;
+        let peer = Vault::open(peer_dir.path(), VaultConfig::device())?;
+        peer.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"world",
+        )?;
+        crate::sync::window::forward_rematerialize(
+            &peer,
+            &rebuilt,
+            &crate::sync::bridge::Materializer::new(),
+            &crate::sync::WindowKey::new(&window),
+        )?;
+        assert_eq!(peer.get(&claim)?, vault.get(&claim)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let world = EntityId::now();
+    let person = EntityId::now();
+    let claim = EntityId::now();
+    let at = 1_771_027_200;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.canonical_soft_world",
+        crate::claim::ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault
+        .batch()
+        .edge(&claim, EdgeKind::About, &person, 1.0)
+        .commit()?;
+    vault.delete_entity_with_reason(&claim, crate::deletion::DeleteReason::UserDelete)?;
+    let key = format!("2026-02@{}", world.to_hex());
+    #[cfg(feature = "sync")]
+    let source_doc = crate::sync::window::load_window_from_state(
+        &vault,
+        "source",
+        &crate::sync::WindowKey::new(&key),
+    )?;
+    #[cfg(not(feature = "sync"))]
+    let source_doc = LoroDoc::new();
+    let snapshot = capture_canonical_window(&vault, &key, &source_doc)?;
+    assert!(
+        snapshot
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *claim.as_bytes()
+                && row.blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN)
+    );
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|row| row.source == *claim.as_bytes() && row.target == *person.as_bytes())
+    );
+    let encoded = snapshot.encode()?;
+    assert_eq!(CanonicalSnapshot::decode(&encoded)?, snapshot);
+    let rebuilt = rebuild_vault_window_from_canonical(&snapshot)?;
+    #[cfg(feature = "sync")]
+    {
+        let peer_dir = tempfile::tempdir()?;
+        let peer = Vault::open(peer_dir.path(), VaultConfig::device())?;
+        peer.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"world",
+        )?;
+        peer.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            at,
+            b"person",
+        )?;
+        let window = crate::sync::WindowKey::new(&key);
+        crate::sync::window::forward_recovery(
+            &peer,
+            &rebuilt,
+            &crate::sync::bridge::Materializer::new(),
+            &window,
+            &snapshot,
+        )?;
+        assert_eq!(
+            peer.get_raw_unsealed(&claim)?.unwrap().len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN
+        );
+        assert_eq!(
+            peer.sync_state_get(&format!("m:dw:{}", claim.to_hex()))?
+                .as_deref(),
+            Some(key.as_bytes())
+        );
+        assert!(
+            peer.edges_out(&claim)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::About && edge.target == person)
+        );
+        crate::sync::server_state::persist_window_snapshot(&peer, &window, &rebuilt)?;
+        let manager = std::sync::Arc::new(crate::sync::WindowManager::new(
+            std::sync::Arc::new(peer),
+            std::sync::Arc::new(crate::sync::bridge::Materializer::new()),
+            "peer",
+        ));
+        let reopened = manager.open_window(&window)?;
+        assert!(
+            reopened
+                .doc
+                .get_map("tombstones")
+                .get(&claim.to_hex())
+                .is_some()
+        );
+    }
+    #[cfg(not(feature = "sync"))]
+    let _ = rebuilt;
+    Ok(())
+}
+
+#[test]
 fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Result<()> {
     let fixture = fixture()?;
     let snapshot = &fixture.snapshot;
@@ -1346,14 +1546,10 @@ fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> 
     let source = Vault::open(dir.path(), VaultConfig::default())?;
     let at = 1_788_220_800_u64; // 2026-09-01, within the canonical window.
     let intent_id = [0x92_u8; 32];
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.outbound.receipt_record.v1\0");
-    hash.update(&intent_id);
-    let mut id_bytes = [0_u8; 16];
-    id_bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    id_bytes[6] = (id_bytes[6] & 0x0f) | 0x70;
-    id_bytes[8] = (id_bytes[8] & 0x3f) | 0x80;
-    let receipt_id = EntityId::from_bytes(id_bytes)?;
+    let receipt_id = EntityId::derive(
+        crate::entity_id::derived_domains::OUTBOUND_RECEIPT_RECORD,
+        &[&intent_id],
+    )?;
     let receipt = ReceiptRecord {
         receipt_id: format!(
             "outbound:suppression:{}",

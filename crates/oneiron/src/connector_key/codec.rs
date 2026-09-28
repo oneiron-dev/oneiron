@@ -9,7 +9,8 @@ use super::record::{
     CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
     ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
     EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
-    EffectorBudgetWindow, PendingConnectorCharter, invalid_body,
+    EffectorBudgetWindow, MAX_CONNECTOR_MANIFEST_BYTES, PendingConnectorCharter,
+    PendingConnectorManifest, invalid_body,
 };
 
 /// Current ConnectorKeyRecord body schema version.
@@ -23,7 +24,7 @@ pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 3;
 /// APPEND-ONLY and position-addressed by the `KEY_*` consts below: an existing
 /// index must never move, or every stored body silently re-reads as a
 /// different field.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 19] = [
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 21] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -43,6 +44,8 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 19] = [
     "slate_revision",
     "admission_epoch",
     "consent_required",
+    "retained_manifest",
+    "pending_manifest",
 ];
 
 const KEY_SCHEMA_VERSION: &str = CONNECTOR_KEY_BODY_KEYS[0];
@@ -64,7 +67,9 @@ const KEY_PROTOCOL_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[15];
 const KEY_SLATE_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[16];
 const KEY_ADMISSION_EPOCH: &str = CONNECTOR_KEY_BODY_KEYS[17];
 const KEY_CONSENT_REQUIRED: &str = CONNECTOR_KEY_BODY_KEYS[18];
-const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 9] = [
+const KEY_RETAINED_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[19];
+const KEY_PENDING_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[20];
+const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
     KEY_SUGGESTED_BUDGETS,
     KEY_SECRET_REF,
     KEY_KEY_GENERATION,
@@ -74,6 +79,8 @@ const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 9] = [
     KEY_SLATE_REVISION,
     KEY_ADMISSION_EPOCH,
     KEY_CONSENT_REQUIRED,
+    KEY_RETAINED_MANIFEST,
+    KEY_PENDING_MANIFEST,
 ];
 
 const CATALOG_ENTRY_KEYS: [&str; 6] = [
@@ -216,6 +223,14 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
         (
             Value::from(KEY_CONSENT_REQUIRED),
             Value::from(record.consent_required),
+        ),
+        (
+            Value::from(KEY_RETAINED_MANIFEST),
+            encode_json_option(record.retained_manifest.as_ref())?,
+        ),
+        (
+            Value::from(KEY_PENDING_MANIFEST),
+            encode_json_option(record.pending_manifest.as_ref())?,
         ),
     ]);
 
@@ -470,6 +485,10 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             .map_or(Ok(0), |v| v.as_u64().ok_or_else(malformed))?,
         consent_required: optional_value(entries, KEY_CONSENT_REQUIRED)
             .map_or(Ok(false), |v| v.as_bool().ok_or_else(malformed))?,
+        retained_manifest: optional_value(entries, KEY_RETAINED_MANIFEST)
+            .map_or_else(|| Ok(None), decode_json_option)?,
+        pending_manifest: optional_value(entries, KEY_PENDING_MANIFEST)
+            .map_or_else(|| Ok(None), decode_json_option::<PendingConnectorManifest>)?,
     };
     record.validate()?;
     Ok(record)
@@ -734,4 +753,31 @@ fn decode_hash32(value: &Value) -> Result<[u8; 32]> {
 
 fn option_string_value(value: Option<&str>) -> Value {
     value.map_or(Value::Nil, Value::from)
+}
+
+fn encode_json_option<T: serde::Serialize>(value: Option<&T>) -> Result<Value> {
+    value
+        .map(|item| {
+            let bytes = serde_json::to_vec(item).map_err(|_| malformed())?;
+            if bytes.len() > MAX_CONNECTOR_MANIFEST_BYTES {
+                return Err(malformed());
+            }
+            Ok(Value::Binary(bytes))
+        })
+        .transpose()
+        .map(|v| v.unwrap_or(Value::Nil))
+}
+fn decode_json_option<T: serde::de::DeserializeOwned>(value: &Value) -> Result<Option<T>> {
+    if *value == Value::Nil {
+        return Ok(None);
+    }
+    let Value::Binary(bytes) = value else {
+        return Err(malformed());
+    };
+    if bytes.len() > MAX_CONNECTOR_MANIFEST_BYTES {
+        return Err(malformed());
+    }
+    serde_json::from_slice(bytes)
+        .map(Some)
+        .map_err(|_| malformed())
 }

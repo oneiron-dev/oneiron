@@ -32,6 +32,12 @@ pub(super) fn fold_entry_state(
     if matches!(entry.op, AuthorityOp::VetoPendingWiden { .. }) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    // Slips are the client credential in every posture. Retired device-key
+    // operations survive only as verified pre-handoff ancestry: a later
+    // client enrollment, rotation or floor change gains no authority.
+    if entry_is_retired(entry, hash, context) {
+        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+    }
 
     // A strictly older observed sequence is rollback. Equal-sequence siblings
     // have separate hashes and fold under their own ancestry, not a fork alarm.
@@ -245,6 +251,37 @@ pub(super) fn fold_entry_state(
     }
     state.seqs.insert(signer, entry.seq);
     EntryFold::Ready(state)
+}
+
+/// A device-key op the host-rooted redesign retired (identity canon,
+/// op-vocabulary amendment 2026-08-05): client enrollment is pairing-only,
+/// `SetTierFloor` and the delayed veto died with the device-key ceremony plane,
+/// and `RotateKey` became the re-root. An agent-only enrollment is not one of
+/// them: it is the host enrolling an engine MACHINE writer (ARCH-0053 seeds
+/// system actors through the authority registry at bootstrap), and an agent
+/// key holds no consent, so it widens no authority.
+pub(super) fn op_is_retired_device_op(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::EnrollDevice { device } => device.roles != ROLE_AGENT,
+        AuthorityOp::RotateKey { .. }
+        | AuthorityOp::SetTierFloor { .. }
+        | AuthorityOp::VetoPendingWiden { .. } => true,
+        _ => false,
+    }
+}
+
+/// Whether the vault door refuses `entry` as a retired device-key op. Only a
+/// verified re-root's pre-handoff ancestry may still use one; the legacy
+/// reference fold (no handoff set) keeps the historical rule.
+pub(super) fn entry_is_retired(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    op_is_retired_device_op(&entry.op)
+        && context
+            .pre_handoff_entries
+            .is_some_and(|permitted| !permitted.contains(&hash))
 }
 
 pub(super) fn active_participant_keys(

@@ -704,7 +704,7 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
     let deleted_id = oneiron::EntityId::from_hex(&turn_ids[1]).expect("turn id parses");
     server
         .vault
-        .delete_entity_with_reason(&deleted_id, oneiron::DeleteReason::UserDelete)
+        .delete_room_record_unchecked_for_test(&deleted_id, oneiron::DeleteReason::UserDelete)
         .expect("soft delete turn");
 
     let (deleted_gap_status, deleted_gap_page) = route_json(
@@ -1116,7 +1116,7 @@ async fn conversation_list_previews_last_visible_multibyte_message_for_every_row
     assert_eq!(status, StatusCode::OK);
     server
         .vault
-        .delete_entity_with_reason(
+        .delete_room_record_unchecked_for_test(
             &oneiron::EntityId::from_hex(hidden["id"].as_str().unwrap()).unwrap(),
             oneiron::DeleteReason::UserDelete,
         )
@@ -1476,6 +1476,7 @@ async fn contact_opt_out_family_supersession_retains_original_diff_after_edit() 
         .opted_out(CounterpartyOptOutReason::Stop, 30)
         .expect("later contact wording")
         .claim_bodies(contact)
+        .expect("contact claim bodies")
         .into_iter()
         .find(|body| body.predicate == PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT)
         .expect("replacement value");

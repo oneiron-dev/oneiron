@@ -18,6 +18,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
         Ok(LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: scope.clone(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::Durable {
@@ -170,7 +171,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                 partition.facet_ref,
                 rel,
                 facts.topic.as_deref(),
-            );
+            )?;
             candidates.push(super::super::evidence::ExtractedCandidate::new(
                 PromotionCandidate {
                     claim_id,

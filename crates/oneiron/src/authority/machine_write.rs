@@ -176,7 +176,7 @@ impl Vault {
         let vault_id = fold.vault_id.ok_or_else(denied)?;
         let facet =
             crate::batch::claim_candidate_apply::claim_candidate_birth_facet(&self.store, txn, id)?;
-        let body = candidate.clone().into_claim_body(envelope, facet);
+        let body = candidate.clone().into_claim_body(envelope, facet)?;
         machine_claim_transcript(&vault_id, id, &body)
     }
 

@@ -48,11 +48,7 @@ pub(crate) fn ingest_in_txn(
     blob: &[u8],
 ) -> Result<bool> {
     let header = validate_envelope(id, blob)?;
-    let existing = vault
-        .store
-        .entities
-        .get(&*wtxn, id.as_bytes())?
-        .map(std::borrow::Cow::into_owned);
+    let existing = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, id)?;
     let exact = existing
         .as_ref()
         .is_some_and(|stored| stored.as_slice() == blob);

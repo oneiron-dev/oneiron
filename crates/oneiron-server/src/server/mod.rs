@@ -1,18 +1,16 @@
 //! Sync server state and maintenance jobs, split by concern.
 mod core;
 mod embedding;
-mod lease_rotation;
 mod leases;
 mod lifecycle;
 mod message_stream;
-pub(crate) mod vault_binding;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
 
 #[cfg(test)]
-mod lease_scope_tests;
+mod slip_transport_tests;
 #[cfg(test)]
 mod tests;
 

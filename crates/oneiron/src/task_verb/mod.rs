@@ -34,6 +34,7 @@ mod follow_up;
 mod lifecycle_facade;
 mod linear_store;
 mod owner_index;
+mod policy_change_followup;
 mod presence_diagnostics;
 mod presence_scan;
 mod query_facade;
@@ -91,7 +92,44 @@ pub(crate) use create_validation::{
 };
 pub(crate) use rate_limit::task_create_owner;
 
+/// A terminal typed TASK cannot be newly bound to a room thread.
+pub(crate) fn thread_task_is_open_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+) -> crate::Result<bool> {
+    let body =
+        wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
+    Ok(body.terminal().is_none())
+}
+
+/// Stored execution holder of a live typed TASK, if one exists.
+pub(crate) fn open_thread_task_holder_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+    fallback: crate::gate::TaskHolderFallback,
+) -> crate::Result<Option<crate::EntityId>> {
+    let body =
+        wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
+    if body.terminal().is_some() {
+        return Ok(None);
+    }
+    match body.assignee.and_then(TaskAssignee::entity_ref) {
+        Some(holder) => Ok(Some(holder)),
+        None => match fallback {
+            crate::gate::TaskHolderFallback::AssigneeThenOwner => {
+                Ok(Some(crate::EntityId::from_hex(&body.owner_ref)?))
+            }
+            crate::gate::TaskHolderFallback::AssigneeOnly => Ok(None),
+        },
+    }
+}
+
 pub(crate) use owner_index::index_owner_fact;
+pub(crate) use policy_change_followup::{
+    enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
+};
 
 #[cfg(test)]
 mod owner_index_tests;
@@ -106,10 +144,10 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
-pub use wave_port::VaultWaveTaskPort;
+pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
-pub(crate) use linear_store::{forget_task_mirror, note_task_write};
+pub(crate) use linear_store::{forget_task_mirror, linear_effect_state_in_txn, note_task_write};
 
 #[cfg(test)]
 mod production_ports_tests;
@@ -127,7 +165,9 @@ pub(crate) use ask_facade::settle_waiting_asks;
 pub(crate) use ask_option_link::{
     ack_option_void_generation, has_option_link_void, option_void_generation,
 };
-pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put, waits_for_ask_group};
+#[cfg(feature = "sync")]
+pub(crate) use ask_record::waits_for_ask_group;
+pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
 pub(crate) use ask_settlement::settle_ask_if_due;
 
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};

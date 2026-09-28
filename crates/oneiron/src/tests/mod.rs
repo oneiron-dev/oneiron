@@ -38,7 +38,7 @@ use crate::affect::coping::{
     decode_coping_outcome_claim,
 };
 use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, VadComponent, VadDelta};
-use crate::affect::{vad_annotation_claim_id, vad_annotation_meta_key};
+use crate::affect::{VAD_ANNOTATION_META, vad_annotation_claim_id, vad_annotation_meta_key};
 use crate::analyzer::{ANALYZER_VERSION, AnalyzerManifest};
 use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
@@ -82,6 +82,7 @@ pub(crate) mod edge_prov_lifecycle;
 pub(crate) mod embedding;
 pub(crate) mod entity_edge_kinds;
 pub(crate) mod graph_topology;
+pub(crate) mod identity_topology_delete_interlock;
 pub(crate) mod open_gates;
 pub(crate) mod prov_deletes;
 pub(crate) mod reput_phonetic;

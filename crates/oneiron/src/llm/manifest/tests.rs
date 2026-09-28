@@ -35,6 +35,7 @@ fn fixture() -> ModelManifest {
             .map(|slot| (slot, ModelLocality::OwnServer))
             .collect(),
         verdict: None,
+        seat_policy: None,
     }
 }
 #[test]
@@ -130,7 +131,7 @@ fn teacher_policy_stricter_vault_bar_refuses_old_eighty_five_percent_approval() 
         850_000,
     )
     .unwrap();
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(bytes.as_slice());
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
         panic!("default policy must be a map");
@@ -175,7 +176,7 @@ fn teacher_policy_stricter_vault_bar_refuses_old_eighty_five_percent_approval() 
 }
 
 fn set_teacher_probe_policy_row(vault: &Vault, minimum: u64, holder: Option<(&str, u64)>) {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap()
     else {
         panic!("seeded manifest is a map");
@@ -296,6 +297,7 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
         let mut request = LlmRequest {
             model: ModelId::new("host/unused@1").unwrap(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: Default::default(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::BestEffort,
@@ -468,6 +470,7 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
     let mut request = LlmRequest {
         model: ModelId::new("host/model@1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
@@ -512,4 +515,26 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         .route_models
         .insert(ModelLocality::OnDevice, checker.model.clone());
     assert!(manifest.validate().is_err());
+}
+
+#[test]
+fn manifest_file_carries_runtime_seat_policy_and_rejects_invalid_rows() {
+    let mut value = serde_json::to_value(fixture()).unwrap();
+    let mut policy = crate::llm::seat::SeatPolicy::bundled().unwrap();
+    policy
+        .purpose_defaults
+        .insert("answer_gen".into(), crate::llm::ReasoningEffort::High);
+    policy.facet_max_bytes = 512;
+    policy.line_max_bytes = 8192;
+    value["seat_policy"] = serde_json::to_value(&policy).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("manifest-v2.json");
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let loaded = ModelManifest::load(&path).unwrap();
+    assert_eq!(loaded.seat_policy, Some(policy.clone()));
+    value["seat_policy"]["default_reasoning_ladder"] = serde_json::json!([]);
+    assert!(ModelManifest::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
+    value["seat_policy"] = serde_json::to_value(policy).unwrap();
+    value["seat_policy"]["invented_behavior"] = serde_json::json!(true);
+    assert!(ModelManifest::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
 }

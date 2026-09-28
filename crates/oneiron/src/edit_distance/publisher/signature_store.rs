@@ -5,14 +5,15 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::signature::is_content_hash;
-use super::{CountKey, IssueCategory, IssueSignature, PublisherResult, put_meta};
+use super::{CountKey, IssueCategory, IssueSignature, PublisherResult};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-const SIGNATURE_KEY_PREFIX: &[u8] = b"edit_distance/issue_signature/v1\0";
-
-const SEND_STATE_KEY_PREFIX: &[u8] = b"edit_distance/issue_signature_send/v1\0";
+/// Stored publisher issue-signature, keyed by its own id.
+pub(super) const SIGNATURE: SideTable<EntityId, IssueSignature, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ISSUE_SIGNATURE);
 
 /// On-disk shape of a stored signature.
 ///
@@ -37,16 +38,14 @@ fn corrupt() -> Error {
     Error::CorruptedIndex("issue signature record")
 }
 
-pub(super) fn signature_key(id: EntityId) -> Vec<u8> {
-    let mut key = SIGNATURE_KEY_PREFIX.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+impl RawValue for IssueSignature {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_signature(self)?)
+    }
 
-pub(super) fn send_state_key(id: EntityId) -> Vec<u8> {
-    let mut key = SEND_STATE_KEY_PREFIX.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_signature(bytes)?)
+    }
 }
 
 fn encode_signature(sig: &IssueSignature) -> Result<Vec<u8>> {
@@ -96,8 +95,7 @@ fn decode_signature(bytes: &[u8]) -> Result<IssueSignature> {
 /// Storage errors.
 pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResult<EntityId> {
     let id = vault.store.clock.entity_id()?;
-    let value = encode_signature(&sig)?;
-    put_meta(vault, &signature_key(id), &value)?;
+    vault.with_write_txn(|wtxn| SIGNATURE.put(&vault.store, wtxn, &id, &sig))?;
     Ok(id)
 }
 
@@ -109,8 +107,5 @@ pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResu
 /// write.
 pub fn issue_signature(vault: &Vault, id: EntityId) -> PublisherResult<Option<IssueSignature>> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &signature_key(id))? else {
-        return Ok(None);
-    };
-    Ok(Some(decode_signature(&raw)?))
+    Ok(SIGNATURE.get(&vault.store, &rtxn, &id)?)
 }

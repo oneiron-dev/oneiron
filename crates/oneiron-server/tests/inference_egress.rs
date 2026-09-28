@@ -1,7 +1,7 @@
 //! Extraction default changes require a host gate at storage and dispatch.
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{Request, StatusCode, request::Builder},
 };
 use oneiron::llm::{
     LlmCatalogCost, LlmCatalogEntry, PurposeDefaultTable,
@@ -51,17 +51,45 @@ fn server(
     }
     build_app(Arc::new(server))
 }
-fn put(table: &PurposeDefaultTable) -> Request<Body> {
-    Request::put("/v1/llm/defaults")
-        .header("authorization", "Bearer owner")
+/// The owner presents the logged host-root slip with a fresh holder proof;
+/// the configured host secret is issuer key material, never a bearer.
+fn owner(vault: &Vault, request: Builder) -> Builder {
+    let issuer =
+        oneiron::authority::HostSlipIssuer::from_secret(b"owner").expect("host slip issuer");
+    let slip = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    let timestamp = vault.capability_slip_now().expect("authority clock");
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .expect("holder proof")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    request
+        .header(
+            "authorization",
+            format!("Bearer {}", slip.to_token().expect("slip token")),
+        )
+        .header(
+            "x-oneiron-binding",
+            serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature})
+                .to_string(),
+        )
+}
+fn put(vault: &Vault, table: &PurposeDefaultTable) -> Request<Body> {
+    owner(vault, Request::put("/v1/llm/defaults"))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(table).expect("encode table")))
         .expect("put request")
 }
-fn call(model: &ModelId) -> Request<Body> {
+fn call(vault: &Vault, model: &ModelId) -> Request<Body> {
     let request = LlmRequest {
         model: model.clone(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Extraction,
             class: CallClass::BestEffort,
@@ -77,8 +105,7 @@ fn call(model: &ModelId) -> Request<Body> {
         params: Default::default(),
         provider_options: Default::default(),
     };
-    Request::post("/v1/llm/generate")
-        .header("authorization", "Bearer owner")
+    owner(vault, Request::post("/v1/llm/generate"))
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_vec(&request).expect("encode request"),
@@ -123,7 +150,7 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
         .locality = ModelLocality::OwnServer;
     assert_eq!(
         server(vault.clone(), count.clone(), None)
-            .oneshot(put(&table))
+            .oneshot(put(&vault, &table))
             .await
             .expect("response")
             .status(),
@@ -140,7 +167,7 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
     assert_eq!(
         allowed
             .clone()
-            .oneshot(put(&table))
+            .oneshot(put(&vault, &table))
             .await
             .expect("response")
             .status(),
@@ -152,7 +179,7 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
     );
     assert_eq!(
         allowed
-            .oneshot(call(&model))
+            .oneshot(call(&vault, &model))
             .await
             .expect("response")
             .status(),
@@ -161,13 +188,13 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
     assert_eq!(count.load(Ordering::SeqCst), 1, "allowed backend reached");
     assert_eq!(
         server(vault.clone(), count.clone(), None)
-            .oneshot(call(&model))
+            .oneshot(call(&vault, &model))
             .await
             .expect("response")
             .status(),
         StatusCode::FORBIDDEN
     );
-    let mut stream = call(&model);
+    let mut stream = call(&vault, &model);
     *stream.uri_mut() = "/v1/llm/stream".parse().expect("stream path");
     assert_eq!(
         server(vault.clone(), count.clone(), None)
@@ -179,8 +206,8 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
     );
     let deny: Arc<dyn oneiron::llm::ExtractionEgressPredicate> = Arc::new(|_: &LlmRequest| false);
     assert_eq!(
-        server(vault, count.clone(), Some(deny))
-            .oneshot(call(&model))
+        server(vault.clone(), count.clone(), Some(deny))
+            .oneshot(call(&vault, &model))
             .await
             .expect("response")
             .status(),

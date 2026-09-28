@@ -991,10 +991,8 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     // A rejected setter neither changes the flag nor spends the next transition.
     let current = vault.store.env.read_txn()?;
     assert_eq!(
-        vault
-            .store
-            .vault_meta
-            .get(&current, super::import_receipt::CODE_AUTO_INSTALL_KEY)?
+        super::import_receipt::CODE_AUTO_INSTALL
+            .get_bytes(&vault.store, &current, &())?
             .as_deref(),
         Some(&[1][..])
     );
@@ -1432,7 +1430,7 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     crate::test_util::put_policy_manifest_bytes(
         &vault,
         policy_id,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let installed = vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4);
     vault.with_write_txn(|txn| {
@@ -1549,6 +1547,64 @@ fn single_quoted_frontmatter_decodes_without_changing_source_hash() -> Result<()
             )])
             .is_err()
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn callable_folder_frontmatter_binds_exact_reference_and_schema() -> Result<()> {
+    let front = b"---\nname: fixture.call\ndescription: A callable fixture\nversion: 1\nrole: callable\ncall:\n  reference: scripts/do.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"result\":\"integer\"}\n---\nCall the helper.\n";
+    let files = vec![
+        HubFile::new("SKILL.md", front.to_vec()),
+        HubFile::new(
+            "scripts/do.js",
+            b"finish(JSON.stringify({result:skillArgs.value + 1}));".to_vec(),
+        ),
+    ];
+    let package = super::folder::package_from_files(files.clone())?;
+    assert_eq!(package.record.role, crate::skill::SkillRole::Callable);
+    assert_eq!(
+        package.record.call.as_ref().unwrap().reference,
+        "scripts/do.js"
+    );
+    let record =
+        crate::skill::decode_skill_record(&crate::skill::encode_skill_record(&package.record)?)?;
+    assert_eq!(record.call, package.record.call);
+    let mut missing = files;
+    missing.pop();
+    assert!(super::folder::package_from_files(missing).is_err());
+    Ok(())
+}
+
+#[test]
+fn skill_roles_parse_unquoted_and_both_supported_quoted_scalars() -> Result<()> {
+    for (role, expected) in [
+        ("knowledge", crate::skill::SkillRole::Knowledge),
+        ("workflow", crate::skill::SkillRole::Workflow),
+        ("callable", crate::skill::SkillRole::Callable),
+    ] {
+        for quoted in [role.to_owned(), format!("\"{role}\""), format!("'{role}'")] {
+            let call = if expected == crate::skill::SkillRole::Callable {
+                "call:\n  reference: scripts/run.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"value\":\"integer\"}\n"
+            } else {
+                ""
+            };
+            let mut files = vec![HubFile::new("SKILL.md", format!(
+                "---\nname: fixture.role\ndescription: fixture\nversion: 1\nrole: {quoted}\n{call}---\nBody\n"
+            ).into_bytes())];
+            if expected == crate::skill::SkillRole::Callable {
+                files.push(HubFile::new(
+                    "scripts/run.js",
+                    b"finish(JSON.stringify({value:skillArgs.value}));".to_vec(),
+                ));
+            }
+            let package = super::folder::package_from_files(files)?;
+            assert_eq!(package.record.role, expected);
+            assert_eq!(
+                package.record.call.is_some(),
+                expected == crate::skill::SkillRole::Callable
+            );
+        }
     }
     Ok(())
 }

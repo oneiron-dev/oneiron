@@ -77,7 +77,7 @@ fn test_inference_host() -> crate::llm::HostInferenceContext<'static> {
 
 fn grant_fixture_reads(vault: &Vault) -> Result<()> {
     let actor = vault.dreamer_authority()?;
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy map")
     else {
@@ -330,7 +330,8 @@ fn prior_head(
         0.8,
         approval,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(source);
     PriorHead {
         claim_id: EntityId::now(),
@@ -2418,7 +2419,8 @@ fn tainted_claim_not_consolidatable_until_approved() {
             0.5,
             appr,
             crate::claim::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(ClaimSource::Inferred);
         if let Some(taint) = taint {
             body.scope = Some(Value::Map(vec![(
@@ -3030,6 +3032,7 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
             rel,
             None,
         )
+        .unwrap()
     };
     assert_ne!(id(Some(rel_a)), id(Some(rel_b)));
     assert_ne!(id(None), id(Some(rel_a)));

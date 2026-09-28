@@ -1,4 +1,5 @@
 use super::*;
+use crate::ErrorKind;
 
 // The ledger is immutable birth identity, never a second text plane. This
 // shared guard covers local writes and replicated/window rematerialization.
@@ -9,7 +10,7 @@ pub(super) fn validate_note_birth_put(
     data: &[u8],
 ) -> Result<()> {
     crate::note::decode_note_body_in_txn(store, txn, data)?;
-    if let Some(old) = store.entities.get(txn, id.as_bytes())?
+    if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
     {
         return Err(Error::Record(RecordError::InvalidNoteBody(

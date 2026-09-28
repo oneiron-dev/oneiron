@@ -7,18 +7,101 @@ use crate::claim::{
 };
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error};
 use heed::{RoTxn, RwTxn};
 
-const CLAIM_KEY: &[u8] = b"project.goal_intake.admission/";
-const POINTER_KEY: &[u8] = b"project.goal_intake.pointer_write/";
+/// Local admission marker of one goal claim. Key: id16 (goal claim).
+const CLAIM_MARKERS: SideTable<EntityId, ClaimMarker, Raw> =
+    SideTable::new(&side_table::PROJECT_GOAL_INTAKE_ADMISSION);
+/// The one project-body write a goal-pointer change is permitted. Key: id16 (project).
+const POINTER_PERMITS: SideTable<EntityId, PointerPermit, Raw> =
+    SideTable::new(&side_table::PROJECT_GOAL_INTAKE_POINTER_WRITE);
+
+/// What the locally armed slot of one goal claim admits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimMarker {
+    /// The stored claim body, by hash: `[1]` + hash32.
+    Sealed([u8; 32]),
+    /// An armed birth: `[2]` + project id16 + typed goal payload hash32.
+    Birth {
+        project: [u8; 16],
+        payload: [u8; 32],
+    },
+    /// A supersession permit: `[3]` + current body hash32 + closed body hash32.
+    Superseding { from: [u8; 32], to: [u8; 32] },
+}
+
+impl RawValue for ClaimMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(match self {
+            Self::Sealed(hash) => [&[1][..], hash].concat(),
+            Self::Birth { project, payload } => [&[2][..], project, payload].concat(),
+            Self::Superseding { from, to } => [&[3][..], from, to].concat(),
+        })
+    }
+
+    /// Any other shape is the admission refusal, not a storage error.
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(match bytes.split_first() {
+            Some((1, hash)) if hash.len() == 32 => Self::Sealed(fixed(hash)?),
+            Some((2, rest)) if rest.len() == 48 => Self::Birth {
+                project: fixed(&rest[..16])?,
+                payload: fixed(&rest[16..])?,
+            },
+            Some((3, rest)) if rest.len() == 64 => Self::Superseding {
+                from: fixed(&rest[..32])?,
+                to: fixed(&rest[32..])?,
+            },
+            _ => return Err(invalid().into()),
+        })
+    }
+}
+
+/// The one project body a goal-pointer change may write: the prior and next goal ids (zeros for
+/// none), then the body's hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PointerPermit {
+    old: [u8; 16],
+    new: [u8; 16],
+    body: [u8; 32],
+}
+
+impl PointerPermit {
+    fn new(old: Option<EntityId>, new: Option<EntityId>, body: &[u8]) -> Self {
+        let slot = |id: Option<EntityId>| id.map_or([0; 16], |id| *id.as_bytes());
+        Self {
+            old: slot(old),
+            new: slot(new),
+            body: *blake3::hash(body).as_bytes(),
+        }
+    }
+}
+
+impl RawValue for PointerPermit {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok([&self.old[..], &self.new, &self.body].concat())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if bytes.len() != 64 {
+            return Err(invalid().into());
+        }
+        Ok(Self {
+            old: fixed(&bytes[..16])?,
+            new: fixed(&bytes[16..32])?,
+            body: fixed(&bytes[32..])?,
+        })
+    }
+}
+
+fn fixed<const N: usize>(part: &[u8]) -> Result<[u8; N]> {
+    part.try_into().map_err(|_| invalid())
+}
 
 fn invalid() -> Error {
     crate::error::RecordError::InvalidProjectBody("goal intake admission missing or invalid").into()
-}
-fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
 }
 fn current_claim(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<(ClaimBody, Vec<u8>)> {
     let raw = store
@@ -44,7 +127,7 @@ pub(crate) fn guard_claim_put(
     bytes: &[u8],
     replicated: bool,
 ) -> Result<()> {
-    let marker = store.vault_meta.get(txn, &key(CLAIM_KEY, id))?;
+    let marker = CLAIM_MARKERS.get(store, txn, &id)?;
     if marker.is_none() && incoming.is_none_or(|body| body.predicate != PREDICATE) {
         return Ok(());
     }
@@ -59,30 +142,35 @@ pub(crate) fn guard_claim_put(
     active.valid_to = None;
     decode_goal_claim(&active, project)?;
     let new_hash = blake3::hash(bytes);
-    match marker.as_ref() {
-        [2, rest @ ..] if !replicated && rest.len() == 48 => {
-            let (project_bytes, payload_hash) = rest.split_at(16);
+    match marker {
+        ClaimMarker::Birth {
+            project: project_bytes,
+            payload: payload_hash,
+        } if !replicated => {
             let rmpv::Value::Binary(payload) = &body.value else {
                 return Err(invalid());
             };
-            if project_bytes != project.as_bytes()
-                || payload_hash != blake3::hash(payload).as_bytes()
+            if project_bytes != *project.as_bytes()
+                || payload_hash != *blake3::hash(payload).as_bytes()
                 || store.entities.get(txn, id.as_bytes())?.is_some()
                 || body.lifecycle != ClaimLifecycleStatus::Active
             {
                 return Err(invalid());
             }
         }
-        [1, stored @ ..] if stored.len() == 32 => {
+        ClaimMarker::Sealed(stored) => {
             let (_, prior) = current_claim(store, txn, id)?;
-            if stored != blake3::hash(&prior).as_bytes() || stored != new_hash.as_bytes() {
+            if stored != *blake3::hash(&prior).as_bytes() || stored != *new_hash.as_bytes() {
                 return Err(invalid());
             }
         }
-        [3, rest @ ..] if !replicated && rest.len() == 64 => {
-            let (old_hash, allowed_hash) = rest.split_at(32);
+        ClaimMarker::Superseding {
+            from: old_hash,
+            to: allowed_hash,
+        } if !replicated => {
             let (_, prior) = current_claim(store, txn, id)?;
-            if old_hash != blake3::hash(&prior).as_bytes() || allowed_hash != new_hash.as_bytes() {
+            if old_hash != *blake3::hash(&prior).as_bytes() || allowed_hash != *new_hash.as_bytes()
+            {
                 return Err(invalid());
             }
         }
@@ -100,7 +188,7 @@ pub(crate) fn admitted_claim_of_project(
     claim: EntityId,
     project: EntityId,
 ) -> Result<bool> {
-    let Some(marker) = store.vault_meta().get(txn, &key(CLAIM_KEY, claim))? else {
+    let Some(marker) = CLAIM_MARKERS.get(store, txn, &claim)? else {
         return Ok(false);
     };
     let raw = store
@@ -117,18 +205,20 @@ pub(crate) fn admitted_claim_of_project(
     active.valid_to = None;
     decode_goal_claim(&active, project)?;
     let digest = blake3::hash(data);
-    let allowed = match marker.as_ref() {
-        [1, stored @ ..] if stored.len() == 32 => stored == digest.as_bytes(),
-        [2, rest @ ..] if rest.len() == 48 && body.lifecycle == ClaimLifecycleStatus::Active => {
-            let (project_bytes, payload_hash) = rest.split_at(16);
-            project_bytes == project.as_bytes()
+    let allowed = match marker {
+        ClaimMarker::Sealed(stored) => stored == *digest.as_bytes(),
+        ClaimMarker::Birth {
+            project: project_bytes,
+            payload: payload_hash,
+        } if body.lifecycle == ClaimLifecycleStatus::Active => {
+            project_bytes == *project.as_bytes()
                 && matches!(&body.value, rmpv::Value::Binary(payload)
-                    if payload_hash == blake3::hash(payload).as_bytes())
+                    if payload_hash == *blake3::hash(payload).as_bytes())
         }
-        [3, rest @ ..]
-            if rest.len() == 64 && body.lifecycle == ClaimLifecycleStatus::Superseded =>
+        ClaimMarker::Superseding { to, .. }
+            if body.lifecycle == ClaimLifecycleStatus::Superseded =>
         {
-            &rest[32..] == digest.as_bytes()
+            to == *digest.as_bytes()
         }
         _ => false,
     };
@@ -146,21 +236,21 @@ pub(super) fn arm_birth(
     project: EntityId,
     record: &GoalRecord,
 ) -> Result<()> {
-    if store.vault_meta.get(txn, &key(CLAIM_KEY, id))?.is_some() {
+    if CLAIM_MARKERS.contains(store, txn, &id)? {
         return Err(invalid());
     }
-    let mut marker = vec![2];
-    marker.extend_from_slice(project.as_bytes());
-    marker.extend_from_slice(blake3::hash(&super::super::encode(record)?).as_bytes());
-    store.vault_meta.put(txn, &key(CLAIM_KEY, id), &marker)?;
+    let marker = ClaimMarker::Birth {
+        project: *project.as_bytes(),
+        payload: *blake3::hash(&super::super::encode(record)?).as_bytes(),
+    };
+    CLAIM_MARKERS.put(store, txn, &id, &marker)?;
     Ok(())
 }
 
 pub(super) fn seal_claim(store: &Store, txn: &mut RwTxn<'_>, id: EntityId) -> Result<()> {
     let (_, data) = current_claim(store, txn, id)?;
-    let mut marker = vec![1];
-    marker.extend_from_slice(blake3::hash(&data).as_bytes());
-    store.vault_meta.put(txn, &key(CLAIM_KEY, id), &marker)?;
+    let marker = ClaimMarker::Sealed(*blake3::hash(&data).as_bytes());
+    CLAIM_MARKERS.put(store, txn, &id, &marker)?;
     Ok(())
 }
 
@@ -172,11 +262,8 @@ pub(super) fn trusted_active_claim(
 ) -> Result<ClaimBody> {
     let (body, data) = current_claim(store, txn, id)?;
     decode_goal_claim(&body, project)?;
-    let marker = store
-        .vault_meta
-        .get(txn, &key(CLAIM_KEY, id))?
-        .ok_or_else(invalid)?;
-    if marker.first() != Some(&1) || marker.get(1..) != Some(blake3::hash(&data).as_bytes()) {
+    let marker = CLAIM_MARKERS.get(store, txn, &id)?.ok_or_else(invalid)?;
+    if marker != ClaimMarker::Sealed(*blake3::hash(&data).as_bytes()) {
         return Err(invalid());
     }
     Ok(body)
@@ -190,21 +277,19 @@ pub(super) fn arm_supersession(
     at: u64,
 ) -> Result<()> {
     let (_, current) = current_claim(store, txn, id)?;
-    let marker = store
-        .vault_meta
-        .get(txn, &key(CLAIM_KEY, id))?
-        .ok_or_else(invalid)?;
-    let old_hash = blake3::hash(&current);
-    if marker.first() != Some(&1) || marker.get(1..) != Some(old_hash.as_bytes()) {
+    let marker = CLAIM_MARKERS.get(store, txn, &id)?.ok_or_else(invalid)?;
+    let old_hash = *blake3::hash(&current).as_bytes();
+    if marker != ClaimMarker::Sealed(old_hash) {
         return Err(invalid());
     }
     let mut closed = prior.clone();
     closed.lifecycle = ClaimLifecycleStatus::Superseded;
     closed.valid_to = Some(at);
-    let mut permit = vec![3];
-    permit.extend_from_slice(old_hash.as_bytes());
-    permit.extend_from_slice(blake3::hash(&encode_claim_body(&closed)?).as_bytes());
-    store.vault_meta.put(txn, &key(CLAIM_KEY, id), &permit)?;
+    let permit = ClaimMarker::Superseding {
+        from: old_hash,
+        to: *blake3::hash(&encode_claim_body(&closed)?).as_bytes(),
+    };
+    CLAIM_MARKERS.put(store, txn, &id, &permit)?;
     Ok(())
 }
 
@@ -235,19 +320,13 @@ pub(crate) fn guard_pointer_put(
     if replicated {
         return Err(invalid());
     }
-    let mut expected = Vec::with_capacity(64);
-    expected.extend_from_slice(
-        previous
-            .as_ref()
-            .and_then(|p| p.goal.as_ref())
-            .map(|s| EntityId::from_hex(s).map(|id| *id.as_bytes()))
-            .transpose()?
-            .unwrap_or([0; 16])
-            .as_slice(),
-    );
-    expected.extend_from_slice(goal.map_or([0; 16], |id| *id.as_bytes()).as_slice());
-    expected.extend_from_slice(blake3::hash(bytes).as_bytes());
-    if store.vault_meta.get(txn, &key(POINTER_KEY, id))?.as_deref() != Some(expected.as_slice()) {
+    let old = previous
+        .as_ref()
+        .and_then(|p| p.goal.as_deref())
+        .map(EntityId::from_hex)
+        .transpose()?;
+    let expected = PointerPermit::new(old, goal, bytes);
+    if POINTER_PERMITS.get(store, txn, &id)? != Some(expected) {
         return Err(invalid());
     }
     if let Some(goal) = goal {
@@ -258,7 +337,7 @@ pub(crate) fn guard_pointer_put(
             .and_then(|p| p.goal.as_deref())
             .ok_or_else(invalid)
             .and_then(|s| EntityId::from_hex(s).map_err(|_| invalid()))?;
-        if store.vault_meta.get(txn, &key(CLAIM_KEY, old))?.is_none() {
+        if !CLAIM_MARKERS.contains(store, txn, &old)? {
             return Err(invalid());
         }
     }
@@ -273,17 +352,16 @@ pub(super) fn arm_pointer(
     new: EntityId,
     body: &[u8],
 ) -> Result<()> {
-    let mut marker = Vec::with_capacity(64);
-    marker.extend_from_slice(old.map_or([0; 16], |id| *id.as_bytes()).as_slice());
-    marker.extend_from_slice(new.as_bytes());
-    marker.extend_from_slice(blake3::hash(body).as_bytes());
-    store
-        .vault_meta
-        .put(txn, &key(POINTER_KEY, project), &marker)?;
+    POINTER_PERMITS.put(
+        store,
+        txn,
+        &project,
+        &PointerPermit::new(old, Some(new), body),
+    )?;
     Ok(())
 }
 pub(super) fn disarm_pointer(store: &Store, txn: &mut RwTxn<'_>, project: EntityId) -> Result<()> {
-    store.vault_meta.delete(txn, &key(POINTER_KEY, project))?;
+    POINTER_PERMITS.delete(store, txn, &project)?;
     Ok(())
 }
 
@@ -296,17 +374,13 @@ pub(crate) fn precheck_delete(
     id: EntityId,
     gated: bool,
 ) -> Result<()> {
-    if store.vault_meta.get(txn, &key(CLAIM_KEY, id))?.is_some() {
+    if CLAIM_MARKERS.contains(store, txn, &id)? {
         if !gated {
             return Err(invalid());
         }
         let (body, bytes) = current_claim(store, txn, id)?;
-        let marker = store
-            .vault_meta
-            .get(txn, &key(CLAIM_KEY, id))?
-            .ok_or_else(invalid)?;
-        if marker.first() != Some(&1)
-            || marker.get(1..) != Some(blake3::hash(&bytes).as_bytes())
+        let marker = CLAIM_MARKERS.get(store, txn, &id)?.ok_or_else(invalid)?;
+        if marker != ClaimMarker::Sealed(*blake3::hash(&bytes).as_bytes())
             || body.predicate != PREDICATE
         {
             return Err(invalid());
@@ -334,7 +408,7 @@ pub(crate) fn retire_for_delete(
     id: EntityId,
 ) -> Result<()> {
     let store = &vault.store;
-    if store.vault_meta.get(txn, &key(CLAIM_KEY, id))?.is_none() {
+    if !CLAIM_MARKERS.contains(store, txn, &id)? {
         return Ok(());
     }
     let (body, _) = current_claim(store, txn, id)?;
@@ -358,13 +432,12 @@ pub(crate) fn retire_for_delete(
     {
         project.goal = None;
         let bytes = super::super::encode(&project)?;
-        let mut marker = Vec::with_capacity(64);
-        marker.extend_from_slice(id.as_bytes());
-        marker.extend_from_slice(&[0; 16]);
-        marker.extend_from_slice(blake3::hash(&bytes).as_bytes());
-        store
-            .vault_meta
-            .put(txn, &key(POINTER_KEY, project_id), &marker)?;
+        POINTER_PERMITS.put(
+            store,
+            txn,
+            &project_id,
+            &PointerPermit::new(Some(id), None, &bytes),
+        )?;
         vault
             .batch_in()
             .put(
@@ -375,19 +448,17 @@ pub(crate) fn retire_for_delete(
                 &bytes,
             )
             .apply(txn)?;
-        store
-            .vault_meta
-            .delete(txn, &key(POINTER_KEY, project_id))?;
+        POINTER_PERMITS.delete(store, txn, &project_id)?;
         super::interview::bump_generation(store, txn, project_id)?;
     }
-    store.vault_meta.delete(txn, &key(CLAIM_KEY, id))?;
+    CLAIM_MARKERS.delete(store, txn, &id)?;
     Ok(())
 }
 
 /// Deletion is not a backdoor for dropping a protected goal or its project.
 /// A future owner-delete flow must supply its own checked authorization.
 pub(crate) fn guard_goal_delete(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<()> {
-    if store.vault_meta.get(txn, &key(CLAIM_KEY, id))?.is_some() {
+    if CLAIM_MARKERS.contains(store, txn, &id)? {
         return Err(invalid());
     }
     if let Some(kind) = super::super::project_type(store)

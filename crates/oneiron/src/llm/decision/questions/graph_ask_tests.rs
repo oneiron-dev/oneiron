@@ -39,7 +39,7 @@ fn identities(vault: &Vault) -> crate::Result<(EntityId, WriteActor)> {
 }
 
 fn grant_graph_reads(vault: &Vault, principal: EntityId) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
     manifest["scoped_grants"] = serde_json::json!([{
         "actor_ref": principal.to_hex(),
@@ -61,7 +61,7 @@ fn grant_graph_reads(vault: &Vault, principal: EntityId) -> crate::Result<()> {
 }
 
 fn grant_class_bound_graph_reads(vault: &Vault, principal: EntityId) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
     manifest["scoped_grants"] = serde_json::json!([{
         "actor_ref": principal.to_hex(),
@@ -167,7 +167,8 @@ fn scoped_claim(principal: EntityId, subject: EntityId) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.scope = Some(Value::Map(vec![(
         Value::from("typed_question_principal"),
         Value::from(principal.to_hex()),
@@ -868,7 +869,13 @@ fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crat
     let scoped = vault.scoped_read(
         crate::claim::ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap(),
     );
-    assert!(scoped.get(&b_note)?.value.is_some());
+    assert!(
+        scoped
+            .read(&[crate::claim::PointRead::id(b_note)], None)?
+            .single()
+            .value
+            .is_some()
+    );
     Ok(())
 }
 

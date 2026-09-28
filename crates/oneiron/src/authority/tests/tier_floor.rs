@@ -159,11 +159,11 @@ fn floor_softening_applies_at_once_and_stays_causal() {
     // ceremony (dead 2026-08-05)").
     let seen = BTreeMap::from([(soften_hash, 10)]);
     let entries = vec![genesis.clone(), soften.clone()];
-    let lowered = fold_authority_log_with_seen_times(&entries, &seen, 10);
+    let lowered = fold_legacy_authority_log_with_seen_times(&entries, &seen, 10);
     assert_eq!(lowered.tier_floor, Some(AuthorityTier::Software));
     assert!(lowered.valid_entries.contains(&soften_hash));
     assert_eq!(
-        fold_authority_log(&entries).tier_floor,
+        fold_legacy_authority_log(&entries).tier_floor,
         Some(AuthorityTier::Software)
     );
     let concurrent = sign_p256(
@@ -180,11 +180,11 @@ fn floor_softening_applies_at_once_and_stays_causal() {
         &hardware,
     );
     let mut fork = vec![genesis, soften, concurrent];
-    let constrained = fold_authority_log_with_seen_times(&fork, &seen, 10);
+    let constrained = fold_legacy_authority_log_with_seen_times(&fork, &seen, 10);
     assert_eq!(constrained.tier_floor, Some(AuthorityTier::Hardware));
     fork.reverse();
     assert_eq!(
         constrained,
-        fold_authority_log_with_seen_times(&fork, &seen, 10)
+        fold_legacy_authority_log_with_seen_times(&fork, &seen, 10)
     );
 }

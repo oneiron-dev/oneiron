@@ -3,7 +3,7 @@ mod faceted_sender;
 use super::*;
 use crate::calendar::ics::{ImipEmitRequest, emit_imip_ics, persist_imip_blob};
 use crate::calendar::test_support::open_calendar_vault;
-use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding};
+use crate::channel_identity::ChannelIdentityBinding;
 use crate::edge::EdgeActorClass;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use crate::write_envelope::WriteActor;
@@ -48,14 +48,14 @@ fn event(vault: &Vault) -> EntityId {
 
 fn identity(vault: &Vault, seed: u8, actor: EntityId, channel: &str, address: &str) {
     let id = crate::test_util::entity(seed);
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         channel,
         address,
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(actor),
+        ChannelIdentityState::Active,
         NOW,
     );
-    identity.state = ChannelIdentityState::Active;
     vault
         .create_channel_identity(&id, &identity)
         .expect("create identity");
@@ -80,7 +80,8 @@ fn attendee(vault: &Vault, seed: u8, event_ref: EntityId, who: &str) {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: NOW,
                 end: NOW,
@@ -129,7 +130,8 @@ fn prior_thread(vault: &Vault, seed: u8, party: &str) {
         channel_class: "email".to_owned(),
         occurred_at: NOW,
     }
-    .claim_body();
+    .claim_body()
+    .unwrap();
     vault
         .put_claim(
             &crate::test_util::entity(seed),

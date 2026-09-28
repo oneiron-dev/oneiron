@@ -194,6 +194,8 @@ pub(super) struct ScoredBasis {
     pub(super) evidence_count: u64,
     pub(super) evidence_digest: String,
     pub(super) world_digest: String,
+    pub(super) goal_revision: String,
+    pub(super) goal_id: EntityId,
     /// The PROPOSAL's own effective governance tier, resolved in the snapshot
     /// this basis was taken in ([`super::tier_verdict_in_txn`] over the
     /// proposal id and record).
@@ -217,6 +219,8 @@ impl ScoredBasis {
         held_out: &[String],
         outcomes: &[(String, bool)],
         proposal_tier: Option<SkillGovernanceTier>,
+        goal_revision: String,
+        goal_id: EntityId,
     ) -> Result<Self> {
         let (evidence_count, evidence_digest) = evidence_identity(held_out);
         Ok(Self {
@@ -225,6 +229,8 @@ impl ScoredBasis {
             evidence_count,
             evidence_digest,
             world_digest: world_labels_digest(outcomes),
+            goal_revision,
+            goal_id,
             proposal_tier,
         })
     }
@@ -237,6 +243,8 @@ impl ScoredBasis {
             && verdict.held_out_count == self.evidence_count
             && verdict.held_out_digest == self.evidence_digest
             && verdict.proposal_tier == self.proposal_tier
+            && verdict.goal_revision == self.goal_revision
+            && verdict.goal_id == Some(self.goal_id)
             && verdict
                 .measurements
                 .as_ref()
@@ -288,6 +296,19 @@ pub trait HeldOutReplayScorer {
     /// Implementation-defined. A scorer that cannot judge must error rather
     /// than guess: an invented scalar is a silent accept.
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32>;
+
+    /// Optional scorer-declared goal axes. Empty means this is a scalar-only
+    /// judge, which may score only a manifest selecting one primary axis.
+    /// Neither the axis name nor the goal definition lives in this trait.
+    fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        Ok(Vec::new())
+    }
+
+    /// A vector scorer must judge each declared axis explicitly. The scalar
+    /// single-primary path calls `score` at the gate and never invokes this.
+    fn score_goal_axis(&self, _case: &HeldOutReplayCase<'_>, _axis: &GoalAxisSpec) -> Result<f32> {
+        Err(invalid("no goal-axis scorer is registered for this axis"))
+    }
 
     /// Score requirement coverage using only the task identity and rubric text.
     /// An unimplemented auditor fails closed rather than fabricating a result.
@@ -483,13 +504,9 @@ pub fn skill_edit_cycle_cap(vault: &Vault) -> Result<u32> {
 }
 
 pub(super) fn cycle_cap_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<u32> {
-    let Some(raw) = vault.store.vault_meta.get(rtxn, SKILL_EDIT_CYCLE_CAP_KEY)? else {
+    let Some(bytes) = SKILL_EDIT_CYCLE_CAP.get(&vault.store, rtxn, &())? else {
         return Ok(DEFAULT_SKILL_EDIT_CYCLE_CAP);
     };
-    let bytes: [u8; 4] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("skill edit cycle cap"))?;
     Ok(u32::from_be_bytes(bytes))
 }
 
@@ -507,10 +524,7 @@ pub fn set_skill_edit_cycle_cap(vault: &Vault, cap: u32) -> Result<()> {
         ));
     }
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, SKILL_EDIT_CYCLE_CAP_KEY, &cap.to_be_bytes())?;
+        SKILL_EDIT_CYCLE_CAP.put(&vault.store, wtxn, &(), &cap.to_be_bytes())?;
         Ok(())
     })
 }

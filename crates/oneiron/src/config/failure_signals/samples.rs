@@ -8,12 +8,17 @@ use crate::{
     error::{Error, Result},
     ports::{EdgeStoreRead, EntityStore},
     registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN},
+    side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable},
     store::Store,
 };
 
+const SAMPLE: SideTable<SampleKey, StoredSample, Raw> =
+    SideTable::new(&side_table::FAILURE_SIGNALS_TIER2_SAMPLE);
+const WEEK_COUNT: SideTable<String, u64, Raw> =
+    SideTable::new(&side_table::FAILURE_SIGNALS_TIER2_WEEK);
+const SOURCE_INDEX: SideTable<SourceKey, Vec<u8>, Raw> =
+    SideTable::new(&side_table::FAILURE_SIGNALS_TIER2_SOURCE);
 const PREFIX: &[u8] = b"failure_signals:tier2:sample:";
-const WEEK_PREFIX: &[u8] = b"failure_signals:tier2:week:";
-const SOURCE_PREFIX: &[u8] = b"failure_signals:tier2:source:";
 const WEEK: u64 = 7 * 24 * 60 * 60;
 const TTL: u64 = 35 * 24 * 60 * 60;
 const CAP: usize = 50;
@@ -149,6 +154,36 @@ struct Prepared {
     sources: Vec<SourceProof>,
 }
 
+/// Physical suffixes stay opaque during cleanup: deletion must also retire a
+/// planted malformed key without changing the old prefix-scan behavior.
+struct SampleKey(Vec<u8>);
+struct SourceKey(Vec<u8>);
+impl SideKey for SampleKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0);
+    }
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self(bytes.to_vec()))
+    }
+}
+impl SideKey for SourceKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0);
+    }
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self(bytes.to_vec()))
+    }
+}
+impl RawValue for StoredSample {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        serde_json::to_vec(self)
+            .map_err(|_| Error::InvariantViolation("tier-2 sample encoding").into())
+    }
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        serde_json::from_slice(bytes).map_err(|_| Error::CorruptedIndex("tier-2 sample").into())
+    }
+}
+
 fn transcript_text(vault: &Vault, turn: &EntityId) -> Result<Option<(String, Vec<SourceProof>)>> {
     let messages = vault.sources(turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?;
     // A TURN body is a grouping fact, not a transcript. Never use txt/text
@@ -194,30 +229,27 @@ fn transcript_text(vault: &Vault, turn: &EntityId) -> Result<Option<(String, Vec
     )))
 }
 
-fn sample_key(week: u64, id: &EntityId) -> Vec<u8> {
-    format!("failure_signals:tier2:sample:{week:016x}:{}", id.to_hex()).into_bytes()
+fn sample_key(week: u64, id: &EntityId) -> SampleKey {
+    SampleKey(format!("{week:016x}:{}", id.to_hex()).into_bytes())
 }
-fn week_key(week: u64) -> Vec<u8> {
-    format!("failure_signals:tier2:week:{week:016x}").into_bytes()
+fn week_key(week: u64) -> String {
+    format!("{week:016x}")
 }
 fn source_prefix(id: &EntityId) -> Vec<u8> {
-    let mut key = SOURCE_PREFIX.to_vec();
-    key.extend_from_slice(id.to_hex().as_bytes());
-    key.push(b':');
-    key
+    format!("{}:", id.to_hex()).into_bytes()
 }
-fn source_key(id: &EntityId, sample_key: &[u8]) -> Vec<u8> {
+fn source_key(id: &EntityId, sample_key: &[u8]) -> SourceKey {
     let mut key = source_prefix(id);
     key.extend_from_slice(sample_key);
-    key
+    SourceKey(key)
 }
 fn decode(raw: &[u8]) -> Result<StoredSample> {
     serde_json::from_slice(raw).map_err(|_| Error::CorruptedIndex("tier-2 sample"))
 }
 fn count_for_week(vault: &Vault, txn: &heed::RoTxn<'_>, week: u64) -> Result<u64> {
-    match vault.store.vault_meta.get(txn, &week_key(week))? {
+    match WEEK_COUNT.get_bytes(&vault.store, txn, &week_key(week))? {
         Some(raw) if raw.len() == 8 => Ok(u64::from_be_bytes(
-            raw.as_ref()
+            raw.as_slice()
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("tier-2 week"))?,
         )),
@@ -264,15 +296,14 @@ fn sources_live(vault: &Vault, txn: &heed::RoTxn<'_>, sources: &[SourceProof]) -
 fn purge_sample(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
-    key: &[u8],
+    key: &SampleKey,
     row: &StoredSample,
 ) -> Result<()> {
+    let full_key = SAMPLE.key_bytes(key);
     for proof in &row.sources {
-        store
-            .vault_meta
-            .delete(txn, &source_key(&proof.entity_id()?, key))?;
+        SOURCE_INDEX.delete(store, txn, &source_key(&proof.entity_id()?, &full_key))?;
     }
-    store.vault_meta.delete(txn, key)?;
+    SAMPLE.delete(store, txn, key)?;
     Ok(())
 }
 
@@ -283,23 +314,19 @@ pub(crate) fn purge_tier2_for_source_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let prefix = source_prefix(id);
-    let keys = store
-        .vault_meta
-        .prefix_iter(&*txn, &prefix)?
-        .map(|entry| {
-            let (_, value) = entry?;
-            Ok(value.to_vec())
-        })
+    let keys = SOURCE_INDEX
+        .iter_raw_from(store, &*txn, &source_prefix(id))?
+        .map(|entry| entry.map(|(_, value)| value))
         .collect::<Result<Vec<_>>>()?;
     for key in keys {
         if !key.starts_with(PREFIX) {
             return Err(Error::CorruptedIndex("tier-2 source index"));
         }
-        if let Some(raw) = store.vault_meta.get(&*txn, &key)? {
-            purge_sample(store, txn, &key, &decode(&raw)?)?;
+        let sample_key = SampleKey(key[PREFIX.len()..].to_vec());
+        if let Some(raw) = SAMPLE.get_bytes(store, &*txn, &sample_key)? {
+            purge_sample(store, txn, &sample_key, &decode(&raw)?)?;
         } else {
-            store.vault_meta.delete(txn, &source_key(id, &key))?;
+            SOURCE_INDEX.delete(store, txn, &source_key(id, &key))?;
         }
     }
     Ok(())
@@ -334,12 +361,7 @@ pub fn capture_tier2_samples(
         }
         let mut chosen = Vec::new();
         for id in ordered {
-            if vault
-                .store
-                .vault_meta
-                .get(&txn, &sample_key(week, &id))?
-                .is_none()
-            {
+            if !SAMPLE.contains(&vault.store, &txn, &sample_key(week, &id))? {
                 chosen.push(id);
             }
         }
@@ -379,7 +401,7 @@ pub fn capture_tier2_samples(
                 break;
             }
             let key = sample_key(week, &row.turn);
-            if vault.store.vault_meta.get(&*txn, &key)?.is_some() {
+            if SAMPLE.contains(&vault.store, &*txn, &key)? {
                 continue;
             }
             if !sources_live(vault, &*txn, &row.sources)? {
@@ -394,24 +416,19 @@ pub fn capture_tier2_samples(
                 sample: sample.clone(),
                 sources: row.sources.clone(),
             };
-            vault.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&stored)
-                    .map_err(|_| Error::InvariantViolation("tier-2 sample encoding"))?,
-            )?;
+            SAMPLE.put(&vault.store, txn, &key, &stored)?;
+            let full_key = SAMPLE.key_bytes(&key);
             for proof in &row.sources {
-                vault
-                    .store
-                    .vault_meta
-                    .put(txn, &source_key(&proof.entity_id()?, &key), &key)?;
+                SOURCE_INDEX.put(
+                    &vault.store,
+                    txn,
+                    &source_key(&proof.entity_id()?, &full_key),
+                    &full_key,
+                )?;
             }
             selected.push(sample);
         }
-        vault
-            .store
-            .vault_meta
-            .put(txn, &wk, &(count + selected.len() as u64).to_be_bytes())?;
+        WEEK_COUNT.put(&vault.store, txn, &wk, &(count + selected.len() as u64))?;
         Ok(selected)
     })
 }
@@ -426,11 +443,11 @@ pub fn read_tier2_samples(vault: &Vault) -> Result<Vec<Tier2Sample>> {
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         let mut live = Vec::new();
         let mut stale = Vec::new();
-        for entry in vault.store.vault_meta.prefix_iter(&*txn, PREFIX)? {
+        for entry in SAMPLE.iter_raw_from(&vault.store, &*txn, &[])? {
             let (key, raw) = entry?;
             let stored = decode(&raw)?;
             if stored.sample.expires_at <= now || !sources_live(vault, &*txn, &stored.sources)? {
-                stale.push((key.to_vec(), stored));
+                stale.push((SampleKey(key), stored));
             } else {
                 live.push(stored.sample);
             }
@@ -439,22 +456,23 @@ pub fn read_tier2_samples(vault: &Vault) -> Result<Vec<Tier2Sample>> {
             purge_sample(&vault.store, txn, &key, &row)?;
         }
         let current_week = now / WEEK;
-        let stale_weeks = vault
-            .store
-            .vault_meta
-            .prefix_iter(&*txn, WEEK_PREFIX)?
+        let stale_weeks = WEEK_COUNT
+            .iter_raw_from(&vault.store, &*txn, &[])?
             .map(|entry| {
                 let (key, _) = entry?;
-                let bucket = std::str::from_utf8(&key[WEEK_PREFIX.len()..])
+                let bucket = std::str::from_utf8(&key)
                     .ok()
                     .and_then(|s| u64::from_str_radix(s, 16).ok())
                     .ok_or(Error::CorruptedIndex("tier-2 week"))?;
-                Ok((bucket, key.to_vec()))
+                Ok((
+                    bucket,
+                    String::from_utf8(key).map_err(|_| Error::CorruptedIndex("tier-2 week"))?,
+                ))
             })
             .collect::<Result<Vec<_>>>()?;
         for (bucket, key) in stale_weeks {
             if bucket < current_week {
-                vault.store.vault_meta.delete(txn, &key)?;
+                WEEK_COUNT.delete(&vault.store, txn, &key)?;
             }
         }
         Ok(live)

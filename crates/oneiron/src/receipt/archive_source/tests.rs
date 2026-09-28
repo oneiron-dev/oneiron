@@ -37,7 +37,7 @@ fn fixture(vault: &Vault) -> Result<(EntityId, EntityId, EntityId, Vec<u8>, Stri
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Imported);
     body.scope = Some(Value::Map(vec![(
         crate::actor_claims::ACTOR_CLAIM_LINEAGE_KEY.into(),

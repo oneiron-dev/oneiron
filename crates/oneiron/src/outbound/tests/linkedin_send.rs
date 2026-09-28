@@ -463,7 +463,7 @@ fn linkedin_send_dm_verifies_metadata_light_conversation_with_requested_thread()
 }
 
 #[test]
-fn linkedin_send_dm_send_failure_fails_without_verification()
+fn linkedin_send_dm_send_failure_is_ambiguous_without_verification()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB4));
@@ -497,8 +497,8 @@ fn linkedin_send_dm_send_failure_fails_without_verification()
         &mut sink,
     )?;
 
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
-    assert_eq!(result.receipt.outcome, "failed");
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert_eq!(result.receipt.outcome, "ambiguous");
     assert!(!result.receipt.fields.contains_key("provider_ref"));
     assert_eq!(sink.transport().send_calls.len(), 1);
     assert_eq!(
@@ -537,7 +537,7 @@ fn linkedin_send_dm_send_failure_fails_without_verification()
 }
 
 #[test]
-fn linkedin_send_dm_observed_absent_produces_failed_receipt_without_phantom_success()
+fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_success()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB2));
@@ -583,8 +583,8 @@ fn linkedin_send_dm_observed_absent_produces_failed_receipt_without_phantom_succ
         &mut sink,
     )?;
 
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
-    assert_eq!(result.receipt.outcome, "failed");
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert_eq!(result.receipt.outcome, "ambiguous");
     assert!(!result.receipt.fields.contains_key("provider_ref"));
     assert_eq!(
         result.receipt.fields.get("retry_state").map(String::as_str),
@@ -651,7 +651,7 @@ fn linkedin_send_dm_does_not_verify_older_matching_transcript_line()
         &mut sink,
     )?;
 
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert!(!result.receipt.fields.contains_key("provider_ref"));
     assert_eq!(sink.transport().send_calls.len(), 1);
     assert_eq!(sink.transport().get_calls.len(), 2);
@@ -706,7 +706,7 @@ fn linkedin_send_dm_requires_new_post_send_occurrence()
         &mut sink,
     )?;
 
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert_eq!(sink.transport().send_calls.len(), 1);
     assert_eq!(
         result.receipt.fields.get("retry_state").map(String::as_str),
@@ -783,7 +783,7 @@ fn linkedin_send_dm_successful_absent_read_clears_prior_get_error()
         &mut sink,
     )?;
 
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert_eq!(sink.transport().get_calls.len(), 3);
     assert_eq!(
         result.receipt.fields.get("retry_state").map(String::as_str),

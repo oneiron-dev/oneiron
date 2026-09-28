@@ -169,6 +169,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "sandbox.credential.call",
             "oneiron.clock.now_unix_ms",
             "oneiron.random.bytes",
+            "vault.agents.put",
             "self.json.validate",
             "self.memory.search",
             "self.memory.put_claim",
@@ -190,6 +191,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
     assert_eq!(
         write_imports,
         vec![
+            "vault.agents.put",
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
@@ -306,7 +308,20 @@ fn code_sandbox_plain_js_prompt_surface_is_docs_only_and_host_bound() {
     assert!(!dts.contains("batch"));
     assert!(!dts.contains("bulk"));
     assert!(!dts.contains("raw"));
-    assert!(!dts.contains("delete"));
+    // Deletion exists only as the canonical reviewable proposal type; no
+    // delete verb is advertised.
+    assert!(
+        !dts.replace("FileDeleteProposal", "")
+            .replace("\"file-delete\"", "")
+            .contains("delete")
+    );
+    assert!(
+        !contract
+            .runtime()
+            .advertised_prompt_verbs()
+            .iter()
+            .any(|verb| verb.contains("delete"))
+    );
     assert!(!dts.contains("putEntity"));
     assert!(!dts.contains("putReplicated"));
     assert!(!dts.contains("setEdgeWeight"));
@@ -383,5 +398,53 @@ fn code_sandbox_first_party_proposal_channel_is_closed() -> Result<()> {
             .is_err()
     );
     assert!(adapter.proposal_deltas().is_empty());
+    Ok(())
+}
+
+#[test]
+fn code_sandbox_delete_rename_and_opaque_proposals_validate_at_review_door() -> Result<()> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut adapter = FakeSandboxAdapter::new(SandboxGuestTier::Foreign, host_mounts(dir.path()));
+    let old = SandboxVirtualPath::try_new("/mnt/workspace/old.txt")?;
+    let new = SandboxVirtualPath::try_new("/mnt/workspace/new.txt")?;
+    let uploads = SandboxVirtualPath::try_new("/mnt/uploads/old.txt")?;
+    let root = SandboxVirtualPath::try_new("/mnt/workspace")?;
+    for invalid in [
+        SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal {
+            path: uploads.clone(),
+        }),
+        SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path: root.clone() }),
+        SandboxProposalWrite::FileRename(SandboxFileRenameProposal {
+            from: old.clone(),
+            to: old.clone(),
+        }),
+        SandboxProposalWrite::FileRename(SandboxFileRenameProposal {
+            from: old.clone(),
+            to: uploads.clone(),
+        }),
+        SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path: uploads }),
+    ] {
+        assert!(adapter.propose_write(invalid).is_err());
+    }
+    assert!(adapter.proposal_deltas().is_empty());
+    for (write, kind) in [
+        (
+            SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path: old.clone() }),
+            SandboxProposalKind::FileDelete,
+        ),
+        (
+            SandboxProposalWrite::FileRename(SandboxFileRenameProposal { from: old, to: new }),
+            SandboxProposalKind::FileRename,
+        ),
+        (
+            SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path: root }),
+            SandboxProposalKind::DirectoryOpaque,
+        ),
+    ] {
+        let delta = adapter.propose_write(write)?;
+        assert_eq!(delta.kind(), kind);
+        assert_eq!(delta.approval(), ClaimApprovalStatus::Proposed);
+    }
+    assert_eq!(adapter.proposal_deltas().len(), 3);
     Ok(())
 }

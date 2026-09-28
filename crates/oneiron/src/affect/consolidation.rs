@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use super::{
     CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimVadConsolidation, ClaimVadReappraisal,
-    ClaimVadTurnEvidence, VAD_ANNOTATION_CLAIM_PREDICATE, Vad, VadAnnotation,
+    ClaimVadTurnEvidence, VAD_ANNOTATION_CLAIM_PREDICATE, VAD_ANNOTATION_META, Vad, VadAnnotation,
     claim_vad_evidence_value, claim_vad_value, collect_claim_turn_evidence_refs,
     decode_vad_annotation_claim_body_if_present, mean_vad, vad_annotation_claim_body,
     vad_annotation_claim_id, vad_annotation_from_value, vad_annotation_meta_key,
@@ -238,7 +238,7 @@ impl Vault {
                     1.0,
                     ClaimApprovalStatus::Auto,
                     ClaimLifecycleStatus::Active,
-                );
+                )?;
                 body.evidence = Some(evidence);
                 body.source = Some(ClaimSource::Inferred);
                 body.valid_from = Some(now);
@@ -463,11 +463,9 @@ impl Vault {
         }
 
         let key = vad_annotation_meta_key(ENTITY_TYPE_TURN, turn_id);
-        let Some(raw) = self.store.vault_meta.get(txn, &key)? else {
+        let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, txn, &key)? else {
             return Ok(None);
         };
-        let annotation: VadAnnotation =
-            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
         annotation.vad.validate()?;
         Ok(Some(annotation))
     }
@@ -608,7 +606,7 @@ impl Vault {
     ) -> Result<VadAnnotation> {
         annotation.vad.validate()?;
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
-        let claim_body = vad_annotation_claim_body(id, &annotation);
+        let claim_body = vad_annotation_claim_body(id, &annotation)?;
         let data = encode_claim_body(&claim_body)?;
         validate_claim_body_bytes(&data, false)?;
 
@@ -657,7 +655,7 @@ impl Vault {
             true,
         )?;
         let key = vad_annotation_meta_key(expected_type, id);
-        self.store.vault_meta.delete(wtxn, &key)?;
+        VAD_ANNOTATION_META.delete(&self.store, wtxn, &key)?;
         Ok(annotation)
     }
 
@@ -738,11 +736,9 @@ impl Vault {
         }
 
         let key = vad_annotation_meta_key(expected_type, id);
-        let Some(raw) = self.store.vault_meta.get(&rtxn, &key)? else {
+        let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, &rtxn, &key)? else {
             return Ok(None);
         };
-        let annotation: VadAnnotation =
-            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
         annotation.vad.validate()?;
         Ok(Some(annotation))
     }

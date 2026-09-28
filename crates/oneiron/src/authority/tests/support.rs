@@ -357,6 +357,7 @@ impl LocalFoldContext {
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
+            pre_handoff_entries: None,
         }
     }
 }
@@ -413,11 +414,11 @@ pub(super) fn scope_entity(byte: u8) -> EntityId {
 }
 
 pub(super) fn symmetric_scope(
-    facets: crate::federation::FederationScopeFacets,
-    bands: crate::federation::FederationScopeBands,
+    facets: ScopeAxis<ScopeId>,
+    bands: ScopeAxis<SelectorRange>,
 ) -> FederationPactScope {
     let half = FederationDirectionScope {
-        worlds: crate::federation::FederationScopeWorlds::All,
+        worlds: ScopeAxis::All,
         facets,
         bands,
     };
@@ -430,14 +431,14 @@ pub(super) fn symmetric_scope(
 pub(super) fn default_pact_scope() -> FederationPactScope {
     FederationPactScope {
         lo_to_hi: FederationDirectionScope {
-            worlds: crate::federation::FederationScopeWorlds::All,
-            facets: crate::federation::FederationScopeFacets::All,
-            bands: crate::federation::FederationScopeBands::All,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
         },
         hi_to_lo: FederationDirectionScope {
-            worlds: crate::federation::FederationScopeWorlds::Base,
-            facets: crate::federation::FederationScopeFacets::All,
-            bands: crate::federation::FederationScopeBands::All,
+            worlds: base_world_axis(),
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
         },
     }
 }
@@ -766,14 +767,11 @@ pub(super) fn totality_ops(
     fixture: &PactFixture,
 ) -> Vec<(&'static str, FederationLifecycleAction)> {
     let narrowed = FederationDirectionScope {
-        worlds: crate::federation::FederationScopeWorlds::Base,
-        facets: crate::federation::FederationScopeFacets::All,
-        bands: crate::federation::FederationScopeBands::All,
+        worlds: base_world_axis(),
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     };
-    let repact_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let repact_scope = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     vec![
         ("connect", connect_action(fixture)),
         (
@@ -983,4 +981,31 @@ pub(super) fn open_vault_at(path: &std::path::Path, secs: u64) -> crate::Vault {
     let mut config = crate::VaultConfig::device();
     config.store_clock = crate::ports::ManualClock::new(secs).bundle();
     crate::Vault::open(path, config).unwrap()
+}
+
+/// Simulate a later local monotonic observation without changing a signed row
+/// or trusting its advisory timestamp. Used only after the row was observed.
+pub(super) fn mature_observed_widen(vault: &crate::Vault, entry: &AuthorityLogEntry) -> u64 {
+    let hash = authority_entry_hash(entry).unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let first_seen = vault
+        .store
+        .sync_state
+        .get(&txn, &authority_first_seen_sync_key(&hash))
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap();
+    drop(txn);
+    let now = first_seen + DEFAULT_PENDING_WIDEN_DELAY_SECS;
+    vault
+        .with_write_txn(|txn| {
+            vault.store.sync_state.put(
+                txn,
+                authority_first_seen_clock_sync_key(),
+                &encode_authority_first_seen_secs(now),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    now
 }

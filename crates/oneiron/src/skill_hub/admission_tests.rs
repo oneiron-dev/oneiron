@@ -2034,3 +2034,101 @@ fn judge_replaced_mid_marketplace_or_merge_scoring_cannot_write_a_ruling() -> Re
     );
     Ok(())
 }
+
+#[test]
+fn imported_callable_stays_candidate_without_foreign_sandbox_qualification() -> Result<()> {
+    let fixture = Fixture::new();
+    let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
+    let package = super::folder::package_from_files(vec![
+        HubFile::new("SKILL.md", b"---\nname: fixture.callable\ndescription: fixture\nversion: 1\nrole: callable\ncall:\n  reference: scripts/call.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"result\":\"integer\"}\n---\ncheck result\n".to_vec()),
+        HubFile::new("scripts/call.js", b"finish(JSON.stringify({result:skillArgs.value+1}));".to_vec()),
+    ])?;
+    let source = HubRef::new(
+        source.hub_id,
+        "fixture.callable",
+        HubPin::ContentHash(package.content_hash()?.to_hex()),
+    )?;
+    let id = fixture
+        .vault
+        .import_skill_from_hub(&source, &package, at(20), 20)?;
+    let ask =
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
+    fixture
+        .vault
+        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    let error = fixture
+        .vault
+        .admit_marketplace_skill(&ask, &Replay::new(true), at(31), 31)
+        .expect_err("text replay does not qualify foreign code execution");
+    assert_eq!(error.kind(), ErrorKind::InvalidSkillBody);
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&id)?
+            .expect("candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    Ok(())
+}
+
+#[test]
+fn edited_shared_fork_persists_each_role_and_callable_contract_change() -> Result<()> {
+    let fixture = Fixture::new();
+    let fork_id = EntityId::now();
+    fixture.vault.fork_skill_record(
+        &fixture.baseline,
+        &fork_id,
+        "fixture.edited-fork",
+        at(40),
+        40,
+    )?;
+    let callable = |version: &str, reference: &str, output: &str| -> Result<HubPackage> {
+        super::folder::package_from_files(vec![
+            HubFile::new("SKILL.md", format!("---\nname: fixture.edited-fork\ndescription: fixture\nversion: {version}\nrole: callable\ncall:\n  reference: {reference}\n  arguments: {{\"value\":\"integer\"}}\n  returns: {{\"value\":\"{output}\"}}\n---\nBody\n").into_bytes()),
+            HubFile::new("scripts/run.js", b"finish(JSON.stringify({value:skillArgs.value}));".to_vec()),
+            HubFile::new("scripts/other.js", b"finish(JSON.stringify({value:skillArgs.value}));".to_vec()),
+        ])
+    };
+    fixture.vault.write_shared_skill_fork_package(
+        &fork_id,
+        &callable("2", "scripts/run.js", "integer")?,
+        at(41),
+        41,
+    )?;
+    let first = fixture
+        .vault
+        .get_skill_record(&fork_id)?
+        .expect("callable fork");
+    assert_eq!(first.role, crate::skill::SkillRole::Callable);
+    assert_eq!(first.call.as_ref().unwrap().reference, "scripts/run.js");
+    fixture.vault.write_shared_skill_fork_package(
+        &fork_id,
+        &callable("3", "scripts/other.js", "number")?,
+        at(42),
+        42,
+    )?;
+    let second = fixture
+        .vault
+        .get_skill_record(&fork_id)?
+        .expect("changed call");
+    assert_eq!(second.call.as_ref().unwrap().reference, "scripts/other.js");
+    assert_eq!(
+        second.call.as_ref().unwrap().returns,
+        serde_json::json!({"value":"number"})
+    );
+    let knowledge = super::folder::package_from_files(vec![HubFile::new("SKILL.md",
+        b"---\nname: fixture.edited-fork\ndescription: fixture\nversion: 4\nrole: knowledge\n---\nBody\n".to_vec())])?;
+    fixture
+        .vault
+        .write_shared_skill_fork_package(&fork_id, &knowledge, at(43), 43)?;
+    let third = fixture
+        .vault
+        .get_skill_record(&fork_id)?
+        .expect("knowledge fork");
+    assert_eq!(third.role, crate::skill::SkillRole::Knowledge);
+    assert_eq!(third.call, None);
+    Ok(())
+}

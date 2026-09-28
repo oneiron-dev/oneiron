@@ -55,7 +55,8 @@ fn fixture_claim(text: &'static str, salience: f32) -> ClaimBody {
         0.8,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.salience = Some(salience);
     body
 }
@@ -225,7 +226,7 @@ fn psych_mirror_selection_structured_claim_value_contributes_entropy() -> Result
         0.8,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
 
     let candidate =
         psych_mirror_source_candidate_from_claim(entity(0x23), entity(0xC3), 0.5, 42, &body)?;

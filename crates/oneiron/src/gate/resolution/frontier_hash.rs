@@ -8,13 +8,17 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
-use super::manifest_types::{PolicyManifestDiagnostics, PolicyManifestResolution};
+use super::manifest_types::{
+    PolicyManifestDiagnostics, PolicyManifestResolution, ResidenceOperationBudgetLimits,
+};
 use crate::gate::ask_policy::AskPolicySurface;
 use crate::gate::ceiling::{
     DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality,
     PolicyOwnerPolicyRow, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
 
+// One hash step per manifest row, in manifest order: splitting it would scatter one frontier.
+#[allow(clippy::too_many_lines)]
 pub(super) fn hash_policy_frontier_v0(
     hasher: &mut Sha256,
     resolution: &PolicyManifestResolution,
@@ -49,11 +53,34 @@ pub(super) fn hash_policy_frontier_v0(
             hash_u64(hasher, u64::from(*minimum));
         }
     }
+    // A new project's birth and the vault ceiling read these resolved policy
+    // rows. A policy edit must move the frontier even if other gate axes agree.
+    if resolution.project_depth_default.is_some() || resolution.project_depth_max.is_some() {
+        hash_str(hasher, "project_depth_policy.v1");
+        hash_opt_u8(hasher, resolution.project_depth_default);
+        hash_opt_u8(hasher, resolution.project_depth_max);
+    }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
     // opted-out send holds or ships, so flipping it must move the frontier and
     // invalidate every standing grant bound to the old one.
     hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    // Absent native-mail rows do not alter an unrelated manifest's frontier.
+    // Present rows do: an owner policy edit must rebind affected authority.
+    if !resolution.native_mail_policy.is_empty() {
+        hash_str(hasher, "native_mail_policy");
+        hash_len(hasher, resolution.native_mail_policy.len());
+        for row in &resolution.native_mail_policy {
+            hash_bytes(hasher, &row.frontier_bytes());
+        }
+    }
+    if let Some(project) = resolution.project_collaboration {
+        hash_str(hasher, "project_collaboration");
+        hash_str(hasher, project.leader_chat_default.as_str());
+        hash_str(hasher, "nested_narrowing");
+        hash_str(hasher, "vault");
+        hash_str(hasher, project.widen_ask_fallback.as_str());
+    }
     // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
     // names a checker keeps its exact no-checker frontier hash — and every
     // consent binding taken against it stays valid. A domain tag rides with
@@ -66,6 +93,99 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if let Some((vault, holders)) = resolution.connector_admission.rows_for_hash() {
+        hash_str(hasher, "connector_admission");
+        hash_str(hasher, "nested_narrow_holder_override_vault_cap");
+        hash_u64(hasher, vault.max_tools as u64);
+        hash_u64(hasher, vault.max_permissions_per_tool as u64);
+        hash_u64(hasher, vault.max_triggers_per_tool as u64);
+        hash_len(hasher, holders.len());
+        for (holder, quotas) in holders {
+            hash_str(hasher, holder);
+            hash_u64(hasher, quotas.max_tools as u64);
+            hash_u64(hasher, quotas.max_permissions_per_tool as u64);
+            hash_u64(hasher, quotas.max_triggers_per_tool as u64);
+        }
+    }
+    if !resolution.voice_serving.is_empty() {
+        hash_str(hasher, "voice_serving_nested_narrowing");
+        hash_len(hasher, resolution.voice_serving.len());
+        for row in &resolution.voice_serving {
+            for value in [
+                row.vault.max_text_bytes,
+                row.vault.max_pcm_bytes,
+                row.vault.max_ref_bytes,
+                row.vault.max_queued_renders,
+                row.vault.max_inflight_uploads,
+                row.vault.upload_read_deadline_ms,
+                row.vault.http_deadline_ms,
+                row.vault.max_header_bytes,
+            ] {
+                hash_u64(hasher, value);
+            }
+            hash_len(hasher, row.holders.len());
+            for (holder, limits) in &row.holders {
+                hash_bytes(hasher, holder.as_bytes());
+                for value in [
+                    limits.max_text_bytes,
+                    limits.max_pcm_bytes,
+                    limits.max_ref_bytes,
+                    limits.max_queued_renders,
+                    limits.max_inflight_uploads,
+                    limits.upload_read_deadline_ms,
+                    limits.http_deadline_ms,
+                    limits.max_header_bytes,
+                ] {
+                    hash_u64(hasher, value);
+                }
+            }
+        }
+    }
+    if !resolution.failure_signal_policy.is_empty() {
+        hash_str(hasher, "failure_signal_policy");
+        hash_len(hasher, resolution.failure_signal_policy.len());
+        for row in &resolution.failure_signal_policy {
+            use crate::failure_signals::policy::{Precedence, Scope};
+            match row.scope {
+                Scope::Default => hash_str(hasher, "default"),
+                Scope::Vault => hash_str(hasher, "vault"),
+                Scope::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.bucket_seconds);
+            hash_u64(hasher, row.max_component_bytes);
+            hash_str(
+                hasher,
+                match row.precedence {
+                    Some(Precedence::NestedNarrowing) => "nested_narrowing",
+                    Some(Precedence::HolderOverride) => "holder_override",
+                    None => "inherit",
+                },
+            );
+        }
+    }
+    // An explicit default and an omitted conversion row are equivalent. A
+    // narrowed conversion policy changes the frontier before standing grants
+    // bound to the old policy may be used again.
+    if resolution.project_conversion != Default::default() {
+        hash_str(hasher, "project_conversion");
+        hash_str(
+            hasher,
+            resolution.project_conversion.leader_fallback.as_str(),
+        );
+        hash_str(
+            hasher,
+            resolution.project_conversion.roster_selection.as_str(),
+        );
+        hash_str(
+            hasher,
+            resolution.project_conversion.task_holder_fallback.as_str(),
+        );
+        hash_u64(hasher, resolution.project_conversion.max_tasks as u64);
+        hash_bool(hasher, resolution.project_conversion.allow_holder_override);
+    }
     // Default rows and owner-authored overrides both affect admission and its
     // consent frontier. Absent policy keeps the old frontier unchanged.
     if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {
@@ -131,6 +251,7 @@ pub(super) fn hash_policy_frontier_v0(
             .expect("validated booking policy rows encode");
         hash_bytes(hasher, &bytes);
     }
+    hash_class_policy_tables(hasher, resolution);
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
@@ -212,6 +333,17 @@ pub(super) fn hash_policy_frontier_v0(
             hash_bytes(hasher, &row.floors.care.to_bits().to_be_bytes());
         }
     }
+    if let Some(default_all) = resolution.sync_world_default {
+        hash_str(hasher, "sync_world_default");
+        hash_bool(hasher, default_all);
+    }
+    if let Some(worlds) = &resolution.sync_world_ceiling {
+        hash_str(hasher, "sync_world_ceiling");
+        hash_len(hasher, worlds.len());
+        for world in worlds {
+            hash_bytes(hasher, world.as_bytes());
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
@@ -229,9 +361,50 @@ pub(super) fn hash_policy_frontier_v0(
 
     // Attribution limits bound post-terminal receipt capture, not Gate authority.
     // Tuning them must not rebind existing consent/grant frontiers.
-    if let Some(threshold) = resolution.proposal_check_threshold {
-        hash_str(hasher, "proposal_check_threshold");
-        hash_u64(hasher, threshold);
+
+    // The effective vault-only meta-rule is frontier state even when its row
+    // is missing and the shipped-data bootstrap supplies it.
+    hash_str(hasher, "scope_precedence_effective");
+    hash_str(
+        hasher,
+        &crate::gate::policy_values::PolicyValue::ScopePrecedence(resolution.scope_precedence().0)
+            .as_str(),
+    );
+    hash_len(hasher, resolution.policy_values.len());
+    for row in &resolution.policy_values {
+        hash_str(hasher, &row.row_ref);
+        hash_str(hasher, row.key.as_str());
+        hash_str(hasher, &row.scope.as_str());
+        hash_str(hasher, &row.value.as_str());
+        hash_bool(hasher, row.override_parent);
+        hash_opt_str(hasher, row.why.as_ref().map(|why| why.text.as_str()));
+        hash_opt_str(
+            hasher,
+            row.why.as_ref().map(|why| match why.source {
+                crate::gate::policy_values::WhySource::Owner => "owner",
+                crate::gate::policy_values::WhySource::Drafted => "drafted",
+            }),
+        );
+    }
+
+    // Residence operation limits are resolved restrictive caps. Hash the
+    // effective vault/holder intersection, not raw manifest representation:
+    // absent holder maps inherit vault limits, and equivalent nested policies
+    // must produce the same read frontier. The shipped defaults change no
+    // decision and keep the established frontier bytes.
+    let residence = resolution.residence_operation_budgets;
+    if residence != ResidenceOperationBudgetLimits::default() {
+        hash_str(hasher, "residence_operation_budgets");
+        hash_u64(hasher, residence.rpc_timeout_ms);
+        hash_len(hasher, residence.index_page_limit);
+        hash_len(hasher, residence.max_index_pages);
+        hash_len(hasher, residence.current_window_count);
+        hash_len(hasher, residence.title_max_chars);
+        hash_len(hasher, residence.search_limit);
+        hash_len(hasher, residence.search_query_max_bytes);
+        hash_len(hasher, residence.offline_candidate_multiplier);
+        hash_u64(hasher, residence.ack_timeout_ms);
+        hash_len(hasher, residence.index_cache_bytes);
     }
 
     // An absent row and the shipped 4096 vault row have identical effective
@@ -257,6 +430,27 @@ pub(super) fn hash_policy_frontier_v0(
         }
     }
 
+    // Operational settings are identity-bearing only when declared: old vaults
+    // retain their existing frontier, while any policy amendment moves it.
+    if let Some(row) = resolution.linear_mirror {
+        hash_str(hasher, "linear_mirror_policy");
+        hash_u64(hasher, row.poll_interval_secs);
+        hash_u64(hasher, row.request_timeout_secs);
+    }
+    if let Some(row) = resolution.linear_sync {
+        hash_str(hasher, "linear_sync_budget");
+        hash_u64(hasher, row.max_pull_pages_per_pass as u64);
+    }
+    if let Some(row) = resolution.wave_handoff {
+        hash_str(hasher, "wave_handoff_policy");
+        hash_u64(hasher, row.scan_limit as u64);
+        hash_u64(hasher, row.retry_floor_ms);
+        hash_u64(hasher, row.retry_cap_ms);
+    }
+    if let Some(precedence) = resolution.operational_precedence {
+        hash_str(hasher, "operational_policy_precedence");
+        hash_str(hasher, precedence.as_str());
+    }
     if let Some(policy) = &resolution.weave_correction_policy {
         hash_str(hasher, "weave_correction_policy");
         policy.hash_into(hasher);
@@ -309,6 +503,19 @@ pub(super) fn hash_policy_frontier_v0(
         }
     }
 
+    if let Some(policy) = resolution.judge_calibration {
+        hash_str(hasher, "judge_calibration");
+        hash_u64(hasher, u64::from(policy.ask_minutes));
+        hash_u64(hasher, u64::from(policy.max_context_bytes));
+    }
+
+    hash_str(hasher, "credential_lifetimes");
+    hash_bool(hasher, resolution.credential_lifetimes.is_some());
+    if let Some(lifetimes) = resolution.credential_lifetimes {
+        hash_str(hasher, lifetimes.precedence.as_str());
+        hash_u64(hasher, lifetimes.oauth_exchange_secs);
+        hash_u64(hasher, lifetimes.initial_owner_secs);
+    }
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);
@@ -355,6 +562,22 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, grant_ref);
     }
 
+    hash_str(hasher, "weave_report_policy");
+    hash_bool(hasher, resolution.weave_report_policy_empty);
+    hash_str(hasher, resolution.weave_report_precedence.as_str());
+    hash_len(hasher, resolution.weave_report_policy.len());
+    for row in &resolution.weave_report_policy {
+        hash_str(hasher, &row.role);
+        hash_opt_str(hasher, row.holder.as_ref().map(EntityId::to_hex).as_deref());
+        hash_len(hasher, row.sections.len());
+        for section in &row.sections {
+            hash_str(hasher, section);
+        }
+        hash_len(hasher, row.max_sections);
+        hash_len(hasher, row.max_predicates);
+        hash_len(hasher, row.max_edge_kinds);
+        hash_len(hasher, row.max_rows);
+    }
     hash_len(hasher, resolution.scoped_grants.len());
     for grant in &resolution.scoped_grants {
         hash_opt_str(hasher, grant.actor_class.as_deref());
@@ -386,6 +609,13 @@ pub(super) fn hash_policy_frontier_v0(
     }
 
     hash_bool(hasher, resolution.owner_policy_enabled);
+    // The shipped nested_narrowing composition keeps the historical frontier
+    // bytes, so standing bindings survive; only a declared change is hashed.
+    if resolution.owner_policy_precedence != crate::gate::ceiling::PolicyOwnerPrecedence::default()
+    {
+        hash_str(hasher, "owner_policy_precedence");
+        hash_str(hasher, resolution.owner_policy_precedence.as_str());
+    }
     hash_bool(hasher, resolution.owner_policy_rows_dropped);
     hash_len(hasher, resolution.owner_policy_rows.len());
     for row in &resolution.owner_policy_rows {
@@ -470,8 +700,22 @@ fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
     hash_str(hasher, &row.text);
     hash_bool(hasher, row.active);
     hash_opt_str(hasher, row.world_ref.as_deref());
+    // Preserve the existing no-project frontier, while binding each new
+    // project scope to its exact bytes (and a distinct field domain).
+    if let Some(project_ref) = row.project_ref.as_deref() {
+        hash_str(hasher, "project_ref");
+        hash_str(hasher, project_ref);
+    }
     hash_str(hasher, row.action.as_str());
     hash_opt_str(hasher, row.human.as_deref());
+    hash_opt_str(hasher, row.why.as_ref().map(|why| why.text.as_str()));
+    hash_opt_str(
+        hasher,
+        row.why.as_ref().map(|why| match why.source {
+            crate::gate::policy_values::WhySource::Owner => "owner",
+            crate::gate::policy_values::WhySource::Drafted => "drafted",
+        }),
+    );
 }
 
 fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {
@@ -628,5 +872,42 @@ fn hash_budget_policy_table(hasher: &mut Sha256, table: &BudgetPolicyTable) {
         if let Some(cap_units) = row.cap_units() {
             hash_u64(hasher, cap_units);
         }
+    }
+}
+
+fn hash_class_policy_tables(hasher: &mut Sha256, resolution: &PolicyManifestResolution) {
+    let waits = resolution.wait_policy.rows();
+    if !waits.is_empty() {
+        hash_str(hasher, "wait_policy");
+        hash_len(hasher, waits.len());
+        for row in waits {
+            hash_str(hasher, &row.wait_class);
+            hash_opt_entity(hasher, row.holder_ref);
+            hash_u64(hasher, row.min_secs);
+            hash_bool(hasher, row.max_secs.is_some());
+            if let Some(max_secs) = row.max_secs {
+                hash_u64(hasher, max_secs);
+            }
+            hash_str(hasher, row.precedence.as_str());
+        }
+    }
+    let acts = resolution.act_policy.rows();
+    if !acts.is_empty() {
+        hash_str(hasher, "act_policy");
+        hash_len(hasher, acts.len());
+        for row in acts {
+            hash_str(hasher, &row.act_class);
+            hash_str(hasher, &row.subject_class);
+            hash_opt_entity(hasher, row.holder_ref);
+            hash_str(hasher, row.posture.as_str());
+            hash_str(hasher, row.precedence.as_str());
+        }
+    }
+}
+
+fn hash_opt_entity(hasher: &mut Sha256, value: Option<EntityId>) {
+    hash_bool(hasher, value.is_some());
+    if let Some(value) = value {
+        hash_bytes(hasher, value.as_bytes());
     }
 }

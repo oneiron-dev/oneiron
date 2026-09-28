@@ -1409,7 +1409,7 @@ fn governed_agent(fixture: &RuledAskFixture) -> Result<(EntityId, TaskAskClass)>
         b"agent",
     )?;
     let mut manifest: serde_json::Value =
-        rmp_serde::from_slice(&crate::gate::default_policy_manifest())?;
+        rmp_serde::from_slice(&crate::gate::default_policy_manifest()?)?;
     manifest["actor_ceilings"]
         .as_array_mut()
         .ok_or("default actor ceilings")?
@@ -2297,7 +2297,7 @@ fn human_no_reply_to_soft_confirm_uses_normal_answer_intake() -> Result<()> {
 #[test]
 fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization() -> Result<()> {
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
         SelfHeldShape,
     };
     use crate::counterparty_contact::CounterpartyContactRecord;
@@ -2381,20 +2381,12 @@ fn pending_soft_confirm_recovers_route_and_remains_gated_without_authorization()
                 1_000,
             ),
         )?;
-        reopened.transition_channel_identity(
+        reopened.step_channel_identity(
             &identity_ref,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
             1_000,
-            None,
         )?;
-        reopened.transition_channel_identity(
-            &identity_ref,
-            ChannelIdentityState::Active,
-            None,
-            1_000,
-            None,
-        )?;
+        reopened.step_channel_identity(&identity_ref, ChannelIdentityStep::Fulfill, 1_000)?;
         reopened.create_counterparty_contact(
             &EntityId::now(),
             &CounterpartyContactRecord::user_introduction(
@@ -2939,7 +2931,7 @@ fn slot_commitment_human_can_approve_or_reject_typed_notice() -> Result<()> {
 #[test]
 fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
-    let mut bytes = crate::gate::default_policy_manifest();
+    let mut bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy manifest map")
     else {

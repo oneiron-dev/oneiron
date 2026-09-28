@@ -861,7 +861,8 @@ fn quiet_hours_claim(subject: EntityId) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }

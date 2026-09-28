@@ -445,7 +445,11 @@ fn same_version_substitution_fails_closed(historical: bool) {
             raw_row(&vault, &key(action)),
             before_swap
                 .metadata
-                .get(build_cache_key(&key(action)).as_slice())
+                .get(
+                    BUILD_CACHE_REAPI_ROW
+                        .key_bytes(key(action).as_bytes())
+                        .as_slice()
+                )
                 .cloned()
         );
         assert_binding_refuses_hits(&vault, action, reference);

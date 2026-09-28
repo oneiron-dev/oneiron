@@ -324,7 +324,8 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
     let unbound_body = candidate.clone().into_claim_body(
         &unbound,
         crate::claim::default_facet_in(&vault.store, &vault.store.env.read_txn().unwrap()).unwrap(),
-    );
+    )
+    .unwrap();
     let unbound_bytes = crate::claim::encode_claim_body(&unbound_body).unwrap();
     vault
         .batch()
@@ -491,7 +492,8 @@ fn unsigned_machine_claim_stays_quarantined_when_actor_arrives_after_replay() {
     let facet =
         crate::claim::default_facet_in(&vault.store, &vault.store.env.read_txn().unwrap()).unwrap();
     let bytes =
-        crate::claim::encode_claim_body(&candidate.into_claim_body(&envelope, facet)).unwrap();
+        crate::claim::encode_claim_body(&candidate.into_claim_body(&envelope, facet).unwrap())
+            .unwrap();
     vault
         .batch()
         .put_replicated(
@@ -645,7 +647,7 @@ fn owner_approval_and_machine_supersession_follow_signed_history() {
         )
         .unwrap();
     let later = vault.now_recorded_at() + 1;
-    let mut manifest = crate::gate::default_policy_manifest();
+    let mut manifest = crate::gate::default_policy_manifest().unwrap();
     let Value::Map(mut fields) =
         rmpv::decode::read_value(&mut std::io::Cursor::new(manifest.as_slice())).unwrap()
     else {
@@ -964,10 +966,12 @@ fn orphan_peer_transition_is_quarantined_before_it_can_poison_a_target() {
                 WriteProvenance::new(Value::from("fixture")).unwrap(),
                 ClaimApprovalStatus::Proposed,
             ),
-            crate::claim::substrate_facet_id(machine),
-        ),
+            crate::claim::substrate_facet_id(machine).unwrap(),
+        )
+        .unwrap(),
         encode_machine_claim_transition_event(&orphan).unwrap(),
-    );
+    )
+    .unwrap();
     let body = crate::claim::encode_claim_body(&record).unwrap();
     let result = vault
         .batch()

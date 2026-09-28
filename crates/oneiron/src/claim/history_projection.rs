@@ -667,7 +667,7 @@ impl Vault {
             target,
             &original,
             bytes.clone(),
-        );
+        )?;
         let now = self.store.clock.now_recorded_at();
         crate::batch::apply_ops_with_gate_mode(
             &self.store,

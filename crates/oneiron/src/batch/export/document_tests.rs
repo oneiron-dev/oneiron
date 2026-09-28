@@ -219,7 +219,7 @@ fn whole_vault_json_roundtrip_preserves_ids_types_times_fields_graph_and_demotes
         0.75,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     knowledge.salience = Some(0.625);
     knowledge.evidence = Some(Value::Map(vec![(
         Value::from("source_document"),
@@ -471,7 +471,7 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
         range(),
         789,
     )?;
@@ -506,7 +506,7 @@ fn whole_vault_provenance_restore_replays_history_with_local_model_binding_and_p
     // This fixture explicitly installs a LOCAL Imported-source permit. The
     // production importer never mints or widens it from the archive.
     let mut policy =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap();
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice()).unwrap();
     let Value::Map(entries) = &mut policy else {
         panic!("policy");
     };
@@ -581,7 +581,7 @@ fn whole_vault_model_restore_reports_local_creation_and_repeat_mapping() -> Resu
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
         range(),
         789,
     )?;

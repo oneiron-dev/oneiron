@@ -60,6 +60,12 @@ struct Search {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AgentPut {
+    id: String,
+    definition: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Speech {
     text: String,
 }
@@ -201,6 +207,14 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
+        "vault.agents.put" => {
+            let args: AgentPut = parse(input)?;
+            SelfCall::AgentsPut(Box::new(crate::code_run::parse_agent_put_request(
+                &args.id,
+                args.definition,
+                now,
+            )?))
+        }
         "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
         "self.memory.put_claim" => {
@@ -238,7 +252,8 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
         }
         "self.memory.put_edge" => {
             let args: Edge = parse(input)?;
-            let kind = edge_kind(&args.kind)?;
+            let kind =
+                EdgeKind::from_name(&args.kind).ok_or_else(|| failure("invalid edge kind"))?;
             let weight = args
                 .weight
                 .or_else(|| kind.default_weight())
@@ -284,6 +299,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(_) => json!({"failed":true}),
+        SelfDispatchOutcome::AgentDefinitionPut(value) => {
+            json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
+        }
         SelfDispatchOutcome::AgentSpawn(value) => match value {
             crate::code_run::SelfAgentSpawnResult::Queued { attempt_ref } => {
                 json!({"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())})
@@ -380,39 +398,6 @@ pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStep
         done: output.done,
         observation: output.observation,
         outputs,
-    })
-}
-
-pub(super) fn edge_kind(name: &str) -> Result<EdgeKind> {
-    Ok(match name {
-        "authored_by" => EdgeKind::AuthoredBy,
-        "scoped_to" => EdgeKind::ScopedTo,
-        "part_of" => EdgeKind::PartOf,
-        "supersedes" => EdgeKind::Supersedes,
-        "belongs_to" => EdgeKind::BelongsTo,
-        "claim_of" => EdgeKind::ClaimOf,
-        "child_of" => EdgeKind::ChildOf,
-        "assigned_to" => EdgeKind::AssignedTo,
-        "derived_from" => EdgeKind::DerivedFrom,
-        "mentions" => EdgeKind::Mentions,
-        "about" => EdgeKind::About,
-        "supports" => EdgeKind::Supports,
-        "opposes" => EdgeKind::Opposes,
-        "participates_in" => EdgeKind::ParticipatesIn,
-        "attached" => EdgeKind::Attached,
-        "employed_by" => EdgeKind::EmployedBy,
-        "has_facet" => EdgeKind::HasFacet,
-        "facet_of" => EdgeKind::FacetOf,
-        "in_world" => EdgeKind::InWorld,
-        "set_in" => EdgeKind::SetIn,
-        "same_as" => EdgeKind::SameAs,
-        "merged_into" => EdgeKind::MergedInto,
-        "split_into" => EdgeKind::SplitInto,
-        "blocked_by" => EdgeKind::BlockedBy,
-        "blocks" => EdgeKind::Blocks,
-        "fulfills" => EdgeKind::Fulfills,
-        "discharged_by" => EdgeKind::DischargedBy,
-        _ => return Err(failure("invalid edge kind")),
     })
 }
 

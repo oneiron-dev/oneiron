@@ -1,11 +1,28 @@
 //! Rebuild mechanical projections and reset leased attempt ownership.
 use super::codec_error;
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{
     EntityId, Error, Result, Vault,
     attempt_queue::AttemptState,
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     temporal::TimeRange,
 };
+
+/// Canonical caller-supplied text fields backing one document's bm25 index.
+/// Key: id16.
+const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
+    SideTable::new(&side_table::INDEX_SOURCE_TEXT);
+/// Caller-supplied phonetic codes retained to recompute an entity's phonetic
+/// postings. Key: id16.
+const INDEX_SOURCE_PHONETIC: SideTable<EntityId, Vec<String>, Named> =
+    SideTable::new(&side_table::BATCH_PHONETIC_INDEX_SOURCE);
+/// A sync window needs a full resync (`fr:w:{key}`). Marker byte `[1]`.
+/// Bound locally rather than reused from `crate::sync::window_rows` because
+/// that module lives behind `feature = "sync"` and this rebuild runs without
+/// it; the declaration itself (`side_table::WINDOW_FULL_RESYNC_MARKER`) is
+/// unconditional, so both bindings share one declared table.
+const WINDOW_FULL_RESYNC_MARKER: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::WINDOW_FULL_RESYNC_MARKER);
 pub(super) fn unlease_attempt(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
     let (&version, _) = bytes.split_first().ok_or_else(codec_error)?;
     let mut record = crate::attempt_queue::decode_record(
@@ -41,20 +58,15 @@ pub(super) fn has_embedding_source(raw: &[u8]) -> Result<bool> {
 }
 pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
     vault.with_write_txn(|txn| {
-        let rows: Vec<_> = vault
-            .store
-            .entities
-            .iter(txn)?
-            .map(|r| r.map(|(k, v)| (k.to_vec(), v.to_vec())))
-            .collect::<std::result::Result<_, _>>()?;
+        let rows = crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, txn)?
+            .collect::<Result<Vec<_>>>()?;
         let mut embeddings = 0;
-        for (key, raw) in &rows {
-            let id = EntityId::from_bytes(key.as_slice().try_into().map_err(|_| codec_error())?)?;
+        for (id, raw) in &rows {
             let header = EntityMetadataHeader::parse(raw).ok_or_else(codec_error)?;
             crate::batch::stage_entity_index_rows(
                 &vault.store,
                 txn,
-                &id,
+                id,
                 header.entity_type,
                 TimeRange {
                     start: header.occurred_start,
@@ -69,14 +81,14 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
                         &vault.store,
                         txn,
-                        &id,
+                        id,
                         &claim,
                         header.learned_at,
                     )?;
                     crate::llm::index_dreamer_step_claim_for_put(
                         &vault.store,
                         txn,
-                        &id,
+                        id,
                         &claim,
                         header.learned_at,
                     )?;
@@ -85,7 +97,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                     crate::counterparty_contact::rebuild_checkpoint_contact_index(
                         &vault.store,
                         txn,
-                        id,
+                        *id,
                         body,
                     )?;
                 }
@@ -93,7 +105,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                     crate::connector_key::rebuild_checkpoint_connector_index(
                         &vault.store,
                         txn,
-                        id,
+                        *id,
                         body,
                     )?;
                 }
@@ -101,7 +113,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                     crate::outbound_grant::rebuild_checkpoint_grant_index(
                         &vault.store,
                         txn,
-                        id,
+                        *id,
                         body,
                     )?;
                 }
@@ -110,47 +122,24 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
             if has_embedding_source(raw)? {
                 vault
                     .store
-                    .mark_pending_embedding(txn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+                    .mark_pending_embedding(txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
                 embeddings += 1;
             }
         }
-        let sources: Vec<_> = vault
-            .store
-            .vault_meta
-            .prefix_iter(txn, b"index_source:text:v1:")?
-            .map(|r| r.map(|(k, v)| (k.to_vec(), v.to_vec())))
-            .collect::<std::result::Result<_, _>>()?;
+        let sources = INDEX_SOURCE_TEXT.scan(&vault.store, txn)?;
         let mut texts = 0;
-        for (key, source) in sources {
-            let id = EntityId::from_bytes(
-                key[b"index_source:text:v1:".len()..]
-                    .try_into()
-                    .map_err(|_| codec_error())?,
-            )?;
-            if vault.store.entities.get(txn, id.as_bytes())?.is_none() {
+        for (id, fields) in sources {
+            if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?.is_none() {
                 continue;
             }
-            let fields: Vec<(String, String)> =
-                rmp_serde::from_slice(&source).map_err(|_| codec_error())?;
             crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields)?;
             texts += 1;
         }
-        let phonetic: Vec<_> = vault
-            .store
-            .vault_meta
-            .prefix_iter(txn, b"index_source:phonetic:v1:")?
-            .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
-            .collect::<std::result::Result<_, _>>()?;
-        for (key, raw) in phonetic {
-            let id = EntityId::from_bytes(
-                key[b"index_source:phonetic:v1:".len()..]
-                    .try_into()
-                    .map_err(|_| codec_error())?,
-            )?;
-            if vault.store.entities.get(txn, id.as_bytes())?.is_none() {
+        let phonetic = INDEX_SOURCE_PHONETIC.scan(&vault.store, txn)?;
+        for (id, codes) in phonetic {
+            if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?.is_none() {
                 continue;
             }
-            let codes: Vec<String> = rmp_serde::from_slice(&raw).map_err(|_| codec_error())?;
             crate::batch::apply_phonetic(&vault.store, txn, id, &codes)?;
         }
         let windows: Vec<_> = vault
@@ -160,10 +149,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
             .map(|r| r.map(|(k, _)| k.into_owned()))
             .collect::<std::result::Result<_, _>>()?;
         for key in windows {
-            vault
-                .store
-                .sync_state
-                .put(txn, &format!("fr:w:{}", &key[4..]), &[1])?;
+            WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &key[4..].to_owned(), &[1u8])?;
         }
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;

@@ -1,6 +1,8 @@
 //! Private per-vault voice reference bank. Provider voice IDs are evictable pointers, not identities.
 use std::collections::BTreeSet;
 
+use crate::error::SideTableRowProblem;
+use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideCodec, SideKey, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -10,10 +12,110 @@ use sha2::{Digest, Sha256};
 
 use super::ref_limits::VoiceRefLimits;
 
-const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
-const PACK_PREFIX: &[u8] = b"voice:owner_ref:v1:";
-const IDENTITY_PREFIX: &[u8] = b"voice:ref_identity:v1:";
-const TARGET_PREFIX: &[u8] = b"voice:ref_target:v1:";
+/// Immutable voice reference pack. Key: string (the pack id).
+const PACKS: SideTable<String, VoiceRefPack, Named> = SideTable::new(&side_table::VOICE_OWNER_REF);
+
+/// A voice identity over its packs. Key: string (the voice id).
+const IDENTITIES: SideTable<String, VoiceIdentity, Named> =
+    SideTable::new(&side_table::VOICE_REF_IDENTITY);
+
+/// An identity's incarnation, fresh at every birth and deleted with it. Key:
+/// string (the voice id).
+const INCARNATIONS: SideTable<String, [u8; 16], Raw> =
+    SideTable::new(&side_table::VOICE_REF_INCARNATION);
+
+/// A cached render-target pointer. Key: voice id `\0` target.
+const TARGETS: SideTable<TargetKey, VoiceTargetRecord, Named> =
+    SideTable::new(&side_table::VOICE_REF_TARGET);
+
+/// Per-owner index over the bank's rows, so erasure finds every row an owner holds. Key: id16
+/// (owner) + the indexed row's full stored key. Value: that full stored key.
+const OWNER_INDEX: SideTable<(EntityId, Vec<u8>), BankRow, Raw> =
+    SideTable::new(&side_table::VOICE_OWNER_REF_OWNER_INDEX);
+
+/// [`TARGETS`]' key: the voice id and target, joined by a NUL neither may contain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TargetKey {
+    voice_id: String,
+    target: String,
+}
+
+impl SideKey for TargetKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.voice_id.as_bytes());
+        out.push(0);
+        out.extend_from_slice(self.target.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let split = bytes.iter().position(|byte| *byte == 0)?;
+        Some(Self {
+            voice_id: String::decode_key(&bytes[..split])?,
+            target: String::decode_key(&bytes[split + 1..])?,
+        })
+    }
+}
+
+/// One bank row an owner holds, stored in [`OWNER_INDEX`] as its full stored key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BankRow {
+    Pack(String),
+    Identity(String),
+    Incarnation(String),
+    Target(TargetKey),
+}
+
+impl BankRow {
+    fn key_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Pack(id) => PACKS.key_bytes(id),
+            Self::Identity(id) => IDENTITIES.key_bytes(id),
+            Self::Incarnation(id) => INCARNATIONS.key_bytes(id),
+            Self::Target(key) => TARGETS.key_bytes(key),
+        }
+    }
+
+    /// Deletes the row; `true` when it was present.
+    fn delete(&self, store: &crate::store::Store, txn: &mut heed::RwTxn<'_>) -> Result<bool> {
+        match self {
+            Self::Pack(id) => PACKS.delete(store, txn, id),
+            Self::Identity(id) => IDENTITIES.delete(store, txn, id),
+            Self::Incarnation(id) => INCARNATIONS.delete(store, txn, id),
+            Self::Target(key) => TARGETS.delete(store, txn, key),
+        }
+    }
+
+    /// Indexes the row under its owner.
+    fn index(
+        self,
+        store: &crate::store::Store,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+    ) -> Result<()> {
+        OWNER_INDEX.put(store, txn, &(owner, self.key_bytes()), &self)
+    }
+}
+
+impl RawValue for BankRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.key_bytes())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row = if let Some(id) = bytes.strip_prefix(PACKS.decl().prefix) {
+            String::decode_key(id).map(Self::Pack)
+        } else if let Some(id) = bytes.strip_prefix(IDENTITIES.decl().prefix) {
+            String::decode_key(id).map(Self::Identity)
+        } else if let Some(id) = bytes.strip_prefix(INCARNATIONS.decl().prefix) {
+            String::decode_key(id).map(Self::Incarnation)
+        } else if let Some(key) = bytes.strip_prefix(TARGETS.decl().prefix) {
+            TargetKey::decode_key(key).map(Self::Target)
+        } else {
+            None
+        };
+        row.ok_or(CodecError::Row(SideTableRowProblem::Undecodable))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -84,6 +186,19 @@ pub struct VoiceTargetRecord {
     pub revision: [u8; 16],
 }
 
+/// A target that uploads the banked refs with every request keeps no provider
+/// record to fence on. It binds to the identity's incarnation, minted when the
+/// identity is born and deleted with it, and to the digest of its selected refs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VoiceRefFence {
+    pub owner: EntityId,
+    /// None only for an identity banked before incarnations were minted. Every
+    /// rebirth mints one, so such a fence never matches a re-banked identity.
+    pub incarnation: Option<[u8; 16]>,
+    pub ref_digest: [u8; 32],
+    pub include_generated: bool,
+}
+
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
@@ -93,23 +208,29 @@ fn valid_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
-fn key(prefix: &[u8], id: &str) -> Result<Vec<u8>> {
-    valid_id(id)?;
-    Ok([prefix, id.as_bytes()].concat())
-}
-fn target_key(voice_id: &str, target: &str) -> Result<Vec<u8>> {
+fn target_key(voice_id: &str, target: &str) -> Result<TargetKey> {
     valid_id(voice_id)?;
     valid_id(target)?;
-    Ok([TARGET_PREFIX, voice_id.as_bytes(), b"\0", target.as_bytes()].concat())
+    Ok(TargetKey {
+        voice_id: voice_id.into(),
+        target: target.into(),
+    })
 }
-fn owner_index(owner: &EntityId, key: &[u8]) -> Vec<u8> {
-    [OWNER_PREFIX, owner.as_bytes(), key].concat()
-}
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|e| Error::InvalidConfig(e.to_string()))
-}
-fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8], message: &str) -> Result<T> {
-    rmp_serde::from_slice(bytes).map_err(|_| invalid(message))
+/// Reads one bank row; a row that does not decode is `corrupt`, an [`Error::InvalidConfig`].
+fn read_row<K: SideKey, V>(
+    table: SideTable<K, V, Named>,
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    key: &K,
+    corrupt: &str,
+) -> Result<Option<V>>
+where
+    Named: SideCodec<V>,
+{
+    table
+        .get_bytes(store, txn, key)?
+        .map(|bytes| table.decode_value(&bytes).map_err(|_| invalid(corrupt)))
+        .transpose()
 }
 fn limits_for(
     store: &crate::store::Store,
@@ -187,18 +308,13 @@ pub(super) fn delete_owner_refs(
     txn: &mut heed::RwTxn<'_>,
     owner: &EntityId,
 ) -> Result<usize> {
-    let prefix = [OWNER_PREFIX, owner.as_bytes()].concat();
-    let rows = store
-        .vault_meta
-        .prefix_iter(txn, &prefix)?
-        .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let rows = OWNER_INDEX.scan_from(store, txn, owner.as_bytes())?;
     let mut deleted = 0;
-    for (index, key) in rows {
-        if store.vault_meta.delete(txn, &key)? {
+    for (index, row) in rows {
+        if row.delete(store, txn)? {
             deleted += 1;
         }
-        store.vault_meta.delete(txn, &index)?;
+        OWNER_INDEX.delete(store, txn, &index)?;
     }
     Ok(deleted)
 }
@@ -207,12 +323,12 @@ impl Vault {
     /// Creates an identity on its first captured/designed pack, then adds immutable packs.
     /// Generated refs need an existing source identity and remain separate tagged packs.
     pub fn store_voice_ref_pack(&self, pack: &VoiceRefPack) -> Result<()> {
-        let pack_key = key(PACK_PREFIX, &pack.id)?;
-        let identity_key = key(IDENTITY_PREFIX, &pack.voice_id)?;
-        let bytes = encode(pack)?;
+        valid_id(&pack.id)?;
+        valid_id(&pack.voice_id)?;
+        let bytes = PACKS.encode_value(pack)?;
         let mut txn = self.store.env.write_txn()?;
         pack.validate(limits_for(&self.store, &txn, &pack.owner)?)?;
-        if let Some(existing) = self.store.vault_meta.get(&txn, &pack_key)? {
+        if let Some(existing) = PACKS.get_bytes(&self.store, &txn, &pack.id)? {
             if existing != bytes {
                 return Err(invalid("voice reference pack id already exists"));
             }
@@ -223,29 +339,36 @@ impl Vault {
             None if pack.origin == VoiceRefOrigin::Generated => {
                 return Err(invalid("generated refs need an existing source identity"));
             }
-            None => VoiceIdentity {
-                version: 1,
-                id: pack.voice_id.clone(),
-                owner: pack.owner,
-                pack_ids: Vec::new(),
-            },
+            None => {
+                // Fresh at every birth, so a withdrawn and identically re-banked
+                // identity never matches a fence taken before the withdrawal.
+                INCARNATIONS.put(
+                    &self.store,
+                    &mut txn,
+                    &pack.voice_id,
+                    uuid::Uuid::new_v4().as_bytes(),
+                )?;
+                BankRow::Incarnation(pack.voice_id.clone()).index(
+                    &self.store,
+                    &mut txn,
+                    pack.owner,
+                )?;
+                VoiceIdentity {
+                    version: 1,
+                    id: pack.voice_id.clone(),
+                    owner: pack.owner,
+                    pack_ids: Vec::new(),
+                }
+            }
         };
         if identity.owner != pack.owner {
             return Err(invalid("voice identity owner mismatch"));
         }
         identity.pack_ids.push(pack.id.clone());
-        self.store.vault_meta.put(&mut txn, &pack_key, &bytes)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &identity_key, &encode(&identity)?)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &owner_index(&pack.owner, &pack_key), &pack_key)?;
-        self.store.vault_meta.put(
-            &mut txn,
-            &owner_index(&pack.owner, &identity_key),
-            &identity_key,
-        )?;
+        PACKS.put(&self.store, &mut txn, &pack.id, pack)?;
+        IDENTITIES.put(&self.store, &mut txn, &pack.voice_id, &identity)?;
+        BankRow::Pack(pack.id.clone()).index(&self.store, &mut txn, pack.owner)?;
+        BankRow::Identity(pack.voice_id.clone()).index(&self.store, &mut txn, pack.owner)?;
         txn.commit()?;
         Ok(())
     }
@@ -305,8 +428,13 @@ impl Vault {
             .owner;
         let limits = limits_for(&self.store, &txn, &owner)?;
         validate_target_record(&record, &request.voice_id, &request.target, limits)?;
-        if let Some(raw) = self.store.vault_meta.get(&txn, &target_key)? {
-            let existing: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
+        if let Some(existing) = read_row(
+            TARGETS,
+            &self.store,
+            &txn,
+            &target_key,
+            "corrupt voice target clone",
+        )? {
             validate_target_record(&existing, &request.voice_id, &request.target, limits)?;
             if existing.source_packs == request.source_packs
                 && existing.ref_digest == request.ref_digest
@@ -314,12 +442,8 @@ impl Vault {
                 return Ok(existing); // A current target pointer is not replaced without new refs.
             }
         }
-        self.store
-            .vault_meta
-            .put(&mut txn, &target_key, &encode(&record)?)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &owner_index(&owner, &target_key), &target_key)?;
+        TARGETS.put(&self.store, &mut txn, &target_key, &record)?;
+        BankRow::Target(target_key).index(&self.store, &mut txn, owner)?;
         txn.commit()?;
         Ok(record)
     }
@@ -359,13 +483,98 @@ impl Vault {
             .voice_identity(voice_id)?
             .ok_or_else(|| invalid("unknown voice identity"))?;
         let mut txn = self.store.env.write_txn()?;
-        self.store.vault_meta.delete(&mut txn, &key)?;
-        self.store
-            .vault_meta
-            .delete(&mut txn, &owner_index(&identity.owner, &key))?;
+        TARGETS.delete(&self.store, &mut txn, &key)?;
+        OWNER_INDEX.delete(
+            &self.store,
+            &mut txn,
+            &(identity.owner, TARGETS.key_bytes(&key)),
+        )?;
         txn.commit()?;
         Ok(())
     }
+
+    /// The selection and its fence, read from one snapshot.
+    pub(crate) fn prepare_fenced_voice_clone(
+        &self,
+        voice_id: &str,
+        target: &str,
+        include_generated: bool,
+    ) -> Result<(VoiceTargetClone, VoiceRefFence)> {
+        let txn = self.store.env.read_txn()?;
+        fenced_clone(&self.store, &txn, voice_id, target, include_generated)
+    }
+
+    /// Runs `operation` only while `fence` is current. Holds the ref guard, so
+    /// a consent withdrawal cannot commit while the refs are being uploaded.
+    pub(crate) fn with_fenced_voice_clone<T>(
+        &self,
+        voice_id: &str,
+        target: &str,
+        fence: &VoiceRefFence,
+        operation: impl FnOnce(&VoiceTargetClone) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = self
+            .voice_ref_guard
+            .read()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
+        let txn = self.store.env.read_txn()?;
+        let (clone, current) =
+            fenced_clone(&self.store, &txn, voice_id, target, fence.include_generated)?;
+        if &current != fence {
+            return Err(invalid("voice identity withdrawn or its refs changed"));
+        }
+        operation(&clone)
+    }
+
+    /// Nonblocking check for synchronous callers. A waiting withdrawal writer
+    /// makes a new read lock unavailable; report stale rather than block.
+    pub(crate) fn voice_ref_fence_current_now(
+        &self,
+        voice_id: &str,
+        target: &str,
+        fence: &VoiceRefFence,
+    ) -> Result<bool> {
+        let _guard = match self.voice_ref_guard.try_read() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(Error::InvariantViolation("voice reference guard poisoned"));
+            }
+        };
+        let txn = self.store.env.read_txn()?;
+        Ok(
+            fenced_clone(&self.store, &txn, voice_id, target, fence.include_generated)
+                .is_ok_and(|(_, current)| &current == fence),
+        )
+    }
+}
+
+fn fenced_clone(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    voice_id: &str,
+    target: &str,
+    include_generated: bool,
+) -> Result<(VoiceTargetClone, VoiceRefFence)> {
+    let clone = select_clone(store, txn, voice_id, target, include_generated)?;
+    let owner = read_identity(store, txn, voice_id)?
+        .ok_or_else(|| invalid("unknown voice identity"))?
+        .owner;
+    let incarnation = INCARNATIONS
+        .get_bytes(store, txn, &voice_id.to_owned())?
+        .map(|raw| {
+            raw.as_slice()
+                .try_into()
+                .map_err(|_| invalid("corrupt voice identity incarnation"))
+        })
+        .transpose()?;
+    let fence = VoiceRefFence {
+        owner,
+        incarnation,
+        ref_digest: clone.ref_digest,
+        include_generated,
+    };
+    Ok((clone, fence))
 }
 
 fn current_target(
@@ -376,10 +585,9 @@ fn current_target(
     include_generated: bool,
 ) -> Result<Option<VoiceTargetRecord>> {
     let key = target_key(voice_id, target)?;
-    let Some(raw) = store.vault_meta.get(txn, &key)? else {
+    let Some(record) = read_row(TARGETS, store, txn, &key, "corrupt voice target clone")? else {
         return Ok(None);
     };
-    let record: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
     let selected = select_clone(store, txn, voice_id, target, include_generated)?;
     let owner = read_identity(store, txn, voice_id)?
         .ok_or_else(|| invalid("unknown voice identity"))?
@@ -396,11 +604,17 @@ fn read_identity(
     txn: &heed::RoTxn<'_>,
     id: &str,
 ) -> Result<Option<VoiceIdentity>> {
-    let identity_key = key(IDENTITY_PREFIX, id)?;
-    let Some(bytes) = store.vault_meta.get(txn, &identity_key)? else {
+    valid_id(id)?;
+    let Some(identity) = read_row(
+        IDENTITIES,
+        store,
+        txn,
+        &id.to_owned(),
+        "corrupt voice identity",
+    )?
+    else {
         return Ok(None);
     };
-    let identity: VoiceIdentity = decode(&bytes, "corrupt voice identity")?;
     if identity.id != id || identity.version != 1 || identity.pack_ids.is_empty() {
         return Err(invalid("corrupt voice identity"));
     }
@@ -443,7 +657,8 @@ fn select_clone(
     }
     let source_packs = packs.iter().map(|p| p.id.clone()).collect();
     let clips = packs.iter().flat_map(|p| p.clips.clone()).collect();
-    let digest = Sha256::digest(encode(&packs)?);
+    let packs = rmp_serde::to_vec_named(&packs).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+    let digest = Sha256::digest(packs);
     Ok(VoiceTargetClone {
         voice_id: voice_id.into(),
         target: target.into(),
@@ -459,11 +674,17 @@ fn read_pack(
     txn: &heed::RoTxn<'_>,
     id: &str,
 ) -> Result<Option<VoiceRefPack>> {
-    let key = key(PACK_PREFIX, id)?;
-    let Some(bytes) = store.vault_meta.get(txn, &key)? else {
+    valid_id(id)?;
+    let Some(pack) = read_row(
+        PACKS,
+        store,
+        txn,
+        &id.to_owned(),
+        "corrupt voice reference pack",
+    )?
+    else {
         return Ok(None);
     };
-    let pack: VoiceRefPack = decode(&bytes, "corrupt voice reference pack")?;
     pack.validate(limits_for(store, txn, &pack.owner)?)?;
     if pack.id != id {
         return Err(invalid("voice reference key mismatch"));
@@ -472,52 +693,5 @@ fn read_pack(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn target_reader_and_writer_reject_the_same_corrupt_rows() -> Result<()> {
-        let dir = tempfile::tempdir().expect("ref vault directory");
-        let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
-        let owner = EntityId::now();
-        vault.store_voice_ref_pack(&VoiceRefPack {
-            version: 1,
-            id: "source".into(),
-            voice_id: "our-voice".into(),
-            owner,
-            origin: VoiceRefOrigin::Captured,
-            clips: vec![VoiceRegisterClip {
-                register: "neutral".into(),
-                media_type: "audio/wav".into(),
-                audio: vec![1],
-                transcript: String::new(),
-            }],
-        })?;
-        let request = vault.prepare_voice_clone("our-voice", "host", false)?;
-        let valid = vault.record_voice_target_clone(&request, "provider-id", 42)?;
-        for (case, mut bad) in [valid.clone(), valid.clone(), valid]
-            .into_iter()
-            .enumerate()
-        {
-            match case {
-                0 => bad.cloned_at = 0,
-                1 => bad.vendor_voice_id = " ".into(),
-                _ => bad.vendor_voice_id = "x".repeat(4_097),
-            }
-            // The writer must not silently replace corrupt persisted data either.
-            let key = target_key("our-voice", "host")?;
-            let mut txn = vault.store.env.write_txn()?;
-            vault.store.vault_meta.put(&mut txn, &key, &encode(&bad)?)?;
-            txn.commit()?;
-            assert!(matches!(
-                vault.voice_target_clone("our-voice", "host", false),
-                Err(Error::InvalidConfig(_))
-            ));
-            assert!(matches!(
-                vault.record_voice_target_clone(&request, "replacement", 43),
-                Err(Error::InvalidConfig(_))
-            ));
-        }
-        Ok(())
-    }
-}
+#[path = "ref_bank/tests.rs"]
+mod tests;

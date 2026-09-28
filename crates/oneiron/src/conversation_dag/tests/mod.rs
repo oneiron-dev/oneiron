@@ -21,7 +21,7 @@ fn dag_test_policy_keeps_the_default_manifest() {
         .unwrap();
     assert_eq!(
         &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        crate::gate::default_policy_manifest()
+        crate::gate::default_policy_manifest().unwrap()
     );
 }
 
@@ -440,11 +440,7 @@ fn corrupted_cycle_cardinality_and_canonical_marks_fail_closed() {
         .id;
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::CANONICAL, &child),
-                root.as_bytes(),
-            )?;
+            super::graph::CANONICAL.put(&vault.store, txn, &child, &root)?;
             Ok(())
         })
         .unwrap();
@@ -545,11 +541,7 @@ fn migration_backfills_forward_only_session_membership_and_rejects_bad_marker() 
     assert_eq!(vault.head(&conv).unwrap(), Some(asking));
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::MIGRATED, &conv),
-                &[2],
-            )?;
+            super::graph::MIGRATED.put(&vault.store, txn, &conv, &[2])?;
             Ok(())
         })
         .unwrap();
@@ -1135,14 +1127,20 @@ fn nested_continuation_refreshes_its_actual_parent_and_delete_repairs_meta() {
     assert_eq!(vault.thread(a).unwrap().replies, [b, c]);
     assert_eq!(vault.thread_meta(a).unwrap().unwrap().count, 2);
     assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
-    vault.delete_entity(&c).unwrap();
+    vault
+        .delete_own_room_record(c, crate::DeleteReason::UserDelete)
+        .unwrap();
     assert_eq!(
         vault.thread_meta(a).unwrap().unwrap().count,
         vault.thread(a).unwrap().count
     );
-    vault.delete_entity(&b).unwrap();
+    vault
+        .delete_own_room_record(b, crate::DeleteReason::UserDelete)
+        .unwrap();
     assert_eq!(vault.thread_meta(a).unwrap(), None);
-    vault.delete_entity(&a).unwrap();
+    vault
+        .delete_own_room_record(a, crate::DeleteReason::UserDelete)
+        .unwrap();
     assert!(vault.thread(trunk).unwrap().replies.is_empty());
     assert_eq!(vault.thread_meta(trunk).unwrap(), None);
 }
@@ -1197,13 +1195,13 @@ fn soft_delete_of_interior_and_last_reply_repairs_thread_meta() {
     );
     assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
     vault
-        .delete_entity_with_reason(&interior, crate::DeleteReason::UserDelete)
+        .delete_own_room_record(interior, crate::DeleteReason::UserDelete)
         .unwrap();
     assert_eq!(vault.thread(trunk).unwrap().replies, [first]);
     assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 1);
     assert_eq!(vault.thread_meta(first).unwrap(), None);
     vault
-        .delete_entity_with_reason(&first, crate::DeleteReason::UserDelete)
+        .delete_own_room_record(first, crate::DeleteReason::UserDelete)
         .unwrap();
     assert!(vault.thread(trunk).unwrap().replies.is_empty());
     assert_eq!(vault.thread_meta(trunk).unwrap(), None);
@@ -1378,11 +1376,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                actor.entity_ref().as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &actor.entity_ref())?;
             Ok(())
         })
         .unwrap();
@@ -1395,11 +1389,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                child.as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &child)?;
             Ok(())
         })
         .unwrap();
@@ -1419,11 +1409,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
         .id;
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                other_root.as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &other_root)?;
             Ok(())
         })
         .unwrap();
@@ -1436,16 +1422,8 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                child.as_bytes(),
-            )?;
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::CANONICAL, &root),
-                root.as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &child)?;
+            super::graph::CANONICAL.put(&vault.store, txn, &root, &root)?;
             Ok(())
         })
         .unwrap();
@@ -1458,11 +1436,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::CANONICAL, &root),
-                child.as_bytes(),
-            )?;
+            super::graph::CANONICAL.put(&vault.store, txn, &root, &child)?;
             Ok(())
         })
         .unwrap();
@@ -1569,16 +1543,21 @@ fn headless_adopted_room_refuses_childof_preview_even_with_newer_thread() {
 
 #[test]
 fn migrated_room_with_only_deleted_childof_shells_has_no_preview() {
-    let (_dir, vault, conversation, _actor) = fixture();
+    let (_dir, vault, conversation, actor) = fixture();
     let turn = EntityId::now();
+    // A room TURN soft-deletes only through its author's room door.
+    let authored = rmp_serde::to_vec_named(
+        &serde_json::json!({"txt": "deleted text", "actor": actor.entity_ref().to_hex()}),
+    )
+    .unwrap();
     vault
         .batch()
-        .put(&turn, ENTITY_TYPE_TURN, time(20), 20, &body("deleted text"))
+        .put(&turn, ENTITY_TYPE_TURN, time(20), 20, &authored)
         .edge_checked(&turn, &conversation, 1.0)
         .commit()
         .unwrap();
     vault
-        .delete_entity_with_reason(&turn, crate::DeleteReason::UserDelete)
+        .delete_own_room_record(turn, crate::DeleteReason::UserDelete)
         .unwrap();
     assert!(vault.is_deleted_shell(&turn).unwrap());
     let page = vault

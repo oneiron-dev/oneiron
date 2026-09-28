@@ -50,7 +50,7 @@ fn witness_message_ignores_class_wide_ceilings_but_honors_actor_bound_rows() -> 
         ),
     ] {
         let (_tmp, vault) = temp_vault();
-        let mut manifest = default_policy_manifest();
+        let mut manifest = default_policy_manifest()?;
         replace_actor_ceilings(&mut manifest, rows);
         put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
         let rtxn = vault.store.env.read_txn()?;
@@ -72,7 +72,7 @@ fn witness_message_ignores_class_wide_ceilings_but_honors_actor_bound_rows() -> 
     }
 
     let (_tmp, vault) = temp_vault();
-    let mut manifest = default_policy_manifest();
+    let mut manifest = default_policy_manifest()?;
     replace_actor_ceilings(&mut manifest, vec![actor_ceiling_row("agent", "auto")]);
     put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
     let rtxn = vault.store.env.read_txn()?;
@@ -99,7 +99,7 @@ fn witness_message_system_authority_rejects_fail_closed_policy_with_auto_row() -
     let (_tmp, vault) = temp_vault();
     let actor_id = test_id(0x21);
     let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
-    let mut manifest = default_policy_manifest();
+    let mut manifest = default_policy_manifest()?;
     replace_actor_ceilings(
         &mut manifest,
         vec![actor_ceiling_row_for_ref(

@@ -6,19 +6,16 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::codec_core::{encode_consent_event, encode_sample};
-use super::codec_records::{decode_roster, encode_print_record, encode_roster};
 use super::math_keys::{
-    invalid_voice, require_non_empty, require_sha256_hex, validate_voice_vector,
-    voice_active_pointer_key, voice_consent_key, voice_print_key, voice_roster_key,
-    voice_sample_key,
+    digest16, invalid_voice, require_non_empty, require_sha256_hex, validate_voice_vector,
 };
 use super::storage_admission::{
-    VoiceDeletionTally, active_print_subjects, admit_enrollment_consent, admit_match_segments,
-    admit_sample_origin, best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
+    CONSENT, PRINT_POINTER, PRINT_RECORD, ROSTER, SAMPLE, VoiceDeletionTally,
+    active_print_subjects, admit_enrollment_consent, admit_match_segments, admit_sample_origin,
+    best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
     delete_voice_prints_in_txn, load_match_candidates, read_active_print,
     require_counterparty_contact_entity, require_relationship_entity, residual_cluster_ref,
-    residual_speaker_label, unambiguous_invite_remainder,
+    residual_speaker_label, sample_digest, unambiguous_invite_remainder,
 };
 use super::types::{
     VoiceAttributionEvidence, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentRequest,
@@ -39,16 +36,20 @@ enum ConsentEventWrite {
 fn put_consent_event_once(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
-    key: &[u8],
-    data: &[u8],
+    event: &VoiceConsentEventV1,
 ) -> Result<ConsentEventWrite> {
-    match store.vault_meta.get(txn, key)? {
-        Some(existing) if existing.as_ref() == data => Ok(ConsentEventWrite::Replayed),
+    let key = (
+        event.subject_ref,
+        digest16(b"voice_identity.consent", event.event_id.as_bytes()),
+    );
+    let data = CONSENT.encode_value(event)?;
+    match CONSENT.get_bytes(store, txn, &key)? {
+        Some(existing) if existing == data => Ok(ConsentEventWrite::Replayed),
         Some(_) => Err(invalid_voice(
             "voice consent event id already names another decision",
         )),
         None => {
-            store.vault_meta.put(txn, key, data)?;
+            CONSENT.put(store, txn, &key, event)?;
             Ok(ConsentEventWrite::Inserted)
         }
     }
@@ -72,9 +73,8 @@ impl Vault {
             })?;
             return Ok(());
         }
-        let data = encode_consent_event(event)?;
-        let key = voice_consent_key(&event.subject_ref, &event.event_id);
-        self.with_write_txn(|wtxn| put_consent_event_once(&self.store, wtxn, &key, &data))
+        CONSENT.encode_value(event)?;
+        self.with_write_txn(|wtxn| put_consent_event_once(&self.store, wtxn, event))
             .map(|_| ())
     }
 
@@ -160,23 +160,12 @@ impl Vault {
                 updated_at: request.requested_at,
                 delete_after: previous.and_then(|prior| prior.delete_after),
             };
-            let body = encode_print_record(&record)?;
-            store.vault_meta.put(
-                wtxn,
-                &voice_print_key(&subject, &request.space.space_id),
-                &body,
-            )?;
-            store.vault_meta.put(
-                wtxn,
-                &voice_active_pointer_key(&subject),
-                request.space.space_id.as_bytes(),
-            )?;
+            let space_digest = digest16(b"voice_identity.space", request.space.space_id.as_bytes());
+            PRINT_RECORD.put(store, wtxn, &(subject, space_digest), &record)?;
+            PRINT_POINTER.put(store, wtxn, &subject, &request.space.space_id)?;
             for sample in &ordered {
-                store.vault_meta.put(
-                    wtxn,
-                    &voice_sample_key(&subject, &sample.sample_id),
-                    &encode_sample(sample)?,
-                )?;
+                let digest = sample_digest(&subject, &sample.sample_id);
+                SAMPLE.put(store, wtxn, &digest, sample)?;
             }
             Ok(record)
         })
@@ -294,10 +283,13 @@ impl Vault {
             segments,
             created_at: request.created_at,
         };
-        let body = encode_roster(&roster)?;
-        let key = voice_roster_key(&roster.voice_session_ref);
+        ROSTER.encode_value(&roster)?;
+        let digest = digest16(
+            b"voice_identity.roster",
+            roster.voice_session_ref.as_bytes(),
+        );
         self.with_write_txn(|wtxn| {
-            self.store.vault_meta.put(wtxn, &key, &body)?;
+            ROSTER.put(&self.store, wtxn, &digest, &roster)?;
             Ok(())
         })?;
         Ok(roster)
@@ -310,14 +302,8 @@ impl Vault {
         voice_session_ref: &str,
     ) -> Result<Option<VoiceSessionRosterV1>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &voice_roster_key(voice_session_ref))?
-        else {
-            return Ok(None);
-        };
-        decode_roster(&bytes).map(Some)
+        let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+        ROSTER.get(&self.store, &rtxn, &digest)
     }
 
     /// Display-only corroboration for a voice grant offer. No caller boolean
@@ -330,14 +316,10 @@ impl Vault {
         owner_actor: EntityId,
     ) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &voice_roster_key(voice_session_ref))?
-        else {
+        let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+        let Some(roster) = ROSTER.get(&self.store, &rtxn, &digest)? else {
             return Ok(false);
         };
-        let roster = decode_roster(&raw)?;
         let Some(print) = read_active_print(&self.store, &rtxn, &owner_actor)? else {
             return Ok(false);
         };
@@ -398,12 +380,8 @@ impl Vault {
                 delete_after: Some(delete_after),
                 ..record
             };
-            let body = encode_print_record(&updated)?;
-            store.vault_meta.put(
-                wtxn,
-                &voice_print_key(&subject_ref, &updated.space.space_id),
-                &body,
-            )?;
+            let digest = digest16(b"voice_identity.space", updated.space.space_id.as_bytes());
+            PRINT_RECORD.put(store, wtxn, &(subject_ref, digest), &updated)?;
             Ok(())
         })
     }
@@ -453,15 +431,16 @@ impl Vault {
             basis: request.basis.clone(),
             state: VoiceConsentState::Withdrawn,
         };
-        let body = encode_consent_event(&event)?;
-        let consent_key = voice_consent_key(&event.subject_ref, &event.event_id);
+        CONSENT.encode_value(&event)?;
 
+        let _guard = self
+            .voice_ref_guard
+            .write()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         let subject = request.subject_ref;
         let (tally, replayed) = self.with_write_txn(|wtxn| {
-            if put_consent_event_once(store, wtxn, &consent_key, &body)?
-                == ConsentEventWrite::Replayed
-            {
+            if put_consent_event_once(store, wtxn, &event)? == ConsentEventWrite::Replayed {
                 return Ok((VoiceDeletionTally::default(), true));
             }
             let mut tally = delete_voice_prints_in_txn(store, wtxn, &subject)?;
@@ -492,24 +471,25 @@ pub(crate) fn put_voice_roster_for_test(
     vault: &Vault,
     roster: &VoiceSessionRosterV1,
 ) -> Result<()> {
-    let body = encode_roster(roster)?;
-    let key = voice_roster_key(&roster.voice_session_ref);
+    ROSTER.encode_value(roster)?;
+    let digest = digest16(
+        b"voice_identity.roster",
+        roster.voice_session_ref.as_bytes(),
+    );
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &body)?;
+        ROSTER.put(&vault.store, wtxn, &digest, roster)?;
         Ok(())
     })
 }
 
-/// Stores arbitrary bytes at a roster key, for the corrupt-roster gate.
+/// Stores arbitrary bytes at a roster key, for the corrupt-roster gate: the
+/// bytes are not a valid encoded roster (that is the point of the gate).
 #[cfg(test)]
 pub(crate) fn put_raw_voice_roster_for_test(
     vault: &Vault,
     voice_session_ref: &str,
     bytes: &[u8],
 ) -> Result<()> {
-    let key = voice_roster_key(voice_session_ref);
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, bytes)?;
-        Ok(())
-    })
+    let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+    vault.with_write_txn(|wtxn| ROSTER.put_undecodable(&vault.store, wtxn, &digest, bytes))
 }

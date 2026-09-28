@@ -21,8 +21,24 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, RecordError, Result};
 use crate::gate::{GateOutcome, resolve_policy_manifest, scoped_read_claim_allowed};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::{GateDecisionId, Store};
 use crate::write_envelope::WriteActor;
+
+/// One share's admission row, keyed by the share id. Bound to raw bytes
+/// rather than the decoded [`ShareAdmission`]: a row that fails to decode
+/// proves no admitted share (soft `None`, not a storage error) at every
+/// reader, so `ShareAdmission::decode` stays a manual `Option`-returning
+/// call rather than the door's error-propagating `RawValue`.
+const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SHARE_BRIEF_ADMISSION);
+
+/// A one-way identity fence. Its exact stored marker is the single byte `1`.
+const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::SHARE_BRIEF_DELETE_RESERVATION);
+
+mod admission_refs;
+pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,26 +231,16 @@ fn decode_refs(value: &Value) -> Result<BTreeSet<EntityId>> {
 // Local, engine-written provenance. Generic grant writes cannot touch a reserved id,
 // even after deletion or a foreign overwrite. A replayed row with no local admission
 // never becomes a usable share. No rendered bytes or claim values live here.
-fn admission_key(id: &EntityId) -> Vec<u8> {
-    [b"share:brief:admission:v1:".as_slice(), id.as_bytes()].concat()
-}
-
 // A one-way admission fence for a deleted brief identity. It is staged in the
 // same writer that rechecks direct shares, before the CRDT tombstone can publish.
 // A failed delete may leave the fence, but cannot leave an unshared new grant
 // racing ahead of a later retry at the same id.
-fn delete_reservation_key(id: &EntityId) -> Vec<u8> {
-    [b"share:brief:deleting:v1:".as_slice(), id.as_bytes()].concat()
-}
-
 pub(crate) fn reserve_brief_delete(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &delete_reservation_key(id), &[1])?;
+    DELETE_RESERVATIONS.put(store, txn, id, &[1])?;
     Ok(())
 }
 
@@ -245,11 +251,7 @@ pub(crate) fn check_generic_grant_write(
     grant: &AccessGrant,
 ) -> Result<()> {
     if matches!(grant.scope, AccessGrantScope::SharedBrief { .. })
-        || vault
-            .store
-            .vault_meta
-            .get(txn, &admission_key(id))?
-            .is_some()
+        || ADMISSIONS.contains(&vault.store, txn, id)?
     {
         return Err(Error::Record(RecordError::InvalidAccessGrantBody(
             "shared briefs require the share door",
@@ -372,7 +374,7 @@ fn read_admitted_share_in_txn(
     let Some(share) = Share::from_grant(&grant) else {
         return Ok(None);
     };
-    let Some(bytes) = store.vault_meta.get(txn, &admission_key(id))? else {
+    let Some(bytes) = ADMISSIONS.get(store, txn, id)? else {
         return Ok(None);
     };
     let Some(admission) = ShareAdmission::decode(&bytes) else {
@@ -516,11 +518,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         if self.store.port_entity_record(&txn, share_id)?.is_some()
-            || self
-                .store
-                .vault_meta
-                .get(&txn, &admission_key(share_id))?
-                .is_some()
+            || ADMISSIONS.contains(&self.store, &txn, share_id)?
         {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
@@ -528,12 +526,7 @@ impl Vault {
         // grant must not point at that same id, even when the caller reuses
         // the exact opaque `brief:<hex>` handle after deleting the record.
         if let Ok(id) = EntityId::from_hex(&share.brief_ref) {
-            if self
-                .store
-                .vault_meta
-                .get(&txn, &delete_reservation_key(&id))?
-                .is_some()
-            {
+            if DELETE_RESERVATIONS.contains(&self.store, &txn, &id)? {
                 return Err(Error::InvariantViolation("cannot share a deleting brief"));
             }
             if self
@@ -571,9 +564,7 @@ impl Vault {
             revoker: None,
         };
         self.apply_access_grant_body(&mut txn, share_id, share.created_at, data)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &admission_key(share_id), &admission.encode())?;
+        ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
         txn.commit()?;
         Ok(())
     }
@@ -613,9 +604,7 @@ impl Vault {
         )?;
         admission.revoked_at = Some(revoked_at);
         admission.revoker = Some(*actor);
-        self.store
-            .vault_meta
-            .put(&mut txn, &admission_key(share_id), &admission.encode())?;
+        ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
         txn.commit()?;
         share.status = AccessGrantStatus::Revoked;
         share.revoked_at = Some(revoked_at);

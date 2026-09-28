@@ -109,7 +109,7 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use super::{PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalized_proposal_text};
+use super::PROPOSAL_ARTIFACT;
 use crate::Vault;
 use crate::consent::{
     AudienceBound, ComposedEffect, ConsentDecision, DisclosureClass, DisclosureEnvelope,
@@ -118,21 +118,24 @@ use crate::consent::{
 use crate::edit_distance::attribution::amendment_evidence_in_txn;
 use crate::edit_distance::delta::amendment_recorded_in_txn;
 use crate::edit_distance::routing::folded_model_version_in_txn;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 // ---------------------------------------------------------------------------
 // Keyspace + pinned strings
 // ---------------------------------------------------------------------------
 
-/// `vault_meta` prefix of the rebuildable candidate index, keyed by the
-/// proposal artifact's entity id — so the index inherits the artifact
-/// keyspace's ordering, and an export is one ordered walk.
-const CANDIDATE_KEY_PREFIX: &[u8] = b"edit_distance/reservoir_candidate/v1\0";
+/// Rebuildable candidate index, keyed by the proposal artifact's entity id —
+/// so the index inherits the artifact keyspace's ordering, and an export is
+/// one ordered walk.
+const CANDIDATE: SideTable<EntityId, StoredCandidate, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_RESERVOIR_CANDIDATE);
 
-/// `vault_meta` prefix of the export-receipt ledger, keyed by receipt id.
-const EXPORT_RECEIPT_KEY_PREFIX: &[u8] = b"edit_distance/reservoir_export/v1\0";
+/// Export-receipt ledger, keyed by receipt id.
+const EXPORT: SideTable<EntityId, StoredExport, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_RESERVOIR_EXPORT);
 
 /// `receipt_id` namespace of an export receipt.
 const EXPORT_RECEIPT_ID_PREFIX: &str = "reservoir_export:";
@@ -366,18 +369,13 @@ pub fn rebuild_reservoir_index(vault: &Vault) -> Result<()> {
         let rtxn = vault.store.env.read_txn()?;
         let rebuilt = resolve_candidates(vault, &rtxn, &ReservoirScope::default())?
             .iter()
-            .map(|pair| Ok((candidate_key(pair.receipt_ref), encode_candidate(pair)?)))
-            .collect::<Result<BTreeMap<Vec<u8>, Vec<u8>>>>()?;
+            .map(|pair| (pair.receipt_ref, stored_candidate(pair)))
+            .collect::<BTreeMap<EntityId, StoredCandidate>>();
 
         // Errors are collected BEFORE the staleness filter, never through it: a
         // filter over `Result`s drops the `Err` arm as "not stale" and swallows
         // the storage failure that produced it.
-        let keys = vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, CANDIDATE_KEY_PREFIX)?
-            .map(|entry| Ok(entry?.0.to_vec()))
-            .collect::<Result<Vec<_>>>()?;
+        let keys = CANDIDATE.scan_keys(&vault.store, &rtxn, &[])?;
         let stale = keys
             .into_iter()
             .filter(|key| !rebuilt.contains_key(key))
@@ -387,10 +385,10 @@ pub fn rebuild_reservoir_index(vault: &Vault) -> Result<()> {
 
     vault.with_write_txn(|wtxn| {
         for key in &stale {
-            vault.store.vault_meta.delete(wtxn, key)?;
+            CANDIDATE.delete(&vault.store, wtxn, key)?;
         }
         for (key, value) in &rebuilt {
-            vault.store.vault_meta.put(wtxn, key, value)?;
+            CANDIDATE.put(&vault.store, wtxn, key, value)?;
         }
         Ok(())
     })
@@ -419,13 +417,8 @@ fn resolve_candidates(
     scope: &ReservoirScope,
 ) -> Result<Vec<TrainingPair>> {
     let mut pairs = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(rtxn, PROPOSAL_ARTIFACT_KEY_PREFIX)?
-    {
-        let (_key, raw) = entry?;
-        let record = decode_finalized_proposal_text(&raw)?;
+    for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, rtxn, &[])? {
+        let (_key, record) = entry?;
 
         // THE TRIPWIRE, at the enumeration source and ahead of every filter.
         // Probing before the eligibility, pair and scope filters is deliberate:
@@ -588,12 +581,7 @@ fn record_export(
         since: scope.since,
         at: vault.store.clock.now_recorded_at(),
     };
-    let encoded = encode_row(&row, EXPORT_RECEIPT_ROW_LABEL)?;
-    let key = export_receipt_key(id);
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
-        Ok(())
-    })?;
+    vault.with_write_txn(|wtxn| EXPORT.put(&vault.store, wtxn, &id, &row))?;
     Ok(id)
 }
 
@@ -618,13 +606,9 @@ pub(crate) fn reservoir_export_receipts(
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(rtxn, EXPORT_RECEIPT_KEY_PREFIX)?
-    {
-        let (key, raw) = entry?;
-        let record = export_receipt_record(&export_receipt_key_id(&key)?, &decode_export(&raw)?);
+    for entry in EXPORT.iter_from(&vault.store, rtxn, &[])? {
+        let (id, row) = entry?;
+        let record = export_receipt_record(&id, &row);
         if query.matches(&record) {
             out.push(record);
         }
@@ -721,45 +705,28 @@ struct StoredCandidate {
     model_id: Option<String>,
 }
 
-fn encode_candidate(pair: &TrainingPair) -> Result<Vec<u8>> {
-    encode_row(
-        &StoredCandidate {
-            v: ROW_VERSION,
-            task_class: pair.task_class.clone(),
-            skill: pair.skill.map(|id| id.to_hex()),
-            model_id: pair.model_id.clone(),
-        },
-        CANDIDATE_ROW_LABEL,
-    )
-}
-
-fn candidate_key(artifact: EntityId) -> Vec<u8> {
-    meta_key(CANDIDATE_KEY_PREFIX, artifact.as_bytes())
-}
-
-fn export_receipt_key(id: EntityId) -> Vec<u8> {
-    meta_key(EXPORT_RECEIPT_KEY_PREFIX, id.as_bytes())
-}
-
-fn export_receipt_key_id(key: &[u8]) -> Result<EntityId> {
-    let tail = key
-        .get(EXPORT_RECEIPT_KEY_PREFIX.len()..)
-        .and_then(|tail| <[u8; ENTITY_ID_LEN]>::try_from(tail).ok())
-        .ok_or(Error::CorruptedIndex(EXPORT_RECEIPT_ROW_LABEL))?;
-    EntityId::from_bytes(tail).map_err(|_| Error::CorruptedIndex(EXPORT_RECEIPT_ROW_LABEL))
-}
-
-fn meta_key(prefix: &[u8], tail: &[u8]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + tail.len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(tail);
-    key
+fn stored_candidate(pair: &TrainingPair) -> StoredCandidate {
+    StoredCandidate {
+        v: ROW_VERSION,
+        task_class: pair.task_class.clone(),
+        skill: pair.skill.map(|id| id.to_hex()),
+        model_id: pair.model_id.clone(),
+    }
 }
 
 /// Rows serialize through the house canonical-JSON door, so a row's bytes are a
 /// function of its values rather than of map iteration order.
 fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
     crate::llm::canonical_json_bytes(row).map_err(|_| Error::CorruptedIndex(label))
+}
+
+fn decode_candidate(raw: &[u8]) -> Result<StoredCandidate> {
+    let row: StoredCandidate =
+        serde_json::from_slice(raw).map_err(|_| Error::CorruptedIndex(CANDIDATE_ROW_LABEL))?;
+    if row.v != ROW_VERSION {
+        return Err(Error::CorruptedIndex(CANDIDATE_ROW_LABEL));
+    }
+    Ok(row)
 }
 
 fn decode_export(raw: &[u8]) -> Result<StoredExport> {
@@ -769,6 +736,26 @@ fn decode_export(raw: &[u8]) -> Result<StoredExport> {
         return Err(Error::CorruptedIndex(EXPORT_RECEIPT_ROW_LABEL));
     }
     Ok(row)
+}
+
+impl RawValue for StoredCandidate {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, CANDIDATE_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_candidate(bytes)?)
+    }
+}
+
+impl RawValue for StoredExport {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, EXPORT_RECEIPT_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_export(bytes)?)
+    }
 }
 
 #[cfg(test)]

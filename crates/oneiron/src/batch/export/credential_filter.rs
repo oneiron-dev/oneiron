@@ -66,13 +66,8 @@ impl Vault {
     pub fn export_vault_json(&self) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
-        for row in self.store.entities.iter(&txn)? {
-            let (key, _) = row?;
-            let bytes: [u8; 16] = key
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::InvariantViolation("invalid export id"))?;
-            ids.push(EntityId::from_bytes(bytes)?);
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
+            ids.push(row?.0);
         }
         drop(txn);
         self.export_entity_bundle_json(&ids)
@@ -89,7 +84,8 @@ impl Vault {
             if whole_vault_export_excludes_entity(self, id)? {
                 continue;
             }
-            let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
+            else {
                 continue;
             };
             let header = EntityMetadataHeader::parse(&raw)

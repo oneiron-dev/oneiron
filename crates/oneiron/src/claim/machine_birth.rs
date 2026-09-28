@@ -302,7 +302,8 @@ mod tests {
             0.9,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.evidence = Some(Value::Map(vec![
             (
                 Value::from("actor_class"),

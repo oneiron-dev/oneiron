@@ -9,6 +9,8 @@ impl crate::vault::Vault {
             audience: None,
             audience_cache: Mutex::new(Default::default()),
             session_view: None,
+            claim_status: ClaimReadStatus::Surfaceable,
+            recall_authority: Mutex::new(None),
         }
     }
 
@@ -32,6 +34,8 @@ impl crate::vault::Vault {
             audience: None,
             audience_cache: Mutex::new(Default::default()),
             session_view: Some(view),
+            claim_status: ClaimReadStatus::Surfaceable,
+            recall_authority: Mutex::new(None),
         }
     }
 }
@@ -79,6 +83,28 @@ impl<'a> ScopedRead<'a> {
             claims.channels.is_empty()
                 && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
         })
+    }
+
+    /// The owner key's binding, re-verified in this read's own snapshot, so a
+    /// key minted before a revocation resolves no plan after it.
+    pub(super) fn owner_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let Some(owner) = self.actor_key.vault_owner_ref() else {
+            return Ok(());
+        };
+        let human = crate::edge::EdgeActorClass::Human;
+        crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
+            .and_then(|()| {
+                if crate::vault::embedded_owner_actor_id().ok() == Some(owner) {
+                    Ok(())
+                } else {
+                    crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner)
+                }
+            })
+            .map_err(|error| {
+                Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                    error,
+                )))
+            })
     }
 
     pub(super) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {

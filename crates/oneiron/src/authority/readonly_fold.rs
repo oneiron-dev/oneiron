@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 /// The generation belongs to the snapshot, not to the most recent process-wide
 /// write. An abort discards its generation update with its authority row.
-const AUTHORITY_CACHE_GENERATION_KEY: &str = "authlog:cache_generation:v1";
+const AUTHORITY_CACHE_GENERATION: crate::side_table::SideTable<(), u64, crate::side_table::Raw> =
+    crate::side_table::SideTable::new(&crate::side_table::AUTHORITY_CACHE_GENERATION);
 
 pub(crate) fn advance_authority_cache_generation(
     store: &Store,
@@ -24,21 +25,14 @@ pub(crate) fn advance_authority_cache_generation(
         .ok_or(Error::CorruptedIndex(
             "authority cache generation exhausted",
         ))?;
-    store
-        .sync_state
-        .put(txn, AUTHORITY_CACHE_GENERATION_KEY, &next.to_be_bytes())?;
+    AUTHORITY_CACHE_GENERATION.put(store, txn, &(), &next)?;
     Ok(())
 }
 
 fn authority_cache_generation(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u64> {
-    match store.sync_state.get(txn, AUTHORITY_CACHE_GENERATION_KEY)? {
-        None => Ok(0),
-        Some(raw) => {
-            Ok(u64::from_be_bytes(raw.as_ref().try_into().map_err(
-                |_| Error::CorruptedIndex("authority cache generation"),
-            )?))
-        }
-    }
+    AUTHORITY_CACHE_GENERATION
+        .get(store, txn, &())
+        .map(|value| value.unwrap_or(0))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -95,10 +89,8 @@ fn authority_cache_key(
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityCacheKey> {
-    let floor = store
-        .sync_state
-        .get(txn, authority_first_seen_clock_sync_key())?
-        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+    let floor = AUTHORITY_FIRST_SEEN
+        .get_lenient(store, txn, &authority_first_seen_clock_key())?
         .unwrap_or(0);
     Ok(AuthorityCacheKey {
         generation: authority_cache_generation(store, txn)?,
@@ -202,14 +194,14 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
     }
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
     let mut first_seen_at_secs = BTreeMap::new();
-    // Read ONCE, before the row scan: the synthesized-first-seen rule below
-    // must be the same for every entry in one fold, and this also decides
-    // whether an absent sidecar is a pre-migration gap or genuine corruption.
-    let backfilled = store
-        .sync_state
-        .get(txn, authority_first_seen_backfill_sync_key())?
-        .is_some();
+    // Read once: all entries in this fold share one snapshot clock and marker.
+    let backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
+        store,
+        txn,
+        &authority_first_seen_backfill_key(),
+    )?;
     let now_secs = key.now_secs;
+
     let entries = authority_log_rows_in_txn(store, txn)?
         .into_iter()
         .map(|(_, body)| decode_authority_log_entry_body(&body))
@@ -282,13 +274,15 @@ fn readonly_first_seen_for(
     now_secs: u64,
 ) -> Result<u64> {
     let corrupt = || Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT);
-    match store
-        .sync_state
-        .get(txn, authority_first_seen_sync_key(hash).as_str())?
-    {
-        Some(raw) => decode_authority_first_seen_secs(&raw).ok_or_else(corrupt),
-        None if backfilled => Err(corrupt()),
-        None => Ok(now_secs),
+    // A decode failure (present but undecodable) and an absent row both surface as `Err`/`Ok`
+    // here without distinguishing the LMDB-level case from the shape case, unlike the
+    // pre-migration hand decode; in practice the only way to reach a non-8-byte row is exactly
+    // the corruption this maps to.
+    match AUTHORITY_FIRST_SEEN.get(store, txn, &authority_first_seen_sidecar_key(hash)) {
+        Ok(Some(secs)) => Ok(secs),
+        Ok(None) if backfilled => Err(corrupt()),
+        Ok(None) => Ok(now_secs),
+        Err(_) => Err(corrupt()),
     }
 }
 

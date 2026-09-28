@@ -654,9 +654,10 @@ mod cb_a {
             .collect();
         assert_eq!(branch_runs.iter().filter(|id| **id == run_id).count(), 3);
         // Depth decrements at every level and is persisted, not merely counted.
-        assert_eq!(fixture.persisted_depth(lead_attempt), Some(8));
-        assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(7));
-        assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(6));
+        // The root starts at the project's depth row, 10 by default (ARCH-0067 §7).
+        assert_eq!(fixture.persisted_depth(lead_attempt), Some(10));
+        assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(9));
+        assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(8));
 
         TeamLeadDelegation {
             preset_available,
@@ -1881,9 +1882,9 @@ mod peer_fixture {
             };
             let conflicts = detect_conflicts(std::slice::from_ref(candidate), &[prior])
                 .expect("conflict detection runs");
-            let marker = conflicts
-                .first()
-                .map(|conflict| conflict_open_marker_id(conflict, self.attempt));
+            let marker = conflicts.first().map(|conflict| {
+                conflict_open_marker_id(conflict, self.attempt).expect("marker id derives")
+            });
             (conflicts.len(), marker)
         }
 
@@ -2049,7 +2050,8 @@ mod peer_fixture {
                 0.9,
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .expect("claim body");
             body.source = Some(ClaimSource::Generated);
             body.scope = Some(tool_output_lineage_scope());
             attempts.push(ForgeryAttempt {

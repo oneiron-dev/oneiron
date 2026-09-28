@@ -335,3 +335,65 @@ fn allowed_atom_kit_round_trips_json_and_msgpack() {
         rmp_serde::from_slice(&positional_msgpack).expect("positional msgpack decode");
     assert_eq!(decoded, lens);
 }
+
+#[test]
+fn mediation_scope_keeps_its_read_receipt() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::pipeline::WorldAuthoritySet;
+    let (_dir, vault) = test_vault();
+    let subject = test_entity_id(96);
+    let (world_a, world_b, world_c) = (test_entity_id(97), test_entity_id(98), test_entity_id(99));
+    let (a, b, c) = (
+        test_entity_id(100),
+        test_entity_id(101),
+        test_entity_id(102),
+    );
+    let at: u64 = 10_000_000;
+    put_person(&vault, &subject)?;
+    for (id, world) in [(a, world_a), (b, world_b), (c, world_c)] {
+        let mut body = ClaimBody::new(
+            "profile.likes",
+            ClaimSubject::Entity(subject),
+            rmpv::Value::from("tea"),
+            0.75,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.world = Some(world);
+        vault.put_claim(&id, &body, crate::TimeRange { start: at, end: at }, at + 1)?;
+    }
+    // The principal may read worlds A and B; nothing grants world C.
+    install_read_grants(
+        &vault,
+        vec![
+            world_read_grant("viewer", rmpv::Value::from(world_a.to_hex())),
+            world_read_grant("viewer", rmpv::Value::from(world_b.to_hex())),
+        ],
+    )?;
+    let key = actor_key("viewer");
+    let read = vault.scoped_read(key.clone());
+    let frame = LensRenderFrame::new(
+        render_id("mediation-receipt"),
+        LensPrincipalBinding::human_view("viewer", key.clone(), vec![key])?,
+    )
+    .with_world_set(WorldAuthoritySet::new(false, [world_a])?);
+
+    let inside = frame.scoped_body(&read, &a)?;
+    assert!(inside.value.is_some());
+    assert_eq!(inside.receipt.suppressed_count, 0);
+    // Readable, but outside the frame's worlds: the frame withholds it.
+    let outside = frame.scoped_body(&read, &b)?;
+    assert!(outside.value.is_none());
+    assert_eq!(outside.receipt.suppressed_count, 1);
+    // Not readable by the principal at all: the scoped read withholds it.
+    let unreadable = frame.scoped_body(&read, &c)?;
+    assert!(unreadable.value.is_none());
+    assert_eq!(unreadable.receipt.suppressed_count, 1);
+    assert!(
+        unreadable
+            .receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
+    Ok(())
+}

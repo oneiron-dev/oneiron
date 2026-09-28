@@ -2,10 +2,12 @@
 
 mod apply;
 mod claim_admission;
+mod connector_key_guard;
 mod lexical_hint;
 mod owned_body;
 mod put_entity_update;
 mod put_staging;
+mod request;
 
 use std::collections::BTreeSet;
 
@@ -13,7 +15,7 @@ use crate::entity_id::EntityId;
 use crate::habit::TaskRole;
 
 use self::put_entity_update::{validate_local_skill_create, validate_skill_body_overwrite};
-use self::put_staging::{stage_claim_projection, stage_optimizer_birth_marker_row};
+use self::put_staging::{stage_claim_projection, stage_optional_side_row};
 use super::agent_definition_create::validate_local_agent_definition_create;
 use super::{
     AuthorityLogKeyOccupant, BaseWriteOrigin, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
@@ -28,6 +30,11 @@ use super::{
 pub(super) use self::apply::apply_put;
 pub(crate) use self::put_staging::{delete_entity_index_rows, stage_entity_index_rows};
 pub(super) use self::put_staging::{stage_edge_rows, stage_entity_body_row};
+pub(super) use self::request::{ClaimCandidateRequest, PutContext, PutOptions, PutRequest, PutRow};
+#[cfg(test)]
+pub(super) use self::request::{
+    ConsentHandling, DecisionRecording, HubImport, Replication, TextIndexing,
+};
 
 /// The final `BatchOp::Put` this batch stages for one entity: where it lands
 /// in op order, its type byte, and — for a TASK only — the body its role is

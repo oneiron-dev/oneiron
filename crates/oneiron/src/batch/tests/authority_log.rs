@@ -56,6 +56,35 @@ fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
 }
 
 #[cfg(feature = "sync")]
+fn authority_child_fixture(
+    vault_id: crate::authority::AuthorityVaultId,
+    parent: &crate::authority::AuthorityLogEntry,
+    signer: &SigningKey,
+    seq: u64,
+    ts: u64,
+    op: crate::authority::AuthorityOp,
+) -> crate::authority::AuthorityLogEntry {
+    let signer_key = authority_key_from_signing(signer);
+    let mut entry = crate::authority::AuthorityLogEntry {
+        schema_version: 1,
+        vault_id: Some(vault_id),
+        seq,
+        parent_hashes: vec![crate::authority::authority_entry_hash(parent).expect("parent hash")],
+        op,
+        signer: crate::authority::AuthoritySignature {
+            suite: signer_key.suite(),
+            public_key: signer_key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts,
+    };
+    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+#[cfg(feature = "sync")]
 fn authority_enroll_fixture(
     vault_id: crate::authority::AuthorityVaultId,
     parent: &crate::authority::AuthorityLogEntry,
@@ -63,27 +92,41 @@ fn authority_enroll_fixture(
     new_seed: u8,
     seq: u64,
 ) -> crate::authority::AuthorityLogEntry {
-    let signer_key = authority_key_from_signing(signer);
     let new_key = authority_key_from_signing(&authority_test_key(new_seed));
-    let mut entry = crate::authority::AuthorityLogEntry {
-        schema_version: 1,
-        vault_id: Some(vault_id),
+    authority_child_fixture(
+        vault_id,
+        parent,
+        signer,
         seq,
-        parent_hashes: vec![crate::authority::authority_entry_hash(parent).expect("parent hash")],
-        op: crate::authority::AuthorityOp::EnrollDevice {
+        u64::from(new_seed),
+        crate::authority::AuthorityOp::EnrollDevice {
             device: authority_test_device(new_key),
         },
-        signer: crate::authority::AuthoritySignature {
-            suite: signer_key.suite(),
-            public_key: signer_key,
-            signature: vec![0; 64],
+    )
+}
+
+/// A signed re-root child. A retired enrollment folds only as verified
+/// pre-handoff ancestry, so this child keeps the enrollment's delay, and
+/// therefore its first-seen sidecar, load-bearing.
+#[cfg(feature = "sync")]
+fn authority_re_root_fixture(
+    vault_id: crate::authority::AuthorityVaultId,
+    parent: &crate::authority::AuthorityLogEntry,
+    signer: &SigningKey,
+    new_seed: u8,
+    seq: u64,
+) -> crate::authority::AuthorityLogEntry {
+    let new_key = authority_key_from_signing(&authority_test_key(new_seed));
+    authority_child_fixture(
+        vault_id,
+        parent,
+        signer,
+        seq,
+        u64::from(new_seed),
+        crate::authority::AuthorityOp::ReRoot {
+            new_device: authority_test_device(new_key),
         },
-        cosigns: Vec::new(),
-        ts: u64::from(new_seed),
-    };
-    let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
-    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
-    entry
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -107,9 +150,11 @@ fn authority_log_first_seen_sidecar_drives_live_fold() -> Result<()> {
     let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
     let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
     let enroll_key = authority_key_from_signing(&authority_test_key(75));
+    let handoff = authority_re_root_fixture(vault_id, &enroll, &owner, 76, 2);
 
     vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
     let enroll_id = vault.put_authority_log_entry(&enroll, test_time_range(2, 2), 2)?;
+    vault.put_authority_log_entry(&handoff, test_time_range(2, 2), 2)?;
 
     let first_seen = authority_first_seen_for_test(&vault, &enroll_sidecar)?
         .expect("authority log put must create first-seen sidecar");
@@ -428,6 +473,28 @@ fn ingest_replicated_identity_topology_event_for_test(
             vault, wtxn, id, &header, &blob, &body, 7,
         )
         .map(|_| ())
+    })?;
+    let (fact_id, fact) =
+        crate::identity_topology::signed_validated_row_for_test(vault, *id, record)?;
+    let fact_body = crate::identity_topology::encode_identity_topology_event_body(&fact)?;
+    let mut fact_blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + fact_body.len());
+    fact_blob.push(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT);
+    for _ in 0..3 {
+        fact_blob.extend_from_slice(&1u64.to_be_bytes());
+    }
+    fact_blob.extend_from_slice(&fact_body);
+    let fact_header = EntityMetadataHeader::parse(&fact_blob).expect("admission fact header");
+    vault.with_write_txn(|wtxn| {
+        crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn(
+            vault,
+            wtxn,
+            &fact_id,
+            &fact_header,
+            &fact_blob,
+            &fact_body,
+            7,
+        )
+        .map(|_| ())
     })
 }
 
@@ -492,6 +559,10 @@ fn authority_log_put_evicts_delete_protected_squatter() -> Result<()> {
     let loser = EntityId::from_bytes([0xD2; 16])?;
     let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 1,
         actor: None,
         source: ClaimSource::Inferred,
@@ -602,6 +673,10 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
 
     let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
+
+        invalidated: false,
         at: 1,
         actor: None,
         source: ClaimSource::Inferred,
@@ -642,7 +717,7 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
             .edges_out(&loser)?
             .iter()
             .all(|edge| edge.kind == EdgeKind::HasFacet
-                && edge.target == crate::claim::substrate_facet_id(loser))
+                && edge.target == crate::claim::substrate_facet_id(loser).unwrap())
             && vault.edges_in(&survivor)?.is_empty(),
         "no half of the shell pair may survive its ledger justification"
     );
@@ -715,6 +790,10 @@ fn evicting_an_apply_creates_unlocked_merge_edges_on_undirect_sources() -> Resul
         &derived,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 40,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -735,6 +814,10 @@ fn evicting_an_apply_creates_unlocked_merge_edges_on_undirect_sources() -> Resul
         &m,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 41,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -846,6 +929,10 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &t,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 40,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -864,6 +951,10 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &derived,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 41,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -880,6 +971,10 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &m,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 42,
+
+            validated_at_write: false,
+
+            invalidated: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -1023,9 +1118,11 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
     let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
     let enroll_key = authority_key_from_signing(&authority_test_key(85));
+    let handoff = authority_re_root_fixture(vault_id, &enroll, &owner, 86, 2);
 
     vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
     vault.put_authority_log_entry(&enroll, test_time_range(2, 2), 2)?;
+    vault.put_authority_log_entry(&handoff, test_time_range(2, 2), 2)?;
     vault.with_write_txn(|wtxn| {
         vault
             .store

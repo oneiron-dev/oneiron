@@ -6,6 +6,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::Store;
 
 use super::SkillRecord;
@@ -47,7 +48,7 @@ pub(crate) fn require_resident_in_txn(
     resident: &EntityId,
     defer_missing_candidate: bool,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(txn, resident.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, resident)? else {
         return if defer_missing_candidate {
             Ok(false)
         } else {
@@ -68,9 +69,7 @@ pub(crate) fn require_resident_in_txn(
 /// An attempt executor can also be a MACHINE system actor. This is NOT the
 /// resident-fork owner check above: MACHINE must never gain fork ownership.
 fn require_executor_in_txn(store: &Store, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<()> {
-    let raw = store
-        .entities
-        .get(txn, actor.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, actor)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("attempt executor entity header"))?;
@@ -87,12 +86,31 @@ fn require_executor_in_txn(store: &Store, txn: &heed::RoTxn<'_>, actor: &EntityI
 
 /// Durable per-skill-id owner, including explicit ABSENCE. Deleting the
 /// entity does not free its identity for a different resident on recreation.
-const OWNER_MARKER_PREFIX: &[u8] = b"skill:resident_owner:v1:";
+const OWNER_MARKER: SideTable<EntityId, OwnerMarker, Raw> =
+    SideTable::new(&side_table::SKILL_RESIDENT_OWNER);
 
-fn owner_marker_key(skill: &EntityId) -> Vec<u8> {
-    let mut key = OWNER_MARKER_PREFIX.to_vec();
-    key.extend_from_slice(skill.as_bytes());
-    key
+/// [`OWNER_MARKER`]'s row: a version byte (1), a has-owner byte, then the owner id when there
+/// is one.
+#[derive(PartialEq, Eq)]
+struct OwnerMarker(Option<EntityId>);
+
+impl RawValue for OwnerMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut encoded = vec![1_u8, u8::from(self.0.is_some())];
+        if let Some(owner) = self.0 {
+            encoded.extend_from_slice(owner.as_bytes());
+        }
+        Ok(encoded)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let owner = match bytes {
+            [1, 0] => None,
+            [1, 1, owner @ ..] => Some(EntityId::decode_key(owner).ok_or_else(invalid_owner)?),
+            _ => return Err(invalid_owner().into()),
+        };
+        Ok(Self(owner))
+    }
 }
 
 pub(crate) fn check_owner_marker_in_txn(
@@ -101,20 +119,15 @@ pub(crate) fn check_owner_marker_in_txn(
     skill: &EntityId,
     record: &SkillRecord,
 ) -> Result<()> {
-    let owner = resident_of(record)?;
-    let key = owner_marker_key(skill);
-    let mut encoded = vec![1_u8, u8::from(owner.is_some())];
-    if let Some(owner) = owner {
-        encoded.extend_from_slice(owner.as_bytes());
-    }
-    if let Some(prior) = store.vault_meta.get(txn, &key)? {
-        if prior.as_ref() != encoded.as_slice() {
+    let marker = OwnerMarker(resident_of(record)?);
+    if let Some(prior) = OWNER_MARKER.get(store, txn, skill)? {
+        if prior != marker {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "skill id cannot change resident ownership across deletion or replay",
             )));
         }
     } else {
-        store.vault_meta.put(txn, &key, &encoded)?;
+        OWNER_MARKER.put(store, txn, skill, &marker)?;
     }
     Ok(())
 }
@@ -136,7 +149,7 @@ pub(crate) fn validate_owner_put_in_txn(
         // state needs its owner before materialization and keeps a retry.
         if replicated
             && record.lifecycle_status != super::SkillLifecycle::Candidate
-            && store.entities.get(txn, resident.as_bytes())?.is_none()
+            && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &resident)?.is_none()
         {
             return Err(Error::Artifact(
                 ArtifactError::ResidentOwnerDependencyPending,
@@ -151,12 +164,23 @@ pub(crate) fn validate_owner_put_in_txn(
 /// One attempt has one resident stamp. The scoped pack doors write this in the
 /// same transaction as the manifest; attribution cannot infer a resident from
 /// a caller-chosen actor id or a lease-owner string.
-const RECEIPT_OWNER_PREFIX: &[u8] = b"skill:resident_receipt:v1:";
+const RECEIPT_OWNER: SideTable<String, ReceiptOwner, Raw> =
+    SideTable::new(&side_table::SKILL_RESIDENT_RECEIPT);
 
-fn receipt_key(receipt: &str) -> Vec<u8> {
-    let mut key = RECEIPT_OWNER_PREFIX.to_vec();
-    key.extend_from_slice(receipt.as_bytes());
-    key
+/// [`RECEIPT_OWNER`]'s row: the bound actor's 16-byte id.
+struct ReceiptOwner(EntityId);
+
+impl RawValue for ReceiptOwner {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let raw: [u8; 16] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("resident receipt owner"))?;
+        Ok(Self(EntityId::from_bytes(raw)?))
+    }
 }
 
 pub(crate) fn bind_receipt_in_txn(
@@ -166,15 +190,15 @@ pub(crate) fn bind_receipt_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     require_executor_in_txn(&vault.store, txn, actor)?;
-    let key = receipt_key(receipt);
-    if let Some(held) = vault.store.vault_meta.get(txn, &key)? {
-        if held.as_ref() != actor.as_bytes() {
+    let key = receipt.to_owned();
+    if let Some(ReceiptOwner(held)) = RECEIPT_OWNER.get(&vault.store, txn, &key)? {
+        if held != *actor {
             return Err(Error::InvalidClaimBody(
                 "attempt belongs to a different actor",
             ));
         }
     } else {
-        vault.store.vault_meta.put(txn, &key, actor.as_bytes())?;
+        RECEIPT_OWNER.put(&vault.store, txn, &key, &ReceiptOwner(*actor))?;
     }
     Ok(())
 }
@@ -189,27 +213,50 @@ pub(crate) fn receipt_resident_in_txn(
     txn: &heed::RoTxn<'_>,
     receipt: &str,
 ) -> Result<Option<EntityId>> {
-    store
-        .vault_meta
-        .get(txn, &receipt_key(receipt))?
-        .map(|bytes| {
-            let raw: [u8; 16] = bytes
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("resident receipt owner"))?;
-            EntityId::from_bytes(raw)
-        })
-        .transpose()
+    Ok(RECEIPT_OWNER
+        .get(store, txn, &receipt.to_owned())?
+        .map(|owner| owner.0))
 }
 
-const RECEIPT_SKILL_PREFIX: &[u8] = b"skill:resident_loaded_skill:v1:";
+/// The skills one attempt receipt's pack loaded, marked with the single byte 1.
+const LOADED_SKILL: SideTable<LoadedSkillKey, [u8; 1], Raw> =
+    SideTable::new(&side_table::SKILL_RESIDENT_LOADED_SKILL);
 
-fn receipt_skill_key(receipt: &str, skill: &EntityId) -> Vec<u8> {
-    let mut key = RECEIPT_SKILL_PREFIX.to_vec();
-    key.extend_from_slice(&(receipt.len() as u64).to_be_bytes());
-    key.extend_from_slice(receipt.as_bytes());
-    key.extend_from_slice(skill.as_bytes());
-    key
+/// The marker [`LOADED_SKILL`] rows carry.
+const LOADED: [u8; 1] = [1];
+
+/// [`LOADED_SKILL`]'s key: the receipt id framed by its big-endian `u64` byte length, then the
+/// skill id.
+struct LoadedSkillKey {
+    receipt: String,
+    skill: EntityId,
+}
+
+impl LoadedSkillKey {
+    fn new(receipt: &str, skill: &EntityId) -> Self {
+        Self {
+            receipt: receipt.to_owned(),
+            skill: *skill,
+        }
+    }
+}
+
+impl SideKey for LoadedSkillKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        (self.receipt.len() as u64).encode_into(out);
+        out.extend_from_slice(self.receipt.as_bytes());
+        self.skill.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (length, rest) = bytes.split_at_checked(8)?;
+        let length = usize::try_from(u64::decode_key(length)?).ok()?;
+        let (receipt, skill) = rest.split_at_checked(length)?;
+        Some(Self {
+            receipt: std::str::from_utf8(receipt).ok()?.to_owned(),
+            skill: EntityId::decode_key(skill)?,
+        })
+    }
 }
 
 pub(crate) fn bind_skill_in_txn(
@@ -218,11 +265,12 @@ pub(crate) fn bind_skill_in_txn(
     receipt: &str,
     skill: &EntityId,
 ) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(txn, &receipt_skill_key(receipt, skill), &[1])?;
-    Ok(())
+    LOADED_SKILL.put(
+        &vault.store,
+        txn,
+        &LoadedSkillKey::new(receipt, skill),
+        &LOADED,
+    )
 }
 
 pub(crate) fn receipt_loaded_skill(
@@ -231,10 +279,5 @@ pub(crate) fn receipt_loaded_skill(
     skill: &EntityId,
 ) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&txn, &receipt_skill_key(receipt, skill))?
-        .as_deref()
-        == Some(&[1][..]))
+    Ok(LOADED_SKILL.get(&vault.store, &txn, &LoadedSkillKey::new(receipt, skill))? == Some(LOADED))
 }

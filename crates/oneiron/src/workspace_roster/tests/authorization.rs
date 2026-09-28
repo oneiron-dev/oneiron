@@ -1,4 +1,5 @@
 use super::*;
+use crate::channel_identity::ChannelIdentityStep;
 use crate::error::{GateError, RecordError};
 use crate::subject_model::tests::authorization::root_owner;
 
@@ -78,7 +79,6 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         ("journal reservation", |v, i, w| {
             write_journal(
                 v,
-                &onboarding_key(&i.onboarding_id),
                 i,
                 &OnboardingJournal {
                     intent_digest: intent_digest(i)?,
@@ -170,8 +170,11 @@ fn final_roster_write_observes_revocation_while_waiting_for_writer_lock() -> Res
         None,
         MemberOnboardingStep::MailboxBound,
     )?;
-    let key = roster_member_key(&intent.workspace.workspace_ref, &intent.person_ref);
-    let journal_before = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?;
+    let key = RosterMemberKey {
+        workspace_ref: intent.workspace.workspace_ref.clone(),
+        person_ref: intent.person_ref,
+    };
+    let journal_before = read_journal(&vault, &intent.onboarding_id)?;
     let mut revocation_txn = vault.store.env.write_txn()?;
     vault.put_authority_log_entries_in_txn(
         &mut revocation_txn,
@@ -202,12 +205,9 @@ fn final_roster_write_observes_revocation_while_waiting_for_writer_lock() -> Res
         ErrorKind::WriteConcurrentWithRevocation
     );
     let txn = vault.store.env.read_txn()?;
-    assert!(vault.store.vault_meta.get(&txn, &key)?.is_none());
+    assert!(!MEMBER.contains(&vault.store, &txn, &key)?);
     drop(txn);
-    assert_eq!(
-        read_journal(&vault, &onboarding_key(&intent.onboarding_id))?,
-        journal_before
-    );
+    assert_eq!(read_journal(&vault, &intent.onboarding_id)?, journal_before);
     Ok(())
 }
 
@@ -235,7 +235,6 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
     let before = durable_rows(&vault)?;
     let err = write_journal(
         &vault,
-        &onboarding_key(&intent.onboarding_id),
         &intent,
         &OnboardingJournal {
             intent_digest: intent_digest(&intent)?,
@@ -249,7 +248,7 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
     assert_eq!(err.kind(), ErrorKind::WriteConcurrentWithRevocation);
     assert_eq!(durable_rows(&vault)?, before);
     assert_eq!(
-        read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+        read_journal(&vault, &intent.onboarding_id)?
             .expect("resumable journal")
             .step,
         MemberOnboardingStep::MailboxBound
@@ -414,7 +413,7 @@ fn mailbox_retry_rechecks_custody_and_never_completes_autonomy() -> Result<()> {
     let identity = vault
         .get_channel_identity(&requested.identity_ref)?
         .expect("Requested row");
-    assert_eq!(identity.state, ChannelIdentityState::Requested);
+    assert_eq!(identity.state(), ChannelIdentityState::Requested);
     assert!(!identity.may_send());
     // A successful first provisioning does not authorize a later retry.
     seed_federation_grant(
@@ -459,8 +458,7 @@ fn mailbox_retry_rechecks_custody_and_never_completes_autonomy() -> Result<()> {
         vault.get_channel_identity(&requested.identity_ref)?,
         Some(identity)
     );
-    let journal =
-        read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.expect("resumable journal");
+    let journal = read_journal(&vault, &intent.onboarding_id)?.expect("resumable journal");
     assert_eq!(journal.step, MemberOnboardingStep::CompanionBorn);
     assert_eq!(journal.completed_at, None);
     Ok(())
@@ -575,7 +573,7 @@ fn mailbox_consent_owner_cannot_be_inferred_from_admin_write_actor() -> Result<(
             .is_err()
     );
     assert_eq!(durable_rows(&vault)?, before);
-    assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
+    assert!(read_journal(&vault, &intent.onboarding_id)?.is_none());
     Ok(())
 }
 
@@ -646,7 +644,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
             } else if stage == 2 {
                 vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?;
             }
-            let journal = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?;
+            let journal = read_journal(&vault, &intent.onboarding_id)?;
             let at = crate::unix_seconds_now();
             match revoke {
                 0 => {
@@ -678,7 +676,6 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
             assert!(
                 write_journal(
                     &vault,
-                    &onboarding_key(&intent.onboarding_id),
                     &intent,
                     &OnboardingJournal {
                         intent_digest: intent_digest(&intent)?,
@@ -695,10 +692,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                 before,
                 "stage {stage}, revoke {revoke}"
             );
-            assert_eq!(
-                read_journal(&vault, &onboarding_key(&intent.onboarding_id))?,
-                journal
-            );
+            assert_eq!(read_journal(&vault, &intent.onboarding_id)?, journal);
             if stage != 2 {
                 assert_eq!(journal.expect("journal").completed_at, None);
                 assert_eq!(
@@ -756,7 +750,7 @@ fn mailbox_publication_fence_rejects_a_mutation_after_successful_verification() 
     );
     assert_eq!(durable_rows(&vault)?, before);
     assert_eq!(
-        read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+        read_journal(&vault, &intent.onboarding_id)?
             .expect("journal")
             .completed_at,
         None
@@ -779,19 +773,17 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
             ))
         ));
         if future_lifecycle {
-            vault.transition_channel_identity(
+            vault.step_channel_identity(
                 &requested.identity_ref,
-                ChannelIdentityState::PendingFulfillment,
-                Some(crate::channel_identity::ChannelIdentityFulfillment::Manual),
+                ChannelIdentityStep::Bind(
+                    crate::channel_identity::ChannelIdentityFulfillment::Manual,
+                ),
                 AT + 1,
-                None,
             )?;
-            vault.transition_channel_identity(
+            vault.step_channel_identity(
                 &requested.identity_ref,
-                ChannelIdentityState::Active,
-                None,
+                ChannelIdentityStep::Fulfill,
                 crate::unix_seconds_now() + 3_600,
-                None,
             )?;
         } else {
             activate_mailbox(&vault, requested.identity_ref)?;
@@ -816,7 +808,7 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
         );
         assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 1);
         assert_eq!(
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+            read_journal(&vault, &intent.onboarding_id)?
                 .expect("journal")
                 .completed_at,
             None
@@ -870,7 +862,7 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
             0
         );
         assert_eq!(
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+            read_journal(&vault, &intent.onboarding_id)?
                 .expect("journal")
                 .completed_at,
             None

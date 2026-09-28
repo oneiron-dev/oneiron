@@ -1,5 +1,7 @@
 //! O2 dispatch: shared request preparation, ledger replay, execution and receipts.
-use super::request_binding::{FrozenDispatchIdentity, PreparedOutboundDispatch};
+use super::request_binding::{
+    FrozenDispatchIdentity, PreparedOutboundDispatch, require_native_mail_retry_sender,
+};
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::outbound::dispatch_types::{
@@ -23,7 +25,16 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, None)
+        self.dispatch_inner(vault, request, sink, None, None)
+    }
+    pub(in crate::outbound) fn dispatch_from_step<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        binding: crate::llm::StepEffectBinding,
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_inner(vault, request, sink, None, Some(binding))
     }
     pub(in crate::outbound) fn dispatch_with_verified_actor<S: OutboundExecutionSink>(
         self,
@@ -33,7 +44,7 @@ impl OutboundDispatchPipeline {
         actor: EntityId,
         actor_class: EdgeActorClass,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, Some((actor, actor_class)))
+        self.dispatch_inner(vault, request, sink, Some((actor, actor_class)), None)
     }
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
@@ -41,8 +52,15 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
+        step_binding: Option<crate::llm::StepEffectBinding>,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        let prepared = PreparedOutboundDispatch::prepare(vault, request, verified_actor)?;
+        let prepared =
+            PreparedOutboundDispatch::prepare(vault, request, verified_actor, step_binding)?;
+        if prepared.replay_done() {
+            return Ok(self
+                .dispatch_completed_effect(vault, prepared, sink)?
+                .result);
+        }
         Ok(self.dispatch_prepared(vault, prepared, sink)?.result)
     }
     /// Observations are response evidence only. Even an exact stored success
@@ -58,7 +76,8 @@ impl OutboundDispatchPipeline {
         key: DispatchObservationKey,
         preflight: impl FnOnce() -> Result<(), OutboundDispatchError>,
     ) -> Result<RecordedDispatch, OutboundDispatchError> {
-        let mut prepared = PreparedOutboundDispatch::prepare(vault, request, Some(verified_actor))?;
+        let mut prepared =
+            PreparedOutboundDispatch::prepare(vault, request, Some(verified_actor), None)?;
         if prepared.replay_done() {
             prepared.freeze_and_validate(vault)?;
             if let Some(observation) = read_dispatch_observation(vault, key)? {
@@ -117,6 +136,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            parked: None,
             suppression_receipt: None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
@@ -161,13 +181,9 @@ impl OutboundDispatchPipeline {
             window_resolution,
             window_decision,
         );
-        if matches!(
-            admission.decision,
-            super::admission::DispatchAdmission::Execute
-        ) || prepared.replay.is_some()
-        {
-            prepared.freeze_and_validate(vault)?;
-        }
+        // One stable payload is compared for New, parked Pending and terminal
+        // replay; admission authority is separate typed ledger metadata.
+        prepared.freeze_and_validate(vault)?;
         let identity = prepared.identity();
         let PreparedOutboundDispatch {
             request,
@@ -178,40 +194,39 @@ impl OutboundDispatchPipeline {
             space_posting,
             policy_risk,
             payload,
-            ..
+            replay,
+            native_mail_recipient,
+            step_binding: _,
         } = prepared;
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
-        let verdict = match admission.decision {
-            super::admission::DispatchAdmission::Execute => {
-                super::effect::execute_admitted(super::effect::EffectInput {
-                    vault,
-                    request: &request,
-                    sink,
-                    verb_contract,
-                    effect,
-                    payload: payload.ok_or(Error::InvariantViolation(
-                        "admitted dispatch has no frozen payload",
-                    ))?,
-                    attempt_id,
-                    idempotency_supported,
-                    verified_actor,
-                    suppression_receipt:
-                        crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
-                            &request,
-                            &admission.window_decision,
-                            &admission.window_resolution,
-                        ),
-                })?
-            }
-            super::admission::DispatchAdmission::Park { outcome } => super::govern::govern_parked(
-                vault,
-                &request,
-                &effect,
-                verified_actor,
-                space_posting.as_ref(),
-                outcome,
-            )?,
+        let parked = match admission.decision {
+            super::admission::DispatchAdmission::Park { outcome } => Some(outcome),
+            super::admission::DispatchAdmission::Execute => None,
         };
+        if parked.is_none()
+            && replay.as_ref().is_some_and(|record| {
+                record.state == crate::outbound_intent_ledger::IntentState::Pending
+            })
+        {
+            require_native_mail_retry_sender(vault, &request, native_mail_recipient)?;
+        }
+        let verdict = super::effect::execute_admitted(super::effect::EffectInput {
+            vault,
+            request: &request,
+            sink,
+            verb_contract,
+            effect,
+            payload: payload.ok_or(Error::InvariantViolation("missing outbound payload"))?,
+            attempt_id,
+            idempotency_supported,
+            verified_actor,
+            parked,
+            suppression_receipt: crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
+                &request,
+                &admission.window_decision,
+                &admission.window_resolution,
+            ),
+        })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,

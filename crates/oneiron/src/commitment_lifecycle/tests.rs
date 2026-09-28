@@ -410,7 +410,7 @@ fn reserved_fulfills_cannot_be_forged_publicly() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&stranger, &stranger_body, time(10, 20), 300)?;
     vault
         .batch()
@@ -1176,7 +1176,7 @@ fn dreamer_witness_refuses_before_writing() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&stranger, &stranger_body, time(10, 20), 300)?;
     assert!(matches!(
         propose_commitment_fulfilled(

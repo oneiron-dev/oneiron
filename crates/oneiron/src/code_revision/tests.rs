@@ -94,7 +94,7 @@ fn put_claim_entity_with_source_and_approval(
         0.9,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let mut body = body;
     body.source = source;
     let data = encode_claim_body(&body)?;
@@ -184,16 +184,11 @@ fn replace_code_artifact_body_unchecked(
 
 fn corrupt_code_revision_frontier_fold(vault: &Vault, session_id: &EntityId) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let key = code_revision_frontier_key(session_id);
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)?
+    let mut frontier = FRONTIER
+        .get(&vault.store, &wtxn, session_id)?
         .ok_or(Error::EntityNotFound)?;
-    let mut frontier = decode_code_revision_frontier_record(&raw)?;
     frontier.revision_fold[0] ^= 0x80;
-    let encoded = encode_code_revision_frontier_record(&frontier)?;
-    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    FRONTIER.put(&vault.store, &mut wtxn, session_id, &frontier)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -205,15 +200,9 @@ fn remove_code_revision_integrity_sidecars(
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     for revision_id in revision_ids {
-        vault
-            .store
-            .vault_meta
-            .delete(&mut wtxn, &code_revision_integrity_key(revision_id))?;
+        INTEGRITY.delete(&vault.store, &mut wtxn, revision_id)?;
     }
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, &code_revision_frontier_key(session_id))?;
+    FRONTIER.delete(&vault.store, &mut wtxn, session_id)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -224,10 +213,7 @@ fn delete_code_revision_session_index_row(
     revision_id: &EntityId,
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.delete(
-        &mut wtxn,
-        &code_revision_session_index_key(session_id, revision_id),
-    )?;
+    SESSION_INDEX.delete(&vault.store, &mut wtxn, &(*session_id, *revision_id))?;
     wtxn.commit()?;
     Ok(())
 }
@@ -239,13 +225,9 @@ fn corrupt_code_revision_parent_fold_self_consistent(
     let mut wtxn = vault.store.env.write_txn()?;
     let revision = read_code_revision_record_in_txn(&vault.store, &wtxn, revision_id)?
         .ok_or(Error::EntityNotFound)?;
-    let key = code_revision_integrity_key(revision_id);
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)?
+    let mut record = INTEGRITY
+        .get(&vault.store, &wtxn, revision_id)?
         .ok_or(Error::EntityNotFound)?;
-    let mut record = decode_code_revision_integrity_record(&raw)?;
     let parent_fold = record.parent_fold.as_mut().ok_or(Error::Artifact(
         ArtifactError::InvalidCodeArtifactBody("test revision must have a parent fold"),
     ))?;
@@ -257,8 +239,7 @@ fn corrupt_code_revision_parent_fold_self_consistent(
         record.parent_fold,
         record.reverted_to_fold,
     );
-    let encoded = encode_code_revision_integrity_record(&record)?;
-    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    INTEGRITY.put(&vault.store, &mut wtxn, revision_id, &record)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -268,22 +249,14 @@ fn read_code_revision_integrity_record(
     revision_id: &EntityId,
 ) -> Result<CodeRevisionIntegrityRecord> {
     let rtxn = vault.store.env.read_txn()?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &code_revision_integrity_key(revision_id))?
-        .ok_or(Error::EntityNotFound)?;
-    decode_code_revision_integrity_record(&raw)
+    INTEGRITY
+        .get(&vault.store, &rtxn, revision_id)?
+        .ok_or(Error::EntityNotFound)
 }
 
 fn replace_code_revision_record_unchecked(vault: &Vault, revision: &CodeRevision) -> Result<()> {
-    let encoded = encode_code_revision(revision)?;
     let mut wtxn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.put(
-        &mut wtxn,
-        &code_revision_record_key(&revision.revision_id),
-        &encoded,
-    )?;
+    RECORDS.put(&vault.store, &mut wtxn, &revision.revision_id, revision)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -292,13 +265,8 @@ fn replace_code_revision_integrity_record_unchecked(
     vault: &Vault,
     record: &CodeRevisionIntegrityRecord,
 ) -> Result<()> {
-    let encoded = encode_code_revision_integrity_record(record)?;
     let mut wtxn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.put(
-        &mut wtxn,
-        &code_revision_integrity_key(&record.revision_id),
-        &encoded,
-    )?;
+    INTEGRITY.put(&vault.store, &mut wtxn, &record.revision_id, record)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -309,25 +277,23 @@ fn corrupt_code_revision_frontier_session(
     corrupt_session_id: EntityId,
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let key = code_revision_frontier_key(session_id);
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)?
+    let mut frontier = FRONTIER
+        .get(&vault.store, &wtxn, session_id)?
         .ok_or(Error::EntityNotFound)?;
-    let mut frontier = decode_code_revision_frontier_record(&raw)?;
     frontier.session_id = corrupt_session_id;
-    let encoded = encode_code_revision_frontier_record(&frontier)?;
-    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    FRONTIER.put(&vault.store, &mut wtxn, session_id, &frontier)?;
     wtxn.commit()?;
     Ok(())
 }
 
+// These two write bytes that must NOT decode as their row's value type, so they go straight to
+// the underlying table through `key_bytes` rather than through `FRONTIER`/`RECORDS`'s typed
+// `put`, which would try (and fail) to encode a real value.
 fn corrupt_code_revision_frontier_bytes(vault: &Vault, session_id: &EntityId) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     vault.store.vault_meta.put(
         &mut wtxn,
-        &code_revision_frontier_key(session_id),
+        &FRONTIER.key_bytes(session_id),
         b"not-a-frontier",
     )?;
     wtxn.commit()?;
@@ -338,7 +304,7 @@ fn corrupt_code_revision_record_bytes(vault: &Vault, revision_id: &EntityId) -> 
     let mut wtxn = vault.store.env.write_txn()?;
     vault.store.vault_meta.put(
         &mut wtxn,
-        &code_revision_record_key(revision_id),
+        &RECORDS.key_bytes(revision_id),
         b"not-a-code-revision",
     )?;
     wtxn.commit()?;
@@ -352,20 +318,11 @@ fn code_revision_integrity_sidecars_exist(
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
     for revision_id in revision_ids {
-        if vault
-            .store
-            .vault_meta
-            .get(&rtxn, &code_revision_integrity_key(revision_id))?
-            .is_none()
-        {
+        if !INTEGRITY.contains(&vault.store, &rtxn, revision_id)? {
             return Ok(false);
         }
     }
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&rtxn, &code_revision_frontier_key(session_id))?
-        .is_some())
+    FRONTIER.contains(&vault.store, &rtxn, session_id)
 }
 
 #[test]
@@ -1516,7 +1473,7 @@ fn code_integrity_generated_non_code_claim_reports_user_stated_code_revision_tru
         0.9,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     generated_body.source = Some(ClaimSource::Generated);
     let data = encode_claim_body(&generated_body)?;
     put_claim_entity_unchecked(&vault, generated_non_code, 300, &data)?;
@@ -1736,11 +1693,7 @@ fn tested_file_frontiers_roundtrip_and_full_fold_verification_catches_substituti
     // state must still break the revision's persisted fold.
     let tampered = revision.with_file_frontier(second);
     let mut txn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.put(
-        &mut txn,
-        &code_revision_record_key(&revision_id),
-        &encode_code_revision(&tampered)?,
-    )?;
+    RECORDS.put(&vault.store, &mut txn, &revision_id, &tampered)?;
     txn.commit()?;
     assert_eq!(
         vault.get_code_revision(&revision_id).unwrap_err().kind(),
@@ -1889,11 +1842,7 @@ fn canonical_commit_message_and_modes_are_authenticated_by_the_revision_fold() -
     let mut forged = revision;
     forged.commit_metadata.as_mut().unwrap().message = "Another message".into();
     let mut txn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.put(
-        &mut txn,
-        &code_revision_record_key(&id),
-        &encode_code_revision(&forged)?,
-    )?;
+    RECORDS.put(&vault.store, &mut txn, &id, &forged)?;
     txn.commit()?;
     assert!(vault.get_code_revision(&id).is_err());
     Ok(())

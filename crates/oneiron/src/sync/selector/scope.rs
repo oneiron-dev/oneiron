@@ -12,8 +12,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    FederationDirectionScope, FederationScopeBands, FederationScopeFacets, SelectorRange,
-    selector_range_of,
+    FederationDirectionScope, ScopeAxis, ScopeId, SelectorRange, selector_range_of,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::sync::bridge::parse_edge_key;
@@ -237,8 +236,7 @@ fn edge_exists_in_txn(
     kind: EdgeKind,
     tgt: &EntityId,
 ) -> Result<bool> {
-    let key = crate::store::Store::encode_edge_key(src, kind, tgt);
-    Ok(vault.store.edges_out.get(rtxn, &key)?.is_some())
+    Ok(crate::ports::EdgeStoreRead::port_edge_get(&vault.store, rtxn, src, kind, tgt)?.is_some())
 }
 
 /// Resolve just the candidate link from the committing document writer.
@@ -379,11 +377,10 @@ pub(super) fn facet_scope_by_source(
     edges: &loro::LoroMap,
     position: &FederationDirectionScope,
 ) -> Result<HashMap<EntityId, FacetScope>> {
-    let selected: HashSet<EntityId> = facet_filter(position)
-        .unwrap_or_default()
-        .iter()
-        .copied()
-        .collect();
+    let selected: HashSet<EntityId> = match &position.facets {
+        ScopeAxis::Some(facets) => facets.iter().map(|facet| facet.0).collect(),
+        ScopeAxis::All | ScopeAxis::Bottom => HashSet::new(),
+    };
     let mut scopes = HashMap::<EntityId, FacetScope>::new();
     if selected.is_empty() {
         return Ok(scopes);
@@ -511,24 +508,18 @@ fn mirrored_endpoint_type(
     Ok(resolved)
 }
 
-/// The facets a resolved position filters on. `None` filters nothing on the
-/// axis, and the ⊥ ceiling's empty list lets nothing pass.
-pub(super) fn facet_filter(position: &FederationDirectionScope) -> Option<&[EntityId]> {
-    match &position.facets {
-        FederationScopeFacets::All => None,
-        FederationScopeFacets::Some(facets) => Some(facets),
-        FederationScopeFacets::Bottom => Some(&[]),
-    }
+/// The facet axis of a resolved position when it filters. `None` filters
+/// nothing on the axis, and the ⊥ ceiling contains no facet, so nothing passes.
+pub(super) fn facet_filter(position: &FederationDirectionScope) -> Option<&ScopeAxis<ScopeId>> {
+    (position.facets != ScopeAxis::All).then_some(&position.facets)
 }
 
-/// The bands a resolved position filters on, read as [`facet_filter`] reads
-/// facets.
-pub(super) fn band_filter(position: &FederationDirectionScope) -> Option<&[SelectorRange]> {
-    match &position.bands {
-        FederationScopeBands::All => None,
-        FederationScopeBands::Some(bands) => Some(bands),
-        FederationScopeBands::Bottom => Some(&[]),
-    }
+/// The band axis of a resolved position when it filters, read as
+/// [`facet_filter`] reads facets.
+pub(super) fn band_filter(
+    position: &FederationDirectionScope,
+) -> Option<&ScopeAxis<SelectorRange>> {
+    (position.bands != ScopeAxis::All).then_some(&position.bands)
 }
 
 pub(super) fn entity_selector_decision(
@@ -541,6 +532,11 @@ pub(super) fn entity_selector_decision(
 ) -> Option<EntitySelectorDecision> {
     let (id, blob) = entity;
     let header = EntityMetadataHeader::parse(blob)?;
+    // Delegated ChannelIdentity rows carry local custody and consent facts.
+    // Filter from the carrier body itself, never from its peer-chosen map key.
+    if crate::sync::window::is_delegated_channel_identity_carrier(blob) {
+        return None;
+    }
     if !claim_sync_allowed(blob) {
         return None;
     }
@@ -570,13 +566,13 @@ pub(super) fn entity_selector_decision(
             .and_then(|registration| registration.family)
             .map(crate::federation::SelectorRange::Family)
     })?;
-    if band_filter(position).is_some_and(|bands| !bands.iter().any(|band| band.includes(identity)))
-    {
+    if band_filter(position).is_some_and(|bands| !bands.contains(&identity)) {
         return None;
     }
     let facets = facet_filter(position);
-    if facets.is_some_and(|facets| header.entity_type == ENTITY_TYPE_FACET && !facets.contains(id))
-    {
+    if facets.is_some_and(|facets| {
+        header.entity_type == ENTITY_TYPE_FACET && !facets.contains(&ScopeId(*id))
+    }) {
         return None;
     }
     if facets.is_some()
@@ -601,8 +597,9 @@ pub(super) fn entity_selector_decision(
     ) {
         return None;
     }
-    let facet_visible =
-        facets.is_some_and(|facets| header.entity_type == ENTITY_TYPE_FACET && facets.contains(id));
+    let facet_visible = facets.is_some_and(|facets| {
+        header.entity_type == ENTITY_TYPE_FACET && facets.contains(&ScopeId(*id))
+    });
     let facet_seed = facets.is_some() && facet_scope.get(id).is_some_and(|scope| scope.selected);
     Some(EntitySelectorDecision {
         facet_visible,

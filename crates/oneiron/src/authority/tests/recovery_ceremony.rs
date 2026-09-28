@@ -24,7 +24,7 @@ fn genesis_secret_step_cannot_be_skipped_and_dismissal_is_visible() {
     let mut skipped = Vec::new();
     rmpv::encode::write_value(&mut skipped, &value).unwrap();
     assert!(decode_authority_log_entry_body(&skipped).is_err());
-    let fold = fold_authority_log(&[genesis.clone()]);
+    let fold = fold_legacy_authority_log(&[genesis.clone()]);
     assert!(fold.genesis_fragile);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll = enroll_device_entry(
@@ -43,7 +43,7 @@ fn genesis_secret_step_cannot_be_skipped_and_dismissal_is_visible() {
     let entries = [genesis, enroll];
     let seen = BTreeMap::from([(hash, 10)]);
     // Enrolling a second device closes the genesis window at once.
-    assert!(!fold_authority_log_with_seen_times(&entries, &seen, 10).genesis_fragile);
+    assert!(!fold_legacy_authority_log_with_seen_times(&entries, &seen, 10).genesis_fragile);
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn migration_preserves_genesis_and_retires_the_old_root() {
     );
     let bytes = encode_authority_log_entry_body(&reroot).unwrap();
     assert_eq!(decode_authority_log_entry_body(&bytes).unwrap(), reroot);
-    let migrated = fold_authority_log(&[genesis.clone(), reroot.clone()]);
+    let migrated = fold_legacy_authority_log(&[genesis.clone(), reroot.clone()]);
     assert_eq!(migrated.vault_id, Some(vault_id));
     assert!(migrated.roster[&authority_key_from_ed(&old)].revoked);
     assert!(!migrated.roster[&authority_key_from_ed(&new)].revoked);
@@ -91,7 +91,7 @@ fn migration_preserves_genesis_and_retires_the_old_root() {
     let seen = BTreeMap::from([(hash, 10)]);
     let entries = [genesis, reroot, enroll];
     // The re-rooted key's enrollment lands at once, even first seen just now.
-    let enrolled = fold_authority_log_with_seen_times(&entries, &seen, 10);
+    let enrolled = fold_legacy_authority_log_with_seen_times(&entries, &seen, 10);
     assert!(enrolled.valid_entries.contains(&hash));
     assert!(!enrolled.roster[&authority_key_from_ed(&ed_key(77))].revoked);
     assert_eq!(enrolled.vault_id, Some(vault_id));

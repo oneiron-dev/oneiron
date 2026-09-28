@@ -1,16 +1,88 @@
 //! OF-327 mechanical semantic cooldown under the effect admission writer lock.
 
 use crate::Vault;
+use crate::error::{Error, SideTableRowProblem, StoreError};
 use crate::outbound_intent_ledger::{
     IntentId, IntentLedgerError, IntentState, read_intent_record_in_txn,
 };
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::types::PreparedEffect;
 
 // Initial safety floor. Tuning belongs to OF-327; this is not a provider rate limit.
 const DEDUPE_COOLDOWN_S: u64 = 86_400;
 const PREFIX: &[u8] = b"outbound:dedupe:v1:";
-const INTENT_PREFIX: &[u8] = b"outbound:dedupe_intent:v1:";
+const RESERVATION: SideTable<[u8; 32], Reservation, Raw> =
+    SideTable::new(&side_table::OUTBOUND_DEDUPE_RESERVATION);
+const INTENT_BINDING: SideTable<IntentId, DedupeBinding, Raw> =
+    SideTable::new(&side_table::OUTBOUND_DEDUPE_INTENT);
+
+/// The binding stores the *full* reservation key, not only its hash suffix.
+#[derive(Clone, Copy)]
+struct DedupeBinding([u8; 32]);
+
+impl RawValue for DedupeBinding {
+    fn to_raw(&self) -> Result<Vec<u8>, CodecError> {
+        let mut bytes = PREFIX.to_vec();
+        bytes.extend_from_slice(&self.0);
+        Ok(bytes)
+    }
+
+    fn from_raw(bytes: &[u8]) -> Result<Self, CodecError> {
+        let hash = bytes
+            .strip_prefix(PREFIX)
+            .and_then(|suffix| suffix.try_into().ok())
+            .ok_or(SideTableRowProblem::Undecodable)?;
+        Ok(Self(hash))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Reservation {
+    id: IntentId,
+    stamped_at: u64,
+}
+
+impl RawValue for Reservation {
+    fn to_raw(&self) -> Result<Vec<u8>, CodecError> {
+        let mut bytes = Vec::with_capacity(40);
+        bytes.extend_from_slice(&self.id);
+        bytes.extend_from_slice(&self.stamped_at.to_be_bytes());
+        Ok(bytes)
+    }
+
+    fn from_raw(bytes: &[u8]) -> Result<Self, CodecError> {
+        let (id, stamp) = bytes
+            .split_at_checked(32)
+            .filter(|(_, stamp)| stamp.len() == 8)
+            .ok_or(SideTableRowProblem::Undecodable)?;
+        Ok(Self {
+            id: id
+                .try_into()
+                .map_err(|_| SideTableRowProblem::Undecodable)?,
+            stamped_at: u64::from_be_bytes(
+                stamp
+                    .try_into()
+                    .map_err(|_| SideTableRowProblem::Undecodable)?,
+            ),
+        })
+    }
+}
+
+fn reservation_key(key: &[u8]) -> Result<[u8; 32], IntentLedgerError> {
+    key.strip_prefix(PREFIX)
+        .and_then(|suffix| suffix.try_into().ok())
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "invalid dedupe reservation key",
+        ))
+}
+
+fn malformed(error: Error, reason: &'static str) -> IntentLedgerError {
+    match error {
+        Error::Store(StoreError::SideTableRow { .. }) => IntentLedgerError::InvalidRecord(reason),
+        other => other.into(),
+    }
+}
 
 /// The semantic key is vault-wide: changing actor, channel or target cannot
 /// evade this floor. Producers include any needed recipient scope in the key;
@@ -49,22 +121,12 @@ pub(super) fn blocked(
     key: &[u8],
     now_s: u64,
 ) -> Result<bool, IntentLedgerError> {
-    let Some(raw) = vault.store.vault_meta.get(txn, key)? else {
+    let Some(Reservation { id, stamped_at }) = RESERVATION
+        .get(&vault.store, txn, &reservation_key(key)?)
+        .map_err(|error| malformed(error, "invalid dedupe pointer"))?
+    else {
         return Ok(false);
     };
-    let bytes: &[u8] = raw.as_ref();
-    let (id_bytes, stamp_bytes) = bytes
-        .split_at_checked(32)
-        .filter(|(_, stamp)| stamp.len() == 8)
-        .ok_or(IntentLedgerError::InvalidRecord("invalid dedupe pointer"))?;
-    let id: IntentId = id_bytes
-        .try_into()
-        .map_err(|_| IntentLedgerError::InvalidRecord("invalid dedupe pointer"))?;
-    let stamped_at = u64::from_be_bytes(
-        stamp_bytes
-            .try_into()
-            .map_err(|_| IntentLedgerError::InvalidRecord("invalid dedupe timestamp"))?,
-    );
     let record = read_intent_record_in_txn(vault, txn, &id)?
         .ok_or(IntentLedgerError::InvalidRecord("dedupe target is missing"))?;
     if intent_key(vault, txn, &id)?.as_deref() != Some(key) {
@@ -92,21 +154,18 @@ pub(super) fn reserve(
     id: &IntentId,
     now_s: u64,
 ) -> Result<(), IntentLedgerError> {
-    let mut value = Vec::with_capacity(40);
-    value.extend_from_slice(id);
-    value.extend_from_slice(&now_s.to_be_bytes());
-    vault.store.vault_meta.put(txn, key, &value)?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, &intent_binding_key(id), key)?;
+    let hash = reservation_key(key)?;
+    RESERVATION.put(
+        &vault.store,
+        txn,
+        &hash,
+        &Reservation {
+            id: *id,
+            stamped_at: now_s,
+        },
+    )?;
+    INTENT_BINDING.put(&vault.store, txn, id, &DedupeBinding(hash))?;
     Ok(())
-}
-
-fn intent_binding_key(id: &IntentId) -> Vec<u8> {
-    let mut key = INTENT_PREFIX.to_vec();
-    key.extend_from_slice(id);
-    key
 }
 
 fn intent_key(
@@ -114,16 +173,10 @@ fn intent_key(
     txn: &heed::RoTxn<'_>,
     id: &IntentId,
 ) -> Result<Option<Vec<u8>>, IntentLedgerError> {
-    let raw = vault.store.vault_meta.get(txn, &intent_binding_key(id))?;
-    raw.map(|bytes| {
-        if bytes.len() != PREFIX.len() + 32 || !bytes.starts_with(PREFIX) {
-            return Err(IntentLedgerError::InvalidRecord(
-                "invalid dedupe intent binding",
-            ));
-        }
-        Ok(bytes.into_owned())
-    })
-    .transpose()
+    INTENT_BINDING
+        .get(&vault.store, txn, id)
+        .map_err(|error| malformed(error, "invalid dedupe intent binding"))
+        .map(|hash| hash.map(|DedupeBinding(hash)| RESERVATION.key_bytes(&hash)))
 }
 
 /// Under the transition's writer lock, only the current reservation can move
@@ -136,19 +189,13 @@ pub(crate) fn owns_retry(
     let Some(key) = intent_key(vault, txn, id)? else {
         return Ok(true);
     };
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &key)?
+    let reservation = RESERVATION
+        .get(&vault.store, txn, &reservation_key(&key)?)
+        .map_err(|error| malformed(error, "invalid dedupe reservation"))?
         .ok_or(IntentLedgerError::InvalidRecord(
             "dedupe reservation is missing",
         ))?;
-    if raw.len() != 40 {
-        return Err(IntentLedgerError::InvalidRecord(
-            "invalid dedupe reservation",
-        ));
-    }
-    Ok(&raw.as_ref()[..32] == id)
+    Ok(&reservation.id == id)
 }
 
 /// Extend the floor from the actual ACK, not the possibly much earlier
@@ -166,10 +213,15 @@ pub(crate) fn delivered_in_txn(
             "delivered dedupe reservation was replaced",
         ));
     }
-    let mut value = Vec::with_capacity(40);
-    value.extend_from_slice(id);
-    value.extend_from_slice(&vault.store.clock.now_recorded_at().to_be_bytes());
-    vault.store.vault_meta.put(txn, &key, &value)?;
+    RESERVATION.put(
+        &vault.store,
+        txn,
+        &reservation_key(&key)?,
+        &Reservation {
+            id: *id,
+            stamped_at: vault.store.clock.now_recorded_at(),
+        },
+    )?;
     Ok(())
 }
 
@@ -189,10 +241,15 @@ pub(crate) fn touch_inflight(vault: &Vault, id: &IntentId) -> Result<(), IntentL
             "outbound semantic retry lost its reservation",
         ));
     }
-    let mut value = Vec::with_capacity(40);
-    value.extend_from_slice(id);
-    value.extend_from_slice(&vault.store.clock.now_recorded_at().to_be_bytes());
-    vault.store.vault_meta.put(&mut txn, &key, &value)?;
+    RESERVATION.put(
+        &vault.store,
+        &mut txn,
+        &reservation_key(&key)?,
+        &Reservation {
+            id: *id,
+            stamped_at: vault.store.clock.now_recorded_at(),
+        },
+    )?;
     txn.commit().map_err(crate::error::Error::from)?;
     crate::outbound_intent_ledger::force_sync(vault)
 }

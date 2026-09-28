@@ -42,12 +42,12 @@ pub(super) fn validate_facet_overwrite(
                 .and_then(|bytes| bytes.try_into().ok())
                 .and_then(|bytes| EntityId::from_bytes(bytes).ok())
                 .ok_or(Error::InvalidClaimBody("substrate PERSON id"))?;
-            if crate::claim::substrate_facet_id(person) != id {
+            if crate::claim::substrate_facet_id(person)? != id {
                 return Err(Error::InvalidClaimBody("substrate id must bind PERSON"));
             }
         }
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(());
     };
     if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_FACET) {

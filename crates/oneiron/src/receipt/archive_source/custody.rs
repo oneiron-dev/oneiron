@@ -5,36 +5,54 @@ use crate::{
     entity_id::EntityId,
     error::{Error, Result},
     registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM},
+    side_table::{self, HexId, Raw, SideTable},
     store::Store,
 };
 use std::collections::BTreeSet;
-const OWNED: &[u8] = b"receipt/archive-owned/v1\0";
-const BINDING: &[u8] = b"receipt/archive-binding/v1\0";
-const SLOT: &[u8] = b"receipt/archive-slot/v1\0";
-fn slot_key(source: &ReceiptArchive) -> Result<Vec<u8>> {
-    let mut key = key(SLOT, &source.holder()?);
-    key.extend_from_slice(source.body_sha256.as_bytes());
-    key.extend_from_slice(source.source.receipt_id().as_bytes());
-    Ok(key)
+
+/// Index of archived receipt-source ids currently owned by one holder claim.
+/// Key: id16 (holder) + id16 (source).
+const OWNED: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::RECEIPT_ARCHIVE_OWNED);
+/// Binds one archived receipt-source ASSET to the inert holder CLAIM it documents. Key: id16.
+const BINDING: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::RECEIPT_ARCHIVE_BINDING);
+/// Dedupe slot: which archived receipt-source id currently occupies one
+/// (holder, body hash, receipt id) triple. Key: id16 (holder) + hex64 (body
+/// sha256) + string (receipt id).
+const SLOT: SideTable<(EntityId, [u8; 64], String), EntityId, Raw> =
+    SideTable::new(&side_table::RECEIPT_ARCHIVE_SLOT);
+/// Marks a holder CLAIM whose archived receipt-source closure has been retired. Key: id16.
+const RETIRED_HOLDER: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::RECEIPT_ARCHIVE_HOLDER_RETIRED);
+/// Marks one archived receipt-source ASSET id as retired. Key: id16.
+const RETIRED_SOURCE: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::RECEIPT_ARCHIVE_SOURCE_RETIRED);
+/// The ARCH-0023b global local hard-delete marker (owned by
+/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
+const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
+
+fn slot_key(source: &ReceiptArchive) -> Result<(EntityId, [u8; 64], String)> {
+    let hash: [u8; 64] = source
+        .body_sha256
+        .as_bytes()
+        .try_into()
+        .map_err(|_| invalid())?;
+    Ok((
+        source.holder()?,
+        hash,
+        source.source.receipt_id().to_owned(),
+    ))
 }
-const RETIRED_HOLDER: &[u8] = b"receipt/archive-holder-retired/v1\0";
-const RETIRED_SOURCE: &[u8] = b"receipt/archive-source-retired/v1\0";
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-fn owned_key(holder: &EntityId, id: &EntityId) -> Vec<u8> {
-    let mut key = key(OWNED, holder);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-fn retired(store: &Store, txn: &heed::RoTxn<'_>, prefix: &[u8], id: &EntityId) -> Result<bool> {
-    Ok(store.vault_meta.get(txn, &key(prefix, id))?.is_some()
-        || store
-            .sync_state
-            .get(txn, &format!("dt:{}", id.to_hex()))?
-            .is_some()
+fn retired(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    table: SideTable<EntityId, (), Raw>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(table.contains(store, txn, id)?
+        || HARD_DELETE_MARKER.contains(store, txn, &HexId(*id))?
         || store.off_record_sessions.contains_entity(id)?)
 }
 
@@ -50,7 +68,7 @@ pub(crate) fn validate_receipt_archive_put(
     } else {
         None
     };
-    if store.vault_meta.get(txn, &key(BINDING, id))?.is_some() && source.is_none() {
+    if BINDING.contains(store, txn, id)? && source.is_none() {
         return Err(invalid());
     }
     let Some(source) = source else {
@@ -64,19 +82,19 @@ pub(crate) fn validate_receipt_archive_put(
     {
         return Err(invalid());
     }
-    if let Some(bound) = store.vault_meta.get(txn, &slot_key(&source)?)?
-        && bound != id.as_bytes().as_slice()
+    if let Some(bound) = SLOT.get(store, txn, &slot_key(&source)?)?
+        && bound != *id
     {
         return Err(invalid());
     }
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("receipt source header"))?;
         if header.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != *body {
             return Err(invalid());
         }
     }
-    if let Some(raw) = store.entities.get(txn, holder.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &holder)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("receipt source holder"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM
@@ -100,13 +118,9 @@ pub(crate) fn stage_receipt_archive_put(
         && let Some(source) = decode(body)?
     {
         let holder = source.holder()?;
-        store
-            .vault_meta
-            .put(txn, &slot_key(&source)?, id.as_bytes())?;
-        store.vault_meta.put(txn, &owned_key(&holder, id), &[])?;
-        store
-            .vault_meta
-            .put(txn, &key(BINDING, id), holder.as_bytes())?;
+        SLOT.put(store, txn, &slot_key(&source)?, id)?;
+        OWNED.put(store, txn, &(holder, *id), &())?;
+        BINDING.put(store, txn, id, &holder)?;
     }
     let owned = receipt_archives_for_holder(store, txn, id)?;
     if !owned.is_empty() {
@@ -117,7 +131,9 @@ pub(crate) fn stage_receipt_archive_put(
             // holder. Retire a now-provably-uncited payload, not the claim.
             let hash = super::codec::digest(body);
             for source_id in owned {
-                let Some(raw) = store.entities.get(txn, source_id.as_bytes())? else {
+                let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw(store, txn, &source_id)?
+                else {
                     continue;
                 };
                 let header = EntityMetadataHeader::parse(&raw)
@@ -130,9 +146,7 @@ pub(crate) fn stage_receipt_archive_put(
                     return Err(invalid());
                 }
                 if source.body_sha256 == hash && !source.matches_body(body) {
-                    store
-                        .vault_meta
-                        .put(txn, &key(RETIRED_SOURCE, &source_id), &[])?;
+                    RETIRED_SOURCE.put(store, txn, &source_id, &())?;
                     erase_source_payload(store, txn, &source_id)?;
                 }
             }
@@ -145,18 +159,9 @@ pub(crate) fn receipt_archives_for_holder(
     txn: &heed::RoTxn<'_>,
     holder: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let prefix = key(OWNED, holder);
     let mut ids = Vec::new();
-    for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (key, _) = entry?;
-        let raw = key.strip_prefix(prefix.as_slice()).ok_or(invalid())?;
-        let id = crate::entity_id::parse_entity_id(raw, "receipt archive index")?;
-        if store
-            .vault_meta
-            .get(txn, &self::key(BINDING, &id))?
-            .as_deref()
-            != Some(holder.as_bytes().as_slice())
-        {
+    for ((_, id), ()) in OWNED.scan_from(store, txn, holder.as_bytes())? {
+        if BINDING.get(store, txn, &id)?.as_ref() != Some(holder) {
             return Err(Error::CorruptedIndex("receipt archive binding"));
         }
         ids.push(id);
@@ -171,7 +176,7 @@ pub(super) fn read_source(
     if retired(store, txn, RETIRED_SOURCE, id)? {
         return Ok(None);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -181,10 +186,7 @@ pub(super) fn read_source(
         return Err(invalid());
     }
     let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
-    if source.id()? != *id
-        || store.vault_meta.get(txn, &slot_key(&source)?)?.as_deref()
-            != Some(id.as_bytes().as_slice())
-    {
+    if source.id()? != *id || SLOT.get(store, txn, &slot_key(&source)?)?.as_ref() != Some(id) {
         return Err(invalid());
     }
     if retired(store, txn, RETIRED_HOLDER, &source.holder()?)?
@@ -204,11 +206,7 @@ pub(crate) fn retire_receipt_archives_for_holder(
     txn: &mut heed::RwTxn<'_>,
     holder: &EntityId,
 ) -> Result<()> {
-    if store
-        .vault_meta
-        .get(txn, &key(RETIRED_HOLDER, holder))?
-        .is_some()
-    {
+    if RETIRED_HOLDER.contains(store, txn, holder)? {
         return Ok(());
     }
     let mut pending = vec![*holder];
@@ -218,11 +216,9 @@ pub(crate) fn retire_receipt_archives_for_holder(
         if !visited.insert(holder) {
             continue;
         }
-        store
-            .vault_meta
-            .put(txn, &key(RETIRED_HOLDER, &holder), &[])?;
+        RETIRED_HOLDER.put(store, txn, &holder, &())?;
         for id in receipt_archives_for_holder(store, txn, &holder)? {
-            store.vault_meta.put(txn, &key(RETIRED_SOURCE, &id), &[])?;
+            RETIRED_SOURCE.put(store, txn, &id, &())?;
             sources.insert(id);
             pending.push(id);
         }
@@ -233,7 +229,7 @@ pub(crate) fn retire_receipt_archives_for_holder(
     Ok(())
 }
 fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(());
     };
     let header =
@@ -257,8 +253,8 @@ pub(crate) fn remove_receipt_archive_custody(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if store.vault_meta.get(txn, &key(BINDING, id))?.is_some() {
-        store.vault_meta.put(txn, &key(RETIRED_SOURCE, id), &[])?;
+    if BINDING.contains(store, txn, id)? {
+        RETIRED_SOURCE.put(store, txn, id, &())?;
     }
     retire_receipt_archives_for_holder(store, txn, id)
 }
@@ -269,7 +265,7 @@ pub(crate) fn receipt_archive_custody_exists(
     holder: &EntityId,
 ) -> Result<bool> {
     for id in receipt_archives_for_holder(store, txn, holder)? {
-        if store.entities.get(txn, id.as_bytes())?.is_some() {
+        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
             return Ok(true);
         }
     }
@@ -283,6 +279,6 @@ pub(crate) fn retire_receipt_archives_for_erased_id(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store.vault_meta.put(txn, &key(RETIRED_SOURCE, id), &[])?;
+    RETIRED_SOURCE.put(store, txn, id, &())?;
     retire_receipt_archives_for_holder(store, txn, id)
 }

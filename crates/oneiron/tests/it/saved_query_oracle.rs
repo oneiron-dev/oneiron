@@ -232,6 +232,7 @@ fn claim_body(subject: EntityId, predicate: &str, value: &str) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .expect("fixture")
 }
 
 fn put_claim_body(vault: &Vault, claim_id: &EntityId, body: ClaimBody) {
@@ -268,6 +269,7 @@ fn create_request(filter: FilterAst, matcher: MatcherSpec) -> CreateSavedQueryRe
 
 fn judge_envelope() -> CallEnvelope {
     CallEnvelope {
+        seat_effort: None,
         scope: oneiron::llm::Scope::default(),
         purpose: CallPurpose::Eval,
         class: CallClass::BestEffort,
@@ -1309,7 +1311,8 @@ fn campaign_member_uses_ca01_optional_derivation_contract() {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .expect("fixture");
         vault
             .put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)
             .unwrap_or_else(|error| panic!("{label} membership must be accepted: {error}"));
@@ -1357,7 +1360,8 @@ fn campaign_member_uses_ca01_optional_derivation_contract() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     assert!(matches!(
         vault.put_claim(&test_id(0x5F), &body, TimeRange { start: 1, end: 1 }, 1),
         Err(Error::InvalidClaimBody(_))
@@ -1703,7 +1707,7 @@ fn membership_epoch_floor_survives_a_promoted_node_with_no_local_watermark() -> 
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
     );
 
     assert_eq!(

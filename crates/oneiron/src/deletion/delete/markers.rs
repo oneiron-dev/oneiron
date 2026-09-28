@@ -4,13 +4,15 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
+use crate::side_table::HexId;
 use crate::store::GateDecisionRecord;
 
 use super::super::rendezvous::maybe_fail_first_txn_pending_tombstone;
 use super::super::tombstone::{
-    DecodedTombstoneValue, TombstoneReason, TombstoneValueV2, archive_tombstone_key,
-    decode_tombstone_value, pending_tombstone_key,
+    ARCHIVE_MARKER, DecodedTombstoneValue, PENDING_TOMBSTONE, PendingTombstoneKey, TombstoneReason,
+    TombstoneValueV2, decode_tombstone_value,
 };
+use super::super::topology_delete_intent::clear_own_topology_delete_in_txn;
 
 impl Vault {
     /// Archives a checked PERSON/SUMMARY in the cleanup decision transaction.
@@ -21,7 +23,8 @@ impl Vault {
         id: &EntityId,
         tombstone: &TombstoneValueV2,
     ) -> Result<bool> {
-        let Some(raw) = self.store.entities.get(wtxn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
+        else {
             return Ok(false);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
@@ -88,8 +91,11 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = pending_tombstone_key(window_label, id);
-        self.store.sync_state.put(wtxn, &key, &value.encode())?;
+        let key = PendingTombstoneKey {
+            window: window_label.to_owned(),
+            id: *id,
+        };
+        PENDING_TOMBSTONE.put(&self.store, wtxn, &key, &value.encode().to_vec())?;
         Ok(())
     }
 
@@ -117,12 +123,27 @@ impl Vault {
         Ok(())
     }
 
-    /// Clears the pending-tombstone marker. Only called once the CRDT
-    /// commit + snapshot persistence have succeeded — never before.
-    pub(super) fn clear_pending_tombstone(&self, window_label: &str, id: &EntityId) -> Result<()> {
+    /// Retire this request's propagation marker and reservation together,
+    /// only after both CRDT publication and local deletion have committed.
+    /// Do not consume a later request's `pt:` row at the same window/entity.
+    pub(super) fn finish_published_topology_delete(
+        &self,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
         self.with_write_txn(|wtxn| {
-            let key = pending_tombstone_key(window_label, id);
-            self.store.sync_state.delete(wtxn, &key)?;
+            let key = PendingTombstoneKey {
+                window: window_label.to_owned(),
+                id: *id,
+            };
+            if PENDING_TOMBSTONE
+                .get_bytes(&self.store, wtxn, &key)?
+                .is_some_and(|raw| raw == value.encode())
+            {
+                PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
+            }
+            clear_own_topology_delete_in_txn(&self.store, wtxn, id, &value.request_id, false)?;
             Ok(())
         })
     }
@@ -139,8 +160,7 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = archive_tombstone_key(id);
-        self.store.sync_state.put(wtxn, &key, &value.encode())?;
+        ARCHIVE_MARKER.put(&self.store, wtxn, &HexId(*id), &value.encode().to_vec())?;
         Ok(())
     }
 
@@ -156,11 +176,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<DecodedTombstoneValue>> {
-        let key = archive_tombstone_key(id);
-        Ok(self
-            .store
-            .sync_state
-            .get(txn, &key)?
+        Ok(ARCHIVE_MARKER
+            .get(&self.store, txn, &HexId(*id))?
             .map(|raw| decode_tombstone_value(&raw)))
     }
 
@@ -175,7 +192,6 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        let key = archive_tombstone_key(id);
-        self.store.sync_state.delete(wtxn, &key)
+        ARCHIVE_MARKER.delete(&self.store, wtxn, &HexId(*id))
     }
 }

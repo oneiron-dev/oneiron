@@ -21,6 +21,7 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
 
 /// An ask word or receipt is checked against its group row, so a replicated
 /// batch applies it after the batch's other rows.
+#[cfg(feature = "sync")]
 pub(crate) fn waits_for_ask_group(blob: &[u8]) -> bool {
     EntityMetadataHeader::parse(blob).is_some_and(|header| header.entity_type == ENTITY_TYPE_TASK)
         && blob
@@ -60,8 +61,8 @@ pub(crate) fn guard_ask_fact_put(
     data: &[u8],
 ) -> Result<()> {
     let kind = fact_kind(data);
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
-        let header = EntityMetadataHeader::parse(raw.as_ref()).ok_or_else(invalid)?;
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? {
+        let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
         let old = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
         if kind.is_some() || fact_kind(old).is_some() {
             // Identity pins BOTH body and header, including an identical-body
@@ -101,7 +102,11 @@ pub(crate) fn guard_ask_fact_put(
                 if group.guest_grants.len() != guests.len()
                     || group.guest_grants.iter().any(|(person, grant)| {
                         !guests.contains_key(person)
-                            || derived_id(b"oneiron.tasks.ask.guest.v1", id, person.as_bytes()).ok()
+                            || crate::EntityId::derive(
+                                crate::entity_id::derived_domains::TASK_ASK_GUEST_GRANT,
+                                &[id.as_bytes(), person.as_bytes()],
+                            )
+                            .ok()
                                 != Some(*grant)
                     })
                 {
@@ -143,10 +148,9 @@ pub(crate) fn guard_ask_fact_put(
                 decode(data, crate::task_verb::ask_soft_confirm::SOFT_CONFIRM)?
                     .ok_or_else(invalid)?;
             if notice.revision == 0
-                || derived_id(
-                    b"oneiron.tasks.ask.soft_confirm.v1",
-                    notice.group_ref,
-                    notice.person_ref.as_bytes(),
+                || crate::EntityId::derive(
+                    crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM,
+                    &[notice.group_ref.as_bytes(), notice.person_ref.as_bytes()],
                 )? != id
             {
                 return Err(invalid());

@@ -10,9 +10,9 @@ use crate::sync::types::WindowKey;
 
 use super::super::export_authority::{VaultImportClassification, VaultImportReceipt};
 use super::export_foreign_receipt::{
-    ForeignVaultImportSource, REMOTE_ENTITY_METADATA_CORRUPT, StagedVaultImport,
-    VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus, content_key,
-    encode_vault_import_receipt, receipt_id, receipt_key, source_bytes, vault_import_stage_receipt,
+    CONTENT, ForeignVaultImportSource, Hex64, RECEIPT, REMOTE_ENTITY_METADATA_CORRUPT,
+    StagedVaultImport, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus,
+    content_key, encode_vault_import_receipt, receipt_id, source_bytes, vault_import_stage_receipt,
 };
 use crate::error::{RecordError, RegistryError, SyncError};
 
@@ -61,24 +61,21 @@ pub(crate) fn vault_import_confirm_if_pending(
     expected: &VaultImportStageReceipt,
     confirmed: &VaultImportStageReceipt,
 ) -> Result<bool> {
-    let key = receipt_key(&expected.receipt_id);
+    let key = Hex64(expected.receipt_id);
     let a = encode_vault_import_receipt(expected)?;
     let b = encode_vault_import_receipt(confirmed)?;
     vault.with_write_txn(|w| {
-        let Some(current) = vault.store.sync_state.get(w, &key)? else {
+        let Some(current) = RECEIPT.get(&vault.store, w, &key)? else {
             return Ok(false);
         };
         if current != a {
             return Ok(false);
         }
-        vault.store.sync_state.put(w, &key, &b)?;
+        RECEIPT.put(&vault.store, w, &key, &b)?;
         // The staged payload exists only to recover a Pending receipt. Once this CAS
         // wins the receipt leaves Pending forever, so drop the content in the same
         // write txn: the terminal receipt and the GC commit or roll back together.
-        vault
-            .store
-            .sync_state
-            .delete(w, &content_key(&expected.receipt_id))?;
+        CONTENT.delete(&vault.store, w, &key)?;
         Ok(true)
     })
 }
@@ -98,17 +95,16 @@ fn put_stage_if_absent(
     receipt: &VaultImportStageReceipt,
     admitted: Option<&[u8]>,
 ) -> Result<bool> {
-    let receipt_key = receipt_key(&receipt.receipt_id);
+    let key = Hex64(receipt.receipt_id);
     let encoded = encode_vault_import_receipt(receipt)?;
-    let content_key = content_key(&receipt.receipt_id);
     vault.with_write_txn(|w| {
-        if vault.store.sync_state.get(w, &receipt_key)?.is_some() {
+        if RECEIPT.contains(&vault.store, w, &key)? {
             return Ok(false);
         }
         if let Some(content) = admitted {
-            vault.store.sync_state.put(w, &content_key, content)?;
+            CONTENT.put(&vault.store, w, &key, &content.to_vec())?;
         }
-        vault.store.sync_state.put(w, &receipt_key, &encoded)?;
+        RECEIPT.put(&vault.store, w, &key, &encoded)?;
         Ok(true)
     })
 }

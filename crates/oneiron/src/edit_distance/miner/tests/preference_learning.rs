@@ -315,7 +315,7 @@ fn ambiguous_and_unscoped_deltas_preserve_the_existing_chooser() {
 /// intact. In production the owner installs the edited manifest through the
 /// owner-authenticated authoring door.
 fn compilation_manifest(vault: &Vault, change: impl FnOnce(&mut Value)) -> Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("shipped manifest decodes");
     change(&mut manifest);
@@ -565,7 +565,7 @@ fn manifest_order_and_pattern_select_the_route() -> Result<()> {
 #[test]
 fn duplicate_holder_parent_is_not_silently_dropped() {
     use super::super::policy::CompilationPolicy;
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest = rmpv::decode::read_value(&mut bytes.as_slice()).expect("manifest");
     let rows = policy_rows(&mut manifest);
     rows.push(Value::Map(vec![
@@ -725,7 +725,9 @@ fn legacy_evidence_and_other_principals_do_not_cross_the_miner_threshold() -> Re
     let crate::claim::ScopedReadResult {
         value,
         receipt: _receipt,
-    } = other.get_entity_parts_with_receipt(id, None)?;
+    } = other
+        .read(&[crate::claim::PointRead::id(*id)], None)?
+        .single();
     assert!(value.is_none());
     Ok(())
 }
@@ -831,7 +833,7 @@ fn owner_identity_and_scope_validation_fail_closed() -> Result<()> {
         0.5,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     for scope in [
         Value::Map(vec![(Value::from("principal"), Value::from("unknown"))]),
         Value::Map(vec![(Value::from("principal"), Value::Binary(vec![1; 15]))]),

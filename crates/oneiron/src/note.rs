@@ -344,7 +344,7 @@ pub(crate) fn ordinary_entity_visible(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(true);
     };
     let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
@@ -365,8 +365,10 @@ mod tests;
 mod citation_erase;
 mod delete;
 mod pin_index;
+mod side_keys;
+mod sync_rows;
 pub(crate) use citation_erase::{
-    PENDING_CITATION_ERASE, ensure_citations_ready, erase_citations_in_txn,
+    any_citation_erase_pending, ensure_citations_ready, erase_citations_in_txn,
 };
 pub(crate) use pin_index::citation_delete_scope_exists;
 #[cfg(feature = "sync")]
