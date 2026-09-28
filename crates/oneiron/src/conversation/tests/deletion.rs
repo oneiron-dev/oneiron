@@ -226,6 +226,8 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         conversation: room,
         parent: Some(root),
         reply_to: None,
+        address: crate::conversation_dag::AddressMode::Broadcast,
+        recipients: vec![],
         kind: crate::registry::ENTITY_TYPE_TURN,
         session: None,
         text: vec![],

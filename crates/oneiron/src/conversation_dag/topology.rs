@@ -31,24 +31,15 @@ impl RecordKind {
 }
 
 pub(crate) fn record_kind(body: &[u8]) -> Result<Option<RecordKind>> {
-    let mut bytes = body;
-    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
-        return Ok(None);
-    };
-    let mut kinds = fields
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some("dag_kind"));
-    let Some((_, value)) = kinds.next() else {
-        return Ok(None);
-    };
-    if !bytes.is_empty() || kinds.next().is_some() {
-        return Err(invalid("invalid DAG record kind"));
-    }
-    match value.as_str() {
-        Some("record") => Ok(Some(RecordKind::Record)),
-        Some("thread") => Ok(Some(RecordKind::Thread)),
-        _ => Err(invalid("invalid DAG record kind")),
-    }
+    // The typed DAG marker and its addressing carrier are one admission
+    // unit. Every topology reader must see the same refusal as entity put.
+    Ok(
+        super::admission::addressing(body)?.map(|(kind, _)| match kind {
+            "record" => RecordKind::Record,
+            "thread" => RecordKind::Thread,
+            _ => unreachable!("addressing decoder admits only typed DAG kinds"),
+        }),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
