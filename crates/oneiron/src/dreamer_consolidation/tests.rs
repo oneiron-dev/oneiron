@@ -45,6 +45,7 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault).expect("owner-pinned test egress");
     grant_fixture_reads(&vault).expect("explicit consolidation read grant");
     (dir, vault)
@@ -1696,7 +1697,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
 
     // …and the module wrote ZERO belief claims itself: the only claims in
     // the store are the step layer's dreamer.step runtime records.
-    let predicates = vault
+    let mut predicates = vault
         .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
         .into_iter()
         .filter(|id| !before.contains(id))
@@ -1705,6 +1706,9 @@ fn no_fabricated_belief_writes() -> Result<()> {
             Ok(crate::claim::decode_claim_body(&bytes, true)?.predicate)
         })
         .collect::<Result<Vec<_>>>()?;
+    // The step records' signed history controls are not claims of their own.
+    predicates
+        .retain(|predicate| crate::claim::history_store::machine_history_kind(predicate).is_none());
     assert!(
         predicates
             .iter()
@@ -2815,7 +2819,11 @@ pub(crate) fn claim_predicates_in_store(vault: &Vault) -> Result<Vec<String>> {
     };
     let mut predicates = Vec::new();
     for id in claim_ids {
-        if let Some(body) = vault.get_claim(&id)? {
+        // A signed MACHINE write's history controls carry its signature; they
+        // are not claims of their own.
+        if let Some(body) = vault.get_claim(&id)?
+            && crate::claim::history_store::machine_history_kind(&body.predicate).is_none()
+        {
             predicates.push(body.predicate);
         }
     }

@@ -131,6 +131,96 @@ fn vault_open_seeds_system_actor_without_claiming_resident_runs() -> Result<()> 
     Ok(())
 }
 
+#[test]
+fn earlier_person_dreamer_row_reopens_as_the_enrolled_system_machine() -> Result<()> {
+    use crate::{ClaimCandidate, ClaimSubject};
+    use rmpv::Value;
+
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let dreamer = vault.dreamer_authority()?.entity_ref();
+    // Earlier builds minted the same id as an Agent PERSON at first use.
+    let minted = TimeRange { start: 7, end: 7 };
+    vault.with_write_txn(|txn| {
+        crate::batch::drop_seeded_actor_row(&vault.store, txn, &dreamer)?;
+        let mut row = vec![crate::registry::ENTITY_TYPE_PERSON];
+        for stamp in [minted.start, minted.end, 7] {
+            row.extend_from_slice(&stamp.to_be_bytes());
+        }
+        row.extend_from_slice(ACTOR_BODY);
+        vault.store.entities.put(txn, dreamer.as_bytes(), &row)?;
+        crate::batch::stage_entity_index_rows(
+            &vault.store,
+            txn,
+            &dreamer,
+            crate::registry::ENTITY_TYPE_PERSON,
+            minted,
+            7,
+        )
+    })?;
+    assert_eq!(
+        vault.get_entity_type(&dreamer)?,
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+    drop(vault);
+
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
+    let actor = vault.dreamer_authority()?;
+    assert_eq!(actor, WriteActor::new(dreamer, EdgeActorClass::System));
+    let raw = {
+        let txn = vault.store.env.read_txn()?;
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &dreamer)?
+            .expect("the migrated Dreamer row")
+    };
+    let header = EntityMetadataHeader::parse(&raw).expect("row header");
+    assert_eq!(
+        (
+            header.entity_type,
+            header.occurred_start,
+            header.occurred_end,
+            header.learned_at
+        ),
+        (crate::registry::ENTITY_TYPE_MACHINE, 0, 0, 0)
+    );
+    assert_eq!(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], ACTOR_BODY);
+
+    let at = TimeRange { start: 10, end: 10 };
+    let candidate = || {
+        ClaimCandidate::new(
+            "profile.color",
+            ClaimSubject::Entity(dreamer),
+            Value::from("blue"),
+            1.0,
+        )
+    };
+    let unsigned = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::from("dreamer"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let propose = |id: EntityId, envelope: &WriteEnvelope| {
+        vault.with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .claim_candidate(&id, candidate(), envelope, at, 10)
+                .apply_recording_gate_decisions(txn)
+        })
+    };
+    // No unsigned MACHINE exemption: until the host enrolls its key, a
+    // Dreamer write is refused.
+    assert!(propose(EntityId::now(), &unsigned).is_err());
+    crate::test_util::provision_engine_machines(&vault);
+    let id = EntityId::now();
+    let signed = crate::test_util::sign_machine_candidate(&vault, &id, &candidate(), &unsigned);
+    assert!(signed.machine_signature().is_some());
+    propose(id, &signed)?;
+    assert_eq!(
+        vault.get_claim(&id)?.map(|body| body.value),
+        Some(Value::from("blue"))
+    );
+    Ok(())
+}
+
 struct UnreachableWeaveDelegate;
 
 impl crate::dreamer_wake::DreamerAttemptExecutor for UnreachableWeaveDelegate {
@@ -195,6 +285,7 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
 
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), embedding_test_config())?;
+    crate::test_util::provision_engine_machines(&vault);
     let dreamer = vault.dreamer_authority()?;
     let agent = EntityId::now();
     let owner = EntityId::now();

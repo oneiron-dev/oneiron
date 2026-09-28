@@ -47,6 +47,7 @@ impl Fixture {
     ) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+        crate::test_util::provision_engine_machines(&vault);
         let actor = vault.dreamer_authority()?;
         let agent = EntityId::now();
         let owner = EntityId::now();
@@ -496,19 +497,16 @@ fn changed_committed_result_does_not_resolve_a_crashed_try() -> Result<()> {
     let fixture = Fixture::new(Some(EdgeActorClass::System))?;
     let mut runtime = CountingRuntime::new();
     fixture.run(&mut runtime)?;
-    let mut body = fixture.output()?;
-    body.value = "substituted result".into();
-    fixture
-        .vault
-        .batch()
-        .put_replicated(
-            &claim_id(&fixture.attempt)?,
-            ENTITY_TYPE_CLAIM,
-            time(6),
-            6,
-            &crate::claim::encode_claim_body(&body)?,
-        )
-        .commit()?;
+    // No write door replaces the Dreamer's signed claim, so the committed
+    // result's record is what changes.
+    let attempt = fixture.attempt.status.attempt.id;
+    fixture.vault.with_write_txn(|txn| {
+        let mut result = RESULT
+            .get(&fixture.vault.store, &*txn, &attempt)?
+            .ok_or_else(invalid)?;
+        result.claim_hash = [0xAB; 32];
+        RESULT.put(&fixture.vault.store, txn, &attempt, &result)
+    })?;
     runtime.panic = true;
     assert!(fixture.run(&mut runtime).is_err());
     assert_eq!(

@@ -1398,6 +1398,10 @@ mod preference_learning;
 #[test]
 fn session_end_miner_uses_queued_system_dreamer() -> Result<()> {
     let (_dir, vault) = temp_vault();
+    // The Dreamer is a MACHINE writer: the host roots the vault and holds its
+    // key. The judging owner keeps writing under the host root.
+    crate::test_util::provision_engine_machines(&vault);
+    crate::test_util::bind_test_owner(&vault, fixture_owner(&vault).entity_ref());
     let actor = put_actor(&vault);
     let mut run = miner_run(&vault);
     run.agent = vault.dreamer_authority()?;

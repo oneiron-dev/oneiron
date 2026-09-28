@@ -33,6 +33,7 @@ impl Fixture {
         // Keep the production default policy. No legacy fixture helper that
         // deletes it, no fail-open policy, no modified production gate.
         let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        crate::test_util::provision_engine_machines(&vault);
         vault
             .put_entity(
                 &id(0x51),
@@ -572,7 +573,7 @@ fn receipt_retention_keeps_the_owner_bundle_receipt_for_load_and_schedule() {
     );
     let facade = f.vault.memory(
         f.vault.dreamer_authority().unwrap().entity_ref(),
-        EdgeActorClass::Agent,
+        EdgeActorClass::System,
     );
     let context = crate::memory::OutboundScheduleContext {
         utc_offset_minutes: Some(0),

@@ -527,6 +527,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
     for resolution in ["accumulate", "merge", "missing", "unlisted"] {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::provision_engine_machines(&vault);
         authorize_test_inference(&vault)?;
         grant_fixture_reads(&vault)?;
         let store = DreamerRunnerStore::new(&vault);

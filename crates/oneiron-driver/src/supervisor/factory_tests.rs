@@ -593,6 +593,10 @@ async fn production_factory_executes_owner_admitted_agent_authored_recipe() -> R
     use oneiron::{EdgeActorClass, EntityId, TimeRange};
 
     let (_dir, vault) = open_vault();
+    // The Dreamer is a MACHINE writer: the host roots the vault and holds its key.
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"driver weave host root")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.provision_engine_machine_identities(&issuer)?;
     let agent = EntityId::from_bytes([0x64; 16])?;
     let owner = EntityId::from_bytes([0x65; 16])?;
     let subject = EntityId::from_bytes([0x66; 16])?;
