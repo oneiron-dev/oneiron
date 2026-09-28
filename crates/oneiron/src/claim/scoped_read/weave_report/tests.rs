@@ -708,3 +708,95 @@ fn weave_exact_pair_admission_keeps_independent_link_to_same_target() -> Result<
     assert!(restored.contains(&independent));
     Ok(())
 }
+
+fn replace_weave_policy(vault: &Vault, policy: Value) -> Result<()> {
+    let invalid = || Error::InvalidConfig("default policy manifest".into());
+    let id = crate::gate::default_policy_manifest_id()?;
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&txn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            .map_err(|_| invalid())?
+    else {
+        return Err(invalid());
+    };
+    drop(txn);
+    entries
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some(crate::gate::weave_policy::KEY))
+        .ok_or_else(invalid)?
+        .1 = policy;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).map_err(|_| invalid())?;
+    crate::test_util::put_policy_manifest_bytes(vault, id, &bytes)
+}
+
+#[test]
+fn wrong_link_correction_follows_weave_report_policy() -> Result<()> {
+    use crate::provenance::EdgeRef;
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let person = entity(0xb4);
+    let peer = entity(0xb5);
+    for id in [person, peer] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+    }
+    vault.put_edge(&person, EdgeKind::Mentions, &peer, 0.5)?;
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);
+    let auth = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+    let link = EdgeRef::new(person, EdgeKind::Mentions, peer);
+    let filed = read.report_wrong_link(&auth, WeaveReader::Person(person), link)?;
+    assert_eq!(
+        read.weave_link_corrections(WeaveReader::Person(person), link)?,
+        vec![filed]
+    );
+
+    // The manifest's person row stops granting the links section: the
+    // correction doors re-run the report under the same resolved policy.
+    let Value::Array(mut roles) = crate::gate::weave_policy::default_value() else {
+        panic!("policy array")
+    };
+    for role in &mut roles {
+        let Value::Map(fields) = role else { continue };
+        if fields
+            .iter()
+            .any(|(k, v)| k.as_str() == Some("role") && v.as_str() == Some("person"))
+        {
+            for (k, v) in fields.iter_mut() {
+                if k.as_str() == Some("sections") {
+                    *v = Value::Array(vec![Value::from("changes")]);
+                }
+            }
+        }
+    }
+    replace_weave_policy(&vault, Value::Array(roles))?;
+
+    assert!(matches!(
+        read.weave_link_corrections(WeaveReader::Person(person), link),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(
+        read.report_wrong_link(&auth, WeaveReader::Person(person), link)
+            .is_err()
+    );
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
+    Ok(())
+}

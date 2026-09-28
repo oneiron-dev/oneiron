@@ -416,6 +416,22 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, grant_ref);
     }
 
+    hash_str(hasher, "weave_report_policy");
+    hash_bool(hasher, resolution.weave_report_policy_empty);
+    hash_str(hasher, resolution.weave_report_precedence.as_str());
+    hash_len(hasher, resolution.weave_report_policy.len());
+    for row in &resolution.weave_report_policy {
+        hash_str(hasher, &row.role);
+        hash_opt_str(hasher, row.holder.as_ref().map(EntityId::to_hex).as_deref());
+        hash_len(hasher, row.sections.len());
+        for section in &row.sections {
+            hash_str(hasher, section);
+        }
+        hash_len(hasher, row.max_sections);
+        hash_len(hasher, row.max_predicates);
+        hash_len(hasher, row.max_edge_kinds);
+        hash_len(hasher, row.max_rows);
+    }
     hash_len(hasher, resolution.scoped_grants.len());
     for grant in &resolution.scoped_grants {
         hash_opt_str(hasher, grant.actor_class.as_deref());

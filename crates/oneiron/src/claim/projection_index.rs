@@ -114,7 +114,7 @@ pub(crate) fn maintain_claim_projection_index(
     store.vault_meta.put(txn, &reverse_key(id), &encoded)?;
     Ok(())
 }
-fn ids(store: &Store, txn: &heed::RoTxn<'_>, prefix: &[u8]) -> Result<Vec<EntityId>> {
+fn ids(store: &Store, txn: &heed::RoTxn<'_>, prefix: &[u8], limit: usize) -> Result<Vec<EntityId>> {
     let mut ids = Vec::new();
     for row in store.vault_meta.prefix_iter(txn, prefix)? {
         let (key, _) = row?;
@@ -123,7 +123,7 @@ fn ids(store: &Store, txn: &heed::RoTxn<'_>, prefix: &[u8]) -> Result<Vec<Entity
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("claim projection index"))?,
         )?);
-        if ids.len() > 10_000 {
+        if ids.len() > limit {
             return Err(Error::IndexOverflow("claim projection query"));
         }
     }
@@ -134,7 +134,17 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
     txn: &heed::RoTxn<'_>,
     predicate: &str,
 ) -> Result<Vec<EntityId>> {
-    ids(store, txn, &predicate_prefix(predicate))
+    ids(store, txn, &predicate_prefix(predicate), 10_000)
+}
+/// The same posting list under a caller-resolved ceiling (a policy row), for
+/// doors whose limit is authored data rather than this index's default.
+pub(crate) fn claim_ids_for_predicate_bounded_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    ids(store, txn, &predicate_prefix(predicate), limit)
 }
 
 /// Classify distinct stored predicates under live policy before reading any
