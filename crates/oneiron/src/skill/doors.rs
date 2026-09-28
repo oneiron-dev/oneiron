@@ -283,6 +283,8 @@ impl Vault {
         }
         fork.forked_from = Some(*parent_id);
         fork.governance_tier = parent.governance_tier;
+        fork.role = parent.role;
+        fork.call = parent.call.clone();
         let package = self.fork_skill_package_in_txn(wtxn, parent_id, &parent, &mut fork)?;
         if let Some(hash) = fork.content_hash
             && self
@@ -514,7 +516,7 @@ impl Vault {
 
     pub(crate) fn read_skill_record_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<SkillRecord> {
         let raw = self
