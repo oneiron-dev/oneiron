@@ -211,7 +211,7 @@ fn enqueue_followup_in_txn(
 mod tests {
     use super::*;
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
         SelfHeldShape,
     };
     use crate::comm::resolve_or_create_comm_party;
@@ -252,16 +252,14 @@ mod tests {
             )
             .expect("create identity");
         vault
-            .transition_channel_identity(
+            .step_channel_identity(
                 &face,
-                ChannelIdentityState::PendingFulfillment,
-                Some(ChannelIdentityFulfillment::Api),
+                ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
                 NOW,
-                None,
             )
             .expect("fulfill identity");
         vault
-            .transition_channel_identity(&face, ChannelIdentityState::Active, None, NOW, None)
+            .step_channel_identity(&face, ChannelIdentityStep::Fulfill, NOW)
             .expect("activate identity");
         vault
             .create_counterparty_contact(
