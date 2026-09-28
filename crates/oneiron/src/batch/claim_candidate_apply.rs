@@ -115,6 +115,7 @@ pub(super) fn apply_claim_candidate(
                 write_policy,
                 write_envelope: Some(envelope),
                 hub_admission: None,
+                refinement_admission: None,
             },
         },
     )?;

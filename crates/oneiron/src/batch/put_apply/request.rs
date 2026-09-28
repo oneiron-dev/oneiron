@@ -171,6 +171,10 @@ pub(in crate::batch) struct PutContext<'a> {
     pub(in crate::batch) write_envelope: Option<&'a WriteEnvelope>,
     /// The bootstrap proof a hub SKILL admission presents.
     pub(in crate::batch) hub_admission: Option<&'a crate::skill_hub::HubAdmissionProof>,
+    /// The owning hub's proof a refinement carrier or its bound claim
+    /// presents.
+    pub(in crate::batch) refinement_admission:
+        Option<&'a crate::skill_hub::RefinementAdmissionProof>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its

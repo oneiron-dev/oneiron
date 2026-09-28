@@ -96,6 +96,40 @@ pub(super) fn archival_coverage(
 
 /// Document-level DSS status cannot borrow signer time: use the earliest
 /// complete trusted timestamp that covers the effective material.
+/// Provisional token time is a diagnostic bound ONLY for the missing-root
+/// material probe. It never feeds signer validation or achieved profiles.
+pub(super) fn provisional_material_time(
+    all: &[EnvelopeEvidence],
+    dss_end: Option<u64>,
+    signer: Option<&EnvelopeEvidence>,
+    clock: u64,
+) -> u64 {
+    let Some(material_end) = dss_end else {
+        return clock;
+    };
+    all.iter()
+        .filter_map(|e| {
+            if e.kind != crate::api::SignatureKind::DocumentTimestamp {
+                return None;
+            }
+            let time = e.untrusted_time?;
+            let revision = e.revision?;
+            let covers = e.byte_range.covers_to?;
+            if covers < material_end || covers < revision.eof_end as u64 {
+                return None;
+            }
+            if let Some(signer) = signer {
+                let signed = signer.revision?;
+                if revision.index <= signed.index {
+                    return None;
+                }
+            }
+            Some(time)
+        })
+        .min()
+        .unwrap_or(clock)
+}
+
 pub(super) fn material_validation_time(
     all: &[EnvelopeEvidence],
     dss_end: Option<u64>,
@@ -150,6 +184,7 @@ mod tests {
                 tsa_chain_ders: vec![],
                 covers_to: 300,
             }),
+            untrusted_time: None,
             covered: vec![],
         }
     }

@@ -478,7 +478,11 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         let skill_holder = crate::skill_hub::source_carrier_holder(body);
         let agent_holder = crate::agent_def::birth_source_holder(body);
         let receipt_holder = crate::receipt::receipt_archive_holder(body);
-        let holder = skill_holder.or(agent_holder).or(receipt_holder);
+        let refinement_holder = crate::skill_hub::refinement_carrier_holder(body);
+        let holder = skill_holder
+            .or(agent_holder)
+            .or(receipt_holder)
+            .or(refinement_holder);
         let holder_erased = holder.is_some_and(|holder| erased.contains(&holder));
         let copied_input_erased = agent_holder.is_some_and(|child| {
             crate::agent_def::birth_source_id(&child).is_ok_and(|id| erased.contains(&id))
@@ -495,6 +499,7 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
                 && let Ok(id) = EntityId::from_hex(key)
                 && (crate::skill_hub::source_carrier_matches_id(body, &id)
                     || crate::receipt::receipt_archive_matches_id(body, &id)
+                    || crate::skill_hub::refinement_carrier_matches_id(body, &id)
                     || agent_holder.is_some_and(|child| {
                         crate::agent_def::birth_source_matches_id(&child, &id)
                     }))

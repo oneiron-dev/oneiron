@@ -17,7 +17,7 @@ const ORIGIN_MARKER: SideTable<EntityId, Vec<Option<String>>, Raw> =
 
 /// Schema version of one origin-marker row. Fail-closed like the verdict row:
 /// an unreadable marker refuses the create rather than admitting it.
-const ORIGIN_MARKER_SCHEMA_VERSION: u64 = 1;
+const ORIGIN_MARKER_SCHEMA_VERSION: u64 = 2;
 
 const ORIGIN_MARKER_LABEL: &str = "skill optimizer origin marker";
 
@@ -86,7 +86,7 @@ pub(crate) fn with_optimized_skill_admission(
     // Exiting on a bare `EntityNotFound` instead left the acceptance
     // standing, the proposal open, and the real score pair unrecorded.
     let Some(accepted) = standing_verdict_in_txn(vault, &*wtxn, proposal)?
-        .filter(|verdict| verdict.disposition.admits())
+        .filter(|verdict| verdict.disposition.admits() && verdict.displaced_by_revision.is_none())
     else {
         return Err(invalid(
             "an optimizer-born candidate is admitted only on a standing accepted gate verdict",
@@ -232,12 +232,13 @@ fn record_refusal_in_txn(
 /// is what makes the admission floor apply at all, the target entity and
 /// version are what "this revises that revision" means, and the cycle is what
 /// the accept cap is counted against.
-const OPTIMIZER_ORIGIN_KEYS: [&str; 5] = [
+const OPTIMIZER_ORIGIN_KEYS: [&str; 6] = [
     PROVENANCE_BIRTH_KEY,
     PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY,
     PROVENANCE_OPTIMIZE_CYCLE_KEY,
+    crate::skill::resident::RESIDENT_PROVENANCE_KEY,
 ];
 
 /// The `vault_meta` key the optimizer-birth marker for one entity lives at.
@@ -247,7 +248,7 @@ pub(in crate::skill_optimize) fn optimizer_origin_marker_key(id: &EntityId) -> V
     ORIGIN_MARKER.key_bytes(id)
 }
 
-/// The five origin values a record carries, in the pinned key order.
+/// The six origin values a record carries, in the pinned key order.
 fn optimizer_origin_values(record: &SkillRecord) -> Vec<Option<String>> {
     OPTIMIZER_ORIGIN_KEYS
         .iter()
@@ -322,7 +323,7 @@ fn decode_origin_marker(raw: &[u8]) -> Result<Vec<Option<String>>> {
 /// create at that id must present byte-identical origin provenance. The answer
 /// is one of four:
 ///
-/// - marked, and the create carries the same five values → allowed, and the
+/// - marked, and the create carries the same six values → allowed, and the
 ///   record is optimizer-born again, so every update-door rule applies to it
 ///   unchanged;
 /// - marked, and the create carries different or absent origin → refused: that
@@ -544,6 +545,8 @@ pub(super) fn target_is_current(proposal: &SkillRecord, target: &SkillRecord) ->
         && target.skill_id == proposal.skill_id
         && provenance_str(proposal, PROVENANCE_OPTIMIZE_OF_VERSION_KEY).as_deref()
             == Some(target.version.as_str())
+        && provenance_str(proposal, crate::skill::resident::RESIDENT_PROVENANCE_KEY)
+            == provenance_str(target, crate::skill::resident::RESIDENT_PROVENANCE_KEY)
 }
 
 pub(super) fn provenance_str(record: &SkillRecord, key: &str) -> Option<String> {

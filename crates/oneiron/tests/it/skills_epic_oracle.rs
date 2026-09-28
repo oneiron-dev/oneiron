@@ -50,6 +50,8 @@ use oneiron::{
     skill_reliability::project_skill_reliability,
     skill_reliability::rebuild_skill_confidence_cache,
     skill_reliability::skill_reliability_posterior,
+    skill_reliability::skill_reliability_posterior_for_executor,
+    skill_reliability::skill_reliability_prior,
 };
 use rmpv::Value;
 
@@ -65,6 +67,9 @@ const PRED_SKILL_RELIABILITY: &str = "skill.reliability";
 /// a lower-bound crossing mints, so quarantine is always a question a human
 /// answers rather than a lifecycle flip the engine performs.
 const PRED_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
+/// The `model@revision` every oracle attempt stamps under its live lease
+/// (ONE-2014): a skill-bearing terminal receipt without one is refused.
+const ORACLE_EXECUTOR: &str = "fixture/model@1";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -139,7 +144,7 @@ fn put_actor(vault: &Vault, id: &EntityId) -> Result<()> {
 /// Runs one attempt whose pack loaded `skill_id` to its terminal door and
 /// returns the receipt id that close STAMPED. Attribution evidence cites these
 /// — a hand-written receipt string is refused at the evidence door.
-fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
+fn stamped_pack_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Result<String> {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
         kind: "oracle.attempt".to_owned(),
@@ -151,6 +156,7 @@ fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    vault.bind_actor_attempt(attempt.id, &actor)?;
     queue.append_manifest_entry(
         attempt.id,
         ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
@@ -162,6 +168,12 @@ fn stamped_pack_receipt(vault: &Vault, skill_id: &str) -> Result<String> {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    queue.set_executor_model(
+        attempt.id,
+        "oracle-worker",
+        leased.attempt_count,
+        ORACLE_EXECUTOR,
+    )?;
     queue.complete(CompleteAttempt {
         id: attempt.id,
         lease_owner: "oracle-worker".to_owned(),
@@ -935,6 +947,16 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    // The executor is bound under the live lease before any mid-run pull
+    // (ONE-2014): the terminal receipt refuses a skill pack with no model.
+    queue
+        .set_executor_model(
+            attempt.id,
+            "oracle-worker",
+            leased.attempt_count,
+            ORACLE_EXECUTOR,
+        )
+        .expect("stamp the executor under the live lease");
     let at_mid = queue
         .append_manifest_entry(
             attempt.id,
@@ -1066,8 +1088,8 @@ fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
             .with_skill(skill_entity)
             .with_routing_facts(followed_skill, true)
     };
-    let defect_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
-    let lapse_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib")?;
+    let defect_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib", actor_entity)?;
+    let lapse_receipt = stamped_pack_receipt(&vault, "oracle.skill.attrib", actor_entity)?;
     record_attribution_evidence(&vault, &failed(&defect_receipt, true))?;
     record_attribution_evidence(&vault, &failed(&lapse_receipt, false))?;
     let judgments = run_attribution_projector(&vault, 0)?;
@@ -1127,7 +1149,7 @@ fn sk04_discovery_outcome_mints_edit_proposal_not_claim() -> Result<()> {
     // ARMED (ONE-1737): the projector runs over an outcome the routing table
     // judges DISCOVERY — the attempt failed, the actor DID follow the skill,
     // and the skill did NOT cover the failing step (missing content).
-    let discovery_receipt = stamped_pack_receipt(&vault, "oracle.skill.discovery")?;
+    let discovery_receipt = stamped_pack_receipt(&vault, "oracle.skill.discovery", actor_entity)?;
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(discovery_receipt, actor_entity, AttemptOutcome::Failed, 20)
@@ -1198,7 +1220,7 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     // rides its own stamped pack receipt, which is what the claim cites.
     let mut minted = Vec::new();
     for at in [30_u64, 31] {
-        let receipt = stamped_pack_receipt(&vault, "oracle.skill.reliability")?;
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.reliability", actor_entity)?;
         record_attribution_evidence(
             &vault,
             &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
@@ -1255,14 +1277,15 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     }
     // Posterior KEY SET is pinned, not just the map length (review C15):
     // {x, y} must not pass. (The header rename clause covers a
-    // ticket-pinned wire rename at arming.)
+    // ticket-pinned wire rename at arming.) ONE-2014 keys the claim to the
+    // (skill, executor model@revision) arm its stamped receipts ran on.
     let posterior = row.value.as_map().expect("the posterior is a map");
     assert_eq!(
         posterior.len(),
-        2,
-        "the value is the Beta posterior: {{alpha, beta}}"
+        3,
+        "the value is the executor arm's Beta posterior: {{alpha, beta, executor}}"
     );
-    for key in ["alpha", "beta"] {
+    for key in ["alpha", "beta", "executor"] {
         assert_eq!(
             posterior
                 .iter()
@@ -1272,6 +1295,14 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
             "posterior carries {key} exactly once"
         );
     }
+    assert_eq!(
+        posterior
+            .iter()
+            .find(|(k, _)| k.as_str() == Some("executor"))
+            .and_then(|(_, v)| v.as_str()),
+        Some(ORACLE_EXECUTOR),
+        "the arm is the executor the receipts stamped"
+    );
     Ok(())
 }
 
@@ -1290,7 +1321,7 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
     // ARMED (ONE-1738): project a reliability claim, capture the posterior mean
     // it asserts, clobber the record's cached score through the ordinary update
     // door, then run the rebuild door.
-    let receipt = stamped_pack_receipt(&vault, "oracle.skill.cache")?;
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.cache", actor_entity)?;
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 30)
@@ -1299,9 +1330,18 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
     )?;
     let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
     project_skill_reliability(&vault, &judgments)?;
-    let claim_posterior_mean: f32 = skill_reliability_posterior(&vault, &skill_entity)?
-        .expect("the projected claim carries the posterior")
-        .mean();
+    let pair_claim =
+        skill_reliability_posterior_for_executor(&vault, &skill_entity, ORACLE_EXECUTOR)?
+            .expect("the projected claim carries the posterior");
+    // ONE-2014: the stamped outcome lands on its (skill, executor) arm. The
+    // scalar cache holds only the unknown-executor arm, which no stamped
+    // receipt feeds, so that arm's truth is still the provenance prior.
+    assert_eq!(
+        skill_reliability_posterior(&vault, &skill_entity)?,
+        None,
+        "a stamped outcome never lands on the unknown-executor arm"
+    );
+    let arm_truth_mean: f32 = skill_reliability_prior(&vault, &skill_entity)?.mean();
 
     // The cache is WRITABLE and non-authoritative: clobbering it is a lawful
     // record edit that mints no revision — and, crucially, changes no claim.
@@ -1322,11 +1362,16 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
         "the rebuild landed on the stored record, not just in the return value"
     );
 
-    let mean = claim_posterior_mean;
+    let mean = arm_truth_mean;
     let rebuilt = rebuilt_cache_value;
     assert!(
         (rebuilt - mean).abs() < 1e-6,
-        "cache rebuilds to the claim's posterior mean: {rebuilt} vs {mean}"
+        "cache rebuilds to its arm's truth, never the pair claim: {rebuilt} vs {mean}"
+    );
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill_entity, ORACLE_EXECUTOR)?,
+        Some(pair_claim),
+        "clobbering + rebuilding the cache never moved the claim's posterior"
     );
     let (active, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_RELIABILITY)?;
     assert_eq!(
@@ -1363,7 +1408,7 @@ fn sk05_floor_crossing_proposes_quarantine_never_auto() -> Result<()> {
     // crossing is not re-proposed once a proposal is open.
     let mut floor_crossed = false;
     for at in 30..30 + u64::from(SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES) + 2 {
-        let receipt = stamped_pack_receipt(&vault, "oracle.skill.floor")?;
+        let receipt = stamped_pack_receipt(&vault, "oracle.skill.floor", actor_entity)?;
         record_attribution_evidence(
             &vault,
             &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, at)
@@ -1421,7 +1466,7 @@ fn sk06_actor_row_cardinalities_are_pinned() -> Result<()> {
     // ARMED (ONE-1739): every row goes through `write_actor_claim`, the ONE
     // door both inlets share — cardinality is the door's contract, so this is
     // where it is pinned.
-    let receipt = stamped_pack_receipt(&vault, "oracle.skill.fit.a")?;
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.fit.a", actor_entity)?;
     let evidence = |at: u64| ActorClaimEvidence::task(vec![receipt.clone()], at);
     for (row, at) in [
         (
@@ -1571,7 +1616,7 @@ fn sk06_two_inlets_one_ledger_both_through_the_write_gate() -> Result<()> {
     // receipt-grounded (`ToolOutput`-lineage) evidence. The projector itself
     // mints no lesson — a routing boolean cannot source prose — so the note is
     // the distiller tier's, exactly as on the chat side.
-    let receipt = stamped_pack_receipt(&vault, "oracle.skill.inlets")?;
+    let receipt = stamped_pack_receipt(&vault, "oracle.skill.inlets", actor_entity)?;
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor_entity, AttemptOutcome::Failed, 40)

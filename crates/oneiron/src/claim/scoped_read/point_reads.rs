@@ -38,6 +38,32 @@ impl ScopedRead<'_> {
             raw.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
         )))
     }
+
+    /// Actor-gated entity bodies at a caller-owned ledger snapshot. A wake
+    /// can pass the SAME read transaction to every child accounting step.
+    pub(crate) fn get_entities_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> Result<Vec<Option<EntityParts>>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        ids.iter()
+            .map(|id| {
+                let Some(revision) =
+                    self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+                else {
+                    return Ok(None);
+                };
+                let header = EntityMetadataHeader::parse(&revision.raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?;
+                Ok(Some((
+                    header.entity_type,
+                    header.learned_at,
+                    revision.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                )))
+            })
+            .collect()
+    }
 }
 
 /// One read in a [`ScopedRead::read`] slice: its target and its frontier.
@@ -183,37 +209,21 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
-            let row = match read.target {
-                ReadTarget::Id(id) => {
-                    match self.entity_raw_with_mode_in(&txn, &policy, &filter, &id, read.mode)? {
-                        Some(revision) => Some(ReadRow::from_revision(id, revision)?),
-                        None => {
-                            suppressed += usize::from(self.entity_record_in(&txn, &id)?.is_some());
-                            None
-                        }
-                    }
-                }
+            let (row, withheld) = match read.target {
+                ReadTarget::Id(id) => self.id_row_in(&txn, &policy, &filter, id, read.mode)?,
                 ReadTarget::ShortRef {
                     short_id,
                     content_hash,
                 } => {
-                    let (row, withheld) = self.short_ref_in(
-                        &txn,
-                        &policy,
-                        &filter,
-                        short_id,
-                        content_hash,
-                        read.mode,
-                    )?;
-                    suppressed += withheld;
-                    row
+                    self.short_ref_in(&txn, &policy, &filter, short_id, content_hash, read.mode)?
                 }
             };
+            suppressed += withheld;
             value.push(row);
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
@@ -221,6 +231,27 @@ impl ScopedRead<'_> {
             value: project(&txn, value)?,
             receipt,
         })
+    }
+
+    /// One id at one frontier: the admitted row and whether an existing row
+    /// was withheld. Value and denial count come from the same snapshot.
+    fn id_row_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        id: EntityId,
+        mode: ReadMode,
+    ) -> Result<(Option<ReadRow>, usize)> {
+        let admitted = self.admit_in(txn, &id, || {
+            self.entity_raw_with_mode_in(txn, policy, filter, &id, mode)
+        })?;
+        let withheld = admitted.suppression();
+        let row = admitted
+            .into_option()
+            .map(|revision| ReadRow::from_revision(id, revision))
+            .transpose()?;
+        Ok((row, withheld))
     }
 
     /// One short reference: the admitted row and whether an existing row was withheld.
@@ -243,13 +274,7 @@ impl ScopedRead<'_> {
                 else {
                     return Ok((None, 0));
                 };
-                return match self.entity_raw_with_mode_in(txn, policy, filter, &id, mode)? {
-                    Some(revision) => Ok((Some(ReadRow::from_revision(id, revision)?), 0)),
-                    None => Ok((
-                        None,
-                        usize::from(self.entity_record_in(txn, &id)?.is_some()),
-                    )),
-                };
+                return self.id_row_in(txn, policy, filter, id, mode);
             }
             ReadMode::Live | ReadMode::Indexed => {
                 self.vault
@@ -261,19 +286,9 @@ impl ScopedRead<'_> {
         };
         if hydrated.body.is_some() {
             // Resolve the requested frontier in this same transaction.
-            return match self.entity_raw_with_mode_in(txn, policy, filter, &hydrated.id, mode)? {
-                Some(revision) => Ok((
-                    Some(ReadRow {
-                        deletion: hydrated.deletion,
-                        ..ReadRow::from_revision(hydrated.id, revision)?
-                    }),
-                    0,
-                )),
-                None => Ok((
-                    None,
-                    usize::from(self.entity_record_in(txn, &hydrated.id)?.is_some()),
-                )),
-            };
+            let (row, withheld) = self.id_row_in(txn, policy, filter, hydrated.id, mode)?;
+            let deletion = hydrated.deletion;
+            return Ok((row.map(|row| ReadRow { deletion, ..row }), withheld));
         }
         // Erased relationship/private bodies cannot prove a scope.
         let revealed = hydrated.deletion.is_some()
@@ -291,9 +306,8 @@ impl ScopedRead<'_> {
                 .entity_types
                 .as_ref()
                 .is_none_or(|types| types.contains(&hydrated.entity_type))
-            // The row's old position cannot be proved. Only authority
-            // covering every possible position may reveal deletion
-            // metadata, never a narrow grant.
+            // Only authority covering every possible old position may reveal
+            // deletion metadata, never a narrow grant.
             && self.credential_allows_id(&hydrated.id)
             && crate::gate::scoped_read_record_allowed(
                 policy,
@@ -301,10 +315,11 @@ impl ScopedRead<'_> {
                 &crate::federation::scope_codec::read_preset(),
             );
         if !revealed {
-            return Ok((
-                None,
-                usize::from(self.entity_record_in(txn, &hydrated.id)?.is_some()),
-            ));
+            // A withheld private NOTE shell counts exactly like a missing row.
+            let withheld = self
+                .admit_in(txn, &hydrated.id, || Ok(None::<()>))?
+                .suppression();
+            return Ok((None, withheld));
         }
         let occurred = self
             .entity_record_in(txn, &hydrated.id)?

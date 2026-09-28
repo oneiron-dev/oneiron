@@ -245,6 +245,9 @@ side_tables! {
     CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
     CODE_REVISION_SESSION_INDEX: VaultMeta b"code_revision:session:v1:" Raw;
+    /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
+    /// id16(run) + id16(summary).
+    CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw;
     /// The taint refs beside one raw-output row, keyed by the same content handle, in the same
@@ -301,6 +304,8 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
+    CONNECTOR_GRANT_SLATE_BINDING: VaultMeta b"connector.grant_slate.binding.v1/" Raw;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.
     CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson;
     /// Idempotent wake-decision record for one connector-event subscription match. Key: hash32.
@@ -326,6 +331,9 @@ side_tables! {
     CONSENT_STANDING_GRANT: VaultMeta b"consent.grant.v1:" Raw;
     /// Approve-once marker. Key: bytes32.
     CONSENT_APPROVE_ONCE_MARKER: VaultMeta b"consent.once.v1:" Raw;
+    /// Owner-reason rule behind a derived standing grant. Key: string (grant ref) ":" id16 (rule
+    /// decision id).
+    CONSENT_OWNER_REASON_RULE: VaultMeta b"consent.owner_reason.v1:" Named;
     /// Parked authority-widening request. Key: hex64.
     CONSENT_WIDEN_PROPOSAL: VaultMeta b"consent.widen.v1:" LegacyJson;
     /// Marker for a ruled conflict packet. Key: bytes32.
@@ -360,6 +368,11 @@ side_tables! {
     CONVERSATION_DAG_LOCAL_HEAD: VaultMeta b"conversation_dag:local_head:v1:" Raw;
     /// Single-byte [1] marker that a conversation has adopted the DAG record model. Key: id16.
     CONVERSATION_DAG_MIGRATED: VaultMeta b"conversation_dag:migrated:v1:" Raw;
+    /// Cached thread projection of a trunk: `[1]`, root id16, reply count u64be, last reply at
+    /// u64be. Key: id16 (trunk).
+    CONVERSATION_DAG_THREAD_META: VaultMeta b"conversation_dag:thread_meta:v1:" Raw;
+    /// Single-byte `[1]` marker that a trunk's cached thread projection is stale. Key: id16.
+    CONVERSATION_DAG_THREAD_META_DIRTY: VaultMeta b"conversation_dag:thread_meta_dirty:v1:" Raw;
     /// Row count / next-sequence counter (u64be) for a conversation's membership ledger. Key: id16.
     CONVERSATION_MEMBERSHIP_SEQ: VaultMeta b"conversation_membership:seq:v1:" Raw;
     /// One append-only membership-ledger event (join/leave/history-visibility change) for a

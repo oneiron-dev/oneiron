@@ -415,54 +415,36 @@ impl Memory<'_> {
         };
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let id = self.resolve_ref_in_lane(&lane, entity_ref)?;
-        let anchor = lane.read(&[PointRead::id(id)], None)?.single();
-        let mut receipt = anchor.receipt;
-        let mut hits = Vec::new();
-        if anchor.value.is_none() {
-            return Ok(ScopedReadResult {
-                value: hits,
-                receipt,
-            });
-        }
-        // Push kind/min_weight/limit into the LMDB prefix walk per direction
-        // so a high-degree node stops after `limit` matches instead of
-        // materializing its full edge set (which errors with IndexOverflow
-        // past MAX_EDGE_QUERY_RESULTS).
-        for (direction, outbound) in [("out", true), ("in", false)] {
-            let remaining = opts.limit - hits.len();
-            if remaining == 0 {
-                break;
-            }
-            let edges = self.vault.neighbor_edges_bounded(
-                &id,
-                outbound,
-                kind_filter,
-                opts.min_weight,
-                remaining,
-            )?;
-            let reads: Vec<_> = edges
-                .iter()
-                .map(|edge| PointRead::id(edge.target))
-                .collect();
-            let rows = lane.read(&reads, None)?;
-            receipt.restrict_with(&rows.receipt);
-            for (edge, row) in edges.iter().zip(rows.value) {
-                let Some(row) = row else {
-                    continue;
-                };
-                hits.push(NeighborHit {
-                    short_id: self.short_ref_or_hex(&edge.target)?,
-                    kind: kind_string_for_type(row.entity_type),
-                    edge_kind: edge_kind_name(edge.kind).to_owned(),
-                    weight: edge.weight,
-                    direction: direction.to_owned(),
-                });
-            }
-        }
-        Ok(ScopedReadResult {
-            value: hits,
-            receipt,
-        })
+        // Scan inside the ONE read snapshot. Hidden edges are not results:
+        // count only edges admitted by both endpoint and exact-pair gates.
+        // The walk stops at `limit` admitted edges, so a high-degree node
+        // never materializes its full edge set.
+        lane.neighborhood_projected(
+            &id,
+            kind_filter,
+            opts.min_weight,
+            opts.limit,
+            |txn, neighbors| {
+                neighbors
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|neighbor| {
+                        let edge = neighbor.edge;
+                        Ok(NeighborHit {
+                            short_id: self
+                                .short_ref_of_in_txn(txn, &edge.target)?
+                                .unwrap_or_else(|| edge.target.to_hex()),
+                            kind: neighbor
+                                .peer_type
+                                .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type),
+                            edge_kind: edge_kind_name(edge.kind).to_owned(),
+                            weight: edge.weight,
+                            direction: if neighbor.outbound { "out" } else { "in" }.to_owned(),
+                        })
+                    })
+                    .collect::<MemoryResult<Vec<_>>>()
+            },
+        )
     }
 
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {

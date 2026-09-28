@@ -47,7 +47,7 @@ fn index_key(plan: &str, local: &str) -> [u8; 32] {
 }
 fn fingerprint(plan: &ValidatedWavePlan) -> Vec<u8> {
     let tasks: Vec<_> = plan
-        .tasks
+        .tasks()
         .values()
         .map(|task| {
             serde_json::json!({
@@ -56,7 +56,7 @@ fn fingerprint(plan: &ValidatedWavePlan) -> Vec<u8> {
             })
         })
         .collect();
-    serde_json::json!({"epic": plan.epic_task_ref.to_hex(), "tasks": tasks})
+    serde_json::json!({"epic": plan.epic_task_ref().to_hex(), "tasks": tasks})
         .to_string()
         .into_bytes()
 }
@@ -66,13 +66,14 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
         plan: &ValidatedWavePlan,
         now: u64,
     ) -> WaveResult<Vec<WaveTaskWrite>> {
-        // The carrier has public fields. Revalidate rather than trusting a
-        // caller-constructed value to have passed the orchestrator.
+        // Keep a production-side check before vault writes. The carrier is
+        // sealed outside wave_orchestration, but this port also rejects any
+        // future internal path that skips validation.
         let checked = WaveOrchestrator::<Self>::validate(WavePlan {
             schema_version: WAVE_PLAN_SCHEMA_VERSION,
-            plan_ref: plan.plan_ref.clone(),
-            epic_task_ref: plan.epic_task_ref,
-            tasks: plan.tasks.values().cloned().collect(),
+            plan_ref: plan.plan_ref().to_owned(),
+            epic_task_ref: plan.epic_task_ref(),
+            tasks: plan.tasks().values().cloned().collect(),
         })?;
         if &checked != plan {
             return Err(Error::InvariantViolation("unvalidated wave ordering").into());
@@ -106,12 +107,12 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                 }
                 if self
                     .vault
-                    .get_entity_type_in_txn(txn, &plan.epic_task_ref)?
+                    .get_entity_type_in_txn(txn, &plan.epic_task_ref())?
                     != Some(crate::registry::ENTITY_TYPE_TASK)
                 {
                     return Err(MemoryError::bad_request("wave epic must be a TASK"));
                 }
-                let seal_key = index_key(&plan.plan_ref, "");
+                let seal_key = index_key(plan.plan_ref(), "");
                 let fingerprint = fingerprint(plan);
                 if WAVE_PLAN_INDEX
                     .get(&self.vault.store, txn, &seal_key)?
@@ -122,9 +123,9 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     ));
                 }
                 let mut ids = BTreeMap::new();
-                for local in &plan.topological_order {
-                    let task = &plan.tasks[local];
-                    let key = index_key(&plan.plan_ref, local);
+                for local in plan.topological_order() {
+                    let task = &plan.tasks()[local];
+                    let key = index_key(plan.plan_ref(), local);
                     let id = if let Some(raw) = WAVE_PLAN_INDEX.get(&self.vault.store, txn, &key)? {
                         let id = EntityId::from_bytes(
                             raw.as_slice()
@@ -196,8 +197,8 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     ids.insert(local.clone(), id);
                 }
                 let mut writes = Vec::new();
-                for local in &plan.topological_order {
-                    let task = &plan.tasks[local];
+                for local in plan.topological_order() {
+                    let task = &plan.tasks()[local];
                     let id = ids[local];
                     let blockers = task
                         .blocked_by
@@ -218,7 +219,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                         .map_err(|e| MemoryError::bad_request(e.to_string()))?;
                         self.vault
                             .batch_in()
-                            .edge(&edge.dependent, edge.kind(), &edge.blocker, 1.0)
+                            .edge(&edge.dependent(), edge.kind(), &edge.blocker(), 1.0)
                             .apply(txn)?;
                     }
                     writes.push(WaveTaskWrite {

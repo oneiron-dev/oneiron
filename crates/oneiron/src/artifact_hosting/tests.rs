@@ -171,6 +171,69 @@ fn artifact_pointer_repoints_unpublishes_and_keeps_fork_mounts() -> Result<()> {
 }
 
 #[test]
+fn artifact_link_capability_survives_reopen_and_unpublish_kills_hash_url() -> Result<()> {
+    let (dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let repo = create_test_repo(b"<h1>link</h1>\n")?;
+    let snapshot = ingest_artifact(&vault, repo.path(), "site", 10)?;
+    let hash = snapshot.snapshot.fork_hash;
+    let selector = ArtifactSnapshotSelector::ForkHash(hash);
+    let (tier, token) = ArtifactServeTier::mint_link_token();
+    assert!(
+        vault
+            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .is_none()
+    );
+    vault.publish_artifact_pointer_with_tier(
+        "site",
+        ArtifactPointerChannel::Published,
+        &hash,
+        tier,
+    )?;
+    assert!(
+        vault
+            .resolve_authorized_artifact_file("site", selector, "index.html", None, None)?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_authorized_artifact_file(
+                "site",
+                selector,
+                "index.html",
+                Some(&"0".repeat(64)),
+                None
+            )?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .is_some()
+    );
+    drop(vault);
+    let vault = Vault::open(dir.path(), test_config())?;
+    assert_eq!(
+        vault
+            .artifact_pointer("site", ArtifactPointerChannel::Published)?
+            .unwrap()
+            .serve_tier,
+        tier
+    );
+    assert!(
+        vault
+            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .is_some()
+    );
+    vault.unpublish_artifact_pointer("site", ArtifactPointerChannel::Published)?;
+    assert!(
+        vault
+            .resolve_authorized_artifact_file("site", selector, "index.html", Some(&token), None)?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
 fn artifact_serving_rejects_codebase_class_snapshots() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let repo = create_test_repo(b"<h1>codebase</h1>\n")?;
@@ -349,6 +412,11 @@ fn artifact_publish_grant_is_per_artifact_and_replay_cannot_rebind() -> Result<(
         vault.request_artifact_publish(&allowed)?.status,
         ArtifactPublishVerbStatus::Published
     );
+    let changed_tier = ArtifactPublishVerbRequest {
+        serve_tier: ArtifactServeTier::Public,
+        ..allowed
+    };
+    assert!(vault.request_artifact_publish(&changed_tier).is_err());
     let rebound = ArtifactPublishVerbRequest::new(
         "other",
         ArtifactPointerChannel::Published,
@@ -372,7 +440,7 @@ fn one_off_owner_approval_publishes_exact_request_without_standing_grant() -> Re
     let repo = create_test_repo(b"<h1>v1</h1>\n")?;
     let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
     let actor = test_publisher(&vault)?;
-    let request = ArtifactPublishVerbRequest::new(
+    let mut request = ArtifactPublishVerbRequest::new(
         "site",
         ArtifactPointerChannel::Published,
         result.snapshot.fork_hash,
@@ -380,6 +448,7 @@ fn one_off_owner_approval_publishes_exact_request_without_standing_grant() -> Re
         EntityId::from_bytes([0x41; 16])?,
         12,
     );
+    request.serve_tier = ArtifactServeTier::Public;
     let other = ArtifactPublishVerbRequest::new(
         "site",
         ArtifactPointerChannel::Published,
@@ -752,6 +821,74 @@ fn blob_export_published_preview_pin_repoint_unpublish_and_direct_version() -> R
 }
 
 #[test]
+fn blob_link_tier_survives_reopen_and_requires_live_pointer() -> Result<()> {
+    let (dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    vault.append_blob_artifact_version(
+        &id,
+        b"report",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let (tier, token) = ArtifactServeTier::mint_link_token();
+    let selector = ArtifactSnapshotSelector::BlobVersion(1);
+    let artifact = id.to_hex();
+    assert!(
+        vault
+            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .is_none()
+    );
+    vault.publish_blob_artifact_pointer_with_tier(
+        &id,
+        ArtifactPointerChannel::Published,
+        1,
+        tier,
+    )?;
+    assert_eq!(
+        vault
+            .artifact_pointer(&artifact, ArtifactPointerChannel::Published)?
+            .unwrap()
+            .serve_tier,
+        tier
+    );
+    assert!(
+        vault
+            .resolve_authorized_artifact_file(&artifact, selector, "export", None, None)?
+            .is_none()
+    );
+    assert_eq!(
+        vault
+            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .expect("live token serves pinned blob")
+            .bytes,
+        b"report"
+    );
+    drop(vault);
+    let vault = Vault::open(dir.path(), test_config())?;
+    assert_eq!(
+        vault
+            .artifact_pointer(&artifact, ArtifactPointerChannel::Published)?
+            .unwrap()
+            .serve_tier,
+        tier
+    );
+    assert!(
+        vault
+            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .is_some()
+    );
+    assert!(vault.unpublish_blob_artifact_pointer(&id, ArtifactPointerChannel::Published)?);
+    assert!(
+        vault
+            .resolve_authorized_artifact_file(&artifact, selector, "export", Some(&token), None)?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
 fn deleting_blob_export_removes_both_channel_pointers() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let (id, actor) = blob_fixture(&vault)?;
@@ -767,7 +904,11 @@ fn deleting_blob_export_removes_both_channel_pointers() -> Result<()> {
         ArtifactPointerChannel::Published,
         ArtifactPointerChannel::Preview,
     ] {
-        vault.publish_blob_artifact_pointer(&id, channel, 1)?;
+        let tier = match channel {
+            ArtifactPointerChannel::Published => ArtifactServeTier::mint_link_token().0,
+            ArtifactPointerChannel::Preview => ArtifactServeTier::WorldMembers(42),
+        };
+        vault.publish_blob_artifact_pointer_with_tier(&id, channel, 1, tier)?;
     }
     assert!(vault.delete_entity(&id)?);
     for channel in [
@@ -808,6 +949,7 @@ fn blob_publish_after_delete_in_the_writer_cannot_revive_on_id_reuse() -> Result
                 artifact_id: id,
                 version: first.version,
             },
+            ArtifactServeTier::Private,
         )
         .expect_err("deleted export cannot be published");
     assert!(matches!(error, Error::EntityNotFound));
@@ -983,7 +1125,7 @@ fn blob_publish_requires_grant_then_receipts_and_replays() -> Result<()> {
         2,
     )?;
     let actor = test_publisher(&vault)?;
-    let request = ArtifactPublishVerbRequest::new_blob(
+    let mut request = ArtifactPublishVerbRequest::new_blob(
         id,
         ArtifactPointerChannel::Published,
         1,
@@ -991,6 +1133,7 @@ fn blob_publish_requires_grant_then_receipts_and_replays() -> Result<()> {
         EntityId::from_bytes([0x63; 16])?,
         12,
     );
+    request.serve_tier = ArtifactServeTier::Public;
     let proposed = vault.request_artifact_publish(&request)?;
     assert_eq!(proposed.status, ArtifactPublishVerbStatus::Proposed);
     assert!(proposed.receipt.is_none());
@@ -1009,7 +1152,20 @@ fn blob_publish_requires_grant_then_receipts_and_replays() -> Result<()> {
             version: 1
         }
     );
+    assert_eq!(
+        published.pointer.as_ref().expect("pointer").serve_tier,
+        ArtifactServeTier::Public
+    );
     let receipt = published.receipt.expect("share receipt");
+    assert_eq!(
+        receipt.fields.get("serve_tier").map(String::as_str),
+        Some("Public")
+    );
+    let changed_tier = ArtifactPublishVerbRequest {
+        serve_tier: ArtifactServeTier::Private,
+        ..request.clone()
+    };
+    assert!(vault.request_artifact_publish(&changed_tier).is_err());
     assert_eq!(receipt.receipt_kind, ReceiptKind::Share);
     assert_eq!(receipt.fields.get("blob_artifact_id"), Some(&id.to_hex()));
     assert_eq!(

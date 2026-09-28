@@ -312,7 +312,11 @@ impl<'a> HumanTaskFollowupDriver<'a> {
                     .tasks_ask_status_for_task(record.task_ref)
                     .map_err(|_| Error::InvalidClaimBody("ask follow-up projection"))?
                     .is_some_and(|status| {
-                        !matches!(status, crate::task_verb::TaskAskStatus::Pending { .. })
+                        !matches!(
+                            status,
+                            crate::task_verb::TaskAskStatus::Pending { .. }
+                                | crate::task_verb::TaskAskStatus::Changed { .. }
+                        )
                     })
             } else {
                 false

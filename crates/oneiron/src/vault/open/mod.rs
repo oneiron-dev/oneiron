@@ -584,6 +584,7 @@ impl Vault {
                 Ok(())
             })?;
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
+            crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
             crate::skill_hub::seed_default_skill_hub(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }

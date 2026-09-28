@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "roles": {
+    "retrieval_embedder": {
+      "model": "fixture/retrieval_embedder@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "reranker": {
+      "model": "fixture/reranker@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "extraction_encoder": {
+      "model": "fixture/extraction_encoder@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "extraction_teacher": {
+      "model": "McGill-NLP/LLM2Vec-Qwen3-8B-mntp@fixture-v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "generative_reasoner": {
+      "model": "fixture/generative_reasoner@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "checker": {
+      "model": "fixture/checker@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "dreamer_current": {
+      "model": "fixture/dreamer_current@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "dreamer_target": {
+      "model": "fixture/dreamer_target@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "asr": {
+      "model": "fixture/asr@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "captioner": {
+      "model": "fixture/captioner@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "doc_parsing": {
+      "model": "fixture/doc_parsing@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "audio_vad": {
+      "model": "fixture/audio_vad@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "tts_deferred": {
+      "model": "fixture/tts_deferred@v1",
+      "slot": "llm",
+      "tier": "configured"
+    }
+  },
+  "routes": {
+    "llm": "own_server",
+    "embedder": "own_server",
+    "oneironer": "own_server"
+  }
+}

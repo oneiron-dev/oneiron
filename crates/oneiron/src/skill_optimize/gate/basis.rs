@@ -278,6 +278,9 @@ pub struct HeldOutReplayCase<'a> {
 /// optimizer grading its own edit, which is the one thing the gate exists to
 /// prevent — so the seam is a required argument rather than a defaulted one.
 pub trait HeldOutReplayScorer {
+    /// Immutable skill revision that owns these candidate scores.
+    fn judge_revision(&self) -> &str;
+
     /// Scores `case` on `0.0..=1.0`, higher is better.
     ///
     /// # Errors

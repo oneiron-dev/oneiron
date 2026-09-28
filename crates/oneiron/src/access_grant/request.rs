@@ -9,6 +9,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Vault};
+use std::ops::Bound;
 
 /// One access request, keyed by its own id (also the eventual grant id).
 const REQUESTS: SideTable<EntityId, RequestRow, LegacyJson> =
@@ -117,6 +118,36 @@ impl Vault {
             .transpose()
     }
 
+    /// Page pending requests from the existing request keyspace without minting authority.
+    /// The cursor is the last returned request id; terminal rows never consume a page slot.
+    /// The caller must enforce the owner/control-plane boundary before surfacing them.
+    pub fn pending_access_requests_page(
+        &self,
+        after: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
+        if limit == 0 {
+            return Ok((Vec::new(), None));
+        }
+        let txn = self.store.env.read_txn()?;
+        // Keys order by request id, so the rows after the cursor start past it.
+        let start = after.map_or(Bound::Unbounded, Bound::Excluded);
+        let mut requests: Vec<AccessRequest> = Vec::new();
+        for entry in REQUESTS.iter_range(&self.store, &txn, start, Bound::Unbounded)? {
+            let (id, row) = entry?;
+            let request = AccessRequest::from_row(id, row)?;
+            if request.status != AccessRequestStatus::Pending {
+                continue;
+            }
+            if requests.len() == limit {
+                let next = requests.last().map(|request| request.id);
+                return Ok((requests, next));
+            }
+            requests.push(request);
+        }
+        Ok((requests, None))
+    }
+
     /// Owner-bound response. The request id is also the resulting grant id,
     /// so the request/grant link is stable and cannot point at another grant.
     pub fn respond_access_request(
@@ -199,6 +230,11 @@ mod tests {
                 AccessRequestStatus::Pending
             );
             assert!(vault.get_access_grant(&id)?.is_none());
+            assert!(vault.pending_access_requests_page(None, 0)?.0.is_empty());
+            assert_eq!(
+                vault.pending_access_requests_page(None, 1)?.0,
+                vec![vault.get_access_request(id)?.unwrap()]
+            );
             let answered = vault.respond_access_request(&owner, id, approve, 2)?;
             assert_eq!(
                 answered.status,
@@ -209,6 +245,7 @@ mod tests {
                 }
             );
             assert_eq!(vault.get_access_request(id)?, Some(answered));
+            assert!(vault.pending_access_requests_page(None, 1)?.0.is_empty());
             assert_eq!(vault.get_access_grant(&id)?, approve.then_some(grant));
             assert!(
                 vault
@@ -216,6 +253,29 @@ mod tests {
                     .is_err()
             );
         }
+        Ok(())
+    }
+    #[test]
+    fn pending_request_page_reaches_after_the_first_hundred() -> Result<()> {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let grant =
+            AccessGrant::companion_profile_read(entity(0xE0), entity(0xE2), entity(0xE3), 1);
+        let request_id = |n: u8| {
+            let mut bytes = [0x70; 16];
+            bytes[15] = n;
+            EntityId::from_bytes(bytes).expect("nonzero request id")
+        };
+        for byte in 1..=101_u8 {
+            vault.request_access(request_id(byte), grant.clone())?;
+        }
+        let (first, next) = vault.pending_access_requests_page(None, 100)?;
+        assert_eq!(first.len(), 100);
+        assert_eq!(first[0].id, request_id(1));
+        assert_eq!(next, Some(request_id(100)));
+        let (last, end) = vault.pending_access_requests_page(next.as_ref(), 100)?;
+        assert_eq!(last.len(), 1);
+        assert_eq!(last[0].id, request_id(101));
+        assert_eq!(end, None);
         Ok(())
     }
 }

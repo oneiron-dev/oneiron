@@ -141,16 +141,25 @@ impl Vault {
         id: crate::attempt_queue::AttemptId,
     ) -> Result<Option<DreamerAuthorityStamp>> {
         let txn = self.store.env.read_txn()?;
+        self.dreamer_attempt_authority_in_txn(&txn, id)
+    }
+
+    /// Validates a queued authority stamp at the SAME wake ledger revision.
+    pub(crate) fn dreamer_attempt_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: crate::attempt_queue::AttemptId,
+    ) -> Result<Option<DreamerAuthorityStamp>> {
         ATTEMPT
-            .get(&self.store, &txn, &id)?
+            .get(&self.store, txn, &id)?
             .map(|stamp| {
                 if stamp.attempt_id != *id.as_bytes()
                     || stamp.facet.trim().is_empty()
-                    || ACTOR.get(&self.store, &txn, &())? != Some(stamp.actor)
+                    || ACTOR.get(&self.store, txn, &())? != Some(stamp.actor)
                     || self
                         .store
                         .entities
-                        .get(&txn, stamp.actor.as_bytes())?
+                        .get(txn, stamp.actor.as_bytes())?
                         .and_then(|raw| EntityMetadataHeader::parse(&raw))
                         .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
                 {

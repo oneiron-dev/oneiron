@@ -114,6 +114,14 @@ impl Memory<'_> {
             let question_digest =
                 super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
                     .ok_or(crate::Error::EntityNotFound)?;
+            let guest_grants = super::ask_guest::mint_guest_grants(
+                self.vault(),
+                txn,
+                group_ref,
+                self.actor(),
+                &effective,
+                now,
+            )?;
             let mut members = Vec::with_capacity(holders.len());
             for (actor, (entry, reachable)) in holders.iter().zip(&validated) {
                 let task_ref = self.mint_task_at_in_txn(
@@ -135,6 +143,8 @@ impl Memory<'_> {
                     actor: actor.to_hex(),
                 });
             }
+            let policy_surface =
+                super::ask_policy::confirmation_surface(self.vault(), txn, &effective, &holders)?;
             let group = AskGroup {
                 base_policy_version: 1,
                 owner: self.actor().to_hex(),
@@ -143,9 +153,12 @@ impl Memory<'_> {
                 effective,
                 context_class,
                 question_digest,
+                link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
                 members,
                 no_live_route,
                 created_at: now,
+                guest_grants,
+                policy_surface,
             };
             ask_record::put_group(self.vault(), txn, group_ref, &group)?;
             for (member, (entry, _)) in group.members.iter().zip(&validated) {
@@ -179,6 +192,7 @@ impl Memory<'_> {
                 vec![assignee.entity_ref().unwrap_or(self.actor())]
             }
             Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
+            Some(TaskAskTarget::Guests(guests)) => guests.keys().copied().collect(),
             None => vec![self.short_ask_principal_in_txn(txn)?],
         })
     }
@@ -469,6 +483,17 @@ impl Memory<'_> {
         handle: TaskAskHandle,
         step_key: Option<&str>,
     ) -> MemoryResult<TaskAskWait> {
+        self.tasks_wait_observing(handle, step_key, 0)
+    }
+
+    /// Code mode supplies only a generation proved by its durable bridge
+    /// replay. An unrecorded Changed result cannot suppress a future wake.
+    pub(crate) fn tasks_wait_observing(
+        &self,
+        handle: TaskAskHandle,
+        step_key: Option<&str>,
+        observed_generation: u64,
+    ) -> MemoryResult<TaskAskWait> {
         if step_key.is_some_and(|key| key.is_empty() || key.len() > 256) {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
@@ -488,11 +513,29 @@ impl Memory<'_> {
             let Some(step_key) = step_key else {
                 return Ok(match status {
                     TaskAskStatus::Pending { .. } => {
-                        let mut wait = peer_result_wait(handle.group_ref);
-                        wait.effect = crate::code_run::SelfEffect::TasksWait;
-                        TaskAskWait::Park(wait)
+                        let voided = super::ask_option_link::voided_friends_in_txn(
+                            self.vault(),
+                            txn,
+                            handle.group_ref,
+                            &group,
+                        )?;
+                        let generation = super::ask_option_link::option_void_generation_in(
+                            self.vault(),
+                            txn,
+                            handle.group_ref,
+                        )?;
+                        if generation > observed_generation && !voided.is_empty() {
+                            TaskAskWait::Changed { voided, generation }
+                        } else {
+                            let mut wait = peer_result_wait(handle.group_ref);
+                            wait.effect = crate::code_run::SelfEffect::TasksWait;
+                            TaskAskWait::Park(wait)
+                        }
                     }
                     TaskAskStatus::Settled(result) => TaskAskWait::Ready(result),
+                    TaskAskStatus::Changed { voided, generation } => {
+                        TaskAskWait::Changed { voided, generation }
+                    }
                 });
             };
             self.bind_external_wait(txn, handle, step_key, status)
@@ -669,6 +712,9 @@ impl Memory<'_> {
                     .ok_or_else(|| MemoryError::bad_request("pending wait has no trap"))?
                     .to_hex(),
             },
+            TaskAskStatus::Changed { voided, generation } => {
+                TaskAskWait::Changed { voided, generation }
+            }
             TaskAskStatus::Settled(result) => {
                 if let Some(trap_claim_id) = row.trap_ref
                     && !row.consumed
@@ -773,6 +819,7 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
     for group in groups {
         super::ask_settlement::settle_ask_if_due(vault, group)?;
     }
+    vault.retry_pending_ask_soft_confirms(usize::MAX)?;
     Ok(())
 }
 

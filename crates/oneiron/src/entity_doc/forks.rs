@@ -114,7 +114,7 @@ const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PROPOSAL_BUNDLE);
 /// Durable settlement receipt for one fork's merge/switch/reject verdict,
 /// keyed by entity then receipt id.
-const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
+pub(super) const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
     SideTable::new(&side_table::ENTITY_DOC_RECEIPT);
 
 pub(super) fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) -> Result<()> {

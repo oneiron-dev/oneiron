@@ -2,8 +2,8 @@
 use super::graph::{MIGRATED, invalid};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{
@@ -76,11 +76,12 @@ pub(crate) fn validate_local_membership(
     ))
 }
 
-fn body_pin(kind: u8, occurred: crate::TimeRange, body: &[u8]) -> [u8; 32] {
+fn body_pin(kind: u8, occurred: crate::TimeRange, learned_at: u64, body: &[u8]) -> [u8; 32] {
     let mut hash = blake3::Hasher::new_derive_key("oneiron/conversation-dag/body-pin");
     hash.update(&[kind]);
     hash.update(&occurred.start.to_be_bytes());
     hash.update(&occurred.end.to_be_bytes());
+    hash.update(&learned_at.to_be_bytes());
     hash.update(body);
     *hash.finalize().as_bytes()
 }
@@ -89,11 +90,24 @@ pub(crate) fn guard_record_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-    kind: u8,
-    occurred: crate::TimeRange,
+    metadata: (u8, crate::TimeRange, u64),
     body: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    let (kind, occurred, learned_at) = metadata;
+    if kind == ENTITY_TYPE_TURN
+        && let Some((_, recipients)) = addressing(body)?
+    {
+        // Known wrong-kind recipients are a bad carrier now. Unknown ids
+        // remain deferred so an out-of-order peer can deliver PERSON later.
+        for recipient in recipients {
+            if crate::batch::stored_entity_type(store, txn, &recipient)?
+                .is_some_and(|kind| kind != crate::registry::ENTITY_TYPE_PERSON)
+            {
+                return Err(invalid("recipient is not a PERSON"));
+            }
+        }
+    }
     let prior = store.port_entity_record(txn, id)?;
     let stored_pin = BODY_PINS.get(store, txn, id)?;
     let inferred_pin = if stored_pin.is_none() {
@@ -110,7 +124,7 @@ pub(crate) fn guard_record_put(
                     && MIGRATED.get(store, txn, &owner)?.is_some();
             }
             (owned || record_kind(&row.body)?.is_some())
-                .then(|| body_pin(row.entity_type, row.occurred, &row.body))
+                .then(|| body_pin(row.entity_type, row.occurred, row.learned_at, &row.body))
         } else {
             None
         }
@@ -124,7 +138,7 @@ pub(crate) fn guard_record_put(
         }
         return Ok(());
     };
-    if !replicated || prior.is_none() || pin != body_pin(kind, occurred, body) {
+    if !replicated || prior.is_none() || pin != body_pin(kind, occurred, learned_at, body) {
         return Err(invalid("DAG records are append-only"));
     }
     Ok(())
@@ -153,6 +167,7 @@ fn stored_record_pin(
             start: header.occurred_start,
             end: header.occurred_end,
         },
+        header.learned_at,
         body,
     )))
 }
@@ -225,6 +240,188 @@ pub(crate) fn keep_membership_pin(
     Ok(())
 }
 
+/// Decode the typed record's addressing carrier. Opaque TURNs have no
+/// `dag_kind` and keep their existing unstructured-body admission rules.
+/// Reference existence is not checked here: a peer may deliver the TURN
+/// before its PERSON recipients, reply target, or graph edges.
+pub(crate) fn addressing(body: &[u8]) -> Result<Option<(&'static str, Vec<EntityId>)>> {
+    let mut bytes = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
+        return Ok(None);
+    };
+    if !fields
+        .iter()
+        .any(|(key, _)| key.as_str() == Some("dag_kind"))
+    {
+        return Ok(None);
+    }
+    if !bytes.is_empty() {
+        return Err(invalid("trailing typed record bytes"));
+    }
+    let mut keys = std::collections::HashSet::new();
+    for (key, _) in &fields {
+        let name = key
+            .as_str()
+            .ok_or_else(|| invalid("non-string typed record key"))?;
+        if !keys.insert(name) {
+            return Err(invalid("duplicate typed record key"));
+        }
+    }
+    let get = |key| {
+        fields
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(key))
+            .map(|(_, value)| value)
+    };
+    let kind = match get("dag_kind").and_then(rmpv::Value::as_str) {
+        Some("record") => "record",
+        Some("thread") => "thread",
+        _ => return Err(invalid("invalid DAG record kind")),
+    };
+    let mode = match get("addr") {
+        None => "broadcast",
+        Some(value) => match value.as_str() {
+            Some("broadcast") => "broadcast",
+            Some("direct") => "direct",
+            Some("reply") => "reply",
+            _ => return Err(invalid("invalid record address mode")),
+        },
+    };
+    let mut recipients = Vec::new();
+    if let Some(value) = get("to") {
+        let list = value
+            .as_array()
+            .ok_or_else(|| invalid("recipients must be an array"))?;
+        let mut seen = std::collections::HashSet::new();
+        for value in list {
+            let hex = value
+                .as_str()
+                .ok_or_else(|| invalid("recipient must be a PERSON id"))?;
+            let id = EntityId::from_hex(hex).map_err(|_| invalid("invalid recipient id"))?;
+            if id.to_hex() != hex || !seen.insert(id) {
+                return Err(invalid("duplicate or noncanonical recipient id"));
+            }
+            recipients.push(id);
+        }
+    }
+    if mode == "direct" && recipients.is_empty() {
+        return Err(invalid("direct addressing requires recipients"));
+    }
+    if mode == "broadcast" && !recipients.is_empty() {
+        return Err(invalid("broadcast cannot name recipients"));
+    }
+    if (mode == "reply") != get("reply_to").is_some() || (kind == "thread" && mode != "reply") {
+        return Err(invalid("reply addressing requires a reply pointer"));
+    }
+    Ok(Some((kind, recipients)))
+}
+
+/// Structural edge echo: only the stamped recipient set can mandate an
+/// AddressedTo edge. The edge carries metadata, never a search weight.
+#[cfg(feature = "sync")]
+pub(crate) fn addressed_to_echo(
+    body: &[u8],
+    learned_at: u64,
+    target: &EntityId,
+    fields: crate::edge::DecodedEdgeValue,
+) -> Result<bool> {
+    Ok(
+        addressing(body)?.is_some_and(|(_, recipients)| recipients.contains(target))
+            && fields.layout == crate::edge::EdgeValueLayout::Structural
+            && fields.weight == 1.0
+            && fields.created_at == learned_at,
+    )
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn addressed_to_echo_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: &EntityId,
+    target: &EntityId,
+    fields: crate::edge::DecodedEdgeValue,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(txn, source.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("addressing source header"))?;
+    if header.entity_type != ENTITY_TYPE_TURN {
+        return Ok(false);
+    }
+    let body = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("addressing source body"))?;
+    if crate::batch::stored_entity_type(store, txn, target)?
+        != Some(crate::registry::ENTITY_TYPE_PERSON)
+    {
+        return Ok(false);
+    }
+    addressed_to_echo(body, header.learned_at, target, fields)
+}
+
+/// Complete addressing indexes when a received/generic typed record first
+/// enters a conversation DAG. The body, not independently supplied edges, is
+/// authority. Missing PERSONs defer adoption; no partial HEAD or edge lands.
+pub(super) fn reconcile_addressing(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    record: &EntityId,
+    body: &[u8],
+    learned_at: u64,
+) -> Result<()> {
+    let Some((_, recipients)) = addressing(body)? else {
+        return Ok(());
+    };
+    let wanted: std::collections::HashSet<_> = recipients.iter().copied().collect();
+    let mut present = std::collections::HashSet::new();
+    for edge in vault.store.port_edges(
+        txn,
+        record,
+        crate::ports::EdgeDirection::Out,
+        Some(EdgeKind::AddressedTo),
+        None,
+    )? {
+        let edge = edge?;
+        if !wanted.contains(&edge.target)
+            || !present.insert(edge.target)
+            || edge.weight != 1.0
+            || edge.created_at != learned_at
+        {
+            return Err(invalid("addressing edge differs from record carrier"));
+        }
+    }
+    for recipient in recipients {
+        match super::graph::require_type(
+            &vault.store,
+            txn,
+            &recipient,
+            crate::registry::ENTITY_TYPE_PERSON,
+        ) {
+            Ok(_) => {}
+            Err(Error::EntityNotFound)
+                if vault.store.port_deletion_state(txn, &recipient)?.deleted =>
+            {
+                // A terminal addressee is not a pending replica. Keep the
+                // historical `to`, but do not resurrect its retired edge.
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+        if !present.contains(&recipient) {
+            vault
+                .batch_in()
+                .edge_with_value_fields(
+                    record,
+                    EdgeKind::AddressedTo,
+                    &recipient,
+                    super::writes::value(learned_at),
+                )
+                .apply(txn)?;
+        }
+    }
+    Ok(())
+}
 pub(super) use super::topology::record_kind;
 
 pub(crate) fn pin_typed_record(

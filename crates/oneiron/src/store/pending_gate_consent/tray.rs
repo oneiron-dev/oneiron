@@ -121,8 +121,7 @@ impl Store {
         let Some(original) = self.gate_decision_in_txn(wtxn, pending.decision_id)? else {
             return Err(Error::CorruptedIndex("pending gate consent"));
         };
-
-        if original.decision_id != pending.decision_id {
+        if original.decision_id != pending.decision_id || original.redacted_at.is_some() {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
         let record = GateDecisionRecord {

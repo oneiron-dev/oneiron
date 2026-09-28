@@ -54,13 +54,21 @@ pub(crate) fn counterparty_contact_by_index_in_txn(
 
 /// Canonical channel-class normalization for the party-channel index.
 ///
-/// Shared by the index writer, the record-class resolver, and the
-/// external-effect gate so a stored class and a queried class can never
-/// disagree over case or padding. Mirrors `campaign::claims`'s token rule, the
-/// one CA-01's `comm.do_not_contact` matching already uses.
+/// Shared by index writers, the contact/comm gate, campaign compliance, and
+/// outbound sender/window handling. Provider-specific email rails are one
+/// recipient-facing class, not aliases for connector authorization: grants,
+/// transport routing and intent ledgers still use each exact connector key.
 #[must_use]
 pub fn normalize_channel_class(channel: &str) -> String {
-    channel.trim().to_ascii_lowercase()
+    let channel = channel.trim().to_ascii_lowercase();
+    if matches!(
+        channel.as_str(),
+        "email_resend" | "email_ses" | "email_postmark"
+    ) {
+        "email".to_owned()
+    } else {
+        channel
+    }
 }
 
 fn party_channel_digest(party_ref: &str, channel_class: &str) -> Result<[u8; 32]> {

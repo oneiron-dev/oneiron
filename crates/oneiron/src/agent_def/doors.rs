@@ -91,7 +91,7 @@ impl Vault {
             .map(|definition| (id, definition)))
     }
 
-    fn read_agent_definition_in_txn(
+    pub(crate) fn read_agent_definition_in_txn(
         &self,
         txn: &heed::RwTxn<'_>,
         id: &EntityId,

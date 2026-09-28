@@ -7,6 +7,7 @@ pub(super) fn put_artifact_pointer_in_txn(
     channel: ArtifactPointerChannel,
     export: ArtifactExportRef,
     stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
 ) -> Result<()> {
     validate_artifact_id(artifact)?;
     ARTIFACT_POINTERS.put(
@@ -19,11 +20,13 @@ pub(super) fn put_artifact_pointer_in_txn(
         &ArtifactPointerRow {
             export,
             stale_taint_override,
+            serve_tier,
         },
     )
 }
 
-/// A deleted blob must not leave a channel that can spring back to life.
+/// A deleted blob must not leave a channel that can spring back to life if
+/// the caller later creates another version chain under the same entity id.
 pub(crate) fn remove_blob_pointers_in_txn(
     store: &crate::store::Store,
     wtxn: &mut RwTxn<'_>,
@@ -48,48 +51,73 @@ pub(crate) fn remove_blob_pointers_in_txn(
     Ok(())
 }
 
-pub(super) fn decode_artifact_pointer_row(raw: &[u8]) -> Result<(ArtifactExportRef, bool)> {
-    let (export, stamp) = match raw.len() {
-        32 | 33 => {
-            let hash = raw[..CODEBASE_FORK_HASH_LEN]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("artifact pointer fork hash"))?;
-            (
-                ArtifactExportRef::ForkHash(hash),
-                raw.get(CODEBASE_FORK_HASH_LEN),
-            )
-        }
-        25 | 26 => {
-            if raw[0] != ARTIFACT_POINTER_BLOB_TAG {
-                return Err(Error::CorruptedIndex("artifact pointer blob tag"));
-            }
-            let id = raw[1..17]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("artifact pointer blob id"))?;
-            let artifact_id = EntityId::from_bytes(id)
-                .map_err(|_| Error::CorruptedIndex("artifact pointer blob id"))?;
-            let version = u64::from_be_bytes(
-                raw[17..25]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("artifact pointer blob version"))?,
-            );
-            if version == 0 {
-                return Err(Error::CorruptedIndex("artifact pointer blob version"));
-            }
-            (
-                ArtifactExportRef::BlobVersion {
-                    artifact_id,
-                    version,
-                },
-                raw.get(25),
-            )
-        }
+/// Legacy 32/33-byte fork rows remain byte-identical. A blob row has a
+/// disjoint 25/26-byte tagged frame: tag, entity id, big-endian version,
+/// and the optional stale-taint override stamp. A non-private serve tier
+/// follows as the stale flag (0 or 1), a tier tag and the tier body.
+pub(super) fn decode_artifact_pointer_row(
+    raw: &[u8],
+) -> Result<(ArtifactExportRef, bool, ArtifactServeTier)> {
+    // Fork and blob base frames are disjoint lengths even with the tier suffix.
+    let base_len = match raw.len() {
+        32 | 33 | 34 | 42 | 66 => CODEBASE_FORK_HASH_LEN,
+        25 | 26 | 27 | 35 | 59 => 25,
         _ => return Err(Error::CorruptedIndex("artifact pointer frame")),
     };
-    if stamp.is_some_and(|byte| *byte != ARTIFACT_POINTER_STALE_OVERRIDE_STAMP) {
-        return Err(Error::CorruptedIndex("artifact pointer taint stamp"));
-    }
-    Ok((export, stamp.is_some()))
+    let export = if base_len == CODEBASE_FORK_HASH_LEN {
+        ArtifactExportRef::ForkHash(
+            raw[..CODEBASE_FORK_HASH_LEN]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("artifact pointer fork hash"))?,
+        )
+    } else {
+        if raw[0] != ARTIFACT_POINTER_BLOB_TAG {
+            return Err(Error::CorruptedIndex("artifact pointer blob tag"));
+        }
+        let id = raw[1..17]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("artifact pointer blob id"))?;
+        let artifact_id = EntityId::from_bytes(id)
+            .map_err(|_| Error::CorruptedIndex("artifact pointer blob id"))?;
+        let version = u64::from_be_bytes(
+            raw[17..25]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("artifact pointer blob version"))?,
+        );
+        if version == 0 {
+            return Err(Error::CorruptedIndex("artifact pointer blob version"));
+        }
+        ArtifactExportRef::BlobVersion {
+            artifact_id,
+            version,
+        }
+    };
+    let (stale, tier) = match &raw[base_len..] {
+        [] => (false, ArtifactServeTier::Private),
+        [ARTIFACT_POINTER_STALE_OVERRIDE_STAMP] => (true, ArtifactServeTier::Private),
+        [stamp @ (0 | 1), 1] => (*stamp == 1, ArtifactServeTier::Public),
+        [stamp @ (0 | 1), 2, digest @ ..] if digest.len() == 32 => (
+            *stamp == 1,
+            ArtifactServeTier::LinkToken(ArtifactLinkCapability(
+                digest
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("artifact token digest"))?,
+            )),
+        ),
+        [stamp @ (0 | 1), 3, world @ ..] if world.len() == 8 => {
+            let world_id = u64::from_be_bytes(
+                world
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("artifact world id"))?,
+            );
+            if world_id == 0 {
+                return Err(Error::CorruptedIndex("artifact world id"));
+            }
+            (*stamp == 1, ArtifactServeTier::WorldMembers(world_id))
+        }
+        _ => return Err(Error::CorruptedIndex("artifact pointer tier")),
+    };
+    Ok((export, stale, tier))
 }
 
 pub(super) fn snapshot_file_entry<'a>(

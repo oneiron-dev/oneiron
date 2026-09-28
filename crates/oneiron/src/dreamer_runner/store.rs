@@ -50,6 +50,12 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// The vault backing this store; used by the engine's one wake scheduler.
+    #[must_use]
+    pub(crate) fn vault(&self) -> &'a Vault {
+        self.vault
+    }
+
     /// Enqueues a Dreamer attempt and records its private run-tree parent row in
     /// the same LMDB write transaction.
     pub fn enqueue(&self, input: EnqueueDreamerAttempt) -> Result<EnqueueDreamerAttemptOutcome> {

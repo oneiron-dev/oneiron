@@ -96,6 +96,29 @@ pub fn run_attribution_projector_with_judge(
 
     vault.with_write_txn(|wtxn| {
         for judgment in &judgments {
+            if let Some(revision) = judge.judge_revision() {
+                super::judge_supersession::ensure_current_attribution_judge_in_txn(
+                    vault, &*wtxn, revision,
+                )?;
+            }
+            if let Some(existing) = JUDGMENT.get(&vault.store, wtxn, &judgment.sequence)? {
+                if existing != *judgment {
+                    return Err(crate::error::Error::InvalidClaimBody(
+                        "an attribution judgment cannot be rescored",
+                    ));
+                }
+                // Unknown is immutable too: a retry under a newly installed
+                // judge must never claim the old verdict as its own.
+                continue;
+            }
+            if let Some(revision) = judge.judge_revision() {
+                super::judge_supersession::stamp_judge_revision(
+                    vault,
+                    wtxn,
+                    judgment.sequence,
+                    revision,
+                )?;
+            }
             JUDGMENT.put(&vault.store, wtxn, &judgment.sequence, judgment)?;
             if let Some(proposal) = edit_proposal_for(judgment) {
                 EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
@@ -114,8 +137,15 @@ pub fn run_attribution_projector_with_judge(
 /// this: it is the stack seam.
 pub fn attribution_judgments(vault: &Vault) -> Result<Vec<AttributionJudgment>> {
     let rtxn = vault.store.env.read_txn()?;
+    attribution_judgments_in_txn(vault, &rtxn)
+}
+
+pub(super) fn attribution_judgments_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AttributionJudgment>> {
     Ok(JUDGMENT
-        .scan(&vault.store, &rtxn)?
+        .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, judgment)| judgment)
         .collect())

@@ -251,8 +251,7 @@ pub(super) fn validate_put_carriers(
         store,
         txn,
         &id,
-        context.entity_type,
-        context.occurred,
+        (context.entity_type, context.occurred, context.learned_at),
         data,
         context.replicated,
     )?;
@@ -277,8 +276,55 @@ pub(super) fn validate_source_carriers(
     let (id, entity_type, data, occurred, learned_at) = row;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, txn, &id, entity_type, data)?;
     crate::skill_hub::validate_hub_source_carrier_put(store, txn, &id, entity_type, data)?;
+    crate::skill_hub::validate_refinement_carrier_put(store, txn, &id, entity_type, data)?;
     crate::agent_def::validate_birth_source_put(store, txn, &id, entity_type, data)?;
     crate::receipt::validate_put(store, txn, (&id, entity_type, data), (occurred, learned_at))
+}
+
+/// The last put-side embedding changes, after short-id and body indexes land.
+pub(super) struct PostPutEmbeddingEffects {
+    pub(super) pending_embedding_token: Option<Vec<u8>>,
+    pub(super) cleared_pending_embedding: bool,
+    pub(super) had_vector_mutation: bool,
+}
+
+pub(super) fn stage_post_put_embeddings(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    data: &[u8],
+    is_lexical_query_hint_claim: bool,
+    body_changed: bool,
+) -> Result<PostPutEmbeddingEffects> {
+    let mut cleared_pending_embedding = false;
+    let mut had_vector_mutation = false;
+    if is_lexical_query_hint_claim {
+        cleared_pending_embedding = store.clear_pending_embedding(wtxn, id)?;
+        let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
+        had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
+        crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    }
+    let pending_embedding_token =
+        if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
+            // Mint the new invalidation token even while idle publication is
+            // pending. The worker skips these revisions; old completions must
+            // still observe that their token no longer owns the current body.
+            let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, id)?;
+            let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
+            if !body_changed && has_vector && !has_current_pending {
+                None
+            } else {
+                Some(store.mark_pending_embedding(wtxn, id, data)?)
+            }
+        } else {
+            None
+        };
+    Ok(PostPutEmbeddingEffects {
+        pending_embedding_token,
+        cleared_pending_embedding,
+        had_vector_mutation,
+    })
 }
 
 /// Validate typed storage carriers before any put effect is staged.
@@ -436,6 +482,7 @@ pub(super) fn stage_task_and_turn(
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
+        crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, id)?;
     }
     Ok(())
 }

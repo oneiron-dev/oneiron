@@ -1,6 +1,7 @@
 //! The verdict ledger, and the `Gate` receipts projected from it.
 
 use super::*;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 // ---------------------------------------------------------------------------
 // The verdict ledger
@@ -11,6 +12,9 @@ pub(super) fn record_verdict_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdict: &HeldOutVerdict,
 ) -> Result<()> {
+    if verdict.measurements.is_some() != verdict.judge_revision.is_some() {
+        return Err(invalid("judged verdict requires a judge revision"));
+    }
     if let Some(measurements) = &verdict.measurements {
         validate_measurements(measurements, verdict.held_out_count)?;
     } else if verdict.disposition != SkillEditDisposition::RefusedStaleTarget
@@ -99,6 +103,13 @@ pub(super) fn record_verdict_in_txn(
                 None => Value::Nil,
             },
         ),
+        (
+            Value::from(KEY_JUDGE_REVISION),
+            verdict
+                .judge_revision
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
         (Value::from(KEY_AT), Value::from(verdict.at)),
     ]);
     let mut encoded = Vec::new();
@@ -186,11 +197,24 @@ fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
     {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
+    let scored = measurements.is_some();
     Ok(HeldOutVerdict {
         before: score(KEY_BEFORE)?,
         after: score(KEY_AFTER)?,
         measurements,
         accepted: disposition.admits(),
+        judge_revision: match field(KEY_JUDGE_REVISION) {
+            Some(Value::Nil) if !scored => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?
+                    .to_owned(),
+            ),
+            None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+        },
+        displaced_by_revision: None,
         id,
         proposal: entity(KEY_PROPOSAL)?,
         skill: entity(KEY_SKILL)?,
@@ -245,6 +269,19 @@ fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
     })
 }
 
+fn decode_verdict_with_marker(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<HeldOutVerdict> {
+    let mut verdict = decode_verdict(id, raw)?;
+    verdict.displaced_by_revision = DISPLACED_VERDICT
+        .get(&vault.store, txn, &verdict.id)?
+        .map(|mark| mark.0);
+    Ok(verdict)
+}
+
 pub(super) fn verdict_rows_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -252,7 +289,7 @@ pub(super) fn verdict_rows_in_txn(
     VERDICTS
         .scan(&vault.store, rtxn)?
         .into_iter()
-        .map(|(id, raw)| decode_verdict(id, &raw))
+        .map(|(id, raw)| decode_verdict_with_marker(vault, rtxn, id, &raw))
         .collect()
 }
 
@@ -349,7 +386,8 @@ pub(crate) fn skill_edit_verdict_receipts(
             break;
         }
         let (id, raw) = row?;
-        let record = skill_edit_verdict_receipt(&decode_verdict(id, &raw)?);
+        let record =
+            skill_edit_verdict_receipt(&decode_verdict_with_marker(vault, &rtxn, id, &raw)?);
         if !query.matches(&record) {
             continue;
         }
@@ -410,6 +448,15 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
             verdict.held_out_digest.clone(),
         ),
     ]);
+    if let Some(judge) = &verdict.judge_revision {
+        fields.insert(FIELD_SKILL_EDIT_JUDGE_REVISION.to_owned(), judge.clone());
+    }
+    if let Some(replacement) = &verdict.displaced_by_revision {
+        fields.insert(
+            FIELD_SKILL_EDIT_JUDGE_DISPLACED_BY.to_owned(),
+            replacement.clone(),
+        );
+    }
     if let Some(measurements) = &verdict.measurements {
         fields.insert(
             FIELD_SKILL_EDIT_MEASUREMENTS.to_owned(),
@@ -472,4 +519,133 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
         )],
         fields,
     }
+}
+
+/// A candidate verdict retired with its judge: the replacement judge revision, keyed by the
+/// verdict id. The verdict row itself stays as ruled.
+const DISPLACED_VERDICT: SideTable<EntityId, VerdictDisplacement, Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_DISPLACED_JUDGE);
+
+/// The fence on a displaced candidate judge revision: the replacement revision, keyed by the
+/// displaced revision's text.
+const DISPLACED_REVISION: SideTable<String, JudgeDisplacement, Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_DISPLACED_REVISION);
+
+/// [`DISPLACED_VERDICT`]'s row: the replacement revision as UTF-8. A row that is not UTF-8 is
+/// verdict-ledger corruption, as it always read.
+struct VerdictDisplacement(String);
+
+impl RawValue for VerdictDisplacement {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        String::from_utf8(bytes.to_vec())
+            .map(Self)
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL).into())
+    }
+}
+
+/// [`DISPLACED_REVISION`]'s row: the replacement revision as UTF-8.
+struct JudgeDisplacement(String);
+
+impl RawValue for JudgeDisplacement {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        String::from_utf8(bytes.to_vec())
+            .map(Self)
+            .map_err(|_| Error::CorruptedIndex("candidate judge displacement").into())
+    }
+}
+
+pub(crate) fn validate_judge_revision(revision: &str) -> Result<()> {
+    if revision.is_empty() || revision.len() > 256 || revision.chars().any(char::is_control) {
+        return Err(invalid("invalid candidate judge revision"));
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_current_judge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<()> {
+    validate_judge_revision(revision)?;
+    if DISPLACED_REVISION.contains(&vault.store, txn, &revision.to_owned())? {
+        return Err(invalid("candidate judge revision was displaced"));
+    }
+    Ok(())
+}
+
+pub(crate) fn displaced_judge_revision_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<Option<String>> {
+    Ok(DISPLACED_REVISION
+        .get(&vault.store, txn, &revision.to_owned())?
+        .map(|mark| mark.0))
+}
+
+/// Retire candidate-scoring judgments by their immutable judge revision.
+/// Their scores and original verdict rows remain readable, while admissions
+/// and repeat deliveries no longer treat their acceptances as standing.
+pub fn supersede_skill_edit_judge(
+    vault: &Vault,
+    displaced: &str,
+    replacement: &str,
+) -> Result<Vec<EntityId>> {
+    if displaced == replacement
+        || displaced.is_empty()
+        || replacement.is_empty()
+        || displaced.len() > 256
+        || replacement.len() > 256
+        || displaced.chars().any(char::is_control)
+        || replacement.chars().any(char::is_control)
+    {
+        return Err(invalid("invalid candidate judge replacement"));
+    }
+    vault.with_write_txn(|txn| {
+        let revision_key = displaced.to_owned();
+        if let Some(held) = DISPLACED_REVISION.get(&vault.store, txn, &revision_key)? {
+            if held.0 != replacement {
+                return Err(invalid(
+                    "candidate judge revision already displaced by another judge",
+                ));
+            }
+        } else {
+            DISPLACED_REVISION.put(
+                &vault.store,
+                txn,
+                &revision_key,
+                &JudgeDisplacement(replacement.to_owned()),
+            )?;
+        }
+        let mut ids = Vec::new();
+        for verdict in verdict_rows_in_txn(vault, txn)? {
+            if verdict.judge_revision.as_deref() != Some(displaced) {
+                continue;
+            }
+            if let Some(held) = DISPLACED_VERDICT.get(&vault.store, txn, &verdict.id)? {
+                if held.0 != replacement {
+                    return Err(invalid(
+                        "candidate verdict already displaced by another judge",
+                    ));
+                }
+            } else {
+                DISPLACED_VERDICT.put(
+                    &vault.store,
+                    txn,
+                    &verdict.id,
+                    &VerdictDisplacement(replacement.to_owned()),
+                )?;
+            }
+            ids.push(verdict.id);
+        }
+        Ok(ids)
+    })
 }

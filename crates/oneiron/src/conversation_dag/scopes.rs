@@ -106,12 +106,47 @@ pub(crate) fn resolve_in_txn(
     let mut records = match scope.path {
         ScopePath::Canonical => graph::canonical_chain(&vault.store, txn, &scope.conversation)?,
         ScopePath::Branch(id) => chain(&vault.store, txn, &scope.conversation, id)?,
+        ScopePath::BranchSpan { after, through } => {
+            return Ok(ResolvedScope {
+                scope: scope.clone(),
+                records: super::branch_scope::prove_branch_span(
+                    &vault.store,
+                    txn,
+                    scope,
+                    after,
+                    through,
+                )?,
+            });
+        }
         ScopePath::SubSession(_) => unreachable!("handled above"),
     };
-    // Branch paths must use the dedicated SubSession selector rather than
-    // pulling a retained worker's records into the parent conversation.
+    // A generic Branch keeps its historic ancestry semantics. Its worker
+    // anchor is proven by the same helper used at stored-summary reads.
+    let worker_branch = if let ScopePath::Branch(anchor) = scope.path {
+        super::branch_scope::prove_branch_anchor(&vault.store, txn, scope, anchor)?
+    } else {
+        None
+    };
+    if let Some(session) = worker_branch {
+        let mut selected = Vec::new();
+        for id in records {
+            if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &id)?
+                == Some(session)
+            {
+                selected.push(id);
+            }
+        }
+        records = selected;
+    }
+    // Plain branches must use the dedicated SubSession selector rather than
+    // pulling retained worker records into the parent conversation.
     for id in &records {
-        if graph::is_sub_session_record(&vault.store, txn, id)? {
+        if graph::is_sub_session_record(&vault.store, txn, id)?
+            && !(matches!(scope.path, ScopePath::Branch(_))
+                && worker_branch.is_some()
+                && crate::compaction::turn_session_membership_in_txn(&vault.store, txn, id)?
+                    == worker_branch)
+        {
             return Err(invalid("use SubSession to select sub-session records"));
         }
     }

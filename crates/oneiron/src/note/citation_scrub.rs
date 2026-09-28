@@ -1,7 +1,9 @@
 //! Pin-only live-state rebuild. Authored prose and surviving provenance stay intact.
 
 use super::document::{NoteDocument, invalid};
-use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_NC_E, SYNC_QD_E, SYNC_QN_E};
+use super::sync_rows::{
+    NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_DS_E, SYNC_NC_E, SYNC_QD_E, SYNC_QN_E,
+};
 use crate::side_table::HexId;
 use crate::{EntityId, Result, Vault};
 
@@ -89,6 +91,10 @@ pub(super) fn scrub_pending(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: Entity
         }
     }
     super::citation_erase::NOTE_ERASE_PENDING.delete_from(&vault.store, txn, &key_prefix)?;
-    super::document_store::persist(vault, txn, &clean)?;
+    if SYNC_DS_E.contains(&vault.store, txn, &HexId(id))? {
+        super::document_store::persist_replica(vault, txn, &clean)?;
+    } else {
+        super::document_store::persist_authoritative(vault, txn, &clean)?;
+    }
     crate::sync::documents::storage::snapshot(vault, txn, id, &clean.doc, true)
 }

@@ -66,34 +66,30 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
     )
 }
 
-/// Stamps the terminal pack receipt for an attempt that ran underneath a
-/// skill pack, inside the terminal transition's OWN write transaction.
+/// Stamps the terminal pack or resident receipt in the transition's OWN
+/// write transaction. Complete, fail, retry-source finalization, queued/paused
+/// cancel, landing cancellation, force-cancel and abandon all call this seam.
+/// An attempt with neither a manifest nor an actor binding mints no row.
 ///
-/// This is the production call path for [`append_pack_manifest_fields`]:
-/// [`AttemptQueue::complete`] and [`AttemptQueue::fail`] are the two doors
-/// every execute leaves through, so stamping there cannot be forgotten by a
-/// caller and cannot drift per lane. An attempt whose pack loaded nothing
-/// mints no row — the manifest IS the reason this receipt exists.
-///
-/// Atomic with the state seal: a terminal attempt with a manifest and no
-/// receipt (or the reverse) is not a reachable state. The row is written
-/// once, at the transition, and never rewritten — which is what makes
-/// "a closed attempt's manifest is the evidence its receipt already
-/// projected" true rather than aspirational.
-///
-/// [`AttemptQueue::complete`]: crate::attempt_queue::AttemptQueue::complete
-/// [`AttemptQueue::fail`]: crate::attempt_queue::AttemptQueue::fail
+/// Atomic with the state seal: a terminal attempt with a manifest or actor
+/// binding and no receipt (or the reverse) is not a reachable state. The row
+/// is written once at the transition and never rewritten.
 pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
     actor: &str,
 ) -> Result<()> {
-    if record.manifest().is_empty() {
+    let receipt_id = attempt_pack_receipt_id(&record.id);
+    // A resident's terminal attempt has an attributable outcome even when it
+    // loaded no skill. Unbound legacy attempts keep their manifest-only rule.
+    if record.manifest().is_empty()
+        && crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_none()
+    {
         return Ok(());
     }
     let mut receipt = ReceiptRecord {
-        receipt_id: attempt_pack_receipt_id(&record.id),
+        receipt_id,
         receipt_kind: ReceiptKind::Outbound,
         occurred_at: record.updated_at,
         actor: Some(actor.to_owned()),
@@ -104,7 +100,20 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         policy_trace: Vec::new(),
         fields: BTreeMap::new(),
     };
+    if record
+        .manifest()
+        .iter()
+        .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
+        && record.executor_model.is_none()
+    {
+        return Err(Error::InvalidClaimBody(
+            "skill-bearing attempt requires executor model",
+        ));
+    }
     append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    if let Some(model) = &record.executor_model {
+        receipt.fields.insert("model".to_owned(), model.clone());
+    }
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }
@@ -402,4 +411,25 @@ pub(crate) fn attempt_pack_receipt_in_txn(
         return Err(Error::CorruptedIndex("attempt receipt key/body identity"));
     }
     Ok(Some(receipt))
+}
+
+/// Test fixture only: emulate a pack receipt imported from the pre-model wire.
+/// Production never removes the immutable executor stamp.
+#[cfg(test)]
+pub(crate) fn make_attempt_receipt_legacy_for_tests(vault: &Vault, receipt_id: &str) -> Result<()> {
+    let key = receipt_id.to_owned();
+    vault.with_write_txn(|txn| {
+        let mut receipt =
+            PACK_RECEIPT
+                .get(&vault.store, txn, &key)?
+                .ok_or(Error::InvalidClaimBody(
+                    "legacy fixture needs an attempt receipt",
+                ))?;
+        if receipt.fields.remove("model").is_none() {
+            return Err(Error::InvalidClaimBody(
+                "legacy fixture needs a stamped model",
+            ));
+        }
+        PACK_RECEIPT.put(&vault.store, txn, &key, &receipt)
+    })
 }

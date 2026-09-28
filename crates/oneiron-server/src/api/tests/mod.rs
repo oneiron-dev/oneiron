@@ -36,6 +36,7 @@ mod mcp_scoping;
 mod mcp_tool_endpoints;
 mod mcp_write_guards;
 mod reactive;
+mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_tree;
@@ -275,8 +276,25 @@ pub(super) fn ingest_artifact_snapshot(
     artifact: &str,
     learned_at: u64,
 ) -> oneiron::codebase::RepoIngestResult {
-    let config = oneiron::codebase::RepoIngestConfig::new(repo_dir, ["index.html", "app.js"])
-        .expect("repo ingest config");
+    let mut paths = vec!["index.html", "app.js"];
+    for extra in [
+        "style.css",
+        "next.html",
+        "c/app.js",
+        "f/style.css",
+        "b/next.html",
+        "_s/nested/app.js",
+        "_t/nested/style.css",
+        "report#1.js",
+        "report?2.js",
+        "literal%20.js",
+    ] {
+        if repo_dir.join(extra).is_file() {
+            paths.push(extra);
+        }
+    }
+    let config =
+        oneiron::codebase::RepoIngestConfig::new(repo_dir, paths).expect("repo ingest config");
     let result = server
         .vault
         .ingest_local_repo_at_commit(

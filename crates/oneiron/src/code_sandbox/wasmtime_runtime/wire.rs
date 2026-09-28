@@ -99,10 +99,51 @@ fn parse<T: serde::de::DeserializeOwned>(input: &str) -> Result<T> {
     serde_json::from_str(input).map_err(|_| failure("invalid typed component arguments"))
 }
 
+/// Fit a recoverable chunk inside the *encoded* host reply ceiling. The
+/// byte-array JSON representation can take four times the raw byte length;
+/// the caller advances by the returned array length, never by a guessed cap.
+fn bounded_recoverable_reply(path: &str, bytes: &[u8], limit: usize) -> Result<String> {
+    let encode = |count| {
+        serde_json::to_string(&json!({"path": path, "bytes": &bytes[..count]}))
+            .map_err(|_| failure("recoverable output encoding failed"))
+    };
+    let full = encode(bytes.len())?;
+    if full.len() <= limit {
+        return Ok(full);
+    }
+    let mut fits = 0;
+    let mut exceeds = bytes.len();
+    while exceeds - fits > 1 {
+        let probe = fits + (exceeds - fits) / 2;
+        if encode(probe)?.len() <= limit {
+            fits = probe;
+        } else {
+            exceeds = probe;
+        }
+    }
+    if fits == 0 {
+        return Err(failure(
+            "recoverable output cannot fit guest message budget",
+        ));
+    }
+    encode(fits)
+}
+
 pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Result<String> {
     match name {
         "sandbox.fs.read_file" => {
             let args: File = parse(input)?;
+            let path = SandboxVirtualPath::try_new(&args.path)?;
+            if path
+                .as_str()
+                .starts_with("/mnt/outputs/.oneiron-context-ref/")
+            {
+                let bytes = state
+                    .host
+                    .read_recoverable_output(path.as_str())?
+                    .ok_or(failure("recoverable output unavailable"))?;
+                return bounded_recoverable_reply(path.as_str(), &bytes, state.message_bytes);
+            }
             let service = state
                 .adapter
                 .as_mut()
@@ -258,6 +299,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             crate::task_verb::TaskAskStatus::Pending { hold } => {
                 json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
             }
+            crate::task_verb::TaskAskStatus::Changed { voided, generation } => {
+                json!({"kind":"task_ask_status","state":"changed","voided":voided.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"generation":generation})
+            }
             crate::task_verb::TaskAskStatus::Settled(result) => {
                 json!({"kind":"task_ask_status","state":"settled","result":result})
             }
@@ -268,6 +312,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::ReportBlocked { receipt } => {
             json!({"receipt":receipt.to_hex()})
         }
+        SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }
@@ -411,6 +456,11 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
     let reply = SelfDispatchResponse {
         outcome: SelfDispatchOutcome::WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy {
             wake_grain_turns: 1,
+            agent_cadence: serde_json::from_str::<crate::dreamer_wake::DreamerWakePolicy>(
+                include_str!("../../dreamer_wake/wake_policy_defaults.json"),
+            )
+            .expect("shipped wake policy")
+            .agent_cadence,
             new_records: 50,
             longest_wait_secs: 28_800,
             nightly_secs: 86_400,
@@ -421,3 +471,30 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
     };
     assert!(response(reply).is_err());
 }
+
+#[cfg(test)]
+#[test]
+fn recoverable_reply_respects_encoded_wire_limit_without_losing_bytes() {
+    let source = (0..2048)
+        .map(|i| [227_u8, 129, 130][i % 3])
+        .collect::<Vec<_>>();
+    let path = "/mnt/outputs/.oneiron-context-ref/0/hash:2048/chunk/0";
+    let mut restored = Vec::new();
+    while restored.len() < source.len() {
+        let end = restored
+            .len()
+            .saturating_add(RECOVERABLE_TEST_CHUNK)
+            .min(source.len());
+        let reply = bounded_recoverable_reply(path, &source[restored.len()..end], 300)
+            .expect("at least one encoded byte fits");
+        assert!(reply.len() <= 300, "the whole framed reply fits");
+        let body: serde_json::Value = serde_json::from_str(&reply).expect("wire JSON");
+        let bytes: Vec<u8> = serde_json::from_value(body["bytes"].clone()).expect("byte array");
+        assert!(!bytes.is_empty());
+        restored.extend(bytes);
+    }
+    assert_eq!(restored, source);
+}
+
+#[cfg(test)]
+const RECOVERABLE_TEST_CHUNK: usize = 64 * 1024;

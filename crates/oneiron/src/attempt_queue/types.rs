@@ -366,6 +366,9 @@ pub struct AttemptRecord {
     /// so no migration is needed.
     #[serde(default)]
     pub manifest: Vec<ManifestEntry>,
+    /// Immutable model id and revision of the executor that acted; absent on legacy attempts.
+    #[serde(default)]
+    pub executor_model: Option<String>,
     /// ONE-1896 two-rung graceful-cancel lifecycle: landing, resume point,
     /// terminal cancellation receipt, cancel pressure, and reserve accounting.
     /// Rows without the key decode as the default, so no migration is needed.

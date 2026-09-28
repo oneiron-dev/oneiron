@@ -616,7 +616,7 @@ impl Vault {
         code_artifact_id: &EntityId,
     ) -> Result<Option<CodebaseSnapshot>> {
         let rtxn = self.store.env.read_txn()?;
-        SNAPSHOTS.get(&self.store, &rtxn, code_artifact_id)
+        self.get_codebase_snapshot_in_txn(&rtxn, code_artifact_id)
     }
 
     /// Reads the value-free custody report stored beside a filtered snapshot.
@@ -654,12 +654,7 @@ impl Vault {
         fork_hash: &CodebaseForkHash,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        codebase_ids_by_index(
-            FORK_INDEX,
-            &self.store,
-            &rtxn,
-            &hash_index_scan_prefix(fork_hash),
-        )
+        self.codebase_snapshots_by_fork_hash_in_txn(&rtxn, fork_hash)
     }
 
     pub fn mount_codebase_snapshot(
@@ -675,6 +670,24 @@ impl Vault {
             snapshot,
         }))
     }
+}
+
+/// One snapshot row in the caller's transaction (the serve path composes it with other reads).
+pub(super) fn codebase_snapshot_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    code_artifact_id: &EntityId,
+) -> Result<Option<CodebaseSnapshot>> {
+    SNAPSHOTS.get(store, rtxn, code_artifact_id)
+}
+
+/// The CODE_ARTIFACT ids indexed under one fork hash, in the caller's transaction.
+pub(super) fn codebase_ids_by_fork_hash_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    fork_hash: &CodebaseForkHash,
+) -> Result<Vec<EntityId>> {
+    codebase_ids_by_index(FORK_INDEX, store, rtxn, &hash_index_scan_prefix(fork_hash))
 }
 
 pub(super) fn codebase_asset_entity_id(

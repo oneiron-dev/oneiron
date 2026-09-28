@@ -51,6 +51,12 @@ side_tables! {
     /// Reverse citation-pin row keyed by the cited source document. Key: hex32(document) ":"
     /// hex32(citing) ":" hex64(hash).
     NOTE_PIN_SOURCE: VaultMeta b"note.pin/source/" LegacyJson;
+    /// One author's reservation of a normalized NOTE title; value id16(note). Key: hex32(author)
+    /// ":" hex64(blake3(normalized title)).
+    NOTE_TITLE_RESERVATION: VaultMeta b"note.title/v1/author/" Raw;
+    /// A NOTE's current title reservation; value is NOTE_TITLE_RESERVATION's full key. Key:
+    /// hex32(note).
+    NOTE_TITLE_BY_NOTE: VaultMeta b"note.title/v1/id/" Raw;
     /// Recorded NOTE fork awaiting review/decision. Key: id16(fork head).
     NOTE_FORK: VaultMeta b"note_fork:v1:" Named;
     /// A NOTE's current head document id and head-move sequence number. Key: id16.
@@ -167,6 +173,8 @@ side_tables! {
     /// Per-envelope usage/rate-window accounting shared by every standing grant naming that envelope.
     /// Key: bytes (channel-identity envelope ref).
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
+    /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
+    SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
     SKILL_HUB_PACK_CANDIDATE: VaultMeta b"pack.candidate.v1/" LegacyJson;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
@@ -204,6 +212,20 @@ side_tables! {
     PORTS_TOMBSTONE: VaultMeta b"ports:tombstone:v1:" Raw;
     /// Community snapshot rows: meta, node:hex32, members:hex32. Key: string.
     PPR_COMMUNITY_CACHE: VaultMeta b"ppr_community_cache:v0:" Raw;
+    /// Local admission marker of one goal claim: `[1]` + body hash32 (sealed), `[2]` + project id16
+    /// + payload hash32 (armed birth), or `[3]` + prior hash32 + allowed hash32 (supersession).
+    /// Key: id16 (goal claim).
+    PROJECT_GOAL_INTAKE_ADMISSION: VaultMeta b"project.goal_intake.admission/" Raw;
+    /// Goal claim a single-use interview confirmation committed. Key: id16 (confirmation turn).
+    PROJECT_GOAL_INTAKE_CONFIRMATION: VaultMeta b"project.goal_intake.confirmation/" Raw;
+    /// A project's goal generation (u64be). Key: id16 (project).
+    PROJECT_GOAL_INTAKE_GENERATION: VaultMeta b"project.goal_intake.generation/" Raw;
+    /// Permit for one goal-pointer change: old goal id16, new goal id16 (zeros for none), project
+    /// body hash32. Key: id16 (project).
+    PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw;
+    /// Durable owner tap of one project card: (tap digest, mint receipt). Key: blake3 hash32 of
+    /// the card id.
+    PROJECT_MINT_TAP: VaultMeta b"project.mint.tap.v1/" Named;
     /// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
     /// id16 (change event id).
     PROJECT_ROOM_CHANGES: VaultMeta b"project.room_changes.v1/" Named;

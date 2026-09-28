@@ -80,11 +80,15 @@ impl SideKey for ArtifactPointerRowKey {
     }
 }
 
-/// One pointer row's value: a bare 32-byte fork hash (every pointer written
-/// before SECRET-04) or 33 bytes when the publish rode a stale-taint override.
+/// One pointer row's value: the export frame, then an optional suffix. A
+/// private pointer keeps the pre-tier frame: a bare 32-byte fork hash (every
+/// pointer written before SECRET-04) or 33 bytes when the publish rode a
+/// stale-taint override. Any other tier appends the stale flag (0 or 1), a
+/// tier tag and the tier body; `decode_artifact_pointer_row` reads it back.
 struct ArtifactPointerRow {
     export: ArtifactExportRef,
     stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
 }
 
 impl RawValue for ArtifactPointerRow {
@@ -102,17 +106,37 @@ impl RawValue for ArtifactPointerRow {
                 bytes
             }
         };
-        if self.stale_taint_override {
-            value.push(ARTIFACT_POINTER_STALE_OVERRIDE_STAMP);
+        if self.stale_taint_override || self.serve_tier != ArtifactServeTier::Private {
+            // A private override is the bare SECRET-04 stamp (0x01).
+            value.push(u8::from(self.stale_taint_override));
+            match self.serve_tier {
+                ArtifactServeTier::Private => {}
+                ArtifactServeTier::Public => value.push(1),
+                ArtifactServeTier::LinkToken(capability) => {
+                    value.push(2);
+                    value.extend_from_slice(&capability.0);
+                }
+                ArtifactServeTier::WorldMembers(world_id) => {
+                    if world_id == 0 {
+                        return Err(Error::InvalidConfig(
+                            "artifact world id cannot be zero".into(),
+                        )
+                        .into());
+                    }
+                    value.push(3);
+                    value.extend_from_slice(&world_id.to_be_bytes());
+                }
+            }
         }
         Ok(value)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let (export, stale_taint_override) = decode_artifact_pointer_row(bytes)?;
+        let (export, stale_taint_override, serve_tier) = decode_artifact_pointer_row(bytes)?;
         Ok(Self {
             export,
             stale_taint_override,
+            serve_tier,
         })
     }
 }
@@ -203,6 +227,8 @@ pub struct ArtifactPointer {
     pub export: ArtifactExportRef,
     /// Durable evidence of an explicit stale-taint publish override.
     pub stale_taint_override: bool,
+    /// The serve tier of this live pointer.
+    pub serve_tier: ArtifactServeTier,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +244,7 @@ pub struct ArtifactSnapshotRef {
 #[non_exhaustive]
 pub struct ArtifactServedFile {
     pub artifact: String,
+    pub serve_tier: ArtifactServeTier,
     pub selector: ArtifactSnapshotSelector,
     pub export: ArtifactExportRef,
     pub path: String,
@@ -231,6 +258,8 @@ pub struct ArtifactServedFile {
 #[non_exhaustive]
 pub struct ArtifactPublishVerbRequest {
     pub artifact: String,
+    /// A publish defaults closed; public disclosure must be explicit.
+    pub serve_tier: ArtifactServeTier,
     pub channel: ArtifactPointerChannel,
     pub export: ArtifactExportRef,
     pub actor: WriteActor,
@@ -251,6 +280,7 @@ impl ArtifactPublishVerbRequest {
     ) -> Self {
         Self {
             artifact: artifact.into(),
+            serve_tier: ArtifactServeTier::Private,
             channel,
             export: ArtifactExportRef::ForkHash(fork_hash),
             actor,
@@ -270,6 +300,7 @@ impl ArtifactPublishVerbRequest {
     ) -> Self {
         Self {
             artifact: artifact_id.to_hex(),
+            serve_tier: ArtifactServeTier::Private,
             channel,
             export: ArtifactExportRef::BlobVersion {
                 artifact_id,
@@ -312,6 +343,7 @@ struct ArtifactPublishAdmission {
     gate_id: GateDecisionId,
     occurred_at: u64,
     stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
 }
 
 impl Vault {
@@ -328,7 +360,13 @@ impl Vault {
             .resolve_artifact_snapshot_by_fork(artifact, fork_hash)?
             .ok_or(Error::EntityNotFound)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let pointer = publish_artifact_pointer_in_txn(self, &mut wtxn, &snapshot, channel)?;
+        let pointer = publish_artifact_pointer_in_txn(
+            self,
+            &mut wtxn,
+            &snapshot,
+            channel,
+            ArtifactServeTier::Private,
+        )?;
         wtxn.commit()?;
         Ok(pointer)
     }
@@ -349,6 +387,44 @@ impl Vault {
                 artifact_id: *artifact_id,
                 version,
             },
+            ArtifactServeTier::Private,
+        )
+    }
+
+    /// Test-only setup of an explicit tier without the outbound Gate.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn publish_artifact_pointer_with_tier(
+        &self,
+        artifact: &str,
+        channel: ArtifactPointerChannel,
+        fork_hash: &CodebaseForkHash,
+        tier: ArtifactServeTier,
+    ) -> Result<ArtifactPointer> {
+        self.publish_export_pointer(
+            artifact,
+            channel,
+            ArtifactExportRef::ForkHash(*fork_hash),
+            tier,
+        )
+    }
+
+    /// Test-only setup of a blob pointer's explicit tier.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn publish_blob_artifact_pointer_with_tier(
+        &self,
+        artifact_id: &EntityId,
+        channel: ArtifactPointerChannel,
+        version: u64,
+        tier: ArtifactServeTier,
+    ) -> Result<ArtifactPointer> {
+        self.publish_export_pointer(
+            &artifact_id.to_hex(),
+            channel,
+            ArtifactExportRef::BlobVersion {
+                artifact_id: *artifact_id,
+                version,
+            },
+            tier,
         )
     }
 
@@ -358,9 +434,11 @@ impl Vault {
         artifact: &str,
         channel: ArtifactPointerChannel,
         export: ArtifactExportRef,
+        tier: ArtifactServeTier,
     ) -> Result<ArtifactPointer> {
         let mut wtxn = self.store.env.write_txn()?;
-        let pointer = self.publish_export_pointer_in_txn(&mut wtxn, artifact, channel, export)?;
+        let pointer =
+            self.publish_export_pointer_in_txn(&mut wtxn, artifact, channel, export, tier)?;
         wtxn.commit()?;
         Ok(pointer)
     }
@@ -371,6 +449,7 @@ impl Vault {
         artifact: &str,
         channel: ArtifactPointerChannel,
         export: ArtifactExportRef,
+        serve_tier: ArtifactServeTier,
     ) -> Result<ArtifactPointer> {
         let entity_id = self
             .resolve_export_owner_in_txn(wtxn, artifact, export)?
@@ -394,12 +473,14 @@ impl Vault {
             channel,
             export,
             stale_taint_override,
+            serve_tier,
         )?;
         Ok(ArtifactPointer {
             artifact: artifact.to_owned(),
             channel,
             export,
             stale_taint_override,
+            serve_tier,
         })
     }
 
@@ -499,7 +580,8 @@ impl Vault {
         let Some(row) = row else {
             return Ok(None);
         };
-        let (export, stale_taint_override) = (row.export, row.stale_taint_override);
+        let (export, stale_taint_override, serve_tier) =
+            (row.export, row.stale_taint_override, row.serve_tier);
         if self.resolve_export_owner(artifact, export)?.is_none() {
             return Ok(None);
         }
@@ -508,6 +590,7 @@ impl Vault {
             channel,
             export,
             stale_taint_override,
+            serve_tier,
         }))
     }
 
@@ -592,6 +675,7 @@ impl Vault {
                 Ok(Some(ArtifactServedFile {
                     artifact: artifact.to_owned(),
                     selector,
+                    serve_tier: ArtifactServeTier::Private,
                     export,
                     path: path.to_owned(),
                     media_type: None,
@@ -635,6 +719,7 @@ impl Vault {
                 Ok(Some(ArtifactServedFile {
                     artifact: artifact.to_owned(),
                     selector,
+                    serve_tier: ArtifactServeTier::Private,
                     export,
                     path: path.to_owned(),
                     media_type: Some(record.export_media_type),
@@ -693,6 +778,9 @@ pub fn artifact_hex(bytes: &[u8]) -> String {
     }
     out
 }
+
+mod access;
+pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};
 
 mod publish;
 pub(crate) use self::publish::artifact_publish_receipts;

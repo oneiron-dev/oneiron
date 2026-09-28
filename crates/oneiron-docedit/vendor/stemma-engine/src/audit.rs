@@ -1,0 +1,1452 @@
+//! The audit core (RFC 0001): certify what changed between two documents.
+//!
+//! One question, answered mechanically: given a `before` and an `after`,
+//! WHAT changed (tracked and untracked), what happened to the changes that
+//! were already pending, and is everything else provably untouched? The
+//! session form (`Document::review` — baseline captured at parse) and the
+//! stateless form (`crate::api::audit` — any two byte packages) are the same
+//! computation; the session handle merely supplies the baseline.
+//!
+//! THE CONTRACT (the reason this module exists): "declared success without
+//! read-back" is the universal agent failure mode. The audit is the
+//! read-back, as one call:
+//! every claim below is derived from the engine's canonical model, never
+//! from what a writer SAID it did.
+//!
+//! Design decisions, each load-bearing:
+//!
+//! - **Census by record identity, never by raw id ranges.** New revisions
+//!   are the enumeration records of `after` left unmatched by `before`'s
+//!   records. A numeric `id > watermark` rule would over-report ids that
+//!   didn't survive normalization (the receipt's documented pitfall) and is
+//!   UNSOUND for the stateless form: another tool (Word included) is under
+//!   no obligation to allocate above the baseline's max id.
+//! - **Disposition by content, never by marker absence.** A pre-existing
+//!   revision still present with identical content is `Untouched`; present
+//!   with different content is `Modified`; absent is `Resolved`. Whether a
+//!   `Resolved` revision was accepted or rejected is deliberately NOT
+//!   claimed in v1 — that distinction requires the committed-content
+//!   comparison the resolution gates use, and a wrong claim here would be
+//!   worse than an honest "resolved". (RFC 0001 defers it to v1.1.)
+//! - **Direct (untracked) delta via reject-all projections.** A tracked
+//!   change leaves the reject-all projection invariant; an untracked edit
+//!   does not. So `diff(reject_all(before), reject_all(after))` is exactly
+//!   the committed delta. Resolving a PRE-EXISTING revision also moves the
+//!   committed content — those rows are annotated with the revision ids
+//!   whose resolution they coincide with, never silently dropped.
+//! - **Untouched proof by fidelity equality, never `semantic_hash`.**
+//!   The block guard deliberately ignores formatting, comments, and
+//!   revision metadata (`semantic_hash.rs` — it is a staleness guard, not
+//!   an identity), so it cannot prove "untouched". The proof pairs the
+//!   blocks the raw diff left unmentioned and requires equality under the
+//!   roundtrip comparator's exhaustive fidelity classification
+//!   (`roundtrip_compare::compare_tracked_block_pair`): everything that is
+//!   document content compares; parse-time artifacts (internal node ids,
+//!   provenance flags, computed hashes) that legitimately differ between
+//!   two independent parses do not. Any pair that fails is a violation,
+//!   LOUD, including the "the diff itself missed this" case.
+//!
+//! Scope boundary (named, per CLAUDE.md): the proof covers block content of
+//! the body and every story (headers, footers, footnotes, endnotes,
+//! comments) plus the body section properties via census+direct delta.
+//! Package-level state outside the block model (styles, settings, media,
+//! docProps) is policed by the validator (section 4) and the fidelity
+//! ratchet suite, not by this proof.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::audit_delta::{AuditDelta, audit_changes};
+use crate::domain::{
+    BlockNode, CanonDoc, HeaderFooterKind, InlineNode, NodeId, OpaqueKind, StoryScope,
+    TrackedBlock, TrackingStatus,
+};
+use crate::runtime::{
+    ErrorCode, ErrorDetails, RuntimeError, ValidationReport, first_quarantined_block,
+    first_unparseable_opaque_with_revisions,
+};
+use crate::styles::StyleTable;
+use crate::tracked_model::{
+    RevisionKind, RevisionRecord, block_node_id, enumerate_revisions, extract_block_text_for_hash,
+    reject_all_with_styles,
+};
+
+/// The audit report: five engine-derived sections (RFC 0001).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditReport {
+    /// Section 1a: revisions present in `after` with no matching record in
+    /// `before` — the session's (or the edit's) tracked-change census.
+    pub new_revisions: Vec<RevisionRecord>,
+    /// Section 1b: every revision that was already pending in `before`,
+    /// with what happened to it.
+    pub preexisting_revisions: Vec<PreexistingRevision>,
+    /// Section 2: committed-content changes with no covering tracked change
+    /// (the untracked delta). In a tracked-changes session this being
+    /// non-empty is itself a finding.
+    pub direct_changes: Vec<DirectChange>,
+    /// Section 3: the untouched proof.
+    pub untouched: UntouchedProof,
+    /// Section 4: the package verdict on `after` — supplied by the byte
+    /// edge (the caller validates the actual bytes; the canonical model
+    /// cannot).
+    pub validator: ValidationReport,
+}
+
+/// A revision that was already pending in `before`, and its fate in `after`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreexistingRevision {
+    /// The record as enumerated in `before`.
+    pub record: RevisionRecord,
+    pub disposition: RevisionDisposition,
+}
+
+/// What happened to a pre-existing revision, judged by record identity and
+/// content — never by marker absence alone (judging by absence produces false
+/// "reverted" verdicts when a marker is merely rewritten).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RevisionDisposition {
+    /// The same revision is present in `after` with identical content.
+    Untouched,
+    /// A revision with the same identity is present in `after` but its
+    /// affected content differs — someone edited inside it.
+    Modified {
+        /// The record's content in `after`.
+        after_excerpt: String,
+    },
+    /// No matching revision in `after`: it was resolved (accepted or
+    /// rejected — v1 deliberately does not claim which; see module doc).
+    Resolved,
+}
+
+/// One committed-content change with no covering tracked change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectChange {
+    /// Which story the change lives in.
+    pub story: StoryScope,
+    pub kind: DirectChangeKind,
+    /// The before-side block id where one exists (`BlockDeleted`,
+    /// `BlockModified`, `TableChanged`); the after-side id for
+    /// `BlockInserted`; `None` for story-level and section-properties rows.
+    pub block_id: Option<NodeId>,
+    pub old_excerpt: Option<String>,
+    pub new_excerpt: Option<String>,
+    /// Revision ids of pre-existing revisions (disposition `Resolved` or
+    /// `Modified`) at this location: resolving a pending revision moves the
+    /// committed content, so this row may be that resolution's committed
+    /// effect rather than a hand edit. Empty = no such coincidence.
+    pub coincides_with_resolution: Vec<u32>,
+}
+
+/// The shape of a committed-content change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectChangeKind {
+    BlockInserted,
+    BlockDeleted,
+    BlockModified,
+    /// Table structure or cell content changed (reported per table).
+    TableChanged,
+    /// A whole story (header/footer/footnote/endnote/comment) appeared.
+    StoryInserted,
+    /// A whole story disappeared.
+    StoryDeleted,
+    /// The body-level section properties differ between the committed
+    /// projections.
+    SectionPropertiesChanged,
+}
+
+impl DirectChangeKind {
+    /// Wire name, used by transports serializing the report.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DirectChangeKind::BlockInserted => "block_inserted",
+            DirectChangeKind::BlockDeleted => "block_deleted",
+            DirectChangeKind::BlockModified => "block_modified",
+            DirectChangeKind::TableChanged => "table_changed",
+            DirectChangeKind::StoryInserted => "story_inserted",
+            DirectChangeKind::StoryDeleted => "story_deleted",
+            DirectChangeKind::SectionPropertiesChanged => "section_properties_changed",
+        }
+    }
+}
+
+/// Section 3: every block outside sections 1–2 verified structurally
+/// identical to the baseline, across all story parts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UntouchedProof {
+    /// Blocks verified `TrackedBlock`-equal across all parts.
+    pub verified_blocks: usize,
+    /// Story-part families the proof walked and found content in
+    /// (`"document"`, `"headers"`, `"footers"`, `"footnotes"`, `"endnotes"`,
+    /// `"comments"`).
+    pub parts: Vec<&'static str>,
+    /// Every failure of the proof. Empty = everything outside the reported
+    /// changes is provably untouched.
+    pub violations: Vec<UntouchedViolation>,
+}
+
+/// One failure of the untouched proof — a difference between `before` and
+/// `after` that no census row and no direct-change row accounts for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UntouchedViolation {
+    pub story: StoryScope,
+    pub kind: UntouchedViolationKind,
+    /// Human context: which blocks, what differs.
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UntouchedViolationKind {
+    /// A paired block differs structurally although no reported change
+    /// covers it (either an unreported edit or a diff blind spot — both are
+    /// findings, never absorbed).
+    BlockDiffers {
+        before_block_id: NodeId,
+        after_block_id: NodeId,
+    },
+    /// After removing all diff-mentioned blocks the two sequences do not
+    /// pair 1:1 — the diff did not fully explain the sequence difference.
+    SequenceLengthMismatch {
+        before_remaining: usize,
+        after_remaining: usize,
+    },
+    /// A story present in `before` has no counterpart in `after` and no
+    /// diff row reported its removal.
+    StoryMissing,
+    /// A story present in `after` has no counterpart in `before` and no
+    /// diff row reported its insertion.
+    StoryUnexpected,
+}
+
+/// Audit `after` against `before`, both as canonical documents. The
+/// `validator` verdict for `after`'s BYTES is computed at the byte edge and
+/// passed in (see `crate::api::audit` / `Document::review`).
+///
+/// Refuses (mutating nothing) when either document carries revisions the
+/// census cannot see — a quarantined block or an unparseable opaque with
+/// embedded tracked changes. Auditing around them would silently
+/// under-report, which is the exact failure this module exists to kill.
+///
+/// `before_styles` / `after_styles` are each document's own style table (parse
+/// them from the corresponding DOCX bytes with
+/// [`crate::style_table_from_docx`]). They let the committed-baseline
+/// projection re-resolve style-inherited run marks when a tracked
+/// paragraph-style change is rejected — without them, a document carrying such
+/// a change would produce a spurious committed-delta row. Pass `None` for a
+/// document with no style table.
+pub fn audit_documents(
+    before: &CanonDoc,
+    after: &CanonDoc,
+    before_styles: Option<&StyleTable>,
+    after_styles: Option<&StyleTable>,
+    validator: ValidationReport,
+) -> Result<AuditReport, RuntimeError> {
+    refuse_unauditable(before, "before")?;
+    refuse_unauditable(after, "after")?;
+
+    // Section 1: the census delta.
+    let before_records = enumerate_revisions(before);
+    let after_records = enumerate_revisions(after);
+    let (new_revisions, preexisting_revisions) = match_census(before_records, after_records);
+
+    // Section 2: the committed (untracked) delta. Reject with each document's
+    // own style table so a rejected paragraph-style change re-resolves its
+    // runs' style-inherited marks (the bare, style-free reject would leave them
+    // baked and inject a spurious committed-delta row).
+    let mut before_committed = before.clone();
+    reject_all_with_styles(&mut before_committed, before_styles);
+    let mut after_committed = after.clone();
+    reject_all_with_styles(&mut after_committed, after_styles);
+    let committed_changes = audit_changes(&before_committed, &after_committed);
+    let mut direct_changes = direct_rows(&committed_changes);
+    append_hyperlink_metadata_rows(&before_committed, &after_committed, &mut direct_changes);
+    if before_committed.body_section_properties != after_committed.body_section_properties {
+        direct_changes.push(DirectChange {
+            story: StoryScope::Body,
+            kind: DirectChangeKind::SectionPropertiesChanged,
+            block_id: None,
+            old_excerpt: None,
+            new_excerpt: None,
+            coincides_with_resolution: Vec::new(),
+        });
+    }
+    annotate_resolutions(&mut direct_changes, &preexisting_revisions);
+
+    // Section 3: the untouched proof, over the RAW documents (pending
+    // revisions and all): the raw diff explains every sequence difference;
+    // whatever it leaves unmentioned must pair 1:1 and be structurally
+    // identical, except pairs a census row already accounts for.
+    let raw_changes = audit_changes(before, after);
+    let untouched = untouched_proof(
+        before,
+        after,
+        &raw_changes,
+        &direct_changes,
+        &new_revisions,
+        &preexisting_revisions,
+    );
+
+    Ok(AuditReport {
+        new_revisions,
+        preexisting_revisions,
+        direct_changes,
+        untouched,
+        validator,
+    })
+}
+
+/// Fail loud when a document carries revisions invisible to the census —
+/// mirrors `EditSnapshot::project`'s accept/reject preflight.
+fn refuse_unauditable(doc: &CanonDoc, side: &str) -> Result<(), RuntimeError> {
+    if let Some(block_id) = first_quarantined_block(doc) {
+        return Err(RuntimeError {
+            code: ErrorCode::UnsupportedEdit,
+            message: format!(
+                "audit refused: {side} document's block '{block_id}' is quarantined (nested \
+                 tracked changes are not representable); its revisions are invisible to the \
+                 census, so the audit would silently under-report"
+            ),
+            details: ErrorDetails::default(),
+        });
+    }
+    if let Some(opaque_id) = first_unparseable_opaque_with_revisions(doc) {
+        return Err(RuntimeError {
+            code: ErrorCode::UnsupportedEdit,
+            message: format!(
+                "audit refused: {side} document's opaque '{opaque_id}' carries tracked changes \
+                 inside raw_xml that could not be parsed; they are invisible to the census, so \
+                 the audit would silently under-report"
+            ),
+            details: ErrorDetails::default(),
+        });
+    }
+    Ok(())
+}
+
+/// The identity of a revision record across two enumerations. `revision_id` is
+/// engine-minted from the canonical revision record and is the semantic key;
+/// raw OOXML `w:id` is diagnostic only and never enters correspondence.
+type CensusKey = (StoryScope, u32, RevisionKind, Option<String>);
+
+fn census_key(r: &RevisionRecord) -> CensusKey {
+    (
+        r.location.clone(),
+        r.revision_id,
+        r.kind,
+        r.author
+            .as_ref()
+            .filter(|author| !author.is_empty())
+            .cloned(),
+    )
+}
+
+/// Match `before`'s records against `after`'s by semantic identity, in document
+/// order. One user intention can have several census rows under the same
+/// identity (for example content and paragraph-mark carriers), so rows pair as
+/// a multiset: exact-content matches first, then modified leftovers.
+fn match_census(
+    before: Vec<RevisionRecord>,
+    after: Vec<RevisionRecord>,
+) -> (Vec<RevisionRecord>, Vec<PreexistingRevision>) {
+    let mut after_by_key: HashMap<CensusKey, Vec<usize>> = HashMap::new();
+    for (idx, record) in after.iter().enumerate() {
+        after_by_key
+            .entry(census_key(record))
+            .or_default()
+            .push(idx);
+    }
+    let mut consumed = vec![false; after.len()];
+
+    let mut preexisting = Vec::with_capacity(before.len());
+    for record in before {
+        let candidates = after_by_key.get(&census_key(&record));
+        // Pass 1: an unconsumed candidate with identical content.
+        let untouched_match = candidates.and_then(|idxs| {
+            idxs.iter()
+                .copied()
+                .find(|&i| !consumed[i] && after[i].excerpt == record.excerpt)
+        });
+        if let Some(i) = untouched_match {
+            consumed[i] = true;
+            preexisting.push(PreexistingRevision {
+                record,
+                disposition: RevisionDisposition::Untouched,
+            });
+            continue;
+        }
+        // Pass 2: an unconsumed candidate with the same identity but
+        // different content.
+        let modified_match =
+            candidates.and_then(|idxs| idxs.iter().copied().find(|&i| !consumed[i]));
+        if let Some(i) = modified_match {
+            consumed[i] = true;
+            preexisting.push(PreexistingRevision {
+                record,
+                disposition: RevisionDisposition::Modified {
+                    after_excerpt: after[i].excerpt.clone(),
+                },
+            });
+            continue;
+        }
+        preexisting.push(PreexistingRevision {
+            record,
+            disposition: RevisionDisposition::Resolved,
+        });
+    }
+
+    let new_revisions = after
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !consumed[*i])
+        .map(|(_, r)| r)
+        .collect();
+    (new_revisions, preexisting)
+}
+
+/// Flatten a committed-projection diff into direct-change rows. Story
+/// `Modified` variants recurse into their block-level changes under the
+/// story's scope; story insert/delete become single story-level rows.
+fn direct_rows(changes: &[AuditDelta]) -> Vec<DirectChange> {
+    let mut rows = Vec::new();
+    for change in changes {
+        push_direct_rows(&mut rows, change, &StoryScope::Body);
+    }
+    rows
+}
+
+fn blocks_text(blocks: &[BlockNode]) -> String {
+    let mut out = String::new();
+    for block in blocks {
+        out.push_str(&extract_block_text_for_hash(block));
+        out.push(' ');
+    }
+    out.trim_end().to_string()
+}
+
+fn push_direct_rows(rows: &mut Vec<DirectChange>, change: &AuditDelta, story: &StoryScope) {
+    let row = |kind: DirectChangeKind,
+               block_id: Option<NodeId>,
+               old_excerpt: Option<String>,
+               new_excerpt: Option<String>| DirectChange {
+        story: story.clone(),
+        kind,
+        block_id,
+        old_excerpt,
+        new_excerpt,
+        coincides_with_resolution: Vec::new(),
+    };
+    match change {
+        AuditDelta::BlockDeleted {
+            block_id, old_text, ..
+        } => rows.push(row(
+            DirectChangeKind::BlockDeleted,
+            Some(block_id.clone()),
+            Some(old_text.clone()),
+            None,
+        )),
+        AuditDelta::BlockInserted { block, .. } => rows.push(row(
+            DirectChangeKind::BlockInserted,
+            Some(block_node_id(block)),
+            None,
+            Some(extract_block_text_for_hash(block)),
+        )),
+        AuditDelta::BlockModified {
+            block_id,
+            old_text,
+            new_text,
+            ..
+        } => rows.push(row(
+            DirectChangeKind::BlockModified,
+            Some(block_id.clone()),
+            Some(old_text.clone()),
+            Some(new_text.clone()),
+        )),
+        AuditDelta::TableStructureChanged {
+            table_id,
+            old_text,
+            new_text,
+            ..
+        } => rows.push(row(
+            DirectChangeKind::TableChanged,
+            Some(table_id.clone()),
+            Some(old_text.clone()),
+            Some(new_text.clone()),
+        )),
+
+        AuditDelta::HeaderModified {
+            kind,
+            base_part_name,
+            block_changes,
+            ..
+        } => {
+            let scope = StoryScope::Header {
+                part_path: base_part_name.clone(),
+                kind: kind.clone(),
+            };
+            for inner in block_changes {
+                push_direct_rows(rows, inner, &scope);
+            }
+        }
+        AuditDelta::HeaderDeleted {
+            kind,
+            part_name,
+            blocks,
+            ..
+        } => rows.push(DirectChange {
+            story: StoryScope::Header {
+                part_path: part_name.clone(),
+                kind: kind.clone(),
+            },
+            kind: DirectChangeKind::StoryDeleted,
+            block_id: None,
+            old_excerpt: Some(blocks_text(blocks)),
+            new_excerpt: None,
+            coincides_with_resolution: Vec::new(),
+        }),
+        AuditDelta::HeaderInserted {
+            kind,
+            part_name,
+            blocks,
+            ..
+        } => rows.push(DirectChange {
+            story: StoryScope::Header {
+                part_path: part_name.clone(),
+                kind: kind.clone(),
+            },
+            kind: DirectChangeKind::StoryInserted,
+            block_id: None,
+            old_excerpt: None,
+            new_excerpt: Some(blocks_text(blocks)),
+            coincides_with_resolution: Vec::new(),
+        }),
+
+        AuditDelta::FooterModified {
+            kind,
+            base_part_name,
+            block_changes,
+            ..
+        } => {
+            let scope = StoryScope::Footer {
+                part_path: base_part_name.clone(),
+                kind: kind.clone(),
+            };
+            for inner in block_changes {
+                push_direct_rows(rows, inner, &scope);
+            }
+        }
+        AuditDelta::FooterDeleted {
+            kind,
+            part_name,
+            blocks,
+            ..
+        } => rows.push(DirectChange {
+            story: StoryScope::Footer {
+                part_path: part_name.clone(),
+                kind: kind.clone(),
+            },
+            kind: DirectChangeKind::StoryDeleted,
+            block_id: None,
+            old_excerpt: Some(blocks_text(blocks)),
+            new_excerpt: None,
+            coincides_with_resolution: Vec::new(),
+        }),
+        AuditDelta::FooterInserted {
+            kind,
+            part_name,
+            blocks,
+            ..
+        } => rows.push(DirectChange {
+            story: StoryScope::Footer {
+                part_path: part_name.clone(),
+                kind: kind.clone(),
+            },
+            kind: DirectChangeKind::StoryInserted,
+            block_id: None,
+            old_excerpt: None,
+            new_excerpt: Some(blocks_text(blocks)),
+            coincides_with_resolution: Vec::new(),
+        }),
+
+        AuditDelta::FootnoteModified {
+            id, block_changes, ..
+        } => {
+            let scope = StoryScope::Footnote { id: id.clone() };
+            for inner in block_changes {
+                push_direct_rows(rows, inner, &scope);
+            }
+        }
+        AuditDelta::FootnoteDeleted { id, blocks, .. } => rows.push(DirectChange {
+            story: StoryScope::Footnote { id: id.clone() },
+            kind: DirectChangeKind::StoryDeleted,
+            block_id: None,
+            old_excerpt: Some(blocks_text(blocks)),
+            new_excerpt: None,
+            coincides_with_resolution: Vec::new(),
+        }),
+        AuditDelta::FootnoteInserted { id, blocks, .. } => rows.push(DirectChange {
+            story: StoryScope::Footnote { id: id.clone() },
+            kind: DirectChangeKind::StoryInserted,
+            block_id: None,
+            old_excerpt: None,
+            new_excerpt: Some(blocks_text(blocks)),
+            coincides_with_resolution: Vec::new(),
+        }),
+
+        AuditDelta::EndnoteModified {
+            id, block_changes, ..
+        } => {
+            let scope = StoryScope::Endnote { id: id.clone() };
+            for inner in block_changes {
+                push_direct_rows(rows, inner, &scope);
+            }
+        }
+        AuditDelta::EndnoteDeleted { id, blocks, .. } => rows.push(DirectChange {
+            story: StoryScope::Endnote { id: id.clone() },
+            kind: DirectChangeKind::StoryDeleted,
+            block_id: None,
+            old_excerpt: Some(blocks_text(blocks)),
+            new_excerpt: None,
+            coincides_with_resolution: Vec::new(),
+        }),
+        AuditDelta::EndnoteInserted { id, blocks, .. } => rows.push(DirectChange {
+            story: StoryScope::Endnote { id: id.clone() },
+            kind: DirectChangeKind::StoryInserted,
+            block_id: None,
+            old_excerpt: None,
+            new_excerpt: Some(blocks_text(blocks)),
+            coincides_with_resolution: Vec::new(),
+        }),
+
+        AuditDelta::CommentModified {
+            id, block_changes, ..
+        } => {
+            let scope = StoryScope::Comment { id: id.clone() };
+            for inner in block_changes {
+                push_direct_rows(rows, inner, &scope);
+            }
+        }
+        AuditDelta::CommentDeleted { id, blocks, .. } => rows.push(DirectChange {
+            story: StoryScope::Comment { id: id.clone() },
+            kind: DirectChangeKind::StoryDeleted,
+            block_id: None,
+            old_excerpt: Some(blocks_text(blocks)),
+            new_excerpt: None,
+            coincides_with_resolution: Vec::new(),
+        }),
+        AuditDelta::CommentInserted { id, blocks, .. } => rows.push(DirectChange {
+            story: StoryScope::Comment { id: id.clone() },
+            kind: DirectChangeKind::StoryInserted,
+            block_id: None,
+            old_excerpt: None,
+            new_excerpt: Some(blocks_text(blocks)),
+            coincides_with_resolution: Vec::new(),
+        }),
+    }
+}
+
+/// Hyperlink relationship retargeting changes committed metadata while leaving
+/// display text unchanged. The semantic text diff deliberately treats that
+/// paragraph as matched, so add the missing audit row explicitly from the typed
+/// hyperlink model instead of letting the untouched proof report a blind spot.
+fn append_hyperlink_metadata_rows(
+    before: &CanonDoc,
+    after: &CanonDoc,
+    rows: &mut Vec<DirectChange>,
+) {
+    let after_by_id: HashMap<NodeId, &TrackedBlock> = after
+        .blocks
+        .iter()
+        .map(|block| (block_node_id(&block.block), block))
+        .collect();
+    for before_block in &before.blocks {
+        let block_id = block_node_id(&before_block.block);
+        let Some(after_block) = after_by_id.get(&block_id) else {
+            continue;
+        };
+        if hyperlink_targets(&before_block.block) == hyperlink_targets(&after_block.block) {
+            continue;
+        }
+        if rows
+            .iter()
+            .any(|row| row.story == StoryScope::Body && row.block_id.as_ref() == Some(&block_id))
+        {
+            continue;
+        }
+        rows.push(DirectChange {
+            story: StoryScope::Body,
+            kind: DirectChangeKind::BlockModified,
+            block_id: Some(block_id),
+            old_excerpt: Some(extract_block_text_for_hash(&before_block.block)),
+            new_excerpt: Some(extract_block_text_for_hash(&after_block.block)),
+            coincides_with_resolution: Vec::new(),
+        });
+    }
+}
+
+/// A block's hyperlink identities in document order: TARGET (url + anchor)
+/// per hyperlink. Deliberately NOT the inline `NodeId` — that id is minted
+/// from a document-global counter and renumbers whenever any earlier inline
+/// content shifts, so comparing it flags untouched hyperlink paragraphs
+/// after a legitimate tracked edit elsewhere. Document order plus the
+/// per-block pairing the caller already does carries the positional
+/// identity.
+fn hyperlink_targets(block: &BlockNode) -> Vec<(Option<String>, Option<String>)> {
+    let mut targets = Vec::new();
+    collect_hyperlink_targets(block, &mut targets);
+    targets
+}
+
+fn collect_hyperlink_targets(
+    block: &BlockNode,
+    targets: &mut Vec<(Option<String>, Option<String>)>,
+) {
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            for segment in &paragraph.segments {
+                for inline in &segment.inlines {
+                    if let InlineNode::OpaqueInline(opaque) = inline
+                        && let OpaqueKind::Hyperlink(link) = &opaque.kind
+                    {
+                        targets.push((link.url.clone(), link.anchor.clone()));
+                    }
+                }
+            }
+        }
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    for nested in &cell.blocks {
+                        collect_hyperlink_targets(nested, targets);
+                    }
+                }
+            }
+        }
+        BlockNode::OpaqueBlock(_) => {}
+    }
+}
+
+/// Annotate each direct row with the pre-existing revisions (Resolved or
+/// Modified) at its location: resolving a pending revision changes the
+/// committed content, so the row may be that resolution's effect. Matching
+/// is by story, plus block id when the row has one; story-level rows match
+/// any record in the same story. Annotation only — a row is never removed.
+fn annotate_resolutions(rows: &mut [DirectChange], preexisting: &[PreexistingRevision]) {
+    let moved: Vec<&PreexistingRevision> = preexisting
+        .iter()
+        .filter(|p| !matches!(p.disposition, RevisionDisposition::Untouched))
+        .collect();
+    if moved.is_empty() {
+        return;
+    }
+    for row in rows.iter_mut() {
+        let matches: Vec<u32> = moved
+            .iter()
+            .filter(|p| {
+                p.record.location == row.story
+                    && match &row.block_id {
+                        Some(block_id) => &p.record.block_id == block_id,
+                        None => true,
+                    }
+            })
+            .map(|p| p.record.revision_id)
+            .collect();
+        row.coincides_with_resolution = matches;
+    }
+}
+
+// ─── Section 3: the untouched proof ──────────────────────────────────────────
+
+/// A block-level location a census row implicates, used to exempt its PAIR
+/// from the proof (the change is accounted for in section 1, so the pair is
+/// neither "verified untouched" nor a violation).
+type Implicated = HashSet<(StoryScope, NodeId)>;
+
+fn untouched_proof(
+    before: &CanonDoc,
+    after: &CanonDoc,
+    raw_changes: &[AuditDelta],
+    direct_changes: &[DirectChange],
+    new_revisions: &[RevisionRecord],
+    preexisting: &[PreexistingRevision],
+) -> UntouchedProof {
+    // Census-implicated block locations. A new revision implicates its
+    // after-side block; a Resolved/Modified pre-existing revision implicates
+    // its before-side block. A pair is exempt when EITHER side is
+    // implicated (covers status-only changes the text diff cannot see,
+    // e.g. a new Delete leg stacked onto an existing insertion).
+    let mut implicated_after: Implicated = HashSet::new();
+    let mut implicated_stories: HashSet<StoryScope> = HashSet::new();
+    for r in new_revisions {
+        note_implication(&mut implicated_after, &mut implicated_stories, r);
+        note_move_carrier_implications(after, r, &mut implicated_after);
+    }
+    let mut implicated_before: Implicated = HashSet::new();
+    for p in preexisting {
+        if !matches!(p.disposition, RevisionDisposition::Untouched) {
+            note_implication(&mut implicated_before, &mut implicated_stories, &p.record);
+            note_move_carrier_implications(before, &p.record, &mut implicated_before);
+            if matches!(p.disposition, RevisionDisposition::Modified { .. }) {
+                note_move_carrier_implications(after, &p.record, &mut implicated_after);
+            }
+        }
+    }
+    for change in direct_changes {
+        if let Some(block_id) = &change.block_id {
+            implicated_before.insert((change.story.clone(), block_id.clone()));
+            implicated_after.insert((change.story.clone(), block_id.clone()));
+        }
+    }
+
+    // Comment stories and their body anchors are one annotation. The raw diff
+    // reports the story insertion/deletion, but the zero-width range markers
+    // added to or removed from the body paragraph are not a separate block
+    // change. Account for those markers here so the untouched proof does not
+    // misreport the correctly anchored paragraph as an unexplained mutation.
+    for change in raw_changes {
+        match change {
+            AuditDelta::CommentInserted { id, .. } => {
+                implicate_comment_anchor_blocks(after, id, &mut implicated_after);
+            }
+            AuditDelta::CommentDeleted { id, .. } => {
+                implicate_comment_anchor_blocks(before, id, &mut implicated_before);
+            }
+            _ => {}
+        }
+    }
+
+    let mut verified = 0usize;
+    let mut violations = Vec::new();
+    let mut parts = Vec::new();
+
+    // Body.
+    if !(before.blocks.is_empty() && after.blocks.is_empty()) {
+        parts.push("document");
+    }
+    let (body_before_removed, body_after_removed) = raw_removed_block_ids(raw_changes);
+    verify_block_sequences(
+        &StoryScope::Body,
+        &before.blocks,
+        &after.blocks,
+        &body_before_removed,
+        &body_after_removed,
+        &implicated_before,
+        &implicated_after,
+        &mut verified,
+        &mut violations,
+    );
+
+    // Headers / footers: paired by part name; raw-diff story rows mark
+    // touched slots.
+    let mut header_touched_before: HashSet<String> = HashSet::new();
+    let mut header_touched_after: HashSet<String> = HashSet::new();
+    let mut footer_touched_before: HashSet<String> = HashSet::new();
+    let mut footer_touched_after: HashSet<String> = HashSet::new();
+    let mut note_touched: HashMap<&'static str, HashSet<String>> = HashMap::new();
+    for change in raw_changes {
+        match change {
+            AuditDelta::HeaderModified {
+                base_part_name,
+                target_part_name,
+                ..
+            } => {
+                header_touched_before.insert(base_part_name.clone());
+                header_touched_after.insert(target_part_name.clone());
+            }
+            AuditDelta::HeaderDeleted { part_name, .. } => {
+                header_touched_before.insert(part_name.clone());
+            }
+            AuditDelta::HeaderInserted { part_name, .. } => {
+                header_touched_after.insert(part_name.clone());
+            }
+            AuditDelta::FooterModified {
+                base_part_name,
+                target_part_name,
+                ..
+            } => {
+                footer_touched_before.insert(base_part_name.clone());
+                footer_touched_after.insert(target_part_name.clone());
+            }
+            AuditDelta::FooterDeleted { part_name, .. } => {
+                footer_touched_before.insert(part_name.clone());
+            }
+            AuditDelta::FooterInserted { part_name, .. } => {
+                footer_touched_after.insert(part_name.clone());
+            }
+            AuditDelta::FootnoteModified { id, .. }
+            | AuditDelta::FootnoteDeleted { id, .. }
+            | AuditDelta::FootnoteInserted { id, .. } => {
+                note_touched
+                    .entry("footnotes")
+                    .or_default()
+                    .insert(id.clone());
+            }
+            AuditDelta::EndnoteModified { id, .. }
+            | AuditDelta::EndnoteDeleted { id, .. }
+            | AuditDelta::EndnoteInserted { id, .. } => {
+                note_touched
+                    .entry("endnotes")
+                    .or_default()
+                    .insert(id.clone());
+            }
+            AuditDelta::CommentModified { id, .. }
+            | AuditDelta::CommentDeleted { id, .. }
+            | AuditDelta::CommentInserted { id, .. } => {
+                note_touched
+                    .entry("comments")
+                    .or_default()
+                    .insert(id.clone());
+            }
+            _ => {}
+        }
+    }
+
+    // Headers.
+    {
+        let before_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = before
+            .headers
+            .iter()
+            .filter(|s| !s.synthesized)
+            .map(|s| {
+                (
+                    s.part_name.clone(),
+                    header_scope(&s.part_name, &s.kind),
+                    &s.blocks,
+                )
+            })
+            .collect();
+        let after_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = after
+            .headers
+            .iter()
+            .filter(|s| !s.synthesized)
+            .map(|s| {
+                (
+                    s.part_name.clone(),
+                    header_scope(&s.part_name, &s.kind),
+                    &s.blocks,
+                )
+            })
+            .collect();
+        if !(before_stories.is_empty() && after_stories.is_empty()) {
+            parts.push("headers");
+        }
+        verify_story_family(
+            before_stories,
+            after_stories,
+            &header_touched_before,
+            &header_touched_after,
+            &implicated_stories,
+            &implicated_before,
+            &implicated_after,
+            &mut verified,
+            &mut violations,
+        );
+    }
+    // Footers.
+    {
+        let before_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = before
+            .footers
+            .iter()
+            .filter(|s| !s.synthesized)
+            .map(|s| {
+                (
+                    s.part_name.clone(),
+                    footer_scope(&s.part_name, &s.kind),
+                    &s.blocks,
+                )
+            })
+            .collect();
+        let after_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = after
+            .footers
+            .iter()
+            .filter(|s| !s.synthesized)
+            .map(|s| {
+                (
+                    s.part_name.clone(),
+                    footer_scope(&s.part_name, &s.kind),
+                    &s.blocks,
+                )
+            })
+            .collect();
+        if !(before_stories.is_empty() && after_stories.is_empty()) {
+            parts.push("footers");
+        }
+        verify_story_family(
+            before_stories,
+            after_stories,
+            &footer_touched_before,
+            &footer_touched_after,
+            &implicated_stories,
+            &implicated_before,
+            &implicated_after,
+            &mut verified,
+            &mut violations,
+        );
+    }
+    // Footnotes / endnotes / comments (keyed by id; insert/delete touched
+    // sets are shared per family since ids identify both sides).
+    {
+        let touched = note_touched.remove("footnotes").unwrap_or_default();
+        let before_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = before
+            .footnotes
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    StoryScope::Footnote { id: s.id.clone() },
+                    &s.blocks,
+                )
+            })
+            .collect();
+        let after_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = after
+            .footnotes
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    StoryScope::Footnote { id: s.id.clone() },
+                    &s.blocks,
+                )
+            })
+            .collect();
+        if !(before_stories.is_empty() && after_stories.is_empty()) {
+            parts.push("footnotes");
+        }
+        verify_story_family(
+            before_stories,
+            after_stories,
+            &touched,
+            &touched,
+            &implicated_stories,
+            &implicated_before,
+            &implicated_after,
+            &mut verified,
+            &mut violations,
+        );
+    }
+    {
+        let touched = note_touched.remove("endnotes").unwrap_or_default();
+        let before_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = before
+            .endnotes
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    StoryScope::Endnote { id: s.id.clone() },
+                    &s.blocks,
+                )
+            })
+            .collect();
+        let after_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = after
+            .endnotes
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    StoryScope::Endnote { id: s.id.clone() },
+                    &s.blocks,
+                )
+            })
+            .collect();
+        if !(before_stories.is_empty() && after_stories.is_empty()) {
+            parts.push("endnotes");
+        }
+        verify_story_family(
+            before_stories,
+            after_stories,
+            &touched,
+            &touched,
+            &implicated_stories,
+            &implicated_before,
+            &implicated_after,
+            &mut verified,
+            &mut violations,
+        );
+    }
+    {
+        let touched = note_touched.remove("comments").unwrap_or_default();
+        let before_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = before
+            .comments
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    StoryScope::Comment { id: s.id.clone() },
+                    &s.blocks,
+                )
+            })
+            .collect();
+        let after_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)> = after
+            .comments
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    StoryScope::Comment { id: s.id.clone() },
+                    &s.blocks,
+                )
+            })
+            .collect();
+        if !(before_stories.is_empty() && after_stories.is_empty()) {
+            parts.push("comments");
+        }
+        verify_story_family(
+            before_stories,
+            after_stories,
+            &touched,
+            &touched,
+            &implicated_stories,
+            &implicated_before,
+            &implicated_after,
+            &mut verified,
+            &mut violations,
+        );
+    }
+
+    UntouchedProof {
+        verified_blocks: verified,
+        parts,
+        violations,
+    }
+}
+
+fn implicate_comment_anchor_blocks(doc: &CanonDoc, comment_id: &str, out: &mut Implicated) {
+    for block in &doc.blocks {
+        if block_contains_comment_anchor(&block.block, comment_id) {
+            out.insert((StoryScope::Body, block_node_id(&block.block)));
+        }
+    }
+}
+
+fn block_contains_comment_anchor(block: &BlockNode, comment_id: &str) -> bool {
+    match block {
+        BlockNode::Paragraph(paragraph) => paragraph.segments.iter().any(|segment| {
+            segment.inlines.iter().any(|inline| {
+                matches!(
+                    inline,
+                    InlineNode::CommentRangeStart { id }
+                        | InlineNode::CommentRangeEnd { id }
+                        | InlineNode::CommentReference { id }
+                        if id == comment_id
+                )
+            })
+        }),
+        BlockNode::Table(table) => table.rows.iter().any(|row| {
+            row.cells.iter().any(|cell| {
+                cell.blocks
+                    .iter()
+                    .any(|nested| block_contains_comment_anchor(nested, comment_id))
+            })
+        }),
+        BlockNode::OpaqueBlock(_) => false,
+    }
+}
+
+fn header_scope(part_name: &str, kind: &HeaderFooterKind) -> StoryScope {
+    StoryScope::Header {
+        part_path: part_name.to_string(),
+        kind: kind.clone(),
+    }
+}
+
+fn footer_scope(part_name: &str, kind: &HeaderFooterKind) -> StoryScope {
+    StoryScope::Footer {
+        part_path: part_name.to_string(),
+        kind: kind.clone(),
+    }
+}
+
+/// Record which block (or whole story) a census row implicates. The
+/// `comment_story` sentinel implicates its whole comment story; the
+/// `body_section` sentinel implicates no block (it lives outside the block
+/// sequences).
+fn note_implication(
+    blocks: &mut Implicated,
+    stories: &mut HashSet<StoryScope>,
+    record: &RevisionRecord,
+) {
+    let id = record.block_id.to_string();
+    if id == "comment_story" {
+        stories.insert(record.location.clone());
+    } else if id != "body_section" {
+        blocks.insert((record.location.clone(), record.block_id.clone()));
+    }
+}
+
+/// A move census row represents every source and destination carrier sharing
+/// one engine identity. The representative row names only the first carrier
+/// in document order, so the untouched proof must recover and implicate the
+/// complete carrier set from the canonical document.
+fn note_move_carrier_implications(
+    doc: &CanonDoc,
+    record: &RevisionRecord,
+    blocks: &mut Implicated,
+) {
+    if record.kind != RevisionKind::Move {
+        return;
+    }
+
+    let mut note_story = |story: StoryScope, story_blocks: &[TrackedBlock]| {
+        if story != record.location {
+            return;
+        }
+        for block in story_blocks {
+            if block.move_id.is_some()
+                && tracked_block_has_revision_identity(block, record.revision_id)
+            {
+                blocks.insert((story.clone(), block_node_id(&block.block)));
+            }
+        }
+    };
+
+    note_story(StoryScope::Body, &doc.blocks);
+    for header in &doc.headers {
+        note_story(
+            header_scope(&header.part_name, &header.kind),
+            &header.blocks,
+        );
+    }
+    for footer in &doc.footers {
+        note_story(
+            footer_scope(&footer.part_name, &footer.kind),
+            &footer.blocks,
+        );
+    }
+    for footnote in &doc.footnotes {
+        note_story(
+            StoryScope::Footnote {
+                id: footnote.id.clone(),
+            },
+            &footnote.blocks,
+        );
+    }
+    for endnote in &doc.endnotes {
+        note_story(
+            StoryScope::Endnote {
+                id: endnote.id.clone(),
+            },
+            &endnote.blocks,
+        );
+    }
+    for comment in &doc.comments {
+        note_story(
+            StoryScope::Comment {
+                id: comment.id.clone(),
+            },
+            &comment.blocks,
+        );
+    }
+}
+
+fn tracked_block_has_revision_identity(block: &TrackedBlock, identity: u32) -> bool {
+    fn status_has_identity(status: &TrackingStatus, identity: u32) -> bool {
+        match status {
+            TrackingStatus::Normal => false,
+            TrackingStatus::Inserted(revision) | TrackingStatus::Deleted(revision) => {
+                revision.identity == identity
+            }
+            TrackingStatus::InsertedThenDeleted(stacked) => {
+                stacked.inserted.identity == identity || stacked.deleted.identity == identity
+            }
+        }
+    }
+
+    if status_has_identity(&block.status, identity) {
+        return true;
+    }
+    let BlockNode::Paragraph(paragraph) = &block.block else {
+        return false;
+    };
+    paragraph
+        .segments
+        .iter()
+        .any(|segment| status_has_identity(&segment.status, identity))
+        || paragraph
+            .para_mark_status
+            .as_ref()
+            .is_some_and(|status| status_has_identity(status, identity))
+}
+
+/// Before-side / after-side block ids the raw diff's BODY-level rows
+/// mention. Story-level rows are handled per family.
+fn raw_removed_block_ids(changes: &[AuditDelta]) -> (HashSet<NodeId>, HashSet<NodeId>) {
+    let mut before_removed = HashSet::new();
+    let mut after_removed = HashSet::new();
+    for change in changes {
+        match change {
+            AuditDelta::BlockDeleted { block_id, .. } => {
+                before_removed.insert(block_id.clone());
+            }
+            AuditDelta::BlockInserted { block, .. } => {
+                after_removed.insert(block_node_id(block));
+            }
+            AuditDelta::BlockModified {
+                block_id,
+                new_block,
+                ..
+            } => {
+                before_removed.insert(block_id.clone());
+                after_removed.insert(block_node_id(new_block));
+            }
+            AuditDelta::TableStructureChanged {
+                table_id,
+                target_table_id,
+                ..
+            } => {
+                before_removed.insert(table_id.clone());
+                after_removed.insert(target_table_id.clone());
+            }
+            _ => {}
+        }
+    }
+    (before_removed, after_removed)
+}
+
+/// The core of the proof: remove diff-mentioned blocks from each side, pair
+/// the remainder 1:1 in order, exempt census-implicated pairs, and require
+/// full `TrackedBlock` equality of every remaining pair.
+#[allow(clippy::too_many_arguments)]
+fn verify_block_sequences(
+    story: &StoryScope,
+    before_blocks: &[TrackedBlock],
+    after_blocks: &[TrackedBlock],
+    before_removed: &HashSet<NodeId>,
+    after_removed: &HashSet<NodeId>,
+    implicated_before: &Implicated,
+    implicated_after: &Implicated,
+    verified: &mut usize,
+    violations: &mut Vec<UntouchedViolation>,
+) {
+    let before_rest: Vec<&TrackedBlock> = before_blocks
+        .iter()
+        .filter(|tb| !before_removed.contains(&block_node_id(&tb.block)))
+        .collect();
+    let after_rest: Vec<&TrackedBlock> = after_blocks
+        .iter()
+        .filter(|tb| !after_removed.contains(&block_node_id(&tb.block)))
+        .collect();
+
+    if before_rest.len() != after_rest.len() {
+        violations.push(UntouchedViolation {
+            story: story.clone(),
+            kind: UntouchedViolationKind::SequenceLengthMismatch {
+                before_remaining: before_rest.len(),
+                after_remaining: after_rest.len(),
+            },
+            detail: format!(
+                "after removing diff-reported changes, {} before-side and {} after-side blocks \
+                 remain — the diff did not fully explain the sequence difference",
+                before_rest.len(),
+                after_rest.len()
+            ),
+        });
+        // The pairing is broken; comparing misaligned pairs would produce
+        // noise on top of the (already loud) mismatch. Stop here for this
+        // sequence.
+        return;
+    }
+
+    for (b, a) in before_rest.iter().zip(after_rest.iter()) {
+        let b_id = block_node_id(&b.block);
+        let a_id = block_node_id(&a.block);
+        let exempt = implicated_before.contains(&(story.clone(), b_id.clone()))
+            || implicated_after.contains(&(story.clone(), a_id.clone()));
+        if exempt {
+            // Accounted for by a census row (section 1); neither verified
+            // nor a violation.
+            continue;
+        }
+        // Fidelity equality, not derive(PartialEq): the roundtrip comparator
+        // ignores parse-time artifacts (internal node ids, provenance flags,
+        // computed hashes) that legitimately differ between two independent
+        // parses of identical content, and compares everything that IS
+        // document content — the same classification the roundtrip suite
+        // enforces exhaustively per field.
+        let differences = crate::roundtrip_compare::compare_tracked_block_pair(b, a);
+        if differences.is_empty() {
+            *verified += 1;
+        } else {
+            let named: Vec<String> = differences.iter().take(3).map(|d| d.to_string()).collect();
+            violations.push(UntouchedViolation {
+                story: story.clone(),
+                kind: UntouchedViolationKind::BlockDiffers {
+                    before_block_id: b_id.clone(),
+                    after_block_id: a_id.clone(),
+                },
+                detail: format!(
+                    "block '{b_id}' differs from its counterpart '{a_id}' although no tracked \
+                     change and no direct-change row covers it ({} difference(s), first: {})",
+                    differences.len(),
+                    named.join("; ")
+                ),
+            });
+        }
+    }
+}
+
+/// Verify one story family (headers, footers, footnotes, endnotes,
+/// comments): stories the raw diff already reported are exempt; the rest
+/// must pair by key and verify block-by-block.
+#[allow(clippy::too_many_arguments)]
+fn verify_story_family(
+    before_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)>,
+    after_stories: Vec<(String, StoryScope, &Vec<TrackedBlock>)>,
+    touched_before: &HashSet<String>,
+    touched_after: &HashSet<String>,
+    implicated_stories: &HashSet<StoryScope>,
+    implicated_before: &Implicated,
+    implicated_after: &Implicated,
+    verified: &mut usize,
+    violations: &mut Vec<UntouchedViolation>,
+) {
+    let empty: HashSet<NodeId> = HashSet::new();
+    let mut after_by_key: HashMap<String, (StoryScope, &Vec<TrackedBlock>)> = after_stories
+        .iter()
+        .filter(|(key, _, _)| !touched_after.contains(key))
+        .map(|(key, scope, blocks)| (key.clone(), (scope.clone(), *blocks)))
+        .collect();
+
+    for (key, scope, before_blocks) in before_stories {
+        if touched_before.contains(&key) {
+            continue; // reported by the diff → accounted for in section 2.
+        }
+        if implicated_stories.contains(&scope) {
+            after_by_key.remove(&key);
+            continue; // accounted for by a story-level census row.
+        }
+        match after_by_key.remove(&key) {
+            Some((_, after_blocks)) => {
+                verify_block_sequences(
+                    &scope,
+                    before_blocks,
+                    after_blocks,
+                    &empty,
+                    &empty,
+                    implicated_before,
+                    implicated_after,
+                    verified,
+                    violations,
+                );
+            }
+            None => violations.push(UntouchedViolation {
+                story: scope.clone(),
+                kind: UntouchedViolationKind::StoryMissing,
+                detail: format!(
+                    "story '{key}' exists in before but has no counterpart in after, and no \
+                     diff row reported its removal"
+                ),
+            }),
+        }
+    }
+
+    for (key, (scope, _)) in after_by_key {
+        if implicated_stories.contains(&scope) {
+            continue;
+        }
+        violations.push(UntouchedViolation {
+            story: scope,
+            kind: UntouchedViolationKind::StoryUnexpected,
+            detail: format!(
+                "story '{key}' exists in after but has no counterpart in before, and no diff \
+                 row reported its insertion"
+            ),
+        });
+    }
+}

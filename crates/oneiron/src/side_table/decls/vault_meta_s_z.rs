@@ -138,11 +138,25 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
+    /// receipt length + receipt string + id16.
+    SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
+    /// Lifelong resident owner of one skill id (version byte, has-owner byte, optional owner id16),
+    /// kept across deletion. Key: id16.
+    SKILL_RESIDENT_OWNER: VaultMeta b"skill:resident_owner:v1:" Raw;
+    /// The actor (id16) one attempt receipt is bound to. Key: string (the receipt id).
+    SKILL_RESIDENT_RECEIPT: VaultMeta b"skill:resident_receipt:v1:" Raw;
     /// Persisted audit report of a judge run against the held-out fixture set, keyed by run time then
     /// evidence sequence. Key: u64be + u64be.
     SKILL_ATTRIBUTION_AUDIT: VaultMeta b"skill_attribution:audit:v1:" Raw;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
+    /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
+    /// (evidence sequence).
+    SKILL_ATTRIBUTION_DISPLACED_JUDGE: VaultMeta b"skill_attribution:displaced_judge:v1:" Raw;
+    /// Fence on a displaced attribution judge revision: its replacement revision (UTF-8). Key:
+    /// string (the displaced revision).
+    SKILL_ATTRIBUTION_DISPLACED_REVISION: VaultMeta b"skill_attribution:displaced_revision:v1:" Raw;
     /// One minted skill-edit proposal awaiting gated apply, keyed by judgment sequence. Key: u64be.
     SKILL_ATTRIBUTION_EDIT_PROPOSAL: VaultMeta b"skill_attribution:edit_proposal:v1:" Raw;
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
@@ -150,6 +164,9 @@ side_tables! {
     SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
     SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE: VaultMeta b"skill_attribution:evidence_sequence:v1" Raw;
+    /// Judge revision (UTF-8) that routed one judgment, stamped once. Key: u64be (evidence
+    /// sequence).
+    SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
@@ -171,6 +188,9 @@ side_tables! {
     SKILL_HUB_ADMISSION_RECEIPT: VaultMeta b"skill_hub/admission-receipt/v1\0" LegacyJson;
     /// Cached capability-surface projection for a hub-derived skill entity. Key: id16.
     SKILL_HUB_CAPABILITY: VaultMeta b"skill_hub/capability/v1\0" Raw;
+    /// Owner-adjudicated held-out claim labels (JSON array of hex ids) reserved for one claim base.
+    /// Key: id16.
+    SKILL_HUB_CLAIM_REFINEMENT_RESERVE: VaultMeta b"skill_hub/claim-refinement-reserve/v1\0" LegacyJson;
     /// Empty-marker index from a skill content hash to every entity holding it, maintained on every
     /// skill put. Key: hash32 + id16.
     SKILL_HUB_CONTENT_HASH_INDEX: VaultMeta b"skill_hub/content_hash_index/v1\0" Raw;
@@ -179,12 +199,37 @@ side_tables! {
     /// Hub-import receipt for one entity, keyed by (entity, source hub id, hash of the source ref
     /// string). Key: id16 + id16 + hash32.
     SKILL_HUB_IMPORT_RECEIPT: VaultMeta b"skill_hub/import-receipt/v1\0" LegacyJson;
+    /// Owner blocking rule (`0` off, `1` on) on one canonical marketplace content hash. Key: hash32.
+    SKILL_HUB_MARKETPLACE_BLOCKED_HASH: VaultMeta b"skill_hub/marketplace-blocked-hash/v1\0" Raw;
+    /// Revision (u64be) of the owner's code auto-install switch, bound into each change's consent.
+    /// Key: ().
+    SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION: VaultMeta b"skill_hub/marketplace-code-auto-install-revision/v1" Raw;
+    /// Owner switch (`0` off, `1` on) for auto-installing code-bearing marketplace folders. Key: ().
+    SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL: VaultMeta b"skill_hub/marketplace-code-auto-install/v1" Raw;
     /// Origin marker for a hub-materialized skill (imported flag, optional forked-from parent id);
     /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.
     SKILL_HUB_ORIGIN: VaultMeta b"skill_hub/origin/v1\0" Raw;
     /// Persisted hub package sidecar (custom MAGIC-framed binary envelope) for a skill entity. Key:
     /// id16.
     SKILL_HUB_PACKAGE: VaultMeta b"skill_hub/package/v1\0" Raw;
+    /// Refinement-receipt carrier id to the holder (candidate id, 16 bytes) that owns it. Key: id16.
+    SKILL_HUB_REFINEMENT_BINDING: VaultMeta b"skill_hub/refinement-binding/v1\0" Raw;
+    /// Permanent claim-refinement origin: blake3 (32 bytes) of the first native Proposed bytes. Key:
+    /// id16.
+    SKILL_HUB_REFINEMENT_CLAIM_ORIGIN: VaultMeta b"skill_hub/refinement-claim-origin/v1\0" Raw;
+    /// Content-free refinement control row (target, bindings, state) for one candidate. Key: id16.
+    SKILL_HUB_REFINEMENT_CONTROL: VaultMeta b"skill_hub/refinement-control/v1\0" LegacyJson;
+    /// Empty marker that a refinement holder's custody is permanently closed. Key: id16.
+    SKILL_HUB_REFINEMENT_HOLDER_RETIRED: VaultMeta b"skill_hub/refinement-holder-retired/v1\0" Raw;
+    /// Latest local refinement ruling pointer (ruling id16 + carrier id16) for a holder. Key: id16.
+    SKILL_HUB_REFINEMENT_LATEST: VaultMeta b"skill_hub/refinement-latest/v1\0" Raw;
+    /// Empty marker that a holder owns one refinement-receipt carrier. Key: id16 + id16.
+    SKILL_HUB_REFINEMENT_OWNED: VaultMeta b"skill_hub/refinement-owned/v1\0" Raw;
+    /// Permanent skill-refinement origin: blake3 (32 bytes) of the first native Candidate bytes.
+    /// Key: id16.
+    SKILL_HUB_REFINEMENT_SKILL_ORIGIN: VaultMeta b"skill_hub/refinement-skill-origin/v1\0" Raw;
+    /// Empty marker that one refinement-receipt carrier id is permanently retired. Key: id16.
+    SKILL_HUB_REFINEMENT_SOURCE_RETIRED: VaultMeta b"skill_hub/refinement-source-retired/v1\0" Raw;
     /// Shared-skill merge delta computed for one candidate. Key: id16.
     SKILL_HUB_SHARED_DELTA: VaultMeta b"skill_hub/shared-delta/v1\0" LegacyJson;
     /// Append-only history of shared-skill merge receipts, keyed by receipt id. Key: string.
@@ -203,12 +248,28 @@ side_tables! {
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
     /// Skill-edit gate verdict ledger row. Key: id16.
     SKILL_EDIT_VERDICT: VaultMeta b"skill_optimize/verdict/v1\0" Raw;
+    /// Replacement judge revision (UTF-8) marking one skill-edit verdict as displaced. Key: id16
+    /// (verdict id).
+    SKILL_OPTIMIZE_DISPLACED_JUDGE: VaultMeta b"skill_optimize:displaced_judge:v1:" Raw;
+    /// Fence on a displaced candidate judge revision: its replacement revision (UTF-8). Key: string
+    /// (the displaced revision).
+    SKILL_OPTIMIZE_DISPLACED_REVISION: VaultMeta b"skill_optimize:displaced_revision:v1:" Raw;
+    /// Marker (MessagePack map naming the displaced and replacement judge revisions) that one
+    /// outcome row's weight is superseded. Key: the outcome row's full stored key, table prefix
+    /// included.
+    SKILL_RELIABILITY_DISPLACED_JUDGE: VaultMeta b"skill_reliability:displaced_judge:v1:" Raw;
     /// Imported (alpha, beta) reliability base this vault's own outcome ledger cannot reproduce,
     /// node-local and never synced. Key: id16.
     SKILL_RELIABILITY_IMPORTED_BASE: VaultMeta b"skill_reliability:imported_base:v1:" Raw;
+    /// The imported reliability base of one named executor's arm. Key: id16 + u16be length +
+    /// executor string.
+    SKILL_RELIABILITY_PAIRED_IMPORTED_BASE: VaultMeta b"skill_reliability:imported_base:v2:" Raw;
     /// Durable per-(skill, receipt) attributed-outcome ledger row, keyed so a re-run over the same
     /// judgment cannot double-count. Key: id16 + string.
     SKILL_RELIABILITY_OUTCOME: VaultMeta b"skill_reliability:outcome:v1:" Raw;
+    /// The same outcome row for a named executor's arm. Key: id16 + u16be length + executor string +
+    /// receipt string.
+    SKILL_RELIABILITY_PAIRED_OUTCOME: VaultMeta b"skill_reliability:outcome:v2:" Raw;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64
     /// (blake3 of prefix+agent+world).
     STANDING_BLOCK: VaultMeta b"standing.block.v1:" LegacyJson;
@@ -219,10 +280,30 @@ side_tables! {
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named;
-    /// Node-local ask origin entity id. Key: ().
     /// Owner/question-class ask band and consumed receipt markers. Key: id16 + u16be + class [+ ':' id16].
     TASK_ASK_BAND: VaultMeta b"tasks.ask.band.v1:" Raw;
+    /// Local ed25519 seed (32 bytes) that signs one ask group's option-link words. Key: id16 (group).
+    TASK_ASK_LINK_SIGNER: VaultMeta b"tasks.ask.link_signer.v1:" Raw;
+    /// One option-link bearer row (group, person, revision, state). Key: blake3 hash32 of the token.
+    TASK_ASK_OPTION_LINK: VaultMeta b"tasks.ask.option_link.v1:" Named;
+    /// A person's current option-link bearer: the full token row key. Key: id16 (group) + id16
+    /// (person).
+    TASK_ASK_OPTION_SEAT: VaultMeta b"tasks.ask.option_seat.v1:" Raw;
+    /// `b"1"` marker that a person voided their option link. Key: id16 (group) + id16 (person).
+    TASK_ASK_OPTION_VOID: VaultMeta b"tasks.ask.option_void.v1:" Raw;
+    /// Highest acknowledged option-link void generation (u64be). Key: id16 (group).
+    TASK_ASK_OPTION_VOID_ACK: VaultMeta b"tasks.ask.option_void_ack.v1:" Raw;
+    /// Option-link void generation (u64be). Key: id16 (group).
+    TASK_ASK_OPTION_VOID_GENERATION: VaultMeta b"tasks.ask.option_void_generation.v1:" Raw;
+    /// Node-local ask origin entity id. Key: ().
     TASK_ASK_ORIGIN: VaultMeta b"tasks.ask.origin.v1" Raw;
+    /// Per-trap ask-void proof committed before a peer-result signal: u64 BE generation. Key: id16.
+    TASK_ASK_PEER_VOID_TRAP: VaultMeta b"tasks.ask.peer_void_trap.v1:" Raw;
+    /// Soft-confirm notice delivery state of one guest. Key: id16 (group) + id16 (person).
+    TASK_ASK_SOFT_CONFIRM_DELIVERY: VaultMeta b"tasks.ask.soft_confirm.delivery.v1/" Named;
+    /// Round-robin cursor of the soft-confirm retry sweep: the last visited delivery key suffix
+    /// (id16 group + id16 person). Key: ().
+    TASK_ASK_SOFT_CONFIRM_DELIVERY_CURSOR: VaultMeta b"tasks.ask.soft_confirm.delivery_cursor.v1" Raw;
     /// By-owner index backfill marker. Key: ().
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
@@ -290,10 +371,15 @@ side_tables! {
     VAULT_CLEANUP_TASK_RETENTION_DAYS: VaultMeta b"vault_cleanup.task_retention_days.v1" Raw;
     /// Test-only marker that closes the automatic-cleanup release blockers. Key: ().
     VAULT_CLEANUP_TEST_BLOCKERS_CLOSED: VaultMeta b"vault_cleanup.test_blockers_closed" Raw;
-    /// Owner voice reference pack. Key: string.
+    /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named;
-    /// Per-owner index over voice reference rows. Key: id16 + string.
+    /// Per-owner index over voice reference bank rows. Key: id16 (owner) + the indexed row's full
+    /// key.
     VOICE_OWNER_REF_OWNER_INDEX: VaultMeta b"voice:owner_ref_owner:v1:" Raw;
+    /// Voice identity over its reference packs. Key: string (voice id).
+    VOICE_REF_IDENTITY: VaultMeta b"voice:ref_identity:v1:" Named;
+    /// Cached voice render-target pointer. Key: string (voice id) "\0" string (target).
+    VOICE_REF_TARGET: VaultMeta b"voice:ref_target:v1:" Named;
     /// Voice consent decision event. Key: id16 + digest16.
     VOICE_IDENTITY_CONSENT: VaultMeta b"voice_identity.consent.v1:" Raw;
     /// Voice print records and the active-space pointer per subject. Key: id16 [+ digest16].
@@ -304,6 +390,9 @@ side_tables! {
     VOICE_IDENTITY_SAMPLE: VaultMeta b"voice_identity.sample.v1:" Raw;
     /// Wave-plan cut index. Key: bytes32.
     TASK_WAVE_PLAN_INDEX: VaultMeta b"wave.task.v1/" Raw;
+    /// One immutable wrong-link label filed from a live weave report. Key: edge ref (33 bytes) +
+    /// id16 (label receipt id).
+    WEAVE_WRONG_LINK_LABEL: VaultMeta b"weave:wrong-link:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw;

@@ -4,6 +4,7 @@
 
 use super::*;
 
+mod claim_refs;
 mod keys;
 mod ledger;
 mod lookup;

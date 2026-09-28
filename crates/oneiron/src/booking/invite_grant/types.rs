@@ -51,11 +51,3 @@ pub struct ConfirmedBookingInvite<'a> {
 /// `comm.rs` constant exactly as `campaign/claims.rs` does: booking READS it
 /// and never writes it.
 pub(super) const COMM_PARTY_KEY_FIELD: &str = "party_key";
-
-/// Zone label the confirm-time invite document is rendered in.
-///
-/// A booking's stored occurrence is UTC and the visitor's wall zone lives on
-/// the soft-hold row, which the confirm consumes and deletes. Rendering the
-/// instant we actually persisted — rather than guessing a zone we no longer
-/// hold — keeps the document a pure function of committed state.
-pub(super) const CONFIRM_INVITE_TZ_LABEL: &str = "UTC";

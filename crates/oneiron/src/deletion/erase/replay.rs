@@ -88,9 +88,14 @@ impl Vault {
         let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
 
         if !decoded.is_hard() {
+            let had_refinement =
+                crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, wtxn, id)?;
+            let had_merge_receipt =
+                crate::skill_hub::refinement_custody_exists_in_txn(&self.store, wtxn, id)?;
             let had_sources =
                 crate::skill_hub::source_custody_exists_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             let had_receipt_sources =
                 crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
             let had_birth_sources =
@@ -102,7 +107,8 @@ impl Vault {
                 .entities
                 .get(&*wtxn, id.as_bytes())?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
+            let (existed, had_vector, ledger_changed) =
+                self.soft_erase_active_store_in_txn(wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;
             }
@@ -112,11 +118,14 @@ impl Vault {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
-                changed: had_body
+                changed: ledger_changed
+                    || had_body
                     || had_vector
                     || had_birth_sources
                     || had_sources
-                    || had_receipt_sources,
+                    || had_receipt_sources
+                    || had_refinement
+                    || had_merge_receipt,
             });
         }
 
@@ -128,6 +137,7 @@ impl Vault {
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
             // Hard-once-seen is durable LOCAL truth even when nothing local

@@ -123,6 +123,8 @@ side_tables! {
     DREAMER_WAKE_RECIPE_INPUT: VaultMeta b"dreamer:wake-policy:recipe-input:v1:" LegacyJson;
     /// Wake cursor and pending state. Key: ().
     DREAMER_WAKE_STATE: VaultMeta b"dreamer:wake-policy:state:v1" LegacyJson;
+    /// Digest (32 bytes) of the last queued wake projector image. Key: ().
+    DREAMER_WAKE_PROJECTION: VaultMeta b"dreamer:wake:projection:v1" Raw;
     /// Per-scope (micro/meso/macro) consolidation watermark: last learned_at/turn_id progress. Key:
     /// u8.
     DREAMER_WATERMARK: VaultMeta b"dreamer:watermark:v1:" Raw;
@@ -241,6 +243,8 @@ side_tables! {
     FAILURE_SIGNALS_TIER2_SOURCE: VaultMeta b"failure_signals:tier2:source:" Raw;
     /// Per-week tier-2 quota count. Key: hex-week.
     FAILURE_SIGNALS_TIER2_WEEK: VaultMeta b"failure_signals:tier2:week:" Raw;
+    /// The actor bound to the active content write transaction, deleted before commit. Key: ().
+    FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
     FEEDBACK_QUEUE: VaultMeta b"feedback:queue:v1:" Named;
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
@@ -276,6 +280,13 @@ side_tables! {
     GATE_DECISION_CLAIM_INDEX: VaultMeta b"gate_decision_by_claim:v0:" Raw;
     /// Claim-index backfill flag. Key: ().
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE: VaultMeta b"gate_decision_by_claim_backfill_complete" Raw;
+    /// Per-constituent index over bundle decisions' claim refs; empty value. Key: id16 (claim) +
+    /// id16 (decision).
+    GATE_DECISION_CLAIM_REF_INDEX: VaultMeta b"gate_decision_by_claim_ref:v0:" Raw;
+    /// A bundle decision's complete constituent claim ids (ascending, distinct). Key: id16.
+    GATE_DECISION_CLAIM_REFS: VaultMeta b"gate_decision_claim_refs:v0:" LegacyCompact;
+    /// Batch preflight decision whose op has not applied yet; never survives a commit. Key: id16.
+    GATE_DECISION_UNAPPLIED_PREFLIGHT: VaultMeta b"gate_decision_unapplied_preflight:v0:" Raw;
     /// Staged deletion authority decision sidecar. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): decode also enforces
@@ -394,7 +405,11 @@ side_tables! {
     LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson;
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
+    /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
+    LLM_EXTRACTION_TEACHER_PROBE: VaultMeta b"llm:extraction_teacher_probe:v1" LegacyJson;
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
+    /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
+    LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
     LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson;

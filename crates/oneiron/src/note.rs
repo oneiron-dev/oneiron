@@ -318,6 +318,25 @@ pub(crate) fn note_body_readable(
     Ok(context != ContextDefault::OwnerOnly || actor == Some(&body.author_ref))
 }
 
+/// A refused private row must not disclose its existence through a receipt.
+/// All NOTE kinds are omitted from denial counts: without admission, a reader
+/// cannot safely distinguish a public NOTE from an owner-only one. Diary-pair
+/// grants and malformed grant bodies are likewise opaque to ordinary readers.
+pub(crate) fn countable_read_suppression(entity_type: u8, body: &[u8]) -> bool {
+    match entity_type {
+        crate::registry::ENTITY_TYPE_NOTE => false,
+        crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
+            crate::access_grant::decode_access_grant_body(body).is_ok_and(|grant| {
+                !matches!(
+                    grant.scope,
+                    crate::access_grant::AccessGrantScope::DiaryCoreference { .. }
+                )
+            })
+        }
+        _ => true,
+    }
+}
+
 /// Ordinary retrieval's NOTE privacy floor. Unrelated entity kinds and missing
 /// graph endpoints retain their existing admission semantics.
 pub(crate) fn ordinary_entity_visible(
@@ -373,6 +392,8 @@ pub use kind_contract::{
     BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
 };
 mod birth;
+mod coreference;
+pub(crate) use coreference::{edge_access_in as diary_edge_access_in, readable_through_link};
 #[cfg(feature = "sync")]
 mod brief_view;
 mod document;
@@ -385,7 +406,10 @@ pub(crate) fn live_frontier_in_txn(
 }
 
 mod document_store;
+mod title_index;
 pub(crate) use birth::document_birth_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_titles_in_txn;
 mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
 #[cfg(feature = "sync")]
@@ -402,6 +426,8 @@ pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpa
 
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod shared_membership_tests;
 
 #[cfg(test)]
 mod adapter_tests;

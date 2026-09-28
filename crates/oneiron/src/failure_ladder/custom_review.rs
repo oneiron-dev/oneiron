@@ -113,6 +113,29 @@ fn custom_agent_ref(record: &AttemptRecord) -> Result<crate::entity_id::EntityId
     input.target.agent_definition_ref().map_err(|_| invalid())
 }
 
+/// Point-check a caller-selected member and class on the SAME snapshot used
+/// for owner validation. A stale group result cannot turn into a read of an
+/// unrelated attempt. The terminal dispatch snapshot is the historical
+/// identity proof: deletion of the live definition does not delete its trace.
+pub(super) fn member_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    class: FailureSignalClass,
+) -> Result<AttemptRecord> {
+    let Some(indexed) = FAILURE.get_bytes(&vault.store, txn, attempt_id.as_bytes())? else {
+        return Err(Error::EntityNotFound);
+    };
+    if indexed.as_slice() != [VERSION, class as u8] {
+        return Err(Error::EntityNotFound);
+    }
+    let record = AttemptQueue::new(vault)
+        .get_in_txn(txn, attempt_id)?
+        .ok_or(Error::CorruptedIndex("custom-agent failure"))?;
+    custom_agent_ref(&record).map_err(|_| Error::CorruptedIndex("custom-agent failure"))?;
+    Ok(record)
+}
+
 impl Vault {
     /// Indexes one terminal custom dispatch under its producer-supplied
     /// taxonomy class, without changing its execution outcome. Same-class

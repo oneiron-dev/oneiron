@@ -14,7 +14,7 @@ use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use oneiron::EntityId;
-use oneiron::conversation_dag::{AppendRecord, DagPageRequest};
+use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest};
 use oneiron::registry::ENTITY_TYPE_TURN;
 use std::sync::Arc;
 use types::parse_optional;
@@ -50,6 +50,16 @@ fn append_input(
     Ok(AppendRecord {
         conversation,
         reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,
+        address: match req.addr.unwrap_or(DagAddressMode::Broadcast) {
+            DagAddressMode::Broadcast => AddressMode::Broadcast,
+            DagAddressMode::Direct => AddressMode::Direct,
+        },
+        recipients: req
+            .to
+            .unwrap_or_default()
+            .iter()
+            .map(|id| parse_entity_id_param(id, "to"))
+            .collect::<Result<Vec<_>, _>>()?,
         parent: parse_optional(req.parent.as_deref(), "parent")?,
         advance: req.advance,
         kind: ENTITY_TYPE_TURN,
@@ -93,6 +103,13 @@ pub(crate) async fn get_core_dag(
     auth.require(CoreScope::Read)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = query_params(query)?;
+    if req
+        .with
+        .as_deref()
+        .is_some_and(|with| with != "thread_meta")
+    {
+        return Err(ApiError::bad_request("unsupported records projection", None).into());
+    }
     let page = server
         .vault
         .main_line(
@@ -103,8 +120,27 @@ pub(crate) async fn get_core_dag(
             },
         )
         .map_err(|e| core_engine_error("DAG read failed", e))?;
+    let thread_meta = if req.with.as_deref() == Some("thread_meta") {
+        let mut meta = std::collections::BTreeMap::new();
+        for id in &page.main_line {
+            let value = server
+                .vault
+                .thread_meta(*id)
+                .map_err(|e| core_engine_error("thread metadata read failed", e))?
+                .map(|row| DagThreadMetaResponse {
+                    root: row.root.to_hex(),
+                    count: row.count,
+                    last_at: row.last_at,
+                });
+            meta.insert(id.to_hex(), value);
+        }
+        Some(meta)
+    } else {
+        None
+    };
     Ok(Json(DagPageResponse {
         head: page.head.map(|id| id.to_hex()),
+        thread_meta,
         root: page.root.map(|id| id.to_hex()),
         main_line: ids(page.main_line),
         page: DagPageCursor {
@@ -324,11 +360,47 @@ pub(crate) async fn get_thread(
     if thread.conversation != conversation {
         return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
     }
+    let roots = server
+        .vault
+        .thread_roots(record)
+        .map_err(|e| core_engine_error("thread roots read failed", e))?;
     Ok(Json(DagThreadResponse {
+        roots: ids(roots),
         root: thread.root.map(|id| id.to_hex()),
         replies: ids(thread.replies),
         count: thread.count,
         last_at: thread.last_at,
+    }))
+}
+
+#[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
+    params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagThreadSummaryRequest,
+    responses((status = 200, body = DagSummaryResponse), (status = 400, body = ApiErrorEnvelope)))]
+pub(crate) async fn summarize_thread(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((conversation_id, record)): Path<(String, String)>,
+    payload: Result<Json<DagThreadSummaryRequest>, JsonRejection>,
+) -> Result<Json<DagSummaryResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
+    let record = parse_entity_id_param(&record, "record")?;
+    let req = json_payload(payload)?;
+    let thread = server
+        .vault
+        .thread(record)
+        .map_err(|e| core_engine_error("thread read failed", e))?;
+    if thread.conversation != conversation {
+        return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
+    }
+    let (summary, landed) = server
+        .vault
+        .mint_and_land_thread_summary(record, &req.text, req.actor.parse(&auth)?)
+        .map_err(|e| core_engine_error("thread summary failed", e))?;
+    Ok(Json(DagSummaryResponse {
+        summary: summary.to_hex(),
+        claim: Some(landed.claim.to_hex()),
+        record: None,
     }))
 }
 

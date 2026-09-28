@@ -6,7 +6,7 @@ use super::receipts::{
 };
 use super::records::{
     SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome,
-    SettlementRecord,
+    SettlementRecord, SheetAnswerReceipt,
 };
 use crate::Vault;
 use crate::anchored_annotation::{ReanchorOp, ReanchorSummary};
@@ -14,7 +14,8 @@ use crate::batch::secret_scan;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_RUN_REF_MAX_BYTES, read_blob_artifact_head_in_txn, require_entity_type,
 };
-use crate::edit_roundtrip::{EditProposal, OfficeFormat};
+use crate::edit_roundtrip::judgment_cells::verify_sheet_answer_bytes;
+use crate::edit_roundtrip::{EditOp, EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
@@ -44,7 +45,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        self.ensure_selectable(proposal)?;
+        self.ensure_selectable(artifact_id, proposal, actor)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
@@ -66,13 +67,97 @@ impl Vault {
             // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
             // a revocation serialized before this commit makes it fail here.
             self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            if let Some(bundle) = &proposal.sheet_answers {
+                let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
+                let cap = policy
+                    .sheet_answer_limit(
+                        &artifact_id.to_hex(),
+                        &bundle.sheet,
+                        bundle.max_count_override,
+                    )
+                    .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "typed answer count policy unavailable",
+                    )))?;
+                if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "typed answer count exceeds policy",
+                    )));
+                }
+            }
+            // A policy revision under this write lock can only make the budget
+            // stricter than the preflight. Re-evaluate before any durable row.
+            let docx_limits = if proposal.format == OfficeFormat::Docx {
+                let limits = self.docx_archive_limits_in_txn(wtxn, Some(actor.entity_ref()))?;
+                oneiron_docedit::validate_blocking_with_limits(&proposal.new_bytes, limits)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidEditManifest(
+                            "docx output fails the current archive budget or linker",
+                        ))
+                    })?;
+                Some(limits)
+            } else {
+                None
+            };
             // Ledger acquisition BEFORE any side effect.
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
             }
+            // The stored artifact format, not public proposal tags, selects the
+            // verifier. Recheck inside the write transaction so a forged XLSX
+            // label can never bypass PowerPoint's semantic replay and write set.
+            let body = self
+                .get_blob_artifact_in_txn(wtxn, artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            let format = OfficeFormat::from_media_type(&body.media_type)?;
+            if format != proposal.format || format != proposal.manifest.format {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "proposal and manifest formats must match the artifact media type",
+                )));
+            }
             // Base head read in-txn, consistent with the append below.
             let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
                 .ok_or(Error::EntityNotFound)?;
+            if let Some(limits) = docx_limits {
+                // A public proposal is not an engine certificate. Replay its
+                // *validated tracked* transaction against the exact version
+                // named by the proposal, then bind every decompressed output
+                // part to that result. This is separate from the independent
+                // package linker and unknown-part passthrough checks.
+                let source_version = proposal.base_version.unwrap_or(base.version);
+                let source = self
+                    .read_blob_artifact_version_in_txn(wtxn, artifact_id, source_version)?
+                    .ok_or(Error::EntityNotFound)?;
+                if *blake3::hash(&source).as_bytes() != proposal.base_content_hash {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "docx proposal base hash does not match its source version",
+                    )));
+                }
+                let [EditOp::DocxRevision { transaction }] = proposal.manifest.ops.as_slice()
+                else {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "docx proposal requires exactly one native tracked transaction",
+                    )));
+                };
+                let expected = oneiron_docedit::revise_with_limits(&source, transaction, limits)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidEditManifest(
+                            "docx transaction cannot replay against its pinned base",
+                        ))
+                    })?;
+                if !crate::edit_roundtrip::docx_parts_match_replay(
+                    &expected,
+                    &proposal.new_bytes,
+                    limits,
+                )? || !crate::edit_roundtrip::validate_docx_passthrough(
+                    &source,
+                    &proposal.new_bytes,
+                    limits,
+                )? {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "docx output does not implement its tracked transaction and base",
+                    )));
+                }
+            }
             // Retain stale output against this exact head. Consume the old ref
             // so a retry can never accidentally apply it after another head
             // change. Reconciliation is a new, explicitly reviewed proposal.
@@ -98,13 +183,46 @@ impl Vault {
                     content_hash: Some(base.content_hash),
                     manifest_ref: Some(manifest_hash),
                     manifest_ops,
+                    pptx_slide_creation_id_mints: Vec::new(),
+                    pptx_review_identities: pptx_review_identities(proposal),
+                    pptx_judgments: proposal.manifest.slide_judgments.clone(),
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
+                    sheet_answers: proposal.sheet_answers.clone(),
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
                 return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
             }
-            let version = self.append_blob_artifact_version_with_engine_in_txn(
+            // Replay every PPTX comment operation against the pinned in-transaction
+            // base. A public proposal/report cannot authorize XML changes on its own.
+            let pptx_limits = if format == OfficeFormat::Pptx {
+                Some(
+                    crate::gate::resolve_policy_manifest(&self.store, wtxn)?
+                        .pptx_comment_limits()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                            "PowerPoint comment limits policy failed closed",
+                        )))?,
+                )
+            } else {
+                None
+            };
+            if let Some(limits) = pptx_limits {
+                if proposal.base_version != Some(base.version) {
+                    return Err(Error::Artifact(ArtifactError::EditProposalStale));
+                }
+                let bytes = self
+                    .read_blob_artifact_version_in_txn(wtxn, artifact_id, base.version)?
+                    .ok_or(Error::EntityNotFound)?;
+                crate::edit_roundtrip::pptx::verify_comment_proposal_with_limits(
+                    &bytes, proposal, limits,
+                )
+                .map_err(|_| {
+                    Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "PowerPoint comment proposal does not replay over its pinned base",
+                    ))
+                })?;
+            }
+            let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                 wtxn,
                 artifact_id,
                 &proposal.new_bytes,
@@ -117,7 +235,20 @@ impl Vault {
                 actor,
                 occurred,
                 learned_at,
+                (format == OfficeFormat::Pptx).then_some(base.version),
             )?;
+            if let Some(limits) = pptx_limits {
+                self.apply_pptx_comment_annotations_in_txn(
+                    wtxn,
+                    artifact_id,
+                    base.version,
+                    proposal,
+                    actor,
+                    occurred,
+                    learned_at,
+                    limits,
+                )?;
+            }
             // Replay the manifest anchor effects onto threads at the prior head.
             // A dedupe no-op append (identical bytes) advances no version, so
             // there is nothing to re-anchor.
@@ -146,8 +277,27 @@ impl Vault {
                 content_hash: Some(version.content_hash),
                 manifest_ref: Some(manifest_hash),
                 manifest_ops,
+                pptx_slide_creation_id_mints: proposal
+                    .manifest
+                    .ops
+                    .iter()
+                    .filter_map(|op| {
+                        if let crate::edit_roundtrip::EditOp::MintPptxSlideCreationId {
+                            slide,
+                            creation_id,
+                        } = op
+                        {
+                            Some((*slide, *creation_id))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                pptx_review_identities: pptx_review_identities(proposal),
+                pptx_judgments: proposal.manifest.slide_judgments.clone(),
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
+                sheet_answers: proposal.sheet_answers.clone(),
             };
             RECORD.put(&self.store, wtxn, &key, &record)?;
             Ok((version, reanchor, record, None))
@@ -178,6 +328,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SettleDiscardOutcome> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
+        crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
@@ -194,8 +345,12 @@ impl Vault {
             content_hash: None,
             manifest_ref: None,
             manifest_ops: 0,
+            pptx_slide_creation_id_mints: Vec::new(),
+            pptx_review_identities: pptx_review_identities(proposal),
+            pptx_judgments: proposal.manifest.slide_judgments.clone(),
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
+            sheet_answers: None,
         };
         RECORD.encode_value(&record)?;
 
@@ -256,6 +411,46 @@ impl Vault {
             version,
             anchors: record.anchors,
         }))
+    }
+
+    /// Reads per-cell typed answer receipts only after a successful Keep.
+    /// Discarded and stale proposals have no kept answers.
+    pub fn sheet_answer_receipts(
+        &self,
+        artifact_id: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<Vec<SheetAnswerReceipt>> {
+        let Some(record) = self.blob_artifact_settlement(artifact_id, proposal_ref)? else {
+            return Ok(Vec::new());
+        };
+        if record.outcome != SettleOutcomeKind::Selected {
+            return Ok(Vec::new());
+        }
+        let Some(bundle) = record.sheet_answers else {
+            return Ok(Vec::new());
+        };
+        let version = record
+            .version
+            .ok_or(Error::CorruptedIndex("selected sheet answer version"))?;
+        let kept_by = record
+            .actor_ref
+            .ok_or(Error::CorruptedIndex("selected sheet answer actor"))?;
+        Ok(bundle
+            .answers
+            .into_iter()
+            .map(|answer| SheetAnswerReceipt {
+                artifact_id: *artifact_id,
+                proposal_ref: record.proposal_ref.clone(),
+                version,
+                question: bundle.question.clone(),
+                question_version: bundle.question_version.clone(),
+                principal: bundle.principal.clone(),
+                sheet: bundle.sheet.clone(),
+                answer,
+                kept_by: kept_by.clone(),
+                kept_at: record.settled_at,
+            })
+            .collect())
     }
 
     /// Whether a live DEC-0006 standing ACTION grant authorizes `actor` to
@@ -342,8 +537,14 @@ impl Vault {
         }
     }
 
-    fn ensure_selectable(&self, proposal: &EditProposal) -> Result<()> {
+    fn ensure_selectable(
+        &self,
+        artifact_id: &EntityId,
+        proposal: &EditProposal,
+        actor: WriteActor,
+    ) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
+        crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
         if !proposal.validation.ok {
@@ -363,15 +564,97 @@ impl Vault {
                 "recalculated proposal must name its engine and version",
             )));
         }
-        // The op vocabulary and re-anchor replay are spreadsheet-specific, the
-        // same gate ARTL-3 applies.
-        if !matches!(proposal.format, OfficeFormat::Xlsx) {
+        if let Some(bundle) = &proposal.sheet_answers {
+            if bundle.ops()? != proposal.manifest.ops {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "typed answers do not match the edit manifest",
+                )));
+            }
+            let version = proposal.base_version.ok_or(Error::Artifact(
+                ArtifactError::InvalidEditManifest(
+                    "typed answers require an artifact base version",
+                ),
+            ))?;
+            let source = self
+                .read_blob_artifact_version(artifact_id, version)?
+                .ok_or(Error::EntityNotFound)?;
+            if blake3::hash(&source).as_bytes() != &proposal.base_content_hash {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "typed answers have a mismatched source hash",
+                )));
+            }
+            verify_sheet_answer_bytes(bundle, Some(&source), Some(&proposal.new_bytes))?;
+        }
+        // The spreadsheet door cannot settle a disguised PowerPoint manifest.
+        if proposal.format == OfficeFormat::Xlsx
+            && proposal.manifest.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    crate::edit_roundtrip::EditOp::PptxComment { .. }
+                        | crate::edit_roundtrip::EditOp::MintPptxSlideCreationId { .. }
+                )
+            })
+        {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "settle supports only xlsx proposals; docx and pptx are not yet supported",
+                "PowerPoint operations require a verified PPTX comment proposal",
+            )));
+        }
+        // Reject a cross-format manifest. The spreadsheet and native Word
+        // writers have separate entry doors and cannot substitute one another's
+        // operations at settlement.
+        if proposal.format == OfficeFormat::Docx {
+            let rtxn = self.store.env.read_txn()?;
+            let limits = self.docx_archive_limits_in_txn(&rtxn, Some(actor.entity_ref()))?;
+            oneiron_docedit::validate_blocking_with_limits(&proposal.new_bytes, limits)
+                .map_err(|_| Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "native docx proposal exceeds archive limits or fails the Word package linker",
+                )))?;
+        }
+        if proposal.format != proposal.manifest.format
+            || match proposal.format {
+                OfficeFormat::Xlsx => proposal
+                    .manifest
+                    .ops
+                    .iter()
+                    .any(|op| matches!(op, EditOp::DocxRevision { .. })),
+                OfficeFormat::Docx => !matches!(
+                    proposal.manifest.ops.as_slice(),
+                    [EditOp::DocxRevision { transaction }]
+                        if oneiron_docedit::validate_revision_transaction(transaction).is_ok()
+                ),
+                OfficeFormat::Pptx => proposal
+                    .manifest
+                    .ops
+                    .iter()
+                    .any(|op| matches!(op, EditOp::DocxRevision { .. })),
+            }
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "settle refuses a cross-format or unsupported office edit manifest",
             )));
         }
         Ok(())
     }
+}
+
+fn pptx_review_identities(proposal: &EditProposal) -> Vec<super::records::PptxReviewIdentity> {
+    proposal
+        .manifest
+        .ops
+        .iter()
+        .filter_map(|op| {
+            let crate::edit_roundtrip::EditOp::PptxComment { patch } = op else {
+                return None;
+            };
+            Some(super::records::PptxReviewIdentity {
+                thread_id: patch.thread_id,
+                asked_by: patch.asked_by,
+                answered_by: patch.answered_by,
+                export_author_guid: patch.author.guid.clone(),
+                export_author_name: patch.author.name.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Validates a proposal ref before it lands in a durable ledger row — the same

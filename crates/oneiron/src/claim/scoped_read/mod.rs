@@ -27,10 +27,12 @@ mod point_reads;
 mod receipt;
 mod retrieval_visibility;
 mod versions;
+mod weave_correction;
 mod weave_report;
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+pub use weave_correction::WeaveLinkCorrection;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
@@ -60,6 +62,8 @@ pub struct ScopedRead<'a> {
 }
 
 mod admission;
+mod edge_admission;
+pub(crate) use admission::ScopedDiaryCandidates;
 mod search;
 mod visibility;
 

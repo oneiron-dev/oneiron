@@ -202,6 +202,7 @@ impl SubRequest {
 
 pub(crate) mod connection;
 mod membership;
+mod publication;
 mod source;
 
 /// Opaque Loro cursor plus a container-batch ordinal. A single Loro commit

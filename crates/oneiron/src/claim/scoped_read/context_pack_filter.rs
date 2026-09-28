@@ -4,7 +4,7 @@ use crate::context_pack::{ContextPack, EmptyContext, EmptyReason};
 
 impl ScopedRead<'_> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
         // One authority fold for this read snapshot, not one per claim in a
         // 1,000-row pack. Drop it before any later read can observe revocation.
@@ -20,10 +20,13 @@ impl ScopedRead<'_> {
                 let visibility = self.retrieval_visibility_in(&rtxn, None)?;
                 let mut admitted = true;
                 for id in summary.evidence_ids() {
-                    if !crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)? {
+                    let evidence = self.admit_in(&rtxn, id, || {
+                        crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)
+                            .map(|visible| visible.then_some(()))
+                    })?;
+                    auxiliary_suppressed += evidence.suppression();
+                    if !evidence.visible() {
                         admitted = false;
-                        auxiliary_suppressed +=
-                            usize::from(self.entity_record_in(&rtxn, id)?.is_some());
                         break;
                     }
                 }
@@ -34,19 +37,22 @@ impl ScopedRead<'_> {
             let had_capabilities = !pack.capabilities.is_empty();
             let mut capabilities = Vec::new();
             for hit in std::mem::take(&mut pack.capabilities) {
-                if self.is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, &hit.id)?
-                    && let Some(current) =
-                        crate::pipeline::capability_hit(&self.vault.store, &rtxn, hit.id)?
-                {
+                let item = self.admit_in(&rtxn, &hit.id, || {
+                    if !self
+                        .is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, &hit.id)?
+                    {
+                        return Ok(None);
+                    }
+                    crate::pipeline::capability_hit(&self.vault.store, &rtxn, hit.id)
+                })?;
+                auxiliary_suppressed += item.suppression();
+                if let Some(current) = item.into_option() {
                     capabilities.push(current);
-                } else if self.entity_record_in(&rtxn, &hit.id)?.is_some() {
-                    auxiliary_suppressed += 1;
                 }
             }
             pack.capabilities = capabilities;
             let previously_suppressed = pack.stats.claims_suppressed;
-            let previous_results = pack.results.len();
-            let previous_count = previous_results + pack.neighbors.len();
+            let previous_count = pack.results.len() + pack.neighbors.len();
             let (results, result_suppressed, result_rows_suppressed) = self
                 .filter_context_entities(
                     &rtxn,
@@ -61,21 +67,23 @@ impl ScopedRead<'_> {
                     &filter,
                     std::mem::take(&mut pack.neighbors),
                 )?;
-            let readable_neighbors = neighbors.len();
-            let reachability_suppressed = if results.len() < previous_results {
-                self.retain_neighbors_reachable_from_results(&rtxn, &mut neighbors, &results)?
-            } else {
-                0
-            };
+            let (reachability_claims, reachability_rows) = self
+                .retain_neighbors_reachable_from_results(
+                    &rtxn,
+                    &policy,
+                    &filter,
+                    &mut neighbors,
+                    &results,
+                )?;
             let suppressed = previously_suppressed
                 .saturating_add(auxiliary_suppressed)
                 .saturating_add(result_rows_suppressed)
                 .saturating_add(neighbor_rows_suppressed)
-                .saturating_add(readable_neighbors.saturating_sub(neighbors.len()));
+                .saturating_add(reachability_rows);
             pack.results = results;
             pack.neighbors = neighbors;
             pack.stats.claims_suppressed +=
-                result_suppressed + neighbor_suppressed + reachability_suppressed;
+                result_suppressed + neighbor_suppressed + reachability_claims;
 
             if (previous_count > 0 || had_capabilities || had_l2_base)
                 && pack.capabilities.is_empty()
@@ -109,16 +117,22 @@ impl ScopedRead<'_> {
         let mut claims_suppressed = 0;
         let mut suppressed = 0;
         for mut entity in entities {
-            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &entity.id)?
-                && self.context_entity_revision_is_readable_in(rtxn, policy, filter, &entity)?
-            {
+            let admission =
+                self.admit_in(rtxn, &entity.id, || {
+                    Ok((self
+                        .is_entity_retrievable_with_policy_in(rtxn, policy, filter, &entity.id)?
+                        && self.context_entity_revision_is_readable_in(
+                            rtxn, policy, filter, &entity,
+                        )?)
+                    .then_some(()))
+                })?;
+            suppressed += admission.suppression();
+            if admission.suppression() > 0 && entity.entity_type == ENTITY_TYPE_CLAIM {
+                claims_suppressed += 1;
+            }
+            if admission.visible() {
                 self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
                 kept.push(entity);
-            } else if self.entity_record_in(rtxn, &entity.id)?.is_some() {
-                suppressed += 1;
-                if entity.entity_type == ENTITY_TYPE_CLAIM {
-                    claims_suppressed += 1;
-                }
             }
         }
         Ok((kept, claims_suppressed, suppressed))
@@ -127,9 +141,11 @@ impl ScopedRead<'_> {
     fn retain_neighbors_reachable_from_results(
         &self,
         rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
         neighbors: &mut Vec<ContextEntity>,
         results: &[ContextEntity],
-    ) -> Result<usize> {
+    ) -> Result<(usize, usize)> {
         let mut reachable_ids = HashSet::new();
         for entity in results {
             if let Some(edges) = entity.edges.as_ref() {
@@ -141,21 +157,41 @@ impl ScopedRead<'_> {
                 );
                 continue;
             }
-            for edge in self.edges_out_in(rtxn, &entity.id)? {
-                if context_pack_edge_can_reach_neighbor(&edge) {
-                    reachable_ids.insert(edge.target);
+            let admitted = self.admitted_edges_in(
+                rtxn,
+                policy,
+                filter,
+                &entity.id,
+                EdgeDirection::Out,
+                None,
+                usize::MAX,
+                usize::MAX,
+                false,
+            )?;
+            for edge in admitted.edges {
+                let info = edge.info();
+                if context_pack_edge_can_reach_neighbor(&info) {
+                    reachable_ids.insert(info.target);
                 }
             }
         }
         let mut claims_suppressed = 0;
-        neighbors.retain(|entity| {
-            let keep = reachable_ids.contains(&entity.id);
-            if !keep && entity.entity_type == ENTITY_TYPE_CLAIM {
-                claims_suppressed += 1;
+        let mut rows_suppressed = 0;
+        let mut kept = Vec::with_capacity(neighbors.len());
+        for entity in std::mem::take(neighbors) {
+            if reachable_ids.contains(&entity.id) {
+                kept.push(entity);
+            } else {
+                claims_suppressed += usize::from(entity.entity_type == ENTITY_TYPE_CLAIM);
+                // A withheld private NOTE relation cannot disclose itself as
+                // a dropped-neighbor count or a row_authority hint.
+                rows_suppressed += self
+                    .admit_in(rtxn, &entity.id, || Ok(None::<()>))?
+                    .suppression();
             }
-            keep
-        });
-        Ok(claims_suppressed)
+        }
+        *neighbors = kept;
+        Ok((claims_suppressed, rows_suppressed))
     }
 
     /// The claim's `FacetOf` targets, read through the same accessor as every
@@ -185,24 +221,6 @@ impl ScopedRead<'_> {
         Ok(facets)
     }
 
-    pub(super) fn edges_out_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Vec<EdgeInfo>> {
-        const MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS: usize = 100_000;
-
-        let mut edges = Vec::new();
-        for entry in self.out_edges_in(rtxn, id, None)? {
-            let edge = entry?;
-            if edges.len() >= MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS {
-                return Err(Error::IndexOverflow("scoped read edge reachability"));
-            }
-            edges.push(edge);
-        }
-        Ok(edges)
-    }
-
     fn filter_context_entity_edges(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -213,13 +231,26 @@ impl ScopedRead<'_> {
         let Some(edges) = entity.edges.as_mut() else {
             return Ok(());
         };
-        let mut kept = Vec::with_capacity(edges.len());
-        for edge in edges.drain(..) {
-            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &edge.target)? {
-                kept.push(edge);
-            }
-        }
-        *edges = kept;
+        let admitted = self.admitted_edges_in(
+            rtxn,
+            policy,
+            filter,
+            &entity.id,
+            EdgeDirection::Out,
+            None,
+            usize::MAX,
+            usize::MAX,
+            false,
+        )?;
+        let permitted: HashSet<_> = admitted
+            .edges
+            .into_iter()
+            .map(|edge| {
+                let info = edge.info();
+                (info.kind, info.target)
+            })
+            .collect();
+        edges.retain(|edge| permitted.contains(&(edge.kind, edge.target)));
         Ok(())
     }
 }

@@ -39,6 +39,11 @@ pub struct HubAdmissionReceipt {
     pub before: f32,
     pub after: f32,
     pub accepted: bool,
+    /// Immutable revision of the skill that scored this candidate.
+    pub judge_revision: String,
+    /// Read projection of the replacement fence; original scores stay intact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub displaced_by_revision: Option<String>,
     pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -146,6 +151,8 @@ impl Vault {
             .ok_or_else(|| invalid("candidate has no instructions"))?;
         let instructions = std::str::from_utf8(&instructions.content)
             .map_err(|_| invalid("instructions are not UTF-8"))?;
+        let judge_revision = scorer.judge_revision().to_owned();
+        crate::skill_optimize::validate_judge_revision(&judge_revision)?;
         let before = score(
             scorer,
             ask,
@@ -160,12 +167,17 @@ impl Vault {
             &snapshot.record.version,
             instructions,
         )?;
+        if scorer.judge_revision() != judge_revision {
+            return Err(invalid("marketplace judge revision moved during scoring"));
+        }
         self.with_write_txn(|txn| {
+            crate::skill_optimize::ensure_current_judge_in_txn(self, txn, &judge_revision)?;
             self.check_hub_ask_in_txn(txn, ask)?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
                     .ok_or_else(|| invalid("human install consent is missing"))?;
-            let receipt = admission_receipt(ask, &snapshot, before, after, learned_at)?;
+            let receipt =
+                admission_receipt(ask, &snapshot, before, after, &judge_revision, learned_at)?;
             if receipt.accepted {
                 self.activate_scored_hub_record_in_txn(
                     txn,
@@ -198,8 +210,33 @@ impl Vault {
         admitted.lifecycle_status = SkillLifecycle::Active;
         let data = crate::skill::encode_skill_record(&admitted)?;
         let proof =
-            super::HubAdmissionProof::consent(&self.store, txn, *candidate, &data, authorization)?;
+            super::HubAdmissionProof::held_out(&self.store, txn, *candidate, &data, authorization)?;
         self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
+    }
+    pub(super) fn activate_refined_hub_record_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &crate::skill::SkillRecord,
+        occurred: TimeRange,
+        learned_at: u64,
+        authorization: &crate::consent::ApproveOnceAuthorization,
+        refinement: super::refinement_admission::RefinementAdmissionProof,
+    ) -> Result<()> {
+        let candidate = refinement.candidate();
+        let mut admitted = record.clone();
+        admitted.approval_status = ClaimApprovalStatus::Approved;
+        admitted.lifecycle_status = SkillLifecycle::Active;
+        let data = crate::skill::encode_skill_record(&admitted)?;
+        let proof =
+            super::HubAdmissionProof::consent(&self.store, txn, candidate, &data, authorization)?;
+        self.admit_hub_skill_record_with_refinement_in_txn(
+            txn,
+            occurred,
+            learned_at,
+            data,
+            proof,
+            Some(refinement),
+        )
     }
     /// Reads the most recent hub admission ruling (including a scored refusal).
     pub fn hub_admission_receipt(
@@ -214,7 +251,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         candidate: &EntityId,
     ) -> Result<Option<HubAdmissionReceipt>> {
-        ADMISSION_RECEIPT.get(&self.store, txn, candidate)
+        ADMISSION_RECEIPT
+            .get(&self.store, txn, candidate)?
+            .map(|mut receipt| {
+                receipt.displaced_by_revision =
+                    crate::skill_optimize::displaced_judge_revision_in_txn(
+                        self,
+                        txn,
+                        &receipt.judge_revision,
+                    )?;
+                Ok(receipt)
+            })
+            .transpose()
     }
     pub(super) fn check_hub_ask_in_txn(
         &self,
@@ -260,6 +308,7 @@ fn admission_receipt(
     snapshot: &AdmissionSnapshot,
     before: f32,
     after: f32,
+    judge_revision: &str,
     at: u64,
 ) -> Result<HubAdmissionReceipt> {
     Ok(HubAdmissionReceipt {
@@ -278,6 +327,8 @@ fn admission_receipt(
         before,
         after,
         accepted: after > before,
+        judge_revision: judge_revision.to_owned(),
+        displaced_by_revision: None,
         at,
     })
 }

@@ -365,6 +365,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn rooms_render(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.render")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.render", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_find(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.find")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.find", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_trunk(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.trunk")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.trunk", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn rooms_claim(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "rooms.claim")?;
         let output = py

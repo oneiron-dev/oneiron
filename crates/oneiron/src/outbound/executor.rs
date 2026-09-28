@@ -195,7 +195,10 @@ impl Vault {
                 task.actor_class,
             ) {
                 Ok(result) => result,
-                Err(OutboundDispatchError::InvalidBoundActor) => {
+                Err(
+                    OutboundDispatchError::InvalidBoundActor
+                    | OutboundDispatchError::ObsoleteAskConfirmation,
+                ) => {
                     // Bound-actor validation fails before the chokepoint admits,
                     // charges, or sends the effect, so this is a definite
                     // non-delivery: fail the attempt terminally and project it.

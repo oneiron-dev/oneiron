@@ -267,6 +267,8 @@ impl Vault {
                         Vec::new()
                     },
                     bytes: 0,
+
+                    revision_events: Vec::new(),
                 },
                 &crate::sync::bridge::OriginMark {
                     conn_id: None,
@@ -320,6 +322,14 @@ impl Vault {
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+                .and_then(|()| {
+                    crate::workspace_roster::precheck_goal_delete(
+                        &self.store,
+                        &wtxn,
+                        *id,
+                        gate.is_some(),
+                    )
+                })
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
         {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;

@@ -37,7 +37,35 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
     NoteDocument::from_loro(id, doc)
 }
 
-pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
+pub(super) fn persist_authoritative(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)?;
+    super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_replica(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
+    persist_structural(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_recovered_document(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)
+}
+
+fn persist_structural(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
     // Keep the live NOTE projection valid, including after concurrent
@@ -120,42 +148,49 @@ impl Memory<'_> {
             markdown: markdown.clone(),
             source_revision_ref: *id.as_bytes(),
         })?;
-        self.with_verified_actor_write_txn(|txn| {
-            if self.vault().brief_kind_contract_in_txn(txn)?.is_none() {
+        self.with_actor_content_write_txn(|content| {
+            if self
+                .vault()
+                .brief_kind_contract_in_txn(content.read())?
+                .is_none()
+            {
                 return Err(invalid("brief kind is not person-stamped").into());
             }
             let doc = NoteDocument::birth(id, &markdown, &actor)?;
             for pin in pins {
-                validate_pin_source(self.vault(), txn, pin)?;
+                validate_pin_source(self.vault(), content.read(), pin)?;
                 doc.add_pin(pin, &actor)?;
             }
             let now = self.vault().now_recorded_at();
-            self.vault()
-                .batch_in()
-                .put_authored_note(
-                    &id,
-                    &self.actor(),
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0)
-                .apply(txn)?;
-            super::operations::record_authorship(
-                &doc,
-                &super::NoteAuthorship {
-                    operation: self.vault().new_entity_id()?,
-                    actor: self.actor(),
-                    actor_class: self.actor_class().gate_actor_class().to_owned(),
-                    grant: None,
-                    command_hash: *blake3::hash(&body).as_bytes(),
-                },
+            content.apply_batch(
+                self.vault()
+                    .batch_in()
+                    .put_authored_note(
+                        &id,
+                        &self.actor(),
+                        TimeRange {
+                            start: now,
+                            end: now,
+                        },
+                        now,
+                        &body,
+                    )
+                    .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0),
             )?;
-            persist(self.vault(), txn, &doc)?;
-            Ok(())
+            content.update_note(id, |txn| {
+                super::operations::record_authorship(
+                    &doc,
+                    &super::NoteAuthorship {
+                        operation: self.vault().new_entity_id()?,
+                        actor: self.actor(),
+                        actor_class: self.actor_class().gate_actor_class().to_owned(),
+                        grant: None,
+                        command_hash: *blake3::hash(&body).as_bytes(),
+                    },
+                )?;
+                persist_authoritative(self.vault(), txn, &doc)?;
+                Ok(())
+            })
         })?;
         #[cfg(feature = "sync")]
         self.vault().notify_note_document(id);
@@ -173,6 +208,25 @@ impl Memory<'_> {
             },
         )
         .map(|_| ())
+    }
+
+    /// Set editable NOTE metadata under the same actor and title gate as socket ops.
+    pub fn set_note_title(
+        &self,
+        note: EntityId,
+        title: impl Into<String>,
+    ) -> MemoryResult<NoteEditOutcome> {
+        Ok(self
+            .apply_local_note_operation(
+                note,
+                &super::NoteOperation {
+                    request_id: EntityId::now(),
+                    change: super::NoteChange::SetTitle {
+                        title: title.into(),
+                    },
+                },
+            )?
+            .outcome)
     }
 
     /// Free prose commits now. Cited spans go through the reviewed claim door.
@@ -199,31 +253,33 @@ impl Memory<'_> {
     /// Compact only through a frontier no citation needs. Fail closed rather
     /// than silently dropping the history that makes a quote checkable.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
-        self.with_verified_actor_write_txn(|txn| {
-            require_note_writer(self, txn, note)?;
-            let doc = load(self.vault(), txn, note)?;
-            let through = frontier(through)?;
-            let key_prefix = format!("{}:", note.to_hex()).into_bytes();
-            for (_, pin) in NOTE_PIN_SOURCE.scan_from(&self.vault().store, txn, &key_prefix)? {
-                pin.validate()?;
-                match doc.doc.cmp_frontiers(&through, &frontier(&pin.frontier)?) {
-                    Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) => {}
-                    _ => return Err(invalid("NOTE purge would pass a cited frontier").into()),
+        self.with_actor_content_write_txn(|content| {
+            content.update_note(note, |txn| {
+                require_note_writer(self, txn, note)?;
+                let doc = load(self.vault(), txn, note)?;
+                let through = frontier(through)?;
+                let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+                for (_, pin) in NOTE_PIN_SOURCE.scan_from(&self.vault().store, txn, &key_prefix)? {
+                    pin.validate()?;
+                    match doc.doc.cmp_frontiers(&through, &frontier(&pin.frontier)?) {
+                        Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) => {}
+                        _ => return Err(invalid("NOTE purge would pass a cited frontier").into()),
+                    }
                 }
-            }
-            let snapshot = doc
-                .doc
-                .export(loro::ExportMode::shallow_snapshot(&through))
-                .map_err(|_| invalid("NOTE history purge failed"))?;
-            let shallow = NoteDocument::load(note, &snapshot)?;
-            super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
-            let slot = DocumentSlot::of(super::storage::slot(self.vault(), txn, note)?);
-            self.vault().store.port_document_shallow_since_put(
-                txn,
-                slot,
-                &shallow.doc.shallow_since_vv().to_vv().encode(),
-            )?;
-            Ok(())
+                let snapshot = doc
+                    .doc
+                    .export(loro::ExportMode::shallow_snapshot(&through))
+                    .map_err(|_| invalid("NOTE history purge failed"))?;
+                let shallow = NoteDocument::load(note, &snapshot)?;
+                super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
+                let slot = DocumentSlot::of(super::storage::slot(self.vault(), txn, note)?);
+                self.vault().store.port_document_shallow_since_put(
+                    txn,
+                    slot,
+                    &shallow.doc.shallow_since_vv().to_vv().encode(),
+                )?;
+                Ok(())
+            })
         })
     }
 }

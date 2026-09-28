@@ -27,6 +27,7 @@ use crate::registry::{
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::secret_custody::plan_replicated_name_index;
+use crate::skill_hub::validate_refinement_admission;
 use crate::store::Store;
 
 mod authority;
@@ -64,6 +65,7 @@ pub(in crate::batch) fn apply_put(
                 write_policy,
                 write_envelope,
                 hub_admission,
+                refinement_admission,
             },
     } = request;
     let Replication {
@@ -113,6 +115,7 @@ pub(in crate::batch) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
+    validate_refinement_admission(store, wtxn, &id, entity_type, data, refinement_admission)?;
     crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
     // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync
@@ -176,6 +179,7 @@ pub(in crate::batch) fn apply_put(
         if body.session_tag.is_some()
             && !replicated
             && !claim_gate_prechecked
+            && !refinement_admission.is_some_and(|proof| proof.binds_claim(&id, data))
             && !write_envelope.is_some_and(|envelope| {
                 crate::claim::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
             })
@@ -256,6 +260,7 @@ pub(in crate::batch) fn apply_put(
         crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::skill::decode_skill_record(data)?;
+        crate::skill::resident::validate_owner_put_in_txn(store, wtxn, &id, &decoded, replicated)?;
         hub_origin_marker = crate::skill_hub::check_hub_skill_put(
             store,
             &*wtxn,
@@ -349,8 +354,7 @@ pub(in crate::batch) fn apply_put(
     let escalated_skill_body;
     let data = match new_skill_record.as_mut() {
         Some(updated) if !replicated && !hub_sync_imported => {
-            if crate::skill_scan::escalate_activation_approval_in_txn(store, &*wtxn, &id, updated)?
-            {
+            if crate::skill_hub::scan_skill_admission(store, &*wtxn, &id, updated, hub_admission)? {
                 escalated_skill_body = crate::skill::encode_skill_record(updated)?;
                 &escalated_skill_body[..]
             } else {
@@ -620,7 +624,16 @@ pub(in crate::batch) fn apply_put(
         previous_skill_record.as_ref(),
         new_skill_record.as_ref(),
     )?;
+    crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    crate::skill_hub::stage_refinement_origin(
+        store,
+        wtxn,
+        &id,
+        decoded_claim_body.as_ref(),
+        new_skill_record.as_ref(),
+        data,
+    )?;
     super::put_staging::stage_local_proposal_observation(
         store,
         wtxn,
@@ -676,34 +689,20 @@ pub(in crate::batch) fn apply_put(
     } else if is_lexical_query_hint_claim {
         delete_short_id_rows_for_id(store, wtxn, &id)?;
     }
-    let mut cleared_pending_embedding = false;
-    let mut had_vector_mutation = false;
-    if is_lexical_query_hint_claim {
-        cleared_pending_embedding = store.clear_pending_embedding(wtxn, &id)?;
-        let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
-        had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
-        crate::hnsw::hnsw_deindex(store, wtxn, &id)?;
-    }
-    let pending_embedding_token =
-        if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
-            // Mint the new invalidation token even while idle publication is
-            // pending. The worker skips these revisions; old completions must
-            // still observe that their token no longer owns the current body.
-            let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
-            let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
-            if !body_changed && has_vector && !has_current_pending {
-                None
-            } else {
-                Some(store.mark_pending_embedding(wtxn, &id, data)?)
-            }
-        } else {
-            None
-        };
+    let embedding = super::put_staging::stage_post_put_embeddings(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        is_lexical_query_hint_claim,
+        body_changed,
+    )?;
     Ok(AppliedPut {
         portable_agent_source,
-        pending_embedding_token,
-        cleared_pending_embedding,
-        had_vector_mutation,
+        pending_embedding_token: embedding.pending_embedding_token,
+        cleared_pending_embedding: embedding.cleared_pending_embedding,
+        had_vector_mutation: embedding.had_vector_mutation,
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })

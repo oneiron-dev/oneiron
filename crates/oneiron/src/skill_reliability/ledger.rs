@@ -5,9 +5,9 @@ use rmpv::Value;
 use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::receipt::ReceiptRecord;
-use crate::side_table::{self, Raw, RawValue, SideTable};
+use crate::side_table::{self, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::skill::SkillRecord;
 
 use super::codec::{
@@ -21,7 +21,7 @@ use super::read::read_skill;
 /// The receipt id in the KEY is what makes the projector idempotent: an outcome
 /// already recorded re-writes its own row instead of incrementing a counter, so
 /// re-running a pass over the same judgments cannot double-count.
-pub(super) const OUTCOME: SideTable<(EntityId, String), OutcomeRow, Raw> =
+const OUTCOME: SideTable<(EntityId, String), OutcomeRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_OUTCOME);
 
 /// [`OUTCOME`]'s row: the byte layout [`record_outcome_in_txn`] has always spelled. `at` is
@@ -59,6 +59,220 @@ impl RawValue for OutcomeRow {
     }
 }
 
+/// The same outcome row for a named executor's arm: [`OUTCOME`]'s value, keyed by the arm and
+/// the receipt id, so one model's evidence never folds into another's or the legacy arm.
+const PAIRED_OUTCOME: SideTable<PairedOutcomeKey, OutcomeRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_PAIRED_OUTCOME);
+
+/// A named executor's arm of one skill: the skill id, then the model id framed by its big-endian
+/// `u16` byte length so model ids with common prefixes stay disjoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ExecutorArm {
+    pub(super) skill: EntityId,
+    pub(super) executor: String,
+}
+
+impl ExecutorArm {
+    pub(super) fn new(skill: &EntityId, executor: &str) -> Self {
+        Self {
+            skill: *skill,
+            executor: executor.to_owned(),
+        }
+    }
+
+    /// The arm's key bytes, the prefix every row of this arm starts with.
+    fn key_prefix(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode_into(&mut out);
+        out
+    }
+
+    /// Splits one arm off the front of `bytes`, returning it and the bytes after it.
+    fn decode_front(bytes: &[u8]) -> Option<(Self, &[u8])> {
+        let (skill, rest) = bytes.split_at_checked(<EntityId as FixedSideKey>::WIDTH)?;
+        let (length, rest) = rest.split_at_checked(2)?;
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        let (executor, rest) = rest.split_at_checked(length)?;
+        let arm = Self {
+            skill: EntityId::decode_key(skill)?,
+            executor: std::str::from_utf8(executor).ok()?.to_owned(),
+        };
+        Some((arm, rest))
+    }
+}
+
+impl SideKey for ExecutorArm {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.skill.encode_into(out);
+        let length = u16::try_from(self.executor.len()).expect("receipt model capped at 256 bytes");
+        out.extend_from_slice(&length.to_be_bytes());
+        out.extend_from_slice(self.executor.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (arm, rest) = Self::decode_front(bytes)?;
+        rest.is_empty().then_some(arm)
+    }
+}
+
+/// [`PAIRED_OUTCOME`]'s key: the executor arm, then the receipt id (the rest of the key).
+pub(super) struct PairedOutcomeKey {
+    arm: ExecutorArm,
+    receipt: String,
+}
+
+impl SideKey for PairedOutcomeKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.arm.encode_into(out);
+        out.extend_from_slice(self.receipt.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (arm, receipt) = ExecutorArm::decode_front(bytes)?;
+        Some(Self {
+            arm,
+            receipt: std::str::from_utf8(receipt).ok()?.to_owned(),
+        })
+    }
+}
+
+/// One outcome row, on the legacy unknown-executor arm or a named executor's arm.
+pub(super) enum OutcomeRef {
+    Unknown((EntityId, String)),
+    Paired(PairedOutcomeKey),
+}
+
+impl OutcomeRef {
+    pub(super) fn new(skill: &EntityId, executor: Option<&str>, receipt: &str) -> Self {
+        match executor {
+            None => Self::Unknown((*skill, receipt.to_owned())),
+            Some(executor) => Self::Paired(PairedOutcomeKey {
+                arm: ExecutorArm::new(skill, executor),
+                receipt: receipt.to_owned(),
+            }),
+        }
+    }
+
+    fn into_receipt(self) -> String {
+        match self {
+            Self::Unknown((_, receipt)) | Self::Paired(PairedOutcomeKey { receipt, .. }) => receipt,
+        }
+    }
+
+    fn get(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<OutcomeRow>> {
+        match self {
+            Self::Unknown(key) => OUTCOME.get(&vault.store, txn, key),
+            Self::Paired(key) => PAIRED_OUTCOME.get(&vault.store, txn, key),
+        }
+    }
+
+    pub(super) fn contains(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        match self {
+            Self::Unknown(key) => OUTCOME.contains(&vault.store, txn, key),
+            Self::Paired(key) => PAIRED_OUTCOME.contains(&vault.store, txn, key),
+        }
+    }
+
+    fn put(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &OutcomeRow) -> Result<()> {
+        match self {
+            Self::Unknown(key) => OUTCOME.put(&vault.store, txn, key, row),
+            Self::Paired(key) => PAIRED_OUTCOME.put(&vault.store, txn, key, row),
+        }
+    }
+}
+
+/// A displacement mark names its outcome row by the row's full stored key, table prefix included.
+impl SideKey for OutcomeRef {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Unknown(key) => out.extend_from_slice(&OUTCOME.key_bytes(key)),
+            Self::Paired(key) => out.extend_from_slice(&PAIRED_OUTCOME.key_bytes(key)),
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        if let Some(key) = bytes.strip_prefix(OUTCOME.decl().prefix) {
+            return <(EntityId, String)>::decode_key(key).map(Self::Unknown);
+        }
+        let key = bytes.strip_prefix(PAIRED_OUTCOME.decl().prefix)?;
+        PairedOutcomeKey::decode_key(key).map(Self::Paired)
+    }
+}
+
+/// Outcome rows whose judge was displaced: the row stays, its weight leaves every fold.
+const DISPLACED: SideTable<OutcomeRef, DisplacedMark, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_DISPLACED_JUDGE);
+
+/// [`DISPLACED`]'s row: the displaced and replacement judge revisions, as a MessagePack map.
+/// Only its presence is read today.
+struct DisplacedMark {
+    displaced: String,
+    replacement: String,
+}
+
+impl RawValue for DisplacedMark {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        let mark = Value::Map(vec![
+            (
+                Value::from("displaced"),
+                Value::from(self.displaced.as_str()),
+            ),
+            (
+                Value::from("replacement"),
+                Value::from(self.replacement.as_str()),
+            ),
+        ]);
+        Ok(encode_value(&mark)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let value = decode_value(bytes)?;
+        let field = |key: &str| {
+            map_entry(&value, key)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or(invalid("skill reliability displacement mark is malformed"))
+        };
+        Ok(Self {
+            displaced: field("displaced")?,
+            replacement: field("replacement")?,
+        })
+    }
+}
+
+pub(crate) fn mark_displaced_outcome_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    executor: Option<&str>,
+    receipt: &str,
+    old: &str,
+    replacement: &str,
+) -> Result<bool> {
+    let outcome = OutcomeRef::new(skill, executor, receipt);
+    let mark = DisplacedMark {
+        displaced: old.to_owned(),
+        replacement: replacement.to_owned(),
+    };
+    let existed = outcome.contains(vault, txn)?;
+    DISPLACED.put(&vault.store, txn, &outcome, &mark)?;
+    Ok(existed)
+}
+
+fn is_displaced(vault: &Vault, txn: &heed::RoTxn<'_>, outcome: &OutcomeRef) -> Result<bool> {
+    DISPLACED.contains(&vault.store, txn, outcome)
+}
+
+/// The immutable model identity on the terminal receipt. Unstamped receipts
+/// remain in the legacy/unknown bucket and cannot train a named model.
+pub(super) fn receipt_executor(receipt: &ReceiptRecord) -> Option<&str> {
+    receipt
+        .fields
+        .get("model")
+        .map(String::as_str)
+        .filter(|id| !id.is_empty())
+}
+
 /// Terminal attempt state that credits a contributing win
 /// (`AttemptState::Completed`'s wire string, as stamped on the pack receipt).
 const ATTEMPT_OUTCOME_COMPLETED: &str = "completed";
@@ -91,6 +305,9 @@ pub fn record_skill_contributing_win(
     at: u64,
 ) -> Result<()> {
     let record = read_skill(vault, skill)?;
+    if crate::skill::resident_of(&record)?.is_some() {
+        return Err(invalid("resident win requires its attributed actor"));
+    }
     let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
         return Err(invalid("contributing win cites an unstamped receipt"));
     };
@@ -104,7 +321,65 @@ pub fn record_skill_contributing_win(
             "contributing win names a skill absent from the receipt manifest",
         ));
     }
-    vault.with_write_txn(|wtxn| record_outcome_in_txn(vault, wtxn, skill, receipt_ref, true, at))
+    vault.with_write_txn(|wtxn| {
+        record_outcome_in_txn(
+            vault,
+            wtxn,
+            skill,
+            receipt_executor(&receipt),
+            receipt_ref,
+            true,
+            at,
+        )
+    })
+}
+
+/// Credits a resident fork only from its own attributed outcome. The
+/// unrestricted win door cannot name an actor and therefore refuses forks.
+pub fn record_resident_skill_contributing_win(
+    vault: &Vault,
+    resident: &EntityId,
+    skill: &EntityId,
+    receipt_ref: &str,
+    at: u64,
+) -> Result<()> {
+    let record = read_skill(vault, skill)?;
+    if crate::skill::resident_of(&record)? != Some(*resident)
+        || crate::skill::resident::receipt_resident(vault, receipt_ref)? != Some(*resident)
+        || !crate::skill::resident::receipt_loaded_skill(vault, receipt_ref, skill)?
+    {
+        return Err(invalid(
+            "resident win names a foreign or unowned skill or attempt",
+        ));
+    }
+    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
+        return Err(invalid("contributing win cites an unstamped receipt"));
+    };
+    if receipt.outcome != ATTEMPT_OUTCOME_COMPLETED {
+        return Err(invalid(
+            "a contributing win requires a completed attempt receipt",
+        ));
+    }
+    let Some(manifest) = receipt.pack_manifest_skills() else {
+        return Err(invalid("resident win needs a versioned manifest"));
+    };
+    if !manifest.iter().any(|entry| {
+        ManifestEntry::parse_wire_form(entry)
+            .is_some_and(|(name, version)| name == record.skill_id && version == record.version)
+    }) {
+        return Err(invalid("resident win needs its exact revision"));
+    }
+    vault.with_write_txn(|txn| {
+        record_outcome_in_txn(
+            vault,
+            txn,
+            skill,
+            receipt_executor(&receipt),
+            receipt_ref,
+            true,
+            at,
+        )
+    })
 }
 
 /// The manifest chokepoint BOTH outcome doors run: did the pack that stamped
@@ -119,23 +394,7 @@ pub(super) fn receipt_manifest_names_skill(receipt: &ReceiptRecord, record: &Ski
     };
     manifest
         .iter()
-        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id, &record.version))
-}
-
-/// A manifest wire form is `reference@version`; a SKILL row's reference is its
-/// `skill_id` and its version is the REVISION the pack loaded.
-/// [`ManifestEntry::parse_wire_form`] owns the split.
-///
-/// The version is compared exactly whenever the entry carries one. A revision
-/// is its own SKILL entity with its own posterior (`supersede_skill_record`
-/// freezes the old one), so a `skill@1` receipt crediting the `skill@2` entity
-/// would move a claim about bytes that attempt never ran. An entry with an
-/// empty version is an absent fact — it names no revision to disagree with —
-/// and still resolves, exactly as an absent manifest does above.
-fn manifest_entry_names_skill(wire_form: &str, skill_id: &str, version: &str) -> bool {
-    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, entry_version)| {
-        reference == skill_id && (entry_version.is_empty() || entry_version == version)
-    })
+        .any(|entry| crate::skill_attribution::manifest_entry_names_skill(entry, record))
 }
 
 /// Writes one outcome row, keyed `(skill, receipt)`.
@@ -150,6 +409,7 @@ pub(super) fn record_outcome_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     receipt_ref: &str,
     win: bool,
     at: u64,
@@ -157,15 +417,17 @@ pub(super) fn record_outcome_in_txn(
     if receipt_ref.is_empty() {
         return Err(invalid("a reliability outcome must cite a receipt"));
     }
-    let key = (*skill, receipt_ref.to_owned());
+    if let Some(model) = executor {
+        super::read::validate_executor(model)?;
+    }
+    let key = OutcomeRef::new(skill, executor, receipt_ref);
     if win
-        && let Some(existing) = OUTCOME.get(&vault.store, wtxn, &key)?
+        && let Some(existing) = key.get(vault, wtxn)?
         && !existing.win
     {
         return Ok(());
     }
-    OUTCOME.put(&vault.store, wtxn, &key, &OutcomeRow { win, at })?;
-    Ok(())
+    key.put(vault, wtxn, &OutcomeRow { win, at })
 }
 
 /// Attributed-outcome counts for one skill, plus the citation trace.
@@ -227,32 +489,69 @@ pub(crate) fn attributed_outcome_receipts(
 /// # Errors
 ///
 /// Storage errors; a typed side-table row error on a malformed outcome key or an
-/// undecodable outcome row.
+/// undecodable outcome row; [`Error::CorruptedIndex`] on a paired key without a receipt.
 pub(crate) fn attributed_outcome_results(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, bool)>> {
-    Ok(OUTCOME
-        .scan_from(&vault.store, rtxn, skill.as_bytes())?
-        .into_iter()
-        .map(|((_, receipt), row)| (receipt, row.win))
-        .collect())
+    let mut outcomes = Vec::new();
+    for (key, row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
+        let outcome = OutcomeRef::Unknown(key);
+        if is_displaced(vault, rtxn, &outcome)? {
+            continue;
+        }
+        outcomes.push((outcome.into_receipt(), row.win));
+    }
+    // Optimization's split is over receipts, across all executors. Pair
+    // measurements remain separate; this read only supplies the evidence basis.
+    for (key, row) in PAIRED_OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
+        if key.receipt.is_empty() {
+            return Err(Error::CorruptedIndex("skill reliability pair key"));
+        }
+        let outcome = OutcomeRef::Paired(key);
+        if is_displaced(vault, rtxn, &outcome)? {
+            continue;
+        }
+        outcomes.push((outcome.into_receipt(), row.win));
+    }
+    outcomes.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(outcomes)
 }
 
 pub(super) fn tally_outcomes(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
 ) -> Result<OutcomeTally> {
+    let rows: Vec<(OutcomeRef, OutcomeRow)> = match executor {
+        None => OUTCOME
+            .scan_from(&vault.store, rtxn, skill.as_bytes())?
+            .into_iter()
+            .map(|(key, row)| (OutcomeRef::Unknown(key), row))
+            .collect(),
+        Some(executor) => PAIRED_OUTCOME
+            .scan_from(
+                &vault.store,
+                rtxn,
+                &ExecutorArm::new(skill, executor).key_prefix(),
+            )?
+            .into_iter()
+            .map(|(key, row)| (OutcomeRef::Paired(key), row))
+            .collect(),
+    };
     let mut tally = OutcomeTally::default();
-    for ((_, receipt), row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
+    for (outcome, row) in rows {
+        if is_displaced(vault, rtxn, &outcome)? {
+            continue;
+        }
         if row.win {
             tally.wins = tally.wins.saturating_add(1);
         } else {
             tally.losses = tally.losses.saturating_add(1);
         }
-        tally.cited.push(receipt);
+        tally.cited.push(outcome.into_receipt());
         if tally.cited.len() > SKILL_RELIABILITY_MAX_CITED_RECEIPTS {
             tally.cited.remove(0);
         }

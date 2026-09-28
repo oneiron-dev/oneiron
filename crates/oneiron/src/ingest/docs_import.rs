@@ -1,12 +1,13 @@
 //! Atomic bulk consent and thin-star docs membership. Derivations never rewrite source evidence.
 use super::{DocsExport, DocsSegment, docs_extraction_id, docs_semantic_segments};
-use crate::batch::{BatchOp, apply_ops};
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
     GrantBound,
 };
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::workspace_roster::{ProjectRecord, ProjectRole};
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -65,6 +66,33 @@ fn annotation_reference(key: &str) -> String {
     let prefix = std::str::from_utf8(ANNOTATION.decl().prefix).expect("annotation prefix is ASCII");
     format!("{prefix}{key}")
 }
+/// Verify the named PROJECT at both consent planning and the import commit.
+/// A source label is not a project identity, and a missing/retyped hub cannot
+/// silently stamp claims into an arbitrary audience.
+pub(super) fn require_docs_corpus_project(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: EntityId,
+) -> Result<()> {
+    let expected = vault.project_type_byte()?;
+    let raw = vault
+        .store
+        .entities
+        .get(txn, project.as_bytes())?
+        .ok_or_else(|| invalid("docs corpus PROJECT missing"))?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("docs corpus PROJECT header"))?;
+    if header.entity_type != expected || raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Err(invalid("docs corpus PROJECT has wrong kind"));
+    }
+    let record: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map_err(|_| invalid("docs corpus PROJECT body invalid"))?;
+    if record.role != ProjectRole::Corpus {
+        return Err(invalid("docs corpus PROJECT must carry corpus role"));
+    }
+    Ok(())
+}
+
 fn encoded(value: &Value) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("docs encoding failed"))
 }
@@ -119,6 +147,7 @@ impl Vault {
     ) -> Result<ComposedEffect> {
         docs.validate()
             .map_err(|_| invalid("invalid docs export"))?;
+        require_docs_corpus_project(self, &self.store.env.read_txn()?, docs.project_id)?;
         let bytes = serde_json::to_vec(docs).map_err(|_| invalid("docs export encoding"))?;
         if docs.pages.len() > ceiling.max_pages || bytes.len() > ceiling.max_bytes {
             return Err(invalid("docs import exceeds consent ceiling"));
@@ -219,6 +248,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
+        require_docs_corpus_project(self, &txn, docs.project_id)?;
         let authorization =
             crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &digest)?
                 .ok_or_else(|| invalid("docs consent already consumed"))?;
@@ -270,10 +300,11 @@ impl Vault {
                 super::docs_deep::DeepApproval {
                     owner: owner.actor(),
                     digest: &digest.to_hex(),
+                    project_id: docs.project_id,
                 },
                 now,
             )?;
-            ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
+            ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
             if unchanged {
                 continue;
             }

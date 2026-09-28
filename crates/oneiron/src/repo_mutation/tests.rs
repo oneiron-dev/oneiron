@@ -1224,6 +1224,80 @@ fn repo_mutation_recovery_rejects_snapshot_from_other_repo() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn record_conflict_refuses_repository_clean_filter_before_merge_tree() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md filter=late\n",
+    )
+    .expect("tracked attributes");
+    run_git_at_path(
+        repo.path(),
+        &["add".into(), "--".into(), ".gitattributes".into()],
+    )
+    .expect("stage attributes");
+    run_git_at_path(
+        repo.path(),
+        &[
+            "-c".into(),
+            "user.name=Oneiron".into(),
+            "-c".into(),
+            "user.email=oneiron@example.invalid".into(),
+            "commit".into(),
+            "-m".into(),
+            "tracked attributes".into(),
+        ],
+    )
+    .expect("commit attributes");
+    create_conflicting_branches(&repo);
+    let fixture = tempfile::tempdir().expect("filter fixture");
+    let marker = fixture.path().join("clean-ran");
+    let filter = fixture.path().join("late-clean");
+    fs::write(
+        &filter,
+        format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    )
+    .expect("filter program");
+    fs::set_permissions(&filter, fs::Permissions::from_mode(0o755)).expect("executable filter");
+    run_git_at_path(
+        repo.path(),
+        &[
+            "config".into(),
+            "filter.late.clean".into(),
+            filter.to_string_lossy().into_owned(),
+        ],
+    )
+    .expect("configure clean filter");
+    run_git_at_path(
+        repo.path(),
+        &["config".into(), "merge.renormalize".into(), "true".into()],
+    )
+    .expect("configure renormalize");
+    let subject = put_branch_subject(&vault);
+    let outcome = vault.apply_repo_mutation(RepoMutationRequest::new(
+        repo_ref(&repo),
+        RepoMutationOperation::RecordConflict {
+            branch_subject: subject,
+            branch_name: "left".into(),
+            ours_ref: "left".into(),
+            theirs_ref: "right".into(),
+        },
+    ));
+    assert!(
+        outcome.is_err(),
+        "unsupported merge/filter profile must be refused"
+    );
+    assert!(
+        !marker.exists(),
+        "merge-tree must never execute the clean filter"
+    );
+}
+
 #[test]
 fn repo_conflict_record_keeps_branches_mountable_and_queryable() {
     let (_vault_dir, vault) = open_test_vault();

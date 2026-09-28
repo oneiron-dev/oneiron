@@ -218,6 +218,26 @@ impl Vault {
         })
     }
 
+    /// Advance the persisted authority-observation floor in test fixtures.
+    /// The generic sync-state write door remains guarded.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn advance_authority_clock_for_test(&self, observed_secs: u64) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            let floor_key = authority_first_seen_clock_key();
+            let previous = AUTHORITY_FIRST_SEEN
+                .get_lenient(&self.store, wtxn, &floor_key)?
+                .unwrap_or(0);
+            AUTHORITY_FIRST_SEEN.put(
+                &self.store,
+                wtxn,
+                &floor_key,
+                &previous.max(observed_secs),
+            )?;
+            Ok(())
+        })
+    }
+
     /// Folds all stored AUTHORITY_LOG entries into the current authority roster.
     ///
     /// The fold is the authority boundary: replay doors only admit canonical,

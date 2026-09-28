@@ -1,5 +1,4 @@
 //! Imported and hub-derived instruction authority at the single SKILL materialization door.
-use super::HubAdmissionProof;
 use super::package_codec::invalid;
 use crate::side_table::{self, Raw, SideTable, StagedRow};
 use crate::{
@@ -20,6 +19,114 @@ use crate::{
 /// its own put transaction alongside the rest of the entity write.
 const ORIGIN: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::SKILL_HUB_ORIGIN);
 
+/// An exact-body activation authorization. Post-fit proof alone may suppress
+/// the advisory scan's independent approval rewrite; other doors keep it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HubAdmissionKind {
+    MarketplacePostFit(crate::skill::SkillContentHash),
+    PackPostFit(crate::skill::SkillContentHash),
+    OwnerConsent,
+    HeldOut,
+    Bootstrap,
+    Optimized,
+}
+#[derive(Debug)]
+pub(crate) struct HubAdmissionProof {
+    id: EntityId,
+    binding: blake3::Hash,
+    kind: HubAdmissionKind,
+}
+impl HubAdmissionProof {
+    fn new(id: EntityId, data: &[u8], kind: HubAdmissionKind) -> Self {
+        Self {
+            id,
+            binding: blake3::hash(data),
+            kind,
+        }
+    }
+    pub(in crate::skill_hub) fn marketplace(
+        id: EntityId,
+        data: &[u8],
+        hash: crate::skill::SkillContentHash,
+    ) -> Self {
+        Self::new(id, data, HubAdmissionKind::MarketplacePostFit(hash))
+    }
+    pub(in crate::skill_hub) fn post_fit(
+        id: EntityId,
+        data: &[u8],
+        hash: crate::skill::SkillContentHash,
+    ) -> Self {
+        Self::new(id, data, HubAdmissionKind::PackPostFit(hash))
+    }
+    pub(in crate::skill_hub) fn bootstrap(id: EntityId, data: &[u8]) -> Self {
+        Self::new(id, data, HubAdmissionKind::Bootstrap)
+    }
+    pub(in crate::skill_hub) fn optimized(id: EntityId, data: &[u8]) -> Self {
+        Self::new(id, data, HubAdmissionKind::Optimized)
+    }
+    pub(in crate::skill_hub) fn consent(
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: &[u8],
+        authorization: &crate::consent::ApproveOnceAuthorization,
+    ) -> Result<Self> {
+        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        Ok(Self::new(id, data, HubAdmissionKind::OwnerConsent))
+    }
+    pub(in crate::skill_hub) fn held_out(
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: &[u8],
+        authorization: &crate::consent::ApproveOnceAuthorization,
+    ) -> Result<Self> {
+        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        Ok(Self::new(id, data, HubAdmissionKind::HeldOut))
+    }
+    pub(in crate::skill_hub) fn id(&self) -> EntityId {
+        self.id
+    }
+    pub(crate) fn binds(&self, id: &EntityId, data: &[u8]) -> bool {
+        self.id == *id && self.binding == blake3::hash(data)
+    }
+    /// Called after the SKILL materialization guard verified this exact proof.
+    /// A post-fit signal was already resolved by the host; scan is not consent.
+    pub(crate) fn resolved_post_fit(
+        &self,
+        id: &EntityId,
+        data: &[u8],
+        record: &SkillRecord,
+    ) -> bool {
+        let hash = match self.kind {
+            HubAdmissionKind::MarketplacePostFit(hash) | HubAdmissionKind::PackPostFit(hash) => {
+                hash
+            }
+            _ => return false,
+        };
+        self.binds(id, data)
+            && record.content_hash == Some(hash)
+            && record.source == ClaimSource::Imported
+    }
+}
+
+/// Post-fit proof has already resolved advisory signals; all other writes
+/// retain the existing scan consent escalation at the batch chokepoint.
+pub(crate) fn scan_skill_admission(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    record: &mut SkillRecord,
+    proof: Option<&HubAdmissionProof>,
+) -> Result<bool> {
+    let encoded = crate::skill::encode_skill_record(record)?;
+    if proof.is_some_and(|proof| proof.resolved_post_fit(id, &encoded, record)) {
+        Ok(false)
+    } else {
+        crate::skill_scan::escalate_activation_approval_in_txn(store, txn, id, record)
+    }
+}
+
 impl crate::Vault {
     pub(in crate::skill_hub) fn admit_hub_skill_record_in_txn(
         &self,
@@ -29,13 +136,33 @@ impl crate::Vault {
         data: Vec<u8>,
         proof: HubAdmissionProof,
     ) -> Result<()> {
+        self.admit_hub_skill_record_with_refinement_in_txn(
+            txn, occurred, learned_at, data, proof, None,
+        )
+    }
+
+    pub(in crate::skill_hub) fn admit_hub_skill_record_with_refinement_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        occurred: crate::TimeRange,
+        learned_at: u64,
+        data: Vec<u8>,
+        proof: HubAdmissionProof,
+        refinement: Option<super::refinement_admission::RefinementAdmissionProof>,
+    ) -> Result<()> {
+        let candidate = proof.id();
+        let mode = crate::batch::ApplyOpsGateMode::new(false, true).with_hub_admission(proof);
+        let mode = match refinement {
+            Some(refinement) => mode.with_refinement_admission(refinement),
+            None => mode,
+        };
         crate::batch::apply_ops_with_gate_mode(
             &self.store,
             &self.config,
             &self.analyzer,
             txn,
             vec![crate::batch::BatchOp::Put {
-                id: proof.id(),
+                id: candidate,
                 entity_type: crate::registry::ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
@@ -46,7 +173,7 @@ impl crate::Vault {
             }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            crate::batch::ApplyOpsGateMode::new(false, true).with_hub_admission(proof),
+            mode,
         )
     }
 }
@@ -106,6 +233,12 @@ pub(crate) fn check_hub_skill_put(
             .transpose()?
             == Some(crate::skill_optimize::skill_body_binding_digest(record)?);
     if record.lifecycle_status == SkillLifecycle::Active && !unchanged_active {
+        if record.source == ClaimSource::Imported
+            && let Some(hash) = record.content_hash
+            && super::import_receipt::marketplace_hash_blocked_in_txn(store, txn, hash)?
+        {
+            return Err(invalid("marketplace hash rule blocks activation"));
+        }
         let proof = proof.ok_or_else(|| {
             invalid("hub or fork activation requires local consent and held-out replay")
         })?;

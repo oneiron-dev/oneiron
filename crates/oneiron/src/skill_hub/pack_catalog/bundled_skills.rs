@@ -3,11 +3,10 @@ use super::{PackInstallReceipt, PackSource, admission::PACK_INSTALL, invalid};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{
     Vault,
-    claim::ClaimApprovalStatus,
     entity_id::EntityId,
     error::Result,
-    skill::SkillLifecycle,
-    skill_hub::{ForeignSkillPublisher, HubFile, HubPin, HubRef},
+    skill::{SkillContentHash, SkillLifecycle},
+    skill_hub::{HubFile, HubPin, HubRef},
     temporal::TimeRange,
 };
 use std::collections::BTreeMap;
@@ -15,15 +14,22 @@ use std::collections::BTreeMap;
 /// A bundled skill's provenance alias names the pack that minted it.
 const PACK_SKILL_ALIAS: SideTable<(EntityId, [u8; 32]), String, Raw> =
     SideTable::new(&side_table::SKILL_HUB_PACK_SKILL_ALIAS);
+
+/// Exact per-skill source held until the pack install verdict commits.
+pub(super) struct ImportedPackSkillSource {
+    pub(super) entity: EntityId,
+    pub(super) reference: HubRef,
+    pub(super) hash: SkillContentHash,
+}
+
 impl Vault {
     pub(super) fn import_pack_skills_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         source: &PackSource,
         hub: &HubRef,
-        publisher: &ForeignSkillPublisher,
         at: u64,
-    ) -> Result<Vec<EntityId>> {
+    ) -> Result<(Vec<EntityId>, Vec<ImportedPackSkillSource>)> {
         let mut groups = BTreeMap::<String, Vec<HubFile>>::new();
         for file in &source.files {
             let Some(path) = file.path.strip_prefix("skills/") else {
@@ -38,6 +44,7 @@ impl Vault {
                 .push(HubFile::new(relative, file.content.clone()));
         }
         let mut ids = Vec::new();
+        let mut skill_sources = Vec::new();
         for (folder, files) in groups {
             let package = super::super::folder::package_from_files(files)?;
             let hash = package.content_hash()?;
@@ -54,7 +61,13 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
-            self.write_hub_import_receipt_in_txn(txn, &id, hash, &skill_ref, Some(publisher), at)?;
+            // The final install/Candidate decision follows later in this same
+            // transaction. Do not publish an intermediate Candidate receipt.
+            skill_sources.push(ImportedPackSkillSource {
+                entity: id,
+                reference: skill_ref.clone(),
+                hash,
+            });
             PACK_SKILL_ALIAS.put(
                 &self.store,
                 txn,
@@ -63,7 +76,7 @@ impl Vault {
             )?;
             ids.push(id);
         }
-        Ok(ids)
+        Ok((ids, skill_sources))
     }
     /// Replace only this pack's admitted prior revisions. Other pack owners
     /// retain a shared content holder until their own installation moves.
@@ -155,39 +168,6 @@ impl Vault {
                     next_id,
                     TimeRange { start: at, end: at },
                     at,
-                )?;
-            }
-        }
-        Ok(())
-    }
-    pub(super) fn activate_pack_skills_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        ids: &[EntityId],
-        at: u64,
-    ) -> Result<()> {
-        for id in ids {
-            let mut record = self.read_skill_record_in_txn(txn, id)?;
-            if record.lifecycle_status == SkillLifecycle::Candidate {
-                if record.approval_status == ClaimApprovalStatus::Rejected
-                    || self
-                        .hub_admission_receipt_in_txn(txn, id)?
-                        .is_some_and(|receipt| !receipt.accepted)
-                {
-                    return Err(invalid("locally rejected bundled skill cannot reactivate"));
-                }
-                // Installation is not human consent. The scanner may still
-                // escalate `auto` if a verdict moves before this write.
-                record.approval_status = ClaimApprovalStatus::Auto;
-                record.lifecycle_status = SkillLifecycle::Active;
-                let data = crate::skill::encode_skill_record(&record)?;
-                let proof = super::super::HubAdmissionProof::post_fit(*id, &data);
-                self.admit_hub_skill_record_in_txn(
-                    txn,
-                    TimeRange { start: at, end: at },
-                    at,
-                    data,
-                    proof,
                 )?;
             }
         }

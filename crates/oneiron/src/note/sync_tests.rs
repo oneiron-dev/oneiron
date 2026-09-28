@@ -1321,3 +1321,109 @@ mod program {
         }
     }
 }
+
+#[test]
+fn offline_title_swap_reconnect_converges_in_either_document_order() {
+    use crate::sync::transport::{decode_document, document_sub_tags};
+    let a_dir = tempfile::tempdir().unwrap();
+    let a = Arc::new(Vault::open(a_dir.path(), VaultConfig::device()).unwrap());
+    let author = actor(&a);
+    let memory = a.memory(author, EdgeActorClass::Human);
+    let first = a
+        .create_note(
+            "research",
+            "first",
+            crate::WriteActor::new(author, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let second = a
+        .create_note(
+            "research",
+            "second",
+            crate::WriteActor::new(author, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let title = |note, text: &str| {
+        memory
+            .apply_local_note_operation(
+                note,
+                &NoteOperation {
+                    request_id: EntityId::now(),
+                    change: NoteChange::SetTitle { title: text.into() },
+                },
+            )
+            .unwrap();
+    };
+    title(first, "alpha");
+    title(second, "beta");
+    let selector = selector(&a, author, FederationGrantRole::Member);
+    let a_manager = manager(a.clone());
+    for order in [[first, second], [second, first]] {
+        let b_dir = tempfile::tempdir().unwrap();
+        let b = Arc::new(Vault::open(b_dir.path(), VaultConfig::device()).unwrap());
+        let b_manager = manager(b.clone());
+        for id in [author, first, second] {
+            replicate_row(&a, &b, id);
+        }
+        for id in [first, second] {
+            b_manager
+                .documents()
+                .subscribe_entity(id, &selector)
+                .unwrap();
+            let frame = a_manager
+                .export_document(
+                    id,
+                    crate::FederationGrantScope::vault(7),
+                    &selector,
+                    &loro::VersionVector::new().encode(),
+                )
+                .unwrap();
+            let frame = decode_document(&frame[1..]).unwrap();
+            assert_eq!(frame.kind, document_sub_tags::STATE);
+            super::import_note_from_authority(&b, id, frame.kind, frame.payload).unwrap();
+        }
+        assert_eq!(
+            b.note_document(first).unwrap().title.as_deref(),
+            Some("alpha")
+        );
+        assert_eq!(
+            b.note_document(second).unwrap().title.as_deref(),
+            Some("beta")
+        );
+        // The authority accepts three unique intermediate states while B is offline.
+        title(first, "temporary");
+        title(second, "alpha");
+        title(first, "beta");
+        drop(b_manager);
+        let reconnect = manager(b.clone());
+        for id in order {
+            reconnect
+                .documents()
+                .subscribe_entity(id, &selector)
+                .unwrap();
+            let frame = a_manager
+                .export_document(
+                    id,
+                    crate::FederationGrantScope::vault(7),
+                    &selector,
+                    &loro::VersionVector::new().encode(),
+                )
+                .unwrap();
+            let frame = decode_document(&frame[1..]).unwrap();
+            assert_eq!(frame.kind, document_sub_tags::STATE);
+            super::import_note_from_authority(&b, id, frame.kind, frame.payload).unwrap();
+        }
+        assert_eq!(
+            b.note_document(first).unwrap().title.as_deref(),
+            Some("beta")
+        );
+        assert_eq!(
+            b.note_document(second).unwrap().title.as_deref(),
+            Some("alpha")
+        );
+        // Reset the authority before constructing the replica in the second order.
+        title(first, "temporary");
+        title(second, "beta");
+        title(first, "alpha");
+    }
+}

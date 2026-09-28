@@ -25,24 +25,40 @@ impl BranchResources<'_> {
             })
             .collect();
         for id in documents {
-            if self.sources.contains_key(&id)
-                || self.read.vault().get_entity_type(&id)? != Some(ENTITY_TYPE_CLAIM)
-            {
+            if self.sources.contains_key(&id) {
                 continue;
             }
-            let head = self
-                .read
-                .read(&[crate::claim::PointRead::id(id)], None)?
-                .single();
-            self.fold_read_receipt(&head.receipt)?;
-            let Some(crate::claim::ReadRow {
-                entity_type: kind,
-                learned_at,
-                body: Some(bytes),
-                ..
-            }) = head.value
-            else {
-                return Err(invalid_consolidation("prior head is not actor-readable"));
+            let (kind, learned_at, bytes) = if let Some(wake) = self.prepared_wake {
+                // Bytes from the wake's one read, whose receipt the branch holds.
+                let Some(row) = wake.source(&id) else {
+                    continue;
+                };
+                if row.0 != ENTITY_TYPE_CLAIM {
+                    continue;
+                }
+                if !self.read.is_entity_readable(&id)? {
+                    return Err(invalid_consolidation("prior head read revoked"));
+                }
+                row
+            } else {
+                if self.read.vault().get_entity_type(&id)? != Some(ENTITY_TYPE_CLAIM) {
+                    continue;
+                }
+                let head = self
+                    .read
+                    .read(&[crate::claim::PointRead::id(id)], None)?
+                    .single();
+                self.fold_read_receipt(&head.receipt)?;
+                let Some(crate::claim::ReadRow {
+                    entity_type: kind,
+                    learned_at,
+                    body: Some(bytes),
+                    ..
+                }) = head.value
+                else {
+                    return Err(invalid_consolidation("prior head is not actor-readable"));
+                };
+                (kind, learned_at, bytes)
             };
             let resource = document_version(id, &bytes);
             if kind != ENTITY_TYPE_CLAIM || !self.scope.allows_read(&resource) {
@@ -74,6 +90,12 @@ impl BranchResources<'_> {
                     resource,
                     entity_type: kind,
                     learned_at,
+                    #[cfg(test)]
+                    trust_class: Some(crate::dreamer_consolidation::provenance::source_meet(
+                        prior.body.source.unwrap_or(crate::ClaimSource::Imported),
+                        crate::claim::claim_evidence_taint(&prior.body)
+                            .unwrap_or(prior.body.source.unwrap_or(crate::ClaimSource::Imported)),
+                    )),
                 },
             );
             self.priors.insert(id, prior);
