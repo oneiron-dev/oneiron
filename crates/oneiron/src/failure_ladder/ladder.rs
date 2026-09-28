@@ -156,7 +156,7 @@ impl<'a> FailureLadder<'a> {
             // sits in is unreadable, so the ordinal that would drive a retry
             // cannot be trusted. It surfaces as Ambiguous and never mints a
             // HealerCase.
-            let failed_attempt = fail_once(&queue, &input)?;
+            let failed_attempt = fail_once(self.vault, &input)?;
             return Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                 failed_attempt,
                 FailureClass::Ambiguous,
@@ -167,12 +167,11 @@ impl<'a> FailureLadder<'a> {
         }
 
         match class {
-            FailureClass::Transient => self.route_transient(&queue, input, &policy, &context, walk),
+            FailureClass::Transient => self.route_transient(input, &policy, &context, walk),
             FailureClass::Permanent => {
                 // The intact-lineage ordinal is discarded by policy: permanent
                 // failures are stamped 0 rather than counted.
                 self.route_healer(
-                    &queue,
                     &input,
                     &policy,
                     &context,
@@ -184,7 +183,7 @@ impl<'a> FailureLadder<'a> {
                 )
             }
             FailureClass::Ambiguous => {
-                let failed_attempt = fail_once(&queue, &input)?;
+                let failed_attempt = fail_once(self.vault, &input)?;
                 Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                     failed_attempt,
                     FailureClass::Ambiguous,
@@ -198,17 +197,15 @@ impl<'a> FailureLadder<'a> {
 
     fn route_transient(
         &self,
-        queue: &AttemptQueue<'_>,
         input: HandleAttemptFailure,
         policy: &FailureScopePolicy,
         context: &FailureSurfaceContext,
         walk: RetryOrdinal,
     ) -> Result<FailureLadderOutcome> {
         match walk {
-            RetryOrdinal::BelowLimit(ordinal) => retry_once(queue, input, ordinal),
+            RetryOrdinal::BelowLimit(ordinal) => retry_once(self.vault, input, ordinal),
             RetryOrdinal::AtLimit(ordinal) => match policy.escalation_mode {
                 FailureEscalationMode::Auto => self.route_healer(
-                    queue,
                     &input,
                     policy,
                     context,
@@ -219,7 +216,7 @@ impl<'a> FailureLadder<'a> {
                     },
                 ),
                 FailureEscalationMode::Human => {
-                    let failed_attempt = fail_once(queue, &input)?;
+                    let failed_attempt = fail_once(self.vault, &input)?;
                     Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                         failed_attempt,
                         FailureClass::Transient,
@@ -237,14 +234,13 @@ impl<'a> FailureLadder<'a> {
 
     fn route_healer(
         &self,
-        queue: &AttemptQueue<'_>,
         input: &HandleAttemptFailure,
         policy: &FailureScopePolicy,
         context: &FailureSurfaceContext,
         routing: HealerRouting,
     ) -> Result<FailureLadderOutcome> {
         let mut txn = self.vault.store.env.write_txn()?;
-        let failed_attempt = fail_once_in_txn(queue, &mut txn, input)?;
+        let failed_attempt = fail_once_in_txn(self.vault, &mut txn, input)?;
         let case = HealerCase {
             case_ref: failure_case_ref(failed_attempt.id),
             scope: policy.scope.clone(),

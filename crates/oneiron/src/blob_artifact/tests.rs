@@ -116,6 +116,7 @@ fn blob_artifact_upload_creates_v1_with_ledger_event() -> Result<()> {
         *blake3::hash(b"office bytes v1").as_bytes()
     );
     assert_eq!(version.provenance, BlobVersionProvenance::UserUpload);
+    assert_eq!(version.calc_engine, None, "an upload was not recalculated");
     // The LEDGER event landed as a CLAIM entity.
     assert_eq!(
         vault.get_entity_type(&version.claim_id)?,
@@ -255,6 +256,7 @@ fn blob_artifact_provenance_round_trips_per_version() -> Result<()> {
 
     let versions = vault.blob_artifact_versions(&artifact_id)?;
     assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].calc_engine, None);
     assert_eq!(versions[0].provenance, BlobVersionProvenance::UserUpload);
     assert_eq!(versions[1].provenance, agent_run);
     assert_ne!(v1.claim_id, v2.claim_id);
@@ -316,7 +318,10 @@ fn blob_artifact_delete_cleans_chain_and_orphaned_assets() -> Result<()> {
     );
 
     // Deleting the LAST referencing artifact removes the shared bytes.
-    vault.delete_entity(&artifact_b)?;
+    vault.delete_entity_with_options(
+        &artifact_b,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert!(vault.blob_artifact_versions(&artifact_b)?.is_empty());
     assert!(vault.get_raw(&shared_asset)?.is_none());
     Ok(())
@@ -426,7 +431,10 @@ fn blob_birth_four_rungs_only_normalize_transport_and_are_purged() -> Result<()>
         assert_eq!(Some(value), changed.blocks.get(key));
     }
     assert_eq!(append(b"# Page\n\nTEXT\n\n# Another\n\nMore")?.version, 4);
-    vault.delete_entity(&artifact)?;
+    vault.delete_entity_with_options(
+        &artifact,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert!(vault.blob_fingerprint(&artifact)?.is_none());
     Ok(())
 }
@@ -493,7 +501,7 @@ fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()>
     assert_eq!(upload.parent_version, None);
     assert_eq!(upload.fork_of_version, None);
     let txn = vault.store.env.read_txn()?;
-    let legacy_raw = vault
+    let root_raw = vault
         .store
         .vault_meta
         .get(
@@ -502,12 +510,12 @@ fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()>
         )?
         .unwrap();
     assert_eq!(
-        rmpv::decode::read_value(&mut std::io::Cursor::new(legacy_raw))
+        rmpv::decode::read_value(&mut std::io::Cursor::new(root_raw))
             .unwrap()
             .as_map()
             .unwrap()
             .len(),
-        6
+        BLOB_ARTIFACT_VERSION_RECORD_KEYS.len() - 2
     );
     drop(txn);
     assert_eq!(

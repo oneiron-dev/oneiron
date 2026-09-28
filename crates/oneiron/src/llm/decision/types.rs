@@ -4,7 +4,9 @@ use crate::EntityId;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionRung {
     Rule,
@@ -159,13 +161,15 @@ pub struct DecisionDial {
 
 impl DecisionDial {
     pub fn narrow(self, resident: Self) -> Result<Self> {
-        if resident.ceiling > self.ceiling
+        self.band.validate()?;
+        if self.first > self.ceiling
+            || resident.first < self.first
+            || resident.ceiling > self.ceiling
             || resident.first > resident.ceiling
             || resident.band != self.band
         {
             return Err(invalid("resident decision dial widens owner authority"));
         }
-        resident.band.validate()?;
         Ok(resident)
     }
 }
@@ -180,6 +184,23 @@ pub struct DecisionReceipt {
     pub principal: EntityId,
     pub providers: Vec<ProviderPin>,
     pub band: DecisionBand,
+    /// Zero denotes the seed band in shadow; learned bands pin their version.
+    #[serde(default)]
+    pub band_version: u32,
+    /// Exact source-body hashes used for this unit's inference.
+    #[serde(default)]
+    pub evidence_versions: Vec<EvidenceVersion>,
+    /// Provider-reported cost at the answered rung, when known.
+    #[serde(default)]
+    pub cost_per_thousand: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceVersion {
+    #[serde(with = "super::codec::entity")]
+    pub id: EntityId,
+    pub body_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

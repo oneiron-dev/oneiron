@@ -74,10 +74,9 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
-            // The ledger id doubles as the frozen call's idempotency key, but a
-            // sink must only be told it has provider idempotency when the verb
-            // actually supports it. A non-idempotent send exposes no key, so the
-            // transport cannot mistake the ledger id for a dedupe token.
+            // Only provider-native and replace-safe verbs expose the frozen
+            // ledger key to the transport. Queue-emulated dedupe does not make
+            // an ambiguous provider call safe to resend.
             idempotency_key: if call.idempotency_supported() {
                 call.idempotency_key()
             } else {
@@ -86,11 +85,17 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             verb_contract: self.verb_contract,
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),
+            linkedin_sandbox_policy: self.request.linkedin_sandbox_policy.as_ref(),
             hygiene_headers,
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
             space_posting,
         };
+        if !crate::task_verb::validate_ask_soft_confirm_dispatch(self.vault, self.request)
+            .unwrap_or(false)
+        {
+            return invalid_frozen_call();
+        }
         let mut execution = self.sink.execute(&execution_request);
         // Only the pipeline may author the normalized re-arm authority, even
         // when the adapter's raw `retry_after` is missing or malformed.

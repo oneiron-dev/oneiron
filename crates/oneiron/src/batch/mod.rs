@@ -1,6 +1,7 @@
 pub mod export;
 pub(crate) mod secret_scan;
 
+mod actor_content;
 mod agent_definition_create;
 mod authority_log;
 mod base_apply;
@@ -37,6 +38,8 @@ mod tests;
 pub use self::builder::BatchBuilder;
 pub use self::txn_builder::TxnBatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
+#[cfg(feature = "sync")]
+pub(crate) use self::vad_postcommit::queue_proactivity_change;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 use self::base_apply::apply_ops_with_origin;
@@ -54,6 +57,7 @@ pub(crate) use self::facet_validation::validate_facet_of_edge;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
+pub(crate) use self::actor_content::apply_actor_ops;
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,

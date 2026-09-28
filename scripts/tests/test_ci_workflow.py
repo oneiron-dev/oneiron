@@ -1,5 +1,6 @@
 """Pin scoped CI, incremental build helpers, and the nightly full gate."""
 
+import ast
 import importlib.util
 import unittest
 from pathlib import Path
@@ -68,6 +69,37 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("run cargo test --locked --doc --workspace --exclude oneiron-bench --all-features", self.runner)
         self.assertIn("schedule | workflow_dispatch) python3 scripts/ci/ci_scope.py --full ;;", self.text)
 
+    def test_atom_fuzz_runs_on_lens_changes_and_the_nightly_gate(self):
+        job = "\n".join(self.job_lines("test-linux"))
+        self.assertIn("Fuzz atom codec and render (golden corpus)", job)
+        self.assertIn("timeout 1200s cargo test --locked -j 8 -p oneiron --lib --all-features lens::tests::atom_fuzz::sustained_atom_codec_render_fuzz -- --ignored --exact", job)
+        guard = job.split("Fuzz atom codec and render (golden corpus)", 1)[1].split("        run:", 1)[0]
+        expression = guard.split("${{", 1)[1].split("}}", 1)[0]
+
+        def runs(*, cancelled=False, scope_result="success", full="false", oneiron="false", modules=""):
+            # Evaluate only the small boolean grammar of this GitHub Actions guard.
+            substitutions = {
+                "contains(format(' {0} ', needs.changes.outputs.modules), ' lens ')": "lens" in modules.split(),
+                "needs.changes.outputs.modules == 'ALL'": modules == "ALL",
+                "needs.changes.outputs.oneiron == 'true'": oneiron == "true",
+                "needs.changes.outputs.full == 'true'": full == "true",
+                "needs.changes.result != 'success'": scope_result != "success",
+                "!cancelled()": not cancelled,
+            }
+            value = expression
+            for term, result in substitutions.items():
+                value = value.replace(term, str(result))
+            tree = ast.parse(value.replace("&&", " and ").replace("||", " or ").strip(), mode="eval")
+            self.assertTrue(all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Constant)) for node in ast.walk(tree)))
+            return eval(compile(tree, "<fuzz-guard>", "eval"), {"__builtins__": {}})
+
+        self.assertTrue(runs(scope_result="failure"))  # Failed scope; all outputs empty.
+        self.assertTrue(runs(scope_result="cancelled"))  # Same fail-safe as the Test job.
+        self.assertTrue(runs(modules="lens", oneiron="true"))
+        self.assertTrue(runs(full="true"))
+        self.assertFalse(runs(modules="gate", oneiron="true"))  # Unrelated scoped change.
+        self.assertFalse(runs(cancelled=True, scope_result="failure"))
+
     def test_macos_recipe_and_mutation_audit_are_dispatch_only(self):
         for job in ("test", "mutation-audit"):
             gate = next(l for l in self.job_lines(job) if l.startswith("    if: "))
@@ -111,11 +143,11 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_full_tier_nextest_commands_are_not_replaced_by_cache_setup(self):
         self.assertIn(
-            "run: cargo nextest run --locked --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast",
+            "run: cargo nextest run --locked --workspace --exclude oneiron-bench --all-features --profile full --no-fail-fast",
             self.text,
         )
         self.assertIn(
-            "run cargo nextest run --locked --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast",
+            "run cargo nextest run --locked --workspace --all-features --profile full --no-fail-fast",
             self.runner,
         )
 
@@ -145,6 +177,10 @@ class CiWorkflowTests(unittest.TestCase):
             self.assertIn("      - name: sccache 0.15.0 (GitHub Actions shared cache)", lines)
         self.assertNotIn("CARGO_INCREMENTAL: '1'", self.text)
         self.assertNotIn("CARGO_INCREMENTAL=1", self.runner)
+
+    def test_scoped_napi_change_runs_its_hostless_rust_tests(self):
+        self.assertIn('case "$p" in oneiron) ;; *) others+=(-p "$p") ;; esac', self.runner)
+        self.assertIn('cargo nextest run --locked "${others[@]}" --all-features', self.runner)
 
     def test_scoped_runner_wraps_test_builds_and_rustdoc_not_clippy(self):
         self.assertIn('if [ "$mode" = test ] || [ "$mode" = featureless ]; then', self.runner)

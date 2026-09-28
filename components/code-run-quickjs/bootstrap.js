@@ -38,7 +38,10 @@
   };
   set("oneiron", freeze(sdk.oneiron));
   set("sandbox", freeze(sdk.sandbox));
-  if (sdk.self) set("self", freeze(sdk.self));
+  if (sdk.self) {
+    set("self", freeze(sdk.self));
+    set("ask", sdk.ask);
+  }
   if (sdk.vault) set("vault", freeze(sdk.vault));
   const randomDouble = () => {
     const bytes = random.bytes(7);

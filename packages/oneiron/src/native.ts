@@ -34,18 +34,25 @@ tasksUpdate(input: unknown): unknown
 witness(turn: WitnessTurn): WitnessReceipt
 claimUpsert(claim: ClaimInput): CommitReceipt
 recall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined): MemoryPack
+export(input: unknown): unknown
 receipts(limit: number | undefined): FacadeReceipt[]
 keyValueGet(requestJson: string): string
 keyValuePut(requestJson: string): string
 keyValueDelete(requestJson: string): string
 keyValueSearch(requestJson: string): string
 keyValueNamespaces(requestJson: string): string
+can(requestJson: string): string
+peek(requestJson: string): string
 tasksAsk(input: unknown): unknown
 tasksWait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 roomsList(input: unknown): unknown
 roomsMessages(input: unknown): unknown
+roomsRender(input: unknown): unknown
+roomsFind(input: unknown): unknown
+roomsGet(input: unknown): unknown
+roomsTrunk(input: unknown): unknown
 roomsClaim(input: unknown): unknown
 roomsSpeak(input: unknown): unknown
 // END GENERATED AGENT VERBS

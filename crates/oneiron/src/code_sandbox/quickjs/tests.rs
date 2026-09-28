@@ -1,6 +1,9 @@
 //! Acceptance tests require the real artifacts produced by the pinned build.
 use super::*;
-use crate::code_run::{SelfDispatchOutcome, SelfMemoryEdgeWriteResult, SelfMemoryWriteResult};
+use crate::code_run::{
+    SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfMemoryEdgeWriteResult, SelfMemoryWriteResult,
+};
 use crate::engine_executor::JsCodeModeStepOutcome;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -49,6 +52,12 @@ impl JsCodeModeHost for Host {
                     tgt: call.tgt,
                 })
             }
+            SelfCall::Ask(_) => SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                wait_id: EntityId::from_bytes([2; 16])?,
+                effect: SelfEffect::Ask,
+                reason: SelfDurableWaitReason::HumanInput,
+                prompt: None,
+            }),
             _ => return Err(Error::InvalidConfig("unexpected test call".into())),
         };
         Ok(SelfDispatchResponse {
@@ -139,6 +148,128 @@ fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
 }
 
 #[test]
+fn quickjs_exposes_bare_ask_but_no_self_ask_alias() {
+    let (bytes, hash) = artifact("first-party");
+    let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default())
+        .expect("pinned real component");
+    let mut host = Host::default();
+    let mut runtime = factory.runtime().expect("runtime");
+    let output = run(
+        &mut runtime,
+        "const wait = await ask({prompt:'continue?'}); finish(JSON.stringify({wait, old:typeof self.ask_human, camel:typeof self.askHuman}));",
+        &mut host,
+    ).expect("guest bare ask");
+    let result: Value = serde_json::from_str(&output.observation).expect("guest result");
+    assert_eq!(
+        result["wait"]["waitId"],
+        EntityId::from_bytes([2; 16]).unwrap().to_hex()
+    );
+    assert_eq!(result["old"], "undefined");
+    assert_eq!(result["camel"], "undefined");
+    assert!(matches!(&host.calls[..], [SelfCall::Ask(call)] if call.prompt == "continue?"));
+}
+
+#[test]
+
+fn quickjs_json_validate_returns_shared_allow_reject_verdicts_without_dispatch() {
+    let (bytes, hash) = artifact("first-party");
+    let factory =
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
+    let mut host = Host::default();
+    let result = run(
+        &mut factory.runtime().unwrap(),
+        "const schema = {type:'object',required:['count'],properties:{count:{type:'integer'}}}; \
+         const allow = await self.json.validate(schema,{count:3}); \
+         const reject = await self.json.validate(schema,{count:'three'}); \
+         const invalidSchema = await self.json.validate({type:'not-a-type'},{count:3}); \
+         finish(JSON.stringify({allow,reject,invalidSchema}));",
+        &mut host,
+    )
+    .unwrap();
+    assert!(result.done);
+    assert_eq!(
+        serde_json::from_str::<Value>(&result.observation).unwrap(),
+        serde_json::json!({"allow":true,"reject":false,"invalidSchema":false})
+    );
+    assert!(
+        host.calls.is_empty(),
+        "validation must not dispatch a self effect"
+    );
+}
+
+#[test]
+fn quickjs_json_validate_recursive_schemas_are_bounded() {
+    const CHILD: &str = "ONEIRON_JSON_VALIDATE_RECURSIVE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let (bytes, hash) = artifact("first-party");
+        let factory =
+            QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default())
+                .expect("pinned component");
+        let result = run(
+            &mut factory.runtime().expect("runtime"),
+            "const bad = {allOf:[{$ref:'#'}]}; \
+             const recursive = {type:'object',properties:{next:{$ref:'#'}}}; \
+             const tupleCycle = {$schema:'http://json-schema.org/draft-07/schema#', \
+                items:[{allOf:[{$ref:'#/items/0'}]}]}; \
+             const tuple = {$schema:'http://json-schema.org/draft-07/schema#', \
+                items:[{type:'integer'}]}; \
+             const emptyKey = {$defs:{'':{type:'integer'}},$ref:'#/$defs/'}; \
+             const pct = {$defs:{a:{type:'integer'}},$ref:'#/$defs/%61'}; \
+             const pctCycle = {$defs:{a:{allOf:[{$ref:'#/$defs/%61'}]},'%61':{}}, \
+                $ref:'#/$defs/a'}; \
+             const draft4Cycle = {$schema:'http://json-schema.org/draft-04/schema#', \
+                properties:{a:{id:'urn:oneiron:test:a',allOf:[{$ref:'#'}]}}}; \
+             finish(JSON.stringify({loop:await self.json.validate(bad,null), \
+                valid:await self.json.validate(recursive,{next:{next:{}}}), \
+                invalid:await self.json.validate(recursive,{next:5}), \
+                tupleLoop:await self.json.validate(tupleCycle,[null]), \
+                tupleValid:await self.json.validate(tuple,[3]), \
+                tupleInvalid:await self.json.validate(tuple,['bad']), \
+                emptyValid:await self.json.validate(emptyKey,3), \
+                emptyInvalid:await self.json.validate(emptyKey,'bad'), \
+                pctValid:await self.json.validate(pct,3), \
+                pctInvalid:await self.json.validate(pct,'bad'), \
+                pctCycle:await self.json.validate(pctCycle,null), \
+                draft4Cycle:await self.json.validate(draft4Cycle,{a:null})}));",
+            &mut Host::default(),
+        )
+        .expect("sandbox returns without aborting the host");
+        assert_eq!(
+            serde_json::from_str::<Value>(&result.observation).unwrap(),
+            serde_json::json!({"loop":false,"valid":true,"invalid":false,
+                "tupleLoop":false,"tupleValid":true,"tupleInvalid":false,
+                "emptyValid":true,"emptyInvalid":false,
+                "pctValid":true,"pctInvalid":false,"pctCycle":false,"draft4Cycle":false})
+        );
+        return;
+    }
+    // A native stack overflow aborts the process and cannot be caught by Wasmtime.
+    // Isolate the regression so the parent test runner survives a broken validator.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("code_sandbox::quickjs::tests::quickjs_json_validate_recursive_schemas_are_bounded")
+        .env(CHILD, "1")
+        .spawn()
+        .expect("spawn isolated sandbox regression");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if let Some(status) = child.try_wait().expect("child status") {
+            assert!(
+                status.success(),
+                "recursive schema must not abort the host: {status}"
+            );
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().expect("stop stalled validation child");
+            let _ = child.wait();
+            panic!("recursive schema validation exceeded the child deadline");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+#[test]
 fn default_budget_passes_the_readiness_probe() {
     let (bytes, hash) = artifact("first-party");
     assert!(
@@ -223,6 +354,9 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
     {
         Err("unlinked capability".into())
     }
+    fn json_validate(&mut self, _: String, _: String) -> std::result::Result<bool, String> {
+        Err("unlinked capability".into())
+    }
     fn memory_search(
         &mut self,
         _: crate::code_sandbox::wasmtime_boundary::bindings::SearchInput,
@@ -259,14 +393,7 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
     {
         Err("unlinked capability".into())
     }
-    fn ask_human(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::PromptInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::WaitOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn ask_human_camel(
+    fn ask(
         &mut self,
         _: crate::code_sandbox::wasmtime_boundary::bindings::PromptInput,
     ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::WaitOutput, String>

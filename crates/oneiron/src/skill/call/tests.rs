@@ -180,7 +180,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         &vault,
         &leased,
         &id,
-        "current-model",
+        "model-current@1",
         &serde_json::json!({"value":41}),
         runtime.as_mut(),
         &mut NoEffects,
@@ -198,7 +198,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
             &vault,
             &leased,
             &id,
-            "current-model",
+            "model-current@1",
             &serde_json::json!({"value":"invalid"}),
             runtime.as_mut(),
             &mut NoEffects,
@@ -213,7 +213,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         &vault,
         &leased,
         &id,
-        "next-model",
+        "model-next@1",
         &serde_json::json!({"value":41}),
         runtime.as_mut(),
         &mut NoEffects,
@@ -223,6 +223,23 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         13,
     )?;
     assert_eq!(second.observation, outcome.observation);
+    assert!(
+        execute_callable_skill(
+            &vault,
+            &leased,
+            &id,
+            "model-next@1",
+            &serde_json::json!({"value":41}),
+            runtime.as_mut(),
+            &mut NoEffects,
+            run_id,
+            0,
+            CodeRunDeterminism::new(1_700_000_000_000, [1; 32]),
+            13,
+        )
+        .is_err(),
+        "a step one executor ran cannot be re-credited to another"
+    );
     assert!(matches!(
         queue.complete(CompleteAttempt {
             id: attempt.id,
@@ -237,7 +254,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
             &vault,
             &leased,
             &id,
-            "current-model",
+            "model-current@1",
             &serde_json::json!({"value":41}),
             runtime.as_mut(),
             &mut NoEffects,
@@ -250,52 +267,39 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         "the finished caller no longer holds the lease"
     );
     let receipt = crate::receipt::attempt_pack_receipt_id(&attempt.id);
-    let other =
-        crate::skill_reliability::skill_executor_reliability_posterior(&vault, &id, "next-model")?;
-    crate::skill_reliability::record_skill_executor_outcome(
-        &vault,
-        &id,
-        "current-model",
-        &receipt,
-        true,
-    )?;
-    crate::skill_reliability::record_skill_executor_outcome(
-        &vault,
-        &id,
-        "current-model",
-        &receipt,
-        true,
-    )?;
+    let prior = crate::skill_reliability::skill_reliability_prior(&vault, &id)?;
+    // A win lands in the shared outcome ledger for every executor that ran a
+    // step, and projects through the same per-executor claim selection reads.
+    crate::skill_reliability::project_callable_receipt_outcome(&vault, &id, &receipt, true, 16)?;
+    crate::skill_reliability::project_callable_receipt_outcome(&vault, &id, &receipt, true, 16)?;
+    for executor in ["model-current@1", "model-next@1"] {
+        let pair = crate::skill_reliability::skill_executor_reliability(&vault, &id, executor)?;
+        assert_eq!((pair.runs, pair.new_model), (1, false), "{executor}");
+        assert_eq!(pair.posterior.alpha, prior.alpha + 1.0);
+        assert_eq!(pair.posterior.beta, prior.beta);
+        assert!(
+            crate::skill_reliability::skill_selection_score_for_executor(&vault, &id, executor, 4)?
+                > crate::skill_reliability::skill_selection_score_for_executor(
+                    &vault,
+                    &id,
+                    "model-third@1",
+                    4
+                )?
+        );
+    }
     assert!(
-        crate::skill_reliability::record_skill_executor_outcome(
-            &vault,
-            &id,
-            "third-model",
-            &receipt,
-            true,
-        )
-        .is_err(),
-        "an invocation cannot credit an executor that did not run"
+        crate::skill_reliability::skill_executor_reliability(&vault, &id, "model-third@1")?
+            .new_model,
+        "an executor that never invoked the callable stays unmeasured"
     );
-    crate::skill_reliability::record_skill_executor_outcome(
-        &vault,
-        &id,
-        "next-model",
-        &receipt,
-        true,
-    )?;
-    let current = crate::skill_reliability::skill_executor_reliability_posterior(
-        &vault,
-        &id,
-        "current-model",
-    )?;
-    assert_eq!(current.alpha, other.alpha + 1.0);
-    assert_eq!(current.beta, other.beta);
-    assert_eq!(
-        crate::skill_reliability::skill_executor_reliability_posterior(&vault, &id, "next-model")?
-            .alpha,
-        other.alpha + 1.0
-    );
+    {
+        let txn = vault.store.env.read_txn()?;
+        assert_eq!(
+            crate::skill_reliability::attributed_outcome_receipts(&vault, &txn, &id)?,
+            vec![receipt.clone()],
+            "the improver's receipt split sees the callable outcome"
+        );
+    }
     let EnqueueOutcome::Enqueued(listed) = queue.enqueue(EnqueueAttempt {
         kind: "call.listed-only".into(),
         payload: vec![],
@@ -306,7 +310,6 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
     else {
         panic!("fresh listed attempt")
     };
-    vault.load_attempt_skill_pack(listed.id, &id, 20)?;
     let ClaimOutcome::Claimed(listed_lease) = queue.claim(ClaimAttempt {
         lease_owner: "listed-worker".into(),
         now: 21,
@@ -314,6 +317,14 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
     else {
         panic!("listed attempt leased")
     };
+    vault.load_attempt_skill_pack(
+        listed.id,
+        &id,
+        "listed-worker",
+        listed_lease.attempt_count,
+        "model-current@1",
+        21,
+    )?;
     assert!(matches!(
         queue.complete(CompleteAttempt {
             id: listed.id,
@@ -323,15 +334,16 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         })?,
         CompleteOutcome::Completed(_)
     ));
-    assert!(
-        crate::skill_reliability::record_skill_executor_outcome(
-            &vault,
-            &id,
-            "current-model",
-            &crate::receipt::attempt_pack_receipt_id(&listed.id),
-            true,
-        )
-        .is_err(),
+    crate::skill_reliability::project_callable_receipt_outcome(
+        &vault,
+        &id,
+        &crate::receipt::attempt_pack_receipt_id(&listed.id),
+        true,
+        23,
+    )?;
+    assert_eq!(
+        crate::skill_reliability::skill_executor_reliability(&vault, &id, "model-current@1")?.runs,
+        1,
         "merely loading the skill cannot credit callable execution"
     );
     Ok(())

@@ -35,6 +35,18 @@ pub struct TxnBatchBuilder<'a> {
     federated_puts: Vec<usize>,
 }
 
+// Promotion clones the private journal into this builder. Scrub that copy on
+// abandonment or preflight failure; base_apply owns it after the handoff.
+impl Drop for TxnBatchBuilder<'_> {
+    fn drop(&mut self) {
+        if matches!(self.origin, BaseWriteOrigin::PromoteReplay(_)) {
+            for op in &mut self.ops {
+                crate::session_overlay::zeroize_batch_op_payload(op);
+            }
+        }
+    }
+}
+
 impl<'a> TxnBatchBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
@@ -110,6 +122,8 @@ impl<'a> TxnBatchBuilder<'a> {
         ops: Vec<BatchOp>,
         grant: &'a PromoteReplayGrant,
     ) -> Self {
+        #[cfg(test)]
+        crate::session_overlay::hygiene_tests::register_replay_copy(&ops);
         Self {
             vault,
             ops,
@@ -657,19 +671,26 @@ impl<'a> TxnBatchBuilder<'a> {
     /// callers must abort the transaction (drop without committing) to discard
     /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true))
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None)
     }
 
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true))
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None)
+    }
+
+    /// Local actor-bound batch: every direct record and reducer-touched parent
+    /// is captured from the operation set, then gated before commit.
+    pub(crate) fn apply_actor(self, wtxn: &mut RwTxn<'_>, actor: &crate::WriteActor) -> Result<()> {
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), Some(actor))
     }
 
     fn apply_with_gate_mode(
         mut self,
         wtxn: &mut RwTxn<'_>,
         gate_mode: ApplyOpsGateMode,
+        actor: Option<&crate::WriteActor>,
     ) -> Result<()> {
         if let Some(error) = self.validation_error.take() {
             return Err(error);
@@ -677,7 +698,7 @@ impl<'a> TxnBatchBuilder<'a> {
         #[cfg(feature = "sync")]
         let mut this = self;
         #[cfg(not(feature = "sync"))]
-        let this = self;
+        let mut this = self;
         #[cfg(feature = "sync")]
         if !this.federated_puts.is_empty() {
             let policy = crate::gate::resolve_policy_manifest(&this.vault.store, wtxn)?;
@@ -707,6 +728,19 @@ impl<'a> TxnBatchBuilder<'a> {
                 }
             }
         }
+        // A batch inside an actor-bound transaction cannot silently choose the
+        // trusted/raw apply path. The in-flight writer is transaction-local,
+        // never a process-global flag or a reusable preflight token.
+        let active_actor = crate::federation::actor_for_txn(this.vault, wtxn)?;
+        let actor = match (actor.copied(), active_actor) {
+            (Some(requested), Some(active)) if requested != active => {
+                return Err(Error::InvalidClaimBody(
+                    "batch actor differs from transaction actor",
+                ));
+            }
+            (Some(requested), _) => Some(requested),
+            (None, active) => active,
+        };
         let text_index_trusted = if contains_text_op(&this.ops) {
             this.vault.ensure_text_index_trusted()?;
             true
@@ -720,19 +754,37 @@ impl<'a> TxnBatchBuilder<'a> {
         } else {
             Vec::new()
         };
-        apply_ops_with_origin(
-            &this.vault.store,
-            &this.vault.config,
-            &this.vault.analyzer,
-            wtxn,
-            this.ops,
-            text_index_trusted,
-            gate_mode.with_birth_mask(this.mask),
-            this.origin,
-        )?;
+        let changes_claims = super::vad_postcommit::ops_change_proactivity(&this.ops);
+        let gate_mode = gate_mode.with_birth_mask(this.mask);
+        let ops = std::mem::take(&mut this.ops);
+        if let Some(actor) = actor {
+            super::apply_actor_ops(
+                this.vault,
+                wtxn,
+                &actor,
+                ops,
+                text_index_trusted,
+                gate_mode,
+                this.origin,
+            )?;
+        } else {
+            apply_ops_with_origin(
+                &this.vault.store,
+                &this.vault.config,
+                &this.vault.analyzer,
+                wtxn,
+                ops,
+                text_index_trusted,
+                gate_mode,
+                this.origin,
+            )?;
+        }
         // Queue only after admitted apply. The owner checks the final body and
         // redeemed consent after ALL of its batches, then commits before VAD.
         super::vad_postcommit::queue_dreamer_vad_approvals(this.vault, wtxn, pending_vad_ids);
+        if changes_claims {
+            super::vad_postcommit::queue_proactivity_change(this.vault, wtxn);
+        }
         Ok(())
     }
 }

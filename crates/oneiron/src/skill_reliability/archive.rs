@@ -1,7 +1,7 @@
 //! Imported reliability history is inert data, not a local posterior or synced base.
 use super::{
     PREDICATE_SKILL_RELIABILITY, SKILL_RELIABILITY_MAX_CITED_RECEIPTS, SkillReliabilityPosterior,
-    codec::invalid,
+    codec::invalid, projector::posterior_value, read::claim_executor,
 };
 use crate::{
     Vault,
@@ -33,20 +33,10 @@ pub(crate) fn imported_reliability_body(body: &ClaimBody) -> Result<ClaimBody> {
         return Err(invalid("reliability archive is neither native nor inert"));
     }
     let posterior = SkillReliabilityPosterior::from_value(&body.value)?;
-    let expected = if let Some(executor) = super::codec::map_str(&body.value, "executor") {
-        if executor.trim().is_empty() || executor.len() > 256 {
-            return Err(invalid("invalid reliability executor identity"));
-        }
-        let mut value = posterior.to_value();
-        let Value::Map(entries) = &mut value else {
-            unreachable!("posterior is a map")
-        };
-        entries.push((Value::from("executor"), Value::from(executor)));
-        value
-    } else {
-        posterior.to_value()
-    };
-    if body.value != expected {
+    let executor = claim_executor(body);
+    if executor.is_some_and(|model| super::read::validate_executor(model).is_err())
+        || body.value != posterior_value(posterior, executor)
+    {
         return Err(invalid(
             "reliability archive requires the exact posterior codec",
         ));

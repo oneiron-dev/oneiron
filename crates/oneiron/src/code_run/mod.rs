@@ -39,7 +39,7 @@ pub use self::replay::{
     CodeRunReplayRecord, CodeRunStepCheckpoint, code_run_replay_abi_layout_checks,
 };
 pub use self::storage::CodeRunModelHealCount;
-pub(crate) use self::storage::ExecutorStorage;
+pub(crate) use self::storage::{ExecutorOutputSpan, ExecutorStorage};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
@@ -52,12 +52,12 @@ pub(crate) use self::storage::{
 };
 pub use self::types::{
     SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
-    SelfAgentSpawnResult, SelfAskHumanCall, SelfCall, SelfContextCall, SelfContextResult,
+    SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSpeechCall, SelfSpeechResult, peer_result_wait,
+    SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

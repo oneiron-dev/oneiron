@@ -49,20 +49,20 @@ impl PipelineBuilder<'_> {
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
         )?;
-        let mut scores = crate::ports::RetrievalIndex::port_retrieval_vector_search_quality(
-            self.vault,
+        let mut scores = self.vault.scoped_vector_search_quality_in_txn(
             rtxn,
             query,
             channel_limit,
             self.skip_vector_rescore,
+            claim_gate.private_note_ids.as_deref(),
         )?;
         self.truncate_corpus_channel(
             &mut scores,
             rtxn,
             requested,
             filters,
-            metadata_cache,
-            claim_gate,
+            false,
+            (metadata_cache, claim_gate),
         )?;
         Ok(scores)
     }
@@ -82,6 +82,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             self.has_codebase_scope_filter()
+                || self.has_strict_text_scope_filter()
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
@@ -94,8 +95,8 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             filters,
-            metadata_cache,
-            claim_gate,
+            self.has_strict_text_scope_filter(),
+            (metadata_cache, claim_gate),
         )?;
         Ok(scores)
     }
@@ -106,13 +107,16 @@ impl PipelineBuilder<'_> {
         rtxn: &RoTxn<'_>,
         requested: usize,
         filters: PipelineFilterConfig<'_>,
-        metadata_cache: &mut EntityMetadataCache,
-        claim_gate: &mut ClaimStatusGateCache,
+        strict_scope: bool,
+        caches: (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<()> {
+        let (metadata_cache, claim_gate) = caches;
         if self.memory_category {
             super::capabilities::retain_memory_candidates(scores, &self.vault.store, rtxn)?;
         }
-        if (filters.corpus_scope == &CorpusScope::All && filters.candidate_filter.is_none())
+        if (!strict_scope
+            && filters.corpus_scope == &CorpusScope::All
+            && filters.candidate_filter.is_none())
             || requested == 0
         {
             if self.memory_category && !self.has_codebase_scope_filter() {
@@ -132,6 +136,7 @@ impl PipelineBuilder<'_> {
         // suppression stats. Import only the candidates that enter fusion.
         let mut probe_gate = ClaimStatusGateCache {
             include_stale: filters.authority_filter.include_stale,
+            private_note_ids: claim_gate.private_note_ids.clone(),
             ..ClaimStatusGateCache::default()
         };
         // Reuse known decisions from earlier channels in this read transaction,

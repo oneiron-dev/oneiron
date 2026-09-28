@@ -19,6 +19,7 @@ fn test_config() -> VaultConfig {
         store_clock: crate::ports::StoreClock::default(),
         ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
         ppr_community: crate::config::PprCommunityConfig::default(),
+        retrieval_telemetry_capture: false,
         map_size: 32 * 1024 * 1024,
         dimensions: 4,
         fast_dims: None,
@@ -66,7 +67,7 @@ fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
     let id = crate::gate::default_policy_manifest_id()?;
 
     let err = vault
-        .delete_entity(&id)
+        .delete_entity_with_options(&id, crate::deletion::DeleteEntityOptions { purge: true })
         .expect_err("public hard delete must reject the default policy manifest");
     assert_matches!(
         err,

@@ -1282,3 +1282,5 @@ fn callable_role_contract_round_trips_and_noncallable_cannot_smuggle_call() -> R
     );
     Ok(())
 }
+
+mod resident;

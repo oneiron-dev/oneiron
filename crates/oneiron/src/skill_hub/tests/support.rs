@@ -6,7 +6,7 @@ use crate::{
     entity_id::EntityId,
     error::Result,
     skill::{SkillLifecycle, SkillRecord},
-    skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
+    skill_optimize::{BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse},
     temporal::TimeRange,
 };
 fn at(time: u64) -> TimeRange {
@@ -120,6 +120,9 @@ pub(crate) fn admit_installed(vault: &Vault, id: &EntityId, source: &HubRef) -> 
 }
 struct FixtureReplay;
 impl HeldOutReplayScorer for FixtureReplay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         assert!(!case.held_out_receipts.is_empty());
         Ok(if case.instructions.contains("Check the fixture result.") {
@@ -127,6 +130,25 @@ impl HeldOutReplayScorer for FixtureReplay {
         } else {
             0.2
         })
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 /// Real terminal attempt receipts, attributed through the production reliability door.
@@ -165,6 +187,14 @@ pub(crate) fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
         else {
             panic!("claimable attempt");
         };
+        queue
+            .set_executor_model(
+                attempt.id,
+                "fixture",
+                leased.attempt_count,
+                "fixture/model@1",
+            )
+            .expect("stamp model");
         assert!(matches!(
             queue
                 .complete(CompleteAttempt {

@@ -29,6 +29,12 @@ impl Vault {
             }
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("export entity header"))?;
+            if crate::companion::is_retired_identity_carrier(
+                header.entity_type,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            ) {
+                continue;
+            }
             rows.push(WholeVaultExportRow {
                 entity_id,
                 entity_type: header.entity_type,

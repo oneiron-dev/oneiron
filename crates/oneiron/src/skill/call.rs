@@ -124,7 +124,8 @@ pub fn execute_callable_skill(
             "callable run id differs from the caller's leased run",
         ));
     }
-    let loaded = vault.load_leased_callable_skill_pack(leased, skill, at)?;
+    crate::skill_reliability::validate_executor(executor)?;
+    let loaded = vault.load_leased_callable_skill_pack(leased, skill, executor, at)?;
     let tier = callable_tier(vault, &loaded.record)?;
     let call = loaded
         .record

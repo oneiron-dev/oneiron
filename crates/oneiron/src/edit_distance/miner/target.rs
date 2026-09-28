@@ -1,4 +1,4 @@
-//! Host-classified compilation proposals. No language heuristics decide policy.
+//! Bounded compilation proposals from principal-bound corrected deltas.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};

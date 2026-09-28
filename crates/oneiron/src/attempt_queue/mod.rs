@@ -16,6 +16,7 @@ mod cancel;
 mod completion;
 mod encoding;
 mod engine;
+mod executor;
 mod observe;
 mod ports;
 mod result;
@@ -23,6 +24,8 @@ mod settlement;
 mod telemetry;
 mod types;
 mod validate;
+#[cfg(test)]
+pub(crate) use validate::validate_lease_owner;
 
 #[cfg(test)]
 mod tests;
@@ -55,6 +58,22 @@ pub use types::{
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
+pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
+    encoding::encode_record(record)
+}
+pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate::Result<()> {
+    validate::validate_cancel_actor(actor)?;
+    validate::validate_optional_failure_reason(reason)
+}
+
+pub(crate) fn signal_cancel_headroom(receipts: usize, pending: usize) -> bool {
+    receipts.saturating_add(pending) < cancel::MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
+}
+
+pub(crate) fn signal_cancel_receipts_full(error: &crate::Error) -> bool {
+    matches!(error, crate::Error::Artifact(crate::error::ArtifactError::InvalidAttemptQueueRecord(reason))
+        if *reason == validate::ERR_CANCEL_RECEIPTS_FULL)
+}
 pub(crate) use engine::dreamer_run_root_id_in_txn;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.

@@ -156,6 +156,17 @@ pub(super) fn link_imports(
                     })();
                     Ok((reply,))
                 }),
+            "self.json.validate" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (schema, value): (String, String)| {
+                    cx.data_mut().begin_call()?;
+                    let reply: Reply<bool> = (|| {
+                        let schema: Value = serde_json::from_str(&schema).map_err(|_| "invalid schema JSON")?;
+                        let value: Value = serde_json::from_str(&value).map_err(|_| "invalid value JSON")?;
+                        cx.data_mut().call("self.json.validate", json!({"schema":schema,"value":value}))
+                            .and_then(|result| field(&result,"valid"))
+                    })();
+                    Ok((reply,))
+                }),
             "self.memory.search" => root.func_wrap(wit,
                 |mut cx: StoreContextMut<'_, State>, (input,): (SearchInput,)| {
                     cx.data_mut().begin_call()?;
@@ -201,7 +212,7 @@ pub(super) fn link_imports(
                         .map(|receipt| BlockedOutput { receipt });
                     Ok((reply,))
                 }),
-            "self.ask_human" | "self.askHuman" => root.func_wrap(wit,
+            "ask" => root.func_wrap(wit,
                 move |mut cx: StoreContextMut<'_, State>, (input,): (PromptInput,)| {
                     cx.data_mut().begin_call()?;
                     let reply: Reply<WaitOutput> = cx.data_mut().call(public, json!({"prompt":input.prompt}))

@@ -1,7 +1,7 @@
 //! Current-main corpus channels and ONE-1388 authority must narrow together.
 
 use super::*;
-use crate::corpus::{CorpusId, CorpusScope, scope_with_corpus_id};
+use crate::corpus::CorpusScope;
 use crate::pipeline::tests::captured_retrieval_trace;
 use crate::store::RetrievalSignal;
 use crate::temporal::{TemporalAnchorMode, TimeRange};
@@ -12,9 +12,9 @@ mod tests {
 
     pub(super) fn put_authority_corpus_claims(
         vault: &Vault,
-        selected: CorpusId,
+        selected: EntityId,
     ) -> Result<EntityId> {
-        let other = CorpusId::from_entity_id(entity_id(0xE5));
+        let other = entity_id(0xE5);
         let eligible = entity_id(0x43);
         // Both excluded rows outrank the eligible stale row. One fails only the
         // authority clamp; the other fails only corpus selection.
@@ -50,7 +50,7 @@ mod tests {
             let mut body = claim();
             body.confidence = confidence;
             body.stale = stale;
-            body.scope = Some(scope_with_corpus_id(body.scope, corpus)?);
+            body.scope_project = corpus;
             vault
                 .batch()
                 .put_replicated(
@@ -72,7 +72,7 @@ use tests::put_authority_corpus_claims;
 #[test]
 fn authority_and_corpus_conjoin_before_channel_limits_and_trace() -> Result<()> {
     let (_tmp, vault) = open_test_vault();
-    let selected = CorpusId::from_entity_id(entity_id(0xE4));
+    let selected = entity_id(0xE4);
     install_grant(
         &vault,
         map(vec![
@@ -154,9 +154,11 @@ fn authority_and_corpus_conjoin_before_channel_limits_and_trace() -> Result<()> 
 fn authority_and_corpus_both_fork_equal_candidate_traces() -> Result<()> {
     let (_tmp, vault) = open_test_vault();
     install_grant(&vault, Value::Nil)?;
-    put_claim(&vault, entity_id(0x43), &claim())?;
-    let a = CorpusId::from_entity_id(entity_id(0xE4));
-    let b = CorpusId::from_entity_id(entity_id(0xE5));
+    let a = entity_id(0xE4);
+    let mut body = claim();
+    body.scope_project = a;
+    put_claim(&vault, entity_id(0x43), &body)?;
+    let b = entity_id(0xE5);
     let floor = resolve_reader_filter(&vault, None)?;
     let narrowed = resolve_reader_filter(
         &vault,

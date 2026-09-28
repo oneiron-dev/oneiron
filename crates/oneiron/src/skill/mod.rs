@@ -12,6 +12,7 @@ mod identity;
 mod lifecycle;
 mod pack_load;
 mod record;
+pub(crate) mod resident;
 mod role;
 mod validate;
 
@@ -31,6 +32,7 @@ pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
     SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
 };
+pub(crate) use self::resident::resident_of;
 pub use self::role::{SkillCallContract, SkillRole};
 pub(crate) use self::validate::{validate_hub_sync_skill_update, validate_skill_update};
 

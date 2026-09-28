@@ -25,6 +25,9 @@ impl GuestImports for Host {
             disposition: "proposed".into(),
         })
     }
+    fn json_validate(&mut self, _: String, _: String) -> Result<bool, String> {
+        Err("validator uses the shared host import".into())
+    }
     fn memory_search(&mut self, _: SearchInput) -> Result<SearchOutput, String> {
         Ok(SearchOutput { results: vec![] })
     }
@@ -46,13 +49,10 @@ impl GuestImports for Host {
             receipt: "receipt".into(),
         })
     }
-    fn ask_human(&mut self, _: PromptInput) -> Result<WaitOutput, String> {
+    fn ask(&mut self, _: PromptInput) -> Result<WaitOutput, String> {
         Ok(WaitOutput {
             wait_id: "wait".into(),
         })
-    }
-    fn ask_human_camel(&mut self, input: PromptInput) -> Result<WaitOutput, String> {
-        self.ask_human(input)
     }
     fn speak(&mut self, _: TextInput) -> Result<SpeechOutput, String> {
         Ok(SpeechOutput {
