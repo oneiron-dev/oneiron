@@ -62,8 +62,9 @@ pub(super) fn hash_policy_frontier_v0(
             hash_str(
                 hasher,
                 match row.precedence {
-                    Precedence::NestedNarrowing => "nested_narrowing",
-                    Precedence::HolderOverride => "holder_override",
+                    Some(Precedence::NestedNarrowing) => "nested_narrowing",
+                    Some(Precedence::HolderOverride) => "holder_override",
+                    None => "inherit",
                 },
             );
         }

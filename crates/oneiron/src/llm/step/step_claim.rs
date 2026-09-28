@@ -484,61 +484,27 @@ pub(crate) fn index_dreamer_step_claim_for_put(
     Ok(())
 }
 
-/// Exact, engine-validated execution model from a finished indexed step.
-/// A caller-authored model string or an unrelated CLAIM cannot be used as
-/// tier-1 model identity; only the runner's stamped terminal claim qualifies.
-pub(crate) fn verified_executed_model(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    claim_id: &EntityId,
-    run_ref: &str,
-) -> Result<Option<ModelId>> {
-    let Some(body) = vault.get_claim_in_txn(txn, claim_id)? else {
-        return Ok(None);
-    };
+/// Read-only consistency check for an ALREADY producer-attested terminal
+/// step. This does not create execution authority; ordinary and replayed
+/// claims may pass this shape check but cannot mint the vault-local witness.
+pub(crate) fn terminal_step_identity(body: &ClaimBody) -> Option<(AttemptId, [u8; 32], ModelId)> {
     if body.predicate != DREAMER_STEP_PREDICATE
         || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
         || body.stale
     {
-        return Ok(None);
+        return None;
     }
-    let Ok(decoded) = decode_step_claim_value(&body.value) else {
-        return Ok(None);
-    };
-    let stamped_run = body.evidence.as_ref().and_then(|evidence| {
-        let Value::Map(entries) = evidence else {
-            return None;
-        };
-        let provenance = entries.iter().find_map(|(key, value)| {
-            (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)).then_some(value)
-        })?;
-        let Value::Map(entries) = provenance else {
-            return None;
-        };
-        entries
-            .iter()
-            .find_map(|(key, value)| {
-                (key.as_str() == Some(ENVELOPE_PROVENANCE_RUN_KEY)).then(|| value.as_str())
-            })
-            .flatten()
-    });
+    let decoded = decode_step_claim_value(&body.value).ok()?;
     let finished = matches!(&body.value, Value::Map(entries) if entries.iter().any(|(key, value)|
         key.as_str() == Some(KEY_PROGRESSION) && value.as_str() == Some("finished")));
-    if stamped_run != Some(run_ref) || !finished {
-        return Ok(None);
+    if !finished || !step_claim_binding_is_trusted(&decoded, body) {
+        return None;
     }
-    if !step_claim_binding_is_trusted(&decoded, &body)
-        || vault
-            .store
-            .vault_meta
-            .get(txn, &step_index_claim_key(claim_id))?
-            .is_none_or(|found| {
-                found != step_index_key(decoded.attempt_id, &decoded.step_hash).as_slice()
-            })
-    {
-        return Ok(None);
-    }
-    Ok(ModelId::new(decoded.model_id).ok())
+    Some((
+        decoded.attempt_id,
+        decoded.step_hash,
+        ModelId::new(decoded.model_id).ok()?,
+    ))
 }
 
 /// Memo-index admission gate (ONE-1344). A claim is trusted for the index only

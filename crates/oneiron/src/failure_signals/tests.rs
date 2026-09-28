@@ -28,7 +28,6 @@ fn input(class: FailureClassV1) -> FailureSignalInput {
             version: "2".into(),
         },
         agent_ref: None,
-        model_step_ref: None,
     }
 }
 
@@ -327,24 +326,26 @@ fn on_record_witness_required_off_record_overlay_never_counts_even_after_close()
         &body,
     )?;
     segment.commit()?;
-    assert!(
-        vault
-            .record_failure_signal(overlay_id, input(FailureClassV1::Other))
-            .is_err()
-    );
+    assert!(vault.tier1_observation(overlay_id)?.is_none());
     assert!(vault.export_tier1_failure_counts()?.is_empty());
     session.close()?;
-    assert!(
-        vault
-            .record_failure_signal(overlay_id, input(FailureClassV1::Other))
-            .is_err()
-    );
+    assert!(vault.tier1_observation(overlay_id)?.is_none());
     assert!(vault.export_tier1_failure_counts()?.is_empty());
     let base_id = on_record_diagnostic(&vault, 3601)?;
     let mut bad = input(FailureClassV1::TaskFailure);
     bad.agent.name = " ".repeat(300);
-    assert!(vault.record_failure_signal(base_id, bad).is_err());
-    vault.record_failure_signal(base_id, input(FailureClassV1::TaskFailure))?;
+    assert!(
+        vault
+            .record_failure_signal(
+                &vault.tier1_observation(base_id)?.expect("real producer"),
+                bad
+            )
+            .is_err()
+    );
+    vault.record_failure_signal(
+        &vault.tier1_observation(base_id)?.expect("real producer"),
+        input(FailureClassV1::TaskFailure),
+    )?;
     assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
     Ok(())
 }
@@ -358,13 +359,12 @@ fn opt_in_and_vault_isolation() -> Result<()> {
     let vault = crate::Vault::open(one.path(), config.clone())?;
     let other = crate::Vault::open(two.path(), config)?;
     let id = on_record_diagnostic(&vault, 3601)?;
-    vault.record_failure_signal(id, input(FailureClassV1::TaskFailure))?;
+    vault.record_failure_signal(
+        &vault.tier1_observation(id)?.expect("real producer"),
+        input(FailureClassV1::TaskFailure),
+    )?;
     assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
-    assert!(
-        other
-            .record_failure_signal(id, input(FailureClassV1::TaskFailure))
-            .is_err()
-    );
+    assert!(other.tier1_observation(id)?.is_none());
     assert!(other.export_tier1_failure_counts()?.is_empty());
     let default_off = FailureSignalCounts::default();
     default_off.record(
@@ -428,21 +428,36 @@ fn detector_cannot_materialize_off_record_source_in_base_or_export_after_close()
     let body = encode_diagnostic_event_body(&event)?;
     let diagnostic_id = diagnostic_event_id(&event.detector_id, &body);
     assert!(run_deterministic_detectors(&vault, &working_set, &[&ConsentDeniedDetector]).is_err());
-    assert!(
-        vault
-            .record_failure_signal(diagnostic_id, input(FailureClassV1::Other))
-            .is_err()
-    );
+    assert!(vault.tier1_observation(diagnostic_id)?.is_none());
     assert!(vault.export_tier1_failure_counts()?.is_empty());
     session.close()?;
     // A caller still holding the vanished source's ID can author a canonical
     // base diagnostic, but the tier-1 door requires a live base source.
     vault.emit_diagnostic_event(&diagnostic_id, &event)?;
-    assert!(
-        vault
-            .record_failure_signal(diagnostic_id, input(FailureClassV1::Other))
-            .is_err()
-    );
+    assert!(vault.tier1_observation(diagnostic_id)?.is_none());
+    assert!(vault.export_tier1_failure_counts()?.is_empty());
+    // A base TURN is also not a Gate-decision receipt, despite being live.
+    let turn_id = EntityId::now();
+    vault.put_entity(
+        &turn_id,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"turn",
+    )?;
+    let turn_fact = DiagnosticObservation {
+        source_ref: turn_id,
+        kind: crate::consent::CONSENT_REASON_DENIED,
+        payload_digest: [9; 32],
+        observed_at: 7_201,
+    };
+    let turn_input = DiagnosticWorkingSet {
+        scope_ref: "scope.consent",
+        observations: &[turn_fact],
+    };
+    let turn_ids = run_deterministic_detectors(&vault, &turn_input, &[&ConsentDeniedDetector])?;
+    assert_eq!(turn_ids.len(), 1);
+    assert!(vault.tier1_observation(turn_ids[0])?.is_none());
     assert!(vault.export_tier1_failure_counts()?.is_empty());
     // D1 is now a live base entity. A second real detector can cite D1,
     // but D2 cannot treat that nested DIAGNOSTIC as a Gate receipt.
@@ -458,11 +473,7 @@ fn detector_cannot_materialize_off_record_source_in_base_or_export_after_close()
     };
     let second_ids = run_deterministic_detectors(&vault, &second, &[&ConsentDeniedDetector])?;
     assert_eq!(second_ids.len(), 1);
-    assert!(
-        vault
-            .record_failure_signal(second_ids[0], input(FailureClassV1::Other))
-            .is_err()
-    );
+    assert!(vault.tier1_observation(second_ids[0])?.is_none());
     assert!(vault.export_tier1_failure_counts()?.is_empty());
     Ok(())
 }
@@ -490,8 +501,14 @@ fn registered_system_and_platform_versions_are_stable_across_vaults_and_reopen()
     };
     let id_one = on_record_diagnostic(&vault, 3_601)?;
     let id_two = on_record_diagnostic(&other, 3_601)?;
-    vault.record_failure_signal(id_one, registered())?;
-    other.record_failure_signal(id_two, registered())?;
+    vault.record_failure_signal(
+        &vault.tier1_observation(id_one)?.expect("real producer"),
+        registered(),
+    )?;
+    other.record_failure_signal(
+        &other.tier1_observation(id_two)?.expect("real producer"),
+        registered(),
+    )?;
     let first = vault.export_tier1_failure_counts()?.remove(0).dimensions;
     let second = other.export_tier1_failure_counts()?.remove(0).dimensions;
     assert_eq!(first, second);
@@ -501,7 +518,22 @@ fn registered_system_and_platform_versions_are_stable_across_vaults_and_reopen()
     assert_eq!(first.detector_id.as_deref(), Some("consent.denied.v1"));
     drop(vault);
     let reopened = crate::Vault::open(one.path(), config)?;
-    reopened.record_failure_signal(id_one, registered())?;
+    assert!(
+        reopened.tier1_observation(id_one)?.is_none(),
+        "the open-vault witness must not persist"
+    );
+    let refreshed = reopened.run_consent_denied_detector(
+        "scope.consent",
+        crate::receipt::ReceiptQuery::new(16).with_kind(crate::receipt::ReceiptKind::Gate),
+    )?;
+    assert!(refreshed.contains(&id_one));
+    let reopened_id = id_one;
+    reopened.record_failure_signal(
+        &reopened
+            .tier1_observation(reopened_id)?
+            .expect("fresh producer after reopen"),
+        registered(),
+    )?;
     assert_eq!(
         reopened.export_tier1_failure_counts()?.remove(0).dimensions,
         first
@@ -510,7 +542,12 @@ fn registered_system_and_platform_versions_are_stable_across_vaults_and_reopen()
     impersonated.agent.name = "Alice-Smith".into();
     assert!(
         reopened
-            .record_failure_signal(id_one, impersonated)
+            .record_failure_signal(
+                &reopened
+                    .tier1_observation(reopened_id)?
+                    .expect("fresh producer after reopen"),
+                impersonated
+            )
             .is_err()
     );
     Ok(())
@@ -567,19 +604,19 @@ fn policy_default_override_narrowing_and_resolution_changes_keep_separate_bucket
         scope: policy::Scope::Default,
         bucket_seconds: 3_600,
         max_component_bytes: 256,
-        precedence: policy::Precedence::NestedNarrowing,
+        precedence: Some(policy::Precedence::NestedNarrowing),
     };
     let vault_row = policy::Row {
         scope: policy::Scope::Vault,
         bucket_seconds: 7_200,
         max_component_bytes: 512,
-        precedence: policy::Precedence::NestedNarrowing,
+        precedence: Some(policy::Precedence::NestedNarrowing),
     };
     let holder_row = policy::Row {
         scope: policy::Scope::Holder(holder),
         bucket_seconds: 10_800,
         max_component_bytes: 384,
-        precedence: policy::Precedence::NestedNarrowing,
+        precedence: Some(policy::Precedence::NestedNarrowing),
     };
     let narrow = policy::resolve(&[baseline, vault_row, holder_row], Some(holder));
     assert_eq!(
@@ -587,7 +624,7 @@ fn policy_default_override_narrowing_and_resolution_changes_keep_separate_bucket
         (10_800, 256)
     );
     let override_row = policy::Row {
-        precedence: policy::Precedence::HolderOverride,
+        precedence: Some(policy::Precedence::HolderOverride),
         ..vault_row
     };
     let override_policy = policy::resolve(&[holder_row, override_row, baseline], Some(holder));
@@ -615,7 +652,10 @@ fn policy_default_override_narrowing_and_resolution_changes_keep_separate_bucket
     let vault = crate::Vault::open(dir.path(), config)?;
     let id = on_record_diagnostic(&vault, 1)?;
     let mut signal = input(FailureClassV1::TaskFailure);
-    vault.record_failure_signal(id, signal.clone())?;
+    vault.record_failure_signal(
+        &vault.tier1_observation(id)?.expect("real producer"),
+        signal.clone(),
+    )?;
     let policy_id = crate::gate::default_policy_manifest_id()?;
     let mut manifest =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
@@ -640,7 +680,10 @@ fn policy_default_override_narrowing_and_resolution_changes_keep_separate_bucket
     rmpv::encode::write_value(&mut bytes, &manifest).expect("encode manifest");
     crate::test_util::put_policy_manifest_bytes(&vault, policy_id, &bytes)?;
     signal.agent.name = "x".repeat(300);
-    vault.record_failure_signal(id, signal)?;
+    vault.record_failure_signal(
+        &vault.tier1_observation(id)?.expect("real producer"),
+        signal,
+    )?;
     let rows = vault.export_tier1_failure_counts()?;
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().any(|r| r.dimensions.bucket_seconds == 3_600));
@@ -692,12 +735,22 @@ fn retrieval_miss_uses_published_base_run_not_entity_impersonation() -> Result<(
     vault.store.record_retrieval_run(&run)?;
     let ids = vault.run_retrieval_miss_detector("retrieval", 10)?;
     assert_eq!(ids.len(), 1);
-    vault.record_failure_signal(ids[0], input(FailureClassV1::MemoryMiss))?;
+    vault.record_failure_signal(
+        &vault
+            .tier1_observation(ids[0])?
+            .expect("retrieval producer"),
+        input(FailureClassV1::MemoryMiss),
+    )?;
     assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
     vault.store.delete_retrieval_run(run.run_id)?;
     assert!(
         vault
-            .record_failure_signal(ids[0], input(FailureClassV1::MemoryMiss))
+            .record_failure_signal(
+                &vault
+                    .tier1_observation(ids[0])?
+                    .expect("prior producer witness"),
+                input(FailureClassV1::MemoryMiss)
+            )
             .is_err()
     );
     assert_eq!(vault.export_tier1_failure_counts()?[0].count(), 1);
@@ -741,7 +794,269 @@ fn real_retrieval_abstention_is_a_ledger_backed_failure_signal() -> Result<()> {
     );
     let ids = vault.run_retrieval_miss_detector("real.retrieval", 10)?;
     assert_eq!(ids.len(), 1);
-    vault.record_failure_signal(ids[0], input(FailureClassV1::MemoryMiss))?;
+    vault.record_failure_signal(
+        &vault
+            .tier1_observation(ids[0])?
+            .expect("retrieval producer"),
+        input(FailureClassV1::MemoryMiss),
+    )?;
     assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn trusted_default_replacement_is_not_clamped_by_compiled_fallback() -> Result<()> {
+    use rmpv::Value;
+    let replacement = policy::Row {
+        scope: policy::Scope::Default,
+        bucket_seconds: 60,
+        max_component_bytes: 512,
+        precedence: Some(policy::Precedence::HolderOverride),
+    };
+    let vault_row = policy::Row {
+        scope: policy::Scope::Vault,
+        bucket_seconds: 90,
+        max_component_bytes: 1_024,
+        precedence: None,
+    };
+    let holder_id = EntityId::now();
+    let holder = policy::Row {
+        scope: policy::Scope::Holder(holder_id),
+        bucket_seconds: 120,
+        max_component_bytes: 768,
+        precedence: None,
+    };
+    let override_resolved = policy::resolve(&[replacement, vault_row, holder], Some(holder_id));
+    assert_eq!(
+        (
+            override_resolved.bucket_seconds,
+            override_resolved.max_component_bytes
+        ),
+        (120, 768)
+    );
+    let nested = policy::Row {
+        precedence: Some(policy::Precedence::NestedNarrowing),
+        ..replacement
+    };
+    let nested_resolved = policy::resolve(&[nested, vault_row, holder], Some(holder_id));
+    assert_eq!(
+        (
+            nested_resolved.bucket_seconds,
+            nested_resolved.max_component_bytes
+        ),
+        (120, 512)
+    );
+
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::default();
+    config.failure_signals.export_opt_in = true;
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let id = on_record_diagnostic(&vault, 1)?;
+    let mut manifest =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+            .expect("shipped manifest");
+    let Value::Map(ref mut entries) = manifest else {
+        panic!("manifest map")
+    };
+    let value = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(policy::POLICY_KEY))
+        .expect("shipped default row");
+    let Value::Array(ref mut rows) = value.1 else {
+        panic!("policy rows")
+    };
+    let Value::Map(ref mut knobs) = rows[0] else {
+        panic!("default row")
+    };
+    for (key, val) in knobs {
+        match key.as_str() {
+            Some("bucket_seconds") => *val = Value::from(60_u64),
+            Some("max_component_bytes") => *val = Value::from(512_u64),
+            Some("precedence") => *val = Value::from("holder_override"),
+            _ => {}
+        }
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )?;
+    let mut signal = input(FailureClassV1::Other);
+    signal.agent.name = "x".repeat(300);
+    vault.record_failure_signal(
+        &vault.tier1_observation(id)?.expect("real producer"),
+        signal,
+    )?;
+    let rows = vault.export_tier1_failure_counts()?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].dimensions.bucket_seconds, 60);
+    Ok(())
+}
+
+#[test]
+fn holder_precedence_declaration_is_invalid_policy() {
+    use rmpv::Value;
+    let holder_id = EntityId::now();
+    let row = Value::Array(vec![Value::Map(vec![
+        (Value::from("scope"), Value::from("holder")),
+        (Value::from("holder_ref"), Value::from(holder_id.to_hex())),
+        (Value::from("bucket_seconds"), Value::from(120_u64)),
+        (Value::from("max_component_bytes"), Value::from(768_u64)),
+        (Value::from("precedence"), Value::from("holder_override")),
+    ])]);
+    assert!(policy::decode(&row).is_none());
+}
+
+#[test]
+fn failure_signals_consolidation_requires_base_receipt_not_caller_copy() -> Result<()> {
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.failure_signals.export_opt_in = true;
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let decision = GateDecisionRecord {
+        version: 0,
+        decision_id: GateDecisionId::now(),
+        created_at: 3_601,
+        outcome: "denied".into(),
+        reason_codes: vec!["gate.deny.dreamer_precommit.degenerate_output".into()],
+        receipt_reasons: vec![],
+        system_notices: vec![],
+        actor_class: "agent".into(),
+        actor_ref: None,
+        content_kind: "claim".into(),
+        policy_manifest_version: "v0".into(),
+        claim_id: None,
+        grant_ref: None,
+        diff_handle: vec![0xAA],
+        read_frontier_hash: [0xBB; 32],
+        redacted_at: None,
+    };
+    vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &decision))?;
+    let receipt = crate::receipt::gate_decision_receipt(&decision);
+    let ids = vault.project_receipt_tripwires("run", std::slice::from_ref(&receipt), 3_601)?;
+    assert_eq!(ids.len(), 1);
+    let observation = vault
+        .tier1_observation(ids[0])?
+        .expect("ledger-backed producer");
+    vault.record_failure_signal(&observation, input(FailureClassV1::TaskFailure))?;
+    let mut forged = receipt;
+    forged
+        .policy_trace
+        .push("gate.deny.dreamer_precommit.foreign".into());
+    let forged_ids = vault.project_receipt_tripwires("run", &[forged], 3_601)?;
+    assert_eq!(forged_ids.len(), 1);
+    assert_ne!(forged_ids[0], ids[0]);
+    assert!(vault.tier1_observation(forged_ids[0])?.is_none());
+    assert_eq!(vault.export_tier1_failure_counts()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn conflicting_policy_precedence_is_restrictive_in_any_order() {
+    let baseline = policy::Row {
+        scope: policy::Scope::Default,
+        bucket_seconds: 60,
+        max_component_bytes: 512,
+        precedence: Some(policy::Precedence::HolderOverride),
+    };
+    let conflicting = policy::Row {
+        precedence: Some(policy::Precedence::NestedNarrowing),
+        ..baseline
+    };
+    let vault_cap = policy::Row {
+        scope: policy::Scope::Vault,
+        bucket_seconds: 120,
+        max_component_bytes: 1_024,
+        precedence: None,
+    };
+    let id = EntityId::now();
+    let holder = policy::Row {
+        scope: policy::Scope::Holder(id),
+        bucket_seconds: 180,
+        max_component_bytes: 768,
+        precedence: None,
+    };
+    let left = policy::resolve(&[baseline, conflicting, vault_cap, holder], Some(id));
+    let right = policy::resolve(&[holder, vault_cap, conflicting, baseline], Some(id));
+    assert_eq!(left, right);
+    assert_eq!((left.bucket_seconds, left.max_component_bytes), (180, 512));
+}
+
+#[test]
+fn public_door_counts_nine_classes_without_provenance_references() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::default();
+    config.failure_signals.export_opt_in = true;
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let id = on_record_diagnostic(&vault, 1)?;
+    let observation = vault.tier1_observation(id)?.expect("real producer");
+    for class in ALL {
+        let mut signal = input(class);
+        signal.agent.name = "Alice-Smith".into();
+        vault.record_failure_signal(&observation, signal.clone())?;
+        vault.record_failure_signal(&observation, signal)?;
+    }
+    let rows = vault.export_tier1_failure_counts()?;
+    assert_eq!(rows.len(), 9);
+
+    let body = vault.get(&id)?.expect("producer diagnostic");
+    let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut forbidden = vec![
+        id.to_hex(),
+        hex(blake3::hash(&body).as_bytes()),
+        hex(&event.replay.content_hash),
+        "scope.consent".to_owned(),
+        "Alice-Smith".to_owned(),
+    ];
+    forbidden.extend(event.replay.run_ref.clone());
+    forbidden.extend(event.evidence_refs.iter().map(EntityId::to_hex));
+    for class in ALL {
+        let taxonomy = FailureTaxonomy::V1(class);
+        let row = rows
+            .iter()
+            .find(|row| row.dimensions().taxonomy() == taxonomy)
+            .expect("class row");
+        assert_eq!(row.count(), 2);
+        let payload = serde_json::to_value(row).expect("serialize tier 1");
+        let wire = payload.to_string();
+        for private in &forbidden {
+            assert!(
+                !wire.contains(private.as_str()),
+                "provenance leaked: {private}"
+            );
+        }
+        let keys: std::collections::BTreeSet<_> = payload
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut expected: std::collections::BTreeSet<_> = [
+            "taxonomy_version",
+            "failure_class",
+            "agent_surface",
+            "agent_kind",
+            "agent",
+            "model",
+            "engine",
+            "ts_bucket",
+            "bucket_seconds",
+            "count",
+        ]
+        .into_iter()
+        .collect();
+        if class == FailureClassV1::Other {
+            expected.insert("detector_id");
+        }
+        assert_eq!(keys, expected);
+        assert_eq!(
+            serde_json::from_value::<Tier1FailureCount>(payload).expect("decode row"),
+            *row
+        );
+    }
     Ok(())
 }

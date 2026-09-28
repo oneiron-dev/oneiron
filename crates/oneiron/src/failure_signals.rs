@@ -8,12 +8,15 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod policy;
+mod witness;
+pub use witness::Tier1Observation;
 
 use crate::config::failure_signals::FailureSignalConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{LlmRole, ModelId};
 use crate::vault::LiveEntityRow;
+use witness::{WitnessEntry, WitnessKind};
 
 /// Graduating `Other` requires a new taxonomy variant and version; never
 /// reinterpret a previously exported class.
@@ -67,7 +70,7 @@ pub struct VersionedComponent {
 }
 
 /// Classification supplied by a detector, with no caller-chosen event time or
-/// detector ID. The record door derives both from a stored diagnostic witness.
+/// detector ID. The record door derives both from a producer-owned witness.
 #[derive(Debug, Clone)]
 pub struct FailureSignalInput {
     pub taxonomy: FailureTaxonomy,
@@ -76,9 +79,6 @@ pub struct FailureSignalInput {
     pub agent: VersionedComponent,
     /// Required for system agents; pinned to the compiled seeded roster.
     pub agent_ref: Option<EntityId>,
-    /// Terminal runner step cited by the diagnostic, if this failure came
-    /// from an LLM execution. None exports an honest unattributed model.
-    pub model_step_ref: Option<EntityId>,
 }
 
 /// Only keyed, per-vault opaque tokens enter the export. The secret key stays
@@ -101,7 +101,7 @@ pub struct FailureSignalDimensions {
     /// Opaque ID derived from the verified diagnostic, only for `Other`.
     #[serde(skip_serializing_if = "Option::is_none")]
     detector_id: Option<String>,
-    /// UTC Unix-hour start (seconds since epoch).
+    /// UTC bucket start (seconds since epoch), aligned to `bucket_seconds`.
     ts_bucket: i64,
     /// Exact resolution so a live policy change cannot merge unlike buckets.
     bucket_seconds: u64,
@@ -160,6 +160,7 @@ struct VerifiedIdentity {
 pub(crate) struct FailureSignalCounts {
     key: [u8; 32],
     counts: Mutex<BTreeMap<FailureSignalDimensions, u64>>,
+    witnesses: Mutex<BTreeMap<EntityId, WitnessEntry>>,
 }
 
 impl Default for FailureSignalCounts {
@@ -169,11 +170,29 @@ impl Default for FailureSignalCounts {
         Self {
             key,
             counts: Mutex::default(),
+            witnesses: Mutex::default(),
         }
     }
 }
 
 impl FailureSignalCounts {
+    fn register(&self, id: EntityId, kind: WitnessKind) -> Result<()> {
+        let mut witnesses = self
+            .witnesses
+            .lock()
+            .map_err(|_| Error::InvariantViolation("tier-1 witness mutex poisoned"))?;
+        witnesses.insert(id, WitnessEntry::new(kind));
+        Ok(())
+    }
+
+    fn witness(&self, id: EntityId) -> Result<Option<WitnessEntry>> {
+        let witnesses = self
+            .witnesses
+            .lock()
+            .map_err(|_| Error::InvariantViolation("tier-1 witness mutex poisoned"))?;
+        Ok(witnesses.get(&id).cloned())
+    }
+
     fn token(&self, domain: &[u8], raw: &str) -> String {
         let mut hasher = blake3::Hasher::new_keyed(&self.key);
         hasher.update(domain);
@@ -339,62 +358,116 @@ fn bucket_start(observed_at: i64, bucket_seconds: u64) -> Result<i64> {
 }
 
 impl crate::Vault {
-    /// Record a failure only for a live DIAGNOSTIC in the base vault. Session
-    /// overlay events have no base row and cannot supply this witness, even
-    /// after their off-record room closes. No source ref reaches the export.
+    /// Count only a producer-owned observation from this open vault. A stored
+    /// DIAGNOSTIC, caller-built working set, or ordinary dreamer.step claim
+    /// alone cannot supply this non-serializable witness.
     pub fn record_failure_signal(
         &self,
-        evidence_id: EntityId,
+        observation: &Tier1Observation<'_>,
         input: FailureSignalInput,
     ) -> Result<()> {
         if !self.config.failure_signals.exports() {
             return Ok(());
         }
-        if self
-            .store
-            .off_record_sessions
-            .contains_entity(&evidence_id)?
-        {
-            return Err(Error::InvariantViolation(
-                "off-record evidence cannot enter failure signals",
+        if !std::ptr::eq(self, observation.vault) {
+            return Err(Error::InvalidConfig(
+                "failure observation belongs to another vault".into(),
             ));
+        }
+        let entry = self
+            .store
+            .diagnostics
+            .failure_signals
+            .witness(observation.id)?
+            .ok_or(Error::InvalidConfig(
+                "unregistered failure observation".into(),
+            ))?;
+        if entry.nonce != observation.nonce {
+            return Err(Error::InvalidConfig("stale failure observation".into()));
         }
         let rtxn = self.store.env.read_txn()?;
-        let body = match crate::vault::live_entity_row_in_txn(&self.store, &rtxn, &evidence_id)? {
-            LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_DIAGNOSTIC,
-                body,
-            } => body,
-            _ => {
-                return Err(Error::InvalidConfig(
-                    "failure signal requires an on-record diagnostic".into(),
-                ));
+        let (verified_model, observed_at, detector_id) = match entry.kind {
+            WitnessKind::Diagnostic {
+                body_hash,
+                sources,
+                detector_id,
+                observed_at,
+            } => {
+                let body = match crate::vault::live_entity_row_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &observation.id,
+                )? {
+                    LiveEntityRow::Live {
+                        entity_type: crate::registry::ENTITY_TYPE_DIAGNOSTIC,
+                        body,
+                    } => body,
+                    _ => {
+                        return Err(Error::InvalidConfig(
+                            "failure diagnostic is no longer live".into(),
+                        ));
+                    }
+                };
+                if *blake3::hash(&body).as_bytes() != body_hash
+                    || !sources.still_live(&self.store, &rtxn)?
+                {
+                    return Err(Error::InvalidConfig(
+                        "failure observation source changed".into(),
+                    ));
+                }
+                (None, observed_at, detector_id)
+            }
+            WitnessKind::Execution {
+                body_hash,
+                attempt_id,
+                run_ref,
+                request_hash,
+                model,
+                observed_at,
+            } => {
+                let attempt = crate::attempt_queue::AttemptQueue::new(self)
+                    .get_in_txn(&rtxn, attempt_id)?
+                    .ok_or(Error::InvalidConfig(
+                        "executed model attempt is no longer live".into(),
+                    ))?;
+                if attempt.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+                    || attempt.run_id != run_ref
+                {
+                    return Err(Error::InvalidConfig(
+                        "executed model attempt changed".into(),
+                    ));
+                }
+                let body = match crate::vault::live_entity_row_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &observation.id,
+                )? {
+                    LiveEntityRow::Live {
+                        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                        body,
+                    } => body,
+                    _ => {
+                        return Err(Error::InvalidConfig(
+                            "executed model source is no longer live".into(),
+                        ));
+                    }
+                };
+                if *blake3::hash(&body).as_bytes() != body_hash {
+                    return Err(Error::InvalidConfig("executed model source changed".into()));
+                }
+                let claim = self
+                    .get_claim_in_txn(&rtxn, &observation.id)?
+                    .ok_or(Error::InvalidConfig("executed model claim missing".into()))?;
+                if crate::llm::terminal_step_identity(&claim)
+                    != Some((attempt_id, request_hash, model.clone()))
+                {
+                    return Err(Error::InvalidConfig(
+                        "executed model identity changed".into(),
+                    ));
+                }
+                (Some(model), observed_at, "llm.step.v1".to_owned())
             }
         };
-        let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
-        if crate::self_heal::diagnostic_event_id(&event.detector_id, &body) != evidence_id {
-            return Err(Error::InvariantViolation(
-                "failure signal diagnostic address changed",
-            ));
-        }
-        crate::self_heal::tier1_source::verify(&self.store, &rtxn, &event, input.model_step_ref)?;
-        let verified_model = input
-            .model_step_ref
-            .map(|step| {
-                crate::llm::verified_executed_model(
-                    self,
-                    &rtxn,
-                    &step,
-                    event.replay.run_ref.as_deref().unwrap_or_default(),
-                )
-            })
-            .transpose()?
-            .flatten();
-        if input.model_step_ref.is_some() && verified_model.is_none() {
-            return Err(Error::InvalidConfig(
-                "failure signal requires a verified terminal model step".into(),
-            ));
-        }
         // heed permits only one read slot per thread on this handle. The
         // source check is complete; release its snapshot before resolving the
         // seeded AGENT_DEF through the ordinary vault reader.
@@ -451,8 +524,6 @@ impl crate::Vault {
             }
             policy::resolve(&manifest.failure_signal_policy, input.agent_ref)
         };
-        let observed_at = i64::try_from(event.valid_from)
-            .map_err(|_| Error::ArithmeticOverflow("failure signal observation time"))?;
         self.store.diagnostics.failure_signals.record(
             self.config.failure_signals,
             input,
@@ -462,7 +533,7 @@ impl crate::Vault {
             },
             policy,
             observed_at,
-            &event.detector_id,
+            &detector_id,
         )
     }
 

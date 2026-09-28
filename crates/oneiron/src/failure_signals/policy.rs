@@ -29,7 +29,7 @@ pub(crate) struct Row {
     pub(crate) scope: Scope,
     pub(crate) bucket_seconds: u64,
     pub(crate) max_component_bytes: u64,
-    pub(crate) precedence: Precedence,
+    pub(crate) precedence: Option<Precedence>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,7 +67,7 @@ pub(crate) fn decode(value: &Value) -> Option<Vec<Row>> {
         let Value::Map(entries) = row else {
             return None;
         };
-        if entries.len() != 4 && entries.len() != 5 {
+        if !(3..=5).contains(&entries.len()) {
             return None;
         }
         let mut scope = None;
@@ -101,14 +101,15 @@ pub(crate) fn decode(value: &Value) -> Option<Vec<Row>> {
         let scope = match (scope?, holder_ref) {
             ("default", None) => Scope::Default,
             ("vault", None) => Scope::Vault,
-            ("holder", Some(id)) => Scope::Holder(id),
+            // A holder may narrow values, not author the precedence rule.
+            ("holder", Some(id)) if precedence.is_none() => Scope::Holder(id),
             _ => return None,
         };
         decoded.push(Row {
             scope,
             bucket_seconds: bucket_seconds?,
             max_component_bytes: max_component_bytes?,
-            precedence: precedence?,
+            precedence,
         });
     }
     Some(decoded)
@@ -119,30 +120,53 @@ pub(crate) fn decode(value: &Value) -> Option<Vec<Row>> {
 /// nested defaults), but the vault ceiling still caps it. No holder row ever
 /// widens the explicit vault bounds.
 pub(crate) fn resolve(rows: &[Row], holder: Option<EntityId>) -> Resolved {
-    let mut baseline = Resolved::default();
-    let mut vault = None;
-    let mut matched = None;
-    let mut precedence = Precedence::NestedNarrowing;
+    let mut baseline: Option<Resolved> = None;
+    let mut vault: Option<Resolved> = None;
+    let mut matched: Option<Resolved> = None;
+    let mut baseline_precedence = None;
+    let mut vault_precedence = None;
+    // Conflicting declarations at the SAME scope resolve to the restrictive
+    // `nested_narrowing` pole, independently of scan order.
+    let fold_precedence = |old: Option<Precedence>, next: Precedence| {
+        old.map_or(next, |prior| {
+            if prior == Precedence::HolderOverride && next == Precedence::HolderOverride {
+                Precedence::HolderOverride
+            } else {
+                Precedence::NestedNarrowing
+            }
+        })
+    };
     for row in rows {
         let values = Resolved {
             bucket_seconds: row.bucket_seconds,
             max_component_bytes: row.max_component_bytes,
         };
         match row.scope {
-            Scope::Default => baseline = baseline.narrow(values),
+            Scope::Default => {
+                baseline = Some(baseline.map_or(values, |prior| prior.narrow(values)));
+                if let Some(precedence) = row.precedence {
+                    baseline_precedence = Some(fold_precedence(baseline_precedence, precedence));
+                }
+            }
             Scope::Vault => {
-                vault = Some(vault.unwrap_or(values).narrow(values));
-                if row.precedence == Precedence::HolderOverride {
-                    precedence = row.precedence;
+                vault = Some(vault.map_or(values, |prior| prior.narrow(values)));
+                if let Some(precedence) = row.precedence {
+                    vault_precedence = Some(fold_precedence(vault_precedence, precedence));
                 }
             }
             Scope::Holder(id) if holder == Some(id) => {
-                matched = Some(matched.unwrap_or(values).narrow(values));
+                matched = Some(matched.map_or(values, |prior| prior.narrow(values)));
             }
             Scope::Holder(_) => {}
         }
     }
+    // The shipped values are a fallback ONLY when no trusted default row is
+    // present. A trusted replacement is not clamped by an invisible root.
+    let baseline = baseline.unwrap_or_default();
     let vault_cap = vault.unwrap_or(baseline);
+    let precedence = vault_precedence
+        .or(baseline_precedence)
+        .unwrap_or(Precedence::NestedNarrowing);
     match (precedence, matched) {
         (Precedence::NestedNarrowing, Some(holder_row)) => {
             baseline.narrow(vault_cap).narrow(holder_row)

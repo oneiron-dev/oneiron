@@ -1971,6 +1971,42 @@ fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
         Some(trusted),
         "the runner's own terminal claim is indexed"
     );
+    assert!(
+        vault.tier1_observation(trusted)?.is_none(),
+        "an ordinary indexed claim never attests model execution"
+    );
+
+    // Replaying the same well-shaped claim into another vault copies bytes,
+    // not the provider-completion event. The replay may create a memo index
+    // but must never register a tier-1 execution witness.
+    let (_replay_dir, replay) = open_vault();
+    replay.put_entity(
+        &fixture.subject,
+        ENTITY_TYPE_PERSON,
+        occurred(10),
+        10,
+        b"subject",
+    )?;
+    replay.put_entity(
+        &fixture.actor.entity_ref(),
+        ENTITY_TYPE_PERSON,
+        occurred(10),
+        10,
+        b"actor",
+    )?;
+    let bytes = vault.get(&trusted)?.expect("terminal claim body");
+    replay
+        .batch()
+        .put_replicated(
+            &trusted,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            occurred(10_000),
+            10_000,
+            &bytes,
+        )
+        .commit()?;
+    assert!(replay.get_claim(&trusted)?.is_some());
+    assert!(replay.tier1_observation(trusted)?.is_none());
 
     // (1) No runner provenance: the identical value under a foreign envelope.
     let foreign_envelope = WriteEnvelope::new(
@@ -2904,6 +2940,8 @@ fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()
         ));
         let step_id =
             step_index_lookup(&vault, fixture.attempt_id, &hash)?.expect("terminal step claim");
+        // Editing an otherwise real diagnostic to cite an unrelated step
+        // cannot attach that model: only the producer may register a source.
         let mut event = source.clone();
         event.evidence_refs.push(step_id);
         event.evidence_refs.sort_unstable();
@@ -2911,6 +2949,7 @@ fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()
         let body = encode_diagnostic_event_body(&event)?;
         let diagnostic_id = diagnostic_event_id(&event.detector_id, &body);
         vault.emit_diagnostic_event(&diagnostic_id, &event)?;
+        assert!(vault.tier1_observation(diagnostic_id)?.is_none());
         let signal = FailureSignalInput {
             taxonomy: FailureTaxonomy::V1(FailureClassV1::TaskFailure),
             agent_surface: AgentSurface::Task,
@@ -2920,10 +2959,12 @@ fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()
                 version: "v1".into(),
             },
             agent_ref: None,
-            model_step_ref: Some(step_id),
         };
-        vault.record_failure_signal(diagnostic_id, signal)?;
-        observed.push(diagnostic_id);
+        let witnessed_step = vault
+            .tier1_observation(step_id)?
+            .expect("actual execution witness");
+        vault.record_failure_signal(&witnessed_step, signal)?;
+        observed.push(step_id);
     }
     assert_eq!(observed.len(), 2);
     let rows = vault.export_tier1_failure_counts()?;
