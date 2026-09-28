@@ -3970,7 +3970,6 @@ fn oversized_resolved_manifest_refuses_stage_before_touching_the_key() -> Result
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 #[test]
 fn replicated_connector_key_replacement_and_manifest_clear_are_rejected() -> Result<()> {
     let (_dir, vault) = temp_vault();
@@ -3995,18 +3994,16 @@ fn replicated_connector_key_replacement_and_manifest_clear_are_rejected() -> Res
         },
     ] {
         let bytes = encode_connector_key_body(&attempted)?;
-        let rejected = vault.with_write_txn(|txn| {
-            vault
-                .batch_in()
-                .put_replicated(
-                    &id,
-                    ENTITY_TYPE_CONNECTOR_KEY,
-                    crate::TimeRange { start: 10, end: 10 },
-                    10,
-                    &bytes,
-                )
-                .apply(txn)
-        });
+        let rejected = vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_CONNECTOR_KEY,
+                crate::TimeRange { start: 10, end: 10 },
+                10,
+                &bytes,
+            )
+            .commit();
         assert!(matches!(
             rejected,
             Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
