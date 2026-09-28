@@ -33,6 +33,7 @@ fn spec(vault: &Vault, holder: EntityId) -> TaskAskSpec {
                 }),
                 ladder_answer: None,
                 class_key: None,
+                commitment: false,
             },
             Some(u64::MAX),
             crate::task_verb::TaskAskDefault::AskMe,

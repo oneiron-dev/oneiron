@@ -261,6 +261,7 @@ impl Vault {
                     &crate::sync::bridge::MaterializedDiffSummary {
                         containers: ids.iter().map(|id| format!("e:{}", id.to_hex())).collect(),
                         bytes: 0,
+                        revision_events: Vec::new(),
                     },
                     &crate::sync::bridge::OriginMark {
                         conn_id: None,
@@ -298,6 +299,8 @@ impl Vault {
                         Vec::new()
                     },
                     bytes: 0,
+
+                    revision_events: Vec::new(),
                 },
                 &crate::sync::bridge::OriginMark {
                     conn_id: None,

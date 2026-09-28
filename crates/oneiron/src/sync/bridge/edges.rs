@@ -17,6 +17,7 @@ use crate::affect::Vad;
 use crate::batch::BatchOp;
 use crate::edge::{EdgeKind, decode_edge_value_for_kind, parse_strict_edge_record_key};
 use crate::entity_id::EntityId;
+use crate::ports::EdgeStoreRead;
 use crate::store::Store;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
@@ -155,6 +156,12 @@ pub(super) fn materialize_edges_from_delta(
                         }
                     };
 
+                    if kind == EdgeKind::AddressedTo
+                        && crate::recovery::retained_soft_shell(doc, &src).is_some()
+                    {
+                        // The erased shell has no recipient carrier to prove.
+                        continue;
+                    }
                     let reserved_rejection = crate::edge::validate_public_edge_kind(kind).err();
                     let src_ready = ensure_entity_materialized_from_crdt(
                         vault,
@@ -211,10 +218,7 @@ pub(super) fn materialize_edges_from_delta(
                     // quarantine-and-continue rejection; no reserved edge
                     // lands merely because hydration ran first.
                     if let Some(reserved) = &reserved_rejection
-                        && !matches!(
-                            kind,
-                            EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo
-                        )
+                        && !matches!(kind, EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo | EdgeKind::AddressedTo)
                     {
                         let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
                             &*wtxn, &src, kind, &tgt,
@@ -333,6 +337,21 @@ pub(super) fn materialize_edges_from_delta(
                         }
                     }
 
+                    // The source body, not the peer-controlled edge map, owns
+                    // addressing. Both endpoints were just hydrated in this
+                    // transaction, so out-of-order arrivals above defer rather
+                    // than permanently quarantining a legitimate mention.
+                    if kind == EdgeKind::AddressedTo
+                        && !crate::conversation_dag::addressed_to_echo_in_txn(
+                            &vault.store, &*wtxn, &src, &tgt, decoded,
+                        )?
+                    {
+                        quarantine_rejected_op_in_txn(
+                            vault, wtxn, window_key, QuarantineContainer::Edges,
+                            key, reserved_rejection.as_ref().expect("addressing is reserved"), buf,
+                        )?;
+                        continue;
+                    }
                     // Parent is staged after ChildOf and submitted to the
                     // one coordinator there. Other DAG structural kinds have
                     // their body-backed admission check here.
@@ -493,8 +512,16 @@ pub(super) fn materialize_edges_from_delta(
                     // `code_memory::remove_blocks_edge`; a replicated
                     // removal is never evidence that the door ran, so it
                     // is quarantined rather than applied.
+                    let hard_deleted = [src, tgt].iter().any(|id| {
+                        crate::sync::loro_support::tombstone_values_for_id(&tombstones_map, id)
+                            .iter()
+                            .any(|value| crate::deletion::decode_tombstone_value(value).is_hard())
+                    });
                     if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
                         && (kind == EdgeKind::Blocks
+                            || (kind == EdgeKind::AddressedTo
+                                && !hard_deleted
+                                && vault.store.port_edge_get(&*wtxn, &src, kind, &tgt)?.is_some())
                             || vault
                                 .identity_topology_mandated_shell_edge_in_txn(
                                     &*wtxn, &src, kind, &tgt,

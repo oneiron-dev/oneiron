@@ -1,5 +1,6 @@
 //! Federation grant record, role/preset policy, and grant body MessagePack codec.
 
+use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -14,13 +15,11 @@ use crate::error::{Error, RecordError, Result};
 
 /// Current FederationGrant body schema version.
 ///
-/// Stays 1 across the Delegate tier: the body grew two ROLE-CONDITIONAL keys
-/// that only a Delegate carries, so every pre-Delegate body is still exactly a
-/// valid current body. A reader on the old five-key set fails CLOSED on a
-/// seven-key Delegate body (its key allowlist rejects `expires_at`), which is
-/// the desired direction — an old peer never silently reads a delegate grant as
-/// a non-expiring one.
-pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 2;
+/// Version 3 adds a role-conditional guest payload. The existing schema-1
+/// decoder remains; no new pre-release schema-2 compatibility path is added.
+pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 3;
+
+const FEDERATION_GRANT_LEGACY_SCHEMA_VERSION: u64 = 1;
 
 /// Maximum delegate time-to-live: 90 days.
 pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
@@ -29,8 +28,9 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 ///
 /// The first `FEDERATION_GRANT_REQUIRED_KEYS` entries are required on every
 /// body; `expires_at` and `delegated_by` are role-conditional — required for
-/// [`FederationGrantRole::Delegate`], forbidden for every other role.
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 8] = [
+/// [`FederationGrantRole::Delegate`], forbidden for every other role. `guest`
+/// is required only for [`FederationGrantRole::Guest`].
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 9] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -39,6 +39,7 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 8] = [
     "expires_at",
     "delegated_by",
     "authority_scope",
+    "guest",
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -71,9 +72,21 @@ pub(super) const KEY_EXPIRES_AT: &str = FEDERATION_GRANT_BODY_KEYS[5];
 
 pub(super) const KEY_DELEGATED_BY: &str = FEDERATION_GRANT_BODY_KEYS[6];
 
+pub(super) const KEY_GUEST: &str = FEDERATION_GRANT_BODY_KEYS[8];
+
 pub(super) const FEDERATION_GRANT_SCOPE_KEYS: [&str; 2] = ["kind", "vault_id"];
 
+const FEDERATION_GRANT_ASK_SCOPE_KEYS: [&str; 2] = ["kind", "ask_ref"];
+
 pub(super) const SCOPE_KIND_VAULT: &str = "vault";
+
+const SCOPE_KIND_ASK: &str = "ask";
+
+/// Wire/resource-safety maximum for one guest grant body, not a policy grant.
+/// Ask-class disclosure limits can narrow this bound but never widen it.
+pub const MAX_GUEST_DISCLOSED_REFS: usize = 64;
+
+const GUEST_SCOPE_KEYS: [&str; 3] = ["person_ref", "asker_ref", "disclosed_refs"];
 
 /// Scope addressed by a federation grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,6 +94,8 @@ pub(super) const SCOPE_KIND_VAULT: &str = "vault";
 pub enum FederationGrantScope {
     /// Membership in a shared vault.
     Vault { vault_id: u64 },
+    /// Access to facts explicitly disclosed for one ask.
+    Ask { ask_ref: EntityId },
 }
 
 impl FederationGrantScope {
@@ -90,10 +105,16 @@ impl FederationGrantScope {
         Self::Vault { vault_id }
     }
 
+    /// Constructs a scope bound to exactly one ask.
+    #[must_use]
+    pub const fn ask(ask_ref: EntityId) -> Self {
+        Self::Ask { ask_ref }
+    }
+
     pub(super) fn validate(self) -> Result<()> {
         match self {
             Self::Vault { vault_id: 0 } => Err(invalid_grant()),
-            Self::Vault { .. } => Ok(()),
+            Self::Vault { .. } | Self::Ask { .. } => Ok(()),
         }
     }
 }
@@ -110,7 +131,7 @@ pub enum FederationGrantRole {
     Member,
     /// Read-only member privileges.
     Viewer,
-    /// Audit-only read privileges.
+    /// Legacy audit spelling; normalized to Viewer when a grant is minted or decoded.
     Auditor,
     /// One-hop, expiring read privileges attenuated from an admin parent.
     ///
@@ -119,6 +140,8 @@ pub enum FederationGrantRole {
     /// [`FederationGrant::attenuated_delegate`] from an [`Self::is_admin`]
     /// parent.
     Delegate,
+    /// Read/propose-only access to explicitly disclosed facts for one ask.
+    Guest,
 }
 
 impl FederationGrantRole {
@@ -130,8 +153,9 @@ impl FederationGrantRole {
             Self::Admin => "admin",
             Self::Member => "member",
             Self::Viewer => "viewer",
-            Self::Auditor => "auditor",
+            Self::Auditor => "viewer",
             Self::Delegate => "delegate",
+            Self::Guest => "guest",
         }
     }
 
@@ -143,8 +167,9 @@ impl FederationGrantRole {
             "admin" => Some(Self::Admin),
             "member" => Some(Self::Member),
             "viewer" => Some(Self::Viewer),
-            "auditor" => Some(Self::Auditor),
+            "auditor" => Some(Self::Viewer),
             "delegate" => Some(Self::Delegate),
+            "guest" => Some(Self::Guest),
             _ => None,
         }
     }
@@ -153,6 +178,12 @@ impl FederationGrantRole {
     #[must_use]
     pub const fn is_admin(self) -> bool {
         matches!(self, Self::Owner | Self::Admin)
+    }
+
+    /// Returns whether this role is the isolated ask-scoped guest role.
+    #[must_use]
+    pub const fn is_guest(self) -> bool {
+        matches!(self, Self::Guest)
     }
 }
 
@@ -172,6 +203,8 @@ pub enum FederationGrantPreset {
     Audit,
     /// Attenuated one-hop delegate envelope.
     Delegate,
+    /// Ask-scoped read/propose-only guest envelope.
+    Guest,
 }
 
 impl FederationGrantPreset {
@@ -183,8 +216,9 @@ impl FederationGrantPreset {
             Self::Admin => "admin",
             Self::Member => "member",
             Self::ReadOnly => "read_only",
-            Self::Audit => "audit",
+            Self::Audit => "read_only",
             Self::Delegate => "delegate",
+            Self::Guest => "guest",
         }
     }
 
@@ -196,8 +230,9 @@ impl FederationGrantPreset {
             "admin" => Some(Self::Admin),
             "member" => Some(Self::Member),
             "read_only" => Some(Self::ReadOnly),
-            "audit" => Some(Self::Audit),
+            "audit" => Some(Self::ReadOnly),
             "delegate" => Some(Self::Delegate),
+            "guest" => Some(Self::Guest),
             _ => None,
         }
     }
@@ -212,10 +247,15 @@ impl FederationGrantPreset {
     #[must_use]
     pub const fn permits_role(self, role: FederationGrantRole) -> bool {
         match self {
-            Self::Owner => !matches!(role, FederationGrantRole::Delegate),
+            Self::Owner => !matches!(
+                role,
+                FederationGrantRole::Delegate | FederationGrantRole::Guest
+            ),
             Self::Admin => !matches!(
                 role,
-                FederationGrantRole::Owner | FederationGrantRole::Delegate
+                FederationGrantRole::Owner
+                    | FederationGrantRole::Delegate
+                    | FederationGrantRole::Guest
             ),
             Self::Member => matches!(
                 role,
@@ -229,11 +269,33 @@ impl FederationGrantPreset {
             ),
             Self::Audit => matches!(role, FederationGrantRole::Auditor),
             Self::Delegate => matches!(role, FederationGrantRole::Delegate),
+            Self::Guest => matches!(role, FederationGrantRole::Guest),
         }
     }
 }
 
-/// Shared-vault membership record.
+/// Bounded identity and fact allowlist carried only by ask-scoped guest grants.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FederationGrantGuestPayload {
+    /// Person whose facts are disclosed for the ask.
+    pub person_ref: EntityId,
+    /// Actor who asked for the disclosed facts.
+    pub asker_ref: EntityId,
+    /// Exact fact entities disclosed to this guest.
+    pub disclosed_refs: BTreeSet<EntityId>,
+}
+
+impl FederationGrantGuestPayload {
+    fn validate(&self) -> Result<()> {
+        if self.disclosed_refs.is_empty() || self.disclosed_refs.len() > MAX_GUEST_DISCLOSED_REFS {
+            return Err(invalid_grant());
+        }
+        Ok(())
+    }
+}
+
+/// Federation grant record. Member grants address a shared vault; guest grants
+/// carry a separate, ask-scoped payload and cannot act as shared membership.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FederationGrant {
     /// Canonical grant authority. Resource fields below are narrowing presets.
@@ -258,6 +320,8 @@ pub struct FederationGrant {
     /// principal stays the same. Required for
     /// [`FederationGrantRole::Delegate`], forbidden for every other role.
     pub delegated_by: Option<EntityId>,
+    /// Ask guest bindings and explicit fact allowlist; absent on every member grant.
+    pub guest: Option<FederationGrantGuestPayload>,
 }
 
 impl FederationGrant {
@@ -277,11 +341,46 @@ impl FederationGrant {
             authority_scope: super::grant_scope::membership_preset(role),
             scope,
             member_ref,
-            role,
-            preset,
+            role: if role == FederationGrantRole::Auditor {
+                FederationGrantRole::Viewer
+            } else {
+                role
+            },
+            preset: if preset == FederationGrantPreset::Audit {
+                FederationGrantPreset::ReadOnly
+            } else {
+                preset
+            },
             expires_at: None,
             delegated_by: None,
+            guest: None,
         }
+    }
+
+    /// Mints a guest grant restricted to one ask and a non-empty bounded fact set.
+    pub fn ask_guest(
+        group_ref: EntityId,
+        companion_ref: EntityId,
+        person_ref: EntityId,
+        asker_ref: EntityId,
+        disclosed_refs: BTreeSet<EntityId>,
+    ) -> Result<Self> {
+        let grant = Self {
+            authority_scope: guest_authority_scope(),
+            scope: FederationGrantScope::Ask { ask_ref: group_ref },
+            member_ref: companion_ref,
+            role: FederationGrantRole::Guest,
+            preset: FederationGrantPreset::Guest,
+            expires_at: None,
+            delegated_by: None,
+            guest: Some(FederationGrantGuestPayload {
+                person_ref,
+                asker_ref,
+                disclosed_refs,
+            }),
+        };
+        grant.validate()?;
+        Ok(grant)
     }
 
     /// Mints a one-hop delegate attenuated from an administrative `parent`.
@@ -315,20 +414,29 @@ impl FederationGrant {
         // `pub` fields make any construction-time invariant unenforceable
         // anyway. Encode and decode remain the validating doors.
         Ok(Self {
-            authority_scope: parent.authority_scope.clone(),
+            // Bare construction carries no DEFAULT authority. The vault
+            // writer resolves a manifest row and meets the live parent before
+            // persisting; encoding this envelope alone stores an inert grant.
+            authority_scope: crate::federation::Scope::default(),
             scope: parent.scope,
             member_ref,
             role: FederationGrantRole::Delegate,
             preset: FederationGrantPreset::Delegate,
             expires_at: Some(expires_at_secs),
             delegated_by: Some(parent.member_ref),
+            guest: None,
         })
     }
 
     /// Validates scope, role/preset policy, and role-conditional field shape.
     pub fn validate(&self) -> Result<()> {
         self.scope.validate()?;
-        if !self.preset.permits_role(self.role) {
+        // Legacy Auditor is only a decoder input. Guest grants are checked
+        // below against their ask scope and guest payload.
+        if self.role == FederationGrantRole::Auditor
+            || self.preset == FederationGrantPreset::Audit
+            || !self.preset.permits_role(self.role)
+        {
             return Err(invalid_grant());
         }
         let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);
@@ -338,6 +446,22 @@ impl FederationGrant {
             return Err(invalid_grant());
         }
         if self.expires_at == Some(0) {
+            return Err(invalid_grant());
+        }
+        let is_guest = self.role.is_guest();
+        if is_guest != self.guest.is_some() {
+            return Err(invalid_grant());
+        }
+        if self.role.is_guest() {
+            let (FederationGrantScope::Ask { .. }, Some(guest)) = (self.scope, self.guest.as_ref())
+            else {
+                return Err(invalid_grant());
+            };
+            guest.validate()?;
+            if self.authority_scope != guest_authority_scope() {
+                return Err(invalid_grant());
+            }
+        } else if matches!(self.scope, FederationGrantScope::Ask { .. }) {
             return Err(invalid_grant());
         }
         Ok(())
@@ -367,6 +491,28 @@ impl FederationGrant {
     #[must_use]
     pub fn is_admin(&self) -> bool {
         super::grant_scope::admits_preset(&self.authority_scope, "admin") && self.role.is_admin()
+    }
+
+    /// Returns whether this valid guest grant names `fact` for the exact ask,
+    /// guest actor, person, and asker tuple. The disclosed set is not transitive.
+    #[must_use]
+    pub fn allows_ask_fact(
+        &self,
+        group_ref: EntityId,
+        companion_ref: EntityId,
+        person_ref: EntityId,
+        asker_ref: EntityId,
+        fact: EntityId,
+    ) -> bool {
+        self.validate().is_ok()
+            && self.role.is_guest()
+            && self.scope == FederationGrantScope::Ask { ask_ref: group_ref }
+            && self.member_ref == companion_ref
+            && self.guest.as_ref().is_some_and(|guest| {
+                guest.person_ref == person_ref
+                    && guest.asker_ref == asker_ref
+                    && guest.disclosed_refs.contains(&fact)
+            })
     }
 }
 
@@ -403,6 +549,9 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
             Value::from(delegated_by.to_hex()),
         ));
     }
+    if let Some(guest) = &grant.guest {
+        entries.push((Value::from(KEY_GUEST), encode_guest_payload(guest)));
+    }
 
     encode_msgpack_value(
         &Value::Map(entries),
@@ -431,14 +580,17 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         return Err(invalid_grant());
     };
 
-    let legacy = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() == Some(1);
-    validate_body_keys(entries, legacy)?;
-    if !legacy
-        && required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
-            != Some(FEDERATION_GRANT_SCHEMA_VERSION)
-    {
+    let schema_version = required_value(entries, KEY_SCHEMA_VERSION)?
+        .as_u64()
+        .ok_or_else(invalid_grant)?;
+    if !matches!(
+        schema_version,
+        FEDERATION_GRANT_LEGACY_SCHEMA_VERSION | FEDERATION_GRANT_SCHEMA_VERSION
+    ) {
         return Err(invalid_grant());
     }
+    let legacy = schema_version == FEDERATION_GRANT_LEGACY_SCHEMA_VERSION;
+    validate_body_keys(entries, schema_version)?;
     if !legacy && optional_value(entries, "authority_scope").is_none() {
         return Err(invalid_grant());
     }
@@ -460,10 +612,17 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     let delegated_by = optional_value(entries, KEY_DELEGATED_BY)
         .map(decode_canonical_entity_ref)
         .transpose()?;
+    let guest = optional_value(entries, KEY_GUEST)
+        .map(decode_guest_payload)
+        .transpose()?;
 
     let grant = FederationGrant {
         authority_scope: if legacy {
-            super::grant_scope::membership_preset(role)
+            if role == FederationGrantRole::Delegate {
+                super::scope_codec::read_preset()
+            } else {
+                super::grant_scope::membership_preset(role)
+            }
         } else {
             super::scope_codec::decode_scope_value(required_value(entries, "authority_scope")?)
                 .map_err(|_| invalid_grant())?
@@ -474,6 +633,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         preset,
         expires_at,
         delegated_by,
+        guest,
     };
     // Role-conditional presence is enforced here: a five-key Delegate body and
     // a seven-key Owner body both die at `validate`, not at the key allowlist.
@@ -493,6 +653,16 @@ pub(crate) fn encode_scope(scope: FederationGrantScope) -> Value {
                 Value::from(vault_id),
             ),
         ]),
+        FederationGrantScope::Ask { ask_ref } => Value::Map(vec![
+            (
+                Value::from(FEDERATION_GRANT_ASK_SCOPE_KEYS[0]),
+                Value::from(SCOPE_KIND_ASK),
+            ),
+            (
+                Value::from(FEDERATION_GRANT_ASK_SCOPE_KEYS[1]),
+                Value::from(ask_ref.to_hex()),
+            ),
+        ]),
     }
 }
 
@@ -500,63 +670,83 @@ fn decode_scope(value: &Value) -> Result<FederationGrantScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    validate_scope_keys(entries)?;
-
-    let kind = required_value(entries, FEDERATION_GRANT_SCOPE_KEYS[0])?
+    let kind = required_value(entries, "kind")?
         .as_str()
         .ok_or_else(invalid_grant)?;
-    if kind != SCOPE_KIND_VAULT {
+    match kind {
+        SCOPE_KIND_VAULT => {
+            validate_scope_keys(entries, &FEDERATION_GRANT_SCOPE_KEYS)?;
+            let vault_id = required_value(entries, "vault_id")?
+                .as_u64()
+                .ok_or_else(invalid_grant)?;
+            let scope = FederationGrantScope::Vault { vault_id };
+            scope.validate()?;
+            Ok(scope)
+        }
+        SCOPE_KIND_ASK => {
+            validate_scope_keys(entries, &FEDERATION_GRANT_ASK_SCOPE_KEYS)?;
+            Ok(FederationGrantScope::Ask {
+                ask_ref: decode_canonical_entity_ref(required_value(entries, "ask_ref")?)?,
+            })
+        }
+        _ => Err(invalid_grant()),
+    }
+}
+
+fn encode_guest_payload(guest: &FederationGrantGuestPayload) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(GUEST_SCOPE_KEYS[0]),
+            Value::from(guest.person_ref.to_hex()),
+        ),
+        (
+            Value::from(GUEST_SCOPE_KEYS[1]),
+            Value::from(guest.asker_ref.to_hex()),
+        ),
+        (
+            Value::from(GUEST_SCOPE_KEYS[2]),
+            Value::Array(
+                guest
+                    .disclosed_refs
+                    .iter()
+                    .map(|id| Value::from(id.to_hex()))
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn decode_guest_payload(value: &Value) -> Result<FederationGrantGuestPayload> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_grant());
+    };
+    validate_scope_keys(entries, &GUEST_SCOPE_KEYS)?;
+    let person_ref = decode_canonical_entity_ref(required_value(entries, GUEST_SCOPE_KEYS[0])?)?;
+    let asker_ref = decode_canonical_entity_ref(required_value(entries, GUEST_SCOPE_KEYS[1])?)?;
+    let Value::Array(disclosed) = required_value(entries, GUEST_SCOPE_KEYS[2])? else {
+        return Err(invalid_grant());
+    };
+    if disclosed.is_empty() || disclosed.len() > MAX_GUEST_DISCLOSED_REFS {
         return Err(invalid_grant());
     }
-
-    let vault_id = required_value(entries, FEDERATION_GRANT_SCOPE_KEYS[1])?
-        .as_u64()
-        .ok_or_else(invalid_grant)?;
-    let scope = FederationGrantScope::Vault { vault_id };
-    scope.validate()?;
-    Ok(scope)
-}
-
-/// Rejects unknown and duplicate keys, and any missing REQUIRED key.
-///
-/// Presence of the two role-conditional tail keys is not decided here — that
-/// is [`FederationGrant::validate`]'s job, because it depends on the role.
-/// A schema-1 body must not carry `authority_scope`: legacy decodes to the
-/// role's membership preset, so accepting a carried value would silently
-/// widen a narrowed scope.
-fn validate_body_keys(entries: &[(Value, Value)], legacy: bool) -> Result<()> {
-    let mut seen = [false; FEDERATION_GRANT_BODY_KEYS.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_grant)?;
-        if legacy && key == "authority_scope" {
+    let mut disclosed_refs = BTreeSet::new();
+    for value in disclosed {
+        if !disclosed_refs.insert(decode_canonical_entity_ref(value)?) {
             return Err(invalid_grant());
         }
-        let Some(index) = FEDERATION_GRANT_BODY_KEYS
-            .iter()
-            .position(|known| *known == key)
-        else {
-            return Err(invalid_grant());
-        };
-        if seen[index] {
-            return Err(invalid_grant());
-        }
-        seen[index] = true;
     }
-    if seen[..FEDERATION_GRANT_REQUIRED_KEYS].iter().all(|v| *v) {
-        Ok(())
-    } else {
-        Err(invalid_grant())
-    }
+    Ok(FederationGrantGuestPayload {
+        person_ref,
+        asker_ref,
+        disclosed_refs,
+    })
 }
 
-fn validate_scope_keys(entries: &[(Value, Value)]) -> Result<()> {
-    let mut seen = [false; FEDERATION_GRANT_SCOPE_KEYS.len()];
+fn validate_scope_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
+    let mut seen = vec![false; keys.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_grant)?;
-        let Some(index) = FEDERATION_GRANT_SCOPE_KEYS
-            .iter()
-            .position(|known| *known == key)
-        else {
+        let Some(index) = keys.iter().position(|known| *known == key) else {
             return Err(invalid_grant());
         };
         if seen[index] {
@@ -569,6 +759,46 @@ fn validate_scope_keys(entries: &[(Value, Value)]) -> Result<()> {
     } else {
         Err(invalid_grant())
     }
+}
+
+/// Rejects unknown and duplicate keys, and any missing REQUIRED key.
+///
+/// Presence of the two role-conditional tail keys is not decided here — that
+/// is [`FederationGrant::validate`]'s job, because it depends on the role.
+/// A schema-1 body must not carry `authority_scope`: legacy decodes to the
+/// role's membership preset, so accepting a carried value would silently
+/// widen a narrowed scope.
+fn validate_body_keys(entries: &[(Value, Value)], schema_version: u64) -> Result<()> {
+    let mut seen = [false; FEDERATION_GRANT_BODY_KEYS.len()];
+    for (key, _) in entries {
+        let key = key.as_str().ok_or_else(invalid_grant)?;
+        let Some(index) = FEDERATION_GRANT_BODY_KEYS
+            .iter()
+            .position(|known| *known == key)
+        else {
+            return Err(invalid_grant());
+        };
+        if seen[index] {
+            return Err(invalid_grant());
+        }
+        // Schema 1 is the original five-key shape; only the current schema
+        // can carry the guest payload.
+        if schema_version == FEDERATION_GRANT_LEGACY_SCHEMA_VERSION && index >= 7 {
+            return Err(invalid_grant());
+        }
+        seen[index] = true;
+    }
+    if seen[..FEDERATION_GRANT_REQUIRED_KEYS].iter().all(|v| *v) {
+        Ok(())
+    } else {
+        Err(invalid_grant())
+    }
+}
+
+fn guest_authority_scope() -> super::Scope {
+    let mut scope = super::Scope::top();
+    scope.verbs = super::ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "propose".to_owned()]));
+    scope
 }
 
 pub(super) fn invalid_grant() -> Error {

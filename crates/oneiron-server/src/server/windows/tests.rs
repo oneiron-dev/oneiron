@@ -67,6 +67,7 @@ async fn local_tee_waits_for_delete_commit_after_tombstone_publication() {
         &MaterializedDiffSummary {
             containers: vec![path],
             bytes: 0,
+            revision_events: Vec::new(),
         },
         &OriginMark {
             conn_id: None,
@@ -84,6 +85,7 @@ async fn local_tee_waits_for_delete_commit_after_tombstone_publication() {
         &MaterializedDiffSummary {
             containers: vec![entity.clone()],
             bytes: 0,
+            revision_events: Vec::new(),
         },
         &OriginMark {
             conn_id: None,

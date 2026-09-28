@@ -96,29 +96,6 @@ impl<'a> AttemptQueue<'a> {
         Ok(outcome)
     }
 
-    /// Enqueues an attempt into a caller-owned write transaction.
-    ///
-    /// The caller owns commit/abort. This is used by higher-level private
-    /// runner stores that need to co-commit their own local indexes with the
-    /// generic attempt row.
-    pub(crate) fn enqueue_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        input: EnqueueAttempt,
-    ) -> Result<EnqueueOutcome> {
-        crate::ports::JobQueue::port_job_enqueue(self, wtxn, input)
-    }
-
-    /// Transaction-composable enqueue with an owning TASK backlink.
-    pub(crate) fn enqueue_with_task_ref_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        input: EnqueueAttempt,
-        task_ref: Option<String>,
-    ) -> Result<EnqueueOutcome> {
-        self.enqueue_with_task_ref_and_dedupe_actor_in_txn(wtxn, input, task_ref, None)
-    }
-
     /// Transaction-composable enqueue that scopes the advisory dedupe index to
     /// one actor.
     ///
@@ -201,6 +178,7 @@ impl<'a> AttemptQueue<'a> {
             updated_at: input.now,
             events: Vec::new(),
             manifest: Vec::new(),
+            executor_model: None,
             cancel_state: AttemptCancelState::default(),
             signals: Vec::new(),
             asks: Vec::new(),
@@ -468,16 +446,5 @@ impl<'a> AttemptQueue<'a> {
             .put(wtxn, id.as_bytes(), &encoded)?;
 
         Ok(ClaimOutcome::Claimed(record))
-    }
-}
-
-impl AttemptQueue<'_> {
-    pub(crate) fn claim_kind_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        kind: &str,
-        input: ClaimAttempt,
-    ) -> Result<ClaimOutcome> {
-        crate::ports::JobQueue::port_job_claim(self, txn, Some(kind), input)
     }
 }
