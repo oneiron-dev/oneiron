@@ -49,67 +49,6 @@ pub(in crate::gate) fn default_docedit_resource_row() -> Value {
     ])
 }
 
-/// Shipped room-thread list budgets: base values under a vault ceiling.
-fn default_room_thread_row() -> Value {
-    Value::Map(vec![
-        (
-            Value::from("base"),
-            Value::Map(vec![
-                (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
-                (Value::from("rows_per_list"), Value::from(8)),
-                (Value::from("tokens_per_list"), Value::from(512)),
-                (Value::from("fill"), Value::from("stage")),
-                (Value::from("waits_per_thread"), Value::from(8)),
-            ]),
-        ),
-        (
-            Value::from("vault_ceiling"),
-            Value::Map(vec![
-                (Value::from("fresh_for_secs"), Value::from(30 * 86_400_u64)),
-                (Value::from("rows_per_list"), Value::from(1_000)),
-                (Value::from("tokens_per_list"), Value::from(65_536)),
-                (Value::from("fill"), Value::from("stage")),
-                (Value::from("waits_per_thread"), Value::from(128)),
-            ]),
-        ),
-        (Value::from("precedence"), Value::from("nested_narrowing")),
-        (
-            Value::from("allowed_fills"),
-            Value::Array(vec![
-                Value::from("recency"),
-                Value::from("nudge_due"),
-                Value::from("stage"),
-            ]),
-        ),
-        (Value::from("holder_rows"), Value::Array(Vec::new())),
-    ])
-}
-
-/// Shipped conversion row: task-holder fallback, inherited roster, the
-/// holder override allowed, and the task cap.
-fn default_project_conversion_row() -> Value {
-    Value::Map(vec![
-        (
-            Value::from("precedence"),
-            Value::from("nested_narrowing_holder_override_capped_vault"),
-        ),
-        (
-            Value::from("leader_fallback"),
-            Value::from("task_holder_then_source_leader"),
-        ),
-        (
-            Value::from("roster_selection"),
-            Value::from("inherit_source"),
-        ),
-        (
-            Value::from("task_holder_fallback"),
-            Value::from("assignee_then_owner"),
-        ),
-        (Value::from("max_tasks"), Value::from(4096_u64)),
-        (Value::from("allow_holder_override"), Value::Boolean(true)),
-    ])
-}
-
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
     EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
@@ -161,7 +100,41 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
             Value::from(env!("CARGO_PKG_VERSION")),
         ),
-        (Value::from("room_thread"), default_room_thread_row()),
+        (
+            Value::from("room_thread"),
+            Value::Map(vec![
+                (
+                    Value::from("base"),
+                    Value::Map(vec![
+                        (Value::from("fresh_for_secs"), Value::from(7 * 86_400_u64)),
+                        (Value::from("rows_per_list"), Value::from(8)),
+                        (Value::from("tokens_per_list"), Value::from(512)),
+                        (Value::from("fill"), Value::from("stage")),
+                        (Value::from("waits_per_thread"), Value::from(8)),
+                    ]),
+                ),
+                (
+                    Value::from("vault_ceiling"),
+                    Value::Map(vec![
+                        (Value::from("fresh_for_secs"), Value::from(30 * 86_400_u64)),
+                        (Value::from("rows_per_list"), Value::from(1_000)),
+                        (Value::from("tokens_per_list"), Value::from(65_536)),
+                        (Value::from("fill"), Value::from("stage")),
+                        (Value::from("waits_per_thread"), Value::from(128)),
+                    ]),
+                ),
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("allowed_fills"),
+                    Value::Array(vec![
+                        Value::from("recency"),
+                        Value::from("nudge_due"),
+                        Value::from("stage"),
+                    ]),
+                ),
+                (Value::from("holder_rows"), Value::Array(Vec::new())),
+            ]),
+        ),
         (
             Value::from(POLICY_DEFAULTS_KEY),
             Value::Map(vec![
@@ -622,7 +595,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         ),
         (
             Value::from(POLICY_PROJECT_CONVERSION_KEY),
-            default_project_conversion_row(),
+            super::project_conversion::shipped_row(),
         ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),

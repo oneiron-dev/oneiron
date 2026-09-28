@@ -121,6 +121,30 @@ impl ProjectConversionPolicy {
     }
 }
 
+/// The shipped conversion row, as the default manifest carries it.
+pub(super) fn shipped_row() -> Value {
+    Value::Map(vec![
+        (
+            Value::from("precedence"),
+            Value::from("nested_narrowing_holder_override_capped_vault"),
+        ),
+        (
+            Value::from("leader_fallback"),
+            Value::from("task_holder_then_source_leader"),
+        ),
+        (
+            Value::from("roster_selection"),
+            Value::from("inherit_source"),
+        ),
+        (
+            Value::from("task_holder_fallback"),
+            Value::from("assignee_then_owner"),
+        ),
+        (Value::from("max_tasks"), Value::from(4096_u64)),
+        (Value::from("allow_holder_override"), Value::Boolean(true)),
+    ])
+}
+
 /// A complete map. Unknown, duplicate, missing, or ill-typed fields reject
 /// the entire manifest, rather than silently authorizing the default.
 pub(super) fn parse_project_conversion(value: &Value) -> Option<ProjectConversionPolicy> {
