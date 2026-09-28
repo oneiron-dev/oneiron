@@ -4,9 +4,8 @@ use crate::Vault;
 use crate::error::Result;
 
 use super::codec::{
-    CURSOR_KEY, EDIT_PROPOSAL_PREFIX, EVIDENCE_PREFIX, JUDGMENT_PREFIX, decode_edit_proposal,
-    decode_judgment, decode_u64, encode_edit_proposal, encode_evidence, encode_judgment,
-    encode_value, evidence_after, next_evidence_sequence_in_txn, sequenced_key, validate_evidence,
+    CURSOR, EDIT_PROPOSAL, EVIDENCE, EvidenceRow, JUDGMENT, evidence_after,
+    next_evidence_sequence_in_txn, validate_evidence,
 };
 use super::judge::{AttributionJudge, RuleAttributionJudge, verdict_subject};
 use super::types::{AttributionJudgment, OutcomeEvidence, SkillEditProposal};
@@ -32,11 +31,15 @@ pub(super) fn record_evidence_in_txn(
     evidence: &OutcomeEvidence,
 ) -> Result<u64> {
     let sequence = next_evidence_sequence_in_txn(vault, txn)?;
-    let encoded = encode_value(&encode_evidence(evidence, sequence))?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, &sequenced_key(EVIDENCE_PREFIX, sequence), &encoded)?;
+    EVIDENCE.put(
+        &vault.store,
+        txn,
+        &sequence,
+        &EvidenceRow {
+            sequence,
+            evidence: evidence.clone(),
+        },
+    )?;
     Ok(sequence)
 }
 
@@ -44,10 +47,7 @@ pub(super) fn record_evidence_in_txn(
 /// An absent row IS cursor 0 (bootstrap).
 pub fn read_attribution_cursor(vault: &Vault) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, CURSOR_KEY)? else {
-        return Ok(0);
-    };
-    decode_u64(&raw, "attribution cursor")
+    Ok(CURSOR.get(&vault.store, &rtxn, &())?.unwrap_or(0))
 }
 
 /// Runs one ordered, idempotent attribution pass over evidence recorded after
@@ -101,9 +101,8 @@ pub fn run_attribution_projector_with_judge(
                     vault, &*wtxn, revision,
                 )?;
             }
-            let judgment_key = sequenced_key(JUDGMENT_PREFIX, judgment.sequence);
-            if let Some(existing) = vault.store.vault_meta.get(wtxn, &judgment_key)? {
-                if decode_judgment(&existing)? != *judgment {
+            if let Some(existing) = JUDGMENT.get(&vault.store, wtxn, &judgment.sequence)? {
+                if existing != *judgment {
                     return Err(crate::error::Error::InvalidClaimBody(
                         "an attribution judgment cannot be rescored",
                     ));
@@ -120,22 +119,13 @@ pub fn run_attribution_projector_with_judge(
                     revision,
                 )?;
             }
-            let encoded = encode_value(&encode_judgment(judgment))?;
-            vault.store.vault_meta.put(wtxn, &judgment_key, &encoded)?;
+            JUDGMENT.put(&vault.store, wtxn, &judgment.sequence, judgment)?;
             if let Some(proposal) = edit_proposal_for(judgment) {
-                let encoded = encode_value(&encode_edit_proposal(&proposal))?;
-                vault.store.vault_meta.put(
-                    wtxn,
-                    &sequenced_key(EDIT_PROPOSAL_PREFIX, proposal.judgment_sequence),
-                    &encoded,
-                )?;
+                EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
             }
         }
         if highest > since_cursor {
-            vault
-                .store
-                .vault_meta
-                .put(wtxn, CURSOR_KEY, &highest.to_be_bytes())?;
+            CURSOR.put(&vault.store, wtxn, &(), &highest)?;
         }
         Ok(())
     })?;
@@ -154,12 +144,11 @@ pub(super) fn attribution_judgments_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<AttributionJudgment>> {
-    let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(txn, JUDGMENT_PREFIX)? {
-        let (_, raw) = row?;
-        out.push(decode_judgment(&raw)?);
-    }
-    Ok(out)
+    Ok(JUDGMENT
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, judgment)| judgment)
+        .collect())
 }
 
 /// Every minted skill EDIT PROPOSAL awaiting the gated apply, in mint order.
@@ -171,16 +160,11 @@ pub(super) fn attribution_judgments_in_txn(
 /// is not applying — ONE-1737 stops at the proposal.
 pub fn pending_edit_proposals(vault: &Vault) -> Result<Vec<SkillEditProposal>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, EDIT_PROPOSAL_PREFIX)?
-    {
-        let (_, raw) = row?;
-        out.push(decode_edit_proposal(&raw)?);
-    }
-    Ok(out)
+    Ok(EDIT_PROPOSAL
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(_, proposal)| proposal)
+        .collect())
 }
 
 /// The proposal a judgment mints, or `None` when its verdict routes to a

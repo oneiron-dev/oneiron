@@ -5,6 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
 use super::address::AssignmentKey;
@@ -12,15 +13,12 @@ use super::codec::decode_channel_identity_body;
 use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
 
-const PREFIX: &[u8] = b"cid_assign:v1:";
+/// One assignment key's two slots: occupant id then predecessor id, zeros for an empty slot.
+const SLOTS: SideTable<[u8; 32], [u8; 32], Raw> =
+    SideTable::new(&side_table::CHANNEL_IDENTITY_ASSIGNMENT);
 /// Deletion evidence for a retained header-only shell, staged with slot removal.
-const ERASED_PREFIX: &[u8] = b"cid_assign_erased:v1:";
-
-fn erased_key(id: &EntityId) -> Vec<u8> {
-    let mut key = ERASED_PREFIX.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+const ERASED: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::CHANNEL_IDENTITY_ASSIGNMENT_ERASED);
 
 /// The only two rows allowed to influence a mailbox route. A predecessor is
 /// a retiring delegated row; it never occupies the mailbox for re-consent.
@@ -30,7 +28,7 @@ struct AssignmentSlot {
     predecessor: Option<EntityId>,
 }
 
-fn index_key(key: &AssignmentKey) -> Vec<u8> {
+fn index_key(key: &AssignmentKey) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     let channel = key.channel().as_bytes();
     let address = key.address_or_handle().as_bytes();
@@ -38,9 +36,7 @@ fn index_key(key: &AssignmentKey) -> Vec<u8> {
     hasher.update(channel);
     hasher.update(&(address.len() as u64).to_be_bytes());
     hasher.update(address);
-    let mut bytes = PREFIX.to_vec();
-    bytes.extend_from_slice(hasher.finalize().as_bytes());
-    bytes
+    *hasher.finalize().as_bytes()
 }
 
 fn decode_id(bytes: &[u8]) -> Result<Option<EntityId>> {
@@ -56,12 +52,9 @@ fn decode_id(bytes: &[u8]) -> Result<Option<EntityId>> {
 }
 
 fn read_slot(store: &Store, txn: &heed::RoTxn<'_>, key: &AssignmentKey) -> Result<AssignmentSlot> {
-    let Some(value) = store.vault_meta.get(txn, &index_key(key))? else {
+    let Some(value) = SLOTS.get(store, txn, &index_key(key))? else {
         return Ok(AssignmentSlot::default());
     };
-    if value.len() != 32 {
-        return Err(Error::CorruptedIndex("channel assignment slot"));
-    }
     Ok(AssignmentSlot {
         occupant: decode_id(&value[..16])?,
         predecessor: decode_id(&value[16..])?,
@@ -81,7 +74,7 @@ fn write_slot(
     if let Some(id) = slot.predecessor {
         value[16..].copy_from_slice(id.as_bytes());
     }
-    store.vault_meta.put(txn, &index_key(key), &value)?;
+    SLOTS.put(store, txn, &index_key(key), &value)?;
     Ok(())
 }
 
@@ -202,7 +195,7 @@ pub(crate) fn maintain_assignment_put(
     }
     write_slot(store, txn, &key, slot)?;
     // A newly admitted row at a formerly erased id is live again.
-    store.vault_meta.delete(txn, &erased_key(id))?;
+    ERASED.delete(store, txn, id)?;
     Ok(())
 }
 
@@ -223,12 +216,8 @@ pub(crate) fn clear_assignment_for_delete(
         return Ok(());
     }
     let mut changed = Vec::new();
-    for item in store.vault_meta.prefix_iter(&*txn, PREFIX)? {
-        let (key, value) = item?;
-        let mut slot: [u8; 32] = value
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("channel assignment slot"))?;
+    for item in SLOTS.iter_from(store, &*txn, &[])? {
+        let (key, mut slot) = item?;
         let mut touched = false;
         for half in slot.chunks_exact_mut(16) {
             if half == id.as_bytes() {
@@ -237,34 +226,27 @@ pub(crate) fn clear_assignment_for_delete(
             }
         }
         if touched {
-            changed.push((key.to_vec(), slot));
+            changed.push((key, slot));
         }
     }
     for (key, slot) in changed {
         if slot == [0; 32] {
-            store.vault_meta.delete(txn, &key)?;
+            SLOTS.delete(store, txn, &key)?;
         } else {
-            store.vault_meta.put(txn, &key, &slot)?;
+            SLOTS.put(store, txn, &key, &slot)?;
         }
     }
     // Soft erase retains the type-index row and a metadata-only shell. This
     // marker proves that empty body was deleted rather than live corruption.
     // Hard delete has no shell; its marker is harmless and is retired on put.
-    store.vault_meta.put(txn, &erased_key(id), &[1])?;
+    ERASED.put(store, txn, id, &[1])?;
     Ok(())
 }
 
 /// Explicit CID-7 recovery. Only this door scans stored rows; normal routing
 /// and write admission use the index. Pre-release vaults have no ABI migration.
 pub(super) fn rebuild(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-    let stale: Vec<Vec<u8>> = store
-        .vault_meta
-        .prefix_iter(&*txn, PREFIX)?
-        .map(|result| result.map(|(key, _)| key.to_vec()))
-        .collect::<Result<_>>()?;
-    for key in stale {
-        store.vault_meta.delete(txn, &key)?;
-    }
+    SLOTS.delete_from(store, txn, &[])?;
     let mut rows = Vec::new();
     for item in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
         let id = item?;
@@ -283,8 +265,8 @@ pub(super) fn rebuild(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         // staged in the SAME deletion transaction. Header-only corruption of a
         // live row has no marker and remains a recovery error.
         if raw.len() == ENTITY_METADATA_HEADER_LEN {
-            match store.vault_meta.get(txn, &erased_key(&id))? {
-                Some(value) if value.as_ref() == [1] => continue,
+            match ERASED.get(store, txn, &id)? {
+                Some([1]) => continue,
                 _ => {
                     return Err(Error::CorruptedIndex(
                         "channel identity shell without deletion",

@@ -18,7 +18,8 @@ fn imported_claim() -> StoredProvenanceClaim {
         record.confidence,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     stamp_imported_source(
         &mut wrapper,
         Value::Map(vec![

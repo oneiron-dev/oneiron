@@ -5,10 +5,10 @@ use rmpv::Value;
 
 use super::support::{
     CURSOR_SCHEMA_VERSION, DREAMER_BUCKET_HASH_DOMAIN, DREAMER_PARTITION_ROUND_HASH_DOMAIN,
-    DREAMER_PRIVATE_CURSOR_PREFIX, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_CONVERSATION,
-    KEY_FACET, KEY_LAST_LEARNED_AT, KEY_LAST_LEDGER_REVISION_HINT, KEY_SCHEMA_VERSION, KEY_TURNS,
-    KEY_WATERMARK, KEY_WORLD, PARTITION_PAYLOAD_SCHEMA_VERSION, decode_value, encode_value,
-    expect_key, expect_map, hash_optional_entity, invalid_consolidation, scope_byte,
+    DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_CONVERSATION, KEY_FACET, KEY_LAST_LEARNED_AT,
+    KEY_LAST_LEDGER_REVISION_HINT, KEY_SCHEMA_VERSION, KEY_TURNS, KEY_WATERMARK, KEY_WORLD,
+    PARTITION_PAYLOAD_SCHEMA_VERSION, decode_value, encode_value, expect_key, expect_map,
+    hash_optional_entity, invalid_consolidation, scope_byte,
 };
 use super::watermark::{
     ConsolidationWatermark, WorkingSetTurn, entity_ref_from_value, read_turn_facts,
@@ -26,6 +26,22 @@ use crate::dreamer_runner::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
+use crate::side_table::{self, Raw, SideTable};
+
+/// Per-scope, per-partition consolidation cursor row. Key: u8 (scope byte) + hash32 (partition
+/// hash).
+const CURSOR: SideTable<([u8; 1], [u8; 32]), ConsolidationCursor, Raw> =
+    SideTable::new(&side_table::DREAMER_CURSOR);
+
+impl crate::side_table::RawValue for ConsolidationCursor {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+        Ok(encode_cursor(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
+        Ok(decode_cursor(bytes)?)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Phase 1 — work partitions (turn vocabulary ONLY)
@@ -72,14 +88,6 @@ pub struct ConsolidationPartitionPlan {
     pub watermark_last_learned_at: u64,
 }
 
-fn cursor_key(scope: DreamerConsolidationScope, partition_hash: &[u8; 32]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_CURSOR_PREFIX.len() + 1 + 32);
-    key.extend_from_slice(DREAMER_PRIVATE_CURSOR_PREFIX);
-    key.push(scope_byte(scope));
-    key.extend_from_slice(partition_hash);
-    key
-}
-
 /// Reads a partition cursor row.
 pub fn read_cursor(
     vault: &Vault,
@@ -87,14 +95,7 @@ pub fn read_cursor(
     partition_hash: &[u8; 32],
 ) -> Result<Option<ConsolidationCursor>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &cursor_key(scope, partition_hash))?
-    else {
-        return Ok(None);
-    };
-    decode_cursor(&raw).map(Some)
+    CURSOR.get(&vault.store, &rtxn, &([scope_byte(scope)], *partition_hash))
 }
 
 /// Writes a partition cursor row (advance ONLY after the bucket's promotion
@@ -105,12 +106,13 @@ pub fn write_cursor(
     partition_hash: &[u8; 32],
     cursor: &ConsolidationCursor,
 ) -> Result<()> {
-    let encoded = encode_cursor(cursor)?;
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, &cursor_key(scope, partition_hash), &encoded)?;
+    CURSOR.put(
+        &vault.store,
+        &mut wtxn,
+        &([scope_byte(scope)], *partition_hash),
+        cursor,
+    )?;
     wtxn.commit()?;
     vault.store.notify_attempt_observers();
     Ok(())

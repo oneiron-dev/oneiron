@@ -13,7 +13,7 @@ use super::ledger_fold::fold_identity_topology_log;
 use super::reassignment_map::reassignment_claims_for_prefix_in_txn;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
-use super::{REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX};
+use super::{REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX};
 
 /// Role relative to the currently applied merge (not old/undone events).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +127,7 @@ impl Vault {
         let mut claims = reassignment_claims_for_prefix_in_txn(
             &self.store,
             &rtxn,
-            REASSIGNMENT_TARGET_META_PREFIX,
+            REASSIGNMENT_TARGET_INDEX,
             target,
             |_| true,
         )?;
@@ -155,7 +155,7 @@ impl Vault {
         let residue = reassignment_claims_for_prefix_in_txn(
             &self.store,
             &rtxn,
-            REASSIGNMENT_ORIGIN_META_PREFIX,
+            REASSIGNMENT_ORIGIN_INDEX,
             origin,
             |target| target.is_none(),
         )?;
@@ -191,7 +191,7 @@ impl Vault {
         reassignment_claims_for_prefix_in_txn(
             &self.store,
             rtxn,
-            REASSIGNMENT_ORIGIN_META_PREFIX,
+            REASSIGNMENT_ORIGIN_INDEX,
             origin,
             |target| target.is_some(),
         )

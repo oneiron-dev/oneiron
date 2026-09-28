@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::authority::{
-    authority_first_seen_clock_sync_key, authority_observation_secs,
-    decode_authority_first_seen_secs,
+    AUTHORITY_FIRST_SEEN, authority_first_seen_clock_key, authority_observation_secs,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -96,11 +95,8 @@ impl Vault {
     /// write paths that already own it, which is why this can run inside a
     /// caller's read transaction at all.
     pub(crate) fn instant_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<VaultInstant> {
-        let persisted_floor = self
-            .store
-            .sync_state
-            .get(txn, authority_first_seen_clock_sync_key())?
-            .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        let persisted_floor = AUTHORITY_FIRST_SEEN
+            .get_lenient(&self.store, txn, &authority_first_seen_clock_key())?
             .unwrap_or(0);
         Ok(VaultInstant(authority_observation_secs(
             &self.store,

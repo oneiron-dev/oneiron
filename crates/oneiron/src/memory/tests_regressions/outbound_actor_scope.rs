@@ -200,3 +200,99 @@ fn schedule_outbound_replay_walk_terminates_on_a_fabricated_self_cycle() {
     );
     assert_eq!(replay.gate_decision_ref, first.gate_decision_ref);
 }
+
+// ── T49: the outbound calendar read carries its lane's receipt ─────────────
+
+/// One live, approved `calendar.*` claim on `event`, optionally in `world`.
+fn put_calendar_claim(
+    vault: &crate::Vault,
+    event: EntityId,
+    predicate: &str,
+    value: rmpv::Value,
+    world: Option<EntityId>,
+) {
+    let mut body = crate::claim::ClaimBody::new(
+        predicate,
+        crate::claim::ClaimSubject::Entity(event),
+        value,
+        1.0,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = world;
+    vault
+        .put_claim(&EntityId::now(), &body, test_time(1), 1)
+        .expect("put calendar claim");
+}
+
+/// An agent whose grant covers only one world reads a calendar EVENT whose
+/// origin claim is in that world and whose busy transparency is not: the
+/// EVENT projects, fails closed toward free, and the receipt names the
+/// withheld claim. The owner reads the same EVENT with nothing withheld.
+#[test]
+fn outbound_calendar_read_returns_its_receipt() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x71);
+    let agent = put_person(&vault, 0x72);
+    let world = EntityId::from_bytes([0x73; 16]).expect("world id");
+    let event = EntityId::from_bytes([0x74; 16]).expect("event id");
+    vault
+        .put_entity(
+            &event,
+            crate::registry::ENTITY_TYPE_EVENT,
+            crate::temporal::TimeRange {
+                start: 1_000,
+                end: 1_099,
+            },
+            1,
+            b"\x81\xa4name\xa6review",
+        )
+        .expect("put event");
+    put_calendar_claim(
+        &vault,
+        event,
+        crate::calendar::claims::PREDICATE_CALENDAR_ORIGIN,
+        rmpv::Value::from("imported"),
+        Some(world),
+    );
+    put_calendar_claim(
+        &vault,
+        event,
+        crate::calendar::claims::PREDICATE_CALENDAR_TIME_KIND,
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("kind"), rmpv::Value::from("absolute")),
+            (
+                rmpv::Value::from("busy_transparency"),
+                rmpv::Value::from("busy"),
+            ),
+        ]),
+        None,
+    );
+    super::super::tests::grant_world_reads(&vault, &agent.to_hex(), world);
+    let request = crate::CalendarReadRequest {
+        event_ref: event.to_hex(),
+    };
+
+    let owned = facade_for(&vault, owner)
+        .calendar_read(&request)
+        .expect("owner calendar read");
+    assert!(owned.value.as_ref().expect("owner projects").blocks_time);
+    assert_eq!(owned.receipt.suppressed_count, 0);
+
+    let scoped = vault
+        .memory(agent, EdgeActorClass::Agent)
+        .calendar_read(&request)
+        .expect("agent calendar read");
+    assert!(
+        !scoped.value.as_ref().expect("agent projects").blocks_time,
+        "a withheld transparency never resolves to the busy default"
+    );
+    assert_eq!(scoped.receipt.suppressed_count, 1);
+    assert!(
+        scoped
+            .receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
+}

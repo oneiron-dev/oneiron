@@ -540,7 +540,7 @@ fn install_retention_rows(
 ) -> crate::Result<()> {
     use crate::gate::retrieval_retention::RETRIEVAL_RETENTION_ROWS_KEY;
     let mut value =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .expect("shipped manifest decodes");
     let rmpv::Value::Map(entries) = &mut value else {
         unreachable!("default manifest map")
@@ -580,7 +580,7 @@ fn install_retention_rows(
 /// normal owner write door still validates before admission.
 fn install_unusable_retention_manifest(vault: &crate::Vault, mode: &str) -> crate::Result<()> {
     let mut value =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .expect("shipped manifest decodes");
     let rmpv::Value::Map(entries) = &mut value else {
         unreachable!("manifest map")
@@ -702,8 +702,9 @@ fn shipped_manifest_declares_default_retention_and_precedence() -> crate::Result
         resolved.retrieval_retention.effective(),
         (DEFAULT_RETRIEVAL_AGE_SECS, DEFAULT_RETRIEVAL_MAX_RUNS)
     );
-    let default = rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
-        .expect("shipped manifest decodes");
+    let default =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .expect("shipped manifest decodes");
     assert!(
         default
             .as_map()
@@ -836,16 +837,11 @@ fn crash_orphans_sweep_on_reopen() -> crate::Result<()> {
             )?
             .is_none()
     );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(
-                &vault.store.env.read_txn()?,
-                &super::run_store::retrieval_run_provisional_key(orphan.run_id)
-            )?
-            .is_none()
-    );
+    assert!(!super::run_store::RETRIEVAL_RUN_PROVISIONAL.contains(
+        &vault.store,
+        &vault.store.env.read_txn()?,
+        &orphan.run_id
+    )?);
     Ok(())
 }
 

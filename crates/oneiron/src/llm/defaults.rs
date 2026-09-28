@@ -1,5 +1,6 @@
 //! Vault-local inference defaults. The shipped rows are data, not model bindings.
 use super::{CallEnvelope, CallPurpose, ModelId, ModelLocality, ModelTierRef, TierPrecedence};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     error::{Error, Result},
@@ -7,7 +8,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const POLICY_KEY: &[u8] = b"llm:purpose_defaults:v1";
+/// The vault's stored purpose-default table, validated on every read. Key: ().
+const POLICY: SideTable<(), PurposeDefaultTable, LegacyJson> =
+    SideTable::new(&side_table::LLM_PURPOSE_DEFAULTS);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -222,11 +225,11 @@ pub(super) fn read_stored_defaults(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<PurposeDefaultTable>> {
-    store
-        .vault_meta
-        .get(txn, POLICY_KEY)?
-        .map(|bytes| PurposeDefaultTable::from_json(&bytes))
-        .transpose()
+    let Some(table) = POLICY.get(store, txn, &())? else {
+        return Ok(None);
+    };
+    table.validate()?;
+    Ok(Some(table))
 }
 
 impl Vault {
@@ -234,9 +237,8 @@ impl Vault {
     /// not permission to fall through to an unrelated global tier.
     pub fn set_purpose_default_table(&self, table: &PurposeDefaultTable) -> Result<()> {
         table.validate()?;
-        let bytes = serde_json::to_vec(table).map_err(|e| Error::InvalidConfig(e.to_string()))?;
         let mut txn = self.store.env.write_txn()?;
-        self.store.vault_meta.put(&mut txn, POLICY_KEY, &bytes)?;
+        POLICY.put(&self.store, &mut txn, &(), table)?;
         txn.commit()?;
         Ok(())
     }
@@ -263,8 +265,7 @@ impl Vault {
                 "resident inference locality cannot widen".into(),
             ));
         }
-        let bytes = serde_json::to_vec(next).map_err(|e| Error::InvalidConfig(e.to_string()))?;
-        self.store.vault_meta.put(&mut txn, POLICY_KEY, &bytes)?;
+        POLICY.put(&self.store, &mut txn, &(), next)?;
         txn.commit()?;
         Ok(())
     }

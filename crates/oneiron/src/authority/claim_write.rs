@@ -12,7 +12,8 @@ use rmpv::Value;
 impl Vault {
     pub fn claim_write_disposition(&self, id: &EntityId) -> Result<Option<CausalWriteDisposition>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
+        else {
             return Ok(None);
         };
         if EntityMetadataHeader::parse(&raw)
@@ -21,16 +22,32 @@ impl Vault {
             return Ok(None);
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        Ok(Some(if claim_causal_admitted(&fold, &body) {
-            CausalWriteDisposition::Admitted
-        } else {
-            CausalWriteDisposition::Quarantined
-        }))
+        let view = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(Some(
+            if claim_causal_admitted(&self.store, &txn, &view, id, &body)? {
+                CausalWriteDisposition::Admitted
+            } else {
+                CausalWriteDisposition::Quarantined
+            },
+        ))
     }
 }
 
-pub(crate) fn claim_causal_admitted(fold: &AuthorityFold, body: &ClaimBody) -> bool {
+pub(crate) fn claim_causal_admitted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<bool> {
+    let machine_admitted = super::machine_claim_read_admitted(store, txn, fold, id, body)?;
+    if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
+        return Ok(machine_admitted);
+    }
+    Ok(machine_admitted && claim_revocation_causal_admitted(fold, body))
+}
+
+fn claim_revocation_causal_admitted(fold: &AuthorityFold, body: &ClaimBody) -> bool {
     if fold.vault_root_is_conflicted() {
         return false;
     }
@@ -82,7 +99,7 @@ pub(crate) fn check_materialized_claim_causality(
 ) -> Result<()> {
     let mut claims = Vec::new();
     for id in ids {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         if EntityMetadataHeader::parse(&raw)
@@ -98,10 +115,13 @@ pub(crate) fn check_materialized_claim_causality(
         return Ok(());
     }
     let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
-    if claims
-        .iter()
-        .any(|body| !claim_causal_admitted(&fold, body))
-    {
+    // Replay may see a machine's signed claim before its enrollment or
+    // binding. Origin verification happens at admission; machine authority is
+    // evaluated at read/fold time, not used to reject an out-of-order replay.
+    if claims.iter().any(|body| {
+        crate::claim::history_store::machine_history_kind(&body.predicate).is_none()
+            && !claim_revocation_causal_admitted(&fold, body)
+    }) {
         return Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation));
     }
     Ok(())
@@ -110,6 +130,7 @@ pub(crate) fn check_materialized_claim_causality(
 pub(crate) fn row_causal_admitted(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
     let header =
@@ -119,5 +140,5 @@ pub(crate) fn row_causal_admitted(
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     let view = vault.authority_view_readonly_in_txn(txn)?;
-    Ok(claim_causal_admitted(&view, &body))
+    claim_causal_admitted(&vault.store, txn, &view, id, &body)
 }

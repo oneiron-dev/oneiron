@@ -20,7 +20,21 @@ use crate::gate::ceiling::{
     fold_delegated_grants,
 };
 use crate::gate::decode::ConnectorClassRole;
-use crate::gate::decode::decode_policy_manifest;
+use crate::gate::decode::{
+    DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
+};
+
+/// The vault ceiling on any project's depth row: the resolved manifest row,
+/// capped by the shipped ceiling. A loaded malformed manifest fails closed to
+/// the most restrictive ceiling (DEC-0005); it never bricks the vault.
+pub(crate) fn resolve_project_depth_max(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u8> {
+    let policy = resolve_policy_manifest(store, txn)?;
+    if policy.diagnostics.loaded_manifest_forces_fail_closed() {
+        return Ok(0);
+    }
+    let ceiling = crate::gate::default_manifest::SEEDED_PROJECT_DEPTH_MAX;
+    Ok(policy.project_depth_max.unwrap_or(ceiling).min(ceiling))
+}
 
 /// Resolve in the caller's mint/issuance transaction so policy and the
 /// resulting log or pending link observe one LMDB snapshot.
@@ -41,6 +55,8 @@ pub(crate) fn resolve_credential_lifetimes(
     })
 }
 
+// One fold per manifest row, in manifest order: splitting it would scatter one manifest.
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 pub(crate) fn resolve_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -48,10 +64,10 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     // The shipped manifest supplies bootstrap policy even when a replacement
     // omits optional count rows; a peer cannot replace these trusted defaults.
-    let shipped = decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest())
-        .ok_or(Error::InvariantViolation(
-            "shipped sheet-answer policy manifest invalid",
-        ))?;
+    let shipped =
+        decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?).ok_or(
+            Error::InvariantViolation("shipped sheet-answer policy manifest invalid"),
+        )?;
     resolution.sheet_answer_default_max_count = shipped
         .sheet_answer_limits
         .iter()
@@ -105,13 +121,26 @@ pub(crate) fn resolve_policy_manifest(
         }
 
         let body = &raw.body;
+        if crate::gate::project_depth::is_project_depth_id(&id)
+            || crate::gate::project_depth::is_project_depth_contribution(body)
+        {
+            match crate::gate::decode::decode_manifest_carrier(body) {
+                Some(crate::gate::decode::DecodedManifestCarrier::ProjectDepth(row)) => {
+                    // Its policy is resolved by the project-scoped causal fold,
+                    // not by a local manifest:trusted sidecar or a global pack.
+                    let _ = row;
+                }
+                _ => resolution.diagnostics.malformed_manifest_seen = true,
+            }
+            continue;
+        }
         if crate::gate::manifest_authenticity::manifest_is_quarantined(store, txn, &id, body)? {
             continue;
         }
         let trusted =
             crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
-        match decode_policy_manifest(body) {
-            Some(decoded) => {
+        match decode_manifest_carrier(body) {
+            Some(DecodedManifestCarrier::Pack(decoded)) => {
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
@@ -120,6 +149,16 @@ pub(crate) fn resolve_policy_manifest(
                     }
                     untrusted_sheet_limits.extend(decoded.sheet_answer_limits);
                     continue;
+                }
+                if let Some(row) = decoded.residence_operation_budgets {
+                    match row.precedence {
+                        crate::gate::ResidenceOperationBudgetPrecedence::NestedNarrowing => {
+                            resolution.residence_operation_budgets.restrict(row.vault);
+                            if let Some(holder) = row.holder {
+                                resolution.residence_operation_budgets.restrict(holder);
+                            }
+                        }
+                    }
                 }
                 // Only trusted packs can authorize the no-LLM lane. Each must agree.
                 if resolution.packs.is_empty() {
@@ -145,6 +184,17 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.credential_lifetimes = Some(lifetimes);
                     }
                 }
+                if let Some(default_all) = decoded.sync_world_default {
+                    resolution.sync_world_default =
+                        Some(resolution.sync_world_default.unwrap_or(true) && default_all);
+                }
+                if let Some(worlds) = decoded.sync_world_ceiling {
+                    resolution.sync_world_ceiling =
+                        Some(match resolution.sync_world_ceiling.take() {
+                            Some(existing) => existing.intersection(&worlds).copied().collect(),
+                            None => worlds,
+                        });
+                }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution
                     .experiment_selection
@@ -164,9 +214,24 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.weave_report_precedence = resolution
                     .weave_report_precedence
                     .max(decoded.weave_report_precedence);
+                // Every trusted pack's mail rows join one set; resolution
+                // narrows them together, so a pack can only tighten.
+                resolution
+                    .native_mail_policy
+                    .extend(decoded.native_mail_policy);
                 resolution
                     .federation_grant_rows
                     .extend(decoded.federation_grant_rows);
+                // One act-policy table per vault: the same table twice is one
+                // configuration; two different tables have no deterministic
+                // answer, so every act they would govern fails closed.
+                if let Some(rows) = decoded.shared_act_policies {
+                    match &resolution.shared_act_policies {
+                        None => resolution.shared_act_policies = Some(rows),
+                        Some(existing) if *existing == rows => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
@@ -197,6 +262,17 @@ pub(crate) fn resolve_policy_manifest(
                     decoded.owner_policy_output_contract,
                     &mut resolution.diagnostics.malformed_manifest_seen,
                 );
+                for (slot, row) in [
+                    (
+                        &mut resolution.project_depth_default,
+                        decoded.project_depth_default,
+                    ),
+                    (&mut resolution.project_depth_max, decoded.project_depth_max),
+                ] {
+                    if let Some(value) = row {
+                        *slot = Some(slot.map_or(value, |current| current.min(value)));
+                    }
+                }
                 resolution.signatures.extend(decoded.signatures);
                 if let Some(retention) = decoded.gate_decision_retention {
                     if retention.rows.iter().any(|row| row.override_parent)
@@ -211,7 +287,7 @@ pub(crate) fn resolve_policy_manifest(
                     // at that same ID as another copy of the seeded default.
                     if id == default_manifest_id
                         && body.as_slice()
-                            == crate::gate::default_manifest::default_policy_manifest().as_slice()
+                            == crate::gate::default_manifest::default_policy_manifest()?.as_slice()
                     {
                         default_retention = Some(retention);
                     } else {
@@ -231,6 +307,13 @@ pub(crate) fn resolve_policy_manifest(
                         Some(existing) if existing == on_budget_exhausted => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
+                }
+                if let Some(policy) = decoded.project_collaboration {
+                    resolution.project_collaboration = Some(
+                        resolution
+                            .project_collaboration
+                            .map_or(policy, |old| old.restrict(policy)),
+                    );
                 }
                 // One checker per vault (ONE-1296), folded exactly like the
                 // budget policy above: the first value wins, a second manifest
@@ -274,12 +357,18 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(admission) = decoded.connector_admission {
+                    resolution.connector_admission.restrict(admission);
+                }
                 if let Some(voice_serving) = decoded.voice_serving {
                     resolution.voice_serving.push(voice_serving);
                 }
                 resolution
                     .failure_signal_policy
                     .extend(decoded.failure_signal_policy);
+                if let Some(policy) = decoded.project_conversion {
+                    resolution.project_conversion = resolution.project_conversion.restrict(policy);
+                }
                 if let Some(policy) = decoded.pack_install_policy {
                     if let Some(existing) = &mut resolution.pack_install_policy {
                         existing.restrict(policy);
@@ -470,6 +559,10 @@ pub(crate) fn resolve_policy_manifest(
                 }
                 resolution.packs.push(decoded.pack);
             }
+            Some(DecodedManifestCarrier::ProjectDepth(_)) => {
+                // A project contribution never becomes a global policy pack.
+                continue;
+            }
             None => {
                 resolution.diagnostics.malformed_manifest_seen = true;
             }
@@ -615,7 +708,7 @@ pub(crate) fn retention_edit_target(
         "gate decision retention manifest missing".into(),
     ))?;
     let default_id = crate::gate::default_manifest::default_policy_manifest_id()?;
-    let seeded = crate::gate::default_manifest::default_policy_manifest();
+    let seeded = crate::gate::default_manifest::default_policy_manifest()?;
     let mut owner_ids = Vec::new();
     let mut default_present = false;
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {

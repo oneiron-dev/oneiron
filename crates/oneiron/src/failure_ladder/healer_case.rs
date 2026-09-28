@@ -2,15 +2,14 @@
 
 use crate::attempt_queue::{AttemptQueue, AttemptState};
 use crate::error::ArtifactError;
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{HealerCase, dispatched_target_ref};
 
-const CASE_PREFIX: &[u8] = b"healer:case:v1:";
-
-fn key(case: &HealerCase) -> Vec<u8> {
-    [CASE_PREFIX, case.case_ref.as_bytes()].concat()
-}
+/// Durable failure-ladder case authenticating one healer admission, bound to its lease-fenced
+/// failed attempt. Key: hex32 (case_ref).
+const CASE: SideTable<String, HealerCase, Named> = SideTable::new(&side_table::HEALER_CASE);
 
 /// Called only by the ladder, in the same transaction as its lease-fenced fail.
 pub(super) fn record_in_txn(
@@ -20,13 +19,10 @@ pub(super) fn record_in_txn(
 ) -> Result<()> {
     // The lease-fenced failure shares this transaction: invalid context aborts both rows.
     crate::agent_dispatch::validate_healer_case(case)?;
-    let key = key(case);
-    if vault.store.vault_meta.get(txn, &key)?.is_some() {
+    if CASE.contains(&vault.store, txn, &case.case_ref)? {
         return Err(Error::CorruptedIndex("duplicate durable healer case"));
     }
-    let bytes = rmp_serde::to_vec_named(case)
-        .map_err(|_| Error::InvariantViolation("healer case encoding"))?;
-    vault.store.vault_meta.put(txn, &key, &bytes)?;
+    CASE.put(&vault.store, txn, &case.case_ref, case)?;
     Ok(())
 }
 
@@ -54,13 +50,9 @@ pub(crate) fn require_in_txn(
     {
         return Err(invalid());
     }
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &key(case))?
+    let authentic = CASE
+        .get(&vault.store, txn, &case.case_ref)?
         .ok_or_else(invalid)?;
-    let authentic: HealerCase =
-        rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("durable healer case"))?;
     if authentic != *case {
         return Err(invalid());
     }

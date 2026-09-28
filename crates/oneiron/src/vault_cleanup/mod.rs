@@ -115,14 +115,14 @@ pub(crate) use self::tripwire::zero_live_members_in_txn;
 pub(crate) use visibility::is_archived_in_txn;
 
 use self::cleanup_types::{
-    DIGEST_PREFIX, DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT,
-    KEY_CANDIDATES, KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL,
-    KEY_SCHEMA_VERSION, KEY_SKIPPED, MAX_CLEANUP_SCAN_ROWS, PROPOSAL_PREFIX, PROPOSAL_ROW_LABEL,
+    DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
+    KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL,
+    KEY_SCHEMA_VERSION, KEY_SKIPPED, MAX_CLEANUP_SCAN_ROWS, PROPOSAL_ROW_LABEL,
     PROPOSAL_SCHEMA_VERSION,
 };
 use self::codec_receipts::{
     decode_proposal, decode_row, encode_row, field, fresh_row_id, id_list, id_value_list,
-    prefixed_key, proposal_key, put_digest_in_txn, put_proposal_in_txn,
+    put_digest_in_txn, put_proposal_in_txn,
 };
 use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,
@@ -140,8 +140,6 @@ mod tests;
 // and the private helpers only the tests reach. After the directory split the
 // seam re-imports them under cfg(test) so the test children resolve exactly
 // as they did before.
-#[cfg(test)]
-use self::codec_receipts::digest_key;
 #[cfg(test)]
 use self::proposals_archive::accept_cleanup_proposal_in_txn;
 #[cfg(test)]

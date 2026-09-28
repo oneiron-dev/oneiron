@@ -24,7 +24,11 @@ mod rulings;
 pub(crate) use ruling_integrity::{
     guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
 };
+mod pending_act;
 mod shared_creation;
+pub use pending_act::{
+    PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
+};
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;
@@ -53,8 +57,8 @@ pub use self::guest::{
 };
 pub use self::pact_scope::{
     Ceiling, FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationPactScope,
-    FederationScopeBands, FederationScopeFacets, FederationScopeWorlds, Position, SelectorRange,
-    decode_federation_pact_scope, encode_federation_pact_scope, selector_range_of,
+    Position, SelectorRange, decode_federation_pact_scope, encode_federation_pact_scope,
+    selector_range_of,
 };
 pub use self::peer_authority::{
     MAX_PEER_AUTHORITY_ENTRIES_PER_PEER, PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry,
@@ -77,6 +81,8 @@ pub(crate) use self::grant::{
     FEDERATION_GRANT_FIELDS_FULL, FEDERATION_GRANT_FIELDS_MINIMAL,
     FEDERATION_GRANT_FIELDS_STANDARD, validate_federation_grant_body_bytes,
 };
+#[cfg(any(feature = "sync", test))]
+pub(crate) use self::pact_scope::base_world_axis;
 pub(crate) use self::pact_scope::{
     decode_federation_direction_scope_value, decode_federation_pact_scope_value,
     federation_direction_scope_value, federation_pact_scope_value,
@@ -137,7 +143,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 mod scope;
-pub use scope::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+pub use scope::{Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 
 mod org_admin;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};

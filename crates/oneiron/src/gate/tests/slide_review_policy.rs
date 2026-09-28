@@ -37,7 +37,7 @@ fn entry(rows: Vec<Value>) -> (Value, Value) {
 
 #[test]
 fn shipped_rows_and_holder_rows_resolve_narrowly() -> Result<()> {
-    let default = default_policy_manifest();
+    let default = default_policy_manifest().unwrap();
     let default_value = rmpv::decode::read_value(&mut default.as_slice()).unwrap();
     let Value::Map(entries) = default_value else {
         unreachable!()

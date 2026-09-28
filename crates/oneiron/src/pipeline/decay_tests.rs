@@ -45,7 +45,7 @@ fn decay_claim_body(predicate: &str, valid_to: Option<u64>) -> Result<Vec<u8>> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_to = valid_to;
     crate::claim::encode_claim_body(&body)
 }
@@ -609,7 +609,7 @@ fn decay_rerank_claim_body(confidence: f32, valid_to: Option<u64>) -> Result<Vec
         confidence,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_to = valid_to;
     crate::claim::encode_claim_body(&body)
 }

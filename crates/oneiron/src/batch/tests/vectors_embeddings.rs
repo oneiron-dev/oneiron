@@ -158,7 +158,7 @@ fn replicated_claim_materialization_writes_pending_embedding_marker() -> Result<
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let data = crate::claim::encode_claim_body(&body)?;
 
     vault

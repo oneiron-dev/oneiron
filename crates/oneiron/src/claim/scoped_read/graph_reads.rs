@@ -65,9 +65,9 @@ impl ScopedRead<'_> {
             else {
                 continue;
             };
-            let header = EntityMetadataHeader::parse(&raw)
+            let header = EntityMetadataHeader::parse(&raw.raw)
                 .ok_or(Error::CorruptedIndex("graph ask neighbor header"))?;
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let body = &raw.raw[ENTITY_METADATA_HEADER_LEN..];
             if (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
                 && (64..100).contains(&header.entity_type))
                 || body.is_empty()

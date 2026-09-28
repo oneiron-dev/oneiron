@@ -44,6 +44,7 @@
 //!   [`IcsHttpTransport`]; the reqwest reservation lands with its owner.
 
 mod admission;
+pub(crate) use admission::ensure_ics_import_actor;
 pub(in crate::calendar) use admission::{
     admit_connector_event, connector_event_ref, delete_connector_resource,
     preflight_connector_feed, sweep_connector_resource,
@@ -70,17 +71,7 @@ pub use self::poll::{
     run_ics_feed_poll_with_screener,
 };
 
-use sha2::{Digest, Sha256};
-
 use super::CalendarError;
-use crate::entity_id::EntityId;
-
-pub(crate) fn derive_entity_id(domain: &[u8], key: &[u8]) -> crate::Result<EntityId> {
-    let digest = Sha256::digest([domain, key].concat());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    EntityId::from_bytes(bytes)
-}
 
 pub(crate) fn credential(context: &'static str, err: &crate::Error) -> CalendarError {
     CalendarError::IcsCredential {

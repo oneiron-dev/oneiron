@@ -547,6 +547,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
     issuer_key.fill(0);
     vault.ensure_host_root_slip(&issuer)?;
+    // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+    vault.provision_engine_machine_identities(&issuer)?;
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
     sync_server.managed_issuer = Some(issuer);

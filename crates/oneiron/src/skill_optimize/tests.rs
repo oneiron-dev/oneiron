@@ -4924,7 +4924,7 @@ fn vector_axes() -> Vec<GoalAxisSpec> {
 }
 
 fn put_narrowing_goal_manifest(vault: &Vault, id: EntityId, axes: Vec<GoalAxisSpec>) -> Result<()> {
-    let baseline = crate::gate::default_policy_manifest();
+    let baseline = crate::gate::default_policy_manifest().unwrap();
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(baseline))
         .expect("shipped manifest decodes")
     else {

@@ -1,6 +1,6 @@
 //! Grant and pact authorization resolving the requested position under the grant ceiling, guest-share stripping, and the closed-subgraph filter pass.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use loro::LoroDoc;
 
@@ -9,10 +9,10 @@ use crate::authority::{AuthorityFold, FederationGrantActivation, federation_gran
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Result, SyncSelectorValidation as SelectorError};
+use crate::error::{Error, Result, SyncError, SyncSelectorValidation as SelectorError};
 use crate::federation::{
-    Ceiling, FederationDirectionScope, FederationGrantScope, FederationScopeBands,
-    FederationScopeFacets, FederationScopeWorlds, Position, decode_federation_grant_body,
+    Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
+    base_world_axis, decode_federation_grant_body,
 };
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
@@ -22,6 +22,9 @@ use crate::sync::loro_support::{
 };
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
+use crate::sync::window::{
+    apply_pending_window_updates, load_window_from_state, reverse_rematerialize,
+};
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
 use super::scope::{
@@ -123,9 +126,9 @@ pub(super) fn resolve_selector_position(
     ceiling: &Ceiling,
 ) -> Result<Position> {
     let worlds = match selector.world {
-        SyncSelectorWorld::All => FederationScopeWorlds::All,
-        SyncSelectorWorld::Base => FederationScopeWorlds::Base,
-        SyncSelectorWorld::World(id) => FederationScopeWorlds::Worlds(vec![id.entity_id()]),
+        SyncSelectorWorld::All => ScopeAxis::All,
+        SyncSelectorWorld::Base => base_world_axis(),
+        SyncSelectorWorld::World(id) => ScopeAxis::Some(BTreeSet::from([ScopeId(id.entity_id())])),
     };
     if !worlds.is_narrowing_of(&ceiling.as_scope().worlds)
         || !selector.facets.within(&ceiling.as_scope().facets)
@@ -149,9 +152,9 @@ pub(super) fn resolve_selector_position(
 /// bounds each exported record.
 pub(super) fn ceiling_for_grant(fold: &AuthorityFold, grant_id: &EntityId) -> Ceiling {
     effective_scope_for_grant(fold, grant_id).unwrap_or(Ceiling::new(FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     }))
 }
 
@@ -244,6 +247,67 @@ fn guest_share_metadata_blob(blob: &[u8]) -> bool {
     })
 }
 
+/// A world edge may name an entity carried by a different base-month Doc.
+/// Authorize that endpoint through the SAME selector over its real base Doc;
+/// a local row alone is not evidence that the grant may export it.
+fn authorized_base_edge_endpoints(
+    vault: &Vault,
+    edges: &loro::LoroMap,
+    kept: &BTreeSet<EntityId>,
+    selector: &SyncSelector,
+    position: &Position,
+) -> Result<BTreeSet<EntityId>> {
+    let mut wanted = BTreeSet::new();
+    map_for_each_value_bytes(edges, |raw, value| {
+        if value.is_none() {
+            return;
+        }
+        if let Some((src, _, tgt)) = parse_edge_key(raw) {
+            if kept.contains(&src) && !kept.contains(&tgt) {
+                wanted.insert(tgt);
+            }
+            if kept.contains(&tgt) && !kept.contains(&src) {
+                wanted.insert(src);
+            }
+        }
+    });
+    let mut selected_by_month = HashMap::<String, LoroDoc>::new();
+    let mut allowed = BTreeSet::new();
+    for id in wanted {
+        let Some(raw) = vault.get_raw(&id)? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+        if crate::sync::types::entity_world(&raw)?.is_some() {
+            continue;
+        }
+        let base_key = WindowKey::from_timestamp(header.learned_at);
+        if !selected_by_month.contains_key(base_key.as_str()) {
+            let base = match load_window_from_state(vault, "selector-base", &base_key) {
+                Ok(doc) => doc,
+                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                    let doc = create_window_doc("selector-base", &base_key);
+                    apply_pending_window_updates(vault, &doc, &base_key)?;
+                    doc
+                }
+                Err(error) => return Err(error),
+            };
+            reverse_rematerialize(vault, &base, &base_key)?;
+            let selected = filter_window_doc(vault, &base, &base_key, selector, position)?;
+            selected_by_month.insert(base_key.to_string(), selected);
+        }
+        if selected_by_month[base_key.as_str()]
+            .get_map("entities")
+            .get(&id.to_hex())
+            .is_some()
+        {
+            allowed.insert(id);
+        }
+    }
+    Ok(allowed)
+}
+
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -251,7 +315,7 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     position: &Position,
 ) -> Result<LoroDoc> {
-    let position = position.as_scope();
+    let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
     // Refresh a detached window, then copy only owners that pass this filter.
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
@@ -293,9 +357,14 @@ pub(super) fn filter_window_doc(
         tombstoned.insert(id);
     });
 
-    let facets = facet_filter(position);
-    let facet_scope =
-        facet_scope_by_source(vault, &rtxn, &source_entities, &source_edges, position)?;
+    let facets = facet_filter(scope_position);
+    let facet_scope = facet_scope_by_source(
+        vault,
+        &rtxn,
+        &source_entities,
+        &source_edges,
+        scope_position,
+    )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
     let mut custody_ids = BTreeSet::new();
     map_for_each_value_bytes(&source_entities, |key, blob| {
@@ -346,7 +415,7 @@ pub(super) fn filter_window_doc(
         if scope_error.is_some() {
             return;
         }
-        match crate::authority::row_causal_admitted(vault, &rtxn, blob) {
+        match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             // An undecodable CLAIM is a withheld row, not a failed export:
@@ -382,7 +451,7 @@ pub(super) fn filter_window_doc(
             (&id, blob),
             selector,
             &facet_scope,
-            position,
+            scope_position,
             &coreference,
         ) else {
             return;
@@ -409,7 +478,6 @@ pub(super) fn filter_window_doc(
     if let Some(error) = scope_error {
         return Err(error);
     }
-    drop(rtxn);
     if facets.is_some() {
         kept.extend(seeds.iter().copied());
         map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
@@ -437,20 +505,126 @@ pub(super) fn filter_window_doc(
 
     let out_entities = out.get_map("entities");
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
-        let Some(blob) = maybe_blob else {
-            return;
-        };
+        let Some(blob) = maybe_blob else { return };
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
-        if id.to_hex() != raw_key {
+        if id.to_hex() != raw_key || !kept.contains(&id) || tombstoned.contains(&id) {
             return;
         }
-        if kept.contains(&id) && !tombstoned.contains(&id) {
-            let _ = map_insert_bytes(&out_entities, raw_key, blob);
-        }
+        let _ = map_insert_bytes(&out_entities, raw_key, blob);
     });
+    // A fresh peer may hold a valid selected target but only part of its
+    // scoped birth/event/handoff closure in the source CRDT. Never emit the
+    // target alone: the receiving replica would mistake missing history for
+    // permission. The selector must carry the whole authenticated closure.
+    let mut incomplete = BTreeSet::new();
+    for id in kept.iter().copied() {
+        let Some(blob) = crate::sync::loro_support::map_get_bytes(&source_entities, &id.to_hex())
+        else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(&blob) else {
+            continue;
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let Ok(body) = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            continue;
+        };
+        if !crate::authority::machine_claim_needs_history(&vault.store, &rtxn, &body)? {
+            continue;
+        }
+        let (Ok(rows), Ok(packet)) = (
+            crate::claim::history_projection::machine_history_rows(&vault.store, &rtxn, id),
+            crate::claim::history_projection::trusted_machine_handoff(&vault.store, &rtxn, id),
+        ) else {
+            incomplete.insert(id);
+            continue;
+        };
+        let mut required = vec![rows.birth.event_id()?];
+        for event in &rows.events {
+            required.push(crate::claim::transition::machine_claim_transition_event_id(
+                event,
+            )?);
+        }
+        let mut next = Some(packet);
+        let mut seen = BTreeSet::new();
+        while let Some(handoff) = next {
+            let hash = handoff
+                .content_hash()
+                .map_err(|_| crate::Error::InvalidClaimBody("machine handoff hash"))?;
+            if !seen.insert(hash) {
+                incomplete.insert(id);
+                break;
+            }
+            required.push(EntityId::from_bytes(
+                hash[..16]
+                    .try_into()
+                    .map_err(|_| crate::Error::InvalidClaimBody("machine handoff id"))?,
+            )?);
+            next = if let Some(parent) = handoff.previous_handoff_hash {
+                let parent_id =
+                    EntityId::from_bytes(parent[..16].try_into().map_err(|_| {
+                        crate::Error::InvalidClaimBody("machine handoff parent id")
+                    })?)?;
+                let Some(raw) = vault.store.entities.get(&rtxn, parent_id.as_bytes())? else {
+                    incomplete.insert(id);
+                    break;
+                };
+                let Some(header) = EntityMetadataHeader::parse(&raw) else {
+                    incomplete.insert(id);
+                    break;
+                };
+                if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                    incomplete.insert(id);
+                    break;
+                }
+                let Ok(body) =
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+                else {
+                    incomplete.insert(id);
+                    break;
+                };
+                let Some(rmpv::Value::Binary(bytes)) = Some(body.value) else {
+                    incomplete.insert(id);
+                    break;
+                };
+                let Ok(parent_packet) = crate::claim::ClaimHistoryHandoff::decode(&bytes) else {
+                    incomplete.insert(id);
+                    break;
+                };
+                if parent_packet.content_hash().ok() != Some(parent) {
+                    incomplete.insert(id);
+                    break;
+                }
+                Some(parent_packet)
+            } else {
+                None
+            };
+        }
+        if required.iter().any(|control| {
+            !kept.contains(control)
+                || !crate::sync::loro_support::map_contains_binary(
+                    &source_entities,
+                    &control.to_hex(),
+                )
+        }) {
+            incomplete.insert(id);
+        }
+    }
+    for id in &incomplete {
+        crate::sync::loro_support::map_delete(&out_entities, &id.to_hex())?;
+    }
+    drop(rtxn);
 
+    let authorized_base = if key.world().is_some() {
+        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?
+    } else {
+        BTreeSet::new()
+    };
     let out_edges = out.get_map("edges");
     map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
         let Some(value) = maybe_value else {
@@ -465,7 +639,10 @@ pub(super) fn filter_window_doc(
         if kind == EdgeKind::SameAs && !coreference.allows(src, tgt) {
             return;
         }
-        if kept.contains(&src) && kept.contains(&tgt) {
+        if (kept.contains(&src) && kept.contains(&tgt))
+            || (kept.contains(&src) && authorized_base.contains(&tgt))
+            || (kept.contains(&tgt) && authorized_base.contains(&src))
+        {
             let _ = map_insert_bytes(&out_edges, raw_key, value);
         }
     });
@@ -477,7 +654,7 @@ pub(super) fn filter_window_doc(
         };
         if kept.contains(&id)
             || (facets.is_none()
-                && band_filter(position).is_none()
+                && band_filter(scope_position).is_none()
                 && matches!(selector.world, SyncSelectorWorld::All))
         {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);

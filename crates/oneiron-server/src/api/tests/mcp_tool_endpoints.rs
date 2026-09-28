@@ -621,12 +621,10 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     }
     let project = oneiron::EntityId::now();
     let root = server.vault.root_project().expect("root");
-    let mut record = ProjectRecord::new(project, Some(root), root, owner);
+    let mut record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
     record.roster.push(other.to_hex());
-    server
-        .vault
-        .put_project(project, &record, 1)
-        .expect("project");
+    bind_room_owner(&server, owner);
+    create_owned_project(&server, owner, project, &record);
     let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
     let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     let mut turns = Vec::new();
@@ -776,11 +774,8 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
         );
     }
     let second_project = oneiron::EntityId::now();
-    let second = ProjectRecord::new(second_project, Some(root), root, owner);
-    server
-        .vault
-        .put_project(second_project, &second, 1)
-        .expect("second project");
+    let second = ProjectRecord::new(second_project, Some(root), root, owner).unwrap();
+    create_owned_project(&server, owner, second_project, &second);
     let (_, rooms) = route_json(
         server.clone(),
         mcp_endpoint_call_request(

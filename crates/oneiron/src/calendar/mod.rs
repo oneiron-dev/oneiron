@@ -222,9 +222,8 @@ pub use outcome::{
     read_event_outcome, record_event_outcome, resolve_owner_check_in,
 };
 pub use passport::{
-    CALENDAR_PASSPORT_INDEX_PREFIX, PassportDecision, all_live_inbound_passports_absent,
-    classify_passport, index_passport_uid, live_passport_for, live_passports_for_event,
-    resolve_event_by_uid, supersede_calendar_passport,
+    PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,
+    live_passport_for, live_passports_for_event, resolve_event_by_uid, supersede_calendar_passport,
 };
 pub use prep::{
     DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS, PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND,
@@ -271,6 +270,24 @@ pub(crate) mod test_support {
     /// Opens a temporary vault for calendar fixtures.
     pub(super) fn open_calendar_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::default())
+    }
+
+    /// Roots the vault and provisions the engine's MACHINE writers, the
+    /// calendar importer among them, with host-held keys. The import actor
+    /// cannot gain claim authority from its transport/connector secret.
+    pub(crate) fn provision_test_calendar_importer(vault: &Vault) {
+        crate::test_util::provision_engine_machines(vault);
+    }
+
+    pub(super) fn open_calendar_vault_with_machine_identity() -> (tempfile::TempDir, Vault) {
+        let clock = crate::ports::ManualClock::new(1_800_000_000);
+        let config = VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        };
+        let (dir, vault) = crate::test_util::open_test_vault_with(config);
+        provision_test_calendar_importer(&vault);
+        (dir, vault)
     }
 
     /// Encodes an EVENT body carrying the `name` field the EVENT profile pins.
@@ -395,7 +412,8 @@ pub(crate) mod test_support {
                         1.0,
                         self.approval,
                         ClaimLifecycleStatus::Active,
-                    ),
+                    )
+                    .unwrap(),
                     TimeRange { start: 1, end: 1 },
                     1,
                 )

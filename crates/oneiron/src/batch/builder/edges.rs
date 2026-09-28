@@ -150,9 +150,9 @@ impl BatchBuilder<'_> {
     /// builder cannot may write a reserved kind. Its callers are
     /// `commitment_lifecycle::link_brief_fulfillment` (CMT-4, ONE-1541: both
     /// ruled `fulfills`/`discharged_by` directions in one transaction, after
-    /// proving both endpoint classes) and `ppr/tests.rs`; the sync
-    /// forward-remat healing write uses the `TxnBatchBuilder` twin below to
-    /// share its mandate-check txn (ARCH-0055).
+    /// proving both endpoint classes), `ppr/tests.rs`, and the sync
+    /// forward-remat healing write, which applies it in the caller's
+    /// transaction to share its mandate-check txn (ARCH-0055).
     pub(crate) fn edge_with_value_fields(
         mut self,
         src: &EntityId,

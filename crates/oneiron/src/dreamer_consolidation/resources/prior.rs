@@ -29,6 +29,7 @@ impl BranchResources<'_> {
                 continue;
             }
             let (kind, learned_at, bytes) = if let Some(wake) = self.prepared_wake {
+                // Bytes from the wake's one read, whose receipt the branch holds.
                 let Some(row) = wake.source(&id) else {
                     continue;
                 };
@@ -43,10 +44,21 @@ impl BranchResources<'_> {
                 if self.read.vault().get_entity_type(&id)? != Some(ENTITY_TYPE_CLAIM) {
                     continue;
                 }
-                self.read
-                    .get_entity_parts_with_receipt(&id, None)?
-                    .value
-                    .ok_or_else(|| invalid_consolidation("prior head is not actor-readable"))?
+                let head = self
+                    .read
+                    .read(&[crate::claim::PointRead::id(id)], None)?
+                    .single();
+                self.fold_read_receipt(&head.receipt)?;
+                let Some(crate::claim::ReadRow {
+                    entity_type: kind,
+                    learned_at,
+                    body: Some(bytes),
+                    ..
+                }) = head.value
+                else {
+                    return Err(invalid_consolidation("prior head is not actor-readable"));
+                };
+                (kind, learned_at, bytes)
             };
             let resource = document_version(id, &bytes);
             if kind != ENTITY_TYPE_CLAIM || !self.scope.allows_read(&resource) {

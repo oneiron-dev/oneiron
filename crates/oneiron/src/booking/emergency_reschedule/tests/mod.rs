@@ -168,7 +168,8 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
@@ -301,8 +302,16 @@ fn executable_with_invite(
     action_policy: EmergencyActionPolicy,
     send_initial: bool,
 ) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
+    executable_with_invite_config(action_policy, send_initial, VaultConfig::default())
+}
+
+fn executable_with_invite_config(
+    action_policy: EmergencyActionPolicy,
+    send_initial: bool,
+    config: VaultConfig,
+) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
     use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
-    let (dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (dir, vault) = open_test_vault_with(config);
     page(&vault, PAGE, OWNER);
     let receipt = book(&vault, PAGE, NOW + 3_600);
     let identity = crate::test_util::self_held_identity_in_state(

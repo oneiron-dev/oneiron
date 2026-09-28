@@ -337,6 +337,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
             event_ref: busy.to_hex(),
         })
         .expect("read")
+        .value
         .expect("an authorized calendar claim projects under the default predicate policy");
     assert_eq!(view.event_ref, busy.to_hex());
     assert!(view.blocks_time);
@@ -358,7 +359,10 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
     assert_eq!(found[0].event_ref, busy.to_hex());
     assert!(found[0].blocks_time);
     assert_eq!(
-        facade.calendar_freebusy(&[], window()).expect("freebusy"),
+        facade
+            .calendar_freebusy(&[], window())
+            .expect("freebusy")
+            .value,
         vec![CalendarFreebusyIntervalDto {
             start_utc: 1_000,
             end_utc: 1_100,

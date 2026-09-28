@@ -255,7 +255,7 @@ fn class_scoped_reads_refuse_missing_invalid_or_unverifiable_identity() -> Resul
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let bytes = encode_claim_body(&body)?;
     vault.with_write_txn(|txn| {
         let raw = entity_record(ENTITY_TYPE_CLAIM, time(1), 1, &bytes);
@@ -320,8 +320,9 @@ fn class_scoped_reads_refuse_missing_invalid_or_unverifiable_identity() -> Resul
             &bytes,
         );
         vault.store.entities.put(txn, binding_id.as_bytes(), &raw)?;
-        // This fixture bypasses the authority writer; stamp the cache generation
-        // so the read fold sees the forged persisted row, not the earlier binding.
+        // This hostile raw fixture bypasses the AUTHORITY_LOG write door;
+        // bump the cache generation exactly as an admitted authority put does.
+
         crate::authority::advance_authority_cache_generation(&vault.store, txn)?;
         Ok(())
     })?;

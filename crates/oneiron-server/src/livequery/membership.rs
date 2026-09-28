@@ -33,7 +33,9 @@ pub(super) fn changed(
                 .get_entity(world)
                 .map_err(AppError::from)
                 .and_then(|entity| {
+                    // A membership probe serves no row, so no receipt leaves it.
                     entity
+                        .value
                         .map(|entity| entity.id_hex)
                         .ok_or_else(|| AppError::bad_request("unknown world", Some("worldRef")))
                 })
@@ -52,7 +54,11 @@ pub(super) fn changed(
     for id in ids {
         // Metadata is used only to decide whether the authority-bound view
         // needs re-derivation. No raw entity body is sent to a subscriber.
-        let Some(entity) = memory.get_entity(&id.to_hex()).map_err(AppError::from)? else {
+        let Some(entity) = memory
+            .get_entity(&id.to_hex())
+            .map_err(AppError::from)?
+            .value
+        else {
             return Ok(true);
         };
         let entity_type = vault

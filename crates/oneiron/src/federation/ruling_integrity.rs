@@ -26,7 +26,7 @@ pub(crate) fn reject_ruling_delete(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && is_ruling(&raw)?
     {
         return Err(invalid());
@@ -43,7 +43,7 @@ pub(crate) fn guard_ruling_overwrite(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && is_ruling(&raw)?
     {
         let header =
@@ -115,7 +115,7 @@ pub(super) fn admitted_ruling(
     {
         return Ok(None);
     }
-    let Some(raw) = store.entities.get(txn, grant_ref.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &grant_ref)? else {
         return Ok(None);
     };
     let header =

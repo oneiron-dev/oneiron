@@ -13,6 +13,7 @@ pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+mod identity;
 mod open;
 mod places;
 
@@ -35,9 +36,10 @@ pub use self::doctor_manifest::{
 pub(crate) use self::doctor_manifest::{
     ensure_text_index_manifest_matches_wtxn, verify_text_index_manifest, write_text_index_manifest,
 };
+#[cfg(test)]
+pub(crate) use self::edges::edge_kind_prefix;
 pub(crate) use self::edges::{
-    CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT, edge_kind_prefix,
-    parse_edge_record,
+    CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT,
 };
 pub use self::entities::HydratedShortId;
 /// The composed session census bounds itself exactly like [`Vault::entities_by_type`],
@@ -47,6 +49,7 @@ pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
+pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 
 /// Main vault API wrapping LMDB storage and configuration.
@@ -61,6 +64,8 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
+    /// Which vault this handle belongs to, resolved once at open.
+    vault_id: VaultId,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
     /// Posture/custody pairing this handle was opened under, retained from the

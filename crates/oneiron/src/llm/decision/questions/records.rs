@@ -49,14 +49,14 @@ impl OutcomeBinding {
             return Err(invalid("invalid outcome source"));
         }
         if let OutcomeSource::Edge { relation } = &self.source
-            && crate::edge::parse_relation(relation).is_none()
+            && crate::edge::EdgeKind::from_name(relation).is_none()
         {
             return Err(invalid("unknown outcome edge relation"));
         }
         if self
             .linked_by
             .as_deref()
-            .is_some_and(|r| crate::edge::parse_relation(r).is_none())
+            .is_some_and(|r| crate::edge::EdgeKind::from_name(r).is_none())
         {
             return Err(invalid("unknown outcome unit relation"));
         }

@@ -1007,82 +1007,6 @@ async fn core_context_pack_dangling_contact_ref_fails_loudly() {
     assert_error_envelope(&body, "NOT_FOUND");
 }
 
-/// Fixture: a logged, host-signed human binding plus a holder-bound top slip.
-/// A bare host secret has no authenticated PERSON identity to exclude.
-fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
-    use ed25519_dalek::Signer;
-    use oneiron::authority::{
-        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-        HostSlipIssuer, actor_binding_is_active, authority_entry_hash, authority_transcript,
-    };
-    use std::collections::BTreeSet;
-
-    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
-    let host_key = issuer.public_key();
-    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", b"secret");
-    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-    assert_eq!(signing.verifying_key().to_bytes(), issuer.binding_key());
-    let fold = server.vault.authority_fold().unwrap();
-    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
-    let mut seq = 0;
-    for row in server
-        .vault
-        .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap()
-    {
-        let entry = server.vault.get_authority_log_entry(&row).unwrap().unwrap();
-        let hash = authority_entry_hash(&entry).unwrap();
-        if fold.valid_entries.contains(&hash) {
-            for parent in &entry.parent_hashes {
-                heads.remove(parent);
-            }
-            if entry.signer.public_key == host_key {
-                seq = seq.max(entry.seq.saturating_add(1));
-            }
-        }
-    }
-    let now = server.vault.now_recorded_at();
-    let mut entry = AuthorityLogEntry {
-        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: fold.vault_id,
-        seq,
-        parent_hashes: heads.into_iter().collect(),
-        op: AuthorityOp::BindActor {
-            authority_key: host_key.clone(),
-            actor_ref: owner,
-            actor_class: "human".into(),
-            epoch: 1,
-        },
-        signer: AuthoritySignature {
-            suite: host_key.suite(),
-            public_key: host_key,
-            signature: vec![0; 64],
-        },
-        cosigns: vec![],
-        ts: now,
-    };
-    entry.signer.signature = signing
-        .sign(&authority_transcript(&entry).unwrap())
-        .to_bytes()
-        .to_vec();
-    server
-        .vault
-        .put_authority_log_entry(
-            &entry,
-            oneiron::TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )
-        .unwrap();
-    assert!(actor_binding_is_active(
-        &server.vault.authority_fold().unwrap(),
-        &owner,
-        "human"
-    ));
-}
-
 async fn room_owner_json(
     server: std::sync::Arc<SyncServer>,
     owner: oneiron::EntityId,
@@ -1124,7 +1048,8 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     let root = server.vault.root_project().expect("root project");
     let project = seeded_test_entity_id(0x2094_0103);
     let mut roster =
-        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner);
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    create_owned_project(&server, owner, project, &roster);
     roster.roster.push(peer.to_hex());
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
     let exact_room = oneiron::workspace_roster::ProjectRoom {
@@ -1133,8 +1058,10 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         project_id: project.to_hex(),
         member_ids: roster.roster.clone(),
         claims_scope_ref: roster.claims_scope_ref.clone(),
+        origin: None,
     };
-    // A public batch can submit the exact derived room beside its PROJECT.
+    // A public batch can submit the exact derived room beside its PROJECT
+    // edit; the owner-signed birth above admitted the PROJECT itself.
     server
         .vault
         .batch()
@@ -1366,8 +1293,9 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
     bind_room_owner(&server, owner);
     let root = server.vault.root_project().unwrap();
     let project = seeded_test_entity_id(0x2094_0202);
-    let record = oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner);
-    server.vault.put_project(project, &record, 1).unwrap();
+    let record =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    create_owned_project(&server, owner, project, &record);
     let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
     let private = seed_text_turn(&server, "owner alone private2094");
     server.vault.set_disclosure_tier_a(&private, 101).unwrap();

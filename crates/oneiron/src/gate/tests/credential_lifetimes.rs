@@ -168,7 +168,7 @@ fn replacing_the_authoritative_default_can_set_a_longer_vault_ceiling() -> crate
     // This local authored replacement uses the pinned default manifest ID,
     // rather than adding a second pack to meet against the old values.
     let id = crate::gate::default_policy_manifest_id()?;
-    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut cursor).expect("decode fixture manifest")
     else {
@@ -209,7 +209,7 @@ fn manifest_without_lifetimes_does_not_restore_shipped_numeric_caps() -> crate::
     let issuer = HostSlipIssuer::from_secret(b"omitted-lifetime-policy")?;
     vault.ensure_host_root_slip(&issuer)?;
     let id = crate::gate::default_policy_manifest_id()?;
-    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut cursor).expect("decode fixture manifest")
     else {

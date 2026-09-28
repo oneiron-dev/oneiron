@@ -2,10 +2,13 @@
 
 use crate::error::{Error, RecordError, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
-const BRIEF_KIND_KEY: &[u8] = b"note.kind/brief/v1";
+/// The one blessed, person-stamped brief-kind policy contract.
+const BRIEF_KIND_CONTRACT: SideTable<(), BriefKindContract, LegacyJson> =
+    SideTable::new(&side_table::NOTE_BRIEF_KIND_CONTRACT);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,13 +83,13 @@ impl Memory<'_> {
             retention: NoteRetentionDefault::Durable,
         };
         self.with_verified_actor_write_txn(|txn| {
-            if let Some(bytes) = self.vault().store.vault_meta.get(txn, BRIEF_KIND_KEY)? {
-                return Ok(BriefKindContract::decode(&bytes)?);
+            if let Some(contract) = BRIEF_KIND_CONTRACT.get(&self.vault().store, txn, &())? {
+                if contract.version != 1 {
+                    return Err(invalid_contract().into());
+                }
+                return Ok(contract);
             }
-            self.vault()
-                .store
-                .vault_meta
-                .put(txn, BRIEF_KIND_KEY, &value.encode()?)?;
+            BRIEF_KIND_CONTRACT.put(&self.vault().store, txn, &(), &value)?;
             Ok(value.clone())
         })
     }
@@ -102,13 +105,12 @@ impl crate::Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<BriefKindContract>> {
-        self.store
-            .vault_meta
-            .get(txn, BRIEF_KIND_KEY)?
-            .map(|bytes| {
-                let contract = BriefKindContract::decode(&bytes)?;
-                if self.get_entity_type_in_txn(txn, &contract.person)?
-                    != Some(crate::registry::ENTITY_TYPE_PERSON)
+        BRIEF_KIND_CONTRACT
+            .get(&self.store, txn, &())?
+            .map(|contract| {
+                if contract.version != 1
+                    || self.get_entity_type_in_txn(txn, &contract.person)?
+                        != Some(crate::registry::ENTITY_TYPE_PERSON)
                 {
                     return Err(invalid_contract());
                 }

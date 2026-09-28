@@ -9,6 +9,7 @@ use crate::calendar::invite::CalendarInvitePayload;
 use crate::delivery_window::{DeliveryWindowApnsInterruptionLevel, DeliveryWindowResolvedLevel};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CONNECTOR_ACTOR;
 use crate::error::{Error, RecordError};
 use crate::habit::TaskRole;
 use crate::receipt::delivered_send_receipt_for_task;
@@ -94,6 +95,7 @@ pub(super) struct ConnectorSendTaskBody {
 pub enum ConnectorSendTaskOutcome {
     Delivered,
     Failed,
+    Ambiguous,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -154,14 +156,7 @@ pub fn connector_actor_id(connector_class: &str) -> Result<EntityId, Error> {
             "connector class must not be empty",
         ));
     }
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.connector_actor.v0\0");
-    hash.update(connector_class.as_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x70;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(CONNECTOR_ACTOR, &[connector_class.as_bytes()])
 }
 
 pub(crate) fn connector_send_attempt_payload(task_ref: EntityId) -> Result<Vec<u8>, Error> {
@@ -473,16 +468,25 @@ pub(super) fn mark_connector_send_task_attempt_started(
     task_ref: EntityId,
     node_id: u64,
     now: u64,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
+    let mut may_dispatch = false;
     update_connector_send_task_body(vault, task_ref, now, |body| {
-        if body.outcome.is_some() {
+        // Check the CURRENT replicated TASK in this same write transaction.
+        // A definite failure remains retryable; delivered, ambiguous and
+        // mechanically suppressed outcomes must never become new send permits.
+        if matches!(
+            body.outcome,
+            Some(ConnectorSendTaskOutcome::Ambiguous | ConnectorSendTaskOutcome::Delivered)
+        ) || body.suppression.is_some()
+        {
             return Ok(());
         }
         body.attempt_started_node_id = Some(node_id);
-        body.outcome = None;
         body.suppression = None;
+        may_dispatch = true;
         Ok(())
-    })
+    })?;
+    Ok(may_dispatch)
 }
 
 pub(super) fn project_connector_send_task_outcome(
@@ -555,6 +559,63 @@ fn update_connector_send_task_body(
 ) -> Result<(), Error> {
     vault.with_write_txn(|wtxn| {
         update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, update)
+    })
+}
+
+/// Read the synced terminal in the same writer that settles this attempt.
+pub(super) fn connector_send_task_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<ConnectorSendTaskOutcome>, Error> {
+    let raw = vault
+        .store
+        .port_entity_record(wtxn, &task_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.entity_type != ENTITY_TYPE_TASK {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "connector send entity is not a TASK",
+        )));
+    }
+    let body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send body")))?;
+    if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
+        || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
+        || body.role != TaskRole::Task.role_byte()
+    {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "unsupported connector send body version",
+        )));
+    }
+    Ok(body.outcome)
+}
+
+pub(super) fn project_connector_send_task_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+) -> Result<(), Error> {
+    #[cfg(test)]
+    if matches!(
+        outcome,
+        ConnectorSendTaskOutcome::Delivered | ConnectorSendTaskOutcome::Failed
+    ) {
+        let receipt_exists = vault
+            .store
+            .get_send_receipt_by_task_in_txn(wtxn, &task_ref)?
+            .is_some();
+        if outcome == ConnectorSendTaskOutcome::Delivered {
+            DELIVERED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(Some(receipt_exists)));
+        } else {
+            FAILED_PROJECTION_SAW_RECEIPT.with(|observed| observed.set(Some(receipt_exists)));
+        }
+    }
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        body.outcome = Some(outcome);
+        body.suppression = None;
+        Ok(())
     })
 }
 

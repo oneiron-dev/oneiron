@@ -165,7 +165,7 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
     );
     let revoke_hash = authority_entry_hash(&revoke).unwrap();
     let mut entries = vec![genesis.clone(), bind.clone(), first, enroll, revoke];
-    let before = fold_authority_log_without_seen_time_delay(&entries);
+    let before = fold_authority_log(&entries);
     assert!(
         before.issues.is_empty(),
         "valid revoke fixture: {:?}",
@@ -185,7 +185,7 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
         .expect("at least one distinct confirmation hashes below the first");
     let replacement_hash = authority_entry_hash(&replacement).unwrap();
     entries.push(replacement);
-    let after = fold_authority_log_without_seen_time_delay(&entries);
+    let after = fold_authority_log(&entries);
     assert!(after.valid_entries.contains(&replacement_hash));
     assert!(!after.valid_entries.contains(&first_hash));
     assert!(!after.valid_entries.contains(&enroll_hash));
@@ -207,11 +207,11 @@ fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
     assert!(!actor_binding_is_active(&after, &actor, "human"));
     let mut bad_entries = entries.clone();
     bad_entries[4].cosigns[0].signature[0] ^= 1;
-    let bad = fold_authority_log_without_seen_time_delay(&bad_entries);
+    let bad = fold_authority_log(&bad_entries);
     assert_eq!(
         folded_status(&bad, &owner_key),
         Some(ActorBindingStatus::Active)
     );
     entries.reverse();
-    assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
+    assert_eq!(fold_authority_log(&entries), after);
 }

@@ -91,7 +91,7 @@ fn first_seed_skips_prior_deleted_or_occupied_source_id() -> Result<()> {
         crate::test_util::put_policy_manifest_bytes(
             &vault,
             crate::gate::default_policy_manifest_id()?,
-            &crate::gate::default_policy_manifest(),
+            &crate::gate::default_policy_manifest().unwrap(),
         )?;
         if deleted {
             vault.stage_pack_source(&source, TimeRange { start: 1, end: 1 }, 1)?;

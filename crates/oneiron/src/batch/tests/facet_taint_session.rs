@@ -123,7 +123,7 @@ fn put_typed(vault: &Vault, id: &EntityId, entity_type: u8) -> Result<()> {
             0.9,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         crate::claim::encode_claim_body(&body)?
     } else {
         b"payload".to_vec()
@@ -268,7 +268,7 @@ fn facet_of_edge_same_batch_entity_then_edge_accepted() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    ))?;
+    )?)?;
 
     vault
         .batch()
@@ -455,7 +455,7 @@ fn taint_guard_decodes_raw_claim_body_subject_refs() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let err = vault
         .put_entity(
             &claim,
@@ -688,7 +688,7 @@ fn session_apply_validates_claim_bodies_before_staging() -> Result<()> {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        ))
+        )?)
     };
 
     let mut undecodable = encode(
@@ -841,7 +841,7 @@ fn a_claim_put_that_changes_its_facet_is_refused() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.scope_facet = default;
     vault.put_entity(
         &claim,

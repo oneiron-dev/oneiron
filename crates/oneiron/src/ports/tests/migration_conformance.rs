@@ -32,8 +32,31 @@ fn query_and_regeneration<P: Backend>(ports: &P) -> Result<()> {
         ports.port_entity_record(&txn, &dependent)?.unwrap().body,
         b"old"
     );
+    assert_eq!(
+        ports
+            .port_entity_raw_records(&txn)?
+            .find(|entry| entry.as_ref().is_ok_and(|(id, _)| *id == dependent))
+            .expect("inserted dependent row")?
+            .1,
+        row(ENTITY_TYPE_ORG, b"old").encode()
+    );
     ports.port_edge_upsert(&mut txn, &dependent, EdgeKind::DerivedFrom, &source, 1.0)?;
+    assert!(ports.port_edge_has_any(&txn, &dependent, EdgeDirection::Out)?);
+    assert!(ports.port_edge_has_any(&txn, &source, EdgeDirection::In)?);
+    assert!(!ports.port_edge_has_any(&txn, &source, EdgeDirection::Out)?);
+    let edge_key = crate::store::Store::encode_edge_key(&dependent, EdgeKind::DerivedFrom, &source);
+    assert!(ports.port_edge_rows_raw(&txn)?.any(|entry| {
+        entry
+            .as_ref()
+            .is_ok_and(|(key, value)| key == &edge_key && !value.is_empty())
+    }));
     ports.port_edge_upsert(&mut txn, &other, EdgeKind::DerivedFrom, &source, 1.0)?;
+    assert_eq!(
+        ports
+            .port_edge_peers(&txn, &source, EdgeDirection::In, EdgeKind::DerivedFrom)?
+            .collect::<Result<Vec<_>>>()?,
+        vec![dependent, other]
+    );
     assert_eq!(
         ports
             .port_edges(
@@ -176,7 +199,9 @@ fn lazy_type_cursor_does_not_decode_rows_past_the_caller_budget() -> Result<()> 
         .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
         .take(2)
         .collect::<Result<Vec<_>>>()?;
-    assert_eq!(page, vec![crate::vault::embedded_owner_actor_id()?, good]);
+    let mut expected = vec![crate::vault::embedded_owner_actor_id()?, good];
+    expected.sort();
+    assert_eq!(page, expected);
     assert!(
         vault
             .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
@@ -217,10 +242,12 @@ fn storage_port_queries_read_one_composed_session_snapshot() -> Result<()> {
         vault.port_entity_record(&txn, &entity)?.unwrap().body,
         b"base"
     );
+    let mut expected = vec![crate::vault::embedded_owner_actor_id()?, entity];
+    expected.sort();
     assert_eq!(
         view.port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
             .collect::<Result<Vec<_>>>()?,
-        vec![crate::vault::embedded_owner_actor_id()?, entity]
+        expected
     );
     drop(view);
     drop(txn);
@@ -257,4 +284,48 @@ fn scoped_text_port_gates_candidates_before_limit_on_both_backends() -> Result<(
     let (_temp, vault, memory, _clock) = fixtures();
     check(&vault)?;
     check(&memory)
+}
+
+#[test]
+fn lmdb_staging_keeps_raw_entity_and_paired_edge_in_one_transaction() -> Result<()> {
+    let (_temp, vault, _memory, _clock) = fixtures();
+    let source = id(160);
+    let target = id(161);
+    let encoded = row(ENTITY_TYPE_ORG, b"staged").encode();
+    let edge = crate::edge::encode_edge_value(
+        EdgeKind::DerivedFrom,
+        1.0,
+        100,
+        crate::affect::Vad::NEUTRAL,
+        None,
+    )?;
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .port_stage_entity_row(&mut txn, &source, &encoded)?;
+    vault
+        .store
+        .port_stage_edge_rows(&mut txn, &source, EdgeKind::DerivedFrom, &target, &edge)?;
+    assert_eq!(vault.port_entity_raw(&txn, &source)?, Some(encoded));
+    assert!(vault.port_edge_consistent(&txn, &source, EdgeKind::DerivedFrom, &target)?);
+    assert_eq!(
+        vault
+            .store
+            .port_edge_encoded(&txn, &source, EdgeKind::DerivedFrom, &target)?,
+        Some(edge)
+    );
+    assert!(vault.store.port_remove_edge_rows(
+        &mut txn,
+        &source,
+        EdgeKind::DerivedFrom,
+        &target
+    )?);
+    assert!(vault.store.port_remove_entity_row(&mut txn, &source)?);
+    assert_eq!(vault.port_entity_raw(&txn, &source)?, None);
+    assert!(
+        vault
+            .port_edge_get(&txn, &source, EdgeKind::DerivedFrom, &target)?
+            .is_none()
+    );
+    Ok(())
 }

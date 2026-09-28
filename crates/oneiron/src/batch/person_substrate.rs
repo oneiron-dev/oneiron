@@ -2,6 +2,7 @@
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{
     EntityId,
     error::{Error, Result},
@@ -10,6 +11,12 @@ use crate::{
 };
 use rmpv::Value;
 
+/// One-shot sweep-done markers. Key: `()`.
+const SCOPE_STAMP_SWEEP_DONE: SideTable<(), [u8; 1], Raw> =
+    SideTable::new(&side_table::SCOPE_STAMP_SWEEP_DONE);
+const SCOPE_POLICY_SWEEP_DONE: SideTable<(), [u8; 1], Raw> =
+    SideTable::new(&side_table::SCOPE_POLICY_SWEEP_DONE);
+
 pub(crate) fn ensure_person_substrate(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -17,8 +24,8 @@ pub(crate) fn ensure_person_substrate(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
-    let facet = crate::claim::substrate_facet_id(person);
-    if let Some(raw) = store.entities.get(txn, facet.as_bytes())? {
+    let facet = crate::claim::substrate_facet_id(person)?;
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
         if header.entity_type != ENTITY_TYPE_FACET
@@ -103,27 +110,17 @@ pub(super) fn validate_scope_identity(id: EntityId) -> Result<()> {
     Ok(())
 }
 pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
-    const MARKER: &[u8] = b"scope:claim-codec:v2";
-    const POLICY_MARKER: &[u8] = b"scope:policy-manifest:v1.2";
     let mut txn = store.env.write_txn()?;
-    let scope_done = store.vault_meta.get(&txn, MARKER)?.is_some();
-    let policy_done = store.vault_meta.get(&txn, POLICY_MARKER)?.is_some();
+    let scope_done = SCOPE_STAMP_SWEEP_DONE.contains(store, &txn, &())?;
+    let policy_done = SCOPE_POLICY_SWEEP_DONE.contains(store, &txn, &())?;
     if scope_done && policy_done {
         return Ok(());
     }
-    let rows: Vec<_> = store
-        .entities
-        .iter(&txn)?
-        .map(|row| row.map(|(key, raw)| (key.to_vec(), raw.into_owned())))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for (key, raw) in rows {
+    let rows = crate::ports::EntityStoreRead::port_entity_raw_records(store, &txn)?
+        .collect::<Result<Vec<_>>>()?;
+    for (id, raw) in rows {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("scope sweep header"))?;
-        let id = EntityId::from_bytes(
-            key.as_slice()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("scope sweep id"))?,
-        )?;
         let occurred = TimeRange {
             start: header.occurred_start,
             end: header.occurred_end,
@@ -252,8 +249,8 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             )?;
         }
     }
-    store.vault_meta.put(&mut txn, MARKER, &[2])?;
-    store.vault_meta.put(&mut txn, POLICY_MARKER, &[1])?;
+    SCOPE_STAMP_SWEEP_DONE.put(store, &mut txn, &(), &[2])?;
+    SCOPE_POLICY_SWEEP_DONE.put(store, &mut txn, &(), &[1])?;
     txn.commit()?;
     Ok(())
 }

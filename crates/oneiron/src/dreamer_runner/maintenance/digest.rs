@@ -1,16 +1,23 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-const CADENCE_KEY: &[u8] = b"settings:dreamer:proactivity:cadence:v1";
-const STATE_KEY: &[u8] = b"dreamer:proactivity:state:v1";
-const DIGEST_PREFIX: &[u8] = b"dreamer:proactivity:digest:v1:";
-const PRESENTATION_KEY: &[u8] = b"settings:dreamer:proactivity:presentation:v1";
-const POLICY_CONFIRMED_PREFIX: &[u8] = b"settings:dreamer:proactivity:confirmed:v1:";
+const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
+const STATE: SideTable<(), DigestState, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_STATE);
+const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_DIGEST);
+const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
+const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_CONFIRMED);
 /// Per-recipient time of the last digest that delivered judge asks.
-const JUDGE_ASK_MARK_PREFIX: &[u8] = b"dreamer:proactivity:judge_asks:v1:";
+const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
 /// Generic proposed claim written through the existing gated agent memory
 /// verb. It changes NO settings until the owner confirms its exact revision.
 pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
@@ -131,10 +138,9 @@ impl Vault {
         if row.period_secs == 0 {
             return Err(invalid());
         }
-        let bytes = serde_json::to_vec(row).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, CADENCE_KEY, &bytes)?;
+            CADENCE.put(&self.store, txn, &(), row)?;
             Ok(())
         })?;
         self.store.notify_proactivity_changes();
@@ -148,10 +154,9 @@ impl Vault {
         row: &ProactivityPresentation,
     ) -> Result<()> {
         row.validate()?;
-        let bytes = serde_json::to_vec(row).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, PRESENTATION_KEY, &bytes)?;
+            PRESENTATION.put(&self.store, txn, &(), row)?;
             Ok(())
         })?;
         self.store.notify_proactivity_changes();
@@ -179,29 +184,18 @@ impl Vault {
         claim_ref: EntityId,
         expected_revision: [u8; 32],
     ) -> Result<()> {
-        let confirmed_key = [POLICY_CONFIRMED_PREFIX, claim_ref.as_bytes()].concat();
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            if self.store.vault_meta.get(&*txn, &confirmed_key)?.is_some() {
+            if POLICY_CONFIRMED.contains(&self.store, &*txn, &claim_ref)? {
                 return Err(invalid());
             }
             let proposal = load_policy_proposal(self, &*txn, owner.actor(), claim_ref)?;
             if proposal.revision != expected_revision {
                 return Err(invalid());
             }
-            self.store.vault_meta.put(
-                txn,
-                CADENCE_KEY,
-                &serde_json::to_vec(&proposal.request.cadence).map_err(|_| invalid())?,
-            )?;
-            self.store.vault_meta.put(
-                txn,
-                PRESENTATION_KEY,
-                &serde_json::to_vec(&proposal.request.presentation).map_err(|_| invalid())?,
-            )?;
-            self.store
-                .vault_meta
-                .put(txn, &confirmed_key, &expected_revision)?;
+            CADENCE.put(&self.store, txn, &(), &proposal.request.cadence)?;
+            PRESENTATION.put(&self.store, txn, &(), &proposal.request.presentation)?;
+            POLICY_CONFIRMED.put(&self.store, txn, &claim_ref, &expected_revision)?;
             Ok(())
         })?;
         self.store.notify_proactivity_changes();
@@ -298,10 +292,8 @@ impl Vault {
             // keeps its own mark on the shared vault cadence: one person's
             // digest never consumes another's.
             let recipient = owner.map(crate::consent::AuthenticatedOwner::actor);
-            let ask_mark_key =
-                recipient.map(|actor| [JUDGE_ASK_MARK_PREFIX, actor.as_bytes()].concat());
-            let asks_due = match &ask_mark_key {
-                Some(key) => load_ask_mark(self, &*txn, key)?
+            let asks_due = match &recipient {
+                Some(actor) => load_ask_mark(self, &*txn, actor)?
                     .is_none_or(|last| now >= last.saturating_add(cadence.period_secs)),
                 None => false,
             };
@@ -391,10 +383,7 @@ impl Vault {
                 rendered,
                 voice_style: presentation.voice_style,
             };
-            let bytes = serde_json::to_vec(&digest).map_err(|_| invalid())?;
-            self.store
-                .vault_meta
-                .put(txn, &[DIGEST_PREFIX, &digest.id].concat(), &bytes)?;
+            DIGEST.put(&self.store, txn, &digest.id, &digest)?;
             // The vault state and board pointer follow the shared proposals;
             // an asks-only digest is the recipient's and moves only its mark.
             if !digest.groups.is_empty() {
@@ -402,14 +391,10 @@ impl Vault {
                     state.last_regular = Some(now);
                 }
                 state.last_digest_id = Some(digest.id);
-                self.store.vault_meta.put(
-                    txn,
-                    STATE_KEY,
-                    &serde_json::to_vec(&state).map_err(|_| invalid())?,
-                )?;
+                STATE.put(&self.store, txn, &(), &state)?;
             }
-            if let Some(key) = ask_mark_key.filter(|_| !digest.judge_asks.is_empty()) {
-                self.store.vault_meta.put(txn, &key, &now.to_be_bytes())?;
+            if let Some(actor) = recipient.filter(|_| !digest.judge_asks.is_empty()) {
+                JUDGE_ASK_MARK.put(&self.store, txn, &actor, &now)?;
             }
             Ok(Some(digest))
         })
@@ -419,9 +404,7 @@ impl Vault {
     #[cfg(feature = "test-support")]
     pub fn corrupt_proactivity_state_for_test(&self) -> Result<()> {
         self.with_write_txn(|txn| {
-            self.store
-                .vault_meta
-                .put(txn, STATE_KEY, b"invalid digest state")?;
+            STATE.put_undecodable(&self.store, txn, &(), b"invalid digest state")?;
             Ok(())
         })
     }
@@ -431,9 +414,7 @@ impl Vault {
     #[cfg(feature = "test-support")]
     pub fn corrupt_proactivity_presentation_for_test(&self) -> Result<()> {
         self.with_write_txn(|txn| {
-            self.store
-                .vault_meta
-                .put(txn, PRESENTATION_KEY, b"invalid presentation")?;
+            PRESENTATION.put_undecodable(&self.store, txn, &(), b"invalid presentation")?;
             Ok(())
         })
     }
@@ -452,12 +433,9 @@ impl Vault {
 
     pub fn read_proactivity_digest(&self, id: [u8; 32]) -> Result<Option<ProactivityDigest>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &[DIGEST_PREFIX, &id].concat())?
-            .map(|bytes| {
-                let digest: ProactivityDigest =
-                    serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        DIGEST
+            .get(&self.store, &txn, &id)?
+            .map(|digest| {
                 let identity = serde_json::to_vec(&(
                     digest.created_at,
                     digest.recipient,
@@ -480,8 +458,8 @@ impl Vault {
 mod tests;
 
 fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCadence> {
-    let row: ProactivityCadence = match vault.store.vault_meta.get(txn, CADENCE_KEY)? {
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
+    let row: ProactivityCadence = match CADENCE.get(&vault.store, txn, &())? {
+        Some(row) => row,
         None => {
             serde_json::from_str(include_str!("digest_defaults.json")).map_err(|_| invalid())?
         }
@@ -492,29 +470,19 @@ fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCaden
     Ok(row)
 }
 fn load_state(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DigestState> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, STATE_KEY)?
-        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
-        .transpose()
-        .map(Option::unwrap_or_default)
+    Ok(STATE.get(&vault.store, txn, &())?.unwrap_or_default())
 }
-fn load_ask_mark(vault: &Vault, txn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<u64>> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, key)?
-        .map(|bytes| {
-            <[u8; 8]>::try_from(bytes.as_ref())
-                .map(u64::from_be_bytes)
-                .map_err(|_| invalid())
+fn load_ask_mark(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<Option<u64>> {
+    JUDGE_ASK_MARK
+        .get(&vault.store, txn, actor)
+        .map_err(|error| match error {
+            crate::Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
+            other => other,
         })
-        .transpose()
 }
 fn load_presentation(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityPresentation> {
-    let row: ProactivityPresentation = match vault.store.vault_meta.get(txn, PRESENTATION_KEY)? {
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
+    let row: ProactivityPresentation = match PRESENTATION.get(&vault.store, txn, &())? {
+        Some(row) => row,
         None => serde_json::from_str(include_str!("digest_presentation_defaults.json"))
             .map_err(|_| invalid())?,
     };
@@ -532,15 +500,10 @@ fn pending_proposals(
     // Stream the producer index rather than using its capped 10k-ID query:
     // previously displayed proposals remain Proposed and still occupy index
     // slots. A full tray must not disable the scheduler's other deadlines.
-    let prefix = crate::claim::producer_prefix(authority);
-    for row in vault.store.vault_meta.prefix_iter(txn, &prefix)? {
-        let (key, _) = row?;
-        let id = EntityId::from_bytes(
-            key[prefix.len()..]
-                .try_into()
-                .map_err(|_| crate::Error::CorruptedIndex("claim projection index"))?,
-        )?;
-        let Some(bytes) = vault.store.entities.get(txn, id.as_bytes())? else {
+    for row in crate::claim::PENDING_PRODUCER.iter_from(&vault.store, txn, authority.as_bytes())? {
+        let ((_, id), _) = row?;
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&bytes).ok_or_else(invalid)?;
@@ -626,10 +589,7 @@ fn load_policy_proposal(
     owner: EntityId,
     claim_ref: EntityId,
 ) -> Result<ProactivityPolicyProposal> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, claim_ref.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &claim_ref)?
         .ok_or_else(invalid)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM

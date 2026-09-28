@@ -5,6 +5,7 @@ use super::*;
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
 use crate::edge::EdgeKind;
+use crate::ports::EdgeStoreRead;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 
 /// Consumes a sealed executor handoff. This is the persistence door for custom
@@ -89,7 +90,8 @@ fn attach_evidence(
             .clone()
             .with_scope(scope_with_taint(original.scope.clone(), source))
             .with_evidence(evidence.envelope(Vec::new()));
-        let gate_body = gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?);
+        let gate_body =
+            gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
         crate::gate::check_claim_policy_for_write(
             &vault.store,
@@ -146,15 +148,9 @@ fn attach_ref(
             "attachment locator source mismatch",
         ));
     }
-    let head_raw = vault
-        .store
-        .entities
-        .get(txn, head.as_bytes())?
+    let head_raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &head)?
         .ok_or(Error::EntityNotFound)?;
-    let source_raw = vault
-        .store
-        .entities
-        .get(txn, source.as_bytes())?
+    let source_raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &source)?
         .ok_or(Error::EntityNotFound)?;
     let head_hash = blake3::hash(&head_raw);
     let source_hash = blake3::hash(&source_raw);
@@ -199,7 +195,6 @@ fn attach_ref(
     record.body_snapshot_ref = Some(head_hash.as_bytes()[..16].try_into().expect("hash prefix"));
     record.actor_class = Some(run.agent_actor.actor_class());
     let derived_evidence = evidence.envelope(Vec::new());
-    let edge_key = crate::store::Store::encode_edge_key(&source, EdgeKind::Supports, &head);
     if let Some(existing) = vault.get_claim_in_txn(txn, &id)? {
         let expected_scope = Value::Map(vec![
             (
@@ -208,27 +203,34 @@ fn attach_ref(
             ),
             (Value::from("derived_evidence"), derived_evidence),
         ]);
-        let forward = vault.store.edges_out.get(txn, &edge_key)?;
-        let reverse_key = crate::store::Store::encode_edge_key(&head, EdgeKind::Supports, &source);
-        let reverse = vault.store.edges_in.get(txn, &reverse_key)?;
+        let edge_consistent =
+            vault
+                .store
+                .port_edge_consistent(txn, &source, EdgeKind::Supports, &head)?;
+        let forward = vault
+            .store
+            .port_edge_get(txn, &source, EdgeKind::Supports, &head)
+            .map_err(|error| match error {
+                Error::CorruptedIndex(_) => {
+                    Error::InvalidClaimBody("attachment replay binding changed")
+                }
+                error => error,
+            })?;
         if existing.scope.as_ref() != Some(&expected_scope)
             || existing.approval != ClaimApprovalStatus::Auto
-            || forward.as_deref() != reverse.as_deref()
-            || forward.as_ref().is_none_or(|raw| {
-                crate::vault::parse_edge_record(&edge_key, raw).map_or(true, |edge| {
-                    edge.provenance
-                        != Some(crate::edge::EdgeProvenanceFlags {
-                            confirmation_status: crate::edge::EdgeConfirmationStatus::Confirmed,
-                            actor_class: run.agent_actor.actor_class(),
-                        })
-                })
+            || !edge_consistent
+            || forward.as_ref().is_none_or(|edge| {
+                edge.provenance
+                    != Some(crate::edge::EdgeProvenanceFlags {
+                        confirmation_status: crate::edge::EdgeConfirmationStatus::Confirmed,
+                        actor_class: run.agent_actor.actor_class(),
+                    })
             })
             || existing.source != Some(evidence_meet)
             || existing.predicate != crate::provenance::PREDICATE_EDGE_PROVENANCE
             || existing.subject != crate::ClaimSubject::from(edge)
             || existing.lifecycle != crate::ClaimLifecycleStatus::Active
             || crate::provenance::decode_edge_provenance_body(&existing.value)? != record
-            || vault.store.edges_out.get(txn, &edge_key)?.is_none()
         {
             return Err(Error::InvalidClaimBody("attachment replay binding changed"));
         }
@@ -243,7 +245,11 @@ fn attach_ref(
         )?;
         return Ok(());
     }
-    if vault.store.edges_out.get(txn, &edge_key)?.is_none() {
+    if vault
+        .store
+        .port_edge_get(txn, &source, EdgeKind::Supports, &head)?
+        .is_none()
+    {
         // Never a raw ungated edge: the caller completed the head-predicate
         // Gate above; provenance policy and both edge indexes co-commit below.
         vault

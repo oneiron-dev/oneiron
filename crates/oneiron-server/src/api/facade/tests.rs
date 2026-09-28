@@ -323,7 +323,8 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
         Some(vault.root_project().unwrap()),
         vault.root_project().unwrap(),
         owner,
-    );
+    )
+    .unwrap();
     spec.roster.extend([addressed.to_hex(), other.to_hex()]);
     vault.put_project(project, &spec, 1).unwrap();
     let room = EntityId::from_hex(&spec.home_room).unwrap();
@@ -588,7 +589,8 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
         Some(vault.root_project().unwrap()),
         vault.root_project().unwrap(),
         actor,
-    );
+    )
+    .unwrap();
     vault.put_project(project, &record, 1).unwrap();
     let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
     let server = Arc::new(

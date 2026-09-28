@@ -14,7 +14,7 @@ pub(super) fn record_event_outcome_in_txn(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(source);
     body.valid_from = Some(value.recorded_at);
 

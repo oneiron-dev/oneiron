@@ -267,7 +267,9 @@ fn beam_search_graph(
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
 
-    if !check_existence || store.entities().get(txn, entry_point.as_bytes())?.is_some() {
+    if !check_existence
+        || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &entry_point)?.is_some()
+    {
         results.push(entry);
         if check_existence && !crate::vault_cleanup::is_archived_in_txn(store, txn, &entry_point)? {
             visible.push(entry);
@@ -301,7 +303,10 @@ fn beam_search_graph(
             }
 
             *ops += 1;
-            if check_existence && store.entities().get(txn, neighbor_id.as_bytes())?.is_none() {
+            if check_existence
+                && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &neighbor_id)?
+                    .is_none()
+            {
                 continue;
             }
 

@@ -18,7 +18,7 @@ fn invalid() -> Error {
 }
 
 fn entity_type(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: EntityId) -> Result<Option<u8>> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(None);
     };
     let header = EntityMetadataHeader::parse(&raw)
@@ -27,12 +27,36 @@ fn entity_type(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: EntityId) -> Resul
 }
 
 fn body(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: EntityId) -> Result<ProjectRecord> {
-    let raw = store
-        .entities()
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
         .ok_or(Error::CorruptedIndex("project edge source missing"))?;
     rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
         .map_err(|_| Error::CorruptedIndex("project edge source body"))
+}
+
+/// Only the project rule claim is about the hub itself. All other CLAIM
+/// links remain outside the collection graph; scope_project alone is not a
+/// permit to attach a CLAIM to a project entity.
+fn leader_chat_rule_about_project(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    claim_id: EntityId,
+    project: EntityId,
+    kind: EdgeKind,
+) -> Result<bool> {
+    if kind != EdgeKind::ClaimOf || entity_type(store, txn, claim_id)? != Some(ENTITY_TYPE_CLAIM) {
+        return Ok(false);
+    }
+    let raw = store
+        .entities()
+        .get(txn, claim_id.as_bytes())?
+        .ok_or_else(invalid)?;
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(
+        body.predicate == super::leader_chat::LEADER_CHAT_RULE_PREDICATE
+            && body.subject == crate::claim::ClaimSubject::Entity(project)
+            && body.scope_project == project
+            && matches!(body.value, rmpv::Value::Boolean(_)),
+    )
 }
 
 /// Applies to public puts, replay puts and the session overlay's paired edge
@@ -60,10 +84,9 @@ pub(crate) fn validate_project_edge_put(
             None | Some(ENTITY_TYPE_CLAIM)
         ))
         || (target_project
-            && matches!(
-                entity_type(store, txn, src)?,
-                None | Some(ENTITY_TYPE_CLAIM)
-            )
+            && (entity_type(store, txn, src)?.is_none()
+                || (entity_type(store, txn, src)? == Some(ENTITY_TYPE_CLAIM)
+                    && !leader_chat_rule_about_project(store, txn, src, tgt, kind)?))
             && !admitted_goal)
     {
         return Err(invalid());

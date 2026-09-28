@@ -5,6 +5,7 @@ use super::repo_ref::{RepoRef, normalize_commit_hash, validate_normalized_commit
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
+use crate::side_table::{CodecError, RawValue};
 use rmpv::Value;
 
 pub const CODEBASE_PROJECT_ID_MAX_BYTES: usize = 256;
@@ -201,6 +202,20 @@ pub fn encode_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<Vec<u8>> 
     rmpv::encode::write_value(&mut out, &value)
         .map_err(|_| Error::InvariantViolation("codebase snapshot MessagePack encode failed"))?;
     Ok(out)
+}
+
+/// The side table's declared codec is `Raw`: a codebase snapshot's on-disk shape is the
+/// hand-rolled MessagePack map [`encode_codebase_snapshot`]/[`decode_codebase_snapshot`] have
+/// always spelled, so this impl simply hands the typed door those existing functions — they ARE
+/// the codec.
+impl RawValue for CodebaseSnapshot {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_codebase_snapshot(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_codebase_snapshot(bytes)?)
+    }
 }
 
 pub fn decode_codebase_snapshot(bytes: &[u8]) -> Result<CodebaseSnapshot> {

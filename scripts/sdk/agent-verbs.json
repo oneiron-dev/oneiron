@@ -754,7 +754,7 @@
         "args": {
           "filter": "ClaimListFilter"
         },
-        "output": "Vec<ClaimView>"
+        "output": "ClaimViews"
       },
       "context": "definition"
     },
@@ -764,7 +764,7 @@
         "args": {
           "claim_ref": "String"
         },
-        "output": "Vec<ClaimView>"
+        "output": "ClaimViews"
       },
       "context": "definition"
     },
@@ -795,7 +795,7 @@
         "args": {
           "refs": "Vec<String>"
         },
-        "output": "Vec<EntityView>"
+        "output": "EntityViews"
       },
       "context": "definition"
     },
@@ -805,7 +805,7 @@
         "args": {
           "entity_ref": "String"
         },
-        "output": "Option<EntityView>"
+        "output": "EntityRead"
       },
       "context": "definition"
     },
@@ -816,7 +816,7 @@
           "query": "String",
           "limit": "u32"
         },
-        "output": "Vec<LexicalHit>"
+        "output": "LexicalHits"
       },
       "context": "definition"
     },
@@ -827,7 +827,7 @@
           "entity_ref": "String",
           "opts": "NeighborOpts"
         },
-        "output": "Vec<NeighborHit>"
+        "output": "NeighborHits"
       },
       "context": "definition"
     },

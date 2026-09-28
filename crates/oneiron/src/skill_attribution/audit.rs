@@ -4,10 +4,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::codec::{
-    AUDIT_PREFIX, SEQUENCE_LEN, decode_audit, encode_audit, encode_value,
-    next_evidence_sequence_in_txn,
-};
+use super::codec::{AUDIT, next_evidence_sequence_in_txn};
 use super::judge::{AttributionJudge, RuleAttributionJudge};
 use super::types::{AttemptOutcome, AttributionVerdict, OutcomeEvidence};
 
@@ -111,12 +108,7 @@ pub fn run_attribution_audit_with_judge(
 
     vault.with_write_txn(|wtxn| {
         let sequence = next_evidence_sequence_in_txn(vault, wtxn)?;
-        let mut key = Vec::with_capacity(AUDIT_PREFIX.len() + SEQUENCE_LEN * 2);
-        key.extend_from_slice(AUDIT_PREFIX);
-        key.extend_from_slice(&at.to_be_bytes());
-        key.extend_from_slice(&sequence.to_be_bytes());
-        let encoded = encode_value(&encode_audit(&report))?;
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        AUDIT.put(&vault.store, wtxn, &(at, sequence), &report)?;
         Ok(())
     })?;
 
@@ -126,12 +118,11 @@ pub fn run_attribution_audit_with_judge(
 /// Every persisted audit report, oldest first.
 pub fn attribution_audit_reports(vault: &Vault) -> Result<Vec<AttributionAuditReport>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&rtxn, AUDIT_PREFIX)? {
-        let (_, raw) = row?;
-        out.push(decode_audit(&raw)?);
-    }
-    Ok(out)
+    Ok(AUDIT
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(_, report)| report)
+        .collect())
 }
 
 /// The held-out set: one case per verdict, plus one whose honest answer is

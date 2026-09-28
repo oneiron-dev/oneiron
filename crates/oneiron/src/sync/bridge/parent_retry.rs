@@ -8,7 +8,7 @@ use crate::conversation_dag::topology::{
 };
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::error::{Error, Result};
-use crate::store::Store;
+use crate::side_table::{self, Raw, SideTable};
 use crate::sync::quarantine::{self, QuarantineContainer, remote_rejection_reason};
 use crate::sync::types::WindowKey;
 use crate::{EntityId, Vault};
@@ -22,6 +22,15 @@ const ANCHOR: &str = "sa:w:";
 const ANCHOR_INDEX: &str = "se:";
 const VALUE_LEN: usize = 12;
 const MAX_DEPENDENCIES: usize = 8;
+const PENDING_ROW: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::DEFERRED_PARENT);
+const INDEX_ROW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::DEFERRED_PARENT_DEPENDENCY);
+const SOURCE_INDEX_ROW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::DEFERRED_PARENT_SOURCE);
+const ANCHOR_ROW: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DEFERRED_SPAWNED_BY);
+const ANCHOR_INDEX_ROW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::DEFERRED_SPAWNED_BY_ENDPOINT);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::sync) enum ParentOutcome {
@@ -174,16 +183,16 @@ fn settle(
     };
     let (_, deps) = decode_pending(&raw)?;
     for dep in deps {
-        vault
-            .store
-            .sync_state
-            .delete(txn, &index_key(dep, &obligation))?;
+        let index = index_key(dep, &obligation);
+        INDEX_ROW.delete(&vault.store, txn, &index[INDEX.len()..].to_string())?;
     }
-    vault.store.sync_state.delete(txn, &obligation)?;
-    vault
-        .store
-        .sync_state
-        .delete(txn, &source_index_key(source, &obligation))?;
+    PENDING_ROW.delete(&vault.store, txn, &obligation[PENDING.len()..].to_string())?;
+    let source_index = source_index_key(source, &obligation);
+    SOURCE_INDEX_ROW.delete(
+        &vault.store,
+        txn,
+        &source_index[SOURCE_INDEX.len()..].to_string(),
+    )?;
     if !has_pending_source_in_txn(vault, txn, window, source)? {
         quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, source)?;
     }
@@ -203,25 +212,26 @@ fn wait(
     if let Some(raw) = vault.store.sync_state.get(txn, &obligation)? {
         let (_, prior) = decode_pending(&raw)?;
         for dep in prior {
-            vault
-                .store
-                .sync_state
-                .delete(txn, &index_key(dep, &obligation))?;
+            let index = index_key(dep, &obligation);
+            INDEX_ROW.delete(&vault.store, txn, &index[INDEX.len()..].to_string())?;
         }
     }
-    vault
-        .store
-        .sync_state
-        .put(txn, &obligation, &encode_pending(value, deps)?)?;
-    vault
-        .store
-        .sync_state
-        .put(txn, &source_index_key(source, &obligation), &[1])?;
+    PENDING_ROW.put(
+        &vault.store,
+        txn,
+        &obligation[PENDING.len()..].to_string(),
+        &encode_pending(value, deps)?,
+    )?;
+    let source_index = source_index_key(source, &obligation);
+    SOURCE_INDEX_ROW.put(
+        &vault.store,
+        txn,
+        &source_index[SOURCE_INDEX.len()..].to_string(),
+        &[1],
+    )?;
     for dep in deps.iter() {
-        vault
-            .store
-            .sync_state
-            .put(txn, &index_key(dep, &obligation), &[1])?;
+        let index = index_key(dep, &obligation);
+        INDEX_ROW.put(&vault.store, txn, &index[INDEX.len()..].to_string(), &[1])?;
     }
     quarantine::set_replay_remat_marker_in_txn(vault, txn, window, source)
 }
@@ -256,19 +266,24 @@ fn apply_ready(
 ) -> Result<ParentOutcome> {
     let src = parent.source;
     let tgt = parent.target;
-    let out_key = Store::encode_edge_key(&src, EdgeKind::Parent, &tgt);
-    let in_key = Store::encode_edge_key(&tgt, EdgeKind::Parent, &src);
-    let out_same = vault
-        .store
-        .edges_out
-        .get(&*txn, &out_key)?
-        .is_some_and(|stored| stored == value);
-    let in_same = vault
-        .store
-        .edges_in
-        .get(&*txn, &in_key)?
-        .is_some_and(|stored| stored == value);
-    if out_same && in_same {
+    let out_same = crate::ports::EdgeStoreStaging::port_edge_encoded(
+        &vault.store,
+        &*txn,
+        &src,
+        EdgeKind::Parent,
+        &tgt,
+    )?
+    .as_deref()
+        == Some(value);
+    if out_same
+        && crate::ports::EdgeStoreRead::port_edge_consistent(
+            &vault.store,
+            &*txn,
+            &src,
+            EdgeKind::Parent,
+            &tgt,
+        )?
+    {
         settle(vault, txn, window, &src, &tgt)?;
         return Ok(ParentOutcome::Unchanged);
     }
@@ -407,12 +422,20 @@ pub(in crate::sync) fn defer_spawned_by(
         return Ok(());
     }
     let row = anchor_key(window, session, turn);
-    vault.store.sync_state.put(txn, &row, value)?;
+    ANCHOR_ROW.put(
+        &vault.store,
+        txn,
+        &row[ANCHOR.len()..].to_string(),
+        &value.to_vec(),
+    )?;
     for endpoint in [session, turn] {
-        vault
-            .store
-            .sync_state
-            .put(txn, &anchor_index_key(endpoint, &row), &[1])?;
+        let index = anchor_index_key(endpoint, &row);
+        ANCHOR_INDEX_ROW.put(
+            &vault.store,
+            txn,
+            &index[ANCHOR_INDEX.len()..].to_string(),
+            &[1],
+        )?;
     }
     quarantine::set_replay_remat_marker_in_txn(vault, txn, window, session)
 }
@@ -428,12 +451,10 @@ fn settle_spawned_by(
     if vault.store.sync_state.get(txn, &row)?.is_none() {
         return Ok(());
     }
-    vault.store.sync_state.delete(txn, &row)?;
+    ANCHOR_ROW.delete(&vault.store, txn, &row[ANCHOR.len()..].to_string())?;
     for endpoint in [session, turn] {
-        vault
-            .store
-            .sync_state
-            .delete(txn, &anchor_index_key(endpoint, &row))?;
+        let index = anchor_index_key(endpoint, &row);
+        ANCHOR_INDEX_ROW.delete(&vault.store, txn, &index[ANCHOR_INDEX.len()..].to_string())?;
     }
     let prefix = format!("{ANCHOR}{window}:{}:", session.to_hex());
     if vault

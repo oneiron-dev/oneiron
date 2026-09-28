@@ -368,7 +368,7 @@ pub(super) fn apply_recency_blend(
     let decay = std::f64::consts::LN_2 / seconds_per_half_life;
 
     for (id, score) in scores {
-        let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -524,7 +524,7 @@ fn resolve_lexical_query_hint_record(
     {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
-    let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
         return Ok(LexicalQueryHintResolution::NonHint);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -561,7 +561,7 @@ fn lexical_query_hint_target_is_live_claim(
     rtxn: &RoTxn<'_>,
     target: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities().get(rtxn, target.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, target)? else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

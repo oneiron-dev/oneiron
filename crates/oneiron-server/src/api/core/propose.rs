@@ -57,8 +57,9 @@ pub(crate) async fn core_propose(
             .is_some()
     } else {
         scoped_read_for_core_auth(server.vault().as_ref(), &auth)?
-            .get(&subject)
+            .read(&[oneiron::claim::PointRead::id(subject)], None)
             .map_err(|error| core_engine_error("proposal target lookup failed", error))?
+            .single()
             .value
             .is_some()
     };
@@ -76,7 +77,8 @@ pub(crate) async fn core_propose(
         1.0,
         oneiron::ClaimApprovalStatus::Proposed,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .map_err(|error| core_engine_error("proposal rejected", error))?;
     body.source = Some(oneiron::ClaimSource::ToolOutput);
     body.scope = Some(rmpv::Value::Map(vec![(
         rmpv::Value::from("proposal_principal"),

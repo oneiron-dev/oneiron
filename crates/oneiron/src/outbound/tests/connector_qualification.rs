@@ -652,7 +652,8 @@ fn check_email_dnc(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     dnc.valid_from = Some(1);
     vault
         .put_claim(

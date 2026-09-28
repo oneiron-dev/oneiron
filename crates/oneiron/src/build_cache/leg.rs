@@ -2,6 +2,11 @@
 use super::*;
 use crate::checkout::CheckoutTaskClass;
 
+/// In-flight reservation marker preventing duplicate dispatch of the same build/verify action.
+/// Key: bytes32 (action key).
+const RUNNING_RESERVATION: SideTable<[u8; BUILD_CACHE_ACTION_KEY_LEN], String, Raw> =
+    SideTable::new(&side_table::BUILD_CACHE_RUNNING_RESERVATION);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildLegReceipt {
     pub action_key: ActionKey,
@@ -32,24 +37,19 @@ impl BuildCache<'_> {
         if let Some(cached) = self.get(&key)? {
             return Ok(leg(cached, class, true));
         }
-        let reservation = [b"build_cache:running:v2:".as_slice(), key.as_bytes()].concat();
         {
             let mut txn = self.vault.store.env.write_txn().map_err(Error::from)?;
-            if self
-                .vault
-                .store
-                .vault_meta
-                .get(&txn, &reservation)?
-                .is_some()
-            {
+            if RUNNING_RESERVATION.contains(&self.vault.store, &txn, key.as_bytes())? {
                 return Err(BuildCacheError::ActionInFlight {
                     action_key: key.to_hex(),
                 });
             }
-            self.vault
-                .store
-                .vault_meta
-                .put(&mut txn, &reservation, class.as_str().as_bytes())?;
+            RUNNING_RESERVATION.put(
+                &self.vault.store,
+                &mut txn,
+                key.as_bytes(),
+                &class.as_str().to_owned(),
+            )?;
             txn.commit().map_err(Error::from)?;
         }
         // Errors deliberately retain the reservation: the host must resolve an

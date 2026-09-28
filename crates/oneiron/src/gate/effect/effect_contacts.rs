@@ -2,10 +2,10 @@
 
 use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
+    CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_by_index_in_txn,
     counterparty_contact_matches_channel_class, counterparty_contacts_by_party_channel,
-    counterparty_contacts_by_party_full_scan, decode_counterparty_contact_index_value,
-    normalize_channel_class, read_counterparty_contact_in_txn,
+    counterparty_contacts_by_party_full_scan, normalize_channel_class,
+    read_counterparty_contact_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -40,6 +40,7 @@ pub(super) fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
+    policy: &crate::gate::PolicyManifestResolution,
 ) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>)> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
@@ -67,6 +68,37 @@ pub(super) fn hydrate_external_effect_contact(
             hydrated.counterparty_opt_out_receipt_reason = record
                 .opt_out
                 .map(crate::counterparty_contact::CounterpartyOptOut::receipt_reason);
+        }
+    }
+
+    // A native-mail sender resolves the vault's recipient-class and initial
+    // posture rows on this SAME Gate transaction as the CID-7 contact facts.
+    // An absent/malformed policy keeps the send in the asking lane.
+    let native_mail = if channel_class == "email" && effect.verb == "send" {
+        effect.channel_identity_ref.map_or(Ok(false), |identity| {
+            crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+                store, txn, identity,
+            )
+        })?
+    } else {
+        false
+    };
+    if native_mail {
+        let mail = policy.native_mail_policy_for(
+            effect.provenance.actor_entity_ref,
+            effect.channel_identity_ref,
+        );
+        if mail
+            .as_ref()
+            .is_none_or(|row| !row.is_known(hydrated.counterparty_first_touch))
+        {
+            let risk = mail.as_ref().map_or(
+                ExternalEffectPolicyRisk::HoldToProposal,
+                crate::gate::mail_policy::MailPolicy::cold_risk,
+            );
+            if risk == ExternalEffectPolicyRisk::HoldToProposal {
+                hydrated.policy_risk = risk;
+            }
         }
     }
 
@@ -186,11 +218,10 @@ fn counterparty_contact_by_identity_index(
     identity_ref: &EntityId,
     counterparty: &str,
 ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
-    let key = counterparty_contact_index_key(identity_ref, counterparty)?;
-    let Some(raw_id) = store.vault_meta.get(txn, &key)? else {
+    let Some(id) = counterparty_contact_by_index_in_txn(store, txn, identity_ref, counterparty)?
+    else {
         return Ok(None);
     };
-    let id = decode_counterparty_contact_index_value(&raw_id)?;
     let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
         return Err(Error::CorruptedIndex(
             "counterparty contact lookup index entity row",

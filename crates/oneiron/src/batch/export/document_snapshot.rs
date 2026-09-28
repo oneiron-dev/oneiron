@@ -64,9 +64,8 @@ impl Vault {
         let mut agent_fork_hashes = BTreeMap::new();
         let mut task_receipts = BTreeMap::new();
         let mut archived_receipts = BTreeMap::new();
-        for entry in self.store.entities.iter(&rtxn)? {
-            let (key, raw) = entry?;
-            let id = crate::entity_id::parse_entity_id(&key, "whole-vault entity id")?;
+        for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
+            let (id, raw) = entry?;
             if whole_vault_export_excludes_entity(self, &id)? {
                 continue;
             }
@@ -175,7 +174,7 @@ impl Vault {
             });
         }
         let mut edges = Vec::new();
-        for entry in self.store.edges_out.iter(&rtxn)? {
+        for entry in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.store, &rtxn)? {
             let (key, value) = entry?;
             let edge = parse_strict_edge_record(&key, &value)?;
             if !included.contains(&edge.source) || !included.contains(&edge.target) {

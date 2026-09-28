@@ -1,6 +1,9 @@
 //! Host-bound account cache: no process-global registry and no implicit cross-tenant lookup.
 use super::*;
-const ACCOUNT: &[u8] = b"build_cache:account:v1";
+
+/// The tenant/account identity a build-cache vault is bound to. Key: ().
+const ACCOUNT: SideTable<(), String, Raw> = SideTable::new(&side_table::BUILD_CACHE_ACCOUNT);
+
 impl<'a> BuildCache<'a> {
     /// Bind a vault to its authenticated account. Hosts supply the account identity;
     /// a later call cannot move an existing vault to another tenant.
@@ -9,15 +12,12 @@ impl<'a> BuildCache<'a> {
             return Err(BuildCacheError::InvalidAction("invalid account"));
         }
         let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
-        match vault.store.vault_meta.get(&txn, ACCOUNT)? {
-            Some(existing) if existing != account.as_bytes() => {
+        match ACCOUNT.get(&vault.store, &txn, &())? {
+            Some(existing) if existing != account => {
                 return Err(BuildCacheError::AccountMismatch);
             }
             Some(_) => (),
-            None => vault
-                .store
-                .vault_meta
-                .put(&mut txn, ACCOUNT, account.as_bytes())?,
+            None => ACCOUNT.put(&vault.store, &mut txn, &(), &account.to_owned())?,
         }
         txn.commit().map_err(Error::from)?;
         Ok(())
@@ -31,7 +31,7 @@ impl<'a> BuildCache<'a> {
     ) -> BuildCacheResult<Self> {
         for vault in [member, account_vault] {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            if vault.store.vault_meta.get(&txn, ACCOUNT)?.as_deref() != Some(account.as_bytes()) {
+            if ACCOUNT.get(&vault.store, &txn, &())?.as_deref() != Some(account) {
                 return Err(BuildCacheError::AccountMismatch);
             }
         }

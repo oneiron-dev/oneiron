@@ -6,17 +6,27 @@ use heed::{RoTxn, RwTxn};
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::GateRetentionContext;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{ManifestDbs, Store};
 
 use super::types::{GateDecisionId, GateDecisionRecord};
 
-const DECISION_SCOPE_PREFIX: &[u8] = b"gate_decision:retention_context:v1:";
-const CLAIM_SCOPE_PREFIX: &[u8] = b"gate_decision:claim_context:v1:";
+/// One decision's append-time context.
+const DECISION_SCOPE: SideTable<GateDecisionId, GateRetentionContext, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_RETENTION_CONTEXT);
+/// The latest verified context of a claim, inherited by its later decisions.
+const CLAIM_SCOPE: SideTable<[u8; 16], GateRetentionContext, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_CLAIM_CONTEXT);
 
-fn key(prefix: &[u8], id: &[u8; 16]) -> Vec<u8> {
-    let mut key = Vec::from(prefix);
-    key.extend_from_slice(id);
-    key
+/// The module's own layout; a row that does not decode is the module's corruption error.
+impl RawValue for GateRetentionContext {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode(*self))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        decode(bytes).map_err(CodecError::Value)
+    }
 }
 
 fn corrupt() -> Error {
@@ -80,20 +90,11 @@ pub(super) fn append_context_in_txn(
     record: &GateDecisionRecord,
 ) -> Result<()> {
     let context = if let Some(claim) = record.claim_id {
-        store
-            .vault_meta()
-            .get(&*txn, &key(CLAIM_SCOPE_PREFIX, &claim))?
-            .map(|raw| decode(&raw))
-            .transpose()?
-            .unwrap_or_default()
+        CLAIM_SCOPE.get(store, &*txn, &claim)?.unwrap_or_default()
     } else {
         GateRetentionContext::default()
     };
-    store.vault_meta().put(
-        txn,
-        &key(DECISION_SCOPE_PREFIX, &record.decision_id.as_bytes()),
-        &encode(context),
-    )?;
+    DECISION_SCOPE.put(store, txn, &record.decision_id, &context)?;
     Ok(())
 }
 
@@ -113,17 +114,11 @@ impl Store {
         {
             return Err(corrupt());
         }
-        let encoded = encode(context);
-        if decode(&encoded)? != context {
+        if decode(&encode(context))? != context {
             return Err(corrupt());
         }
-        self.vault_meta
-            .put(txn, &key(CLAIM_SCOPE_PREFIX, claim.as_bytes()), &encoded)?;
-        self.vault_meta.put(
-            txn,
-            &key(DECISION_SCOPE_PREFIX, &decision_id.as_bytes()),
-            &encoded,
-        )?;
+        CLAIM_SCOPE.put(self, txn, claim.as_bytes(), &context)?;
+        DECISION_SCOPE.put(self, txn, &decision_id, &context)?;
         Ok(())
     }
 
@@ -132,11 +127,8 @@ impl Store {
         txn: &RoTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<GateRetentionContext> {
-        match self.vault_meta.get(
-            txn,
-            &key(DECISION_SCOPE_PREFIX, &record.decision_id.as_bytes()),
-        )? {
-            Some(raw) => decode(&raw),
+        match DECISION_SCOPE.get(self, txn, &record.decision_id)? {
+            Some(context) => Ok(context),
             // A missing append-time context on a claim-bound row cannot be
             // assumed vault-scoped once child retention policies exist.
             None if record.claim_id.is_some() => Err(corrupt()),
@@ -149,8 +141,7 @@ impl Store {
         txn: &mut RwTxn<'_>,
         decision_id: GateDecisionId,
     ) -> Result<()> {
-        self.vault_meta
-            .delete(txn, &key(DECISION_SCOPE_PREFIX, &decision_id.as_bytes()))?;
+        DECISION_SCOPE.delete(self, txn, &decision_id)?;
         Ok(())
     }
 }

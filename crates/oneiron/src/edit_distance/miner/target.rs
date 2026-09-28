@@ -63,7 +63,7 @@ impl CompilationTarget {
                 0.5,
                 ClaimApprovalStatus::Proposed,
                 crate::claim::ClaimLifecycleStatus::Active,
-            );
+            )?;
             crate::claim::validate_expression_preference_claim_structure(&body)?;
         }
         Ok(())

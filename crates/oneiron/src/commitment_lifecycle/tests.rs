@@ -15,7 +15,6 @@ use crate::commitment::{
 };
 use crate::commitment_schedule::{
     CommitmentDueEntry, CommitmentSchedulePayload, Schedule, ScheduleResult,
-    commitment_projection_actor,
 };
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
@@ -24,8 +23,7 @@ use crate::habit::{TaskRole, task_body_for_test};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{
-    ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
 use crate::write_envelope::{WriteActor, WriteProvenance};
 
@@ -53,10 +51,8 @@ const fn time(start: u64, end: u64) -> TimeRange {
 
 /// The two human parties plus the projector's pinned System actor.
 ///
-/// The last one is load-bearing: the claim-candidate door resolves
-/// `envelope.actor()` against a stored entity and validates its class, so a
-/// vault that expects the projector to mint anything must carry the derived
-/// actor as a MACHINE entity.
+/// The last one is load-bearing: the projector is a MACHINE, so it mints only
+/// with the host-held key the host provisions at bootstrap (ONE-1634).
 struct Parties {
     obligor: EntityId,
     beneficiary: EntityId,
@@ -69,13 +65,7 @@ fn parties(vault: &Vault) -> Result<Parties> {
     for id in [obligor, beneficiary] {
         vault.put_entity(&id, ENTITY_TYPE_PERSON, time(1, 1), 1, b"person")?;
     }
-    vault.put_entity(
-        &commitment_projection_actor().entity_ref(),
-        ENTITY_TYPE_MACHINE,
-        time(1, 1),
-        1,
-        b"commitment projector",
-    )?;
+    crate::test_util::provision_engine_machines(vault);
     Ok(Parties {
         obligor,
         beneficiary,
@@ -420,7 +410,7 @@ fn reserved_fulfills_cannot_be_forged_publicly() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&stranger, &stranger_body, time(10, 20), 300)?;
     vault
         .batch()
@@ -1186,7 +1176,7 @@ fn dreamer_witness_refuses_before_writing() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&stranger, &stranger_body, time(10, 20), 300)?;
     assert!(matches!(
         propose_commitment_fulfilled(

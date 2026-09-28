@@ -4,7 +4,9 @@ use crate::calendar::connectors::{
     RemoteSyncBatch, calendar_write_outbox_rows, run_calendar_connector_sync,
 };
 use crate::calendar::ics::parse_ics_feed;
-use crate::calendar::test_support::{CalendarEventFixture, open_calendar_vault};
+use crate::calendar::test_support::{
+    CalendarEventFixture, open_calendar_vault_with_machine_identity as open_calendar_vault,
+};
 use std::cell::RefCell;
 
 const NOW: u64 = 1_800_000_000;
@@ -224,7 +226,8 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
                         1.0,
                         crate::ClaimApprovalStatus::Approved,
                         crate::ClaimLifecycleStatus::Active,
-                    ),
+                    )
+                    .unwrap(),
                     crate::TimeRange {
                         start: NOW,
                         end: NOW,

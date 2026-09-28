@@ -418,7 +418,8 @@ pub(super) fn seed_active_claim(
         0.9,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     server
         .vault
         .put_claim(
@@ -883,6 +884,7 @@ pub(super) fn seed_disclosure_scope(
 ) {
     let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
+
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)
@@ -910,7 +912,8 @@ fn seed_disclosure_claim_in_world(
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = Some(world);
     // Tier B is required here: otherwise the tier check rejects this claim
     // before the test can exercise the contact's world clearance.
@@ -1067,6 +1070,16 @@ pub(super) fn reactive_window_update_frame(window_key: &str) -> Vec<u8> {
     reactive_window_frame(window_key, crate::protocol::window_sub_tags::UPDATE)
 }
 
+pub(super) fn reactive_doc_update_frame(id: oneiron::EntityId) -> Vec<u8> {
+    oneiron::sync::transport::encode_document(
+        id,
+        oneiron::sync::transport::document_sub_tags::UPDATE,
+        b"delta",
+    )
+    .into_result()
+    .expect("document update frame")
+}
+
 /// Every frame shape that reaches the broadcast channel yet must never re-run
 /// an LMDB query: presence/ephemeral state, sync negotiation, lease traffic,
 /// selector requests, malformed bytes, and tags this server does not know
@@ -1169,7 +1182,8 @@ pub(super) fn seed_world_claim(
         0.8,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     server
         .vault

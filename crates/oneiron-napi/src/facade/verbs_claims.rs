@@ -7,13 +7,13 @@ use super::boundary::{boundary_error, facade_error, ts_from_engine};
 use super::bridge::ActorScopedVault;
 use super::convert::{
     claim_view_from_engine, commit_receipt_from_engine, entity_view_from_engine,
-    forget_active_matches, gate_receipt_from_engine, witness_receipt_from_engine,
-    witness_turn_to_engine,
+    forget_active_matches, gate_receipt_from_engine, read_receipt_from_engine,
+    witness_receipt_from_engine, witness_turn_to_engine,
 };
 use super::dtos::{
-    NapiClaimInput, NapiClaimListFilter, NapiClaimView, NapiCommitReceipt, NapiDeleteReceipt,
-    NapiEntityView, NapiForgetSelector, NapiGateReceipt, NapiPendingWrite, NapiWitnessReceipt,
-    NapiWitnessTurn,
+    NapiClaimInput, NapiClaimListFilter, NapiClaimViews, NapiCommitReceipt, NapiDeleteReceipt,
+    NapiEntityRead, NapiEntityViews, NapiForgetSelector, NapiGateReceipt, NapiPendingWrite,
+    NapiWitnessReceipt, NapiWitnessTurn,
 };
 use super::numeric::claim_input_to_engine;
 
@@ -102,9 +102,10 @@ impl ActorScopedVault {
             .collect())
     }
 
-    /// Lists claims by subject/predicate/lifecycle, bounded by `limit`.
+    /// Lists claims by subject/predicate/lifecycle, bounded by `limit`,
+    /// with the read's receipt.
     #[napi]
-    pub fn claim_list(&self, filter: NapiClaimListFilter) -> napi::Result<Vec<NapiClaimView>> {
+    pub fn claim_list(&self, filter: NapiClaimListFilter) -> napi::Result<NapiClaimViews> {
         let views = self
             .facade()?
             .claim_list(&ClaimListFilter {
@@ -114,23 +115,18 @@ impl ActorScopedVault {
                 limit: filter.limit as usize,
             })
             .map_err(facade_error)?;
-        views
-            .into_iter()
-            .map(|view| claim_view_from_engine(view).map_err(boundary_error))
-            .collect()
+        claim_views_from_engine(views)
     }
 
-    /// Supersession timeline for one claim, oldest first.
+    /// Supersession timeline for one claim, oldest first, with the read's
+    /// receipt.
     #[napi]
-    pub fn claim_history(&self, claim_ref: String) -> napi::Result<Vec<NapiClaimView>> {
+    pub fn claim_history(&self, claim_ref: String) -> napi::Result<NapiClaimViews> {
         let views = self
             .facade()?
             .claim_history(&claim_ref)
             .map_err(facade_error)?;
-        views
-            .into_iter()
-            .map(|view| claim_view_from_engine(view).map_err(boundary_error))
-            .collect()
+        claim_views_from_engine(views)
     }
 
     /// Deletes an entity under a NAMED reason (`user_delete` |
@@ -193,24 +189,48 @@ impl ActorScopedVault {
             .collect()
     }
 
-    /// Hydrates short refs (or hex ids) to full entity views.
+    /// Hydrates short refs (or hex ids) to full entity views, with the
+    /// read's receipt.
     #[napi]
-    pub fn hydrate(&self, refs: Vec<String>) -> napi::Result<Vec<NapiEntityView>> {
+    pub fn hydrate(&self, refs: Vec<String>) -> napi::Result<NapiEntityViews> {
         let views = self.facade()?.hydrate(&refs).map_err(facade_error)?;
-        views
-            .into_iter()
-            .map(|view| entity_view_from_engine(view).map_err(boundary_error))
-            .collect()
+        Ok(NapiEntityViews {
+            value: views
+                .value
+                .into_iter()
+                .map(|view| entity_view_from_engine(view).map_err(boundary_error))
+                .collect::<napi::Result<_>>()?,
+            narrowing: read_receipt_from_engine(views.receipt).map_err(boundary_error)?,
+        })
     }
 
-    /// Reads one entity; `null` when absent.
+    /// Reads one entity; `value` is `null` when absent or withheld, and the
+    /// receipt says which.
     #[napi]
-    pub fn get_entity(&self, entity_ref: String) -> napi::Result<Option<NapiEntityView>> {
+    pub fn get_entity(&self, entity_ref: String) -> napi::Result<NapiEntityRead> {
         let view = self
             .facade()?
             .get_entity(&entity_ref)
             .map_err(facade_error)?;
-        view.map(|v| entity_view_from_engine(v).map_err(boundary_error))
-            .transpose()
+        Ok(NapiEntityRead {
+            value: view
+                .value
+                .map(|view| entity_view_from_engine(view).map_err(boundary_error))
+                .transpose()?,
+            narrowing: read_receipt_from_engine(view.receipt).map_err(boundary_error)?,
+        })
     }
+}
+
+fn claim_views_from_engine(
+    views: oneiron::claim::ScopedReadResult<Vec<oneiron::ClaimView>>,
+) -> napi::Result<NapiClaimViews> {
+    Ok(NapiClaimViews {
+        value: views
+            .value
+            .into_iter()
+            .map(|view| claim_view_from_engine(view).map_err(boundary_error))
+            .collect::<napi::Result<_>>()?,
+        narrowing: read_receipt_from_engine(views.receipt).map_err(boundary_error)?,
+    })
 }

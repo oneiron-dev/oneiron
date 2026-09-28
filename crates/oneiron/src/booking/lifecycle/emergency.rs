@@ -10,13 +10,13 @@ use super::door::BookingLifecycleConsumerInput;
 use super::occurrence::{inclusive_occurrence, offers_slot};
 use super::passport::supersede_outbound_passport;
 use super::storage::{
-    booking_writer, delete_meta, encode_claim_value, encode_row, engine_failure, meta_key,
-    put_meta, read_meta, read_txn, revision_receipt_key, write_receipt,
+    RECEIPT, booking_writer, encode_claim_value, engine_failure, read_txn, revision_receipt_key,
+    write_receipt,
 };
 use super::token::{OpaqueLifecycleToken, mint_raw_token, token_digest};
 use super::types::{
-    BOOKING_PASSPORT_SYSTEM, BOOKING_RECEIPT_META_PREFIX, BOOKING_STATUS_PREDICATE,
-    BOOKING_TOKEN_META_PREFIX, BookingStatus, BookingStatusValue, CalendarRevision,
+    BOOKING_PASSPORT_SYSTEM, BOOKING_STATUS_PREDICATE, BookingStatus, BookingStatusValue,
+    CalendarRevision,
 };
 use super::{BookingContent, LifecycleReceiptRow};
 use crate::booking::BookingError;
@@ -26,6 +26,7 @@ use crate::calendar::claims::{
 use crate::claim::ClaimLifecycleStatus;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::registry::ENTITY_TYPE_EVENT;
+use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
@@ -42,6 +43,15 @@ struct EmergencyPickRow {
     emergency_item_key: Vec<u8>,
     proposal_index: usize,
 }
+
+/// Same `booking.token.v1:` declaration [`TOKEN`](super::TOKEN) and
+/// [`CHECKOUT_LEASE`](super::CHECKOUT_LEASE) bind; see `TOKEN`'s doc comment.
+/// Key: hash32 (the emergency action token digest).
+const EMERGENCY_PICK: SideTable<
+    [u8; 32],
+    EmergencyPickRow,
+    VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,
+> = SideTable::new(&side_table::BOOKING_TOKEN);
 
 fn require_emergency_home(
     vault: &Vault,
@@ -307,15 +317,17 @@ pub(in crate::booking) fn commit_emergency_item(
         let mut actions = Vec::new();
         for proposal_index in 0..plan.proposals.len() {
             let token = OpaqueLifecycleToken(mint_raw_token());
-            put_meta(
-                vault,
-                txn,
-                &meta_key(BOOKING_TOKEN_META_PREFIX, &token_digest(&token)),
-                &encode_row(&EmergencyPickRow {
-                    emergency_item_key: key.clone(),
-                    proposal_index,
-                })?,
-            )?;
+            EMERGENCY_PICK
+                .put(
+                    &vault.store,
+                    txn,
+                    &token_digest(&token),
+                    &EmergencyPickRow {
+                        emergency_item_key: key.clone(),
+                        proposal_index,
+                    },
+                )
+                .map_err(|error| engine_failure("meta write", error))?;
             actions.push(token);
         }
         let item = EmergencyItem {
@@ -365,9 +377,10 @@ fn emergency_pick_in(
     token: &OpaqueLifecycleToken,
 ) -> Result<(crate::booking::emergency_reschedule::EmergencyItem, usize), BookingError> {
     use crate::booking::emergency_reschedule as emergency;
-    let action: EmergencyPickRow =
-        read_meta(vault, txn, BOOKING_TOKEN_META_PREFIX, &token_digest(token))?
-            .ok_or_else(|| emergency_refused("unknown emergency lifecycle action"))?;
+    let action: EmergencyPickRow = EMERGENCY_PICK
+        .get(&vault.store, txn, &token_digest(token))
+        .map_err(|error| engine_failure("meta read", error))?
+        .ok_or_else(|| emergency_refused("unknown emergency lifecycle action"))?;
     let item = emergency::read_item_in(vault, txn, &action.emergency_item_key)?
         .ok_or_else(|| emergency_refused("emergency action has no durable checkpoint"))?;
     emergency::verify_plan_in(vault, txn, &item.plan)?;
@@ -538,14 +551,9 @@ pub(in crate::booking) fn pick_emergency_item(
             ));
         }
         if expected_status == BookingStatus::Cancelled {
-            delete_meta(
-                vault,
-                txn,
-                &meta_key(
-                    BOOKING_RECEIPT_META_PREFIX,
-                    &revision_receipt_key(&event, None),
-                ),
-            )?;
+            RECEIPT
+                .delete(&vault.store, txn, &revision_receipt_key(&event, None))
+                .map_err(|error| engine_failure("meta delete", error))?;
         }
         if item.basis == emergency::EmergencyLocalBasis::PreStartCancellation {
             use crate::calendar::outcome::{

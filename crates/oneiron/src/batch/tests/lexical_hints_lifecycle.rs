@@ -152,7 +152,7 @@ fn lexical_hint_claim_of_edges_do_not_dilute_ppr_claim_neighbors() -> Result<()>
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     seed_raw_claim_record(&vault, &real_neighbor, real_neighbor_body)?;
     seed_claim_of_edge(&vault, &real_neighbor, &claim)?;
 
@@ -304,7 +304,7 @@ fn local_raw_claim_put_removes_lexical_hint_side_records() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     replacement.scope_facet = vault.get_claim(&claim)?.expect("stored claim").scope_facet;
     vault.put_claim(&claim, &replacement, test_time_range(12, 12), 13)?;
 
@@ -384,7 +384,7 @@ fn plain_overwrite_removes_orphan_lexical_hint_without_claim_of() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     orphan_body.stale = true;
     seed_raw_claim_record(&vault, &orphan_hint, orphan_body)?;
     vault
@@ -431,7 +431,7 @@ fn raw_claim_put_rejects_malformed_lexical_hint_claim() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let data = crate::claim::encode_claim_body(&body)?;
 
     let err = vault
@@ -463,7 +463,7 @@ fn raw_lexical_hint_put_rejects_non_lh_prefixed_id() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     seed_raw_claim_record(&vault, &target, target_body)?;
 
     let mut raw = [0x44; ENTITY_ID_LEN];
@@ -482,7 +482,7 @@ fn raw_lexical_hint_put_rejects_non_lh_prefixed_id() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.stale = true;
     let data = crate::claim::encode_claim_body(&body)?;
 
@@ -508,7 +508,7 @@ fn legacy_cyclic_lexical_hints_delete_without_recursive_cleanup() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body_a.stale = true;
     let mut body_b = ClaimBody::new(
         crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
@@ -517,7 +517,7 @@ fn legacy_cyclic_lexical_hints_delete_without_recursive_cleanup() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body_b.stale = true;
     seed_raw_claim_record(&vault, &hint_a, body_a)?;
     seed_raw_claim_record(&vault, &hint_b, body_b)?;
@@ -537,7 +537,7 @@ fn legacy_cyclic_lexical_hints_delete_without_recursive_cleanup() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     self_body.stale = true;
     seed_raw_claim_record(&vault, &self_hint, self_body)?;
     seed_claim_of_edge(&vault, &self_hint, &self_hint)?;

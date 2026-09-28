@@ -19,16 +19,17 @@ use super::constants::{
     GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY, GATE_RETENTION_HORIZON_SECS_KEY,
     GATE_RETENTION_MAX_SWEEP_ROWS_KEY, GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS,
     POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
-    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
-    POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
-    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_CONNECTOR_ADMISSION_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
+    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY,
+    POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
+    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
-    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY,
-    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
+    POLICY_PROJECT_CONVERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY, POLICY_TEACHER_PROBE_KEY,
     POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
     RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
@@ -45,6 +46,13 @@ use super::resolution::{
 use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
+/// Seeded policy data, not a project-constructor or dispatch constant.
+pub(crate) const SEEDED_PROJECT_DEPTH_DEFAULT: u8 = 10;
+pub(crate) const SEEDED_PROJECT_DEPTH_MAX: u8 = 16;
+
+pub(crate) const fn seeded_project_depth_default() -> u8 {
+    SEEDED_PROJECT_DEPTH_DEFAULT
+}
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 
 /// Shipped policy data; organ users resolve this row or supply their own
@@ -119,21 +127,21 @@ pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<V
 
 // One row per default policy entry: the manifest is a data table, and splitting it would scatter one manifest.
 #[allow(clippy::too_many_lines)]
-pub(crate) fn default_policy_manifest() -> Vec<u8> {
+pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
     // commitment projector's actor id is derived, not authored, so the row is
     // computed here rather than pinned as a hex literal. If the domain constant
     // behind the derivation ever moves, the row dangles and mints pend —
     // fail-closed, never silently re-aimed.
-    let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
+    let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
     let bytes = rmp_serde::to_vec_named(&policy_values).expect("encode shipped policy values");
     let policy_values =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("decode shipped policy values");
-    let manifest = Value::Map(vec![
+    let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
             Value::from(crate::failure_signals::policy::POLICY_KEY),
@@ -142,6 +150,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_ADMISSION_KEY),
+            super::connector_admission::ConnectorAdmissionPolicy::default_rows(),
         ),
         (
             Value::from(super::constants::POLICY_ASK_POLICY_KEY),
@@ -158,6 +170,14 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(POLICY_PACK_ID_KEY),
             Value::from("oneiron-default-policy"),
+        ),
+        (
+            Value::from("project_depth_default"),
+            Value::from(SEEDED_PROJECT_DEPTH_DEFAULT),
+        ),
+        (
+            Value::from("project_depth_max"),
+            Value::from(SEEDED_PROJECT_DEPTH_MAX),
         ),
         (
             Value::from(crate::skill_optimize::policy::MANIFEST_KEY),
@@ -720,6 +740,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             default_docedit_resource_row(),
         ),
         (
+            Value::from(POLICY_PROJECT_CONVERSION_KEY),
+            super::project_conversion::shipped_row(),
+        ),
+        (
             Value::from("experiment_selection"),
             default_experiment_selection_rows(),
         ),
@@ -789,9 +813,32 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     .collect(),
             ),
         ),
+        (
+            Value::from(POLICY_PROJECT_COLLABORATION_KEY),
+            Value::Map(vec![
+                (
+                    Value::from("leader_chat"),
+                    Value::Map(vec![
+                        (Value::from("default"), Value::from("allow")),
+                        (Value::from("precedence"), Value::from("nested_narrowing")),
+                        (Value::from("holder_override_cap"), Value::from("vault")),
+                    ]),
+                ),
+                (
+                    Value::from("cross_project_ask"),
+                    Value::Map(vec![(Value::from("fallback"), Value::from("hold"))]),
+                ),
+            ]),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
+        // Owner default for a fresh non-home machine; sync-all remains an
+        // explicit host request bounded by trusted world ceilings.
+        (
+            Value::from(POLICY_SYNC_WORLD_DEFAULT_KEY),
+            Value::from("opened"),
+        ),
         (
             Value::from(POLICY_OWNER_POLICY_ENABLED_KEY),
             Value::Boolean(false),
@@ -832,10 +879,21 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ])]),
         ),
-    ]);
+    ];
+    encode_with_native_mail_policy(entries)
+}
+
+/// The shipped native-mail dial is one vault row; hosts narrow it with their
+/// own vault, holder or identity rows in the same manifest key.
+fn encode_with_native_mail_policy(mut entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
+    entries.push((
+        Value::from(super::mail_policy::MANIFEST_KEY),
+        Value::Array(vec![super::mail_policy::default_row()]),
+    ));
     let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
-    data
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| Error::InvariantViolation("default policy manifest encoding"))?;
+    Ok(data)
 }
 
 /// Shipped project-room thread liveness data: base budgets, the vault

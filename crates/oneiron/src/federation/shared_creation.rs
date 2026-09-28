@@ -6,8 +6,12 @@ use super::{
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, TimeRange, Vault};
-const CREATION_KEY: &[u8] = b"shared-vault:creation:v1";
+
+/// One-time creation-time membership defaults. Key: `()` (singleton).
+const SHARED_VAULT_CREATION: SideTable<(), SharedVaultCreation, LegacyJson> =
+    SideTable::new(&side_table::SHARED_VAULT_CREATION);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -99,7 +103,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        if self.store.vault_meta.get(&txn, CREATION_KEY)?.is_some() || has_member_grant(self, &txn)?
+        if SHARED_VAULT_CREATION.contains(&self.store, &txn, &())? || has_member_grant(self, &txn)?
         {
             return Err(invalid("shared membership has already been initialized"));
         }
@@ -125,7 +129,8 @@ impl Vault {
         };
         let mut ops = Vec::new();
         for (member, role) in rows {
-            if self.store.entities.get(&txn, member.as_bytes())?.is_none() {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &member)?.is_none()
+            {
                 return Err(Error::EntityNotFound);
             }
             let role = if role == Role::Auditor {
@@ -157,10 +162,11 @@ impl Vault {
                 hub_sync_imported: false,
             });
         }
-        if preset.is_some() {
+        let mut seeded_manifest = None;
+        if let Some(preset) = preset {
             let id = crate::gate::default_policy_manifest_id()?;
-            let default = crate::gate::default_policy_manifest();
-            match self.store.entities.get(&txn, id.as_bytes())? {
+            let default = crate::gate::default_policy_manifest()?;
+            match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)? {
                 Some(raw)
                     if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                         != Some(default.as_slice()) =>
@@ -176,20 +182,10 @@ impl Vault {
                 }
                 _ => {
                     // Defaults are ordinary editable stored policy, not a
-                    // second runtime policy engine.
-                    ops.push(BatchOp::Put {
-                        id,
-                        entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                        occurred: TimeRange {
-                            start: now,
-                            end: now,
-                        },
-                        learned_at: now,
-                        data: default,
-                        allow_maintenance: true,
-                        allow_reserved_predicate: false,
-                        hub_sync_imported: false,
-                    });
+                    // second runtime policy engine. The preset's act-policy
+                    // rows ride the same manifest through the owner door.
+                    let data = super::pending_act::with_preset_act_policies(default, preset)?;
+                    seeded_manifest = Some((id, data));
                     creation.policy_ref = Some(id.to_hex());
                 }
             }
@@ -205,8 +201,10 @@ impl Vault {
             false,
             true,
         )?;
-        let bytes = serde_json::to_vec(&creation).map_err(|_| invalid("shared creation encode"))?;
-        self.store.vault_meta.put(&mut txn, CREATION_KEY, &bytes)?;
+        if let Some((id, data)) = seeded_manifest {
+            self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        }
+        SHARED_VAULT_CREATION.put(&self.store, &mut txn, &(), &creation)?;
         txn.commit()?;
         Ok(creation)
     }
@@ -214,11 +212,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<SharedVaultCreation>> {
-        self.store
-            .vault_meta
-            .get(txn, CREATION_KEY)?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("shared creation decode")))
-            .transpose()
+        SHARED_VAULT_CREATION.get(&self.store, txn, &())
     }
 
     pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {

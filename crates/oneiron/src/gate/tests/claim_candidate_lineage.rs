@@ -44,6 +44,9 @@ fn assert_claim_candidate_lineage_permits(
     );
     put_policy_manifest_bytes(&vault, test_id(0x23), &data)?;
     vault.put_entity(&actor, ENTITY_TYPE_MACHINE, test_time(1), 1, b"gate actor")?;
+    // A MACHINE writes only with the host-held key its host provisions (ONE-1634).
+    let issuer = crate::test_util::provision_engine_machines(&vault);
+    vault.provision_host_machine_identity(&issuer, actor)?;
     let mut body = source_trust_claim(source);
     if let ClaimSubject::Entity(subject) = body.subject {
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"subject")?;
@@ -76,6 +79,11 @@ fn assert_claim_candidate_lineage_permits(
         for in_txn in [false, true] {
             let id = test_id(0x24 + index as u8 * 2 + u8::from(in_txn));
             let candidate = claim_candidate_from_body(&body);
+            let mut envelope = envelope.clone();
+            {
+                let txn = vault.store.env.read_txn()?;
+                vault.sign_retained_machine_claim_in_txn(&txn, &id, &candidate, &mut envelope)?;
+            }
             let result = if in_txn {
                 vault.with_write_txn(|wtxn| {
                     vault

@@ -2,7 +2,14 @@
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::RecordError;
+use crate::side_table::HexId;
 use crate::store::Store;
+
+/// Existence check against the deletion module's local hard-delete marker
+/// (`dt:`, `crate::deletion::LOCAL_HARD_DELETE_PREFIX`) — not owned by this
+/// module; only presence is read here, so no value shape commitment is made.
+const HARD_DELETE_MARKERS: SideTable<HexId, (), Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn invalid() -> Error {
     RecordError::InvalidProjectBody("invalid project or ancestry").into()
@@ -16,12 +23,8 @@ fn dependency(
     id: EntityId,
     kind: u8,
 ) -> Result<ProjectRecord> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-        if store
-            .sync_state
-            .get(txn, &crate::deletion::local_hard_delete_key(&id))?
-            .is_some()
-        {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+        if HARD_DELETE_MARKERS.contains(store, txn, &HexId(id))? {
             return Err(invalid());
         }
         return Err(RecordError::ProjectDependencyPending.into());
@@ -39,10 +42,18 @@ fn dependency(
         .map_err(|_| Error::CorruptedIndex("project dependency body"))
 }
 
+/// The project a home-room body names. A derived room id carries no order
+/// against its project's id, so an importer resolves the project first.
+pub(crate) fn project_room_dependency(bytes: &[u8]) -> Option<EntityId> {
+    let room = decode::<ProjectRoom>(bytes).ok()?;
+    EntityId::from_hex(&room.project_id).ok()
+}
+
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body.schema_version != 1
-        || body.home_room != home_room_id(id).to_hex()
+        || usize::from(body.depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
+        || body.home_room != home_room_id(id)?.to_hex()
         || body.roster.is_empty()
     {
         return Err(invalid());
@@ -54,6 +65,17 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     refs.extend(&body.parents);
+    // A card mint on a message carries only `born_from`. A converted thread
+    // also names its origin room, thread and position: all of them or none.
+    match (&body.origin_room, &body.origin_thread, body.origin_at) {
+        (None, None, None) => {}
+        (Some(room), Some(thread), Some(_))
+            if body.born_from.is_some() && !body.parents.is_empty() =>
+        {
+            refs.extend([room, thread]);
+        }
+        _ => return Err(invalid()),
+    }
     refs.extend(body.goal.iter());
     refs.extend(body.born_from.iter());
     refs.extend(body.budget.iter());
@@ -100,6 +122,30 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     Ok(ids)
 }
 
+/// Project membership carries a birth-depth cache, not authority. Replacing
+/// members with an older view must not roll back the policy contribution set.
+pub(crate) fn normalize_project_body(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    bytes: &[u8],
+    posture: crate::HostingPrivacyPosture,
+) -> Result<Vec<u8>> {
+    validate_project_body(id, bytes)?;
+    let mut body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
+    if body.parents.contains(&id.to_hex()) {
+        return Err(invalid());
+    }
+    body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
+        Some((_, birth)) => birth.depth,
+        None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {
+            crate::gate::project_depth::canonical_birth(id)?.depth
+        }
+        None => return Err(RecordError::ProjectDependencyPending.into()),
+    };
+    encode(&body)
+}
+
 pub(crate) fn reconcile_project_rooms(
     store: &Store,
     config: &crate::VaultConfig,
@@ -112,8 +158,9 @@ pub(crate) fn reconcile_project_rooms(
         return Ok(());
     };
     let mut room_ops = Vec::new();
+    let mut origins = Vec::new();
     for id in touched {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -129,11 +176,7 @@ pub(crate) fn reconcile_project_rooms(
         if let Some(source) = &body.born_from {
             let source = EntityId::from_hex(source).map_err(|_| invalid())?;
             let Some(message) = store.entities.get(txn, source.as_bytes())? else {
-                if store
-                    .sync_state
-                    .get(txn, &crate::deletion::local_hard_delete_key(&source))?
-                    .is_some()
-                {
+                if HARD_DELETE_MARKERS.contains(store, txn, &HexId(source))? {
                     return Err(invalid());
                 }
                 return Err(RecordError::ProjectDependencyPending.into());
@@ -165,23 +208,25 @@ pub(crate) fn reconcile_project_rooms(
             )?;
             pending.extend(parent_body.parents);
         }
+        origins.push((*id, body.clone()));
         // The body is the authority for the project DAG. Materialize its
         // `belongs_to` links in the same batch as the home room, so PPR and
         // graph readers see both parents (or neither on a rejected write).
         let mut existing = std::collections::BTreeMap::new();
-        let prefix = [
-            id.as_bytes().as_slice(),
-            &[crate::edge::EdgeKind::BelongsTo as u8],
-        ]
-        .concat();
-        for row in store.edges_out.prefix_iter(txn, &prefix)? {
-            let (key, value) = row?;
-            let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
+        for row in crate::ports::EdgeStoreRead::port_edges(
+            store,
+            txn,
+            id,
+            crate::ports::EdgeDirection::Out,
+            Some(crate::edge::EdgeKind::BelongsTo),
+            None,
+        )? {
+            let edge = row?;
             // The PROJECT body owns only PROJECT-to-PROJECT parent links.
             // A venture may also belong to an ORG; saving its body must not
             // remove or rewrite that independently owned relationship.
             if is_project_entity(store, txn, edge.target)? {
-                existing.insert(edge.target.to_hex(), edge.decoded.weight);
+                existing.insert(edge.target.to_hex(), edge.weight);
             }
         }
         for parent in existing.keys() {
@@ -211,6 +256,7 @@ pub(crate) fn reconcile_project_rooms(
             project_id: id.to_hex(),
             member_ids: body.roster.clone(),
             claims_scope_ref: body.claims_scope_ref.clone(),
+            origin: body.origin_card(),
         };
         let previous: Option<ProjectRoom> =
             match record(store, txn, room_id, ENTITY_TYPE_CONVERSATION) {
@@ -229,9 +275,8 @@ pub(crate) fn reconcile_project_rooms(
         if previous.as_ref() == Some(&room) {
             // A batch can submit the exact derived room beside its PROJECT.
             // Even when no room rewrite is needed, its owner marker must land.
-            let marker = [ROOM_PROJECT, room_id.as_bytes()].concat();
-            if store.vault_meta.get(txn, &marker)?.as_deref() != Some(id.as_bytes()) {
-                store.vault_meta.put(txn, &marker, id.as_bytes())?;
+            if ROOM_PROJECT.get(store, txn, &room_id)? != Some(*id) {
+                ROOM_PROJECT.put(store, txn, &room_id, id)?;
             }
             continue;
         }
@@ -243,16 +288,8 @@ pub(crate) fn reconcile_project_rooms(
             at: header.learned_at,
         };
         let event = EntityId::now();
-        store.vault_meta.put(
-            txn,
-            &[CHANGES, id.as_bytes(), event.as_bytes()].concat(),
-            &encode(&change)?,
-        )?;
-        store.vault_meta.put(
-            txn,
-            &[ROOM_PROJECT, room_id.as_bytes()].concat(),
-            id.as_bytes(),
-        )?;
+        CHANGES.put(store, txn, &(*id, event), &change)?;
+        ROOM_PROJECT.put(store, txn, &room_id, id)?;
         room_ops.push(BatchOp::Put {
             id: room_id,
             entity_type: ENTITY_TYPE_CONVERSATION,
@@ -274,7 +311,7 @@ pub(crate) fn reconcile_project_rooms(
     }
     // Generic room writes cannot silently widen the derived membership/scope.
     for id in touched {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -293,9 +330,16 @@ pub(crate) fn reconcile_project_rooms(
             || project.home_room != id.to_hex()
             || project.roster != room.member_ids
             || project.claims_scope_ref != room.claims_scope_ref
+            || project.origin_card() != room.origin
         {
             return Err(invalid_room());
         }
+    }
+    // Origins are proved against the batch's final state: every derived room
+    // above has landed, so a source roster edit in the same batch is seen.
+    for (id, body) in &origins {
+        origin::validate_binding(store, txn, body)?;
+        origin::index_origin(store, txn, *id, body)?;
     }
     Ok(())
 }
@@ -306,11 +350,7 @@ pub(crate) fn validate_room_body(
     id: EntityId,
     data: &[u8],
 ) -> Result<()> {
-    if store
-        .vault_meta
-        .get(txn, &[ROOM_PROJECT, id.as_bytes()].concat())?
-        .is_some()
-    {
+    if ROOM_PROJECT.contains(store, txn, &id)? {
         let room: ProjectRoom = rmp_serde::from_slice(data).map_err(|_| invalid_room())?;
         if room.schema_version != 1 || room.kind != "channel" {
             return Err(invalid_room());

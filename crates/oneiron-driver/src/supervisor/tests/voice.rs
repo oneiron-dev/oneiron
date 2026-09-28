@@ -143,8 +143,9 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(reader("agent"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::System);
@@ -153,15 +154,17 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(reader("agent"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_some()
     );
     assert!(
         vault
             .scoped_read(reader("human"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     let other =
@@ -169,8 +172,9 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(other)
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     assert!(
@@ -571,7 +575,8 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
         let (read, mut write) = client.into_split();
         let mut read = BufReader::new(read);
         let tick = Tick::Hint(crate::tick::HintSignal::default());
-        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        // A hang guard, not a latency bound; a loaded host needs well over 10s.
+        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(60), async {
             let pass = run_pass_supervised(
                 &vault, &pass_config, "served:p0", &clock, &mut factory, &mut listener, &tick,
             );

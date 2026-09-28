@@ -162,7 +162,8 @@ fn encoder_persistence_commits_mentions_coref_and_vad_or_rolls_back_everything()
         0.9,
         crate::ClaimApprovalStatus::Auto,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(crate::ClaimSource::Inferred);
     body.evidence = Some(rmpv::Value::Array(vec![rmpv::Value::Binary(
         turn_id.as_bytes().to_vec(),

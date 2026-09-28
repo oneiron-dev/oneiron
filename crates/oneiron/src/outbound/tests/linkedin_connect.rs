@@ -206,7 +206,7 @@ fn connect_request_never_uses_tool_success_without_observation()
         &mut sink,
         active_linkedin_policy()?,
     )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert_eq!(
         result
             .receipt
@@ -245,7 +245,7 @@ fn connect_request_retry_observes_pending_without_second_send()
         &mut sink,
         active_linkedin_policy()?,
     )?;
-    assert_eq!(first.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(first.outcome, OutboundDispatchOutcome::Ambiguous);
     sink.add_plan(
         "intent:retry",
         LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?.retry_guarded(),
@@ -260,7 +260,7 @@ fn connect_request_retry_observes_pending_without_second_send()
     )?;
     // The ledger owns the exact replay and abandons an ambiguous non-idempotent
     // send before it can reach the sink again.
-    assert_eq!(second.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(second.outcome, OutboundDispatchOutcome::Ambiguous);
     assert_eq!(sink.transport().calls.len(), 1);
     assert_eq!(sink.transport().reads.len(), 2);
 
@@ -433,7 +433,7 @@ fn connect_request_fails_closed_on_wrong_profile_and_observes_after_tool_error()
         &mut sink,
         active_linkedin_policy()?,
     )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert!(!result.receipt.fields.contains_key("provider_ref"));
     assert_eq!(
         result
@@ -610,7 +610,7 @@ fn profile_cap_boundary_stops_post_send_verification_without_claiming_delivery()
         &mut sink,
         policy,
     )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert_eq!(
         result
             .receipt
@@ -664,7 +664,7 @@ fn profile_cap_counts_each_verification_attempt_even_when_state_stays_connectabl
         &mut sink,
         policy,
     )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert_eq!(
         result
             .receipt

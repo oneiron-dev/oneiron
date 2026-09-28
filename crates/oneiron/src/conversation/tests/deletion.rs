@@ -344,12 +344,9 @@ fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
     assert!(vault.conversation_body(room).unwrap().roles.is_empty());
     let txn = vault.store.env.read_txn().unwrap();
     assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&txn, &erasure_key(room, bob.entity_ref()))
+        !ROOM_ERASURES
+            .contains(&vault.store, &txn, &(room, bob.entity_ref()))
             .unwrap()
-            .is_none()
     );
 }
 
@@ -894,7 +891,8 @@ fn manifest_seeded_before_room_rows_uses_shipped_room_defaults() {
     // An existing vault keeps the manifest it was first seeded with; open
     // never reseeds one that predates `room_policy_rows`.
     let rmpv::Value::Map(fields) =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap()
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .unwrap()
     else {
         unreachable!()
     };

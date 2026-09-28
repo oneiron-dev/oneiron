@@ -15,7 +15,7 @@ use oneiron_docedit::ArchiveLimits;
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
     AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
-    SheetAnswerPrecedence,
+    ProjectCollaborationPolicy, ResidenceOperationBudgetLimits, SheetAnswerPrecedence,
 };
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
@@ -29,6 +29,7 @@ use crate::gate::policy_values::{
     PolicyWhy, ResolvedPolicyValue, WhySource, precedence_row, resolve_row, resolve_value,
     shipped_default_precedence,
 };
+use crate::gate::project_conversion::ProjectConversionPolicy;
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -69,6 +70,18 @@ impl PolicyManifestResolution {
         // A completely absent manifest preserves the existing bootstrap
         // behavior; any loaded malformed/unsupported manifest fails closed.
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    /// The effective residence-operation caps, absent when loaded policy is
+    /// malformed or otherwise forces fail-closed. Holder narrowing has already
+    /// been capped by the vault-level values during the trusted manifest fold.
+    #[must_use]
+    pub(crate) fn residence_operation_budgets(&self) -> Option<ResidenceOperationBudgetLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.residence_operation_budgets)
+        }
     }
 
     /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
@@ -329,6 +342,31 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// Nested native-mail policy: every trusted vault row caps a holder or
+    /// identity row. A missing/malformed governing policy never invents an
+    /// auto-send or an earned graduation offer.
+    pub(crate) fn native_mail_policy_for(
+        &self,
+        holder: Option<crate::entity_id::EntityId>,
+        identity: Option<crate::entity_id::EntityId>,
+    ) -> Option<crate::gate::mail_policy::MailPolicy> {
+        if self.is_fail_closed() {
+            return None;
+        }
+        crate::gate::mail_policy::resolve_rows(&self.native_mail_policy, holder, identity)
+    }
+
+    /// Project coordination decisions read one trusted manifest snapshot.
+    /// A malformed loaded manifest cannot silently open leader chat.
+    #[must_use]
+    pub(crate) fn project_collaboration(&self) -> Option<ProjectCollaborationPolicy> {
+        if self.is_fail_closed() {
+            None
+        } else {
+            self.project_collaboration
+        }
+    }
+
     /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no
     /// manifest names one.
     ///
@@ -433,6 +471,30 @@ impl PolicyManifestResolution {
     /// the caller must refuse rather than substitute an empty table. An
     /// absent manifest keeps the bootstrap posture and exposes the empty
     /// table, which is exactly the single-pool meter.
+    /// Resolved default mode; missing/bootstrapping manifests preserve the
+    /// shipped non-home `opened` posture.
+    pub(crate) fn sync_default_all_worlds(&self) -> Result<bool> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid sync world default policy".into(),
+            ));
+        }
+        Ok(self.sync_world_default.unwrap_or(false))
+    }
+
+    /// Trusted manifest cap for local world subscriptions. An absent manifest
+    /// preserves bootstrap selection; a malformed loaded one grants nothing.
+    pub(crate) fn sync_world_ceiling(
+        &self,
+    ) -> Result<Option<&std::collections::BTreeSet<crate::EntityId>>> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid sync world ceiling policy".into(),
+            ));
+        }
+        Ok(self.sync_world_ceiling.as_ref())
+    }
+
     #[must_use]
     pub(crate) fn budget_policy(&self) -> Option<&BudgetPolicyTable> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
@@ -440,6 +502,13 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    /// Conversion must use this resolved policy inside its write transaction.
+    /// A malformed loaded manifest offers no usable policy, never a default.
+    #[must_use]
+    pub(crate) fn project_conversion_policy(&self) -> Option<ProjectConversionPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.project_conversion)
     }
 
     /// Retention may erase published telemetry only when the loaded manifest

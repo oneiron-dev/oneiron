@@ -2,13 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::super::support::{Memory, verify_actor_binding};
+use super::super::support::Memory;
 use super::super::{MemoryError, MemoryResult};
 use super::invite::CalendarInviteSurfaceInput;
 use super::types::{OutboundIntentReceipt, OutboundScheduleContext};
 use crate::calendar::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
 };
+use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::temporal::TimeRange;
 /// One source-redacted busy interval, half-open `[start_utc, end_utc)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,45 +37,28 @@ fn validate_calendar_range(range: Option<CalendarRangeDto>) -> MemoryResult<()> 
 impl Memory<'_> {
     // ── calendar (CAL-09) ───────────────────────────────────────────────
 
-    /// The bound actor's scoped-read lane.
-    ///
-    /// Calendar bodies are imported foreign content, so this surface reads them
-    /// through the policy scoped-read lane rather than raw vault reads: an
-    /// actor's calendar view is always a subset of the internal projection.
-    fn calendar_read_lane(&self) -> MemoryResult<crate::claim::ScopedRead<'_>> {
-        let key = crate::claim::ScopedReadActorKey::with_actor_class(
-            self.actor.to_hex(),
-            self.actor_class.gate_actor_class(),
-        )
-        .ok_or_else(|| {
-            MemoryError::bad_request("bound actor cannot be used as a scoped read key")
-        })?;
-        Ok(self.vault.scoped_read(key))
-    }
+    // Calendar bodies are imported foreign content, so this surface reads them
+    // through the bound actor's read lane, never raw vault reads: an actor's
+    // calendar view is always a subset of the internal projection, and each
+    // verb returns the receipt of the claims that lane withheld.
 
     /// Reads one calendar EVENT under the caller's read scope.
     pub fn calendar_read(
         &self,
         req: &CalendarReadRequest,
-    ) -> MemoryResult<Option<CalendarEventView>> {
-        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-        Ok(crate::calendar::read_event_scoped(
-            &self.calendar_read_lane()?,
-            req,
-        )?)
+    ) -> MemoryResult<ScopedReadResult<Option<CalendarEventView>>> {
+        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        Ok(crate::calendar::read_event_scoped(&lane, req)?)
     }
 
     /// Searches calendar EVENTs under the caller's read scope.
     pub fn calendar_search(
         &self,
         req: &CalendarSearchRequest,
-    ) -> MemoryResult<Vec<CalendarEventView>> {
-        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+    ) -> MemoryResult<ScopedReadResult<Vec<CalendarEventView>>> {
+        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         validate_calendar_range(req.range)?;
-        Ok(crate::calendar::search_events_scoped(
-            &self.calendar_read_lane()?,
-            req,
-        )?)
+        Ok(crate::calendar::search_events_scoped(&lane, req)?)
     }
 
     /// Projects busy-only occupancy over `range`, source-redacted.
@@ -87,23 +71,25 @@ impl Memory<'_> {
         &self,
         calendars: &[CalendarSel],
         range: TimeRange,
-    ) -> MemoryResult<CalendarFreebusyDto> {
-        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+    ) -> MemoryResult<ScopedReadResult<CalendarFreebusyDto>> {
+        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         if range.start > range.end {
             return Err(MemoryError::bad_request_with(
                 "calendar freebusy range start must not exceed end",
                 &["Pass an inclusive range with start <= end."],
             ));
         }
-        let union =
-            crate::calendar::freebusy_scoped(&self.calendar_read_lane()?, calendars, range)?;
-        Ok(union
-            .into_iter()
-            .map(|interval| CalendarFreebusyIntervalDto {
-                start_utc: interval.start_utc,
-                end_utc: interval.end_utc,
-            })
-            .collect())
+        Ok(
+            crate::calendar::freebusy_scoped(&lane, calendars, range)?.map(|union| {
+                union
+                    .into_iter()
+                    .map(|interval| CalendarFreebusyIntervalDto {
+                        start_utc: interval.start_utc,
+                        end_utc: interval.end_utc,
+                    })
+                    .collect()
+            }),
+        )
     }
 
     /// Schedules one iMIP-shaped calendar invite through the ordinary outbound

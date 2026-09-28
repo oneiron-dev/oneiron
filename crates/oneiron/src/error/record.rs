@@ -25,7 +25,7 @@ pub enum RecordError {
     InvalidProjectBody(&'static str),
     #[error("invalid project home room: {0}")]
     InvalidProjectRoomBody(&'static str),
-    /// A well-formed project reference has not materialized yet.
+    /// A project parent or the signer of its depth fact has not materialized yet.
     #[error("project dependency is not materialized")]
     ProjectDependencyPending,
     #[error("message stream recovery refused: {0}")]
@@ -36,6 +36,9 @@ pub enum RecordError {
     ConversationState(&'static str),
     #[error("conversation actor is not authorized")]
     ConversationDenied,
+    /// A live shared-ancestor rule narrowed the default leader-chat admission.
+    #[error("leader chat refused by rule claim {}", rule.to_hex())]
+    LeaderChatRule { rule: EntityId },
 
     #[error("DAG parent is outside the conversation")]
     DagParentOutsideConversation,
@@ -217,7 +220,7 @@ impl RecordError {
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
             Self::ConversationState(_) => ErrorKind::ConversationState,
-            Self::ConversationDenied => ErrorKind::ConversationDenied,
+            Self::ConversationDenied | Self::LeaderChatRule { .. } => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
             Self::DagParentOutsideConversation => ErrorKind::DagParentOutsideConversation,
             Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,

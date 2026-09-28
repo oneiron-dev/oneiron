@@ -28,11 +28,13 @@ fn identity_op_event_touches(
 impl Vault {
     /// Redact the authors of decisions reached by the redirect walk. The
     /// decision stays immutable; only separate personal carriers are erased.
+    /// Returns the redacted events and their scrubbed carriers, for
+    /// post-commit local invalidation.
     pub(super) fn scrub_identity_op_author_stamps_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         touched: &BTreeSet<EntityId>,
-    ) -> Result<()> {
+    ) -> Result<Vec<EntityId>> {
         let mut targets = Vec::new();
         for entry in self
             .store
@@ -55,15 +57,17 @@ impl Vault {
                 targets.push(id);
             }
         }
+        let mut scrubbed = Vec::new();
         for target in targets {
-            crate::identity_topology::redact_author_attribution_in_txn(
+            scrubbed.push(target);
+            scrubbed.extend(crate::identity_topology::redact_author_attribution_in_txn(
                 self,
                 wtxn,
                 target,
                 self.store.clock.now_recorded_at(),
-            )?;
+            )?);
         }
-        Ok(())
+        Ok(scrubbed)
     }
 
     /// Erase one actor's independent carriers across the entire decision

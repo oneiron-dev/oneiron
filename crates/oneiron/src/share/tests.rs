@@ -149,7 +149,7 @@ fn claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = world;
     body.stale = stale;
     let bytes = encode_claim_body(&body)?;
@@ -582,16 +582,11 @@ fn share_admission_binding_rejects_tampering_and_foreign_actor_classes() -> Resu
     vault.create_share(&id, &issuer, &share)?;
     let original = {
         let txn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .vault_meta
-            .get(&txn, &admission_key(&id))?
-            .expect("admission")
-            .to_vec()
+        ADMISSIONS.get(&vault.store, &txn, &id)?.expect("admission")
     };
     for bad in [vec![], vec![1], [original.as_slice(), &[0]].concat()] {
         vault.with_write_txn(|txn| {
-            vault.store.vault_meta.put(txn, &admission_key(&id), &bad)?;
+            ADMISSIONS.put(&vault.store, txn, &id, &bad)?;
             Ok(())
         })?;
         assert!(
@@ -601,10 +596,7 @@ fn share_admission_binding_rejects_tampering_and_foreign_actor_classes() -> Resu
         );
     }
     vault.with_write_txn(|txn| {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &admission_key(&id), &original)?;
+        ADMISSIONS.put(&vault.store, txn, &id, &original)?;
         Ok(())
     })?;
     let mut altered = share.clone();
@@ -1199,11 +1191,7 @@ fn receipt_retention_keeps_active_share_admission_gate() -> Result<()> {
     vault.create_share(&id, &issuer, &share)?;
     let gate_id = {
         let txn = vault.store.env.read_txn()?;
-        let raw = vault
-            .store
-            .vault_meta
-            .get(&txn, &admission_key(&id))?
-            .expect("admission");
+        let raw = ADMISSIONS.get(&vault.store, &txn, &id)?.expect("admission");
         ShareAdmission::decode(&raw)
             .expect("typed admission")
             .gate_id
@@ -1226,7 +1214,7 @@ fn receipt_retention_keeps_active_share_admission_gate() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         EntityId::now(),
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let owner = vault.authenticate_owner(
         issuer.entity_ref(),

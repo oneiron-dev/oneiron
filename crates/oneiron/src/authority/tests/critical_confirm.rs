@@ -257,7 +257,6 @@ fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associa
                 CriticalWriteConfirmMethod::TokenReauth,
             )),
             [hash; 32],
-            false,
             &owner_key,
         );
         state
@@ -488,7 +487,7 @@ fn critical_write_confirm_revoked_signer_is_fold_invalid() {
     let fold = fold_legacy_authority_log_with_seen_times(
         &[genesis, enroll_second, enroll_peer, revoke, confirm.clone()],
         &seen,
-        1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+        1_000,
     );
     assert!(fold.roster[&authority_key_from_ed(&second)].revoked);
     assert!(fold.issues.iter().any(|issue| matches!(issue,
@@ -536,7 +535,7 @@ fn critical_write_confirm_admin_only_signer_is_fold_invalid() {
     let fold = fold_legacy_authority_log_with_seen_times(
         &[genesis, enroll, confirm.clone()],
         &seen,
-        1_000 + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+        1_000,
     );
     let device = &fold.roster[&authority_key_from_ed(&admin)];
     assert!(!device.revoked && device.roles & ROLE_ADMIN != 0 && device.roles & ROLE_OWNER == 0);
@@ -684,7 +683,8 @@ fn put_critical_confirm_claim(vault: &crate::Vault, id: EntityId) {
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let data = crate::claim::encode_claim_body(&body).unwrap();
     let payload = crate::test_util::entity_record(
         crate::registry::ENTITY_TYPE_CLAIM,

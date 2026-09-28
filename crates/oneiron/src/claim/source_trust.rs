@@ -253,6 +253,7 @@ pub(crate) const KEY_VALUE_PREDICATE: &str = "core.memory.key_value";
 
 pub(crate) fn claim_generic_readable(body: &ClaimBody) -> bool {
     body.predicate != KEY_VALUE_PREDICATE
+        && super::history_store::machine_history_kind(&body.predicate).is_none()
 }
 
 /// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004

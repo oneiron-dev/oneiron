@@ -270,10 +270,7 @@ impl Vault {
             )));
         }
         if fresh
-            && (self
-                .store
-                .entities
-                .get(wtxn, preferred_id.as_bytes())?
+            && (crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &preferred_id)?
                 .is_some()
                 || self.local_hard_delete_marker_exists_in_txn(wtxn, &preferred_id)?)
         {
@@ -539,7 +536,7 @@ impl Vault {
                 1.0,
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             proposal.source = Some(ClaimSource::Imported);
             self.put_reserved_claim_in_txn(
                 &mut wtxn,

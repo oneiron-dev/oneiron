@@ -13,12 +13,10 @@ use crate::error::Result;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
 
-use super::codec::{
-    ENTITY_ID_LEN, KEY_SCHEMA_VERSION, decode_value, encode_value, invalid, map_u64,
-};
+use super::codec::{KEY_SCHEMA_VERSION, decode_value, encode_value, invalid, map_u64};
 use super::floor::floor_check_in_txn;
 use super::ledger::{
-    outcome_key, receipt_executor, receipt_manifest_names_skill, record_outcome_in_txn,
+    ExecutorArm, OutcomeRef, receipt_executor, receipt_manifest_names_skill, record_outcome_in_txn,
     tally_outcomes,
 };
 use super::posterior::{
@@ -26,19 +24,50 @@ use super::posterior::{
 };
 use super::provenance::skill_reliability_prior;
 use super::read::{active_reliability_heads_in_txn, validate_executor};
+use crate::side_table::{self, Raw, RawValue, SideTable};
 
 /// The §G.1 predicate this module projects. Reserved `skill.*` namespace:
 /// public claim writes are rejected, and the rows land through the
 /// engine-owned reserved door.
 pub const PREDICATE_SKILL_RELIABILITY: &str = "skill.reliability";
 
-/// `skill_reliability:imported_base:v1:` + skill id (16 B).
+/// Imported (alpha, beta) reliability base. Key: id16(skill).
 ///
 /// The α, β a synced claim carried that this vault's outcome ledger cannot
 /// reproduce. Node-local like the ledger it completes — this row is a record of
 /// what arrived, not a fact about the skill, so it never travels.
-const IMPORTED_BASE_PREFIX: &[u8] = b"skill_reliability:imported_base:v1:";
-const PAIRED_BASE_PREFIX: &[u8] = b"skill_reliability:imported_base:v2:";
+const IMPORTED_BASE: SideTable<EntityId, ImportedBaseRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_IMPORTED_BASE);
+
+/// The same imported base for a named executor's arm.
+const PAIRED_IMPORTED_BASE: SideTable<ExecutorArm, ImportedBaseRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_PAIRED_IMPORTED_BASE);
+
+/// [`IMPORTED_BASE`]'s row: the posterior plus its own leading schema-version byte, the byte
+/// layout [`write_imported_base_in_txn`] has always spelled.
+struct ImportedBaseRow(SkillReliabilityPosterior);
+
+impl RawValue for ImportedBaseRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        let row = Value::Map(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_ALPHA), Value::F32(self.0.alpha)),
+            (Value::from(KEY_BETA), Value::F32(self.0.beta)),
+        ]);
+        Ok(encode_value(&row)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let value = decode_value(bytes)?;
+        if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
+            return Err(invalid("unsupported skill reliability imported-base schema").into());
+        }
+        Ok(Self(SkillReliabilityPosterior::from_value(&value)?))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Projector
@@ -228,7 +257,7 @@ fn project_in_txn(
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(evidence);
         body.source = Some(ClaimSource::Observed);
         vault.put_reserved_claim_in_txn(
@@ -342,12 +371,7 @@ fn cites_receipts_absent_locally(
         let Some(receipt) = receipt.as_str() else {
             continue;
         };
-        if vault
-            .store
-            .vault_meta
-            .get(rtxn, &outcome_key(skill, executor, receipt))?
-            .is_none()
-        {
+        if !OutcomeRef::new(skill, executor, receipt).contains(vault, rtxn)? {
             return Ok(true);
         }
     }
@@ -360,20 +384,13 @@ fn read_imported_base_in_txn(
     skill: &EntityId,
     executor: Option<&str>,
 ) -> Result<Option<SkillReliabilityPosterior>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, &imported_base_key(skill, executor))?
-    else {
-        return Ok(None);
+    let row = match executor {
+        None => IMPORTED_BASE.get(&vault.store, rtxn, skill)?,
+        Some(executor) => {
+            PAIRED_IMPORTED_BASE.get(&vault.store, rtxn, &ExecutorArm::new(skill, executor))?
+        }
     };
-    let value = decode_value(&raw)?;
-    if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
-        return Err(invalid(
-            "unsupported skill reliability imported-base schema",
-        ));
-    }
-    SkillReliabilityPosterior::from_value(&value).map(Some)
+    Ok(row.map(|row| row.0))
 }
 
 fn write_imported_base_in_txn(
@@ -383,38 +400,13 @@ fn write_imported_base_in_txn(
     executor: Option<&str>,
     base: SkillReliabilityPosterior,
 ) -> Result<()> {
-    let row = Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
-        ),
-        (Value::from(KEY_ALPHA), Value::F32(base.alpha)),
-        (Value::from(KEY_BETA), Value::F32(base.beta)),
-    ]);
-    let encoded = encode_value(&row)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &imported_base_key(skill, executor), &encoded)?;
-    Ok(())
-}
-
-fn imported_base_key(skill: &EntityId, executor: Option<&str>) -> Vec<u8> {
-    let prefix = if executor.is_some() {
-        PAIRED_BASE_PREFIX
-    } else {
-        IMPORTED_BASE_PREFIX
-    };
-    let mut key =
-        Vec::with_capacity(prefix.len() + ENTITY_ID_LEN + executor.map_or(0, str::len) + 2);
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(skill.as_bytes());
-    if let Some(executor) = executor {
-        let length = u16::try_from(executor.len()).expect("executor capped at 256 bytes");
-        key.extend_from_slice(&length.to_be_bytes());
-        key.extend_from_slice(executor.as_bytes());
+    let row = ImportedBaseRow(base);
+    match executor {
+        None => IMPORTED_BASE.put(&vault.store, wtxn, skill, &row),
+        Some(executor) => {
+            PAIRED_IMPORTED_BASE.put(&vault.store, wtxn, &ExecutorArm::new(skill, executor), &row)
+        }
     }
-    key
 }
 
 pub(super) fn posterior_value(

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use heed::types::{Bytes, Str};
-use heed::{Database, Env, RoTxn, RwTxn};
+use heed::{Database, Env, RwTxn};
 
 use crate::authority::AuthorityLocalClock;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -25,6 +25,8 @@ thread_local! {
     #[cfg(test)]
     static PANIC_ON_ACTIVE_WRITE_TXN: Cell<bool> = const { Cell::new(false) };
 }
+
+pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
 
 pub(crate) struct ActiveWriteTxnGuard;
 
@@ -131,6 +133,8 @@ pub struct StoreCore {
     /// this vault handle. No process-global state or cross-vault kill switch.
     pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
     pub(in crate::store) retrieval_telemetry_capture: bool,
+    /// Open-time posture for exact authority scope checks without a Vault handle.
+    pub(crate) privacy_posture: crate::HostingPrivacyPosture,
     #[cfg(target_os = "linux")]
     pub(in crate::store) retrieval_telemetry_lease:
         Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,
@@ -140,6 +144,12 @@ pub struct StoreCore {
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// Opt-in host root for signing scoped MACHINE history. Never populated
+    /// from a transport key, peer assertion, or relay-mode vault.
+    pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
+    /// Host-provided software signers are scoped to this vault handle and never
+    /// persisted, inferred from transport credentials, or shared across vaults.
+    pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
     pub(crate) clock: crate::ports::StoreClock,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
@@ -353,31 +363,6 @@ impl SessionStoreView<'_> {
             crate::session_overlay::OverlayKeyspace::Entities,
         )
     }
-
-    /// Mode-aware VaultMeta write half consumed by
-    /// `OffRecordSession::vault_meta_put`. Reuses the existing raw key/value
-    /// representation; this pins routing, not a new encoding.
-    pub(crate) fn vault_meta_put_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<()> {
-        self.vault_meta.put(wtxn, key, value)
-    }
-
-    /// Composed VaultMeta read half consumed by
-    /// `OffRecordSession::vault_meta_get` — overlay ∪ base.
-    pub(crate) fn vault_meta_get_in_txn(
-        &self,
-        rtxn: &RoTxn<'_>,
-        key: &[u8],
-    ) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .vault_meta
-            .get(rtxn, key)?
-            .map(std::borrow::Cow::into_owned))
-    }
 }
 
 /// Generates [`ManifestDbs`] and its two implementations from ONE list of the
@@ -502,7 +487,7 @@ pub(super) fn seed_default_policy_manifest_in_txn(
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
     let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let body = crate::gate::default_policy_manifest();
+    let body = crate::gate::default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
     payload.extend_from_slice(&timestamp.to_be_bytes());

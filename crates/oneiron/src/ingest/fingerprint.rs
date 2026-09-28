@@ -1,6 +1,7 @@
 //! Entity-local four-rung birth fingerprints over the ingest pipeline's own segments.
 use super::{DocsSegment, docs_semantic_segments};
 use crate::error::Error;
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -46,28 +47,21 @@ pub(crate) struct FingerprintUpdate {
     tree: Tree,
     pub(crate) decision: BlobBirthDecision,
 }
-fn key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"ingest-fingerprint:v1:".to_vec();
-    key.extend(id.as_bytes());
-    key
-}
+
+/// Blob birth fingerprint tree. Key: the entity id.
+const FINGERPRINT: SideTable<EntityId, Tree, LegacyJson> =
+    SideTable::new(&side_table::INGEST_FINGERPRINT);
+
 pub(crate) fn invalidate_blob_fingerprint(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store.vault_meta.delete(txn, &key(id))?;
+    FINGERPRINT.delete(store, txn, id)?;
     Ok(())
 }
 fn load(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<Tree>> {
-    store
-        .vault_meta
-        .get(txn, &key(id))?
-        .map(|data| {
-            serde_json::from_slice(&data)
-                .map_err(|_| Error::CorruptedIndex("blob fingerprint tree"))
-        })
-        .transpose()
+    FINGERPRINT.get(store, txn, id)
 }
 impl FingerprintUpdate {
     pub(crate) fn persist(
@@ -76,13 +70,12 @@ impl FingerprintUpdate {
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<()> {
-        let data = serde_json::to_vec(&self.tree)
-            .map_err(|_| Error::InvariantViolation("blob fingerprint encoding"))?;
+        let data = FINGERPRINT.encode_value(&self.tree)?;
         crate::batch::secret_scan::scan_metadata_field(
             std::str::from_utf8(&data)
                 .map_err(|_| Error::InvariantViolation("fingerprint JSON encoding"))?,
         )?;
-        store.vault_meta.put(txn, &key(id), &data)?;
+        FINGERPRINT.put(store, txn, id, &self.tree)?;
         Ok(())
     }
 }

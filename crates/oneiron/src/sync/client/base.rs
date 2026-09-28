@@ -1,15 +1,13 @@
 //! SyncClient construction, window and ephemeral accessors, and root persistence.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
-use super::types::{
-    EphemeralChangeOrigin, KEY_LAST_SYNC, KEY_ROOT_DOC, KEY_ROOT_SV, KEY_ROOT_SVF,
-    ROOT_UPDATE_PREFIX, SVF_FRESH, SyncClientConfig, SyncEvent, SyncStatus,
-};
+use super::types::{EphemeralChangeOrigin, SVF_FRESH, SyncClientConfig, SyncEvent, SyncStatus};
 use crate::Vault;
 use crate::error::{
     Error, Result, SyncConfigField, SyncEngineContext, SyncError, SyncProtocolValidation,
@@ -21,6 +19,9 @@ use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window::LoadedWindow;
+use crate::sync::window_rows::{
+    LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
+};
 use crate::sync::{
     EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent, LoroValue, Subscription,
 };
@@ -39,6 +40,13 @@ pub struct SyncClient {
     /// may only be cleared once the server's OWN vv proves it holds every op
     /// the local doc holds.
     pub(crate) server_vvs: HashMap<String, VersionVector>,
+    pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
+    pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
+    /// Unacknowledged cross-month deltas. Lost on process death, re-fetched by VV.
+    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>)>,
+    pub(crate) root_bootstrapped: bool,
+    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence.
+    pub(crate) residence_acks: HashMap<u64, [u8; 32]>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -139,6 +147,11 @@ impl SyncClient {
             client_id,
             config,
             server_vvs: HashMap::new(),
+            requested_windows: Mutex::new(HashSet::new()),
+            pending_world_windows: Mutex::new(HashSet::new()),
+            staged_world_updates: Vec::new(),
+            root_bootstrapped: false,
+            residence_acks: HashMap::new(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
@@ -239,6 +252,96 @@ impl SyncClient {
         self.vault.message_streams.presence.store.remove_outdated();
     }
 
+    /// Follow another project. The next sync negotiation requests all its known
+    /// historical windows, so following late backfills rather than starting now.
+    pub fn follow_world(&mut self, world: crate::EntityId) {
+        if let Some(worlds) = &mut self.config.followed_worlds
+            && !worlds.contains(&world)
+        {
+            worlds.push(world);
+        }
+    }
+
+    /// Home-node / explicit sync-all mode.
+    pub fn follow_all_worlds(&mut self) {
+        self.config.followed_worlds = None;
+    }
+
+    /// Effective subscription = host request ∩ trusted manifest ceiling.
+    /// Fail closed when a loaded manifest is malformed; the caller request
+    /// is never rewritten, so `follow_all_worlds` cannot bypass the cap.
+    pub(crate) fn effective_worlds(
+        &self,
+    ) -> std::result::Result<Option<BTreeSet<crate::EntityId>>, TransportError> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let resolution = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let ceiling = resolution
+            .sync_world_ceiling()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let default_all = resolution
+            .sync_default_all_worlds()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        // `Some([])` from a fresh SyncClientConfig means "use the manifest's
+        // shipped default". An explicit `None` from follow_all_worlds is a
+        // request for all, still capped by the trusted manifest ceiling.
+        let requested = if self
+            .config
+            .followed_worlds
+            .as_ref()
+            .is_some_and(Vec::is_empty)
+            && default_all
+        {
+            None
+        } else {
+            self.config.followed_worlds.as_ref()
+        };
+        Ok(match (requested, ceiling) {
+            (None, None) => None,
+            (None, Some(cap)) => Some(cap.clone()),
+            (Some(worlds), None) => Some(worlds.iter().copied().collect()),
+            (Some(worlds), Some(cap)) => Some(
+                worlds
+                    .iter()
+                    .filter(|world| cap.contains(world))
+                    .copied()
+                    .collect(),
+            ),
+        })
+    }
+
+    pub(crate) fn follows_window(
+        key: &WindowKey,
+        worlds: &Option<BTreeSet<crate::EntityId>>,
+    ) -> bool {
+        match (key.world(), worlds) {
+            (None, _) | (_, None) => true,
+            (Some(world), Some(worlds)) => worlds.contains(&world),
+        }
+    }
+
+    /// Whether this opened-item device promoted `key` to a canonical copy.
+    pub(crate) fn opened_window_promoted(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<bool, TransportError> {
+        if self.config.residence_mode != super::SyncResidenceMode::Opened
+            || self.config.federation_peer.is_some()
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .vault
+            .sync_state_get(&format!("rp:w:{key}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some())
+    }
+
     /// Returns the list of window keys from the root doc (set by server).
     pub fn server_windows(&self) -> Vec<String> {
         // `meta.windows` is encoded by the schema helpers (`create_root_doc` /
@@ -259,10 +362,7 @@ impl SyncClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         self.vault.with_write_txn(|wtxn| {
-            self.vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_LAST_SYNC, &now_secs.to_le_bytes())?;
+            LAST_SYNC.put(&self.vault.store, wtxn, &(), &now_secs.to_le_bytes())?;
             Ok(())
         })
     }
@@ -278,15 +378,9 @@ impl SyncClient {
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
         if let Err(err) = self.vault.with_write_txn(|wtxn| {
-            self.vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_ROOT_DOC, &snapshot)?;
-            self.vault.store.sync_state.put(wtxn, KEY_ROOT_SV, &vv)?;
-            self.vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_ROOT_SVF, &[SVF_FRESH])?;
+            ROOT_SNAPSHOT.put(&self.vault.store, wtxn, &(), &snapshot)?;
+            ROOT_STATE_VECTOR.put(&self.vault.store, wtxn, &(), &vv)?;
+            ROOT_SHALLOW_FENCE.put(&self.vault.store, wtxn, &(), &[SVF_FRESH])?;
             crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
         }) {
@@ -307,15 +401,11 @@ impl SyncClient {
 /// replay (ARCH-0023b startup step 1). Fresh doc when nothing is persisted.
 pub(super) fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
-    let doc = match vault.store.sync_state.get(&rtxn, KEY_ROOT_DOC)? {
+    let doc = match ROOT_SNAPSHOT.get(&vault.store, &rtxn, &())? {
         Some(snapshot) => doc_from_snapshot(&snapshot)?,
         None => LoroDoc::new(),
     };
-    let iter = vault
-        .store
-        .sync_state
-        .prefix_iter(&rtxn, ROOT_UPDATE_PREFIX)?;
-    for entry in iter {
+    for entry in ROOT_UPDATE.iter_from(&vault.store, &rtxn, &[])? {
         let (_k, v) = entry?;
         doc.import(&v).map_err(|source| {
             Error::Sync(SyncError::CrdtDecodeError {

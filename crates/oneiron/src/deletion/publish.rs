@@ -28,7 +28,7 @@ use super::topology_delete_intent::{
 };
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
-use super::tombstone::pending_tombstone_key;
+use super::tombstone::{PENDING_TOMBSTONE, PendingTombstoneKey};
 #[cfg(feature = "sync")]
 use crate::error::SyncError;
 
@@ -51,6 +51,7 @@ impl Vault {
         &self,
         id: &EntityId,
         window_ts: u64,
+        window_label: &str,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
@@ -59,6 +60,7 @@ impl Vault {
         let outcome = self.write_crdt_tombstone_impl(
             id,
             window_ts,
+            window_label,
             value,
             gate_decision,
             gate,
@@ -127,11 +129,15 @@ impl Vault {
     /// receipt ordering, and a B-side replay here would purge BEFORE the
     /// purge transaction, voiding the local receipt and the
     /// `DeleteEntityOutcome` (mirrors `replay_pending_tombstones`).
+    /// `window_ts` keys the topology reservation (the caller's Committed row
+    /// uses the same value); `window_label` addresses the world-month document.
     #[cfg(feature = "sync")]
+    #[allow(clippy::too_many_arguments)]
     fn write_crdt_tombstone_impl(
         &self,
         id: &EntityId,
         window_ts: u64,
+        window_label: &str,
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
@@ -149,7 +155,7 @@ impl Vault {
         };
         use loro::CommitOptions;
 
-        let window_key = WindowKey::from_timestamp(window_ts);
+        let window_key = WindowKey::new(window_label);
 
         if let Some((window, materializer, manager)) = self.live_window(&window_key) {
             // Live path: merge the on-disk record first (clobber guard —
@@ -302,6 +308,38 @@ impl Vault {
         Ok(true)
     }
 
+    /// A separate local-read notice after the destructive LMDB transaction
+    /// commits. Tombstone publication is too early for hard purge, and a soft
+    /// scrub must notify even when later CRDT publication fails. The existing
+    /// tee is vault-scoped and has no recipient if no window manager is live.
+    pub(super) fn notify_local_delete_materialized(&self, ids: &[EntityId]) {
+        #[cfg(feature = "sync")]
+        {
+            let manager = self
+                .live_window_manager
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .upgrade();
+            if let Some(manager) = manager {
+                let path = "local_delete_committed";
+                manager.materializer().notify_live_queries(
+                    path,
+                    &crate::sync::bridge::MaterializedDiffSummary {
+                        containers: ids.iter().map(|id| format!("e:{}", id.to_hex())).collect(),
+                        bytes: 0,
+                        revision_events: Vec::new(),
+                    },
+                    &crate::sync::bridge::OriginMark {
+                        conn_id: None,
+                        origin: Some("local_delete_committed".to_owned()),
+                    },
+                );
+            }
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = ids;
+    }
+
     /// Publication notification only: never run from a Loro observer or before
     /// TXN1 commits. Hard-purge dependencies stay pending at the read consumer
     /// until the later purge has committed, including the transient-window path.
@@ -450,14 +488,15 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = pending_tombstone_key(window_label, id);
-        let staged_by_this_delete = self
-            .store
-            .sync_state
-            .get(&*wtxn, &key)?
-            .is_some_and(|existing| *existing == value.encode());
+        let key = PendingTombstoneKey {
+            window: window_label.to_owned(),
+            id: *id,
+        };
+        let staged_by_this_delete = PENDING_TOMBSTONE
+            .get(&self.store, &*wtxn, &key)?
+            .is_some_and(|existing| existing == value.encode());
         if staged_by_this_delete {
-            self.store.sync_state.delete(wtxn, &key)?;
+            PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
         }
         Ok(())
     }
@@ -614,14 +653,21 @@ impl Vault {
             // scrub). The `u:w:` rows the snapshot just subsumed are
             // active payload carriers too.
             crate::sync::queue::scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
-            for update_key in persistence.scrubbed_update_keys {
-                self.store.sync_state.delete(wtxn, update_key)?;
-            }
+            crate::sync::window::prune_subsumed_window_updates_in_txn(
+                self,
+                wtxn,
+                window_key,
+                persistence.scrubbed_update_keys,
+            )?;
             // Carriers 13–14: this window's sync state is no longer a
             // faithful delta source — mark it for a full per-window
             // resync on the next connect.
-            let fr_key = format!("fr:w:{window_key}");
-            self.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+            crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER.put(
+                &self.store,
+                wtxn,
+                &window_key.as_str().to_owned(),
+                &[1_u8],
+            )?;
         }
         if let Some(update) = persistence.delete_update {
             // The live-doc path suppresses Observer A for the tombstone
@@ -656,6 +702,7 @@ impl Vault {
         &self,
         _id: &EntityId,
         _window_ts: u64,
+        _window_label: &str,
         _value: &TombstoneValueV2,
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
@@ -744,7 +791,14 @@ mod live_query_publication_tests {
                 deleted_at: 1_772_000_000,
                 request_id: [7; 16],
             };
-            let result = vault.write_crdt_tombstone(&id, 1_772_000_000, &value, None, None);
+            let result = vault.write_crdt_tombstone(
+                &id,
+                1_772_000_000,
+                tee.window.as_str(),
+                &value,
+                None,
+                None,
+            );
             assert_eq!(result.is_err(), fail);
             assert_eq!(*tee.seen.lock().unwrap(), usize::from(!fail));
         }

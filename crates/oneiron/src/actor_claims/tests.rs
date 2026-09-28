@@ -535,7 +535,7 @@ fn public_writes_of_the_four_predicates_are_reserved() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(Value::from("forged"));
         body.source = Some(ClaimSource::Generated);
         let error = vault
@@ -621,7 +621,8 @@ fn the_structural_validator_refuses_bare_or_mis_sourced_rows() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     assert!(validate_actor_claim_structure(&bare).is_err());
 
     // A well-formed row: evidence present, lineage stamped where the trust

@@ -5,8 +5,7 @@ use crate::error::{Error, Result};
 use crate::store::{Store, active_write_txn_depth};
 
 use super::run_store::{
-    decode_retrieval_run, encode_retrieval_outcome, retrieval_outcome_key, retrieval_run_key,
-    retrieval_run_provisional_key, vet_retrieval_outcome,
+    OutcomeKey, RETRIEVAL_OUTCOME, RETRIEVAL_RUN, RETRIEVAL_RUN_PROVISIONAL, vet_retrieval_outcome,
 };
 use super::types::{
     RETRIEVAL_TELEMETRY_VERSION, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
@@ -47,20 +46,16 @@ impl Store {
             secret_scan::scan_metadata_field(value)?;
         }
         let mut wtxn = self.env.write_txn()?;
-        let run_key = retrieval_run_key(input.run_id);
-        let raw = self.vault_meta.get(&wtxn, &run_key)?.ok_or_else(|| {
-            Error::InvalidConfig("retrieval end outcome references unknown run id".to_owned())
-        })?;
-        if self
-            .vault_meta
-            .get(&wtxn, &retrieval_run_provisional_key(input.run_id))?
-            .is_some()
-        {
+        let run = RETRIEVAL_RUN
+            .get(self, &wtxn, &input.run_id)?
+            .ok_or_else(|| {
+                Error::InvalidConfig("retrieval end outcome references unknown run id".to_owned())
+            })?;
+        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &wtxn, &input.run_id)? {
             return Err(Error::InvalidConfig(
                 "retrieval end outcome references unpublished run id".to_owned(),
             ));
         }
-        let run = decode_retrieval_run(&raw)?;
         if run.run_id != input.run_id {
             return Err(Error::CorruptedIndex("retrieval run telemetry"));
         }
@@ -75,10 +70,11 @@ impl Store {
             updated_at: self.clock.now_recorded_at(),
             reward_evidence: Some(evidence),
         };
-        self.vault_meta.put(
+        RETRIEVAL_OUTCOME.put(
+            self,
             &mut wtxn,
-            &retrieval_outcome_key(record.run_id, &record.key),
-            &encode_retrieval_outcome(&record)?,
+            &OutcomeKey(record.run_id, record.key.clone()),
+            &record,
         )?;
         wtxn.commit()?;
         Ok(())

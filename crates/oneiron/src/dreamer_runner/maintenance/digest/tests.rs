@@ -96,7 +96,7 @@ fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()>
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let urgent = UrgentDigestWake {
@@ -196,7 +196,8 @@ fn policy_row_rejects_invalid_templates_and_disables_unpicked_breakthrough() -> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let wake = UrgentDigestWake {
@@ -249,7 +250,8 @@ fn repeated_urgent_groups_do_not_postpone_the_ordinary_group() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let urgent = UrgentDigestWake {
@@ -664,7 +666,7 @@ fn every_funded_recipient_has_an_independent_digest_cadence() -> Result<()> {
 }
 
 fn set_calibration_manifest(vault: &Vault, cost: u32, limit: u32) -> Result<()> {
-    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
     let Value::Map(ref mut entries) = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| crate::Error::InvalidConfig("test manifest".into()))?
     else {

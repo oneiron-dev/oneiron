@@ -13,6 +13,10 @@ pub(crate) struct AppError {
     message: String,
     request_id: String,
     suggestions: Vec<String>,
+    /// The receipt of the read that refused, when a read verb refused;
+    /// boxed so the refusal stays small on every `Result` that carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
 }
 
 impl AppError {
@@ -28,6 +32,7 @@ impl AppError {
             message: message.into(),
             request_id: format!("ws-facade-req-{id:016x}"),
             suggestions: suggestions.into_iter().map(Into::into).collect(),
+            narrowing: None,
         }
     }
 
@@ -79,7 +84,11 @@ impl From<ApiError> for AppError {
 
 impl From<MemoryError> for AppError {
     fn from(error: MemoryError) -> Self {
-        // Match the released HTTP projection, not the engine's internal fields.
-        Self::new(&error.code, error.message, error.suggestions)
+        // Match the released HTTP projection, not the engine's internal
+        // fields; a read refusal keeps its receipt, as the HTTP envelope does.
+        Self {
+            narrowing: error.read_receipt,
+            ..Self::new(&error.code, error.message, error.suggestions)
+        }
     }
 }

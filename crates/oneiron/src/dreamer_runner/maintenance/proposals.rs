@@ -29,7 +29,7 @@ pub(super) fn emit_in_txn(
         b"oneiron:dreamer-maintenance-proposal:v1",
         &[subject.as_bytes(), predicate.as_bytes(), &bytes],
     )?;
-    if let Some(raw) = vault.store.entities.get(&*txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*txn, &id)? {
         let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(super::invalid)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             return Err(super::invalid());

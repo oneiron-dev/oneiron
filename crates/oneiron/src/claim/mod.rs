@@ -5,8 +5,8 @@
 //! the ON-DISK vocabulary. ARCH-0003's camelCase `Claim` shape is the
 //! app-layer view. The v2 Scope stamps use their canonical camelCase keys.
 //!
-//! Every type-0 write on every path (`Vault::put_entity`, `BatchBuilder`,
-//! `TxnBatchBuilder`, sync replay via `apply_ops`) is structurally validated
+//! Every type-0 write on every path (`Vault::put_entity`, both `BatchBuilder`
+//! terminals, sync replay via `apply_ops`) is structurally validated
 //! here (D18). Bodies of all OTHER type bytes stay opaque at the storage
 //! layer. Validation is fail-closed: a body that does not decode to a
 //! MessagePack map carrying exactly the pinned vocabulary with all required
@@ -53,14 +53,19 @@ mod demotion;
 mod evidence_support;
 mod expression_archive;
 mod expression_preference;
+mod history_handoff;
+pub(crate) mod history_projection;
+pub use history_projection::ResolvedMachineClaim;
+pub(crate) mod history_store;
 mod lexical_query_hint;
 mod lifecycle;
+mod machine_birth;
 mod predicate_grammar;
 mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
-    claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
-    maintain_claim_projection_index, producer_prefix, remove_claim_projection_index,
+    PENDING_PRODUCER, claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
+    maintain_claim_projection_index, remove_claim_projection_index,
 };
 mod put;
 mod read;
@@ -71,13 +76,16 @@ mod source_trust;
 mod status;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;
+pub(crate) mod transition;
 mod write_target;
 
 pub use core_types::*;
 pub use decay::*;
 pub(crate) use evidence_support::has_live_support_in_txn;
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
+pub use history_handoff::*;
 pub use lexical_query_hint::*;
+pub(crate) use machine_birth::SignedClaimBirth;
 pub use predicate_grammar::*;
 pub use predicate_validators::*;
 pub(crate) use read::*;
@@ -88,7 +96,6 @@ pub use scope_stamp::{
 pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
 pub(crate) use scoped_read::invalidate_weave_digest_source_in_txn;
 pub use scoped_read::*;
-pub(crate) use scoped_read::{ReadAdmission, admit_stored_edge_in};
 pub use source_trust::*;
 pub use status::*;
 pub(crate) use write_target::validate_claim_write_target_in_txn;

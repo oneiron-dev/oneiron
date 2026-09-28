@@ -4,6 +4,7 @@
 use super::super::support::facade_provenance;
 use super::*;
 use crate::batch::{ApplyOpsGateMode, BatchOp};
+use crate::entity_id::derived_domains::KEY_VALUE;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use std::sync::atomic::Ordering;
@@ -32,22 +33,19 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("value must be a JSON object"));
         }
         let source = super::super::claims::parse_claim_source(&input.source)?;
-        let identity = serde_json::to_vec(&(
-            "oneiron.key_value.v1",
-            self.actor.to_hex(),
-            self.actor_class.gate_actor_class(),
-            &address,
-            &input.request_id,
-        ))
-        .map_err(|_| MemoryError::bad_request("invalid key identity"))?;
-        let digest = blake3::hash(&identity);
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&digest.as_bytes()[..16]);
+        let address_bytes = serde_json::to_vec(&address)
+            .map_err(|_| MemoryError::bad_request("invalid key identity"))?;
         // Domain-separated, actor-bound deterministic ID, not an unchecked
         // type byte or caller-selected entity ID. Full identity is rechecked.
-        bytes[6] = (bytes[6] & 0x0f) | 0x80;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let id = EntityId::from_bytes(bytes)?;
+        let id = EntityId::derive(
+            KEY_VALUE,
+            &[
+                self.actor.as_bytes(),
+                self.actor_class.gate_actor_class().as_bytes(),
+                &address_bytes,
+                input.request_id.as_bytes(),
+            ],
+        )?;
         let now = crate::unix_seconds_now();
         let (item, replayed) = self.with_actor_content_write_txn(|content| {
             if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &id)? {
@@ -85,8 +83,9 @@ impl Memory<'_> {
                 .map_err(|_| MemoryError::bad_request("invalid JSON value"))?.len())?;
             let candidate = ClaimCandidate::new(PREDICATE.to_owned(), ClaimSubject::Entity(self.actor),
                 json_to_rmpv(&value), 1.0).with_scope(self.key_value_scope(&address));
-            let envelope = WriteEnvelope::new(WriteActor::new(self.actor, self.actor_class), source,
+            let mut envelope = WriteEnvelope::new(WriteActor::new(self.actor, self.actor_class), source,
                 WriteProvenance::new(facade_provenance("key_value_put"))?, ClaimApprovalStatus::Auto);
+            self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
             content.apply_claim_ops(
                 vec![BatchOp::ClaimCandidate { id, candidate: Box::new(candidate), envelope,
                     occurred: TimeRange { start: now, end: now }, learned_at: now, internal_lexical_query_hint: false }],
@@ -107,7 +106,8 @@ impl Memory<'_> {
                         &["Keep the true source. Store generated output under a separate key. Only a genuine new user statement may be submitted as user_stated; never relabel generated output."],
                     ))?;
                 content.update_claim(prior_id, |txn| {
-                    self.vault.supersede_claim_in_txn(txn, &id, &prior_id, now)
+                    self.vault.supersede_claim_in_txn_as(txn, &id, &prior_id, now,
+                        Some(WriteActor::new(self.actor, self.actor_class)))
                 })?;
             }
             Ok((self.key_value_item(content.read(), id, stored)?, false))
@@ -136,9 +136,12 @@ impl Memory<'_> {
                 });
             };
             content.update_claim(id, |txn| {
-                let receipt =
-                    self.vault
-                        .retract_claim_in_txn(txn, &id, crate::unix_seconds_now())?;
+                let receipt = self.vault.retract_claim_in_txn_as(
+                    txn,
+                    &id,
+                    crate::unix_seconds_now(),
+                    Some(WriteActor::new(self.actor, self.actor_class)),
+                )?;
                 Ok(KeyValueDeleteReceipt {
                     existed: true,
                     receipt_refs: vec![receipt.map_or_else(

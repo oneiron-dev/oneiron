@@ -991,10 +991,8 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     // A rejected setter neither changes the flag nor spends the next transition.
     let current = vault.store.env.read_txn()?;
     assert_eq!(
-        vault
-            .store
-            .vault_meta
-            .get(&current, super::import_receipt::CODE_AUTO_INSTALL_KEY)?
+        super::import_receipt::CODE_AUTO_INSTALL
+            .get_bytes(&vault.store, &current, &())?
             .as_deref(),
         Some(&[1][..])
     );
@@ -1432,7 +1430,7 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     crate::test_util::put_policy_manifest_bytes(
         &vault,
         policy_id,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let installed = vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4);
     vault.with_write_txn(|txn| {

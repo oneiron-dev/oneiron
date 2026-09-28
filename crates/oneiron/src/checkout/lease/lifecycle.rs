@@ -1,16 +1,16 @@
 //! Lease state machine: claim, renew, reclaim, settle, and teardown plus fence guards.
 
-use super::codec::{load_act_in_txn, load_tombstone_in_txn, store_act_in_txn};
+use super::checkout_result_identity;
+use super::codec::{
+    LEASE, SETTLEMENT, SettlementKey, TOMBSTONE, TombstoneRow, load_act_in_txn,
+    load_tombstone_in_txn, store_act_in_txn,
+};
 use super::types::{
     CheckoutClaimRequest, CheckoutError, CheckoutFactMutation, CheckoutFactSink, CheckoutId,
     CheckoutLeaseAct, CheckoutLeaseFence, CheckoutLeaseGrant, CheckoutLeaseState, CheckoutLiveness,
     CheckoutLivenessPulse, CheckoutRepoOps, CheckoutResult, CheckoutRetainReason,
     CheckoutSettlementDisposition, CheckoutSettlementReceipt, CheckoutSettlementRequest,
     CheckoutTeardownOutcome, PushedHeadReceipt, TeardownReceiptMatch,
-};
-use super::{
-    checkout_result_identity, decode_act, decode_receipt, encode_receipt, encode_tombstone,
-    lease_key, settlement_key, tombstone_key,
 };
 
 use crate::Vault;
@@ -178,10 +178,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     }
     pub fn get(&self, id: CheckoutId) -> CheckoutResult<Option<CheckoutLeaseAct>> {
         let t = self.vault.store.env.read_txn().map_err(Error::from)?;
-        match self.vault.store.vault_meta.get(&t, &lease_key(id))? {
-            Some(raw) => Ok(Some(decode_act(&raw)?)),
-            None => Ok(None),
-        }
+        Ok(LEASE.get(&self.vault.store, &t, &id)?)
     }
     pub fn settle(
         &mut self,
@@ -195,9 +192,12 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
             require_not_regressed(&a, r.now)?;
             let identity =
                 checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
-            let key = settlement_key(a.checkout_id, a.epoch, identity);
-            if let Some(raw) = self.vault.store.vault_meta.get(&*t, &key)? {
-                let old = decode_receipt(&raw)?;
+            let key = SettlementKey {
+                checkout_id: a.checkout_id,
+                epoch: a.epoch,
+                identity,
+            };
+            if let Some(old) = SETTLEMENT.get(&self.vault.store, &*t, &key)? {
                 if old.checkout_id == a.checkout_id
                     && old.epoch == a.epoch
                     && old.result_identity == identity
@@ -221,10 +221,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                 result_ref: r.result_ref.clone(),
                 settled_at: r.now,
             };
-            self.vault
-                .store
-                .vault_meta
-                .put(t, &key, &encode_receipt(&receipt)?)?;
+            SETTLEMENT.put(&self.vault.store, t, &key, &receipt)?;
             a.state = CheckoutLeaseState::Settled;
             a.updated_at = r.now;
             store_act_in_txn(self.vault, t, &a)?;
@@ -309,15 +306,13 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
             // before the namespace is freed, so no crash window can free the id
             // without recording the epoch it just retired. Monotone-only.
             let prior = load_tombstone_in_txn(self.vault, t, current.checkout_id)?.unwrap_or(0);
-            self.vault.store.vault_meta.put(
+            TOMBSTONE.put(
+                &self.vault.store,
                 t,
-                &tombstone_key(current.checkout_id),
-                &encode_tombstone(prior.max(current.epoch))?,
+                &current.checkout_id,
+                &TombstoneRow(prior.max(current.epoch)),
             )?;
-            self.vault
-                .store
-                .vault_meta
-                .delete(t, &lease_key(current.checkout_id))?;
+            LEASE.delete(&self.vault.store, t, &current.checkout_id)?;
             Ok(())
         })?;
         Ok(CheckoutTeardownOutcome::Collected {

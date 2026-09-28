@@ -85,7 +85,7 @@ fn grant_for(
     project: Option<EntityId>,
     ceiling: Option<crate::federation::Sensitivity>,
 ) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: serde_json::Value =
         rmp_serde::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("fixture policy"))?;
     let mut scope = crate::federation::scope_codec::read_preset();
@@ -203,7 +203,7 @@ fn standing_backfill_keeps_receipts_by_immutable_version_after_edit_and_pause() 
         let claim = vault.get_claim(&answer.claim)?.expect("kept answer claim");
         assert_eq!(claim.predicate, "judgment.answer");
         let encoded = super::store::encode(answer)?;
-        let receipt: AnswerRecord = super::store::decode(&encoded)?;
+        let receipt: AnswerRecord = rmp_serde::from_slice(&encoded).expect("stored answer decode");
         assert_eq!(receipt.decision.receipt.question_version, version);
         assert_eq!(
             claim.value,
@@ -412,7 +412,8 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
         1.0,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     fact.source = Some(crate::claim::ClaimSource::Imported);
     vault.put_claim(&evidence, &fact, TimeRange { start: 1, end: 1 }, 1)?;
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
@@ -427,7 +428,7 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
     let stored = backfill_standing_answer(&vault, owner, id, 1, actor, answer.clone(), 11)?;
     assert_eq!(
         vault.get_claim(&stored.claim)?.expect("landed").scope_facet,
-        crate::claim::substrate_facet_id(unit),
+        crate::claim::substrate_facet_id(unit).unwrap(),
     );
     let incompatible = EntityId::now();
     person(&vault, incompatible)?;
@@ -556,7 +557,8 @@ fn supplemental_claim_evidence_taint_scope_and_revisions_are_preserved() -> Test
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(kind);
         body
     };
@@ -633,7 +635,8 @@ fn note_unit_and_evidence_require_record_project_and_sensitivity_grants() -> Tes
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::UserStated);
     body.scope_project = other_project;
     vault.put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)?;
@@ -690,7 +693,8 @@ fn mixed_source_sensitivity_never_downgrades_a_kept_answer() -> TestResult {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .unwrap();
             claim.source = Some(ClaimSource::UserStated);
             claim.scope = Some(rmpv::Value::Map(vec![(
                 rmpv::Value::from("sensitivity"),

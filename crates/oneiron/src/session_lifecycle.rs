@@ -48,15 +48,19 @@ use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SESSION;
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
 pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
-/// `vault_meta` key of the single open-session pointer (value = 16-byte id).
-const SESSION_LIFECYCLE_OPEN_KEY: &[u8] = b"session_lifecycle:v0:open";
-/// `vault_meta` key prefix for per-session lifecycle records (suffix = id).
-const SESSION_LIFECYCLE_RECORD_KEY_PREFIX: &[u8] = b"session_lifecycle:v0:record:";
+/// The single open-session pointer (value = 16-byte session id). Key: `()`.
+const OPEN_POINTER: SideTable<(), EntityId, Raw> =
+    SideTable::new(&side_table::SESSION_LIFECYCLE_OPEN);
+/// Per-session lifecycle records. Key: the session id.
+const RECORDS: SideTable<EntityId, SessionLifecycleRecord, Named> =
+    SideTable::new(&side_table::SESSION_LIFECYCLE_RECORD);
+
 const SESSION_LIFECYCLE_RECORD_VERSION: u8 = 1;
 
 /// Why a session ended. `Explicit` is the app's own end hint; `IdleFloor`
@@ -244,21 +248,9 @@ impl SessionEndWake {
     }
 }
 
-fn session_record_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(SESSION_LIFECYCLE_RECORD_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(SESSION_LIFECYCLE_RECORD_KEY_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-fn encode_session_record(record: &SessionLifecycleRecord) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(record)
-        .map_err(|_| Error::InvariantViolation("session lifecycle record encode failed"))
-}
-
-fn decode_session_record(bytes: &[u8]) -> Result<SessionLifecycleRecord> {
-    let record: SessionLifecycleRecord = rmp_serde::from_slice(bytes)
-        .map_err(|_| Error::CorruptedIndex("session lifecycle record"))?;
+/// A record decoded off-disk carries whatever `version` its bytes named;
+/// this is the domain check the `Named` codec cannot express on its own.
+fn validated_record(record: SessionLifecycleRecord) -> Result<SessionLifecycleRecord> {
     if record.version != SESSION_LIFECYCLE_RECORD_VERSION {
         return Err(Error::CorruptedIndex(
             "unsupported session lifecycle record version",
@@ -267,27 +259,19 @@ fn decode_session_record(bytes: &[u8]) -> Result<SessionLifecycleRecord> {
     Ok(record)
 }
 
-fn decode_open_pointer(bytes: &[u8]) -> Result<EntityId> {
-    let raw: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("session lifecycle open pointer"))?;
-    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex("session lifecycle open pointer"))
-}
-
 /// Reads the open session (pointer + record) inside a transaction. A
 /// pointer whose record row is missing is corruption, not "no session".
 fn open_session_in_txn(
     store: &Store,
     txn: &RwTxn<'_>,
 ) -> Result<Option<(EntityId, SessionLifecycleRecord)>> {
-    let Some(raw) = store.vault_meta.get(txn, SESSION_LIFECYCLE_OPEN_KEY)? else {
+    let Some(id) = OPEN_POINTER.get(store, txn, &())? else {
         return Ok(None);
     };
-    let id = decode_open_pointer(&raw)?;
-    let Some(record) = store.vault_meta.get(txn, &session_record_key(&id))? else {
+    let Some(record) = RECORDS.get(store, txn, &id)? else {
         return Err(Error::CorruptedIndex("session lifecycle record"));
     };
-    Ok(Some((id, decode_session_record(&record)?)))
+    Ok(Some((id, validated_record(record)?)))
 }
 
 /// Bumps the open session's `last_activity` (monotonic — never rewinds)
@@ -308,11 +292,7 @@ pub(crate) fn bump_open_session_activity_in_txn(
     };
     if now > record.last_activity {
         record.last_activity = now;
-        store.vault_meta.put(
-            wtxn,
-            &session_record_key(&id),
-            &encode_session_record(&record)?,
-        )?;
+        RECORDS.put(store, wtxn, &id, &record)?;
     }
     Ok(Some(id))
 }
@@ -321,18 +301,13 @@ impl Vault {
     /// The currently open session, if any.
     pub fn open_session(&self) -> Result<Option<OpenSession>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, SESSION_LIFECYCLE_OPEN_KEY)?
-        else {
+        let Some(id) = OPEN_POINTER.get(&self.store, &rtxn, &())? else {
             return Ok(None);
         };
-        let id = decode_open_pointer(&raw)?;
-        let Some(record) = self.store.vault_meta.get(&rtxn, &session_record_key(&id))? else {
+        let Some(record) = RECORDS.get(&self.store, &rtxn, &id)? else {
             return Err(Error::CorruptedIndex("session lifecycle record"));
         };
-        let record = decode_session_record(&record)?;
+        let record = validated_record(record)?;
         Ok(Some(OpenSession {
             session: id,
             started_at: record.started_at,
@@ -347,10 +322,10 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<SessionLifecycleRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&rtxn, &session_record_key(id))? else {
-            return Ok(None);
-        };
-        decode_session_record(&raw).map(Some)
+        RECORDS
+            .get(&self.store, &rtxn, id)?
+            .map(validated_record)
+            .transpose()
     }
 
     /// Mints and opens a canonical SESSION entity at `now` (unix seconds).
@@ -379,12 +354,8 @@ impl Vault {
     ) -> Result<SessionMintOutcome> {
         let now = timestamp.effective_ms / 1_000;
         let id = self.store.clock.entity_id()?;
-        if let Some(raw) = self
-            .store
-            .vault_meta
-            .get(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?
-        {
-            return Ok(SessionMintOutcome::AlreadyOpen(decode_open_pointer(&raw)?));
+        if let Some(existing) = OPEN_POINTER.get(&self.store, wtxn, &())? {
+            return Ok(SessionMintOutcome::AlreadyOpen(existing));
         }
         let record = SessionLifecycleRecord {
             version: SESSION_LIFECYCLE_RECORD_VERSION,
@@ -413,14 +384,8 @@ impl Vault {
                 &body,
             )
             .apply(wtxn)?;
-        self.store.vault_meta.put(
-            wtxn,
-            &session_record_key(&id),
-            &encode_session_record(&record)?,
-        )?;
-        self.store
-            .vault_meta
-            .put(wtxn, SESSION_LIFECYCLE_OPEN_KEY, id.as_bytes())?;
+        RECORDS.put(&self.store, wtxn, &id, &record)?;
+        OPEN_POINTER.put(&self.store, wtxn, &(), &id)?;
         Ok(SessionMintOutcome::Minted(id))
     }
 
@@ -452,11 +417,7 @@ impl Vault {
             record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
             record.last_activity = record.last_activity.max(timestamp.effective_ms / 1_000);
             record.app_open_hints.push(timestamp);
-            self.store.vault_meta.put(
-                wtxn,
-                &session_record_key(&id),
-                &encode_session_record(&record)?,
-            )?;
+            RECORDS.put(&self.store, wtxn, &id, &record)?;
             Ok(Some(id))
         })
     }
@@ -496,11 +457,7 @@ impl Vault {
                 record.activity_periods.push(period);
             }
 
-            self.store.vault_meta.put(
-                wtxn,
-                &session_record_key(&id),
-                &encode_session_record(&record)?,
-            )?;
+            RECORDS.put(&self.store, wtxn, &id, &record)?;
             Ok(Some(id))
         })
     }
@@ -630,14 +587,8 @@ impl Vault {
             record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
             record.explicit_end_hint = Some(timestamp);
         }
-        self.store.vault_meta.put(
-            wtxn,
-            &session_record_key(&id),
-            &encode_session_record(&record)?,
-        )?;
-        self.store
-            .vault_meta
-            .delete(wtxn, SESSION_LIFECYCLE_OPEN_KEY)?;
+        RECORDS.put(&self.store, wtxn, &id, &record)?;
+        OPEN_POINTER.delete(&self.store, wtxn, &())?;
 
         // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
         // same commit as the close: "this sitting is over and not yet

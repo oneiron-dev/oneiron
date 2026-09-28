@@ -9,11 +9,14 @@ use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{DreamerTrapKind, DurableStepContext, TrapRef};
+use crate::side_table::{self, Named, SideTable};
 
 use super::adapter::RunTreeAdapter;
 use super::signal::RunAsk;
 
-const WAIT_DOMAIN: &[u8] = b"run.ask.wait.v1/";
+const WAITS: SideTable<[u8; 80], WaitBinding, Named> =
+    SideTable::new(&side_table::RUN_TREE_ASK_WAIT);
+const WAIT_DOMAIN: &[u8] = side_table::RUN_TREE_ASK_WAIT.prefix;
 const MAX_WAITS_PER_ASK: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,34 +59,42 @@ impl WaitBinding {
     }
 }
 
-fn wait_prefix(branch: AttemptId, handle: &str) -> Vec<u8> {
-    let mut prefix = Vec::with_capacity(WAIT_DOMAIN.len() + 48);
-    prefix.extend_from_slice(WAIT_DOMAIN);
-    prefix.extend_from_slice(branch.as_bytes());
-    prefix.extend_from_slice(blake3::hash(handle.as_bytes()).as_bytes());
+fn wait_prefix(branch: AttemptId, handle: &str) -> [u8; 48] {
+    let mut prefix = [0; 48];
+    prefix[..16].copy_from_slice(branch.as_bytes());
+    prefix[16..].copy_from_slice(blake3::hash(handle.as_bytes()).as_bytes());
     prefix
 }
 
-fn wait_key(branch: AttemptId, handle: &str, step_key: &str) -> Vec<u8> {
-    let mut key = wait_prefix(branch, handle);
-    key.extend_from_slice(blake3::hash(step_key.as_bytes()).as_bytes());
+fn wait_key(branch: AttemptId, handle: &str, step_key: &str) -> [u8; 80] {
+    let mut key = [0; 80];
+    key[..48].copy_from_slice(&wait_prefix(branch, handle));
+    key[48..].copy_from_slice(blake3::hash(step_key.as_bytes()).as_bytes());
     key
 }
 
-fn encode(binding: &WaitBinding) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(binding)
-        .map_err(|_| Error::InvalidConfig("ask wait encoding failed".into()))
-}
-
-fn decode(raw: &[u8], handle: &str) -> Result<WaitBinding> {
-    let binding: WaitBinding = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::InvalidConfig("invalid ask wait binding".into()))?;
-    if binding.handle != handle {
+fn read_wait(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8; 80],
+    handle: &str,
+) -> Result<Option<WaitBinding>> {
+    let value = WAITS.get(store, txn, key).map_err(|error| {
+        if error.kind() == crate::ErrorKind::SideTableRow {
+            Error::InvalidConfig("invalid ask wait binding".into())
+        } else {
+            error
+        }
+    })?;
+    if value
+        .as_ref()
+        .is_some_and(|binding| binding.handle != handle)
+    {
         return Err(Error::InvalidConfig(
             "ask wait binding handle mismatch".into(),
         ));
     }
-    Ok(binding)
+    Ok(value)
 }
 
 /// Co-transactionally wake each unconsumed step on ONE newly landed answer.
@@ -95,19 +106,18 @@ pub(super) fn signal_waiters_in_txn(
     handle: &str,
     at_ms: u64,
 ) -> Result<()> {
-    let rows = vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, &wait_prefix(branch, handle))?
-        .map(|row| row.map(|(_, value)| value.to_vec()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let rows = WAITS.scan_from(&vault.store, txn, &wait_prefix(branch, handle))?;
     if rows.len() > MAX_WAITS_PER_ASK {
         return Err(Error::InvalidConfig(
             "ask wait binding limit exceeded".into(),
         ));
     }
-    for raw in rows {
-        let binding = decode(&raw, handle)?;
+    for (_, binding) in rows {
+        if binding.handle != handle {
+            return Err(Error::InvalidConfig(
+                "ask wait binding handle mismatch".into(),
+            ));
+        }
         if !binding.consumed {
             crate::llm::signal_step_wait_in_txn(vault, txn, &binding.trap(), at_ms)?;
         }
@@ -126,7 +136,7 @@ impl RunTreeAdapter<'_> {
         handle: &str,
         step_key: &str,
     ) -> Result<RunAskWait> {
-        if !std::ptr::eq(ctx.vault, self.vault)
+        if ctx.vault.vault_id() != self.vault.vault_id()
             || ctx.run_id.is_none()
             || handle.is_empty()
             || step_key.is_empty()
@@ -151,8 +161,7 @@ impl RunTreeAdapter<'_> {
             .find(|ask| ask.handle == handle)
             .ok_or_else(|| Error::InvalidConfig("ask wait handle missing".into()))?;
         let key = wait_key(ctx.attempt_id, handle, step_key);
-        if let Some(raw) = self.vault.store.vault_meta.get(&txn, &key)? {
-            let binding = decode(&raw, handle)?;
+        if let Some(binding) = read_wait(&self.vault.store, &txn, &key, handle)? {
             if !binding.matches(ctx, handle, step_key) {
                 return Err(Error::InvalidConfig("ask wait identity changed".into()));
             }
@@ -169,11 +178,8 @@ impl RunTreeAdapter<'_> {
             return Ok(RunAskWait::Available(ask));
         }
         let prefix = wait_prefix(ctx.attempt_id, handle);
-        let count = self
-            .vault
-            .store
-            .vault_meta
-            .prefix_iter(&txn, &prefix)?
+        let count = WAITS
+            .iter_from(&self.vault.store, &txn, &prefix)?
             .take(MAX_WAITS_PER_ASK)
             .try_fold(0, |count, row| row.map(|_| count + 1))?;
         if count >= MAX_WAITS_PER_ASK {
@@ -201,10 +207,7 @@ impl RunTreeAdapter<'_> {
             step_hash,
             consumed: false,
         };
-        self.vault
-            .store
-            .vault_meta
-            .put(&mut txn, &key, &encode(&binding)?)?;
+        WAITS.put(&self.vault.store, &mut txn, &key, &binding)?;
         txn.commit()?;
         Ok(RunAskWait::Pending { ask, trap })
     }
@@ -218,7 +221,7 @@ impl RunTreeAdapter<'_> {
         handle: &str,
         step_key: &str,
     ) -> Result<Option<RunAsk>> {
-        if !std::ptr::eq(ctx.vault, self.vault) || ctx.run_id.is_none() {
+        if ctx.vault.vault_id() != self.vault.vault_id() || ctx.run_id.is_none() {
             return Err(Error::InvalidConfig("invalid ask wait context".into()));
         }
         let mut txn = self.vault.store.env.write_txn()?;
@@ -235,13 +238,8 @@ impl RunTreeAdapter<'_> {
             .find(|ask| ask.handle == handle)
             .ok_or_else(|| Error::InvalidConfig("ask wait handle missing".into()))?;
         let key = wait_key(ctx.attempt_id, handle, step_key);
-        let raw = self
-            .vault
-            .store
-            .vault_meta
-            .get(&txn, &key)?
+        let mut binding = read_wait(&self.vault.store, &txn, &key, handle)?
             .ok_or_else(|| Error::InvalidConfig("ask wait binding missing".into()))?;
-        let mut binding = decode(&raw, handle)?;
         if !binding.matches(ctx, handle, step_key) {
             return Err(Error::InvalidConfig("ask wait identity changed".into()));
         }
@@ -253,10 +251,7 @@ impl RunTreeAdapter<'_> {
             return Ok(None);
         }
         binding.consumed = true;
-        self.vault
-            .store
-            .vault_meta
-            .put(&mut txn, &key, &encode(&binding)?)?;
+        WAITS.put(&self.vault.store, &mut txn, &key, &binding)?;
         txn.commit()?;
         Ok(Some(ask))
     }

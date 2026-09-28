@@ -11,10 +11,16 @@ use crate::claim::{
     encode_claim_body,
 };
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
 use rmpv::Value;
+
+/// Private local binding digest proving which writer authored/finalized a
+/// CLAIM row. Key: id16.
+const AUTHORED: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::CLAIM_MATERIALIZATION_AUTHORED);
 
 /// Private fields prevent a caller from attaching an arbitrary envelope to a Put.
 /// The provenance owner supplies its sealed payload. Lifecycle reconstruction
@@ -80,9 +86,7 @@ impl ClaimMaterialization {
         else {
             return Err(binding_error());
         };
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -166,10 +170,7 @@ impl ClaimMaterialization {
         else {
             return Err(binding_error());
         };
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
@@ -228,10 +229,7 @@ impl ClaimMaterialization {
         id: &EntityId,
         checker: Option<&crate::llm::BoundedAutoChecker>,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -332,8 +330,9 @@ impl ClaimMaterialization {
         txn: &mut heed::RwTxn<'_>,
         op: BatchOp,
         persist_pending: bool,
+        approver: Option<crate::WriteActor>,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, persist_pending, None)
+        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver)
     }
 
     pub(crate) fn apply_refinement_approval(
@@ -342,15 +341,16 @@ impl ClaimMaterialization {
         op: BatchOp,
         proof: crate::skill_hub::RefinementAdmissionProof,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, false, Some(proof))
+        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None)
     }
 
     fn apply_approval_inner(
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
-        op: BatchOp,
+        mut op: BatchOp,
         persist_pending: bool,
         proof: Option<crate::skill_hub::RefinementAdmissionProof>,
+        approver: Option<crate::WriteActor>,
     ) -> Result<()> {
         let BatchOp::Put {
             id,
@@ -361,14 +361,11 @@ impl ClaimMaterialization {
             allow_maintenance: false,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
-        } = &op
+        } = &mut op
         else {
             return Err(binding_error());
         };
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
@@ -384,7 +381,29 @@ impl ClaimMaterialization {
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());
         }
-        let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
+        if crate::authority::machine_claim_needs_history(&vault.store, txn, &prior)? {
+            let now = vault.store.clock.now_recorded_at();
+            let approved = match approver {
+                Some(actor) => crate::claim::transition::stage_machine_transition_as(
+                    vault,
+                    txn,
+                    *id,
+                    crate::claim::transition::ClaimTransitionKind::Approve,
+                    crate::claim::transition::TransitionDelta::None,
+                    actor,
+                    now,
+                )?,
+                None => crate::claim::transition::stage_owner_machine_transition(
+                    vault,
+                    txn,
+                    *id,
+                    crate::claim::transition::ClaimTransitionKind::Approve,
+                    crate::claim::transition::TransitionDelta::None,
+                    now,
+                )?,
+            };
+            *data = encode_claim_body(&approved)?;
+        }
         let mut bindings = Vec::new();
         if let Some(envelope) = lifecycle_envelope(&vault.store, txn, id, &prior)? {
             let binding = Self {
@@ -400,6 +419,7 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
         super::apply_ops_with_gate_mode(
             &vault.store,
             &vault.config,
@@ -439,21 +459,19 @@ impl ClaimMaterialization {
     }
 
     pub(super) fn validate_actor(&self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<()> {
-        let current = store.entities.get(txn, self.id.as_bytes())?;
+        let current = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &self.id)?;
         if current.as_ref().map(|raw| row_digest(raw)) != self.prior {
             return Err(binding_error());
         }
         if !self.reserved {
-            let authored = store.vault_meta.get(txn, &authored_key(&self.id))?;
-            if authored.as_deref() != self.prior.as_ref().map(<[u8; 32]>::as_slice) {
+            let authored = AUTHORED.get(store, txn, &self.id)?;
+            if authored != self.prior {
                 return Err(binding_error());
             }
         }
         crate::gate::validate_write_envelope(&self.envelope)?;
         let actor = self.envelope.actor();
-        let raw = store
-            .entities
-            .get(txn, actor.entity_ref().as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
@@ -495,88 +513,6 @@ pub(super) fn consume_claim_materialization(
     }
 }
 
-/// Rebuild the permitted body delta instead of trusting caller-supplied axes.
-fn demotion_body(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    prior: &ClaimBody,
-    next: &ClaimBody,
-    tail: &[BatchOp],
-) -> Result<ClaimBody> {
-    use crate::claim::{
-        CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, ClaimSubject, claim_demotion_rung,
-    };
-    use crate::edge::{EdgeKind, validate_edge_weight};
-    use crate::vault::{edge_kind_prefix, parse_edge_record};
-
-    if prior.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(binding_error());
-    }
-    let before = claim_demotion_rung(prior)?;
-    let after = claim_demotion_rung(next)?;
-    let mut expected = prior.clone();
-    let rung = match (before, after, tail) {
-        (
-            None | Some(ClaimDemotionRung::Decayed),
-            Some(ClaimDemotionRung::Decayed),
-            [
-                BatchOp::SetEdgeWeight {
-                    src,
-                    kind: EdgeKind::ClaimOf,
-                    tgt,
-                    weight,
-                },
-            ],
-        ) if src == id && prior.subject == ClaimSubject::Entity(*tgt) => {
-            validate_edge_weight(*weight)?;
-            let mut current = None;
-            for entry in store
-                .edges_out
-                .prefix_iter(txn, &edge_kind_prefix(id, EdgeKind::ClaimOf))?
-            {
-                let (key, value) = entry?;
-                let edge = parse_edge_record(&key, &value)?;
-                if edge.target == *tgt && current.replace(edge.weight).is_some() {
-                    return Err(binding_error());
-                }
-            }
-            if *weight > current.ok_or(binding_error())? {
-                return Err(binding_error());
-            }
-            "decayed"
-        }
-        (
-            Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened),
-            Some(ClaimDemotionRung::Weakened),
-            [],
-        ) if next.confidence.is_finite()
-            && (0.0..=1.0).contains(&next.confidence)
-            && next.confidence <= prior.confidence =>
-        {
-            expected.confidence = next.confidence;
-            "weakened"
-        }
-        (Some(ClaimDemotionRung::Weakened), Some(ClaimDemotionRung::Stale), []) => {
-            expected.stale = true;
-            "stale"
-        }
-        _ => return Err(binding_error()),
-    };
-    let mut scope = match expected.scope.take() {
-        None => Vec::new(),
-        Some(Value::Map(entries)) => entries,
-        Some(_) => return Err(binding_error()),
-    };
-    scope.retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
-    scope.push((
-        Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-        Value::from(rung),
-    ));
-    expected.scope = Some(Value::Map(scope));
-    Ok(expected)
-}
-
 fn row_digest(raw: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     Sha256::digest(raw).into()
@@ -584,14 +520,6 @@ fn row_digest(raw: &[u8]) -> [u8; 32] {
 
 fn binding_error() -> Error {
     Error::InvalidClaimBody("claim materialization binding mismatch")
-}
-
-/// A private local key, never reconstructed from a raw or replicated Put.
-/// Its digest binds authority to one finalized row, not to the id forever.
-fn authored_key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"claim:materialization:authored:v1:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
 }
 
 /// Binds a gated ClaimCandidate or a consumed lifecycle binding. An unbound
@@ -609,16 +537,14 @@ pub(super) fn record_committed_claim(
     if !authored {
         return invalidate_authored_claim(store, txn, id);
     }
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or(binding_error())?;
+    let raw =
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.ok_or(binding_error())?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Err(binding_error());
     }
     let digest = row_digest(&raw);
-    store.vault_meta.put(txn, &authored_key(id), &digest)?;
+    AUTHORED.put(store, txn, id, &digest)?;
     Ok(())
 }
 
@@ -630,7 +556,7 @@ pub(super) fn invalidate_authored_claim(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store.vault_meta.delete(txn, &authored_key(id))?;
+    AUTHORED.delete(store, txn, id)?;
     Ok(())
 }
 
@@ -642,17 +568,13 @@ fn lifecycle_envelope(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<Option<WriteEnvelope>> {
-    let Some(bytes) = store.vault_meta.get(txn, &authored_key(id))? else {
+    let Some(digest) = AUTHORED.get(store, txn, id)? else {
         return Ok(None);
     };
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or(binding_error())?;
+    let raw =
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.ok_or(binding_error())?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-        || bytes.as_ref() != row_digest(&raw).as_slice()
-    {
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM || digest != row_digest(&raw) {
         return Err(binding_error());
     }
     let authored = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
@@ -793,6 +715,9 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
             .with_verified_claim_transitions(transitions),
     )
 }
+
+mod demotion;
+use demotion::demotion_body;
 
 #[cfg(test)]
 mod tests;

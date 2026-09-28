@@ -8,16 +8,16 @@ mod session;
 mod visibility;
 
 pub use body::{ConversationBody, ConversationKind, RoomRole};
-pub(crate) use body::{fresh_id_in_txn, validate_put_in_txn};
+pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
 #[cfg(test)]
-pub(crate) use deletion::erasure_key;
+pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
     guard_room_message_delete, pin_room_message_edge, replay_room_message_tombstone,
     room_message_owner_in, room_person_write_allowed,
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
-pub(crate) use visibility::AudienceCache;
+pub(crate) use visibility::{AudienceCache, room_for_record_in};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};
@@ -39,17 +39,11 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid("body decode"))
 }
-fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
 fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) -> Result<Vec<u8>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
         return Err(Error::EntityNotFound);
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != kind {

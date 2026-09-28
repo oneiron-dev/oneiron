@@ -8,6 +8,7 @@
 //! model, HNSW params); a copy that is value-identical to the shared
 //! helper is a drift hazard and must route through it.
 
+pub(crate) mod row_dump;
 /// Test-only-file classification for the source-scanning fences. The
 /// integration binaries mount the same file through `tests/common`.
 pub(crate) mod source_scan;
@@ -196,7 +197,7 @@ pub(crate) fn backdate_claim_gate_decisions(vault: &Vault, created_at: u64) -> c
 /// that replace the seeded default must preserve this floor before pinning a
 /// teacher, without accidentally replacing their own Gate policy rows.
 pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, rmpv::Value)>) {
-    let default = crate::gate::default_policy_manifest();
+    let default = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(default_entries) =
         rmpv::decode::read_value(&mut default.as_slice()).expect("seeded policy map")
     else {
@@ -235,7 +236,7 @@ pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
             ])
         })
         .collect();
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
     else {
@@ -276,6 +277,33 @@ pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vaul
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
     clear_default_policy_manifest_for_legacy_tests(&vault);
     (dir, vault)
+}
+
+/// The unit-test host root. Each test vault is its own trust domain, so one
+/// fixed secret lets any fixture rebuild the issuer that rooted its vault.
+pub(crate) fn test_host_issuer() -> crate::authority::HostSlipIssuer {
+    crate::authority::HostSlipIssuer::from_secret(b"oneiron unit test host root")
+        .expect("host issuer")
+}
+
+/// Roots the vault under the test host and provisions the engine's MACHINE
+/// writers, as a host does at bootstrap. Returns the host issuer so a test can
+/// provision its own MACHINE actors with `provision_host_machine_identity`.
+pub(crate) fn provision_engine_machines(vault: &Vault) -> crate::authority::HostSlipIssuer {
+    let issuer = test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+    issuer
+}
+
+/// Binds `owner` as the rooted test vault's human owner, so owner verbs keep
+/// working after a fixture roots its vault.
+pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
+    vault
+        .bind_host_owner_for_test(&test_host_issuer(), owner)
+        .expect("owner binding");
 }
 
 /// First open seeds the bootstrap skills, whose activation edits wait for

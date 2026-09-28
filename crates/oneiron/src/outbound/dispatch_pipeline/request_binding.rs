@@ -11,13 +11,14 @@ use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
 use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound::capability::{
-    OutboundRetryClass, OutboundVerbContract, outbound_verb_contract,
+    OutboundRetryClass, OutboundVerbContract, normalize_key, outbound_verb_contract,
 };
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentLedgerRecord, IntentState, read_intent_for_attempt_in_txn,
 };
+use crate::ports::TombstoneStore;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -41,6 +42,7 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
     pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
+    pub(super) native_mail_recipient: bool,
 }
 impl PreparedOutboundDispatch {
     pub(super) fn prepare(
@@ -107,6 +109,8 @@ impl PreparedOutboundDispatch {
                 .as_ref()
                 .map(crate::outbound_intent_ledger::IntentLedgerRecord::payload),
         )?;
+        let native_mail_recipient =
+            bind_native_mail_recipient(vault, &mut request, verb_contract, replay.as_ref())?;
         let space_posting = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             vault.outbound_space_posting_in_txn(
@@ -118,8 +122,16 @@ impl PreparedOutboundDispatch {
         let policy_risk = if space_posting
             .as_ref()
             .is_some_and(crate::channel_identity_autonomy::FrozenSpacePosting::policy_risk)
+            || request.gate.policy_risk
+                == crate::outbound::OutboundDispatchPolicyRisk::HoldToProposal
         {
             ExternalEffectPolicyRisk::HoldToProposal
+        } else if native_mail_recipient {
+            // The trusted native-mail manifest row decides known vs cold in
+            // the Gate transaction. The generic email capability's advisory
+            // risk flag must not pre-hold every known-recipient send; caller
+            // and space-specific explicit holds remain restrictive above.
+            ExternalEffectPolicyRisk::Normal
         } else {
             outbound_dispatch_policy_risk(request.gate, verb_contract)
         };
@@ -134,6 +146,7 @@ impl PreparedOutboundDispatch {
             verified_actor,
             step_binding,
             payload: None,
+            native_mail_recipient,
         })
     }
     /// The same freeze and replay proof runs for every normal call and every
@@ -165,6 +178,10 @@ impl PreparedOutboundDispatch {
             actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
             channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
             counterparty_ref: request.counterparty_ref.as_deref(),
+            native_mail_recipient: self.native_mail_recipient.then_some(true),
+            native_mail_logical_ref: self
+                .native_mail_recipient
+                .then_some(request.intent_ref.as_str()),
             has_opted_in: request.gate.has_opted_in,
             has_permission: request.gate.has_permission,
             requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
@@ -186,6 +203,9 @@ impl PreparedOutboundDispatch {
             }
             if let Some((actor, actor_class)) = self.verified_actor {
                 let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                if vault.port_tombstone_is_deleted(&txn, &actor)? {
+                    return Err(OutboundDispatchError::InvalidBoundActor);
+                }
                 let entity_type = vault
                     .get_entity_type_in_txn(&txn, &actor)?
                     .ok_or(OutboundDispatchError::InvalidBoundActor)?;
@@ -213,6 +233,83 @@ impl PreparedOutboundDispatch {
         })
     }
 }
+/// Only an executable Pending retry needs the native sender live today.
+/// Parked Pending and terminal records remain readable without transport.
+pub(super) fn require_native_mail_retry_sender(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    native_mail: bool,
+) -> std::result::Result<(), OutboundDispatchError> {
+    if native_mail {
+        let sender = request
+            .channel_identity_ref
+            .ok_or(Error::InvalidConfig("missing native-mail sender".into()))?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        if !crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+            &vault.store,
+            &txn,
+            sender,
+        )? {
+            return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
+        }
+    }
+    Ok(())
+}
+
+/// Bind one canonical native-mail recipient to gate, ledger and transport.
+/// The generic dispatch API must not bypass the adapter's target check.
+fn bind_native_mail_recipient(
+    vault: &Vault,
+    request: &mut OutboundDispatchRequest,
+    contract: &crate::outbound::capability::OutboundVerbContract,
+    replay: Option<&crate::outbound_intent_ledger::IntentLedgerRecord>,
+) -> std::result::Result<bool, OutboundDispatchError> {
+    // The accepted contract, not the caller's raw spelling, is the operation
+    // the Gate and the sink execute. The raw spelling stays frozen unchanged.
+    if normalize_key(&request.intent.channel) != "email" || contract.kind != "send" {
+        return Ok(false);
+    }
+    let Some(identity) = request.channel_identity_ref else {
+        return Ok(false);
+    };
+    let native = if let Some(record) = replay {
+        let frozen: serde_json::Value =
+            serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
+        match frozen.get("native_mail_recipient") {
+            Some(serde_json::Value::Bool(true)) => true,
+            None => false,
+            _ => return Err(invalid_replay()),
+        }
+    } else {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let structural =
+            crate::channel_identity_provider::native_mail::is_native_mail_identity_in_txn(
+                &vault.store,
+                &txn,
+                identity,
+            )?;
+        if structural
+            && !crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+                &vault.store,
+                &txn,
+                identity,
+            )?
+        {
+            return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
+        }
+        structural
+    };
+    if !native {
+        return Ok(false);
+    }
+    let canonical =
+        crate::channel_identity_provider::native_mail::CanonicalMailSend::from_request(request)?;
+    request.intent.channel = "email".to_owned();
+    request.intent.target = canonical.recipient.clone();
+    request.counterparty_ref = Some(canonical.recipient);
+    Ok(true)
+}
+
 pub(super) fn invalid_replay() -> OutboundDispatchError {
     OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
         "outbound dispatch replay does not match its admitted binding",

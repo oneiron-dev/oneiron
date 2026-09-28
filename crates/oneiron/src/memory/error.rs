@@ -102,6 +102,15 @@ pub struct MemoryError {
     /// serialize identically — so the stable payload is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_denial: Option<Box<MemoryGateDenial>>,
+    /// The mandatory receipt of the scoped read that produced this refusal,
+    /// present when a read verb answers `NOT_FOUND`: an absent row and a row
+    /// this actor may not read are both `NOT_FOUND`, and only the receipt
+    /// says which axes narrowed (DEC-0005: a read never silently narrows).
+    ///
+    /// On the wire it is `narrowing`, the one name every read result uses
+    /// for its receipt. Boxed for the same reason `gate_denial` is.
+    #[serde(default, rename = "narrowing", skip_serializing_if = "Option::is_none")]
+    pub read_receipt: Option<Box<crate::claim::ScopedReadReceipt>>,
 }
 
 /// The stable Gate rejection strings behind a [`MemoryError`] whose engine
@@ -123,7 +132,15 @@ impl MemoryError {
             suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
             successor_short_id: None,
             gate_denial: None,
+            read_receipt: None,
         }
+    }
+
+    /// The same refusal carrying the receipt of the read that produced it.
+    #[must_use]
+    pub(crate) fn with_read_receipt(mut self, receipt: crate::claim::ScopedReadReceipt) -> Self {
+        self.read_receipt = Some(Box::new(receipt));
+        self
     }
 
     /// Rebuilds the typed engine denial this refusal carries, when it carries
@@ -178,6 +195,9 @@ impl std::error::Error for MemoryError {}
 
 impl From<Error> for MemoryError {
     fn from(err: Error) -> Self {
+        if let Error::Claim(ClaimError::ScopedReadOwnerNotLive(refusal)) = err {
+            return *refusal;
+        }
         let message = err.to_string();
         // ONE-1936: the successor ref travels as a FIELD, not as prose. A
         // stale target is an INVALID_STATE refusal like the rest of the
@@ -335,6 +355,7 @@ impl From<Error> for MemoryError {
             ErrorKind::Storage
             | ErrorKind::Io
             | ErrorKind::CorruptedIndex
+            | ErrorKind::SideTableRow
             | ErrorKind::InvariantViolation
             | ErrorKind::MapFull
             | ErrorKind::IndexOverflow

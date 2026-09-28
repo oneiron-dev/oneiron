@@ -79,7 +79,7 @@ mod tests {
             1.0,
             crate::ClaimApprovalStatus::Auto,
             crate::ClaimLifecycleStatus::Active,
-        );
+        )?;
         claim.source = Some(ClaimSource::UserStated);
         vault.put_claim(&id, &claim, when, 1)?;
         let reader = vault.scoped_read(ScopedReadActorKey::new("pin-reader").unwrap());
@@ -109,7 +109,7 @@ mod tests {
             Ok(rmpv::Value::Map(grant))
         };
         let mut policy = rmpv::decode::read_value(&mut std::io::Cursor::new(
-            crate::gate::default_policy_manifest(),
+            crate::gate::default_policy_manifest()?,
         ))
         .unwrap();
         // Remove the normal `profile.` rule: the declared critical default now
