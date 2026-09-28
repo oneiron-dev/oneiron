@@ -15,7 +15,7 @@ use oneiron_docedit::ArchiveLimits;
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
     AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
-    ResidenceOperationBudgetLimits, SheetAnswerPrecedence,
+    ProjectCollaborationPolicy, ResidenceOperationBudgetLimits, SheetAnswerPrecedence,
 };
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
@@ -354,6 +354,17 @@ impl PolicyManifestResolution {
             return None;
         }
         crate::gate::mail_policy::resolve_rows(&self.native_mail_policy, holder, identity)
+    }
+
+    /// Project coordination decisions read one trusted manifest snapshot.
+    /// A malformed loaded manifest cannot silently open leader chat.
+    #[must_use]
+    pub(crate) fn project_collaboration(&self) -> Option<ProjectCollaborationPolicy> {
+        if self.is_fail_closed() {
+            None
+        } else {
+            self.project_collaboration
+        }
     }
 
     /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no

@@ -179,7 +179,7 @@ pub(crate) fn stamp_put(
         if prior.version != 2
             || prior.kind != kind
             || prior.birth_facet != *facet.as_bytes()
-            || prior.scope != scope
+            || (prior.scope != scope && !leader_settled(kind, &prior.scope, &scope))
         {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
@@ -201,6 +201,73 @@ pub(crate) fn stamp_put(
         scope,
     })
     .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
+    store.vault_meta.put(txn, &key(id), &bytes)?;
+    Ok(())
+}
+/// A TURN/MESSAGE body never proposes an audience: only
+/// `stamp_leader_project` settles a non-default one, at the record's birth. A
+/// later content put recomputes the default and keeps that settled position.
+fn leader_settled(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
+    matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+    ) && Scope {
+        audience: proposed.audience.clone(),
+        ..prior.clone()
+    } == *proposed
+}
+/// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
+/// record-position scope door, after the typed write's full batch succeeds.
+/// Opaque replicated rows cannot call this door and remain unstamped.
+///
+/// The birth position is immutable (see `stamp_put`): this door only moves
+/// the record's own default birth stamp to the leader's project, or confirms
+/// the leader stamp it already carries. Any other prior position is refused.
+pub(crate) fn stamp_leader_project(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    let raw = store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("leader chat scope header"))?;
+    let kind = header.entity_type;
+    if !matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+    ) {
+        return Err(Error::InvalidEntityType(kind));
+    }
+    let facet = crate::claim::substrate_facet_id(id);
+    let birth = default_stamp(kind, facet);
+    let mut scope = birth.clone();
+    scope.audience = singleton(ScopeId(project));
+    if let Some(bytes) = store.vault_meta.get(txn, &key(id))? {
+        let prior: Stamp = serde_json::from_slice(&bytes)
+            .map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
+        if prior.version != 2
+            || prior.kind != kind
+            || prior.birth_facet != *facet.as_bytes()
+            || (prior.scope != birth && prior.scope != scope)
+        {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        if prior.scope == scope {
+            return Ok(());
+        }
+    }
+    bump_scope_revision(store, txn)?;
+    let bytes = serde_json::to_vec(&Stamp {
+        version: 2,
+        kind,
+        birth_facet: *facet.as_bytes(),
+        scope,
+    })
+    .map_err(|_| Error::InvariantViolation("leader chat scope stamp encode"))?;
     store.vault_meta.put(txn, &key(id), &bytes)?;
     Ok(())
 }

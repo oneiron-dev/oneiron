@@ -8,7 +8,7 @@ mod session;
 mod visibility;
 
 pub use body::{ConversationBody, ConversationKind, RoomRole};
-pub(crate) use body::{fresh_id_in_txn, validate_put_in_txn};
+pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
 #[cfg(test)]
 pub(crate) use deletion::erasure_key;
 pub(crate) use deletion::{
@@ -17,7 +17,7 @@ pub(crate) use deletion::{
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
-pub(crate) use visibility::AudienceCache;
+pub(crate) use visibility::{AudienceCache, room_for_record_in};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};

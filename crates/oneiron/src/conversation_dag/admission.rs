@@ -48,6 +48,25 @@ pub(crate) fn validate_local_membership(
     if !is_kind(&record, ENTITY_TYPE_TURN)? || !is_kind(&conversation, ENTITY_TYPE_CONVERSATION)? {
         return Ok(());
     }
+    // A leader chat is protected before DAG adoption as well. A generic raw
+    // TURN + ChildOf pair has no authenticated speaker/project permit.
+    if let Some(raw) = store.entities.get(txn, conversation.as_bytes())? {
+        let body = crate::conversation::ConversationBody::from_bytes(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        if body
+            .extra
+            .contains_key(crate::workspace_roster::LEADER_CHAT_FIELD)
+            && !crate::workspace_roster::leader_chat_record_permitted(
+                store,
+                txn,
+                record,
+                conversation,
+            )?
+        {
+            return Err(crate::error::RecordError::ConversationDenied.into());
+        }
+    }
     let marker = store.vault_meta.get(txn, &key(MIGRATED, &conversation))?;
     let Some(marker) = marker else {
         return Ok(());

@@ -312,6 +312,60 @@ impl CredentialLifetimePolicy {
     }
 }
 
+/// Manifest-backed project coordination. The two fixed shape tokens state the
+/// non-widening authority law; owner-editable defaults compose restrictively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeaderChatDefault {
+    Allow,
+    Deny,
+}
+impl LeaderChatDefault {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectWidenAskFallback {
+    Hold,
+    AskMe,
+}
+impl ProjectWidenAskFallback {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hold => "hold",
+            Self::AskMe => "ask_me",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectCollaborationPolicy {
+    pub(crate) leader_chat_default: LeaderChatDefault,
+    pub(crate) widen_ask_fallback: ProjectWidenAskFallback,
+}
+impl ProjectCollaborationPolicy {
+    pub(crate) fn restrict(self, other: Self) -> Self {
+        Self {
+            leader_chat_default: if self.leader_chat_default == LeaderChatDefault::Deny
+                || other.leader_chat_default == LeaderChatDefault::Deny
+            {
+                LeaderChatDefault::Deny
+            } else {
+                LeaderChatDefault::Allow
+            },
+            widen_ask_fallback: if self.widen_ask_fallback == ProjectWidenAskFallback::Hold
+                || other.widen_ask_fallback == ProjectWidenAskFallback::Hold
+            {
+                ProjectWidenAskFallback::Hold
+            } else {
+                ProjectWidenAskFallback::AskMe
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
@@ -374,6 +428,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     pub(crate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
+    pub(super) project_collaboration: Option<ProjectCollaborationPolicy>,
     /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
     /// never stored here — only the manifest's selector for it. Injection
     /// rides the write door's own options, so no host object is ever reachable

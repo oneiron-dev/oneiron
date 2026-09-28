@@ -17,6 +17,7 @@ pub(crate) use self::manifest_types::{
     CredentialLifetimePrecedence, DEFAULT_ATTRIBUTION_REASON_MAX_BYTES,
     DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS, GateDecisionRetentionPolicy, GateRetentionContext,
     GateRetentionOverrideCeiling, GateRetentionPrecedence, GateRetentionRow, GateRetentionScope,
-    PolicyManifestResolution, ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
+    LeaderChatDefault, PolicyManifestResolution, ProjectCollaborationPolicy,
+    ProjectWidenAskFallback, ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
     ResidenceOperationBudgetRow, SheetAnswerLimitRow, SheetAnswerPrecedence,
 };

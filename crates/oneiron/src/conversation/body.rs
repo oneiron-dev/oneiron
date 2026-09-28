@@ -129,6 +129,44 @@ pub(crate) fn validate_put_in_txn(
     replicated: bool,
 ) -> Result<()> {
     let body = ConversationBody::from_bytes(bytes)?;
+    let chat_field = crate::workspace_roster::LEADER_CHAT_FIELD;
+    if let Some(value) = body.extra.get(chat_field) {
+        let encoded = rmp_serde::to_vec_named(value).map_err(|_| invalid("leader chat binding"))?;
+        let chat: crate::workspace_roster::LeaderChat =
+            rmp_serde::from_slice(&encoded).map_err(|_| invalid("leader chat binding"))?;
+        if body.kind != ConversationKind::Direct
+            || body
+                .member_ids
+                .iter()
+                .any(|person| !chat.persons.contains(person))
+            || chat.projects[0] == chat.projects[1]
+            || chat.actors[0] == chat.actors[1]
+            || chat.persons[0] == chat.persons[1]
+        {
+            return Err(invalid("leader chat binding"));
+        }
+        if !replicated
+            && store.entities.get(txn, id.as_bytes())?.is_none()
+            && store
+                .vault_meta
+                .get(
+                    txn,
+                    &[b"project.leader_chat.v1/".as_slice(), id.as_bytes()].concat(),
+                )?
+                .as_deref()
+                != Some(encoded.as_slice())
+        {
+            return Err(denied());
+        }
+    }
+    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+        && raw.len() >= ENTITY_METADATA_HEADER_LEN
+    {
+        let previous = ConversationBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if previous.extra.get(chat_field) != body.extra.get(chat_field) {
+            return Err(state("leader chat binding is immutable"));
+        }
+    }
     // A replica carries structurally valid body metadata, not local membership
     // authority. PERSON rows may arrive later; only the local ledger grants reads.
     if !replicated {
@@ -213,77 +251,11 @@ impl Vault {
         learned_at: u64,
         text: &[(&str, &str)],
     ) -> Result<()> {
-        let at = occurred.start;
         self.with_write_txn(|txn| {
-            authorize(self, txn, actor)?;
-            if !body.roles.is_empty() {
-                let fold = self.authority_fold_readonly_in_txn(txn)?;
-                if fold.vault_root_is_conflicted()
-                    || (fold.vault_id.is_some()
-                        && (actor.actor_class() != crate::EdgeActorClass::Human
-                            || crate::memory::verify_owner_actor_binding_in_txn(
-                                self,
-                                txn,
-                                actor.entity_ref(),
-                            )
-                            .is_err()))
-                {
-                    return Err(denied());
-                }
-                let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-                if !crate::gate::room_policy_allows(
-                    &policy,
-                    id,
-                    crate::gate::RoomAction::Delegate,
-                    RoomRole::Owner,
-                ) {
-                    return Err(denied());
-                }
-            }
-            if !fresh_id_in_txn(&self.store, txn, id)? {
-                return Err(state("conversation already exists"));
-            }
-            for person in &body.member_ids {
-                require_kind(self, txn, *person, ENTITY_TYPE_PERSON)?;
-                membership::append_row(
-                    self,
-                    txn,
-                    id,
-                    &MembershipRow {
-                        v: 1,
-                        person: *person,
-                        action: MembershipAction::Join,
-                        at,
-                        actor: actor.entity_ref(),
-                        visible_from: Some(if body.shares_history() { 0 } else { at }),
-                    },
-                )?;
-            }
-            let mut batch = self.batch_in().put(
-                &id,
-                ENTITY_TYPE_CONVERSATION,
-                occurred,
-                learned_at,
-                &body.to_bytes()?,
-            );
-            if !text.is_empty() {
-                batch = batch.text(&id, text);
-            }
-            batch.apply(txn)?;
-            self.store.vault_meta.put(
-                txn,
-                &key(b"conversation:creator:v1:", id),
-                actor.entity_ref().as_bytes(),
-            )?;
-            for (person, role) in &body.roles {
-                let person = EntityId::from_hex(person)?;
-                self.store
-                    .vault_meta
-                    .put(txn, &roles::grant_key(id, person), &encode(role)?)?;
-            }
-            Ok(())
+            create_in_txn(self, txn, id, body, actor, occurred, learned_at, text)
         })
     }
+
     /// Filter the type-index page. The cursor is the last *scanned* id, not a
     /// matching id, so sparse filters cannot skip or repeat rooms.
     pub fn conversations_page(
@@ -325,11 +297,100 @@ impl Vault {
         }
     }
 }
-pub(super) fn body_in(
+pub(crate) fn body_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<ConversationBody> {
     let raw = require_kind(vault, txn, id, ENTITY_TYPE_CONVERSATION)?;
     ConversationBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])
+}
+
+/// Shared atomic create door for ordinary conversations and project-leader chats.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the atomic conversation create carries its original caller fields into one transaction"
+)]
+pub(crate) fn create_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    body: &ConversationBody,
+    actor: WriteActor,
+    occurred: crate::TimeRange,
+    learned_at: u64,
+    text: &[(&str, &str)],
+) -> Result<()> {
+    authorize(vault, txn, actor)?;
+    if !body.roles.is_empty() {
+        let fold = vault.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_root_is_conflicted()
+            || (fold.vault_id.is_some()
+                && (actor.actor_class() != crate::EdgeActorClass::Human
+                    || crate::memory::verify_owner_actor_binding_in_txn(
+                        vault,
+                        txn,
+                        actor.entity_ref(),
+                    )
+                    .is_err()))
+        {
+            return Err(denied());
+        }
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+        if !crate::gate::room_policy_allows(
+            &policy,
+            id,
+            crate::gate::RoomAction::Delegate,
+            RoomRole::Owner,
+        ) {
+            return Err(denied());
+        }
+    }
+    if !fresh_id_in_txn(&vault.store, txn, id)? {
+        return Err(state("conversation already exists"));
+    }
+    for person in &body.member_ids {
+        require_kind(vault, txn, *person, ENTITY_TYPE_PERSON)?;
+        membership::append_row(
+            vault,
+            txn,
+            id,
+            &MembershipRow {
+                v: 1,
+                person: *person,
+                action: MembershipAction::Join,
+                at: occurred.start,
+                actor: actor.entity_ref(),
+                visible_from: Some(if body.shares_history() {
+                    0
+                } else {
+                    occurred.start
+                }),
+            },
+        )?;
+    }
+    let mut batch = vault.batch_in().put(
+        &id,
+        ENTITY_TYPE_CONVERSATION,
+        occurred,
+        learned_at,
+        &body.to_bytes()?,
+    );
+    if !text.is_empty() {
+        batch = batch.text(&id, text);
+    }
+    batch.apply(txn)?;
+    vault.store.vault_meta.put(
+        txn,
+        &key(b"conversation:creator:v1:", id),
+        actor.entity_ref().as_bytes(),
+    )?;
+    for (person, role) in &body.roles {
+        let person = EntityId::from_hex(person)?;
+        vault
+            .store
+            .vault_meta
+            .put(txn, &roles::grant_key(id, person), &encode(role)?)?;
+    }
+    Ok(())
 }

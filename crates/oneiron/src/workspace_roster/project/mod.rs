@@ -9,7 +9,9 @@ mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
 mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
+mod leader_chat;
 mod projection;
+mod widen;
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
@@ -22,6 +24,16 @@ pub(crate) use goal::{
 };
 #[cfg(test)]
 mod review_tests;
+pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
+pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
+pub(crate) use leader_chat::{
+    admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,
+    permit_record as permit_leader_chat_record, permitted_record as leader_chat_record_permitted,
+    settle_record as settle_leader_chat_record,
+    validate_local_turns as validate_local_leader_chat_turns,
+    verify_existing_turn as verify_existing_leader_chat_turn,
+};
+pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{
@@ -522,7 +534,11 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
         // derives that birth from the root marker, also in an owner-rooted
         // vault that predates root seeding.
         vault.store.vault_meta.put(txn, ROOT, id.as_bytes())?;
-        let body = ProjectRecord::new(id, None, id, leader);
+        let mut body = ProjectRecord::new(id, None, id, leader);
+        // The owner already exists at this point in vault open. A fresh root
+        // board must be able to receive the first cross-project widen ask.
+        body.board
+            .push(crate::vault::embedded_owner_actor_id()?.to_hex());
         vault
             .batch_in()
             .put(
