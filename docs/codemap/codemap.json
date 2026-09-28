@@ -1891,13 +1891,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/authority/fold_engine.rs",
      "purpose": "Top-level fold orchestration",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -2265,7 +2265,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/history_transfer.rs",
@@ -2273,7 +2273,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/hosted_consent.rs",
@@ -2305,7 +2305,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/readonly_fold.rs",
@@ -2353,7 +2353,7 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 58
+      "crate-vis": 59
      }
     },
     {
@@ -9225,7 +9225,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/firecracker/protocol.rs",
@@ -9249,7 +9249,7 @@
      "path": "src/code_sandbox/firecracker/snapshot.rs",
      "purpose": "Descriptor-relative, no-symlink source snapshot for a foreign VM",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -9322,6 +9322,7 @@
      "path": "src/code_sandbox/microvm/handle.rs",
      "purpose": "The VM value objects: guest image, running handle, exit and execution budget",
      "surface": {
+      "crate-vis": 1,
       "fn": 11,
       "struct": 4
      }
@@ -9333,6 +9334,7 @@
      "path": "src/code_sandbox/microvm/mod.rs",
      "purpose": "MicroVM execution lane for foreign and ingested guest code",
      "surface": {
+      "crate-vis": 1,
       "re-export": 6
      }
     },
@@ -9343,8 +9345,18 @@
      "path": "src/code_sandbox/microvm/overlay.rs",
      "purpose": "The host-side scratch root and the bounded overlay walk that turns guest writes into proposals",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/microvm/scratch.rs",
+     "purpose": "Private, clone-safe per-VM scratch custody and crash-leftover reclamation",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -9388,7 +9400,10 @@
      "kind": "src",
      "notable": [
       "SandboxClaimProposal",
+      "SandboxDirectoryOpaqueProposal",
+      "SandboxFileDeleteProposal",
       "SandboxFileEditProposal",
+      "SandboxFileRenameProposal",
       "SandboxFileWriteProposal",
       "SandboxProposalDelta",
       "SandboxProposalKind",
@@ -9400,7 +9415,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 10,
-      "struct": 4
+      "struct": 7
      }
     },
     {
@@ -9433,7 +9448,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WasmtimeBoundary",
@@ -16297,7 +16312,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EngineNativeExecutor"
@@ -16306,7 +16321,7 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -16375,6 +16390,14 @@
      "notable": [],
      "path": "src/engine_executor/tests/output_decay.rs",
      "purpose": "Model-facing output decay and successful native compaction on the real REPL path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/seat_routing.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -18002,7 +18025,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 35,
       "re-export": 6
      }
     },
@@ -18060,7 +18083,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 45
+      "crate-vis": 47
      }
     },
     {
@@ -18510,6 +18533,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/voice_serving.rs",
+     "purpose": "Manifest-backed voice serving limits: precedence, narrowing, and fail closure",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -18528,6 +18559,19 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceServingLimits"
+     ],
+     "path": "src/gate/voice_serving.rs",
+     "purpose": "Resolved, narrow-only limits for the generic voice serving seam",
+     "surface": {
+      "crate-vis": 9,
       "struct": 1
      }
     },
@@ -21978,7 +22022,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "re-export": 1,
       "struct": 4
      }
@@ -22015,7 +22059,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 6,
-      "mod": 8,
+      "mod": 9,
       "re-export": 19
      }
     },
@@ -22110,6 +22154,7 @@
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 13,
       "struct": 11,
@@ -22198,6 +22243,56 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DescriptionLine",
+      "DescriptionSource",
+      "ModelDescription",
+      "ModelSeat",
+      "SeatCandidate",
+      "SeatChoiceReceipt",
+      "SeatJudge",
+      "SeatJudgment",
+      "SeatKind",
+      "SeatPool",
+      "SeatTask"
+     ],
+     "path": "src/llm/seat.rs",
+     "purpose": "Seat-birth model routing above the raw LLM call seam",
+     "surface": {
+      "enum": 2,
+      "fn": 17,
+      "re-export": 1,
+      "struct": 8,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatPolicy",
+      "SeatPrecedence"
+     ],
+     "path": "src/llm/seat/policy.rs",
+     "purpose": "Manifest-owned runtime seat policy; shipped defaults are data, not routing code",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/seat/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -31551,14 +31646,41 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JudgeAsk",
+      "JudgeAskReason",
+      "JudgeLabel"
+     ],
+     "path": "src/skill_optimize/labels.rs",
+     "purpose": "Human-calibrated judge asks and the append-only label anchor",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 8
+      "crate-vis": 4,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/policy.rs",
+     "purpose": "Calibration policy row in trusted Gate manifests",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -34000,7 +34122,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -34372,7 +34494,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 1,
       "re-export": 18
      }
@@ -34783,7 +34905,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -35281,7 +35403,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/vault/open.rs",
@@ -35532,7 +35654,7 @@
      "path": "src/voice_cascade.rs",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
-      "mod": 4,
+      "mod": 5,
       "re-export": 6
      }
     },
@@ -35874,6 +35996,62 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "RenderTarget",
+      "VoxCpm2Adapter",
+      "VoxCpm2Audio",
+      "VoxCpm2Operation",
+      "VoxCpm2Pcm",
+      "VoxCpm2Queue",
+      "VoxCpm2Work",
+      "WarmTarget"
+     ],
+     "path": "src/voice_cascade/voxcpm2.rs",
+     "purpose": "VoxCPM2's warm, host-owned rendering seam",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 8,
+      "mod": 1,
+      "re-export": 1,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoxCpm2Event",
+      "VoxCpm2HttpQueue"
+     ],
+     "path": "src/voice_cascade/voxcpm2/http.rs",
+     "purpose": "Loopback wire to a separately deployed, always-warm CUDA worker",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/voxcpm2/http/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/voxcpm2/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/voice_identity/codec_core.rs",
      "purpose": "Shared MessagePack plumbing plus origin/basis/space/consent/sample encode_/decode_ pairs kept together",
@@ -35918,6 +36096,7 @@
      "kind": "src",
      "notable": [
       "VoiceIdentity",
+      "VoiceRefFence",
       "VoiceRefOrigin",
       "VoiceRefPack",
       "VoiceRegisterClip",
@@ -35927,10 +36106,10 @@
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault voice reference bank",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -37241,6 +37420,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/voice_voxcpm2.rs",
+     "purpose": "Host-visible banked-ref → TTS seam → PCM harness (CPU fixture, not GPU proof)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -37330,7 +37517,7 @@
     "authority": {
      "files": 64,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "AUTHORITY_LOG record substrate"
     },
@@ -37503,7 +37690,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37811,7 +37998,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37881,7 +38068,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 98,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38014,7 +38201,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 87,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38371,7 +38558,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 17,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38506,7 +38693,7 @@
     "vault": {
      "files": 20,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
@@ -38518,8 +38705,8 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 26,
-     "impl_vault": false,
+     "files": 30,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
@@ -38567,10 +38754,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2284,
-   "test_files": 792
+   "source_files": 2292,
+   "test_files": 798
   },
   "oneiron-android": {
    "files": [
@@ -40523,7 +40710,7 @@
      "path": "src/protocol.rs",
      "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -40918,7 +41105,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/lib/tests.rs",
@@ -40997,7 +41184,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -41958,7 +42145,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/remote/tests.rs",
@@ -42142,7 +42329,7 @@
      "path": "src/workspace.rs",
      "purpose": "Checked file and directory shape; reservations compose before execution",
      "surface": {
-      "fn": 11,
+      "fn": 13,
       "struct": 2
      }
     }
@@ -44154,7 +44341,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_quickjs.rs",
@@ -45571,7 +45758,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
