@@ -167,6 +167,10 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(crate) fn goal_limits(&self) -> crate::workspace_roster::GoalLimits {
+        self.goal_limits.unwrap_or_default()
+    }
+
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
