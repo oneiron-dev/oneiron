@@ -94,19 +94,38 @@ pub(crate) fn topology_delete_reservation_in_txn(
     }))
 }
 
-/// A hard request subsumes a different request's soft deletion of the same
-/// entity: the soft reservation already fences topology, and the hard
-/// tombstone dominates the soft one on every replica.
-fn hard_request_subsumes(existing: &TopologyDeleteIntent, value: &TombstoneValueV2) -> bool {
-    existing.request_id != value.request_id && value.reason.is_hard() && !existing.reason.is_hard()
+/// A hard request subsumes a different request's deletion of the same entity
+/// when the existing reservation already fences topology and the hard
+/// tombstone leaves it nothing to add: a soft deletion, which the hard
+/// tombstone dominates on every replica, or a hard deletion that published or
+/// committed but never completed its local purge. A partition hold can defer
+/// that purge after publication (ARCH-0038 legal hold, an Art. 17(3)(b)
+/// deferral), and the released erasure must still complete. A Prepared hard
+/// request has published nothing yet, and a completed one keeps its own
+/// reservation.
+fn hard_request_subsumes(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    existing: &TopologyDeleteIntent,
+    value: &TombstoneValueV2,
+) -> Result<bool> {
+    if existing.request_id == value.request_id || !value.reason.is_hard() {
+        return Ok(false);
+    }
+    if !existing.reason.is_hard() {
+        return Ok(true);
+    }
+    Ok(existing.phase != TopologyDeletePhase::Prepared
+        && !local_topology_delete_complete_in_txn(store, txn, entity, existing)?)
 }
 
 /// Source eligibility must be checked BEFORE calling this under the same
 /// writer. A retry can advance its own phase, but cannot replace a different
 /// request's reservation or move a committed request backwards. The one
-/// exception is a hard request over a soft one: it takes the reservation over
-/// once it has published or committed, never while merely Prepared, so a
-/// failed hard attempt leaves the soft request's intent in place.
+/// exception is a hard request that subsumes the existing one: it takes the
+/// reservation over once it has published or committed, never while merely
+/// Prepared, so a failed hard attempt leaves the existing intent in place.
 pub(super) fn reserve_topology_delete_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -116,7 +135,7 @@ pub(super) fn reserve_topology_delete_in_txn(
     phase: TopologyDeletePhase,
 ) -> Result<()> {
     if let Some(existing) = topology_delete_reservation_in_txn(store, txn, entity)? {
-        if hard_request_subsumes(&existing, value) {
+        if hard_request_subsumes(store, txn, entity, &existing, value)? {
             if phase == TopologyDeletePhase::Prepared {
                 return Ok(());
             }
@@ -141,7 +160,7 @@ pub(super) fn reserve_topology_delete_in_txn(
 }
 
 /// Whether this request may publish: it owns the reservation, or it is a hard
-/// request that will take a soft request's reservation over at publication.
+/// request that will take a subsumed reservation over at publication.
 #[cfg(feature = "sync")]
 pub(super) fn may_publish_topology_delete_in_txn(
     store: &Store,
@@ -149,11 +168,11 @@ pub(super) fn may_publish_topology_delete_in_txn(
     entity: &EntityId,
     value: &TombstoneValueV2,
 ) -> Result<bool> {
-    Ok(
-        topology_delete_reservation_in_txn(store, txn, entity)?.is_some_and(|intent| {
-            intent.request_id == value.request_id || hard_request_subsumes(&intent, value)
-        }),
-    )
+    let Some(intent) = topology_delete_reservation_in_txn(store, txn, entity)? else {
+        return Ok(false);
+    };
+    Ok(intent.request_id == value.request_id
+        || hard_request_subsumes(store, txn, entity, &intent, value)?)
 }
 
 /// Only an already published (or destructively committed) matching request
@@ -693,6 +712,91 @@ mod tests {
             .is_err(),
             "a soft request never displaces a hard one"
         );
+    }
+
+    #[test]
+    fn hard_request_takes_over_an_unpurged_hard_reservation_only_once_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let entity = EntityId::from_hex("55555555555555555555555555555555").unwrap();
+        let deferred = tombstone([9; 16]);
+        let retry = tombstone([10; 16]);
+        let later = tombstone([11; 16]);
+        let reserve = |value: &TombstoneValueV2, phase| {
+            let mut txn = vault.store.env.write_txn().unwrap();
+            let reserved = reserve_topology_delete_in_txn(
+                &vault.store,
+                &mut txn,
+                &entity,
+                value,
+                1_772_000_000,
+                phase,
+            );
+            txn.commit().unwrap();
+            reserved
+        };
+        let owner = || {
+            let txn = vault.store.env.read_txn().unwrap();
+            topology_delete_reservation_in_txn(&vault.store, &txn, &entity)
+                .unwrap()
+                .map(|intent| (intent.request_id, intent.phase))
+        };
+
+        // A hold refused the purge after publication: the request stays
+        // Published with no dt: marker.
+        reserve(&deferred, TopologyDeletePhase::Published).unwrap();
+        reserve(&retry, TopologyDeletePhase::Prepared).unwrap();
+        assert_eq!(
+            owner(),
+            Some((deferred.request_id, TopologyDeletePhase::Published)),
+            "a merely prepared retry leaves the deferred intent in place"
+        );
+        reserve(&retry, TopologyDeletePhase::Published).unwrap();
+        assert_eq!(
+            owner(),
+            Some((retry.request_id, TopologyDeletePhase::Published))
+        );
+
+        // The scrub of a GDPR/policy delete commits before its purge, so a
+        // hold refusing that purge leaves Committed without a dt: marker.
+        reserve(&retry, TopologyDeletePhase::Committed).unwrap();
+        reserve(&later, TopologyDeletePhase::Committed).unwrap();
+        assert_eq!(
+            owner(),
+            Some((later.request_id, TopologyDeletePhase::Committed))
+        );
+        let soft = TombstoneValueV2 {
+            reason: TombstoneReason::UserDelete,
+            ..tombstone([12; 16])
+        };
+        assert!(
+            reserve(&soft, TopologyDeletePhase::Committed).is_err(),
+            "a soft request never displaces a hard one"
+        );
+
+        // Once the owner's purge completed, no other request takes over, and
+        // the deferred request's replay is an accepted no-stronger repeat.
+        {
+            let mut txn = vault.store.env.write_txn().unwrap();
+            vault
+                .store
+                .sync_state
+                .put(
+                    &mut txn,
+                    &super::super::tombstone::local_hard_delete_key(&entity),
+                    &later.encode(),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+        }
+        assert!(reserve(&deferred, TopologyDeletePhase::Published).is_err());
+        assert_eq!(
+            owner(),
+            Some((later.request_id, TopologyDeletePhase::Committed))
+        );
+        let txn = vault.store.env.read_txn().unwrap();
+        let replay = super::super::tombstone::decode_tombstone_value(&deferred.encode());
+        assert!(guard_topology_delete_request_in_txn(&vault.store, &txn, &entity, &replay).is_ok());
     }
 
     #[test]
