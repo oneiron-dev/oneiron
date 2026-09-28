@@ -18,16 +18,16 @@ use crate::gate::constants::{
     ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
     POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY,
-    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
-    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
+    POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
-    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY,
+    POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
     POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
     POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
     POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
@@ -41,10 +41,9 @@ use crate::gate::operational_policy::{
     PolicyPrecedence, WAVE_HANDOFF_KEY, WaveHandoffPolicy,
 };
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
-
+use crate::gate::policy_values::{PolicyValueRow, parse_policy_values};
 use crate::gate::resolution::{
-    AttributionLimits, CommOptOutPosture, ConnectorClassPrecedence, GateDecisionRetentionPolicy,
-    TeacherProbeRow,
+    AttributionLimits, ConnectorClassPrecedence, GateDecisionRetentionPolicy, TeacherProbeRow,
 };
 use crate::gate::retrieval_retention::{
     RETRIEVAL_RETENTION_ROWS_KEY, RetrievalRetentionRows, parse_retrieval_retention_rows,
@@ -62,8 +61,8 @@ use super::decode_policy_tables::{
     parse_owner_policy_rows, parse_rules, parse_scoped_grants,
 };
 use super::decode_trust_budget::{
-    parse_budget_exhaustion_policy, parse_budget_policy, parse_comm_opt_out_posture,
-    parse_gate_decision_retention, parse_source_trust,
+    parse_budget_exhaustion_policy, parse_budget_policy, parse_gate_decision_retention,
+    parse_source_trust,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -75,6 +74,7 @@ pub(in crate::gate) enum ConnectorClassRole {
 
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
+    pub(in crate::gate) policy_values: Vec<PolicyValueRow>,
     pub(in crate::gate) actor_ceilings: Vec<ActorCeiling>,
     pub(in crate::gate) delegated_grants: Vec<DelegationGrantRecord>,
     pub(in crate::gate) source_trust: SourceTrustCeiling,
@@ -91,7 +91,6 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) owner_policy_patterns_dropped: bool,
     pub(in crate::gate) signatures: Vec<PolicySignature>,
     pub(in crate::gate) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
-    pub(in crate::gate) comm_opt_out_posture: Option<CommOptOutPosture>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
@@ -117,7 +116,6 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) livequery_tracker_limits:
         Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
-    pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) retrieval_retention: Option<RetrievalRetentionRows>,
     pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
@@ -181,10 +179,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 // Retired, accepted and ignored so manifests written before
                 // the engine floor was removed still decode. See the const.
                 | POLICY_LEGAL_FLOOR_ROWS_KEY
+                | POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY
+                | POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
-                | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | crate::gate::voice_serving::KEY
@@ -205,8 +204,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_DOCX_ARCHIVE_LIMITS_KEY
 
                 | "diagnostic_bounds"
+                | "policy_values"
                 | "livequery_tracker_limits"
-                | "proposal_check_threshold"
                 | RETRIEVAL_RETENTION_ROWS_KEY
                 | "goal_limits"
                 | "voice_ref_limits"
@@ -332,15 +331,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
-    };
-    // Parsed exactly like its `on_budget_exhausted` sibling, and failing the
-    // same way: an unrecognized token drops the WHOLE manifest, which sets
-    // `malformed_manifest_seen` and fails the gate closed. A posture nobody can
-    // read must never resolve to the permissive pole by silent default.
-    let comm_opt_out_posture = match single_map_value(&entries, POLICY_COMM_OPT_OUT_POSTURE_KEY) {
-        MapValue::Missing => None,
-        MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(parse_comm_opt_out_posture(value)?),
     };
     // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
     // asks only that it be one non-blank, bounded string. A duplicate row is
@@ -492,10 +482,10 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     };
 
-    let proposal_check_threshold = match single_map_value(&entries, "proposal_check_threshold") {
-        MapValue::Missing => None,
+    let policy_values = match single_map_value(&entries, "policy_values") {
+        MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
+        MapValue::Present(value) => parse_policy_values(value)?,
     };
 
     let retrieval_retention = match single_map_value(&entries, RETRIEVAL_RETENTION_ROWS_KEY) {
@@ -626,6 +616,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
     Some(DecodedPolicyManifest {
+        policy_values,
         pack: PolicyPack {
             _pack_id: pack_id,
             _pack_version: pack_version,
@@ -649,7 +640,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         owner_policy_patterns_dropped,
         signatures,
         on_budget_exhausted,
-        comm_opt_out_posture,
         auto_checker,
         budget_policy,
         voice_serving,
@@ -669,7 +659,6 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         docx_archive_limits,
         diagnostic_bounds,
         livequery_tracker_limits,
-        proposal_check_threshold,
         retrieval_retention,
         goal_limits,
         voice_ref_limits,

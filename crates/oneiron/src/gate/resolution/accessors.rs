@@ -22,6 +22,10 @@ use crate::gate::ceiling::{
     PolicySignature,
 };
 use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
+use crate::gate::policy_values::{
+    PolicyEvaluationScope, PolicyPrecedence, PolicyValue, PolicyValueKey, PolicyValueRow,
+    ResolvedPolicyValue, precedence_row, resolve_row, resolve_value, shipped_default_precedence,
+};
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -209,9 +213,78 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(in crate::gate) fn policy_value_row(
+        &self,
+        key: PolicyValueKey,
+        scope: &PolicyEvaluationScope,
+    ) -> Option<&PolicyValueRow> {
+        (!self.is_fail_closed())
+            .then(|| resolve_row(&self.policy_values, key, scope))
+            .flatten()
+    }
+
+    /// The meta-rule is read at vault scope only. Absence uses the shipped
+    /// data default; callers can receipt the missing-row fallback distinctly.
+    pub(in crate::gate) fn scope_precedence(&self) -> (PolicyPrecedence, Option<&str>) {
+        if !self.is_fail_closed()
+            && let Some(row) = precedence_row(&self.policy_values)
+            && let PolicyValue::ScopePrecedence(mode) = row.value
+        {
+            return (mode, Some(&row.row_ref));
+        }
+        (shipped_default_precedence(), None)
+    }
+
+    pub(in crate::gate) fn resolved_policy_value(
+        &self,
+        key: PolicyValueKey,
+        scope: &PolicyEvaluationScope,
+        fallback: PolicyValue,
+    ) -> ResolvedPolicyValue<'_> {
+        if self.is_fail_closed() {
+            return ResolvedPolicyValue {
+                value: fallback,
+                deciding_row: None,
+            };
+        }
+        resolve_value(
+            &self.policy_values,
+            key,
+            scope,
+            self.scope_precedence().0,
+            fallback,
+        )
+    }
+
+    #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
-        self.proposal_check_threshold
-            .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
+        self.proposal_check_threshold_in_scope(&PolicyEvaluationScope::default())
+    }
+
+    #[must_use]
+    pub(crate) fn proposal_check_threshold_in_scope(&self, scope: &PolicyEvaluationScope) -> u64 {
+        self.proposal_check_threshold_source(scope).threshold
+    }
+
+    pub(crate) fn proposal_check_threshold_source(
+        &self,
+        scope: &PolicyEvaluationScope,
+    ) -> crate::gate::proposal_observation::ProposalPolicySource {
+        let fallback = PolicyValue::ProposalCheckThreshold(
+            crate::gate::policy_values::shipped_default_proposal_check_threshold(),
+        );
+        let resolved =
+            self.resolved_policy_value(PolicyValueKey::ProposalCheckThreshold, scope, fallback);
+        let PolicyValue::ProposalCheckThreshold(threshold) = resolved.value else {
+            unreachable!("typed policy key")
+        };
+        let (_, precedence_row) = self.scope_precedence();
+        crate::gate::proposal_observation::ProposalPolicySource {
+            threshold,
+            deciding_row: resolved.deciding_row.map(|row| row.row_ref.clone()),
+            precedence_row: precedence_row.map(str::to_owned),
+            shipped_default_precedence: precedence_row.is_none(),
+        }
     }
 
     /// Trusted vault policy narrowed by the holder's own limits and shipped defaults.
@@ -237,7 +310,20 @@ impl PolicyManifestResolution {
     /// restrictive default, `Escalate`.
     #[must_use]
     pub(in crate::gate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
-        self.comm_opt_out_posture.unwrap_or_default()
+        let fallback = PolicyValue::CommOptOutPosture(
+            crate::gate::policy_values::shipped_default_comm_opt_out_posture(),
+        );
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::CommOptOutPosture,
+                &PolicyEvaluationScope::default(),
+                fallback,
+            )
+            .value
+        {
+            PolicyValue::CommOptOutPosture(value) => value,
+            _ => unreachable!("typed policy key"),
+        }
     }
 
     /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no

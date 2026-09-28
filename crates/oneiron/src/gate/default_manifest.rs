@@ -79,7 +79,14 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     // behind the derivation ever moves, the row dangles and mints pend —
     // fail-closed, never silently re-aimed.
     let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
+    let policy_values: serde_json::Value =
+        serde_json::from_str(include_str!("policy_value_defaults.json"))
+            .expect("valid shipped policy values");
+    let bytes = rmp_serde::to_vec_named(&policy_values).expect("encode shipped policy values");
+    let policy_values =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("decode shipped policy values");
     let manifest = Value::Map(vec![
+        (Value::from("policy_values"), policy_values),
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),

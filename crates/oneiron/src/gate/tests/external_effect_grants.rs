@@ -698,7 +698,8 @@ fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<
         decisions[0].receipt_reasons,
         vec![
             "counterparty_opt_out_unsubscribe",
-            "counterparty_first_touch_user_introduction"
+            "counterparty_first_touch_user_introduction",
+            "policy_precedence_shipped_default"
         ]
     );
 
@@ -709,7 +710,8 @@ fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<
         vec![
             "gate.pending.counterparty_opt_out",
             "counterparty_opt_out_unsubscribe",
-            "counterparty_first_touch_user_introduction"
+            "counterparty_first_touch_user_introduction",
+            "policy_precedence_shipped_default"
         ]
     );
     assert_eq!(
@@ -721,7 +723,9 @@ fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<
             .fields
             .get("receipt_reasons")
             .map(String::as_str),
-        Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+        Some(
+            "counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction,policy_precedence_shipped_default"
+        )
     );
     Ok(())
 }
