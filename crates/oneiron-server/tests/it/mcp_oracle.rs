@@ -175,8 +175,9 @@ mod cb_x {
             .collect::<Vec<_>>();
         expected.sort();
         // 24 since ARCH-0067's 2026-09-22 amendment folded `tasks.check` and
-        // `tasks.expand` into the one `describe` row.
-        assert_eq!(expected.len(), 24);
+        // `tasks.expand` into the one `describe` row; 28 since ONE-2563 added
+        // `rooms.render`, `rooms.find`, `rooms.get` and `rooms.trunk`.
+        assert_eq!(expected.len(), 28);
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);

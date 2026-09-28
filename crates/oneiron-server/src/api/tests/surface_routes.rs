@@ -66,9 +66,10 @@ async fn context_board_hides_fresh_default_policy_manifest() {
                 oneiron::registry::ENTITY_TYPE_SKILL.to_string(),
                 Value::from(4)
             ),
+            // Four bootstrap skill carriers plus four built-in pack sources.
             (
                 oneiron::registry::ENTITY_TYPE_ASSET.to_string(),
-                Value::from(4)
+                Value::from(8)
             ),
             (
                 oneiron::registry::ENTITY_TYPE_CONVERSATION.to_string(),

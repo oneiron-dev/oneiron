@@ -21,6 +21,7 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
 
 /// An ask word or receipt is checked against its group row, so a replicated
 /// batch applies it after the batch's other rows.
+#[cfg(feature = "sync")]
 pub(crate) fn waits_for_ask_group(blob: &[u8]) -> bool {
     EntityMetadataHeader::parse(blob).is_some_and(|header| header.entity_type == ENTITY_TYPE_TASK)
         && blob
