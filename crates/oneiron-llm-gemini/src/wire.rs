@@ -1,6 +1,6 @@
 //! Gemini generateContent request and response mapping plus status taxonomy.
 use super::{GeminiAccumulator, GeminiHttpRequest};
-use oneiron::llm::BudgetDenied;
+use oneiron::llm::{BudgetDenied, ReasoningEffort};
 use oneiron::{
     ContentPart, FatalLlmError, ImageContent, LlmCatalogEntry, LlmError, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, ResponseFormat, RetryableLlmError,
@@ -12,6 +12,15 @@ pub(super) fn build_request(
     stream: bool,
 ) -> LlmResult<GeminiHttpRequest> {
     entry.admit(request, stream)?;
+    // No universal Gemini effort enum maps to a valid thinking budget/level.
+    // Refuse a non-None seat instead of sending a made-up wire parameter.
+    if request
+        .envelope
+        .seat_effort
+        .is_some_and(|effort| effort != ReasoningEffort::None)
+    {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
     let calls: std::collections::BTreeMap<_, _> = request
         .messages
         .iter()
@@ -46,6 +55,41 @@ pub(super) fn build_request(
             other => other,
         };
         generation.insert(wire_name.into(), value.clone());
+    }
+    if request.envelope.seat_effort == Some(ReasoningEffort::None) {
+        // The explicit None pin beats stale generic controls, just as on the
+        // OpenAI and Anthropic adapters. Unsupported nested raw controls are
+        // refused rather than pretending to interpret them.
+        if generation.get("generationConfig").is_some_and(|value| {
+            value.as_object().is_none_or(|fields| {
+                [
+                    "thinkingConfig",
+                    "thinking_config",
+                    "thinkingBudget",
+                    "thinkingLevel",
+                    "reasoning_effort",
+                    "reasoning",
+                    "thinking",
+                    "output_config",
+                ]
+                .iter()
+                .any(|key| fields.contains_key(*key))
+            })
+        }) {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        for key in [
+            "thinkingConfig",
+            "thinking_config",
+            "thinkingBudget",
+            "thinkingLevel",
+            "reasoning_effort",
+            "reasoning",
+            "thinking",
+            "output_config",
+        ] {
+            generation.remove(key);
+        }
     }
     if let ResponseFormat::Json { schema } = &request.envelope.response_format {
         generation.insert("responseMimeType".into(), json!("application/json"));

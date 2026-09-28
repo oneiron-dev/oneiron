@@ -13,6 +13,7 @@ fn request(model: ModelId, locality: ModelLocality) -> LlmRequest {
     LlmRequest {
         model,
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
