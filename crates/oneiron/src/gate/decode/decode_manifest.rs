@@ -12,14 +12,16 @@ use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
 };
+use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 use crate::gate::constants::{
     ATTRIBUTION_HOLDER_ACTOR_KEY, ATTRIBUTION_HOLDER_MAX_BYTES_KEY,
     ATTRIBUTION_HOLDER_REASON_BYTES_KEY, ATTRIBUTION_PRECEDENCE_KEY,
-    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACTOR_CEILINGS_KEY,
-    POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_AUTO_CHECKER_KEY,
-    POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
-    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
+    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, POLICY_ACT_POLICY_KEY,
+    POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
+    POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_COMM_OPT_OUT_POSTURE_KEY,
+    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
+    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
@@ -29,7 +31,7 @@ use crate::gate::constants::{
     POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
     POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
     POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -46,6 +48,7 @@ use crate::gate::retrieval_retention::{
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
+use super::decode_class_policy::{parse_act_policy, parse_wait_policy};
 use super::decode_map_util::{
     MapValue, parse_signature_value, parse_signatures, required_string, required_value,
     single_map_value, version_gt,
@@ -91,6 +94,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) voice_serving: Option<crate::gate::voice_serving::VoiceServingRows>,
     pub(in crate::gate) gate_decision_retention: Option<GateDecisionRetentionPolicy>,
+    pub(in crate::gate) wait_policy: WaitPolicyTable,
+    pub(in crate::gate) act_policy: ActPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) pptx_comment_limits:
@@ -174,6 +179,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | crate::gate::voice_serving::KEY
                 | POLICY_GATE_DECISION_RETENTION_KEY
+                | POLICY_WAIT_POLICY_KEY
+                | POLICY_ACT_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
@@ -354,6 +361,17 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => Some(parse_gate_decision_retention(value)?),
         };
+    // Invalid wait/act rows reject the entire manifest, not just the axis.
+    let wait_policy = match single_map_value(&entries, POLICY_WAIT_POLICY_KEY) {
+        MapValue::Missing => WaitPolicyTable::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_wait_policy(value)?,
+    };
+    let act_policy = match single_map_value(&entries, POLICY_ACT_POLICY_KEY) {
+        MapValue::Missing => ActPolicyTable::default(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_act_policy(value)?,
+    };
     let room_thread = match single_map_value(&entries, "room_thread") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -602,6 +620,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         voice_serving,
         gate_decision_retention,
+        wait_policy,
+        act_policy,
         pack_install_policy,
         room_thread,
         pptx_comment_limits,

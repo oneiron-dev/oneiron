@@ -452,6 +452,20 @@ fn provider_email_policy_manifest(actor: &str, channel: &str) -> Vec<u8> {
         (Value::from("actor_class"), Value::from("first_party")),
         (Value::from("ceiling"), Value::from("auto")),
     ]));
+    // This fixture removes the seeded manifest. Spell the self-held sender
+    // posture in its own vault-resident row rather than borrowing an engine
+    // class default from the identity record.
+    entries.push((
+        Value::from("act_policy"),
+        Value::Array(vec![Value::Map(vec![
+            (
+                Value::from("act_class"),
+                Value::from("channel_identity.outbound_send"),
+            ),
+            (Value::from("subject_class"), Value::from("self_held")),
+            (Value::from("posture"), Value::from("require_capability")),
+        ])]),
+    ));
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value).expect("encode policy fixture");
     out
@@ -678,9 +692,7 @@ fn check_email_dnc(
 #[test]
 fn provider_key_stop_projects_email_contact_and_holds_each_provider_send()
 -> Result<(), Box<dyn std::error::Error>> {
-    use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
-    };
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
     for (index, channel) in ["email_resend", "email_ses", "email_postmark"]
         .iter()
         .enumerate()
@@ -701,14 +713,14 @@ fn provider_key_stop_projects_email_contact_and_holds_each_provider_send()
             &provider_email_policy_manifest(&actor.to_hex(), channel),
         )?;
         let identity_ref = entity(0x83);
-        let mut identity = ChannelIdentity::requested(
+        let identity = crate::test_util::self_held_identity_in_state(
             "email",
             "sender@example.com",
             SelfHeldShape::DedicatedAddress,
             ChannelIdentityBinding::actor(actor),
+            ChannelIdentityState::Active,
             10,
         );
-        identity.state = ChannelIdentityState::Active;
         vault.create_channel_identity(&identity_ref, &identity)?;
         let address = format!("stop-{index}@example.com");
         let contact_id = entity(0x84);
