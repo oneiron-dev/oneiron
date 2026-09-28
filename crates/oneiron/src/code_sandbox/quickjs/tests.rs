@@ -67,6 +67,16 @@ impl JsCodeModeHost for Host {
     }
 }
 
+/// `self.json.validate` compiles the host's schema-validator module on the
+/// first call, inside the step's wall time. That compile is slow in debug
+/// builds on a loaded host; these tests check verdicts, not the deadline.
+fn validation_budget() -> ComponentBudget {
+    ComponentBudget {
+        wall_time: std::time::Duration::from_secs(60),
+        ..ComponentBudget::default()
+    }
+}
+
 fn run(
     runtime: &mut dyn JsCodeModeRuntime,
     script: &str,
@@ -173,8 +183,7 @@ fn quickjs_exposes_bare_ask_but_no_self_ask_alias() {
 
 fn quickjs_json_validate_returns_shared_allow_reject_verdicts_without_dispatch() {
     let (bytes, hash) = artifact("first-party");
-    let factory =
-        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
+    let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, validation_budget()).unwrap();
     let mut host = Host::default();
     let result = run(
         &mut factory.runtime().unwrap(),
@@ -202,9 +211,8 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
     const CHILD: &str = "ONEIRON_JSON_VALIDATE_RECURSIVE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let (bytes, hash) = artifact("first-party");
-        let factory =
-            QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default())
-                .expect("pinned component");
+        let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, validation_budget())
+            .expect("pinned component");
         let result = run(
             &mut factory.runtime().expect("runtime"),
             "const bad = {allOf:[{$ref:'#'}]}; \
@@ -251,7 +259,9 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
         .env(CHILD, "1")
         .spawn()
         .expect("spawn isolated sandbox regression");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // A hang guard, not a latency bound: the child compiles the component twice
+    // in a debug build and can take tens of seconds on a loaded host.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         if let Some(status) = child.try_wait().expect("child status") {
             assert!(
