@@ -1371,13 +1371,14 @@ fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
     output.evidence_turn_refs = turns;
     derive_id(&mut output, attempt.status.attempt.id)?;
     // The graph signal reads the subject's sources as the Dreamer: the diary
-    // is withheld, so it neither counts toward fan-in nor goes unreported.
+    // is withheld, so it does not count toward fan-in. A withheld NOTE stays
+    // opaque in the receipt too (ONE-2110): its existence is not counted.
     let (fan_in, _, _) = branch.candidate_signals(branch.scope(), &output)?;
     assert_eq!(fan_in, 0);
     let mut sink = ReceiptSink::default();
     branch.accept(branch.scope(), &mut sink, vec![output])?;
     let receipt = sink.receipt.expect("the sealed write carries its reads");
-    assert_eq!(receipt.suppressed_count, 1);
-    assert!(receipt.narrowed_axes.contains(&"row_authority".to_owned()));
+    assert_eq!(receipt.suppressed_count, 0);
+    assert!(!receipt.narrowed_axes.contains(&"row_authority".to_owned()));
     Ok(())
 }
