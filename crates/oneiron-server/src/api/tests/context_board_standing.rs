@@ -276,3 +276,246 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
     assert_eq!(folded["self_brief"]["prefix"].as_str(), Some(tail));
     assert!(folded["self_brief"]["tail"].is_null());
 }
+
+async fn register_agent_connector(
+    server: &Arc<SyncServer>,
+    label: &str,
+    actor: oneiron::EntityId,
+    slip_scope: &crate::mcp::McpConnectorScope,
+    registered: crate::mcp::McpConnectorScope,
+    records: Option<std::collections::BTreeSet<String>>,
+) {
+    let mut token = pair_mcp_credential(
+        server,
+        label,
+        actor,
+        oneiron::EdgeActorClass::Agent,
+        slip_scope,
+    );
+    if records.is_some() {
+        token = attenuate_mcp_credential(
+            server,
+            label,
+            oneiron::authority::SlipCaveat {
+                records,
+                ..Default::default()
+            },
+        );
+    }
+    server
+        .mcp_registry
+        .lock()
+        .await
+        .register(
+            &token,
+            crate::mcp::McpConnectorActorRecord::new(
+                actor,
+                oneiron::EdgeActorClass::Agent,
+                registered,
+            ),
+        )
+        .expect("register agent connector");
+}
+
+/// MCP `describe(self)` renders the whole run brief, so every ceiling on the
+/// calling credential applies before rendering. Narrowed world, facet and
+/// record credentials, and a broad credential under a narrower registration,
+/// are refused without naming the hidden world; their filtered task list is not.
+#[tokio::test]
+async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
+    use crate::mcp::McpConnectorScope;
+    use oneiron::context_board::{CommunicationLimits, SelfBriefState};
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    use oneiron::llm::{BudgetExhaustionPolicy, BudgetRead};
+    let (_dir, server) = auth_test_server();
+    // The seeded manifest's agent ceiling names the first-party connector actor.
+    let actor = oneiron::EntityId::from_bytes([0xE1; 16]).unwrap();
+    server
+        .vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    let world_a = seeded_test_entity_id(0x2631_0101);
+    let hidden_world = seeded_test_entity_id(0x2631_0102);
+    let facet_a = seeded_test_entity_id(0x2631_0103);
+    let mut effective_scope = Scope::top();
+    effective_scope.worlds =
+        ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(hidden_world)]));
+    server
+        .install_self_brief_session(
+            actor,
+            "wide-run".into(),
+            1,
+            SelfBriefState {
+                self_ref: actor,
+                principal: actor,
+                cast: vec![actor],
+                grant_revision: 1,
+                effective_scope,
+                communication: CommunicationLimits {
+                    scope: Scope::default(),
+                    recipients: vec![],
+                    max_messages: None,
+                },
+                classes: vec![],
+                budget_lease_id: "lease".into(),
+                budget: BudgetRead {
+                    attempt_id: "run".into(),
+                    limit_units: 10,
+                    cap_units: 10,
+                    used_units: 0,
+                    reserved_units: 0,
+                    remaining_units: 10,
+                    on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
+                    fired_thresholds: vec![],
+                },
+                clock_ms: 1,
+                skill_index: vec![],
+                working_set: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    // The run opens in the hidden world, so turn one has rendered its prefix.
+    server
+        .vault
+        .put_entity(
+            &hidden_world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_ref,
+            &owner_ref.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .open_standing_block(&owner, actor, hidden_world, "identity", 64)
+        .unwrap();
+    let (status, open) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-board",
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={};actor_class=agent",
+                actor.to_hex()
+            )),
+            Some(&json!({"session":{"session_id":"wide-run"},
+                "standing":{"world_ref":hidden_world.to_hex(),"token_budget":65_536}})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{open}");
+    let envelope = |scope: &McpConnectorScope| {
+        let mut envelope = mcp_scoped_envelope(actor, "read_tasks", scope);
+        envelope["actor"]["actor_class"] = json!("agent");
+        envelope["actor"]["gate_actor_class"] = json!("agent");
+        envelope
+    };
+    let describe_self = |label: &str, scope: &McpConnectorScope| {
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            label,
+            label,
+            "describe",
+            mcp_merge_args(
+                envelope(scope),
+                json!({"arguments": {"self": true, "session_id": "wide-run"}}),
+            ),
+        )
+    };
+    let hidden = hidden_world.to_hex();
+
+    let wide = McpConnectorScope::vault_wide();
+    register_agent_connector(&server, "brief-wide", actor, &wide, wide.clone(), None).await;
+    let (status, body) = route_json(server.clone(), describe_self("brief-wide", &wide)).await;
+    assert_eq!(status, StatusCode::OK);
+    let output = &body["result"]["structuredContent"]["output"];
+    assert_eq!(output["kind"], "self_card", "{body}");
+    assert!(output["tail"].as_str().unwrap().contains(&hidden), "{body}");
+
+    let world_only = McpConnectorScope::scoped(Some(world_a), None);
+    let facet_only = McpConnectorScope::scoped(None, Some(facet_a));
+    let records = Some(std::collections::BTreeSet::from([actor.to_hex()]));
+    for (label, slip_scope, registered, records, code) in [
+        (
+            "brief-world",
+            &world_only,
+            &world_only,
+            None,
+            "mcp_scope_refused",
+        ),
+        (
+            "brief-facet",
+            &facet_only,
+            &facet_only,
+            None,
+            "mcp_scope_refused",
+        ),
+        (
+            "brief-record",
+            &wide,
+            &wide,
+            records,
+            "mcp_scope_unprojectable",
+        ),
+        (
+            "brief-wide-slip-world",
+            &wide,
+            &world_only,
+            None,
+            "mcp_scope_refused",
+        ),
+        (
+            "brief-wide-slip-facet",
+            &wide,
+            &facet_only,
+            None,
+            "mcp_scope_refused",
+        ),
+    ] {
+        register_agent_connector(
+            &server,
+            label,
+            actor,
+            slip_scope,
+            registered.clone(),
+            records,
+        )
+        .await;
+        let refused = mcp_refusal(&server, describe_self(label, registered)).await;
+        assert_mcp_structured_error(&refused, code);
+        assert!(!refused.to_string().contains(&hidden), "{label}: {refused}");
+        let (status, listed) = route_json(
+            server.clone(),
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                label,
+                label,
+                "describe",
+                envelope(registered),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            listed["result"]["structuredContent"]["output"]["kind"], "tasks_section",
+            "{label}: {listed}"
+        );
+    }
+}

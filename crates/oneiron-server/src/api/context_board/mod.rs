@@ -409,11 +409,13 @@ pub(crate) async fn context_board_hydrate(
 
 /// The authenticated SDK describe(self) path uses the same run snapshot and
 /// renderer as context-board assembly. It cannot accept authority in the body.
+/// The brief is rendered whole, so a record-narrowed credential is refused.
 pub(crate) async fn describe_self_for_auth(
     server: &SyncServer,
     auth: &CoreAuth,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, crate::error::ApiError> {
+    auth.require_unrestricted_record_scope()?;
     oneiron::task_verb::sdk::validate_input("describe", body).map_err(|_| {
         crate::error::ApiError::bad_request("invalid describe(self) input", Some("self"))
     })?;
