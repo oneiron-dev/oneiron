@@ -147,6 +147,7 @@ impl Store {
             raw,
             kind_registry,
             off_record_sessions: OffRecordSessionRegistry::default(),
+            gate_retirement_lock: std::sync::RwLock::new(()),
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,

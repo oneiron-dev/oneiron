@@ -50,6 +50,7 @@ fn codec_error() -> Error {
 impl Vault {
     /// Create-new output only. Checkpoint id hashes the entire canonical image.
     pub fn snapshot_checkpoint(&self, path: &Path, created_at: u64) -> Result<String> {
+        let _custody = self.store.gate_custody_read_guard()?;
         let txn = self.store.env.read_txn()?;
         // Refuse a checkpoint that cannot read CURRENT exterior custody; it
         // cannot package key bytes to paper over a missing/shredded key.

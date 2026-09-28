@@ -74,6 +74,23 @@ pub struct ClaimConflictReceipt {
 fn key(prefix: &[u8], digest: &[u8; 32]) -> Vec<u8> {
     [prefix, digest.as_slice()].concat()
 }
+/// Replaying a ruled dispute rebuilds its receipt from the recorded Gate
+/// decision, so the retention sweep keeps every decision a marker names.
+pub(crate) fn claim_conflict_ruling_gate_refs_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::HashSet<GateDecisionId>, Error> {
+    let mut ids = std::collections::HashSet::new();
+    for row in store.vault_meta.prefix_iter(txn, RESOLUTION)? {
+        let (_, raw) = row?;
+        ids.insert(GateDecisionId::from_bytes(
+            raw.as_ref()
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("conflict resolution marker"))?,
+        ));
+    }
+    Ok(ids)
+}
 fn encode(bundle: &ClaimConflictBundle) -> Result<Vec<u8>, Error> {
     let mut stored = bundle.clone();
     for member in &mut stored.members {

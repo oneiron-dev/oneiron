@@ -1,6 +1,25 @@
 use super::*;
 
 impl Vault {
+    /// Refuse the entire head erase when ANY redirect shell in its atomic
+    /// cascade has an accepted hold. Called before local scrub and publication.
+    pub(in crate::deletion) fn reject_held_redirect_shells_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        head: &EntityId,
+    ) -> Result<()> {
+        let shells = crate::identity_redirect::inbound_redirect_shells_in_txn(
+            &self.store,
+            txn,
+            &BTreeSet::from([*head]),
+        )?;
+        for shell in shells {
+            self.store
+                .reject_held_gate_partition_in_txn(txn, shell.as_bytes())?;
+        }
+        Ok(())
+    }
+
     /// ARCH-0055 §9 (r6): "HardErase walks redirects. Erasing a canonical
     /// head erases its redirect shells' payloads too — leaving a shell
     /// readable would leak what erasure hid."
@@ -33,6 +52,10 @@ impl Vault {
         )?;
         if shells.is_empty() {
             return Ok(shells);
+        }
+        for shell in &shells {
+            self.store
+                .reject_held_gate_partition_in_txn(wtxn, shell.as_bytes())?;
         }
         let mut had_vector = false;
         for shell in &shells {

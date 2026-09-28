@@ -349,6 +349,30 @@ fn publish_receipt(
     }
 }
 
+/// The admitted publish's original decision remains necessary for idempotent
+/// replay and its receipt even after pointer removal or snapshot eviction.
+pub(crate) fn artifact_publish_gate_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::HashSet<crate::store::GateDecisionId>> {
+    let mut ids = std::collections::HashSet::new();
+    for row in vault
+        .store
+        .vault_meta
+        .prefix_iter(txn, ARTIFACT_PUBLISH_ADMISSION_PREFIX)?
+    {
+        let (key, raw) = row?;
+        let id = key
+            .strip_prefix(ARTIFACT_PUBLISH_ADMISSION_PREFIX)
+            .ok_or(Error::CorruptedIndex("artifact publish admission key"))?;
+        let _: [u8; 16] = id
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("artifact publish admission key"))?;
+        ids.insert(decode_publish_admission(&raw)?.gate_id);
+    }
+    Ok(ids)
+}
+
 pub(crate) fn artifact_publish_receipts(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

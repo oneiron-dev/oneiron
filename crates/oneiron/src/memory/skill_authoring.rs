@@ -25,12 +25,8 @@ pub struct SkillAuthoringReceipt {
     pub version: String,
 }
 
-fn author_proof(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    record: &SkillRecord,
-) -> Result<(EntityId, crate::store::GateDecisionId), Error> {
+/// The exact birth-author decision ID a skill names in its provenance.
+fn named_author_proof(record: &SkillRecord) -> Result<&str, Error> {
     let Value::Map(entries) = &record.provenance else {
         return Err(authority_denied("skill author proof is missing"));
     };
@@ -44,6 +40,39 @@ fn author_proof(
     if proofs.next().is_some() {
         return Err(authority_denied("ambiguous skill author proof"));
     }
+    Ok(proof)
+}
+
+/// Every edit of a live skill re-proves authorship from the exact receipt
+/// its provenance names, so the retention sweep must keep that receipt.
+pub(crate) fn skill_author_proof_is_live_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &crate::store::GateDecisionRecord,
+) -> Result<bool, Error> {
+    let Some(claim) = receipt.claim_id else {
+        return Ok(false);
+    };
+    if receipt.content_kind != AUTHOR_KIND || receipt.redacted_at.is_some() {
+        return Ok(false);
+    }
+    let id = EntityId::from_bytes(claim)?;
+    if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?.deleted
+        || vault.get_raw_in(txn, &id)?.is_none()
+    {
+        return Ok(false);
+    }
+    let stored = vault.read_skill_record_in_txn(txn, &id)?;
+    Ok(named_author_proof(&stored).is_ok_and(|proof| proof == receipt.decision_id.to_hex()))
+}
+
+fn author_proof(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    record: &SkillRecord,
+) -> Result<(EntityId, crate::store::GateDecisionId), Error> {
+    let proof = named_author_proof(record)?;
     for receipt in vault
         .store
         .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?

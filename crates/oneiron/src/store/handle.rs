@@ -109,6 +109,8 @@ pub struct StoreCore {
     /// Exterior key custody binding. On restore this remains the source vault's
     /// canonical path; it is never reset to the new LMDB image's location.
     pub(in crate::store) gate_custody_root: std::path::PathBuf,
+    /// Exterior retirement cannot race a live snapshot's decision decrypt.
+    pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
     pub(crate) env: Env,

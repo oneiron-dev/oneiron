@@ -51,6 +51,21 @@ fn key(prefix: &[u8], id: &[u8]) -> Vec<u8> {
     [prefix, id].concat()
 }
 
+/// An exact tap replay re-proves its mint against the recorded Grant
+/// decision, so the retention sweep keeps each durable tap's decision.
+pub(crate) fn project_mint_gate_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::HashSet<GateDecisionId>> {
+    let mut ids = std::collections::HashSet::new();
+    for row in vault.store.vault_meta.prefix_iter(txn, TAP)? {
+        let (_, raw) = row?;
+        let (_, receipt): ([u8; 32], ProjectMintReceipt) = decode(&raw)?;
+        ids.insert(receipt.grant_decision_id);
+    }
+    Ok(ids)
+}
+
 fn checked_ref(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

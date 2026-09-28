@@ -9,12 +9,14 @@ use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY,
     ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY,
-    AXIS_SENSITIVITY_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY,
+    AXIS_SENSITIVITY_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
+    GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY,
     POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
     POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
-    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
+    POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_ROWS_KEY,
+    POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
     POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY,
     POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
@@ -643,6 +645,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from("suspend"),
         ),
         super::room_policy::default_entry(),
+        default_gate_decision_retention_entry(),
         (
             Value::from(POLICY_PPTX_COMMENT_LIMITS_KEY),
             crate::edit_roundtrip::pptx::PptxOperationalLimits::default().policy_row(),
@@ -734,6 +737,30 @@ fn room_thread_default_row() -> Value {
 /// Engine-authored vault policy DATA for grant creation. The grant codec and
 /// write gate do not consult this list; they resolve the stored manifest rows
 /// in the same writer that mints each membership grant.
+/// A fresh vault never age-prunes its gate decisions. Only the owner can
+/// replace this null horizon with a positive retention period.
+fn default_gate_decision_retention_entry() -> (Value, Value) {
+    (
+        Value::from(POLICY_GATE_DECISION_RETENTION_KEY),
+        Value::Map(vec![
+            (Value::from(GATE_RETENTION_HORIZON_SECS_KEY), Value::Nil),
+            (
+                Value::from(GATE_RETENTION_MAX_SWEEP_ROWS_KEY),
+                Value::from(256_u64),
+            ),
+            (
+                Value::from(GATE_RETENTION_PRECEDENCE_KEY),
+                Value::from("nested_narrowing"),
+            ),
+            (
+                Value::from(GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY),
+                Value::from("vault"),
+            ),
+            (Value::from("rows"), Value::Array(Vec::new())),
+        ]),
+    )
+}
+
 fn federation_grant_default_rows() -> Value {
     use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
     use crate::federation::{FederationGrantRole as Role, Scope, ScopeAxis};

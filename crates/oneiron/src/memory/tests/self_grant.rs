@@ -683,3 +683,33 @@ fn changed_same_id_proposals_are_new_submissions_but_exact_retries_are_not() {
         }
     }
 }
+
+#[test]
+fn own_skill_edit_survives_a_receipt_retention_sweep() {
+    let (_dir, vault) = open_vault();
+    let resident = put_person(&vault, 0x25);
+    let owner = put_person(&vault, 0x26);
+    let memory = vault.memory(resident, EdgeActorClass::Agent);
+    let saved = memory.skill_save(id(0x27), &skill(), None, 100).unwrap();
+    crate::test_util::backdate_claim_gate_decisions(&vault, 1).unwrap();
+    vault
+        .set_gate_decision_retention_secs(&owner_proof(&vault, owner), Some(60))
+        .unwrap();
+    vault.sweep_gate_decision_retention().unwrap();
+    let mut record = vault.get_skill_record(&saved.skill_id).unwrap().unwrap();
+    record.version = "2".to_owned();
+    record.desc = "edited after retention".to_owned();
+    let edited = memory
+        .skill_save(saved.skill_id, &record, Some("1"), 101)
+        .unwrap();
+    assert_eq!(edited.author, resident);
+    assert_eq!(edited.author_receipt, saved.author_receipt);
+    assert_eq!(
+        vault
+            .get_skill_record(&saved.skill_id)
+            .unwrap()
+            .unwrap()
+            .desc,
+        "edited after retention"
+    );
+}
