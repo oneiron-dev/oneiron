@@ -328,8 +328,49 @@ impl Vault {
         reference: &str,
         expected_delta: &[u8],
     ) -> Result<ConsentReceipt> {
+        self.accept_widen_checked(owner, None, reference, expected_delta)
+    }
+
+    /// The HTTP holder route passes its logged capability, rechecked in the
+    /// SAME transaction as grant minting. A revoked slip cannot win a race
+    /// between transport authentication and the actual approval.
+    pub fn accept_credential_widen(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: &VerifiedSlip,
+        reference: &str,
+        expected_delta: &[u8],
+    ) -> Result<ConsentReceipt> {
+        let claims = credential.claims();
+        if claims.single_use
+            || claims.holder_ref != owner.actor().to_hex()
+            || claims.actor_class.as_deref() != Some("human")
+            || !credential.allows_verb("core:auth")
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "holder credential does not authorize a widen",
+            )));
+        }
+        self.accept_widen_checked(owner, Some(credential), reference, expected_delta)
+    }
+
+    fn accept_widen_checked(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        reference: &str,
+        expected_delta: &[u8],
+    ) -> Result<ConsentReceipt> {
         let key = key(reference)?;
         self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
+            if let Some(credential) = credential
+                && !self.capability_slip_is_live_in_txn(&*txn, credential)?
+            {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "holder credential is no longer live",
+                )));
+            }
             let raw = self
                 .store
                 .vault_meta
@@ -337,13 +378,17 @@ impl Vault {
                 .ok_or_else(invalid_row)?;
             let mut row = decode_row(&raw, reference)?;
             let proposal = &row.proposal;
+            if proposal.owner_ref != owner.principal_ref() {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "widen proposal belongs to another holder",
+                )));
+            }
             if row.resolved
                 || proposal.expires_at <= self.store.clock.now_recorded_at()
-                || proposal.owner_ref != owner.principal_ref()
                 || proposal.canonical_delta != expected_delta
             {
-                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                    "widen proposal is stale, changed, resolved, or bound to another owner",
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "widen proposal is stale, changed, or resolved",
                 )));
             }
             let bound = decode_delta(&proposal.canonical_delta)?;

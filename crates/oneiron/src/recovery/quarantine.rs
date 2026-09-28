@@ -42,7 +42,12 @@ pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Resul
 
 #[cfg(unix)]
 pub(super) fn sync_parent(path: &Path) -> io::Result<()> {
-    fs::File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()
+    fs::File::open(
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new(".")),
+    )?
+    .sync_all()
 }
 #[cfg(not(unix))]
 pub(super) fn sync_parent(_path: &Path) -> io::Result<()> {
