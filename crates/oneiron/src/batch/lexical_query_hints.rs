@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use crate::affect::Vad;
 use crate::claim::ClaimSubject;
-use crate::edge::{EdgeKind, parse_strict_edge_record};
+use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
@@ -461,14 +461,21 @@ pub(super) fn lexical_query_hint_claim_ids_for_target(
     target: &EntityId,
 ) -> Result<Vec<EntityId>> {
     let mut hint_ids = Vec::new();
-    for entry in store.edges_in.prefix_iter(wtxn, target.as_bytes())? {
-        let (key, value) = entry?;
-        let edge = parse_strict_edge_record(&key, &value)?;
+    for entry in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        wtxn,
+        target,
+        crate::ports::EdgeDirection::In,
+        None,
+        None,
+    )? {
+        let edge = entry?;
         if edge.kind != EdgeKind::ClaimOf {
             continue;
         }
         let source = edge.target;
-        let Some(raw) = store.entities.get(wtxn, source.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &source)?
+        else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -553,7 +560,7 @@ pub(super) fn stored_entity_is_claim_type(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -567,7 +574,7 @@ pub(super) fn stored_claim_body(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<crate::claim::ClaimBody>> {
-    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

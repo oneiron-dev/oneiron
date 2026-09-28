@@ -49,8 +49,6 @@ pub(crate) use self::base_apply::{
     apply_session_bundle_claim_puts, apply_session_bundle_claim_puts_with_transitions,
 };
 pub(crate) use self::builder::BatchOp;
-#[cfg(feature = "sync")]
-pub(crate) use self::child_of_overlay::child_of_prefix;
 pub(crate) use self::claim_materialization::{
     ClaimMaterialization, apply_owner_bound_claim_puts,
     apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,

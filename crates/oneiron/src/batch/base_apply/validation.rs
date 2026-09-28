@@ -131,7 +131,7 @@ pub(super) fn birth_stamp_target(
             entity_type,
             crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
         )
-        || store.entities.get(txn, id.as_bytes())?.is_some()
+        || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some()
     {
         return Ok(None);
     }

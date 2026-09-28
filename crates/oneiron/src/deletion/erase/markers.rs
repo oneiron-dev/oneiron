@@ -52,19 +52,19 @@ impl Vault {
             || crate::skill_hub::refinement_custody_exists_in_txn(&self.store, txn, id)?
             || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
-            || self.store.entities.get(txn, id.as_bytes())?.is_some()
+            || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?.is_some()
             || self.port_retrieval_delete_scope_exists(txn, id)?
             || self.port_short_id_mapping_exists(txn, id)?
         {
             return Ok(true);
         }
 
-        let mut edges_out = self.store.edges_out.prefix_iter(txn, id.as_bytes())?;
-        if edges_out.next().transpose()?.is_some() {
-            return Ok(true);
-        }
-        let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
-        if edges_in.next().transpose()?.is_some() {
+        if crate::ports::EdgeStoreRead::port_edge_has_any(
+            &self.store,
+            txn,
+            id,
+            crate::ports::EdgeDirection::Both,
+        )? {
             return Ok(true);
         }
 

@@ -397,7 +397,9 @@ pub(crate) fn apply_ops_session(
                     // idempotent, while a same-id divergent retry is refused
                     // before any overlay mutation or journal entry stages.
                     crate::gate::validate_canonical_witness_message_body(data)?;
-                    if let Some(raw) = view.entities.get(&*wtxn, id.as_bytes())? {
+                    if let Some(raw) =
+                        crate::ports::EntityStoreRead::port_entity_raw(view, &*wtxn, id)?
+                    {
                         let header = EntityMetadataHeader::parse(&raw)
                             .ok_or(Error::CorruptedIndex("entity header"))?;
                         if header.entity_type != *entity_type {

@@ -83,7 +83,7 @@ pub(crate) fn validated_local_record_for_canonical(
     id: &EntityId,
     expected: Option<&[u8]>,
 ) -> Result<Option<Vec<u8>>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         if expected.is_some() {
             return Err(Error::CorruptedIndex(
                 "canonical receipt record not materialized",
@@ -101,7 +101,7 @@ pub(crate) fn validated_local_record_for_canonical(
         }
         return Ok(None);
     }
-    if expected.is_some_and(|candidate| candidate != raw.as_ref()) {
+    if expected.is_some_and(|candidate| candidate != raw.as_slice()) {
         return Err(Error::CorruptedIndex(
             "canonical receipt record carrier diverged",
         ));
@@ -117,7 +117,7 @@ pub(crate) fn validated_local_record_for_canonical(
             "canonical receipt record/index binding",
         ));
     }
-    Ok(Some(raw.into_owned()))
+    Ok(Some(raw))
 }
 
 /// Enumerate the validated receipt family owned by this canonical window,
@@ -210,7 +210,7 @@ pub(crate) fn validate_receipt_record_put(
             )));
         }
     }
-    if let Some(prior) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&prior)
             .ok_or(Error::CorruptedIndex("outbound suppression prior header"))?;
         if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {

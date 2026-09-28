@@ -183,7 +183,9 @@ impl Vault {
                     {
                         return Err(chunks::invalid("lfs upload was cancelled"));
                     }
-                    if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
+                    if let Some(raw) =
+                        crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+                    {
                         let body = raw
                             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                             .ok_or(Error::CorruptedIndex("lfs chunk header"))?;

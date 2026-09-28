@@ -8,7 +8,6 @@ use crate::conversation_dag::topology::{
 };
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::error::{Error, Result};
-use crate::store::Store;
 use crate::sync::quarantine::{self, QuarantineContainer, remote_rejection_reason};
 use crate::sync::types::WindowKey;
 use crate::{EntityId, Vault};
@@ -256,19 +255,24 @@ fn apply_ready(
 ) -> Result<ParentOutcome> {
     let src = parent.source;
     let tgt = parent.target;
-    let out_key = Store::encode_edge_key(&src, EdgeKind::Parent, &tgt);
-    let in_key = Store::encode_edge_key(&tgt, EdgeKind::Parent, &src);
-    let out_same = vault
-        .store
-        .edges_out
-        .get(&*txn, &out_key)?
-        .is_some_and(|stored| stored == value);
-    let in_same = vault
-        .store
-        .edges_in
-        .get(&*txn, &in_key)?
-        .is_some_and(|stored| stored == value);
-    if out_same && in_same {
+    let out_same = crate::ports::EdgeStoreStaging::port_edge_encoded(
+        &vault.store,
+        &*txn,
+        &src,
+        EdgeKind::Parent,
+        &tgt,
+    )?
+    .as_deref()
+        == Some(value);
+    if out_same
+        && crate::ports::EdgeStoreRead::port_edge_consistent(
+            &vault.store,
+            &*txn,
+            &src,
+            EdgeKind::Parent,
+            &tgt,
+        )?
+    {
         settle(vault, txn, window, &src, &tgt)?;
         return Ok(ParentOutcome::Unchanged);
     }

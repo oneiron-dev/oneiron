@@ -7,6 +7,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
+    ports::{EdgeDirection, EdgeStoreRead},
     store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
@@ -77,12 +78,19 @@ pub(crate) fn birth_facet(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<EntityId>> {
-    let prefix = crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::FacetOf);
-    let Some(row) = store.edges_out().prefix_iter(txn, &prefix)?.next() else {
+    let Some(row) = store
+        .port_edges(
+            txn,
+            &id,
+            EdgeDirection::Out,
+            Some(crate::edge::EdgeKind::FacetOf),
+            None,
+        )?
+        .next()
+    else {
         return Ok(None);
     };
-    let (key, value) = row?;
-    Ok(Some(crate::vault::parse_edge_record(&key, &value)?.target))
+    Ok(Some(row?.target))
 }
 pub(crate) fn stamp_put(
     store: &Store,
@@ -260,7 +268,8 @@ impl Vault {
     /// Read the current positive stamp. Missing or stale stamps are not inferred.
     pub fn record_scope(&self, id: &EntityId) -> Result<Option<Scope>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
+        else {
             return Ok(None);
         };
         let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
@@ -292,13 +301,8 @@ impl Vault {
         }
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
-        for row in self.store.entities.iter(&txn)? {
-            let (key, raw) = row?;
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("record id"))?,
-            )?;
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
+            let (id, raw) = row?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             let scope = stored_scope(
@@ -315,7 +319,7 @@ impl Vault {
             if allowed || view == ScopeView::Debug {
                 out.push(ScopedRecord {
                     id,
-                    bytes: raw.into_owned(),
+                    bytes: raw,
                     scope,
                     suppressed: !allowed,
                 });
@@ -332,13 +336,8 @@ impl Vault {
     ) -> Result<Vec<ScopedRecord>> {
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
-        for row in self.store.entities.iter(&txn)? {
-            let (key, raw) = row?;
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("record id"))?,
-            )?;
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
+            let (id, raw) = row?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             if let Some(scope) = stored_scope(
@@ -352,7 +351,7 @@ impl Vault {
             {
                 out.push(ScopedRecord {
                     id,
-                    bytes: raw.into_owned(),
+                    bytes: raw,
                     scope: Some(scope),
                     suppressed: false,
                 });
@@ -369,13 +368,8 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         self.with_write_txn(|txn| {
             let mut ids = Vec::new();
-            for row in self.store.entities.iter(txn)? {
-                let (key, raw) = row?;
-                let id = EntityId::from_bytes(
-                    key.as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("record id"))?,
-                )?;
+            for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)? {
+                let (id, raw) = row?;
                 let h = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("record header"))?;
                 if let Some(scope) = stored_scope(

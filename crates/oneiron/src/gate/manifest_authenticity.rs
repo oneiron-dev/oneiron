@@ -65,11 +65,12 @@ pub(crate) fn stamp_manifest_origin(
         store.sync_state.delete(txn, &seed_key)?;
         store.sync_state.put(txn, &origin_key, hash.as_bytes())?;
     } else {
-        let existing_matches = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-            EntityMetadataHeader::parse(&raw)
-                .is_some_and(|h| h.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
-                && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(body)
-        });
+        let existing_matches = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+            .is_some_and(|raw| {
+                EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|h| h.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
+                    && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(body)
+            });
         if !existing_matches
             || store
                 .sync_state
@@ -133,10 +134,7 @@ impl Vault {
         {
             let (index, _) = row?;
             let id = crate::vault::entity_id_from_type_index_key(&index)?;
-            let raw = self
-                .store
-                .entities
-                .get(&txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
                 .ok_or(Error::CorruptedIndex("manifest contribution"))?;
             let body = raw
                 .get(ENTITY_METADATA_HEADER_LEN..)
@@ -160,10 +158,7 @@ impl Vault {
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|h| h.entity_type != ENTITY_TYPE_POLICY_MANIFEST)
@@ -192,7 +187,7 @@ impl Vault {
         if super::decode::decode_policy_manifest(&data).is_none() {
             return Err(Error::InvalidConfig("malformed policy manifest".into()));
         }
-        if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)? {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("policy manifest header"))?;
             if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
@@ -261,16 +256,13 @@ impl Vault {
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, legacy.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &legacy)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("legacy manifest header"))?;
         if crate::registry::zone_of(header.entity_type)
             != crate::registry::TypeByteZone::CompiledProduct
-            || self.store.entities.get(&txn, target.as_bytes())?.is_some()
+            || crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &target)?.is_some()
         {
             return Err(Error::InvalidConfig(
                 "manifest re-key requires legacy source and fresh target".into(),

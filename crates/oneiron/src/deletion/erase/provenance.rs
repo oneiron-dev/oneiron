@@ -34,7 +34,8 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<CapturedProvenanceDelete>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, rtxn, id)?
+        else {
             return Ok(None);
         };
         let header =
@@ -86,8 +87,15 @@ impl Vault {
         deleted_claim_id: &EntityId,
         subject: &EdgeRef,
     ) -> Result<()> {
-        let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-        if self.store.edges_out.get(wtxn, &edge_key)?.is_none() {
+        if crate::ports::EdgeStoreStaging::port_edge_encoded(
+            &self.store,
+            wtxn,
+            &subject.source,
+            subject.kind,
+            &subject.target,
+        )?
+        .is_none()
+        {
             return Ok(());
         }
         let survivors =

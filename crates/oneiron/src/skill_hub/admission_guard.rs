@@ -206,9 +206,7 @@ pub(crate) fn check_hub_skill_put(
     if marked.is_none() && !has_import_origin(store, txn, record)? {
         return Ok(None);
     }
-    let prior = store
-        .entities
-        .get(txn, id.as_bytes())?
+    let prior = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .map(|raw| {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -275,9 +273,7 @@ fn has_import_origin(store: &Store, txn: &heed::RoTxn<'_>, record: &SkillRecord)
         if store.vault_meta.get(txn, &origin_key(&id))?.is_some() {
             return Ok(true);
         }
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
             .ok_or_else(|| invalid("skill fork ancestry is missing"))?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("skill ancestor header"))?;

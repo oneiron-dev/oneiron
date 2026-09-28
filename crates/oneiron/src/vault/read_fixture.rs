@@ -86,13 +86,10 @@ impl Vault {
                 };
                 crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
             }
-            let raw =
-                self.store
-                    .entities
-                    .get(txn, id.as_bytes())?
-                    .ok_or(Error::InvariantViolation(
-                        "test permit requires a seeded default policy",
-                    ))?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+                .ok_or(Error::InvariantViolation(
+                    "test permit requires a seeded default policy",
+                ))?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("test policy header"))?;
             if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST

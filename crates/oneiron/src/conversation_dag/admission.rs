@@ -175,7 +175,7 @@ fn stored_record_pin(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<[u8; 32]>> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(None);
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
@@ -227,9 +227,7 @@ fn is_dag_membership(
             .vault_meta()
             .get(txn, &key(MIGRATED, conversation))?
             .is_some()
-        && store
-            .entities()
-            .get(txn, conversation.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, conversation)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
 }
 

@@ -3007,7 +3007,10 @@ fn ppr_vad_gate_carries_canonical_stored_layouts() -> Result<()> {
         let key = Store::encode_edge_key(&seed, kind, &target);
         let value = vault.store.edges_out.get(&txn, &key)?.expect("stored edge");
         assert_eq!(value.len(), len);
-        let gated = gate_edge(&vault.store, &txn, &key, &value, 0)?.expect("traversable");
+        let edge =
+            crate::ports::EdgeStoreRead::port_edge_get(&vault.store, &txn, &seed, kind, &target)?
+                .expect("stored edge decodes through port");
+        let gated = gate_edge(&vault.store, &txn, &seed, &edge, 0)?.expect("traversable");
         assert_eq!(gated.vad, if len == 12 { None } else { Some(vad) });
     }
     Ok(())

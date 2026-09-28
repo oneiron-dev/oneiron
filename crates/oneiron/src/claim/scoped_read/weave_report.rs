@@ -406,7 +406,8 @@ impl ScopedRead<'_> {
                     "owner weave links need a canonical read".into(),
                 ));
             }
-            for row in self.vault.store.edges_out.iter(txn)? {
+            for row in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.vault.store, txn)?
+            {
                 let (key, value) = row?;
                 let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
                 if !kinds.contains(&edge.kind) || !weave_edge_live(edge.decoded.provenance) {

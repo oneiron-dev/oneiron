@@ -7,14 +7,13 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimSource, ClaimSubject, decode_claim_body, encode_claim_body,
 };
-use crate::edge::{EdgeKind, parse_strict_edge_record};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::ExportBody;
-use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
@@ -126,7 +125,7 @@ impl Vault {
             if self.store.off_record_sessions.contains_entity(&id)? {
                 return Err(invalid("import ID belongs to an off-record overlay"));
             }
-            let existing = self.store.entities.get(&wtxn, id.as_bytes())?;
+            let existing = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &wtxn, &id)?;
             if let Some(existing) = existing {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
@@ -473,18 +472,13 @@ pub(super) fn import_edge(
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
-    let key = Store::encode_edge_key(&source, kind, &target);
-    if let Some(raw) = vault.store.edges_out.get(wtxn, &key)? {
-        let existing = parse_strict_edge_record(&key, &raw)?;
-        let same = existing.decoded.weight == edge.weight
-            && existing.decoded.created_at == edge.created_at
+    if let Some(existing) =
+        crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+    {
+        let same = existing.weight == edge.weight
+            && existing.created_at == edge.created_at
+            && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
             && existing
-                .decoded
-                .vad
-                .map(|v| [v.valence, v.arousal, v.dominance])
-                == edge.vad
-            && existing
-                .decoded
                 .provenance
                 .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
                 == edge.provenance;

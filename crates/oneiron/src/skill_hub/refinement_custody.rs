@@ -163,7 +163,7 @@ pub(crate) fn validate_refinement_carrier_put(
     {
         return Err(Error::CorruptedIndex("refinement carrier binding"));
     }
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let head = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("refinement carrier header"))?;
         if head.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != *bytes {
@@ -246,10 +246,7 @@ impl Vault {
             return Err(Error::CorruptedIndex("refinement latest pointer"));
         }
         let id = crate::entity_id::parse_entity_id(&id[16..], "refinement latest receipt")?;
-        let raw = self
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
             .ok_or(Error::CorruptedIndex("refinement latest source"))?;
         let head = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("refinement source header"))?;
@@ -356,7 +353,7 @@ pub(crate) fn erase_refinement_custody_in_txn(
             {
                 return Err(Error::CorruptedIndex("refinement owned source binding"));
             }
-            if store.entities.get(txn, id.as_bytes())?.is_some() {
+            if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
                 let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &id)?;
                 crate::ppr::invalidate_ppr_for_delete(store, txn, &id, &neighbors)?;
                 if graph {

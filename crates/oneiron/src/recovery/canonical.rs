@@ -368,10 +368,8 @@ pub fn capture_canonical_window(
         if hard.contains(&tombstone.id) {
             continue;
         }
-        let shell = vault
-            .store
-            .entities
-            .get(&txn, &tombstone.id)?
+        let id = EntityId::from_bytes(tombstone.id)?;
+        let shell = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?
             .ok_or(invalid("missing retained shell"))?;
         if shell.len() != crate::batch::ENTITY_METADATA_HEADER_LEN {
             return Err(invalid("soft delete not materialized"));
@@ -394,7 +392,7 @@ pub fn capture_canonical_window(
         snapshot
             .base_edges
             .retain(|row| !soft.contains(&row.source) && !soft.contains(&row.target));
-        for row in vault.store.edges_out.iter(&txn)? {
+        for row in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&vault.store, &txn)? {
             let (key, value) = row?;
             if key.len() != 33 {
                 return Err(invalid("retained edge key"));

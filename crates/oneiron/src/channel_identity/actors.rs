@@ -41,7 +41,8 @@ impl Vault {
             return Ok(None);
         };
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&txn, actor.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &actor)?
+        else {
             return Ok(None);
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -93,7 +94,9 @@ impl Vault {
             for row in self.store.type_index.prefix_iter(&txn, &[kind])? {
                 let (key, _) = row?;
                 let id = crate::vault::entity_id_from_type_index_key(&key)?;
-                let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+                let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
+                else {
                     return Err(Error::CorruptedIndex("channel actor index"));
                 };
                 if let Ok(Value::Map(entries)) =
@@ -241,11 +244,11 @@ fn validate_axes(vault: &Vault, txn: &heed::RoTxn<'_>, scope: &Scope) -> Result<
                     {
                         continue;
                     }
-                    let found = vault
-                        .store
-                        .entities
-                        .get(txn, id.0.as_bytes())?
-                        .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.entity_type));
+                    let found =
+                        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id.0)?
+                            .and_then(|raw| {
+                                EntityMetadataHeader::parse(&raw).map(|h| h.entity_type)
+                            });
                     if found != Some(kind) {
                         return Err(Error::InvalidClaimBody(
                             "channel scope reference has wrong type",

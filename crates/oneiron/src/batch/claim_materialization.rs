@@ -80,9 +80,7 @@ impl ClaimMaterialization {
         else {
             return Err(binding_error());
         };
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -166,10 +164,7 @@ impl ClaimMaterialization {
         else {
             return Err(binding_error());
         };
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
@@ -228,10 +223,7 @@ impl ClaimMaterialization {
         id: &EntityId,
         checker: Option<&crate::llm::BoundedAutoChecker>,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -365,10 +357,7 @@ impl ClaimMaterialization {
         else {
             return Err(binding_error());
         };
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
@@ -439,7 +428,7 @@ impl ClaimMaterialization {
     }
 
     pub(super) fn validate_actor(&self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<()> {
-        let current = store.entities.get(txn, self.id.as_bytes())?;
+        let current = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &self.id)?;
         if current.as_ref().map(|raw| row_digest(raw)) != self.prior {
             return Err(binding_error());
         }
@@ -451,9 +440,7 @@ impl ClaimMaterialization {
         }
         crate::gate::validate_write_envelope(&self.envelope)?;
         let actor = self.envelope.actor();
-        let raw = store
-            .entities
-            .get(txn, actor.entity_ref().as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
@@ -508,7 +495,6 @@ fn demotion_body(
         CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, ClaimSubject, claim_demotion_rung,
     };
     use crate::edge::{EdgeKind, validate_edge_weight};
-    use crate::vault::{edge_kind_prefix, parse_edge_record};
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
         return Err(binding_error());
@@ -531,12 +517,15 @@ fn demotion_body(
         ) if src == id && prior.subject == ClaimSubject::Entity(*tgt) => {
             validate_edge_weight(*weight)?;
             let mut current = None;
-            for entry in store
-                .edges_out
-                .prefix_iter(txn, &edge_kind_prefix(id, EdgeKind::ClaimOf))?
-            {
-                let (key, value) = entry?;
-                let edge = parse_edge_record(&key, &value)?;
+            for entry in crate::ports::EdgeStoreRead::port_edges(
+                store,
+                txn,
+                id,
+                crate::ports::EdgeDirection::Out,
+                Some(EdgeKind::ClaimOf),
+                None,
+            )? {
+                let edge = entry?;
                 if edge.target == *tgt && current.replace(edge.weight).is_some() {
                     return Err(binding_error());
                 }
@@ -609,10 +598,8 @@ pub(super) fn record_committed_claim(
     if !authored {
         return invalidate_authored_claim(store, txn, id);
     }
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or(binding_error())?;
+    let raw =
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.ok_or(binding_error())?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Err(binding_error());
@@ -645,10 +632,8 @@ fn lifecycle_envelope(
     let Some(bytes) = store.vault_meta.get(txn, &authored_key(id))? else {
         return Ok(None);
     };
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or(binding_error())?;
+    let raw =
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.ok_or(binding_error())?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
         || bytes.as_ref() != row_digest(&raw).as_slice()

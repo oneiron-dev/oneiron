@@ -57,7 +57,7 @@ pub(super) fn observe_in_txn(
     // Only completed clock ticks train the baseline. A current burst cannot
     // teach away its own signal. Cold start is the normalizer's clock seed.
     let baseline = row.completed as f64 / now.saturating_sub(row.first).max(1) as f64;
-    let size = vault.store.entities.len(&*txn)?;
+    let size = crate::ports::EntityStoreRead::port_entity_count(&vault.store, &*txn)?;
     let inputs = normalized_burst_inputs(row.recent, 1, baseline, size, row.streak);
     save(vault, txn, &key, &row)?;
     Ok(inputs)

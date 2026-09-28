@@ -65,7 +65,7 @@ pub(crate) fn guard(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId) -> Res
             "NOTE recovery requires authority or citation rebasing",
         ));
     }
-    if vault.store.entities.get(txn, note.as_bytes())?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &note)?.is_some() {
         let doc = super::document_store::load(vault, txn, note)?;
         if !doc.pins()?.is_empty() {
             return Err(invalid(

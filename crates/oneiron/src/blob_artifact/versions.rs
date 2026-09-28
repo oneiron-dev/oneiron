@@ -151,7 +151,8 @@ impl Vault {
         rtxn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<BlobArtifactBody>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, rtxn, id)?
+        else {
             return Ok(None);
         };
         let header =
