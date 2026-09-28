@@ -999,3 +999,53 @@ fn non_human_lanes_get_no_cursor() {
         "a rebuild invents no cursor for a realized lane"
     );
 }
+
+#[test]
+fn token_answer_completes_its_member_and_suppresses_due_reminder_while_group_waits() {
+    use crate::task_verb::{
+        TaskAskOptionId, TaskAskStatus, TaskAskTarget, task_human_assignee, task_is_terminal,
+    };
+    let fixture = HumanFixture::open();
+    add_owner_route(&fixture);
+    let other = crate::test_util::entity(0xD6);
+    put_person(&fixture.vault, other);
+    let mut spec = routed_ask_spec(&fixture);
+    spec.intent_key = "linked-member-followup".into();
+    spec.who = Some(TaskAskTarget::People([fixture.person, other].into()));
+    spec.decide = None;
+    spec.what
+        .options
+        .insert(TaskAskOptionId::new("yes").expect("id"), "Yes".into());
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
+    let receipt = memory.tasks_ask(&spec).expect("two-person ask");
+    let task = receipt
+        .task_refs
+        .into_iter()
+        .find(|task_ref| {
+            task_human_assignee(&fixture.vault, *task_ref).expect("assignee")
+                == Some(fixture.person)
+        })
+        .expect("routed member");
+    let due = fixture.cursor(task).next_due_at.expect("reminder due");
+    let link = memory
+        .tasks_ask_option_link(receipt.handle, fixture.person)
+        .expect("link");
+    fixture
+        .vault
+        .answer_ask_option_link(&link.token, &TaskAskOptionId::new("yes").expect("id"))
+        .expect("bearer answer");
+    assert!(task_is_terminal(&fixture.vault, task).expect("terminal member"));
+    assert!(matches!(
+        memory.tasks_ask_status(receipt.handle).expect("aggregate"),
+        TaskAskStatus::Pending { .. }
+    ));
+    let dispatched = HumanTaskFollowupDriver::new(&fixture.vault)
+        .run_due(due, 8)
+        .expect("due pass");
+    assert!(dispatched.iter().all(|entry| entry.task_ref != task));
+    assert!(fixture.cursor(task).completed_at.is_some());
+    assert_eq!(
+        fixture.scheduled_sends(&task_follow_up_dedupe_key(task, "human_reminder:0")),
+        0
+    );
+}

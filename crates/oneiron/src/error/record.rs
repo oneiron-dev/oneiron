@@ -169,6 +169,10 @@ pub enum RecordError {
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
+    /// A replicated ask fact names a group or person row that has not
+    /// materialized yet. Its proof is checked once that row arrives.
+    #[error("ask fact dependency is not materialized")]
+    AskDependencyPending,
     /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
     /// write carried body-divergent bytes for an existing AUTHORITY_LOG id. Local
     /// callers get this as a hard error; replicated doors classify it as a
@@ -246,6 +250,7 @@ impl RecordError {
             Self::InvalidSuppressionReceiptBody(_) => ErrorKind::InvalidSuppressionReceiptBody,
             Self::SuppressionReceiptDivergence => ErrorKind::SuppressionReceiptDivergence,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
+            Self::AskDependencyPending => ErrorKind::AskDependencyPending,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             // Deliberately the SAME coarse kind a companion body fault has
             // always reported: only the variant is distinct, so the staging

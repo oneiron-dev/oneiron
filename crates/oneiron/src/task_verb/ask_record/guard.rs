@@ -19,6 +19,38 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
     })
 }
 
+/// An ask word or receipt is checked against its group row, so a replicated
+/// batch applies it after the batch's other rows.
+pub(crate) fn waits_for_ask_group(blob: &[u8]) -> bool {
+    EntityMetadataHeader::parse(blob).is_some_and(|header| header.entity_type == ENTITY_TYPE_TASK)
+        && blob
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(fact_kind)
+            .is_some_and(|kind| kind != GROUP)
+}
+
+/// A replicated fact can arrive before its group. Absence stays retryable;
+/// a present row that is not an ask group is a bad fact.
+fn stored_group(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    group: EntityId,
+) -> Result<AskGroup> {
+    let raw = store
+        .entities
+        .get(txn, group.as_bytes())?
+        .ok_or(Error::Record(RecordError::AskDependencyPending))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Err(invalid());
+    }
+    decode(
+        raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?,
+        GROUP,
+    )?
+    .ok_or_else(invalid)
+}
+
 pub(crate) fn guard_ask_fact_put(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -99,6 +131,12 @@ pub(crate) fn guard_ask_fact_put(
             {
                 return Err(invalid());
             }
+            if fact.source == TaskAskSource::ForeignStated {
+                let group = stored_group(store, txn, fact.group)?;
+                super::link_proof::validate_source(store, txn, id, &group, &fact)?;
+            } else if fact.link_proof.is_some() {
+                return Err(invalid());
+            }
         }
         Some(crate::task_verb::ask_soft_confirm::SOFT_CONFIRM) => {
             let notice: crate::task_verb::TaskAskSoftConfirmNotice =
@@ -118,6 +156,17 @@ pub(crate) fn guard_ask_fact_put(
             let result = decode::<crate::task_verb::TaskAskResult>(data, "tasks.ask_settlement")?
                 .ok_or_else(invalid)?;
             crate::task_verb::ask_settlement::validate_result(id, &result)?;
+            // A consistent reducer transcript is not proof of link intake:
+            // only the group's issuer can sign a receipt with such words.
+            if result
+                .evidence
+                .iter()
+                .any(|entry| entry.source == TaskAskSource::ForeignStated)
+                || result.settlement.link_result_proof.is_some()
+            {
+                let group = stored_group(store, txn, result.settlement.group_ref)?;
+                verify_link_settlement(&group, &result)?;
+            }
         }
         _ => {}
     }

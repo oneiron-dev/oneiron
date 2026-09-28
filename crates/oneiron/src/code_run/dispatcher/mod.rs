@@ -249,7 +249,7 @@ impl<'a> HostSelfDispatcher<'a> {
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
-            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call),
+            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
