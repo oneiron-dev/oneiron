@@ -222,6 +222,9 @@ pub(crate) fn resolve_policy_manifest(
                         }
                     }
                 }
+                resolution
+                    .skill_tradeoff_rows
+                    .extend(decoded.skill_tradeoff_rows);
                 if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
                     match resolution.on_budget_exhausted {
                         None => resolution.on_budget_exhausted = Some(on_budget_exhausted),

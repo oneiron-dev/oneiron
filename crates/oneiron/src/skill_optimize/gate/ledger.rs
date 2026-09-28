@@ -10,7 +10,21 @@ fn validate_tradeoff_verdict(
     disposition: SkillEditDisposition,
     axes: &BTreeMap<String, GoalAxisScore>,
     resolution: Option<&TradeoffResolution>,
+    jev: Option<&JevTradeoffVerdict>,
 ) -> Result<()> {
+    if let Some(jev) = jev {
+        jev.validate()?;
+        if floor_regressed(axes) || !is_tradeoff(axes) {
+            return Err(invalid("a Jev verdict binds only a pending tradeoff"));
+        }
+    }
+    // A Jev resolution is the bound verdict on this row, echoing its question.
+    if resolution.is_some_and(|resolution| {
+        resolution.rung == TradeoffRung::Jev
+            && jev.is_none_or(|jev| jev.question_digest != resolution.evidence)
+    }) {
+        return Err(invalid("a Jev resolution requires its bound verdict"));
+    }
     if let Some(resolution) = resolution {
         if !matches!(
             disposition,
@@ -69,11 +83,13 @@ pub(super) fn record_verdict_in_txn(
             verdict.disposition,
             &verdict.goal_axes,
             verdict.tradeoff_resolution.as_ref(),
+            verdict.tradeoff_jev.as_ref(),
         )?;
     } else if !verdict.goal_axes.is_empty()
         || !verdict.goal_revision.is_empty()
         || verdict.goal_id.is_some()
         || verdict.tradeoff_resolution.is_some()
+        || verdict.tradeoff_jev.is_some()
     {
         return Err(invalid("an unscored verdict cannot carry goal axes"));
     }
@@ -114,6 +130,16 @@ pub(super) fn record_verdict_in_txn(
                 Some(resolution) => Value::from(
                     serde_json::to_string(resolution)
                         .map_err(|_| invalid("tradeoff decision encode failed"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
+        (
+            Value::from(KEY_TRADEOFF_JEV),
+            match &verdict.tradeoff_jev {
+                Some(jev) => Value::from(
+                    serde_json::to_string(jev)
+                        .map_err(|_| invalid("Jev tradeoff encoding failed"))?,
                 ),
                 None => Value::Nil,
             },
@@ -341,16 +367,35 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
         ),
         None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
     };
+    // Required even when Nil: a v6 row cannot say whether Jev ruled it.
+    let tradeoff_jev: Option<JevTradeoffVerdict> = match field(KEY_TRADEOFF_JEV) {
+        Some(Value::Nil) => None,
+        Some(value) => Some(
+            serde_json::from_str(
+                value
+                    .as_str()
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+            )
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        ),
+        None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
     if measurements.is_some() {
-        validate_tradeoff_verdict(disposition, &goal_axes, tradeoff_resolution.as_ref())
-            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
-    } else if tradeoff_resolution.is_some() {
+        validate_tradeoff_verdict(
+            disposition,
+            &goal_axes,
+            tradeoff_resolution.as_ref(),
+            tradeoff_jev.as_ref(),
+        )
+        .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+    } else if tradeoff_resolution.is_some() || tradeoff_jev.is_some() {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
     let scored = measurements.is_some();
     Ok(HeldOutVerdict {
         goal_id,
         tradeoff_resolution,
+        tradeoff_jev,
         goal_axes,
         goal_revision: text(KEY_GOAL_REVISION)?,
         before: score(KEY_BEFORE)?,
@@ -629,6 +674,12 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
         fields.insert(
             FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION.to_owned(),
             serde_json::to_string(resolution).expect("validated tradeoff decision serializes"),
+        );
+    }
+    if let Some(jev) = &verdict.tradeoff_jev {
+        fields.insert(
+            FIELD_SKILL_EDIT_TRADEOFF_JEV.to_owned(),
+            serde_json::to_string(jev).expect("validated Jev verdict serializes"),
         );
     }
     if !verdict.goal_axes.is_empty() {
