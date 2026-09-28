@@ -462,6 +462,8 @@ pub struct OutboundDispatchResult {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OutboundDispatchError {
+    #[error("the ask confirmation is no longer active at this revision")]
+    ObsoleteAskConfirmation,
     #[error(transparent)]
     UnsupportedCapability(#[from] Box<UnsupportedOutboundCapability>),
     #[error("the facade-bound actor is no longer valid")]

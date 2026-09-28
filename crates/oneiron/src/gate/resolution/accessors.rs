@@ -60,6 +60,13 @@ impl PolicyManifestResolution {
             .map(|policy| policy.limit_for(holder))
     }
 
+    /// Shipped manifest rows or the same bootstrap default if no ask row
+    /// exists; an invalid loaded manifest never silently supplies authority.
+    pub(crate) fn ask_operational_policy(&self) -> Option<crate::gate::AskOperationalPolicy> {
+        (!self.diagnostics.loaded_manifest_forces_fail_closed())
+            .then(|| self.ask_policy.clone().unwrap_or_default())
+    }
+
     /// Resolve the required vault ceiling and every matching actor/scope row.
     pub(crate) fn retry_budget_for(
         &self,
@@ -69,10 +76,42 @@ impl PolicyManifestResolution {
         crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
     }
 
+    /// Only trusted policy rows select the room working set. A malformed
+    /// loaded manifest refuses reads rather than silently restoring defaults.
+    pub(crate) fn room_thread_settings(
+        &self,
+        actor: crate::EntityId,
+    ) -> Result<crate::gate::RoomThreadSettings> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid room thread policy".into(),
+            ));
+        }
+        Ok(self
+            .room_thread
+            .clone()
+            .unwrap_or_default()
+            .effective(actor))
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
+    }
+
+    /// Trusted vault policy narrowed by the holder's own limits and shipped defaults.
+    pub(crate) fn voice_ref_limits(
+        &self,
+        owner: &crate::EntityId,
+    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            self.voice_ref_defaults
+                .as_ref()
+                .and_then(|defaults| self.voice_ref_limits.effective(defaults, owner))
+        }
     }
 
     #[must_use]
