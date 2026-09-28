@@ -5773,7 +5773,8 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world.entity_id());
     vault.put_claim(&claim, &body, occurred, at)?;
     vault

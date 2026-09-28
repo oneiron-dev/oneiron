@@ -1,6 +1,6 @@
 //! Tombstone pass of forward rematerialization: reason-aware replay of window tombstones.
 
-use super::super::loro_support::map_for_each_tombstone_value;
+use super::super::loro_support::{map_for_each_tombstone_value, map_get_bytes};
 use super::super::quarantine::{self, QuarantineContainer};
 use super::{RematCtx, RematLedger};
 

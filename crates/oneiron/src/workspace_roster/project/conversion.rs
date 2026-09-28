@@ -244,7 +244,7 @@ impl Vault {
                 Some(source_project_id),
                 EntityId::from_hex(&source_project.claims_scope_ref)?,
                 leader,
-            );
+            )?;
             project.tasks = tasks;
             project.roster = match policy.roster_selection {
                 RosterSelection::InheritSource => source_project.roster,

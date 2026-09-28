@@ -8,12 +8,13 @@ use loro::LoroDoc;
 
 use crate::entity_id::EntityId;
 use crate::sync::ingest::{TombstoneStep, classify_tombstone};
+use crate::sync::loro_support::map_get_bytes;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op, quarantine_rejected_op_in_txn,
     remote_rejection_reason,
 };
 use crate::sync::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
-use crate::{Error, SyncProtocolValidation, Vault};
+use crate::{Error, Result, SyncProtocolValidation, Vault};
 
 /// Materialize tombstone changes — apply deletes to LMDB.
 ///
@@ -79,54 +80,57 @@ pub(super) fn materialize_tombstones_from_delta(
                         }
                     }
                     TombstoneStep::Replay { id, hard } => {
-                    let residence: Result<crate::sync::types::TombstoneResidence> = (|| {
-                        let txn = vault.store.env.read_txn()?;
-                        let window =
-                            crate::sync::WindowKey::try_new(window_key).ok_or(Error::InvalidKey)?;
-                        let state =
-                            crate::sync::types::tombstone_residence_in(vault, &txn, &id, &window)?;
-                        if state == crate::sync::types::TombstoneResidence::Unknown
-                            && window.world().is_some()
-                            && let Some(raw) = map_get_bytes(&entities_map, &id.to_hex())
-                            && crate::sync::types::retained_world_shell_belongs_to_window(
-                                vault, &txn, doc, &id, &raw, &window, false,
-                            )?
-                        {
-                            return Ok(crate::sync::types::TombstoneResidence::Match);
-                        }
-                        Ok(state)
-                    })(
-                    );
-                    match residence {
-                        Ok(crate::sync::types::TombstoneResidence::Wrong) => {
-                            if let Err(error) = quarantine_rejected_op(
-                                vault,
-                                window_key,
-                                QuarantineContainer::Tombstones,
-                                key.as_ref(),
-                                &Error::InvalidConfig("tombstone outside window residence".into()),
-                                raw_value,
-                            ) {
-                                tracing::error!(%error, "failed to quarantine cross-world tombstone");
+                        let residence: Result<crate::sync::types::TombstoneResidence> = (|| {
+                            let txn = vault.store.env.read_txn()?;
+                            let window = crate::sync::WindowKey::try_new(window_key)
+                                .ok_or(Error::InvalidKey)?;
+                            let state = crate::sync::types::tombstone_residence_in(
+                                vault, &txn, &id, &window,
+                            )?;
+                            if state == crate::sync::types::TombstoneResidence::Unknown
+                                && window.world().is_some()
+                                && let Some(raw) = map_get_bytes(&entities_map, &id.to_hex())
+                                && crate::sync::types::retained_world_shell_belongs_to_window(
+                                    vault, &txn, doc, &id, &raw, &window, false,
+                                )?
+                            {
+                                return Ok(crate::sync::types::TombstoneResidence::Match);
                             }
-                            continue;
+                            Ok(state)
+                        })(
+                        );
+                        match residence {
+                            Ok(crate::sync::types::TombstoneResidence::Wrong) => {
+                                if let Err(error) = quarantine_rejected_op(
+                                    vault,
+                                    window_key,
+                                    QuarantineContainer::Tombstones,
+                                    key.as_ref(),
+                                    &Error::InvalidConfig(
+                                        "tombstone outside window residence".into(),
+                                    ),
+                                    raw_value,
+                                ) {
+                                    tracing::error!(%error, "failed to quarantine cross-world tombstone");
+                                }
+                                continue;
+                            }
+                            Ok(crate::sync::types::TombstoneResidence::Unknown)
+                                if window_key.contains('@') =>
+                            {
+                                // The CRDT tombstone itself gates this window. Do not
+                                // mint a global dt: marker for an unproven ID.
+                                continue;
+                            }
+                            Err(error) => {
+                                let _ = vault.with_write_txn(|txn| {
+                                    quarantine::set_remat_marker_in_txn(vault, txn, window_key, &id)
+                                });
+                                tracing::error!(%error, "tombstone residence check failed");
+                                continue;
+                            }
+                            _ => {}
                         }
-                        Ok(crate::sync::types::TombstoneResidence::Unknown)
-                            if window_key.contains('@') =>
-                        {
-                            // The CRDT tombstone itself gates this window. Do not
-                            // mint a global dt: marker for an unproven ID.
-                            continue;
-                        }
-                        Err(error) => {
-                            let _ = vault.with_write_txn(|txn| {
-                                quarantine::set_remat_marker_in_txn(vault, txn, window_key, &id)
-                            });
-                            tracing::error!(%error, "tombstone residence check failed");
-                            continue;
-                        }
-                        _ => {}
-                    }
 
                         staged.push(TombstoneWork {
                             id,

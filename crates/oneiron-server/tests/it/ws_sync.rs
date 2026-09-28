@@ -2242,7 +2242,8 @@ async fn fresh_home_root_advertises_unopened_world_and_historical_base() {
         1.0,
         oneiron::ClaimApprovalStatus::Proposed,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.world = Some(world);
     vault
         .put_claim(&claim, &body, test_range(learned), learned)

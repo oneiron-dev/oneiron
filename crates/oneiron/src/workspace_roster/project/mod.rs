@@ -37,8 +37,8 @@ pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{
-    normalize_project_body, project_room_dependency, reconcile_project_rooms, validate_project_body,
-    validate_room_body,
+    normalize_project_body, project_room_dependency, reconcile_project_rooms,
+    validate_project_body, validate_room_body,
 };
 #[cfg(test)]
 pub(crate) use tests::{create_project_signed_for_test, set_project_depth_signed_for_test};

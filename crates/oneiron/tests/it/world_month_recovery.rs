@@ -47,7 +47,8 @@ fn soft_world_claim_round_trips_without_sync_feature() {
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at).unwrap();
     vault
@@ -120,7 +121,8 @@ fn malformed_world_claim_domain_is_rejected_before_canonical_rebuild() {
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at).unwrap();
     let raw = vault.get_raw(&claim).unwrap().unwrap();

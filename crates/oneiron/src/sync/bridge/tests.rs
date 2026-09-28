@@ -4041,7 +4041,8 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     let project = EntityId::now();
     a.put_project(
         project,
-        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader),
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
+            .unwrap(),
         1,
     )?;
     let owner_id = EntityId::now();
@@ -4073,12 +4074,13 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     let lead_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
     b.put_project(
         root_a,
-        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, lead_b),
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, lead_b).unwrap(),
         1,
     )?;
     b.put_project(
         project,
-        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, lead_b),
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, lead_b)
+            .unwrap(),
         1,
     )?;
     b.put_entity(
@@ -4144,7 +4146,7 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
     let id = EntityId::now();
     source.put_project(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, leader),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, leader).unwrap(),
         1,
     )?;
     let human = EntityId::now();
@@ -4181,12 +4183,13 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
             Some(target_root),
             target_root,
             target_leader,
-        ),
+        )
+        .unwrap(),
         1,
     )?;
     target.put_project(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, target_leader),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, target_leader).unwrap(),
         1,
     )?;
     target.put_entity(
@@ -4271,7 +4274,8 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
     let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
     b.put_project(
         root_a,
-        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader_b),
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader_b)
+            .unwrap(),
         1,
     )?;
     b.put_entity(

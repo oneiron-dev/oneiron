@@ -422,7 +422,8 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
         1.0,
         crate::claim::ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     let window = format!("2026-02@{}", world.to_hex());
@@ -504,7 +505,8 @@ fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() ->
         1.0,
         crate::claim::ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     vault

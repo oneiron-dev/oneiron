@@ -3121,7 +3121,8 @@ fn spawn_reads_live_project_depth_and_never_widens_a_frozen_parent() -> Result<(
             Some(root_project),
             root_project,
             leader,
-        ),
+        )
+        .unwrap(),
         1,
     )?;
     let person = EntityId::now();
@@ -3248,7 +3249,8 @@ fn child_project_transition_obeys_live_parent_and_all_ancestor_depth_rows() -> R
     let child_project = EntityId::now();
     vault.put_project(
         child_project,
-        &crate::workspace_roster::ProjectRecord::new(child_project, Some(root), root, leader),
+        &crate::workspace_roster::ProjectRecord::new(child_project, Some(root), root, leader)
+            .unwrap(),
         1,
     )?;
     let person = EntityId::now();

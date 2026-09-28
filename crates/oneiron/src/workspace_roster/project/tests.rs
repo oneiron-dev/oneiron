@@ -548,7 +548,7 @@ fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result
     );
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let child = EntityId::now();
-    let mut body = ProjectRecord::new(child, Some(root), root, leader);
+    let mut body = ProjectRecord::new(child, Some(root), root, leader).unwrap();
     body.sessions.push(EntityId::now().to_hex());
     vault.put_project(child, &body, 1)?;
     assert_eq!(vault.project(child)?, Some(body.clone()));
@@ -768,8 +768,8 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     }
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
-    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice).unwrap(), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob).unwrap(), 2)?;
     let chat = EntityId::now();
     let opened = vault.open_leader_chat(
         chat,
@@ -956,7 +956,8 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope_project = root;
     claim.valid_from = Some(6);
     // The test-only rule is authored through the ordinary CLAIM gate. Supply
@@ -1064,8 +1065,16 @@ fn cross_project_widen_asks_the_shared_ancestor_board_not_the_other_leader() -> 
     );
     let left = EntityId::now();
     let right = EntityId::now();
-    vault.put_project(left, &ProjectRecord::new(left, Some(root), left, alice), 2)?;
-    vault.put_project(right, &ProjectRecord::new(right, Some(root), right, bob), 2)?;
+    vault.put_project(
+        left,
+        &ProjectRecord::new(left, Some(root), left, alice).unwrap(),
+        2,
+    )?;
+    vault.put_project(
+        right,
+        &ProjectRecord::new(right, Some(root), right, bob).unwrap(),
+        2,
+    )?;
     assert_eq!(vault.project(root)?.unwrap().board, [board_member.to_hex()]);
 
     let scope = crate::federation::scope_codec::read_preset();
@@ -1191,8 +1200,8 @@ fn leader_chat_membership_keeps_binding_but_allows_history_leave_and_rejoin() ->
     }
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
-    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice).unwrap(), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob).unwrap(), 2)?;
     for (leaver, other) in [(alice, bob), (bob, alice)] {
         let room = EntityId::now();
         let writer = crate::WriteActor::new(alice, EdgeActorClass::Human);
@@ -1245,8 +1254,8 @@ fn raw_turn_and_edge_cannot_attach_to_leader_chat_before_or_after_dag_adoption()
     }
     let a = EntityId::now();
     let b = EntityId::now();
-    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
-    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice).unwrap(), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob).unwrap(), 2)?;
     let chat = EntityId::now();
     vault.open_leader_chat(
         chat,
@@ -1782,7 +1791,7 @@ fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Resu
 
     let child = EntityId::now();
     let leader = EntityId::from_hex(&original.leader)?;
-    let mut nondefault_birth = ProjectRecord::new(child, Some(root), root, leader);
+    let mut nondefault_birth = ProjectRecord::new(child, Some(root), root, leader).unwrap();
     nondefault_birth.depth = 12;
     vault.put_project(child, &nondefault_birth, 9)?;
     assert_eq!(
@@ -1841,7 +1850,7 @@ fn delete_recreate_cannot_reset_owner_depth_for_existing_attempt() -> Result<()>
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
-    let born = ProjectRecord::new(id, Some(root), root, leader);
+    let born = ProjectRecord::new(id, Some(root), root, leader).unwrap();
     vault.put_project(id, &born, 1)?;
     let (agent, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.default")?
@@ -1941,16 +1950,24 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
     }
     let left = EntityId::now();
     let right = EntityId::now();
-    vault.put_project(left, &ProjectRecord::new(left, Some(root), left, alice), 2)?;
-    vault.put_project(right, &ProjectRecord::new(right, Some(root), right, bob), 2)?;
+    vault.put_project(
+        left,
+        &ProjectRecord::new(left, Some(root), left, alice).unwrap(),
+        2,
+    )?;
+    vault.put_project(
+        right,
+        &ProjectRecord::new(right, Some(root), right, bob).unwrap(),
+        2,
+    )?;
     let first = EntityId::now();
     let second = EntityId::now();
-    let mut branch = ProjectRecord::new(first, Some(left), first, alice);
+    let mut branch = ProjectRecord::new(first, Some(left), first, alice).unwrap();
     branch.parents.push(right.to_hex()); // shared ancestor only on the second path
     vault.put_project(first, &branch, 3)?;
     vault.put_project(
         second,
-        &ProjectRecord::new(second, Some(right), second, bob),
+        &ProjectRecord::new(second, Some(right), second, bob).unwrap(),
         3,
     )?;
     vault.open_leader_chat(
@@ -1979,7 +1996,8 @@ fn secondary_parent_rule_narrows_cross_project_leader_chat() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope_project = right;
     vault.put_claim(&rule, &claim, TimeRange { start: 5, end: 5 }, 5)?;
     let refusal = vault

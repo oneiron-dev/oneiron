@@ -63,7 +63,8 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
         Some(vault.root_project()?),
         vault.root_project()?,
         host,
-    );
+    )
+    .expect("fixture");
     source.roster.push(holder.to_hex());
     vault.put_project(source_id, &source, 1)?;
     let room = EntityId::from_hex(&source.home_room)?;
@@ -185,7 +186,8 @@ fn conversion_without_open_task_uses_room_host_and_rejects_wrong_origin() -> Res
         Some(vault.root_project()?),
         vault.root_project()?,
         host,
-    );
+    )
+    .expect("fixture");
     vault.put_project(source_id, &source, 1)?;
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
@@ -230,7 +232,8 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
         Some(vault.root_project()?),
         vault.root_project()?,
         host,
-    );
+    )
+    .expect("fixture");
     source.roster.push(owner_id.to_hex());
     vault.put_project(source_id, &source, 1)?;
     let room = EntityId::from_hex(&source.home_room)?;
@@ -425,7 +428,8 @@ fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Re
         Some(vault.root_project()?),
         vault.root_project()?,
         host,
-    );
+    )
+    .expect("fixture");
     vault.put_project(source_id, &source, 1)?;
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
@@ -439,7 +443,8 @@ fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Re
         Some(source_id),
         EntityId::from_hex(&source.claims_scope_ref)?,
         host,
-    );
+    )
+    .expect("fixture");
     record.born_from = Some(host.to_hex()); // wrong type: PERSON, not MESSAGE
     record.origin_room = Some(room.to_hex());
     record.origin_thread = Some(thread.to_hex());
@@ -470,7 +475,8 @@ fn generic_project_write_proves_origin_and_prevents_duplicate_conversion() -> Re
         Some(source_id),
         EntityId::from_hex(&source.claims_scope_ref)?,
         host,
-    );
+    )
+    .expect("fixture");
     duplicate.born_from = record.born_from.clone();
     duplicate.origin_room = record.origin_room.clone();
     duplicate.origin_thread = record.origin_thread.clone();
@@ -589,7 +595,7 @@ fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.expect("root").leader)?;
     let source_id = EntityId::now();
-    let mut source = ProjectRecord::new(source_id, Some(root), root, host);
+    let mut source = ProjectRecord::new(source_id, Some(root), root, host).expect("fixture");
     source.roster.push(owner.to_hex());
     if leader_in_roster {
         source.roster.push(leader.to_hex());
@@ -744,7 +750,9 @@ fn disallowed_final_leader_rejects_with_no_writes() -> Result<()> {
             .is_err()
     );
     assert!(vault.project(rejected)?.is_none(), "no PROJECT");
-    let home_room = ProjectRecord::new(rejected, None, source_id, leader).home_room;
+    let home_room = ProjectRecord::new(rejected, None, source_id, leader)
+        .expect("fixture")
+        .home_room;
     assert!(
         vault.get(&EntityId::from_hex(&home_room)?)?.is_none(),
         "no home room"

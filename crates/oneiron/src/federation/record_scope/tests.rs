@@ -65,7 +65,8 @@ fn claim_birth_facet_remains_visible_after_value_edit() {
         0.8,
         crate::claim::ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let original = crate::claim::encode_claim_body(&claim).unwrap();
     vault
         .put_entity(&id, ENTITY_TYPE_CLAIM, time, at, &original)
