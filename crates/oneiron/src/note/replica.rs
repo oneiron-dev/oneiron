@@ -26,14 +26,7 @@ pub(super) fn admit_pin_disclosure(
         .ok_or_else(|| invalid("citation claim missing"))?;
     let identity = crate::federation::selector_range_of(crate::registry::ENTITY_TYPE_CLAIM)
         .ok_or_else(|| invalid("citation claim outside selector"))?;
-    let band_passes = match &position.bands {
-        crate::federation::FederationScopeBands::All => true,
-        crate::federation::FederationScopeBands::Some(bands) => {
-            bands.iter().any(|band| band.includes(identity))
-        }
-        crate::federation::FederationScopeBands::Bottom => false,
-    };
-    if !band_passes {
+    if !position.bands.contains(&identity) {
         return Err(invalid("citation claim outside selector"));
     }
     if let Some(world) = claim.world {

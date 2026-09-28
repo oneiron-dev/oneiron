@@ -985,7 +985,8 @@ fn seed_scoped_grant_vault(vault: &Vault) -> (EntityId, String, String) {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         body.source = Some(ClaimSource::UserStated);
         body
@@ -1122,7 +1123,8 @@ fn seed_retrieval_budget_vault(vault: &Vault) -> usize {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(ClaimSource::UserStated);
         vault
             .put_claim(&id, &body, occurred, occurred.start)
@@ -1227,7 +1229,8 @@ fn seed_scoped_pack_vault(vault: &Vault) -> (EntityId, EntityId) {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = world;
         body.source = Some(ClaimSource::UserStated);
         body

@@ -341,7 +341,7 @@ impl<'vault> SessionVault<'vault> {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Inferred);
         let data = crate::claim::encode_claim_body(&body)?;
 

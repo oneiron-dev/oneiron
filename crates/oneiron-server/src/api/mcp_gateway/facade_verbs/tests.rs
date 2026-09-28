@@ -61,6 +61,7 @@ fn navigation_projection_uses_indexed_body_while_live_edit_is_pending() {
             oneiron::ClaimApprovalStatus::Auto,
             oneiron::ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let at = |second| oneiron::TimeRange {
         start: second,

@@ -197,7 +197,7 @@ pub(crate) fn backdate_claim_gate_decisions(vault: &Vault, created_at: u64) -> c
 /// that replace the seeded default must preserve this floor before pinning a
 /// teacher, without accidentally replacing their own Gate policy rows.
 pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, rmpv::Value)>) {
-    let default = crate::gate::default_policy_manifest();
+    let default = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(default_entries) =
         rmpv::decode::read_value(&mut default.as_slice()).expect("seeded policy map")
     else {
@@ -236,7 +236,7 @@ pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
             ])
         })
         .collect();
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
     else {

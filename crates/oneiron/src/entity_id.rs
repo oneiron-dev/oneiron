@@ -73,6 +73,21 @@ impl EntityId {
         Self::from_bytes(number.to_be_bytes())
     }
 
+    /// Derives the deterministic id of `parts` under `domain`: the one rule for
+    /// every id an input fixes rather than a clock (minted ids are opaque ULIDs,
+    /// see [`EntityId::now`]).
+    ///
+    /// BLAKE3 in derive-key mode with `domain` as the context string, each part
+    /// prefixed by its u64 little-endian length, truncated to the first 16 bytes
+    /// and stamped with the RFC 9562 version-8 (custom) and variant bits. The
+    /// domains live in [`derived_domains`]. A non-UTF-8 or empty domain is
+    /// refused with [`Error::InvariantViolation`](crate::error::Error::InvariantViolation);
+    /// a result in the reserved sentinel range is refused with
+    /// [`Error::InvalidKey`](crate::error::Error::InvalidKey), never perturbed.
+    pub(crate) fn derive(domain: &[u8], parts: &[&[u8]]) -> crate::error::Result<Self> {
+        derive_with(domain, parts, is_reserved_entity_id_bytes)
+    }
+
     /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
     ///
     /// The all-zero, all-`0xFF`, and `[entity_type, 0xFF×15]` patterns are
@@ -252,6 +267,37 @@ pub(crate) fn parse_entity_id(
     Ok(EntityId(arr))
 }
 
+/// [`EntityId::derive`]'s body, with the reserved-range predicate as a seam.
+///
+/// The version and variant stamp keeps a derived id out of every reserved pattern
+/// today; the check still runs so a widened reservation fails closed instead of
+/// handing out a sentinel.
+fn derive_with(
+    domain: &[u8],
+    parts: &[&[u8]],
+    reserved: impl Fn(&[u8; ENTITY_ID_LEN]) -> bool,
+) -> crate::error::Result<EntityId> {
+    let context = std::str::from_utf8(domain)
+        .ok()
+        .filter(|context| !context.is_empty())
+        .ok_or(crate::error::Error::InvariantViolation(
+            "a derived-id domain must be non-empty UTF-8",
+        ))?;
+    let mut hasher = blake3::Hasher::new_derive_key(context);
+    for part in parts {
+        hasher.update(&(part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    let mut bytes = [0; ENTITY_ID_LEN];
+    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
+    bytes[6] = (bytes[6] & 0x0F) | 0x80;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    if reserved(&bytes) {
+        return Err(crate::error::Error::InvalidKey);
+    }
+    Ok(EntityId(bytes))
+}
+
 fn is_reserved_entity_id_bytes(bytes: &[u8; ENTITY_ID_LEN]) -> bool {
     if *bytes == [0x00; ENTITY_ID_LEN] || *bytes == [0xFF; ENTITY_ID_LEN] {
         return true;
@@ -366,9 +412,63 @@ fn hex_nibble(b: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        EntityId, FOREIGN_WORLD_ID_RANGE_START_BYTE, ForeignWorldId, LocalWorldId,
-        parse_presentation_id, parse_short_ref_syntax,
+        EntityId, FOREIGN_WORLD_ID_RANGE_START_BYTE, ForeignWorldId, LocalWorldId, derive_with,
+        derived_domains, parse_presentation_id, parse_short_ref_syntax,
     };
+    use crate::error::Error;
+
+    #[test]
+    fn every_derived_id_carries_version_eight() {
+        let domains = derived_domains::ALL;
+        let distinct = domains.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(distinct.len(), domains.len(), "every domain is its own");
+        for domain in domains {
+            for parts in [&[][..], &[&b"part"[..]][..], &[&b"a"[..], &b"b"[..]][..]] {
+                let id = EntityId::derive(domain, parts).unwrap();
+                let bytes = id.as_bytes();
+                assert_eq!(bytes[6] >> 4, 8, "{}", String::from_utf8_lossy(domain));
+                assert_eq!(bytes[8] >> 6, 0b10, "{}", String::from_utf8_lossy(domain));
+                assert_eq!(EntityId::derive(domain, parts).unwrap(), id);
+            }
+        }
+        // Parts are length-prefixed, so moving a byte across a boundary moves the id.
+        let domain = derived_domains::KEY_VALUE;
+        assert_ne!(
+            EntityId::derive(domain, &[b"ab", b"c"]).unwrap(),
+            EntityId::derive(domain, &[b"a", b"bc"]).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_reserved_derived_id_is_refused_with_an_error() {
+        let domain = b"oneiron test reserved derived id";
+        assert!(derive_with(domain, &[b"part"], |_| false).is_ok());
+        let refused = derive_with(domain, &[b"part"], |_| true);
+        assert!(matches!(refused, Err(Error::InvalidKey)), "{refused:?}");
+        for domain in [&b""[..], &[0xFF, 0xFE][..]] {
+            let refused = EntityId::derive(domain, &[b"part"]);
+            assert!(
+                matches!(refused, Err(Error::InvariantViolation(_))),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_nibble_stamp_remains_outside_entity_id() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let tree = crate::test_util::source_scan::SourceTree::read(&src);
+        let offenders = tree
+            .production_sources()
+            .filter(|(_, text)| text.contains("[6] = ("))
+            .map(|(path, _)| tree.relative(path))
+            .filter(|path| path != "entity_id.rs" && !path.starts_with("entity_id/"))
+            .collect::<Vec<_>>();
+        assert!(
+            offenders.is_empty(),
+            "derive ids through EntityId::derive, not a version stamp: {offenders:?}"
+        );
+    }
 
     #[test]
     fn ulid_text_roundtrips_and_orders_by_time_without_rejecting_legacy_ids() {
@@ -530,3 +630,5 @@ mod tests {
 
 /// Explicit opt-in hex codec for domain records; EntityId has no implicit wire ABI.
 pub(crate) mod serde_hex;
+
+pub(crate) mod derived_domains;

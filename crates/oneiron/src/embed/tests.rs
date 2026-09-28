@@ -93,7 +93,8 @@ fn claim_body_bytes(value: &str) -> Vec<u8> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 

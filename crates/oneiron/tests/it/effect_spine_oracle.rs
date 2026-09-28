@@ -1924,7 +1924,8 @@ mod one1891 {
             confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .expect("fixture");
         body.valid_from = Some(200);
         body.source = Some(ClaimSource::Observed);
         body
@@ -2574,7 +2575,8 @@ fn one1891_non_enrichment_and_missing_score_claims_are_refused() {
         0.95,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.valid_from = Some(200);
     vault
         .put_claim(&foreign, &body, one1891::at(200), 200)
@@ -2983,7 +2985,8 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.valid_from = Some(200);
     let error = vault
         .put_claim(&one1891::fixture_id(0xe2), &body, one1891::at(200), 200)

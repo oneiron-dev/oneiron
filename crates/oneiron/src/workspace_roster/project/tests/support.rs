@@ -32,7 +32,7 @@ pub(crate) fn signed_birth(
     let authority_key = crate::authority::AuthorityKey::Ed25519(key.verifying_key().to_bytes());
     vault.create_project_with_owner(
         id,
-        &ProjectRecord::new(id, Some(parent), parent, leader),
+        &ProjectRecord::new(id, Some(parent), parent, leader).unwrap(),
         writer,
         at,
         authority_key,

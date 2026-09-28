@@ -106,7 +106,7 @@ pub fn put_coreference_link(
         other_person,
         Value::from(status.wire()),
         status.approval(),
-    );
+    )?;
     let mut ops = vec![BatchOp::Edge {
         src: local_person,
         kind: EdgeKind::SameAs,
@@ -163,7 +163,7 @@ pub fn coreference_share_consent(
             Value::from(bytes_to_hex_lower(pact_id)),
         )]),
         ClaimApprovalStatus::Approved,
-    );
+    )?;
     let ops = coreference_claim_ops(claim_id, source, &body, occurred, learned_at)?;
     apply_coreference_ops(vault, ops)?;
     Ok(claim_id)
@@ -314,7 +314,7 @@ fn coreference_claim_body(
     target: EntityId,
     value: Value,
     approval: ClaimApprovalStatus,
-) -> ClaimBody {
+) -> Result<ClaimBody> {
     ClaimBody::new(
         predicate,
         ClaimSubject::Edge {

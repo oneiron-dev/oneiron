@@ -5,6 +5,7 @@ use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::SyncError;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TASK};
+use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
 use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
     map_contains_binary, map_insert_bytes,
@@ -18,6 +19,32 @@ use std::sync::Arc;
 fn test_vault() -> Arc<Vault> {
     let dir = tempfile::tempdir().unwrap();
     Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
+}
+
+/// One peer entity blob through the shared ingest ladder inside `wtxn`, keyed
+/// by its canonical hex id as Observer B keys it.
+fn ingest_peer_blob(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    tombstones: &loro::LoroMap,
+    id: &EntityId,
+    blob: &[u8],
+) -> Result<EntityStep> {
+    let ingest = IngestCtx::new(
+        vault,
+        "2026-03",
+        crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+        tombstones,
+    );
+    ingest_entity_in_txn(&ingest, wtxn, &id.to_hex(), Some(blob))
+}
+
+/// The typed rejection a refused ingest step carries.
+fn refusal(step: EntityStep) -> Error {
+    match step {
+        EntityStep::Quarantine(refusal) => refusal.err,
+        other => panic!("expected the ingest ladder to refuse the blob, got {other:?}"),
+    }
 }
 
 #[test]
@@ -366,15 +393,11 @@ fn authority_peer_burst_is_observed_and_never_rejected() -> Result<()> {
         let blob = authority_log_entity_blob(&entry, n + 1)?;
         let id = crate::authority::authority_log_entity_id(&entry)?;
         vault.with_write_txn(|wtxn| {
-            assert!(materialize_entity_blob_in_txn(
-                &vault,
-                wtxn,
-                &tombstones,
-                "2026-03",
-                &id.to_hex(),
-                &blob,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID
-            )?);
+            assert!(
+                ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob)?
+                    .written()
+                    .is_some()
+            );
             Ok(())
         })?;
         assert!(vault.get_raw(&id)?.is_some());
@@ -409,16 +432,8 @@ fn store_key_mismatched_authority_row_from_peer_is_rejected_without_quota_debit(
 
     let err = vault
         .with_write_txn(|wtxn| {
-            materialize_entity_blob_in_txn(
-                &vault,
-                wtxn,
-                &tombstones,
-                "2026-03",
-                &wrong_id.to_hex(),
-                &blob,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-            )
-            .map(|_| ())
+            let step = ingest_peer_blob(&vault, wtxn, &tombstones, &wrong_id, &blob)?;
+            Err::<(), _>(refusal(step))
         })
         .expect_err("a AUTHORITY_LOG row under a non-derived id must be refused at the peer door");
 
@@ -487,17 +502,9 @@ fn tombstone_before_authority_row_cannot_poison_materialization() -> Result<()> 
     doc.commit();
 
     vault.with_write_txn(|wtxn| {
-        let wrote = materialize_entity_blob_in_txn(
-            &vault,
-            wtxn,
-            &tombstones,
-            "2026-03",
-            &id.to_hex(),
-            &blob,
-            crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-        )?;
+        let wrote = ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob)?.written();
         assert!(
-            wrote,
+            wrote.is_some(),
             "a delete-protected authority row must materialize despite an earlier tombstone"
         );
         Ok(())
@@ -586,17 +593,9 @@ fn presquatted_revocation_id_still_admits_the_revocation() -> Result<()> {
         let doc = LoroDoc::new();
         let tombstones = doc.get_map("tombstones");
         vault.with_write_txn(|wtxn| {
-            let wrote = materialize_entity_blob_in_txn(
-                &vault,
-                wtxn,
-                &tombstones,
-                "2026-03",
-                &squatted_id.to_hex(),
-                &blob,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-            )?;
+            let wrote = ingest_peer_blob(&vault, wtxn, &tombstones, &squatted_id, &blob)?;
             assert!(
-                wrote,
+                wrote.written().is_some(),
                 "a fully validated revocation must dominate a cross-type squatter at its derived id"
             );
             Ok(())
@@ -671,17 +670,14 @@ fn forged_authority_row_cannot_displace_a_key_occupant() -> Result<()> {
     // assertion sees whatever side effects a rejected row actually leaves
     // behind.
     let kind = vault.with_write_txn(|wtxn| {
-        let err = materialize_entity_blob_in_txn(
+        // A forged authority row must fail validation before any dominance.
+        let err = refusal(ingest_peer_blob(
             &vault,
             wtxn,
             &tombstones,
-            "2026-03",
-            &target_id.to_hex(),
+            &target_id,
             &forged_blob,
-            crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-        )
-        .map(|_| ())
-        .expect_err("a forged authority row must fail validation before any dominance");
+        )?);
         assert!(
             crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
             "the forged row must classify as a remote rejection (commit-on-rejection), got {err:?}"
@@ -1729,7 +1725,7 @@ fn observer_b_rejects_and_scrubs_public_legacy_persona_facet() {
 /// CACHE of that Claim, and the Claim is truth") — byte-identical,
 /// instead of warn-skipping it at the public reserved-namespace gate.
 ///
-/// FAILS against pre-fix code: `materialize_entity_blob_in_txn` routed
+/// FAILS against pre-fix code: the bridge's entity ladder routed
 /// the type-0 Claim through the pre-rename replay door
 /// (`allow_reserved_predicate: false`), `validate_claim_body_bytes`
 /// rejected it with ReservedPredicate, and the observer warn-skipped it
@@ -1767,7 +1763,8 @@ fn observer_b_materializes_remote_edge_provenance_claim() {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.evidence = Some(crate::provenance::encode_actor_class_evidence(
         crate::edge::EdgeActorClass::Human,
     ));
@@ -2466,7 +2463,8 @@ fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
         1.0,
         ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let claim_body = crate::claim::encode_claim_body(&claim).unwrap();
     // This row is participant state for the sync-door test, not a local
     // claim-policy decision. Seed it through the replicated materialization
@@ -2568,7 +2566,8 @@ fn observer_b_revalidates_deferred_participant_before_reserved_edge_write() {
         1.0,
         ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let claim_body = crate::claim::encode_claim_body(&claim).unwrap();
 
     // Endpoint blobs exist in the CRDT before Observer B starts, so the
@@ -3826,15 +3825,9 @@ fn observer_b_refuses_replicated_message_bodies_before_any_mutation() -> Result<
     );
     vault.with_write_txn(|wtxn| {
         assert!(
-            materialize_entity_blob_in_txn(
-                &vault,
-                wtxn,
-                &tombstones,
-                "2026-03",
-                &ordinary_id.to_hex(),
-                &ordinary,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-            )?,
+            ingest_peer_blob(&vault, wtxn, &tombstones, &ordinary_id, &ordinary)?
+                .written()
+                .is_some(),
             "a non-MESSAGE peer row still replicates"
         );
         Ok(())
@@ -3888,17 +3881,12 @@ fn observer_b_refuses_replicated_message_bodies_before_any_mutation() -> Result<
         let id = EntityId::from_bytes([seed; 16])?;
         let blob = entity_blob(crate::registry::ENTITY_TYPE_MESSAGE, occurred, 9, &body);
         let kind = vault.with_write_txn(|wtxn| {
-            let err = materialize_entity_blob_in_txn(
-                &vault,
-                wtxn,
-                &tombstones,
-                "2026-03",
-                &id.to_hex(),
-                &blob,
-                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-            )
-            .map(|_| ())
-            .expect_err(why);
+            let step = ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob)?;
+            assert!(
+                matches!(step, EntityStep::Quarantine(_)),
+                "{why}, got {step:?}"
+            );
+            let err = refusal(step);
             assert!(
                 crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
                 "a refused peer MESSAGE must quarantine-and-continue, got {err:?}"
@@ -3926,7 +3914,8 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     let bad = EntityId::now();
     let good = EntityId::now();
     let target = EntityId::now();
-    let project = crate::workspace_roster::ProjectRecord::new(bad, Some(bad), root, leader);
+    let project =
+        crate::workspace_roster::ProjectRecord::new(bad, Some(bad), root, leader).unwrap();
     let room = EntityId::from_hex(&project.home_room).unwrap();
     let doc = LoroDoc::new();
     // Seed CRDT bodies before attaching Observer B. Only the edge delta below
@@ -4052,7 +4041,8 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     let project = EntityId::now();
     a.put_project(
         project,
-        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader),
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, leader)
+            .unwrap(),
         1,
     )?;
     let owner_id = EntityId::now();
@@ -4084,12 +4074,13 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     let lead_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
     b.put_project(
         root_a,
-        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, lead_b),
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, lead_b).unwrap(),
         1,
     )?;
     b.put_project(
         project,
-        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, lead_b),
+        &crate::workspace_roster::ProjectRecord::new(project, Some(root_a), root_a, lead_b)
+            .unwrap(),
         1,
     )?;
     b.put_entity(
@@ -4155,7 +4146,7 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
     let id = EntityId::now();
     source.put_project(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, leader),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, leader).unwrap(),
         1,
     )?;
     let human = EntityId::now();
@@ -4192,12 +4183,13 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
             Some(target_root),
             target_root,
             target_leader,
-        ),
+        )
+        .unwrap(),
         1,
     )?;
     target.put_project(
         id,
-        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, target_leader),
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, target_leader).unwrap(),
         1,
     )?;
     target.put_entity(
@@ -4282,7 +4274,8 @@ fn observer_b_bootstraps_signed_default_birth_and_edit_on_fresh_replica() -> cra
     let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
     b.put_project(
         root_a,
-        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader_b),
+        &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader_b)
+            .unwrap(),
         1,
     )?;
     b.put_entity(
@@ -4728,7 +4721,8 @@ fn invalid_deferred_participant_erasure_cannot_activate_verified_merge() {
                 1.0,
                 ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Active,
-            );
+            )
+            .unwrap();
             crate::claim::encode_claim_body(&claim).unwrap()
         } else {
             b"facet fixture".to_vec()
@@ -5067,7 +5061,7 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
     vault
         .put_project(
             child,
-            &ProjectRecord::new(child, Some(root), root, leader),
+            &ProjectRecord::new(child, Some(root), root, leader).unwrap(),
             1,
         )
         .unwrap();
@@ -5092,7 +5086,8 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
                 0.9,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange { start: 2, end: 2 },
             2,
         )

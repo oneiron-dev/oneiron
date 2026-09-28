@@ -119,7 +119,8 @@ fn scan_verdict_body(subject: EntityId, provider: &str, scanned_at: u64) -> Clai
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::Observed);
     body
 }

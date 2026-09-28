@@ -720,7 +720,7 @@ fn pptx_artifact_rejects_xlsx_relabel_that_would_skip_semantic_replay() {
 }
 
 fn author_limits_policy(vault: &Vault, limits: crate::edit_roundtrip::pptx::PptxOperationalLimits) {
-    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
     let mut manifest = rmpv::decode::read_value(&mut cursor).unwrap();
     let rmpv::Value::Map(entries) = &mut manifest else {
         unreachable!()

@@ -164,7 +164,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         0.1,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.salience = Some(0.9);
     vault.put_claim(&claim, &body, test_time_range(10, 10), CLAIM_LEARNED_AT)?;
 
@@ -176,7 +176,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     other_body.salience = Some(0.3);
     vault.put_claim(
         &other_claim,
@@ -193,7 +193,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         0.4,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     third_body.salience = Some(0.0);
     vault.put_claim(
         &third_claim,
@@ -293,7 +293,7 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         0.75,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.salience = Some(0.25);
     body.evidence = Some(rmpv::Value::Array(vec!["tn1".into()]));
     body.valid_from = Some(100);
@@ -338,7 +338,7 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         (
             "scopeFacetId".into(),
             rmpv::Value::Binary(
-                crate::claim::substrate_facet_id(subject)
+                crate::claim::substrate_facet_id(subject)?
                     .as_bytes()
                     .to_vec(),
             ),
@@ -367,7 +367,7 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&minimal_id, &minimal, test_time_range(1, 1), 2)?;
     let read = vault.get_claim(&minimal_id)?.expect("minimal claim");
     assert!(!read.stale, "absent stale must decode to false");
@@ -422,7 +422,7 @@ fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&claim, &body, test_time_range(1, 1), 2)?;
 
     // claim_of (u8 = 5) Claim → subject, structural 12-byte value, present
@@ -462,7 +462,7 @@ fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let err = vault
         .put_claim(&orphan, &body, test_time_range(1, 1), 2)
         .expect_err("nonexistent subject must be rejected");
@@ -506,7 +506,7 @@ fn put_claim_edge_ref_subject_validates_shape_without_claim_of() -> Result<()> {
         0.5,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&claim, &body, test_time_range(1, 1), 2)?;
 
     let read = vault.get_claim(&claim)?.expect("edge-subject claim");
@@ -670,6 +670,7 @@ fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
                 "scopeFacetId".into(),
                 rmpv::Value::Binary(
                     crate::claim::substrate_facet_id(subj_id)
+                        .unwrap()
                         .as_bytes()
                         .to_vec(),
                 ),
@@ -884,7 +885,7 @@ fn put_claim_typed_api_rejects_invalid_confidence() -> Result<()> {
             bad_conf,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         let err = vault
             .put_claim(&id, &body, test_time_range(1, 1), 2)
             .expect_err("invalid conf must be rejected");
@@ -966,7 +967,7 @@ fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Resu
             ("scopeRelationshipId".into(), rmpv::Value::from("all")),
             (
                 "scopeFacetId".into(),
-                rmpv::Value::Binary(crate::claim::substrate_facet_id(a).as_bytes().to_vec()),
+                rmpv::Value::Binary(crate::claim::substrate_facet_id(a)?.as_bytes().to_vec()),
             ),
             (
                 "scopeProjectId".into(),
@@ -1099,7 +1100,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
             ("scopeRelationshipId".into(), rmpv::Value::from("all")),
             (
                 "scopeFacetId".into(),
-                rmpv::Value::Binary(crate::claim::substrate_facet_id(a).as_bytes().to_vec()),
+                rmpv::Value::Binary(crate::claim::substrate_facet_id(a)?.as_bytes().to_vec()),
             ),
             (
                 "scopeProjectId".into(),

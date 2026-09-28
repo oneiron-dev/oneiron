@@ -398,7 +398,8 @@ fn resolution_never_rewrites_a_claim_subject() {
                 0.9,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: 100,
                 end: 100,

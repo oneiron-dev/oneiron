@@ -143,7 +143,8 @@ fn seed_source(
 }
 fn install_policy(vault: &Vault, actor: EntityId, allow_send: bool) {
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap();
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .unwrap();
     let Value::Map(ref mut entries) = manifest else {
         panic!("default manifest map");
     };

@@ -919,7 +919,8 @@ fn merge_apply_writes_shell_edges_event_record_and_receipt() {
         1.0,
         ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(
             &note_id,
@@ -1084,7 +1085,8 @@ fn merge_apply_rejects_shells_facets_missing_and_non_structural_participants() {
         1.0,
         ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(
             &claim_id,
@@ -1573,10 +1575,10 @@ fn facet_and_assert_distinct_doors_mint_their_own_effects() {
     assert_eq!(event_count(&vault), 2);
     let all_masks = vault.facets_of(&other).expect("facets of");
     assert_eq!(all_masks.len(), 2);
-    assert!(all_masks.contains(&crate::claim::substrate_facet_id(other)));
+    assert!(all_masks.contains(&crate::claim::substrate_facet_id(other).unwrap()));
     let masks: Vec<_> = all_masks
         .into_iter()
-        .filter(|mask| *mask != crate::claim::substrate_facet_id(other))
+        .filter(|mask| *mask != crate::claim::substrate_facet_id(other).unwrap())
         .collect();
     assert_eq!(masks.len(), 1);
     assert_eq!(
@@ -3605,7 +3607,8 @@ fn write_note_claim(vault: &Vault, claim: EntityId, subject: EntityId) -> Entity
                 0.9,
                 ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: 100,
                 end: 100,
@@ -4924,6 +4927,7 @@ fn distinct_from_claim_structure_pins_the_pair_and_its_subject() {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     validate_distinct_from_claim_structure(&body(pair.0, distinct_claim_value(pair)))
         .expect("the normalized shape is the valid one");

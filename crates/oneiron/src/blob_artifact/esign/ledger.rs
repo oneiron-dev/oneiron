@@ -141,7 +141,7 @@ pub(super) fn append(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Observed);
     vault.put_reserved_claim_in_txn(
         txn,

@@ -726,7 +726,7 @@ mod revision_tests {
         assert!(slate_expands(&old, &header, &default));
         assert!(slate_expands(&header, &new, &default));
         // A trusted holder row narrows the shipped carry table to empty.
-        let data = crate::gate::default_policy_manifest();
+        let data = crate::gate::default_policy_manifest().unwrap();
         let mut cursor = std::io::Cursor::new(data);
         let rmpv::Value::Map(mut entries) =
             rmpv::decode::read_value(&mut cursor).expect("policy map")
@@ -772,7 +772,7 @@ mod revision_tests {
                 .expect("default policy class row")
                 .1 = value;
         }
-        let data = crate::gate::default_policy_manifest();
+        let data = crate::gate::default_policy_manifest().unwrap();
         let mut cursor = std::io::Cursor::new(data);
         let rmpv::Value::Map(mut entries) =
             rmpv::decode::read_value(&mut cursor).expect("default policy map")

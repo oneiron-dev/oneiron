@@ -86,6 +86,7 @@ fn fact(unit: EntityId) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 #[test]

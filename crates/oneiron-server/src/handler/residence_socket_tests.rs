@@ -702,7 +702,8 @@ impl WorldResidence {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         home.put_claim(&claim, &body, at, now).unwrap();
         let server = Arc::new(

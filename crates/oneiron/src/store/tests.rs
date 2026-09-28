@@ -173,7 +173,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(20, [0, 2, 0, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(21, [0, 2, 0, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
@@ -5322,7 +5322,7 @@ fn retention_manifest_with_scopes(
     precedence: &str,
     rows: Vec<rmpv::Value>,
 ) -> Result<Vec<u8>> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: rmpv::Value = rmpv::decode::read_value(&mut bytes.as_slice())
         .map_err(|_| Error::CorruptedIndex("test policy manifest"))?;
     let rmpv::Value::Map(ref mut fields) = manifest else {
@@ -5375,7 +5375,7 @@ fn retention_scope_row(
 }
 
 fn retention_manifest_with_horizon(seconds: u64) -> Result<Vec<u8>> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut manifest: rmpv::Value = rmpv::decode::read_value(&mut bytes.as_slice())
         .map_err(|_| Error::CorruptedIndex("test policy manifest"))?;
     let rmpv::Value::Map(ref mut fields) = manifest else {
@@ -5893,7 +5893,7 @@ fn gate_retention_narrow_edit_targets_trusted_owner_not_untrusted_default() -> R
     )?;
     let default_id = crate::gate::default_policy_manifest_id()?;
     let mut untrusted: rmpv::Value =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .map_err(|_| Error::CorruptedIndex("test manifest"))?;
     let rmpv::Value::Map(ref mut entries) = untrusted else {
         unreachable!("map")

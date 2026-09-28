@@ -334,7 +334,7 @@ fn captured_knowledge() -> Result<(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&claim, &body, at, 10)?;
     vault.put_agent_definition(
         &child,
@@ -505,7 +505,7 @@ fn cyclic_archive_input_references_retire_payloads_without_recursing_through_age
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         let knowledge = ExportEntity {
             short_ref: None,
             id: assets[1 - index].to_hex(),

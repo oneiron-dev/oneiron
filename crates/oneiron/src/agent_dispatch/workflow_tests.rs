@@ -648,7 +648,7 @@ fn workflow_child_project_transition_and_later_release_recheck_live_ancestor() -
     let child = EntityId::now();
     vault.put_project(
         child,
-        &crate::workspace_roster::ProjectRecord::new(child, Some(root), root, leader),
+        &crate::workspace_roster::ProjectRecord::new(child, Some(root), root, leader).unwrap(),
         1,
     )?;
     let person = EntityId::now();

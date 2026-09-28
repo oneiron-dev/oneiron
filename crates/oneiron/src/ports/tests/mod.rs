@@ -48,7 +48,7 @@ fn a_port_entity_put_passes_the_same_gates_as_a_batch_put() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     claim.source = Some(ClaimSource::UserStated);
     let row = record(ENTITY_TYPE_CLAIM, &crate::claim::encode_claim_body(&claim)?);
 

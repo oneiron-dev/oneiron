@@ -103,7 +103,7 @@ fn setup_with_secret(
     // Keep the fixture's established normal-criticality gate posture while
     // supplying the seeded pack-install rows that local admission now reads.
     let (dir, vault) = crate::test_util::open_test_vault_with(config);
-    let defaults = crate::gate::default_policy_manifest();
+    let defaults = crate::gate::default_policy_manifest().unwrap();
     let mut manifest = rmpv::decode::read_value(&mut defaults.as_slice())
         .map_err(|_| crate::Error::InvariantViolation("decode test policy"))?;
     let rmpv::Value::Map(entries) = &mut manifest else {

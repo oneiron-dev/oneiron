@@ -61,7 +61,7 @@ fn operation_effect_parts(vault: &crate::Vault) -> Result<(ClaimBody, WriteEnvel
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.evidence = Some(crate::write_envelope::write_envelope_evidence(
         &envelope, None,
     ));
@@ -272,7 +272,7 @@ fn commitment_projection_gate_input(
 }
 
 fn resolved_default_policy_manifest(vault: &crate::Vault) -> Result<PolicyManifestResolution> {
-    put_policy_manifest_bytes(vault, test_id(0xC9), &default_policy_manifest())?;
+    put_policy_manifest_bytes(vault, test_id(0xC9), &default_policy_manifest()?)?;
     resolve(vault)
 }
 
@@ -289,7 +289,7 @@ fn commitment_projection_envelope_reaches_auto_under_default_manifest() -> Resul
     let (_tmp, vault) = temp_vault();
     let policy = resolved_default_policy_manifest(&vault)?;
 
-    let actor = crate::commitment_schedule::commitment_projection_actor();
+    let actor = crate::commitment_schedule::commitment_projection_actor()?;
     assert_eq!(
         actor.actor_class(),
         EdgeActorClass::System,
@@ -330,7 +330,7 @@ fn commitment_projection_grant_is_actor_keyed_not_class_wide() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let policy = resolved_default_policy_manifest(&vault)?;
 
-    let mut perturbed = *crate::commitment_schedule::commitment_projection_actor()
+    let mut perturbed = *crate::commitment_schedule::commitment_projection_actor()?
         .entity_ref()
         .as_bytes();
     perturbed[0] ^= 0x01;
@@ -365,7 +365,7 @@ fn generated_source_trust_row_pends_one_band_above_the_cap() -> Result<()> {
     let policy = resolved_default_policy_manifest(&vault)?;
 
     let input = commitment_projection_gate_input(
-        &crate::commitment_schedule::commitment_projection_actor()
+        &crate::commitment_schedule::commitment_projection_actor()?
             .entity_ref()
             .to_hex(),
         COMMITMENT_PROJECTION_CLAIM_BAND + 1,
@@ -388,7 +388,7 @@ fn generated_source_trust_row_pends_one_band_above_the_cap() -> Result<()> {
 /// leaving a dangling row that silently re-aims (or drops) the grant.
 #[test]
 fn default_manifest_system_row_pins_the_commitment_projection_actor() {
-    let data = default_policy_manifest();
+    let data = default_policy_manifest().unwrap();
     let mut cursor = Cursor::new(data.as_slice());
     let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
         unreachable!("the default manifest is a map");
@@ -430,6 +430,7 @@ fn default_manifest_system_row_pins_the_commitment_projection_actor() {
         "the default manifest must grant the commitment projection actor authority",
     );
     let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()
+        .unwrap()
         .entity_ref()
         .to_hex();
     for row in granting_system_rows {
@@ -459,7 +460,7 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
             .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
     }
 
-    let data = default_policy_manifest();
+    let data = default_policy_manifest()?;
     let mut cursor = Cursor::new(data.as_slice());
     let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
         unreachable!("the default manifest is a map");
@@ -483,7 +484,7 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
         unreachable!("the generated row is a map");
     };
 
-    let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()
+    let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()?
         .entity_ref()
         .to_hex();
     let bound = field(fields, ACTOR_REF_KEY);
@@ -503,7 +504,7 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
     // write from any other actor pends on source trust.
     let (_tmp, vault) = temp_vault();
     let policy = resolved_default_policy_manifest(&vault)?;
-    let mut other = *crate::commitment_schedule::commitment_projection_actor()
+    let mut other = *crate::commitment_schedule::commitment_projection_actor()?
         .entity_ref()
         .as_bytes();
     other[0] ^= 0x01;

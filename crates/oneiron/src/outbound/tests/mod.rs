@@ -560,7 +560,8 @@ fn quiet_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }
@@ -591,7 +592,8 @@ fn calendar_busy_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }
@@ -622,7 +624,8 @@ fn channel_delivery_window_claim_body(subject_seed: u8, channel: &str, reason: &
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }

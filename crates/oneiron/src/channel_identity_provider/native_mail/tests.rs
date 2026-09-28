@@ -32,7 +32,7 @@ fn set_holder_mail_policy(
     tiers: &[&str],
     complaint_cap: f64,
 ) -> Result<()> {
-    let mut bytes = crate::gate::default_policy_manifest();
+    let mut bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("seeded manifest decodes")
     else {
@@ -310,7 +310,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
         updated_at: 10,
     };
     let mut warmup_claim = None;
-    for (n, mut body) in reputation.claim_bodies(id).into_iter().enumerate() {
+    for (n, mut body) in reputation.claim_bodies(id).unwrap().into_iter().enumerate() {
         if body.approval == crate::claim::ClaimApprovalStatus::Proposed {
             continue;
         }

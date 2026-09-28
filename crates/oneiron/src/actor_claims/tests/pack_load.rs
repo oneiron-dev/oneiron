@@ -83,7 +83,8 @@ fn terminal_receipt_keeps_index_pull_and_actor_claim_in_load_order() -> Result<(
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     prior.source = Some(crate::claim::ClaimSource::Observed);
     prior.evidence = Some(Value::from("fixture:provider"));
     vault

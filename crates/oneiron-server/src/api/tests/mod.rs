@@ -418,7 +418,8 @@ pub(super) fn seed_active_claim(
         0.9,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     server
         .vault
         .put_claim(
@@ -911,7 +912,8 @@ fn seed_disclosure_claim_in_world(
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = Some(world);
     // Tier B is required here: otherwise the tier check rejects this claim
     // before the test can exercise the contact's world clearance.
@@ -1180,7 +1182,8 @@ pub(super) fn seed_world_claim(
         0.8,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     server
         .vault

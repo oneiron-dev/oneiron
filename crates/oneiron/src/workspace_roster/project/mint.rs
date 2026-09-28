@@ -156,7 +156,7 @@ impl Vault {
         let id = EntityId::now();
         let header_turn = EntityId::now();
         let header_message = EntityId::now();
-        let room = super::home_room_id(id);
+        let room = super::home_room_id(id)?;
         let header = WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(header_turn.to_hex()),
@@ -270,7 +270,7 @@ impl Vault {
             Some(root_id),
             EntityId::from_hex(&root.claims_scope_ref).map_err(|_| invalid())?,
             leader,
-        );
+        )?;
         project.board = board.iter().map(EntityId::to_hex).collect();
         project.roster.extend(project.board.iter().cloned());
         if !project.roster.contains(&owner.actor().to_hex()) {

@@ -1823,14 +1823,11 @@ fn suppression_carrier_fixture(divergent: bool) -> (EntityId, Vec<u8>) {
         policy_trace: Vec::new(),
         fields,
     };
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.outbound.receipt_record.v1\0");
-    hash.update(&intent_id);
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x70;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let id = EntityId::from_bytes(bytes).expect("fixture id");
+    let id = EntityId::derive(
+        crate::entity_id::derived_domains::OUTBOUND_RECEIPT_RECORD,
+        &[&intent_id],
+    )
+    .expect("fixture id");
     let body = rmp_serde::to_vec_named(&SuppressionCarrierFixture {
         intent_id,
         receipt: &receipt,

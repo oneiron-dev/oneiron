@@ -1,7 +1,8 @@
 use super::*;
 use crate::entity_id::EntityId;
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, SelectorRange, encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, SelectorRange,
+    base_world_axis, encode_federation_pact_scope,
 };
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::temporal::TimeRange;

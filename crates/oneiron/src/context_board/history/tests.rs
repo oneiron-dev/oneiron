@@ -136,7 +136,8 @@ fn generic_claim_door_cannot_forge_board_authority_or_frontier() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.valid_from = Some(1);
     assert!(matches!(
         vault.put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 2 }, 1),
@@ -164,7 +165,8 @@ fn board_refuses_claims_withdrawn_before_recording_or_after_the_turn() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
@@ -439,7 +441,8 @@ fn board_history_reads_return_their_receipt() {
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )

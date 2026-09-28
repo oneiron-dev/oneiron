@@ -365,7 +365,7 @@ fn write_skill_edit_cost(
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(evidence.clone());
         body.scope = Some(edit_cost_scope(&scope));
         body.valid_from = Some(at);

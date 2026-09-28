@@ -136,7 +136,7 @@ impl RunTreeAdapter<'_> {
         handle: &str,
         step_key: &str,
     ) -> Result<RunAskWait> {
-        if !std::ptr::eq(ctx.vault, self.vault)
+        if ctx.vault.vault_id() != self.vault.vault_id()
             || ctx.run_id.is_none()
             || handle.is_empty()
             || step_key.is_empty()
@@ -221,7 +221,7 @@ impl RunTreeAdapter<'_> {
         handle: &str,
         step_key: &str,
     ) -> Result<Option<RunAsk>> {
-        if !std::ptr::eq(ctx.vault, self.vault) || ctx.run_id.is_none() {
+        if ctx.vault.vault_id() != self.vault.vault_id() || ctx.run_id.is_none() {
             return Err(Error::InvalidConfig("invalid ask wait context".into()));
         }
         let mut txn = self.vault.store.env.write_txn()?;

@@ -11,7 +11,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::ExportBody;
 use crate::temporal::TimeRange;
@@ -502,6 +503,9 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
+        ENTITY_TYPE_CONVERSATION => crate::workspace_roster::project_room_dependency(bytes)
+            .into_iter()
+            .collect(),
         ENTITY_TYPE_WORKFLOW => {
             let definition = crate::agent_def::workflow::decode_workflow(bytes)?;
             definition
@@ -536,9 +540,20 @@ pub(super) fn import_edge(
         if same {
             return Ok(());
         }
-        // A newly imported claim's typed door creates its own ClaimOf link.
-        // Restoring this exported public link's original timestamp is safe.
-        if kind != EdgeKind::ClaimOf || !inserted.contains(&source) {
+        // A newly imported claim's typed door creates its own ClaimOf link, and
+        // a newly imported project's projector its damped parent membership.
+        // Restoring this exported link's original timestamp is safe.
+        let door_minted = inserted.contains(&source)
+            && match kind {
+                EdgeKind::ClaimOf => true,
+                EdgeKind::BelongsTo => {
+                    existing.weight == edge.weight
+                        && crate::workspace_roster::is_project_entity(&vault.store, wtxn, source)?
+                        && crate::workspace_roster::is_project_entity(&vault.store, wtxn, target)?
+                }
+                _ => false,
+            };
+        if !door_minted {
             return Err(invalid(
                 "import edge collides with different stored metadata",
             ));

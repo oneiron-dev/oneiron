@@ -127,14 +127,14 @@ pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<V
 
 // One row per default policy entry: the manifest is a data table, and splitting it would scatter one manifest.
 #[allow(clippy::too_many_lines)]
-pub(crate) fn default_policy_manifest() -> Vec<u8> {
+pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
     // commitment projector's actor id is derived, not authored, so the row is
     // computed here rather than pinned as a hex literal. If the domain constant
     // behind the derivation ever moves, the row dangles and mints pend —
     // fail-closed, never silently re-aimed.
-    let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
+    let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -884,15 +884,15 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
 
 /// The shipped native-mail dial is one vault row; hosts narrow it with their
 /// own vault, holder or identity rows in the same manifest key.
-fn encode_with_native_mail_policy(mut entries: Vec<(Value, Value)>) -> Vec<u8> {
+fn encode_with_native_mail_policy(mut entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
     entries.push((
         Value::from(super::mail_policy::MANIFEST_KEY),
         Value::Array(vec![super::mail_policy::default_row()]),
     ));
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries))
-        .expect("encode default policy manifest");
-    data
+        .map_err(|_| Error::InvariantViolation("default policy manifest encoding"))?;
+    Ok(data)
 }
 
 /// Shipped project-room thread liveness data: base budgets, the vault

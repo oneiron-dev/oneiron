@@ -89,7 +89,7 @@ fn authored_large_ceilings_are_valid_and_precedence_is_evaluated() {
 
 #[test]
 fn manifest_precedence_row_is_explicit_and_unknown_value_fails_closed() {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     assert!(crate::gate::decode::decode_policy_manifest(&bytes).is_some());
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
         panic!("manifest map")

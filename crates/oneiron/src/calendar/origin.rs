@@ -228,7 +228,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         // Recorded projector fact, not a user-authored assertion about origin.
         claim.evidence = Some(Value::Map(vec![
             (Value::from("kind"), Value::from("calendar_projector")),

@@ -191,7 +191,8 @@ fn source_trust_claim(source: ClaimSource) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(source);
     body
 }
@@ -475,7 +476,8 @@ fn followed_world_rejects_foreign_payload_at_update_and_both_bulk_doors() {
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         vault.put_claim(&claim, &body, occurred, at).unwrap();
     }
@@ -583,7 +585,8 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     source
         .put_claim(
@@ -622,7 +625,8 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     same_body.world = Some(world);
     source
         .put_claim(
@@ -669,7 +673,8 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         other_body.world = Some(other_world);
         source
             .put_claim(

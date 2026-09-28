@@ -513,6 +513,7 @@ fn claim_body(text: &str) -> Vec<u8> {
                 rmpv::Value::from("scopeFacetId"),
                 rmpv::Value::Binary(
                     oneiron::claim::substrate_facet_id(subject)
+                        .unwrap()
                         .as_bytes()
                         .to_vec(),
                 ),

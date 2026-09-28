@@ -642,7 +642,8 @@ fn deleting_world_claim_preserves_its_world_month_tombstone_address() -> crate::
         1.0,
         crate::claim::ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     vault.delete_entity_with_reason(&claim, DeleteReason::UserHardDelete)?;

@@ -143,7 +143,8 @@ fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
         0.8,
         oneiron::claim::ClaimApprovalStatus::Proposed,
         oneiron::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let body = Value::Map(vec![
         (Value::from("pred"), Value::from(claim.predicate.as_str())),
         (Value::from("val"), claim.value),

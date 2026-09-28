@@ -10,7 +10,8 @@ fn map_mut(value: &mut rmpv::Value) -> &mut Vec<(rmpv::Value, rmpv::Value)> {
 }
 
 fn with_row(default: &str, fallback: &str) -> Vec<u8> {
-    let mut manifest: rmpv::Value = rmp_serde::from_slice(&default_policy_manifest()).unwrap();
+    let mut manifest: rmpv::Value =
+        rmp_serde::from_slice(&default_policy_manifest().unwrap()).unwrap();
     let fields = map_mut(&mut manifest);
     let row = fields
         .iter_mut()
@@ -35,7 +36,7 @@ fn with_row(default: &str, fallback: &str) -> Vec<u8> {
 
 #[test]
 fn shipped_row_decodes_and_owner_replacement_changes_the_fallback() -> Result<()> {
-    let shipped = decode_policy_manifest(&default_policy_manifest()).unwrap();
+    let shipped = decode_policy_manifest(&default_policy_manifest().unwrap()).unwrap();
     let row = shipped.project_collaboration.unwrap();
     assert_eq!(row.leader_chat_default, LeaderChatDefault::Allow);
     assert_eq!(row.widen_ask_fallback, ProjectWidenAskFallback::Hold);

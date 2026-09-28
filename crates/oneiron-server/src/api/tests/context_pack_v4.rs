@@ -733,7 +733,8 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
             0.9,
             oneiron::ClaimApprovalStatus::Auto,
             oneiron::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.scope = Some(rmpv::Value::Map(vec![(
             rmpv::Value::from("sensitivity"),
             rmpv::Value::from("public"),
@@ -824,7 +825,8 @@ async fn context_board_feeds_explicit_subjects_to_the_l2_producer() {
         0.9,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     assert!(matches!(
         server.vault.put_claim(
             &user_claim,

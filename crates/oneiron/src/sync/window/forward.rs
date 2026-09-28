@@ -40,6 +40,10 @@ struct RematLedger {
     terminal_quarantines: Vec<EntityId>,
     pending_entity_dependencies: HashSet<EntityId>,
     pending_dag_parent_sources: HashSet<EntityId>,
+    /// Delete-protected rows the entity pass admitted: the ingest step already
+    /// refused every tombstone naming them, so the tombstone pass records
+    /// each such tombstone once, not twice.
+    protected_admissions: HashSet<EntityId>,
     count: u32,
 }
 
@@ -167,6 +171,7 @@ fn forward_with_recovery(
         terminal_quarantines: Vec::new(),
         pending_entity_dependencies: HashSet::new(),
         pending_dag_parent_sources: HashSet::new(),
+        protected_admissions: HashSet::new(),
         count: 0u32,
     };
 

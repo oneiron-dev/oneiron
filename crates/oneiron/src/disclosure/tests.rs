@@ -42,7 +42,8 @@ fn claim_with_scope(predicate: &str, scope: Option<Value>) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.scope = scope;
     body
 }
@@ -488,7 +489,8 @@ fn disclosure_claim_family_dispatch_and_structure() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     assert!(validate_disclosure_claim_structure(&tier).is_ok());
     let mut bad_tier = tier.clone();
     bad_tier.value = Value::from("tier_b");
@@ -693,7 +695,7 @@ fn admits_claims_by_record_scope_not_subject_allowlist() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     fact.scope = Some(sensitivity_scope("public"));
     let base_fact = test_id(0x84);
     vault.put_claim(&base_fact, &fact, TimeRange { start: 1, end: 1 }, 1)?;
@@ -817,7 +819,7 @@ fn mirror_write_door_refuses_predicates_outside_the_disclosure_family() -> Resul
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         let mut wtxn = vault.store.env.write_txn()?;
         let err = vault
             .put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &body, 100)
@@ -834,7 +836,7 @@ fn mirror_write_door_refuses_predicates_outside_the_disclosure_family() -> Resul
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let mut wtxn = vault.store.env.write_txn()?;
     vault.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &body, 100)?;
     wtxn.commit()?;
@@ -859,7 +861,7 @@ fn clear_tier_a_leaves_a_foreign_claim_squatting_the_mirror_id_untouched() -> Re
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&claim_id, &squatter, TimeRange { start: 1, end: 1 }, 1)?;
 
     vault.clear_disclosure_tier_a(&marked, 200)?;

@@ -165,8 +165,8 @@ impl HostSelfDispatcher<'_> {
         // default when the write applies.
         let gate_body = candidate.clone().into_claim_body(
             &envelope,
-            crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
-        );
+            crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+        )?;
         let authored_rules = crate::dreamer_consolidation::prepare_authored_claim(
             &gate_body.predicate,
             &gate_body.value,
@@ -254,7 +254,7 @@ impl HostSelfDispatcher<'_> {
             ClaimSubject::Entity(call.old_id),
             Value::Binary(call.new_id.as_bytes().to_vec()),
             &envelope,
-        );
+        )?;
 
         let supersedes_weight =
             EdgeKind::Supersedes
@@ -271,7 +271,7 @@ impl HostSelfDispatcher<'_> {
             },
             Value::F32(supersedes_weight),
             &envelope,
-        );
+        )?;
         let edge_gate_id = edge_operation_gate_id(
             SelfEffect::MemorySupersedeClaim,
             call.new_id,
@@ -329,7 +329,7 @@ impl HostSelfDispatcher<'_> {
             },
             Value::F32(call.weight),
             &envelope,
-        );
+        )?;
         let gate_id =
             edge_operation_gate_id(SelfEffect::MemoryPutEdge, call.src, call.kind, call.tgt)?;
         match &self.storage {

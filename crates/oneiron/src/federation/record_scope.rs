@@ -138,7 +138,7 @@ pub(crate) fn stamp_put(
         };
         (default_stamp(kind, facet), facet)
     } else {
-        let facet = crate::claim::substrate_facet_id(id);
+        let facet = crate::claim::substrate_facet_id(id)?;
         (default_stamp(kind, facet), facet)
     };
     // A locally authored RELATIONSHIP may declare its sensitivity just as a
@@ -239,7 +239,7 @@ pub(crate) fn stamp_leader_project(
     ) {
         return Err(Error::InvalidEntityType(kind));
     }
-    let facet = crate::claim::substrate_facet_id(id);
+    let facet = crate::claim::substrate_facet_id(id)?;
     let birth = default_stamp(kind, facet);
     let mut scope = birth.clone();
     scope.audience = singleton(ScopeId(project));
@@ -290,7 +290,7 @@ fn stored_scope(
     } else if carries_birth_stamp(kind) {
         birth_facet(store, txn, id)?
     } else {
-        Some(crate::claim::substrate_facet_id(id))
+        Some(crate::claim::substrate_facet_id(id)?)
     };
     if facet.is_none_or(|facet| stamp.birth_facet != *facet.as_bytes()) {
         return Ok(None);

@@ -258,7 +258,7 @@ fn explicit_child_override_releases_parent_but_stays_below_vault() -> Result<()>
 #[test]
 fn shipped_values_and_row_edits_change_behaviour_without_code_changes() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x36), &default_policy_manifest())?;
+    put_policy_manifest_bytes(&vault, test_id(0x36), &default_policy_manifest().unwrap())?;
     let policy = resolve(&vault)?;
     assert_eq!(policy.proposal_check_threshold(), 1_000_000);
     assert_eq!(
@@ -271,7 +271,7 @@ fn shipped_values_and_row_edits_change_behaviour_without_code_changes() -> Resul
             .row_ref,
         "default.comm_opt_out_posture"
     );
-    let mut modified = default_policy_manifest();
+    let mut modified = default_policy_manifest().unwrap();
     rewrite_policy_manifest_entries(&mut modified, |entries| {
         let (_, Value::Array(rows)) = entries
             .iter_mut()

@@ -171,7 +171,7 @@ fn code_run_read_action_returns_the_scoped_read_receipt() -> Result<()> {
         1.0,
         crate::ClaimApprovalStatus::Approved,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )?;
     about.source = Some(crate::ClaimSource::UserStated);
     vault.put_claim(&target, &about, TimeRange { start: 1, end: 1 }, 1)?;
     let actor = WriteActor::new(actor, EdgeActorClass::Agent);

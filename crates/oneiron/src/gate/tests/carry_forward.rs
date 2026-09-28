@@ -163,7 +163,8 @@ fn generic_and_raw_doors_cannot_auto_commit_low_confidence_care() -> Result<()> 
         FORWARD_CONFIDENCE_FLOOR,
         ClaimApprovalStatus::Auto,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     raw.source = Some(crate::ClaimSource::UserStated);
     let raw_error = vault
         .put_claim(&raw_id, &raw, test_time(10), 10)
@@ -234,7 +235,8 @@ pub(super) fn park_forward_care(
         FORWARD_CONFIDENCE_FLOOR,
         ClaimApprovalStatus::Proposed,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.evidence = Some(precommit_evidence(vec![subject]));
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(vault, &body, test_id(0x40), run)?;
@@ -533,7 +535,8 @@ fn manifest_floor_changes_typed_generic_and_raw_admission() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Auto,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(crate::ClaimSource::UserStated);
     let err = vault
         .put_claim(&raw_id, &body, test_time(10), 10)
@@ -698,7 +701,7 @@ fn replace_seed_confidence(
     precedence: &str,
     now: u64,
 ) -> Result<()> {
-    let mut data = crate::gate::default_policy_manifest();
+    let mut data = crate::gate::default_policy_manifest().unwrap();
     rewrite_policy_manifest_entries(&mut data, |entries| {
         let encoded = confidence_manifest(care, precedence, Vec::new());
         let Value::Map(config) = rmpv::decode::read_value(&mut encoded.as_slice()).expect("policy")
