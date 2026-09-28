@@ -627,11 +627,8 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
-                let controls = crate::claim::history_store::retire_machine_history_for_delete(
-                    store, wtxn, id,
-                )?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
-                    deindex_entity(store, wtxn, &id)?;
+                    deindex_entity_with_machine_history(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
                     store.let_go_pending_gate_consent_in_txn(wtxn, &id, mutation_recorded_at)?;
@@ -642,13 +639,6 @@ pub(super) fn apply_ops_with_origin(
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
                 had_graph_mutation |= deleted_graph_state;
                 had_vector_mutation |= had_vector;
-                for control in controls {
-                    let (_existed, had_vector, deleted_graph_state, neighbors) =
-                        deindex_entity(store, wtxn, &control)?;
-                    ppr::invalidate_ppr_for_delete(store, wtxn, &control, &neighbors)?;
-                    had_graph_mutation |= deleted_graph_state;
-                    had_vector_mutation |= had_vector;
-                }
             }
             // CMT-4 (ONE-1541). All-or-nothing by construction: the helper
             // grounds every selected instance before staging a single op and

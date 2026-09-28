@@ -21,6 +21,10 @@ use super::slip_vault::require_host;
 use super::{ActorBindingStatus, AuthorityKey, HostSlipIssuer, invalid_authority};
 
 const ENGINE_MACHINE_KEY_DOMAIN: &str = "oneiron/engine-machine-authority/v1";
+/// Engine writers are bootstrap seeds: a row this module births carries the
+/// seed time, as the seeded owner PERSON and agent definitions do, so a host
+/// open never reads as vault activity.
+const ENGINE_MACHINE_SEED_TIME: u64 = 0;
 const ENGINE_MACHINE_TRANSPORT_DOMAIN: &str = "oneiron/engine-machine-transport/v1";
 
 fn engine_machine_signing_key(
@@ -42,12 +46,12 @@ impl Vault {
     /// the first call enrolls, later calls only retain the signers, and an
     /// existing vault gets its engine keys before its first engine write.
     pub fn provision_engine_machine_identities(&self, issuer: &HostSlipIssuer) -> Result<()> {
-        let now = self.now_recorded_at();
+        let seed = ENGINE_MACHINE_SEED_TIME;
         let machines = [
-            self.ensure_commitment_projection_machine(now)?,
-            crate::calendar::ingest::ensure_ics_import_actor(self, now)?,
-            crate::calendar::transcript::file_drop_import_actor(self, now)?,
-            self.ensure_esign_artifact_machine()?,
+            self.ensure_commitment_projection_machine(seed)?,
+            crate::calendar::ingest::ensure_ics_import_actor(self, seed)?,
+            crate::calendar::transcript::file_drop_import_actor(self, seed)?,
+            self.ensure_esign_artifact_machine(seed)?,
         ];
         for machine in machines {
             self.provision_host_machine_identity(issuer, machine)?;
@@ -125,8 +129,7 @@ impl Vault {
         Ok(machine)
     }
 
-    fn ensure_esign_artifact_machine(&self) -> Result<EntityId> {
-        let now = self.now_recorded_at();
+    fn ensure_esign_artifact_machine(&self, now: u64) -> Result<EntityId> {
         self.with_write_txn(|txn| {
             Ok(crate::blob_artifact::esign::artifact_machine(self, txn, now)?.entity_ref())
         })
