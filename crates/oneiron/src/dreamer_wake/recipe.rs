@@ -162,7 +162,8 @@ fn cached_result(
                     ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Approved
                 )
                 || claim_evidence_taint(&body) != Some(source)
-                || body.evidence
+                // The Dreamer's MACHINE signature binds these same bytes.
+                || crate::authority::evidence_without_machine_signature(&body)
                     != Some(crate::write_envelope::write_envelope_evidence(
                         &stamped,
                         Some(cited(pin, source)),
@@ -307,6 +308,8 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             if current_source != source || current_hash != read_hash {
                 return Err(invalid());
             }
+            let mut envelope = envelope.clone();
+            vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
             vault
                 .batch_in()
                 .claim_candidate(

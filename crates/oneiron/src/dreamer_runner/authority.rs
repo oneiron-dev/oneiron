@@ -27,6 +27,8 @@ pub struct DreamerAuthorityStamp {
     pub facet: String,
     pub receipt_id: [u8; 16],
 }
+/// The seeded MACHINE row's body; the row itself carries seed time 0.
+const ACTOR_BODY: &[u8] = b"Dreamer authority";
 pub(crate) fn dreamer_actor_id() -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])
 }
@@ -40,7 +42,7 @@ pub(crate) fn guard_actor_put(
 ) -> Result<()> {
     if id == dreamer_actor_id()?
         && (entity_type != crate::registry::ENTITY_TYPE_MACHINE
-            || data != b"Dreamer authority"
+            || data != ACTOR_BODY
             || occurred.start != 0
             || occurred.end != 0
             || learned_at != 0)
@@ -78,34 +80,35 @@ impl Vault {
         // The id is shared across replicas of one vault, but the local binding
         // cannot be redirected to another MACHINE or a deleted shell.
         let actor = dreamer_actor_id()?;
-        if let Some(id) = ACTOR.get(&self.store, &*txn, &())? {
-            if id != actor {
-                return Err(invalid());
-            }
-            let entity = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &id)?
-                .ok_or_else(invalid)?;
-            if EntityMetadataHeader::parse(&entity)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_MACHINE)
-                || entity.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                    != Some(b"Dreamer authority".as_slice())
-            {
-                return Err(invalid());
-            }
-            return Ok(WriteActor::new(id, EdgeActorClass::System));
+        let bound = ACTOR.get(&self.store, &*txn, &())?;
+        if bound.is_some_and(|id| id != actor) {
+            return Err(invalid());
         }
-        if let Some(raw) =
-            crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &actor)?
-        {
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_MACHINE)
-                || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                    != Some(b"Dreamer authority".as_slice())
-            {
-                return Err(invalid());
+        let row = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &actor)?;
+        match row.as_deref().map(|raw| {
+            (
+                EntityMetadataHeader::parse(raw).map(|h| h.entity_type),
+                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..),
+            )
+        }) {
+            Some((Some(crate::registry::ENTITY_TYPE_MACHINE), Some(ACTOR_BODY))) => {}
+            // Earlier builds minted this id as an Agent PERSON on first use.
+            // It is re-born as the System MACHINE row under the same id, so
+            // its host key can be enrolled before any Dreamer write needs it.
+            Some((Some(crate::registry::ENTITY_TYPE_PERSON), Some(ACTOR_BODY))) => {
+                crate::batch::drop_seeded_actor_row(&self.store, txn, &actor)?;
+                self.seed_actor_in_txn(txn, actor)?;
             }
+            Some(_) => return Err(invalid()),
+            None if bound.is_some() => return Err(invalid()),
+            None => self.seed_actor_in_txn(txn, actor)?,
+        }
+        if bound.is_none() {
             ACTOR.put(&self.store, txn, &(), &actor)?;
-            return Ok(WriteActor::new(actor, EdgeActorClass::System));
         }
+        Ok(WriteActor::new(actor, EdgeActorClass::System))
+    }
+    fn seed_actor_in_txn(&self, txn: &mut heed::RwTxn<'_>, actor: EntityId) -> Result<()> {
         apply_ops(
             &self.store,
             &self.config,
@@ -116,7 +119,7 @@ impl Vault {
                 entity_type: crate::registry::ENTITY_TYPE_MACHINE,
                 occurred: TimeRange { start: 0, end: 0 },
                 learned_at: 0,
-                data: b"Dreamer authority".to_vec(),
+                data: ACTOR_BODY.to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
@@ -126,8 +129,7 @@ impl Vault {
             false,
             true,
         )?;
-        ACTOR.put(&self.store, txn, &(), &actor)?;
-        Ok(WriteActor::new(actor, EdgeActorClass::System))
+        Ok(())
     }
     /// Proposal envelope shared by maintenance facets. Approval is never Auto.
     pub fn dreamer_proposal_envelope(
@@ -199,7 +201,7 @@ impl Vault {
                         EntityMetadataHeader::parse(&raw)
                             .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_MACHINE)
                             || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                                != Some(b"Dreamer authority".as_slice())
+                                != Some(ACTOR_BODY)
                     })
                 {
                     return Err(invalid());

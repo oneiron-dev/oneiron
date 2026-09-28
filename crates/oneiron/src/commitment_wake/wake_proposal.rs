@@ -332,6 +332,8 @@ fn write_commitment_wake_proposal(vault: &Vault, write: &ProposalWrite<'_>) -> R
         // The ONE write door: a raw claim write that omits recording gate
         // decisions would omit the pending consent row and remove the inbox
         // approval door entirely.
+        let mut envelope = envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
         vault
             .batch_in()
             .claim_candidate(

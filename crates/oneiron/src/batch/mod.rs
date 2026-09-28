@@ -55,7 +55,10 @@ pub(crate) use self::claim_materialization::{
 };
 #[cfg(test)]
 pub(crate) use self::deindex::deindex_entity_for_test;
-pub(crate) use self::deindex::{deindex_entity, deindex_lexical_query_hints_for_target};
+pub(crate) use self::deindex::{
+    deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,
+    drop_seeded_actor_row,
+};
 pub(crate) use self::facet_validation::validate_facet_of_edge;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep

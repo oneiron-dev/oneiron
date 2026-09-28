@@ -288,6 +288,15 @@ impl Vault {
     }
 }
 
+/// A claim's evidence without the MACHINE signature that binds it.
+pub(crate) fn evidence_without_machine_signature(body: &ClaimBody) -> Option<Value> {
+    let mut evidence = body.evidence.clone();
+    if let Some(Value::Map(entries)) = &mut evidence {
+        entries.retain(|(key, _)| key.as_str() != Some(SIGNATURE_KEY));
+    }
+    evidence
+}
+
 /// Canonical body binding includes all envelope metadata, source and payload.
 /// The signature value itself is excluded to avoid a circular transcript.
 pub fn machine_claim_transcript(
@@ -296,9 +305,7 @@ pub fn machine_claim_transcript(
     body: &ClaimBody,
 ) -> Result<Vec<u8>> {
     let mut unsigned = body.clone();
-    if let Some(Value::Map(entries)) = &mut unsigned.evidence {
-        entries.retain(|(key, _)| key.as_str() != Some(SIGNATURE_KEY));
-    }
+    unsigned.evidence = evidence_without_machine_signature(body);
     let bytes = crate::claim::encode_claim_body(&unsigned)?;
     let mut transcript = Vec::with_capacity(DOMAIN.len() + 32 + 16 + 32);
     transcript.extend_from_slice(DOMAIN);
