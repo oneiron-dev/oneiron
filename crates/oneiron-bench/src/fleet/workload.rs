@@ -124,6 +124,7 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         .collect::<Vec<_>>();
     let endpoint = format!("http://{}/v1/core/facade/witness", addresses[0]);
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let root = vault.ensure_host_root_slip(&issuer)?;
     let credentials = (0..plan.agents)
         .map(|index| super::wire::credential(&vault, &issuer, &id(0x31, index)?.to_hex()))
         .collect::<Result<Vec<_>>>()?;
@@ -134,11 +135,11 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         .map(|(index, (tcp, credential))| {
             let url = &urls[index % urls.len()];
             let address = addresses[index % addresses.len()];
-            let secret = &secret;
+            let root = (&issuer, &root);
             async move {
                 let start = Instant::now();
                 let agent =
-                    Agent::connect(index, url, address, tcp, secret, credential, timeout).await?;
+                    Agent::connect(index, url, address, tcp, root, credential, timeout).await?;
                 Ok::<_, super::Error>((agent, start.elapsed().as_secs_f64() * 1000.0))
             }
         })

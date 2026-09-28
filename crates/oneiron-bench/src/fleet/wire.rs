@@ -81,21 +81,40 @@ pub(super) fn credential(
     Ok((vault.mint_capability_slip(issuer, claims)?, key))
 }
 
+/// A fresh proof for the logged host root, which alone opens the owner-grade
+/// socket; the issuer secret is key material, never a bearer credential.
+fn root_binding(issuer: &HostSlipIssuer, root: &CapabilitySlip) -> Result<Value> {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = oneiron::authority::holder_proof_challenge(timestamp, &nonce);
+    let signature = issuer
+        .binding_proof(root, &challenge)?
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(json!({"timestamp":timestamp,"nonce":nonce,"signature":signature}))
+}
+
 impl Agent {
     pub(super) async fn connect(
         index: usize,
         url: &str,
         address: std::net::SocketAddr,
         tcp: tokio::net::TcpSocket,
-        secret: &str,
+        (issuer, root): (&HostSlipIssuer, &CapabilitySlip),
         (slip, key): (CapabilitySlip, SigningKey),
         timeout: Duration,
     ) -> Result<Self> {
         tokio::time::timeout(timeout, async {
             let mut request = url.into_client_request()?;
-            request
-                .headers_mut()
-                .insert("authorization", format!("Bearer {secret}").parse()?);
+            request.headers_mut().insert(
+                "authorization",
+                format!("Bearer {}", root.to_token()?).parse()?,
+            );
+            request.headers_mut().insert(
+                "x-oneiron-binding",
+                root_binding(issuer, root)?.to_string().parse()?,
+            );
             let tcp = tcp.connect(address).await.map_err(|error| {
                 std::io::Error::new(
                     error.kind(),

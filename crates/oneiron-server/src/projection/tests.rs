@@ -121,7 +121,15 @@ fn skill_full_projection_exposes_reliability_metadata() {
         // of identity|alignment|standard. Full projection emits what the body
         // carries, so a fixture that asserts every SKILL_RECORD_BODY_KEYS key
         // has to carry this one too.
-        "governanceTier": "standard"
+        "governanceTier": "standard",
+        // ONE-2635: a non-knowledge role rides the body, and `call` is present
+        // exactly when the role is callable, so the fixture carries both.
+        "role": "callable",
+        "call": {
+            "reference": "scripts/calculate.js",
+            "arguments": {"value": "integer"},
+            "returns": {"result": "integer"}
+        }
     }))
     .unwrap();
 
@@ -134,6 +142,8 @@ fn skill_full_projection_exposes_reliability_metadata() {
         );
     }
     assert_eq!(full["governanceTier"], "standard");
+    assert_eq!(full["role"], "callable");
+    assert_eq!(full["call"]["reference"], "scripts/calculate.js");
     assert_eq!(full["generated"], false);
     assert_eq!(full["humanAuthored"], true);
     assert_eq!(full["dependencies"][0]["skillId"], "oneiron.skill.base");

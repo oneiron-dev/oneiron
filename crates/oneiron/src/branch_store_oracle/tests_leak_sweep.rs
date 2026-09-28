@@ -86,15 +86,19 @@ fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -
          around it — receipts follow the transcript, floor rows do not"
     );
 
-    // Base is the baseline PLUS exactly the floor row: one `vault_meta` row
-    // (this decision carries no grant_ref and no claim_id, so it writes no
-    // index rows). Everything the room itself wrote is gone.
+    // Base is the baseline PLUS exactly the floor decision: two `vault_meta`
+    // rows, the decision row and the retention-context sidecar every Gate
+    // append writes in the same txn (ONE-1642). The sidecar belongs to the
+    // kept decision, so it stays with it. This decision carries no grant_ref
+    // and no claim_id, so it writes no index rows. Everything the room itself
+    // wrote is gone.
     let base_after = full_db_census(&vault)?;
     let mut expected = base_before;
-    expected[11] += 1;
+    expected[11] += 2;
     assert_eq!(
         base_after, expected,
-        "close leaves base as it was before the room, plus the one floor row"
+        "close leaves base as it was before the room, plus the one floor decision \
+         and its retention-context sidecar"
     );
     Ok(())
 }
