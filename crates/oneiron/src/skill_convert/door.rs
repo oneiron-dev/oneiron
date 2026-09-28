@@ -181,6 +181,10 @@ pub fn convert_messages_to_skill(
 /// "conversation convert" under [`ProvenanceTrustClass::Generated`], so the
 /// confidence CACHE is seeded from that class's prior rather than from an
 /// optimistic constant — a converted skill starts WEAK and earns its place.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "both verdicts land one record from the same refined fields plus its role contract"
+)]
 fn converted_record(
     skill_id: &str,
     desc: &str,

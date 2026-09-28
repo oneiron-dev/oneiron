@@ -296,7 +296,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         let txn = vault.store.env.read_txn()?;
         assert_eq!(
             crate::skill_reliability::attributed_outcome_receipts(&vault, &txn, &id)?,
-            vec![receipt.clone()],
+            vec![receipt],
             "the improver's receipt split sees the callable outcome"
         );
     }

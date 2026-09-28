@@ -12,7 +12,7 @@ use crate::attempt_queue::{
 };
 use crate::code_run::{HostSelfDispatcher, SelfCall, SelfDispatchOutcome, SelfDispatcher};
 use crate::engine_executor::{JsCodeModeHost, SelfDispatchResponse};
-use crate::{EdgeActorClass, Vault, VaultConfig, WriteActor};
+use crate::{EdgeActorClass, VaultConfig, WriteActor};
 use serde_json::json;
 
 struct SdkHost<'a>(HostSelfDispatcher<'a>);

@@ -10,6 +10,8 @@ pub mod blocked;
 pub mod consent;
 pub mod vault_read;
 
+// The guest authoring request is decoded only at the typed component bridge.
+#[cfg(any(test, feature = "code-sandbox-wasmtime"))]
 mod agent_authoring;
 mod codec;
 mod coordination_codec;
@@ -23,6 +25,8 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) use self::agent_authoring::parse_agent_put_request;
 pub(crate) use self::codec::encode_code_run_replay_value;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
@@ -43,7 +47,6 @@ pub(crate) use self::storage::{ExecutorOutputSpan, ExecutorStorage};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
-pub(crate) use self::agent_authoring::parse_agent_put_request;
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]

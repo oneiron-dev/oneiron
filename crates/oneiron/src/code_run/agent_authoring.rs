@@ -71,8 +71,7 @@ pub(crate) fn parse_agent_put_request(
     let ceiling = draft
         .ceiling
         .as_deref()
-        .map(AgentCeiling::parse)
-        .unwrap_or(Some(AgentCeiling::Proposed))
+        .map_or(Some(AgentCeiling::Proposed), AgentCeiling::parse)
         .ok_or_else(|| Error::InvalidConfig("invalid agent ceiling".into()))?;
     let definition = AgentDefinition::new(
         draft.agent_id,

@@ -100,6 +100,10 @@ impl Vault {
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the authoring door binds author, target, request, scope, lease generation and time in one transaction"
+    )]
     pub(crate) fn put_agent_definition_for_author_with_scope(
         &self,
         author: &EntityId,
