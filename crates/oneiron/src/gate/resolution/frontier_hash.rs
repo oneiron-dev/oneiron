@@ -263,9 +263,30 @@ pub(super) fn hash_policy_frontier_v0(
 
     // Attribution limits bound post-terminal receipt capture, not Gate authority.
     // Tuning them must not rebind existing consent/grant frontiers.
-    if let Some(threshold) = resolution.proposal_check_threshold {
-        hash_str(hasher, "proposal_check_threshold");
-        hash_u64(hasher, threshold);
+
+    // The effective vault-only meta-rule is frontier state even when its row
+    // is missing and the shipped-data bootstrap supplies it.
+    hash_str(hasher, "scope_precedence_effective");
+    hash_str(
+        hasher,
+        &crate::gate::policy_values::PolicyValue::ScopePrecedence(resolution.scope_precedence().0)
+            .as_str(),
+    );
+    hash_len(hasher, resolution.policy_values.len());
+    for row in &resolution.policy_values {
+        hash_str(hasher, &row.row_ref);
+        hash_str(hasher, row.key.as_str());
+        hash_str(hasher, &row.scope.as_str());
+        hash_str(hasher, &row.value.as_str());
+        hash_bool(hasher, row.override_parent);
+        hash_opt_str(hasher, row.why.as_ref().map(|why| why.text.as_str()));
+        hash_opt_str(
+            hasher,
+            row.why.as_ref().map(|why| match why.source {
+                crate::gate::policy_values::WhySource::Owner => "owner",
+                crate::gate::policy_values::WhySource::Drafted => "drafted",
+            }),
+        );
     }
 
     // An absent row and the shipped 4096 vault row have identical effective
@@ -512,6 +533,14 @@ fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
     hash_opt_str(hasher, row.world_ref.as_deref());
     hash_str(hasher, row.action.as_str());
     hash_opt_str(hasher, row.human.as_deref());
+    hash_opt_str(hasher, row.why.as_ref().map(|why| why.text.as_str()));
+    hash_opt_str(
+        hasher,
+        row.why.as_ref().map(|why| match why.source {
+            crate::gate::policy_values::WhySource::Owner => "owner",
+            crate::gate::policy_values::WhySource::Drafted => "drafted",
+        }),
+    );
 }
 
 fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {

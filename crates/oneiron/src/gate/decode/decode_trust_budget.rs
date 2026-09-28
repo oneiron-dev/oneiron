@@ -10,7 +10,6 @@ use crate::gate::constants::{
     BUDGET_POLICY_PURPOSE_KEY, SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
     SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
-use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{
     BudgetExhaustionPolicy, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable, CallPurpose,
 };
@@ -124,16 +123,6 @@ pub(super) fn parse_budget_exhaustion_policy(value: &Value) -> Option<BudgetExha
             }
         },
         MapValue::Duplicate => None,
-    }
-}
-
-/// Exact inverse of [`CommOptOutPosture::as_str`]. A plain token and nothing
-/// else: the posture is a two-valued dial, not a shape with sub-keys.
-pub(super) fn parse_comm_opt_out_posture(value: &Value) -> Option<CommOptOutPosture> {
-    match value.as_str()? {
-        "escalate" => Some(CommOptOutPosture::Escalate),
-        "allow_with_receipt" => Some(CommOptOutPosture::AllowWithReceipt),
-        _ => None,
     }
 }
 

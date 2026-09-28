@@ -28,6 +28,7 @@ mod grants;
 mod hosted_tts_policy;
 mod input;
 mod pack_install_policy;
+pub(crate) mod policy_values;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;

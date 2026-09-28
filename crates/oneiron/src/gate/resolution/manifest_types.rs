@@ -10,6 +10,7 @@ use crate::gate::ceiling::{
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
+use crate::gate::policy_values::PolicyValueRow;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -45,10 +46,9 @@ impl PolicyManifestDiagnostics {
 /// `Escalate` is the DEFAULT and the restrictive pole: an absent key anywhere,
 /// and any single matching pack that names it, resolve here. It is the posture
 /// that asks the owner rather than deciding for them.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::gate) enum CommOptOutPosture {
     /// Hold the send as a pending owner decision.
-    #[default]
     Escalate,
     /// Send immediately, keeping the opt-out receipt trail.
     AllowWithReceipt,
@@ -64,8 +64,7 @@ impl CommOptOutPosture {
         }
     }
 
-    /// Manifest token for this posture. The parse direction is
-    /// `decode::parse_comm_opt_out_posture`; the two stay exact inverses.
+    /// Manifest token for this posture, parsed from a typed value row.
     #[must_use]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -174,7 +173,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(in crate::gate) teacher_probe_trusted: bool,
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
     pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
-    pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) retrieval_retention: crate::gate::retrieval_retention::RetrievalRetentionPolicy,
     pub(crate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
@@ -196,6 +194,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) carry_forward_authored: bool,
     pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(super) packs: Vec<PolicyPack>,
+    pub(super) policy_values: Vec<PolicyValueRow>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
     pub(super) source_trust: SourceTrustCeiling,
@@ -211,7 +210,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) owner_policy_patterns_dropped: bool,
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
-    pub(super) comm_opt_out_posture: Option<CommOptOutPosture>,
     /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
     /// never stored here — only the manifest's selector for it. Injection
     /// rides the write door's own options, so no host object is ever reachable
