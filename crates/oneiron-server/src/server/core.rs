@@ -161,8 +161,8 @@ impl SyncServer {
                 // fresh server docs, root-doc creation, and client decoding
                 // cannot drift.
                 init_window_list(&doc, &[]);
-                // Device-lease registry map (ONE-1140, OD-3) — server-write
-                // only; lazily present on docs persisted before v2.
+                // Historical receipt-key verification records. This map
+                // grants no transport authority and has no live mint path.
                 let _leases = doc.get_map(ROOT_LEASES_MAP);
                 doc.commit();
                 // Boot is pre-connection/single-threaded; no root-writer

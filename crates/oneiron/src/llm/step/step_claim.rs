@@ -144,16 +144,28 @@ pub(super) fn load_step_response(
     vault: &Vault,
     decoded: &DecodedStepClaim,
 ) -> DurableStepResult<LlmResponse> {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    load_step_response_in_txn(vault, &txn, decoded)
+}
+
+pub(super) fn load_step_response_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    decoded: &DecodedStepClaim,
+) -> DurableStepResult<LlmResponse> {
     match (&decoded.response, &decoded.response_ref) {
         (Some(inline), None) => Ok(serde_json::from_slice(inline.as_bytes())?),
         (None, Some(artifact_id)) => {
-            let head = vault
-                .blob_artifact_head(artifact_id)?
-                .ok_or(Error::InvalidClaimBody(
-                    "dreamer step response_ref artifact missing",
-                ))?;
+            let head = crate::blob_artifact::read_blob_artifact_head_in_txn(
+                &vault.store,
+                txn,
+                artifact_id,
+            )?
+            .ok_or(Error::InvalidClaimBody(
+                "dreamer step response_ref artifact missing",
+            ))?;
             let bytes = vault
-                .read_blob_artifact_version(artifact_id, head.version)?
+                .read_blob_artifact_version_in_txn(txn, artifact_id, head.version)?
                 .ok_or(Error::InvalidClaimBody(
                     "dreamer step response_ref version missing",
                 ))?;
@@ -484,6 +496,29 @@ pub(crate) fn index_dreamer_step_claim_for_put(
     Ok(())
 }
 
+/// Read-only consistency check for an ALREADY producer-attested terminal
+/// step. This does not create execution authority; ordinary and replayed
+/// claims may pass this shape check but cannot mint the vault-local witness.
+pub(crate) fn terminal_step_identity(body: &ClaimBody) -> Option<(AttemptId, [u8; 32], ModelId)> {
+    if body.predicate != DREAMER_STEP_PREDICATE
+        || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        || body.stale
+    {
+        return None;
+    }
+    let decoded = decode_step_claim_value(&body.value).ok()?;
+    let finished = matches!(&body.value, Value::Map(entries) if entries.iter().any(|(key, value)|
+        key.as_str() == Some(KEY_PROGRESSION) && value.as_str() == Some("finished")));
+    if !finished || !step_claim_binding_is_trusted(&decoded, body) {
+        return None;
+    }
+    Some((
+        decoded.attempt_id,
+        decoded.step_hash,
+        ModelId::new(decoded.model_id).ok()?,
+    ))
+}
+
 /// Memo-index admission gate (ONE-1344). A claim is trusted for the index only
 /// when BOTH bindings hold:
 ///
@@ -495,7 +530,7 @@ pub(crate) fn index_dreamer_step_claim_for_put(
 ///   the dreamer runner surface AND the SAME attempt id the claim value
 ///   carries, so a body cannot buy a memo row for an attempt it does not
 ///   belong to.
-fn step_claim_binding_is_trusted(decoded: &DecodedStepClaim, body: &ClaimBody) -> bool {
+pub(super) fn step_claim_binding_is_trusted(decoded: &DecodedStepClaim, body: &ClaimBody) -> bool {
     if ModelId::new(decoded.model_id.clone()).is_err()
         || decoded.purpose.is_empty()
         || !is_lowercase_hex_digest(&decoded.params_hash)
@@ -566,8 +601,17 @@ pub(super) fn step_index_lookup(
     step_hash: &[u8; 32],
 ) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
+    step_index_lookup_in_txn(vault, &rtxn, attempt_id, step_hash)
+}
+
+pub(super) fn step_index_lookup_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<Option<EntityId>> {
     let key = step_index_key(attempt_id, step_hash);
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
+    let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
         return Ok(None);
     };
     let bytes: [u8; 16] = raw

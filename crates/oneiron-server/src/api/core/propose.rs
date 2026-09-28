@@ -34,16 +34,35 @@ pub(crate) async fn core_propose(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CoreProposeRequest>, JsonRejection>,
 ) -> Result<Json<CoreProposeResponse>, EnvelopedApiError> {
-    if !auth.has_scope(CoreScope::Write) {
-        auth.require(CoreScope::Propose)?;
-    }
+    // Membership picks a verb; `require` also checks the effective record and
+    // channel ceiling. No unrelated read verb may change this write decision.
+    let permission = if auth.has_scope(CoreScope::Write) {
+        CoreScope::Write
+    } else {
+        CoreScope::Propose
+    };
+    auth.require(permission)?;
     let request = json_payload(payload)?;
     let subject = oneiron::EntityId::from_hex(&request.subject)
         .map_err(|_| ApiError::bad_request("invalid subject reference", Some("subject")))?;
-    let readable = scoped_read_for_core_auth(server.vault().as_ref(), &auth)?
-        .get(&subject)
-        .map_err(|error| core_engine_error("proposal target lookup failed", error))?;
-    if readable.value.is_none() {
+    // A verified slip is already admitted by the transport. The host checks
+    // existence without disclosing the target. This unscoped writer refuses
+    // narrower record/channel capabilities in `require` above. Development
+    // callers without a slip retain the scoped-read fallback.
+    let exists = if auth.verified_slip().is_some() {
+        server
+            .vault()
+            .get(&subject)
+            .map_err(|error| core_engine_error("proposal target lookup failed", error))?
+            .is_some()
+    } else {
+        scoped_read_for_core_auth(server.vault().as_ref(), &auth)?
+            .get(&subject)
+            .map_err(|error| core_engine_error("proposal target lookup failed", error))?
+            .value
+            .is_some()
+    };
+    if !exists {
         return Err(ApiError::forbidden_scope("proposal:subject").into());
     }
     let bytes = rmp_serde::to_vec_named(&request.value)

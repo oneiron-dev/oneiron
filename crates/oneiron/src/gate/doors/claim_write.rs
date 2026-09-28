@@ -420,6 +420,15 @@ fn check_claim_policy_for_write_with_record_inner(
                 // above into the ledger's token vocabulary: an owner reviewing
                 // a held write reads WHY the host held it, not just that
                 // something did.
+                .chain(
+                    decision
+                        .policy_row_ref()
+                        .map(|row| format!("policy_row_{row}")),
+                )
+                .chain(decision.precedence_row_ref().map(|row| match row {
+                    Some(row) => format!("policy_precedence_row_{row}"),
+                    None => "policy_precedence_shipped_default".to_owned(),
+                }))
                 .chain(checker_receipt_reasons)
                 .collect(),
             system_notices: Vec::new(),

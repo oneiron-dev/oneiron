@@ -605,9 +605,8 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
         .expect("slot resolves")
         .expect("an endpoint slot exists");
     // The semantic door is an owner-grade `/api/*` route over a proof-backed
-    // scoped read: it needs the configured host secret on both the server and
-    // the request. The dev hatch authenticates but carries no proof, so its
-    // reads deny.
+    // scoped read: it needs a holder-bound owner slip minted by the host.
+    // The dev hatch authenticates but carries no proof, so its reads deny.
     let server = Arc::new(
         crate::server::SyncServer::new(
             Arc::clone(&vault),
@@ -632,22 +631,22 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
         worker.abort();
         assert!(filled, "the worker filled every pending vector");
 
+        let (slip, key) = crate::test_credentials::credential(&server, "jti=embedder-semantic");
         let response = crate::build_app(Arc::clone(&server))
-            .oneshot(
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
                 Request::builder()
                     .method("POST")
                     .uri("/api/search/semantic")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .header(
-                        axum::http::header::AUTHORIZATION,
-                        "Bearer embedder-fixture-secret",
-                    )
                     .body(Body::from(
                         json!({ "text": texts[1], "limit": corpus_size, "view": "standard" })
                             .to_string(),
                     ))
                     .expect("request"),
-            )
+            ))
             .await
             .expect("semantic response");
         assert_eq!(response.status(), StatusCode::OK);

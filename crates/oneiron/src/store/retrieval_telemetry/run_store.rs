@@ -293,14 +293,23 @@ impl Store {
         run_id: RetrievalRunId,
     ) -> Result<Option<RetrievalRunRecord>> {
         let rtxn = self.env.read_txn()?;
+        self.retrieval_run_in_txn(&rtxn, run_id)
+    }
+
+    /// Base-only published run lookup in a caller-held read snapshot.
+    pub(crate) fn retrieval_run_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run_id: RetrievalRunId,
+    ) -> Result<Option<RetrievalRunRecord>> {
         if self
             .vault_meta
-            .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+            .get(rtxn, &retrieval_run_provisional_key(run_id))?
             .is_some()
         {
             return Ok(None);
         }
-        let Some(value) = self.vault_meta.get(&rtxn, &retrieval_run_key(run_id))? else {
+        let Some(value) = self.vault_meta.get(rtxn, &retrieval_run_key(run_id))? else {
             return Ok(None);
         };
         let record = decode_retrieval_run(&value)?;

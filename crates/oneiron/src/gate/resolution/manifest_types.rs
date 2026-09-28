@@ -4,17 +4,21 @@ use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
 };
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::llm::{
+    BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailureClass, DreamerFailureDecision,
+    DreamerFailurePrecedence, DreamerFailureRule, decide_failure,
+};
 use std::collections::BTreeMap;
 
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
 
 use crate::gate::ceiling::{
-    ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
-    PolicySignature, SourceTrustCeiling,
+    ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
+    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
+use crate::gate::policy_values::PolicyValueRow;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PolicyManifestDiagnostics {
@@ -50,10 +54,9 @@ impl PolicyManifestDiagnostics {
 /// `Escalate` is the DEFAULT and the restrictive pole: an absent key anywhere,
 /// and any single matching pack that names it, resolve here. It is the posture
 /// that asks the owner rather than deciding for them.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::gate) enum CommOptOutPosture {
     /// Hold the send as a pending owner decision.
-    #[default]
     Escalate,
     /// Send immediately, keeping the opt-out receipt trail.
     AllowWithReceipt,
@@ -69,8 +72,7 @@ impl CommOptOutPosture {
         }
     }
 
-    /// Manifest token for this posture. The parse direction is
-    /// `decode::parse_comm_opt_out_posture`; the two stay exact inverses.
+    /// Manifest token for this posture, parsed from a typed value row.
     #[must_use]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -279,16 +281,46 @@ pub(crate) enum SheetAnswerPrecedence {
     NestedNarrowingHolderCappedAtVault,
 }
 
+/// Trusted vault duration policy. The shipped manifest carries the defaults;
+/// the runtime itself provides no numeric fallback or hidden ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CredentialLifetimePolicy {
+    pub(crate) oauth_exchange_secs: u64,
+    pub(crate) initial_owner_secs: u64,
+    pub(crate) precedence: CredentialLifetimePrecedence,
+}
+
+/// Explicit precedence row: the holder can only narrow the vault ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CredentialLifetimePrecedence {
+    VaultCeilingHolderNarrows,
+}
+impl CredentialLifetimePrecedence {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::VaultCeilingHolderNarrows => "vault_ceiling_holder_narrows",
+        }
+    }
+}
+impl CredentialLifetimePolicy {
+    pub(crate) fn restrict(&mut self, other: Self) {
+        self.oauth_exchange_secs = self.oauth_exchange_secs.min(other.oauth_exchange_secs);
+        self.initial_owner_secs = self.initial_owner_secs.min(other.initial_owner_secs);
+        // The decoder admits only the closed, shrink-only precedence law.
+        self.precedence = other.precedence;
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) teacher_probe_trusted: bool,
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
     pub(in crate::gate) teacher_probe_holders: BTreeMap<String, u32>,
-    pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) retrieval_retention: crate::gate::retrieval_retention::RetrievalRetentionPolicy,
     pub(crate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
@@ -313,15 +345,22 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
     pub(super) carry_forward_authored: bool,
     pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
+    pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(super) packs: Vec<PolicyPack>,
+    pub(super) policy_values: Vec<PolicyValueRow>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,
     pub(super) source_trust: SourceTrustCeiling,
     pub(super) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(super) scoped_grants: Vec<PolicyScopedGrant>,
+    pub(crate) weave_report_policy: Vec<crate::gate::weave_policy::Row>,
+    pub(crate) weave_report_policy_empty: bool,
+    pub(crate) weave_report_precedence: crate::gate::weave_policy::Precedence,
+    pub(super) skill_edit_goal: Vec<crate::gate::SkillEditGoalPolicy>,
     pub(crate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(crate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
+    pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,
     pub(super) owner_policy_document: Option<String>,
@@ -330,7 +369,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) owner_policy_patterns_dropped: bool,
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
-    pub(super) comm_opt_out_posture: Option<CommOptOutPosture>,
     /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
     /// never stored here — only the manifest's selector for it. Injection
     /// rides the write door's own options, so no host object is ever reachable
@@ -343,6 +381,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    pub(super) dreamer_failure_rules: Vec<DreamerFailureRule>,
+    pub(super) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
     /// Vault-resident wait windows keyed by class.
     pub(super) wait_policy: WaitPolicyTable,
     /// Vault-resident act postures keyed by act and subject class.
@@ -353,4 +393,19 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy:
         Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
+}
+
+impl PolicyManifestResolution {
+    /// A malformed policy cannot authorize use of failed model output.
+    pub(crate) fn dreamer_failure_decision(
+        &self,
+        class: DreamerFailureClass,
+    ) -> DreamerFailureDecision {
+        let precedence = self.dreamer_failure_precedence.unwrap_or_default();
+        if self.diagnostics.is_fail_closed() {
+            decide_failure(&[], class, precedence)
+        } else {
+            decide_failure(&self.dreamer_failure_rules, class, precedence)
+        }
+    }
 }
