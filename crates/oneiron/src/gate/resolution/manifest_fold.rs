@@ -222,6 +222,16 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .federation_grant_rows
                     .extend(decoded.federation_grant_rows);
+                // One act-policy table per vault: the same table twice is one
+                // configuration; two different tables have no deterministic
+                // answer, so every act they would govern fails closed.
+                if let Some(rows) = decoded.shared_act_policies {
+                    match &resolution.shared_act_policies {
+                        None => resolution.shared_act_policies = Some(rows),
+                        Some(existing) if *existing == rows => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);

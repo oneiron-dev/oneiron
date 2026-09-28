@@ -32,11 +32,11 @@ use crate::gate::constants::{
     POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
     POLICY_PROJECT_CONVERSION_KEY, POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY,
     POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
-    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
-    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
-    POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY, POLICY_TEACHER_PROBE_KEY,
-    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHARED_ACT_POLICIES_KEY,
+    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY,
+    POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -69,7 +69,7 @@ use super::decode_map_util::{
 };
 use super::decode_policy_tables::{
     parse_actor_ceilings, parse_axes, parse_delegated_grants, parse_owner_policy_patterns,
-    parse_owner_policy_rows, parse_rules, parse_scoped_grants,
+    parse_owner_policy_rows, parse_rules, parse_scoped_grants, parse_shared_act_policies,
 };
 use super::decode_trust_budget::{
     parse_budget_exhaustion_policy, parse_budget_policy, parse_gate_decision_retention,
@@ -95,6 +95,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) skill_edit_goal: Option<SkillEditGoalPolicy>,
     pub(in crate::gate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(in crate::gate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
+    pub(in crate::gate) shared_act_policies:
+        Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
@@ -225,6 +227,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SKILL_EDIT_GOAL_KEY
                 | crate::federation::grant_policy::ROWS_KEY
                 | crate::gate::room_policy::KEY
+                | POLICY_SHARED_ACT_POLICIES_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_PRECEDENCE_KEY
                 | super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY
@@ -382,6 +385,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Duplicate => return None,
             MapValue::Present(value) => crate::federation::grant_policy::parse_rows(value)?,
         };
+    let shared_act_policies = match single_map_value(&entries, POLICY_SHARED_ACT_POLICIES_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_shared_act_policies(value)?),
+    };
     let owner_policy_enabled = match single_map_value(&entries, POLICY_OWNER_POLICY_ENABLED_KEY) {
         MapValue::Missing => false,
         MapValue::Duplicate => return None,
@@ -837,6 +845,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         skill_edit_goal,
         federation_grant_rows,
         room_policy_rows,
+        shared_act_policies,
         single_valued_predicates,
         owner_policy_rows,
         owner_policy_precedence,
