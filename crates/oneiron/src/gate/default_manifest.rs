@@ -486,6 +486,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             federation_grant_default_rows(),
         ),
         (
+            Value::from("experiment_selection"),
+            default_experiment_selection_rows(),
+        ),
+        (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
@@ -614,4 +618,17 @@ fn compilation_route(
         (Value::from("from_not_prefix"), Value::from(from_not_prefix)),
         (Value::from("style_atom"), Value::Boolean(style_atom)),
     ])
+}
+
+/// The vault-wide search policy ships as data, not a Rust threshold or
+/// hard-coded stagnation branch. The manifest resolver composes edits by scope.
+fn default_experiment_selection_rows() -> Value {
+    let rows: Vec<crate::autoreason_campaign::selection::SelectionPolicyRow> =
+        serde_json::from_str(include_str!(
+            "../autoreason_campaign/selection_defaults.json"
+        ))
+        .expect("valid shipped experiment selection rows");
+    let bytes = rmp_serde::to_vec_named(&rows).expect("encode shipped experiment selection rows");
+    rmpv::decode::read_value(&mut bytes.as_slice())
+        .expect("decode shipped experiment selection rows")
 }

@@ -1,5 +1,6 @@
 //! Read-only resolved-field accessors plus the frontier-hash entry.
 
+use crate::autoreason_campaign::selection::{SelectionPolicy, SelectionPrecedence};
 use sha2::{Digest, Sha256};
 
 use crate::EntityId;
@@ -130,6 +131,62 @@ impl PolicyManifestResolution {
         }
         crate::booking::resolve_booking_conversion_rows(&self.booking_conversion_rows, holder_ref)
             .ok()
+    }
+
+    /// Compose trusted vault, campaign and holder rows in the shared manifest
+    /// resolver. The vault row selects precedence; equal-scope rows intersect
+    /// regardless of scan order, and every holder result remains vault-capped.
+    /// An absent vault row or malformed manifest supplies no search permission.
+    #[must_use]
+    pub(crate) fn experiment_selection_policy(
+        &self,
+        campaign_id: &str,
+        holder_id: Option<&str>,
+    ) -> Option<SelectionPolicy> {
+        if self.is_fail_closed() {
+            return None;
+        }
+        let mut vault = None;
+        let mut precedence = None;
+        let mut campaign = None;
+        let mut holder = None;
+        for row in &self.experiment_selection {
+            match (
+                row.scope.campaign_id.as_deref(),
+                row.scope.holder_id.as_deref(),
+            ) {
+                (None, None) => {
+                    if precedence.is_some_and(|old| old != row.precedence) {
+                        return None;
+                    }
+                    precedence = Some(row.precedence);
+                    vault = Some(
+                        vault.map_or(row.policy, |old: SelectionPolicy| old.narrow(row.policy)),
+                    );
+                }
+                (Some(id), None) if id == campaign_id => {
+                    campaign = Some(
+                        campaign.map_or(row.policy, |old: SelectionPolicy| old.narrow(row.policy)),
+                    );
+                }
+                (Some(id), Some(actor)) if id == campaign_id && Some(actor) == holder_id => {
+                    holder = Some(
+                        holder.map_or(row.policy, |old: SelectionPolicy| old.narrow(row.policy)),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let vault = vault?;
+        match (holder, precedence.unwrap_or_default()) {
+            (Some(holder), SelectionPrecedence::HolderUnderVault) => Some(vault.narrow(holder)),
+            _ => Some(match (campaign, holder) {
+                (Some(campaign), Some(holder)) => vault.narrow(campaign).narrow(holder),
+                (Some(campaign), None) => vault.narrow(campaign),
+                (None, Some(holder)) => vault.narrow(holder),
+                (None, None) => vault,
+            }),
+        }
     }
 
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
