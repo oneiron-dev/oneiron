@@ -125,6 +125,39 @@ impl OpcPackage {
 /// entry, or an unsupported compression method. Corruption checks upstream
 /// rely on this failing loudly rather than guessing.
 pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
+    read_bounded(
+        bytes,
+        MAX_ENTRY_UNCOMPRESSED,
+        MAX_PACKAGE_UNCOMPRESSED,
+        usize::from(u16::MAX),
+    )
+}
+
+/// The DOCX door resolves these limits from trusted policy rather than using
+/// the spreadsheet reader's independent, fixed legacy ceiling.
+pub(crate) fn read_with_limits(
+    bytes: &[u8],
+    limits: oneiron_docedit::ArchiveLimits,
+) -> Result<OpcPackage> {
+    if !limits.is_valid() {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "invalid docx archive limits",
+        )));
+    }
+    read_bounded(
+        bytes,
+        limits.max_part_bytes,
+        limits.max_total_bytes,
+        limits.max_entries,
+    )
+}
+
+fn read_bounded(
+    bytes: &[u8],
+    max_entry: u64,
+    max_package: u64,
+    max_entries: usize,
+) -> Result<OpcPackage> {
     let eocd = locate_eocd(bytes)?;
 
     // Multi-disk / spanned archives are out of scope: OPC packages are single
@@ -148,6 +181,11 @@ pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
         )));
     }
     let entry_count = entry_count as usize;
+    if entry_count > max_entries {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc archive exceeds the entry-count cap",
+        )));
+    }
 
     let mut parts = Vec::with_capacity(entry_count);
     let mut seen_names = BTreeSet::new();
@@ -192,13 +230,13 @@ pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
         // uncompressed size exceeds the per-entry cap, and any package whose
         // declared sizes sum past the whole-package cap.
         let declared_size = u64::from(declared_size);
-        if declared_size > MAX_ENTRY_UNCOMPRESSED {
+        if declared_size > max_entry {
             return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "opc entry declares an uncompressed size over the per-entry cap",
             )));
         }
         total_declared = total_declared.saturating_add(declared_size);
-        if total_declared > MAX_PACKAGE_UNCOMPRESSED {
+        if total_declared > max_package {
             return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "opc package declares an uncompressed size over the package cap",
             )));
