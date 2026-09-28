@@ -40,12 +40,20 @@ pub(crate) struct RedactionAuditReceipt {
     pub(crate) sweep_queued_at: Option<u64>,
     pub(crate) sweep_complete_at: Option<u64>,
     pub(crate) affected_revision_ids: Vec<String>,
+    /// Optional room-specific authority, never content from the erased record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) actor_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) room_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) room_role: Option<crate::conversation::RoomRole>,
     pub(crate) verification: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct RedactionReceiptInput {
     pub actor_principal: Option<EntityId>,
+    pub room_authority: Option<(EntityId, crate::conversation::RoomRole)>,
     pub request_id: String,
     pub scope: RedactionScope,
     pub reason: DeleteReason,
@@ -141,6 +149,12 @@ pub(crate) fn encode_redaction_audit_receipt(
         sweep_queued_at: input.sweep_queued_at,
         sweep_complete_at: None,
         affected_revision_ids: Vec::new(),
+        actor_ref: input
+            .room_authority
+            .and(input.actor_principal)
+            .map(|id| id.to_hex()),
+        room_ref: input.room_authority.map(|(room, _)| room.to_hex()),
+        room_role: input.room_authority.map(|(_, role)| role),
         verification: BTreeMap::new(),
     };
 
@@ -224,7 +238,7 @@ pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incomin
 ///
 /// Un-cfg'd since ONE-1087: the sweep executor's receipt finalization
 /// self-validates its rewritten body on EVERY build, not just sync ones.
-const RECEIPT_BODY_KEYS: [&str; 10] = [
+const RECEIPT_BODY_KEYS: [&str; 13] = [
     "request_id",
     "scope",
     "reason",
@@ -234,6 +248,9 @@ const RECEIPT_BODY_KEYS: [&str; 10] = [
     "sweep_queued_at",
     "sweep_complete_at",
     "affected_revision_ids",
+    "actor_ref",
+    "room_ref",
+    "room_role",
     "verification",
 ];
 
@@ -351,6 +368,17 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
                     "affected_revision_ids must be an array of opaque UUID strings",
                 )?;
             }
+            "actor_ref" | "room_ref" => {
+                validate_opaque_uuid(&value, "room authority references must be opaque UUIDs")?;
+            }
+            "room_role" => match value.as_str() {
+                Some("owner" | "admin" | "member") => {}
+                _ => {
+                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
+                        "invalid room deletion role",
+                    )));
+                }
+            },
             "verification" => {
                 // ONE-1140 (OD-6): the M4 "must be empty" pin is VERSIONED —
                 // verification now carries EXACTLY the four attestation
@@ -365,8 +393,17 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
         }
     }
 
+    let room_fields = &seen[9..12];
+    if room_fields.iter().any(|present| *present) && !room_fields.iter().all(|present| *present) {
+        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
+            "room authority fields must appear together",
+        )));
+    }
     for (index, key) in RECEIPT_BODY_KEYS.iter().enumerate() {
-        let optional = matches!(*key, "sweep_queued_at" | "sweep_complete_at");
+        let optional = matches!(
+            *key,
+            "sweep_queued_at" | "sweep_complete_at" | "actor_ref" | "room_ref" | "room_role"
+        );
         if !optional && !seen[index] {
             return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                 "missing required receipt field",

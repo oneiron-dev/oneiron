@@ -138,6 +138,24 @@ pub(super) fn link_imports(
                         .and_then(|value| field(&value,"bytes"));
                     Ok((reply,))
                 }),
+            "vault.agents.put" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (input,): (AgentPutInput,)| {
+                    cx.data_mut().begin_call()?;
+                    let reply: Reply<AgentPutOutput> = (|| {
+                        if input.definition.len() > cx.data().message_bytes {
+                            return Err("agent definition exceeds message budget".into());
+                        }
+                        let definition: Value = serde_json::from_str(&input.definition)
+                            .map_err(|_| "invalid agent definition JSON")?;
+                        let value = cx.data_mut().call("vault.agents.put",
+                            json!({"id":input.id,"definition":definition}))?;
+                        Ok(AgentPutOutput {
+                            id: field(&value, "id")?,
+                            disposition: field(&value, "disposition")?,
+                        })
+                    })();
+                    Ok((reply,))
+                }),
             "self.json.validate" => root.func_wrap(wit,
                 |mut cx: StoreContextMut<'_, State>, (schema, value): (String, String)| {
                     cx.data_mut().begin_call()?;
