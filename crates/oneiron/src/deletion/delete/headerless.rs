@@ -64,8 +64,14 @@ impl Vault {
             self.store
                 .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
         }
-        let crdt_persisted =
-            self.write_crdt_tombstone(id, requested_at, &tombstone, gate_decision.as_ref(), gate)?;
+        let crdt_persisted = self.write_crdt_tombstone(
+            id,
+            requested_at,
+            &window_label,
+            &tombstone,
+            gate_decision.as_ref(),
+            gate,
+        )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
         #[cfg(not(all(test, feature = "sync")))]
@@ -147,8 +153,10 @@ impl Vault {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
-        let existed =
+        let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
+        let (existed, citing) =
             self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
+        affected.extend(citing);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -182,6 +190,7 @@ impl Vault {
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
+            self.notify_local_delete_materialized(&affected);
             if crdt_persisted {
                 self.finish_published_topology_delete(&window_label, id, &tombstone)?;
             }
@@ -216,6 +225,7 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
+        self.notify_local_delete_materialized(&affected);
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }

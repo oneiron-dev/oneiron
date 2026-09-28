@@ -15,7 +15,7 @@ use oneiron_docedit::ArchiveLimits;
 use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
     AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
-    SheetAnswerPrecedence,
+    ResidenceOperationBudgetLimits, SheetAnswerPrecedence,
 };
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
@@ -69,6 +69,18 @@ impl PolicyManifestResolution {
         // A completely absent manifest preserves the existing bootstrap
         // behavior; any loaded malformed/unsupported manifest fails closed.
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    /// The effective residence-operation caps, absent when loaded policy is
+    /// malformed or otherwise forces fail-closed. Holder narrowing has already
+    /// been capped by the vault-level values during the trusted manifest fold.
+    #[must_use]
+    pub(crate) fn residence_operation_budgets(&self) -> Option<ResidenceOperationBudgetLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.residence_operation_budgets)
+        }
     }
 
     /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
@@ -447,6 +459,30 @@ impl PolicyManifestResolution {
     /// the caller must refuse rather than substitute an empty table. An
     /// absent manifest keeps the bootstrap posture and exposes the empty
     /// table, which is exactly the single-pool meter.
+    /// Resolved default mode; missing/bootstrapping manifests preserve the
+    /// shipped non-home `opened` posture.
+    pub(crate) fn sync_default_all_worlds(&self) -> Result<bool> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid sync world default policy".into(),
+            ));
+        }
+        Ok(self.sync_world_default.unwrap_or(false))
+    }
+
+    /// Trusted manifest cap for local world subscriptions. An absent manifest
+    /// preserves bootstrap selection; a malformed loaded one grants nothing.
+    pub(crate) fn sync_world_ceiling(
+        &self,
+    ) -> Result<Option<&std::collections::BTreeSet<crate::EntityId>>> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(crate::Error::InvalidConfig(
+                "invalid sync world ceiling policy".into(),
+            ));
+        }
+        Ok(self.sync_world_ceiling.as_ref())
+    }
+
     #[must_use]
     pub(crate) fn budget_policy(&self) -> Option<&BudgetPolicyTable> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
