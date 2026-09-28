@@ -24,6 +24,25 @@ use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPoli
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 
+/// Shipped policy data; organ users resolve this row or supply their own
+/// positive budgets. No fallback numbers live in the XML/ZIP implementation.
+pub(in crate::gate) fn default_docedit_resource_row() -> Value {
+    Value::Map(vec![
+        (
+            Value::from("archive_bytes"),
+            Value::from(512 * 1024 * 1024u64),
+        ),
+        (Value::from("entries"), Value::from(10_000u64)),
+        (Value::from("part_bytes"), Value::from(64 * 1024 * 1024u64)),
+        (
+            Value::from("expanded_bytes"),
+            Value::from(512 * 1024 * 1024u64),
+        ),
+        (Value::from("xml_depth"), Value::from(256u64)),
+        (Value::from("xml_nodes"), Value::from(1_000_000u64)),
+    ])
+}
+
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
     EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
@@ -492,6 +511,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 Value::from("max_count"),
                 Value::from(4096u64),
             )])]),
+        ),
+        (
+            Value::from(super::constants::POLICY_DOCEDIT_RESOURCE_KEY),
+            default_docedit_resource_row(),
         ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),

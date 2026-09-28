@@ -128,4 +128,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) hosted_tts: HostedTtsPolicy,
     pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) docedit_resource_policy:
+        Option<crate::gate::docedit_resource::DoceditResourcePolicy>,
 }
