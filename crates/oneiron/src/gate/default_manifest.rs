@@ -562,59 +562,11 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         // and everything about who owns the decision.
         (
             Value::from(POLICY_WAIT_POLICY_KEY),
-            Value::Array(vec![Value::Map(vec![
-                (
-                    Value::from(WAIT_POLICY_CLASS_KEY),
-                    Value::from(WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE),
-                ),
-                (
-                    Value::from(WAIT_POLICY_MIN_SECS_KEY),
-                    Value::from(DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
-                ),
-            ])]),
+            wait_policy_default_rows(),
         ),
         (
             Value::from(POLICY_ACT_POLICY_KEY),
-            Value::Array(vec![
-                // A delegated row is the member's own mailbox under an OAuth
-                // grant. ARCH-0063 R3 says identity picks the STARTING posture
-                // only and a grant may authorize send-as-owner, so the ban is
-                // a default and not a class property. Raising this row to
-                // `require_capability` does not by itself enable sending: the
-                // grant must carry an outbound scope, and the read-only scope
-                // classes cannot express one.
-                Value::Map(vec![
-                    (
-                        Value::from(ACT_POLICY_CLASS_KEY),
-                        Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
-                    ),
-                    (
-                        Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
-                        Value::from(ChannelIdentityShape::DelegatedGrant.as_str()),
-                    ),
-                    (
-                        Value::from(ACT_POLICY_POSTURE_KEY),
-                        Value::from(ActPosture::Deny.as_str()),
-                    ),
-                ]),
-                // A self-held row is an account the product minted, so the
-                // class is not barred; the substrate check still asks whether
-                // this row is live.
-                Value::Map(vec![
-                    (
-                        Value::from(ACT_POLICY_CLASS_KEY),
-                        Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
-                    ),
-                    (
-                        Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
-                        Value::from(SUBJECT_CLASS_SELF_HELD),
-                    ),
-                    (
-                        Value::from(ACT_POLICY_POSTURE_KEY),
-                        Value::from(ActPosture::RequireCapability.as_str()),
-                    ),
-                ]),
-            ]),
+            act_policy_default_rows(),
         ),
         (
             Value::from(POLICY_SIGNATURES_KEY),
@@ -631,6 +583,66 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// The shipped `wait_policy` rows (GATE-009): today's quarantine floor as
+/// vault-resident data.
+fn wait_policy_default_rows() -> Value {
+    Value::Array(vec![Value::Map(vec![
+        (
+            Value::from(WAIT_POLICY_CLASS_KEY),
+            Value::from(WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE),
+        ),
+        (
+            Value::from(WAIT_POLICY_MIN_SECS_KEY),
+            Value::from(DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
+        ),
+    ])])
+}
+
+/// The shipped `act_policy` rows (GATE-009): the starting outbound posture
+/// for each channel identity subject class.
+fn act_policy_default_rows() -> Value {
+    Value::Array(vec![
+        // A delegated row is the member's own mailbox under an OAuth
+        // grant. ARCH-0063 R3 says identity picks the STARTING posture
+        // only and a grant may authorize send-as-owner, so the ban is
+        // a default and not a class property. Raising this row to
+        // `require_capability` does not by itself enable sending: the
+        // grant must carry an outbound scope, and the read-only scope
+        // classes cannot express one.
+        Value::Map(vec![
+            (
+                Value::from(ACT_POLICY_CLASS_KEY),
+                Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
+            ),
+            (
+                Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
+                Value::from(ChannelIdentityShape::DelegatedGrant.as_str()),
+            ),
+            (
+                Value::from(ACT_POLICY_POSTURE_KEY),
+                Value::from(ActPosture::Deny.as_str()),
+            ),
+        ]),
+        // A self-held row is an account the product minted, so the
+        // class is not barred; the substrate check still asks whether
+        // this row is live.
+        Value::Map(vec![
+            (
+                Value::from(ACT_POLICY_CLASS_KEY),
+                Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
+            ),
+            (
+                Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
+                Value::from(SUBJECT_CLASS_SELF_HELD),
+            ),
+            (
+                Value::from(ACT_POLICY_POSTURE_KEY),
+                Value::from(ActPosture::RequireCapability.as_str()),
+            ),
+        ]),
+    ])
 }
 
 /// Engine-authored vault policy DATA for grant creation. The grant codec and
