@@ -1970,6 +1970,42 @@ fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
         Some(trusted),
         "the runner's own terminal claim is indexed"
     );
+    assert!(
+        vault.tier1_observation(trusted)?.is_none(),
+        "an ordinary indexed claim never attests model execution"
+    );
+
+    // Replaying the same well-shaped claim into another vault copies bytes,
+    // not the provider-completion event. The replay may create a memo index
+    // but must never register a tier-1 execution witness.
+    let (_replay_dir, replay) = open_vault();
+    replay.put_entity(
+        &fixture.subject,
+        ENTITY_TYPE_PERSON,
+        occurred(10),
+        10,
+        b"subject",
+    )?;
+    replay.put_entity(
+        &fixture.actor.entity_ref(),
+        ENTITY_TYPE_PERSON,
+        occurred(10),
+        10,
+        b"actor",
+    )?;
+    let bytes = vault.get(&trusted)?.expect("terminal claim body");
+    replay
+        .batch()
+        .put_replicated(
+            &trusted,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            occurred(10_000),
+            10_000,
+            &bytes,
+        )
+        .commit()?;
+    assert!(replay.get_claim(&trusted)?.is_some());
+    assert!(replay.tier1_observation(trusted)?.is_none());
 
     // (1) No runner provenance: the identical value under a foreign envelope.
     let foreign_envelope = WriteEnvelope::new(
@@ -2843,6 +2879,110 @@ fn schema_compartment_evaluation_has_its_own_fuel_ceiling() {
         Outcome::LimitExceeded
     );
     assert!(super::validate_json_schema(&schema, &value).is_ok());
+}
+
+#[test]
+fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()> {
+    use crate::consent::{ComposedEffect, EffectFacts};
+    use crate::failure_signals::{
+        AgentKind, AgentSurface, FailureClassV1, FailureSignalInput, FailureTaxonomy,
+        VersionedComponent,
+    };
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    use crate::self_heal::{
+        decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
+    };
+    use crate::store::GateDecisionId;
+
+    let mut config = VaultConfig::device();
+    config.failure_signals.export_opt_in = true;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let owner_id = EntityId::now();
+    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, occurred(1), 1, b"owner")?;
+    let owner =
+        vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
+    let effect =
+        ComposedEffect::new(EffectFacts::new("channel.send")?.with_external_observers(true));
+    vault.approve_once(&owner, effect.digest())?;
+    vault.deny_consent(&owner, effect.digest())?;
+    let query = ReceiptQuery::new(16)
+        .with_kind(ReceiptKind::Gate)
+        .with_actor(owner_id.to_hex());
+    let source_id = vault.run_consent_denied_detector("run-test", query)?[0];
+    let source = decode_diagnostic_event_body(&vault.get(&source_id)?.expect("diagnostic"))?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("first")),
+        Ok(response_fixture("second")),
+    ]);
+    let guard = guard_with_limit(10_000);
+    let mut observed = Vec::new();
+    for version in ["r1", "r2"] {
+        let actual =
+            ModelId::new(format!("test/model@{version}")).expect("validated model identity");
+        let selected = crate::llm::RoleModelDefaults::new()
+            .with_override(crate::llm::LlmRole::Orchestrator, actual.clone())
+            .resolve(crate::llm::LlmRole::Orchestrator);
+        assert_eq!(selected, actual);
+        let mut request = request_fixture();
+        request.model = selected;
+        let hash = request.canonical_hash().expect("step hash");
+        let outcome =
+            block_on(call_as_step(&ctx, &backend, &guard, request)).expect("executed step");
+        assert!(matches!(
+            outcome,
+            StepOutcome::Finished {
+                memoized: false,
+                ..
+            }
+        ));
+        let step_id =
+            step_index_lookup(&vault, fixture.attempt_id, &hash)?.expect("terminal step claim");
+        // Editing an otherwise real diagnostic to cite an unrelated step
+        // cannot attach that model: only the producer may register a source.
+        let mut event = source.clone();
+        event.evidence_refs.push(step_id);
+        event.evidence_refs.sort_unstable();
+        event.replay.checkpoint_ref = Some(step_id.to_hex());
+        let body = encode_diagnostic_event_body(&event)?;
+        let diagnostic_id = diagnostic_event_id(&event.detector_id, &body);
+        vault.emit_diagnostic_event(&diagnostic_id, &event)?;
+        assert!(vault.tier1_observation(diagnostic_id)?.is_none());
+        let signal = FailureSignalInput {
+            taxonomy: FailureTaxonomy::V1(FailureClassV1::TaskFailure),
+            agent_surface: AgentSurface::Task,
+            agent_kind: AgentKind::Custom,
+            agent: VersionedComponent {
+                name: "custom".into(),
+                version: "v1".into(),
+            },
+            agent_ref: None,
+        };
+        let witnessed_step = vault
+            .tier1_observation(step_id)?
+            .expect("actual execution witness");
+        vault.record_failure_signal(&witnessed_step, signal)?;
+        observed.push(step_id);
+    }
+    assert_eq!(observed.len(), 2);
+    let rows = vault.export_tier1_failure_counts()?;
+    assert_eq!(
+        rows.len(),
+        2,
+        "the same role must not merge distinct actual revisions"
+    );
+    let wire = rows
+        .iter()
+        .map(|row| serde_json::to_value(row).expect("tier-1 row"))
+        .collect::<Vec<_>>();
+    assert_eq!(wire[0]["model"]["name"], wire[1]["model"]["name"]);
+    assert_ne!(wire[0]["model"]["version"], wire[1]["model"]["version"]);
+    for row in &wire {
+        assert_ne!(row["model"]["name"], "openai/gpt-4.1");
+        assert_ne!(row["model"]["version"], "unattributed");
+    }
+    Ok(())
 }
 
 #[test]

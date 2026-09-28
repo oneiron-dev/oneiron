@@ -141,6 +141,7 @@ pub mod consult_ladder;
 pub mod dispatch_byoa;
 pub mod engine_executor;
 pub mod failure_ladder;
+pub mod failure_signals;
 pub mod run_tree;
 pub mod self_heal;
 pub mod session_lifecycle;

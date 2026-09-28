@@ -117,6 +117,8 @@ impl Vault {
             scope_ref,
             observations: &observations,
         };
-        run_deterministic_detectors(self, &input, &[&ConsentDeniedDetector])
+        let ids = run_deterministic_detectors(self, &input, &[&ConsentDeniedDetector])?;
+        self.capture_tier1_point_producer(&ids)?;
+        Ok(ids)
     }
 }

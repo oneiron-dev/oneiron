@@ -21,6 +21,59 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
+/// An execution-completion capability, not a decoded claim or memo index.
+/// Private fields prevent ordinary claim authors and replay from minting it.
+pub(crate) struct ExecutedModelWitness<'vault> {
+    vault: &'vault crate::Vault,
+    claim_id: crate::EntityId,
+    attempt_id: crate::attempt_queue::AttemptId,
+    run_ref: Option<String>,
+    request_hash: [u8; 32],
+    model: super::super::ModelId,
+    at_ms: u64,
+}
+
+impl<'vault> ExecutedModelWitness<'vault> {
+    fn completed(
+        ctx: &DurableStepContext<'vault>,
+        claim_id: crate::EntityId,
+        request_hash: [u8; 32],
+        model: super::super::ModelId,
+    ) -> Self {
+        Self {
+            vault: ctx.vault,
+            claim_id,
+            attempt_id: ctx.attempt_id,
+            run_ref: ctx.run_id.clone(),
+            request_hash,
+            model,
+            at_ms: ctx.now_ms,
+        }
+    }
+
+    pub(crate) fn parts(
+        &self,
+    ) -> (
+        &'vault crate::Vault,
+        crate::EntityId,
+        crate::attempt_queue::AttemptId,
+        Option<&str>,
+        [u8; 32],
+        &super::super::ModelId,
+        u64,
+    ) {
+        (
+            self.vault,
+            self.claim_id,
+            self.attempt_id,
+            self.run_ref.as_deref(),
+            self.request_hash,
+            &self.model,
+            self.at_ms,
+        )
+    }
+}
+
 /// Durable LLM call: memoize on `(job_id, step_hash)`, spend under a
 /// [`BudgetGuard`] lease, retry retryable failures (the ONE retry
 /// authority), and persist ONE terminal `dreamer.step` claim.
@@ -197,10 +250,12 @@ pub async fn call_as_step_with_fallbacks(
         ctx.now_ms,
     )?;
 
-    log_terminal_step(ctx, &step_hash, &request, &response, &payload)?;
+    let claim_id = log_terminal_step(ctx, &step_hash, &request, &response, &payload)?;
 
     lease_settle.settle().map_err(LlmError::from)?;
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
+    let witness = ExecutedModelWitness::completed(ctx, claim_id, step_hash, request.model.clone());
+    ctx.vault.capture_tier1_executed_step(&witness)?;
 
     Ok(StepOutcome::Finished {
         response,

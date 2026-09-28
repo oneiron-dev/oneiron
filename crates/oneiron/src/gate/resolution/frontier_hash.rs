@@ -100,6 +100,31 @@ pub(super) fn hash_policy_frontier_v0(
             }
         }
     }
+    if !resolution.failure_signal_policy.is_empty() {
+        hash_str(hasher, "failure_signal_policy");
+        hash_len(hasher, resolution.failure_signal_policy.len());
+        for row in &resolution.failure_signal_policy {
+            use crate::failure_signals::policy::{Precedence, Scope};
+            match row.scope {
+                Scope::Default => hash_str(hasher, "default"),
+                Scope::Vault => hash_str(hasher, "vault"),
+                Scope::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.bucket_seconds);
+            hash_u64(hasher, row.max_component_bytes);
+            hash_str(
+                hasher,
+                match row.precedence {
+                    Some(Precedence::NestedNarrowing) => "nested_narrowing",
+                    Some(Precedence::HolderOverride) => "holder_override",
+                    None => "inherit",
+                },
+            );
+        }
+    }
     // Default rows and owner-authored overrides both affect admission and its
     // consent frontier. Absent policy keeps the old frontier unchanged.
     if let Some(defaults) = resolution.voice_ref_defaults.as_ref() {

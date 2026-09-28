@@ -484,6 +484,29 @@ pub(crate) fn index_dreamer_step_claim_for_put(
     Ok(())
 }
 
+/// Read-only consistency check for an ALREADY producer-attested terminal
+/// step. This does not create execution authority; ordinary and replayed
+/// claims may pass this shape check but cannot mint the vault-local witness.
+pub(crate) fn terminal_step_identity(body: &ClaimBody) -> Option<(AttemptId, [u8; 32], ModelId)> {
+    if body.predicate != DREAMER_STEP_PREDICATE
+        || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        || body.stale
+    {
+        return None;
+    }
+    let decoded = decode_step_claim_value(&body.value).ok()?;
+    let finished = matches!(&body.value, Value::Map(entries) if entries.iter().any(|(key, value)|
+        key.as_str() == Some(KEY_PROGRESSION) && value.as_str() == Some("finished")));
+    if !finished || !step_claim_binding_is_trusted(&decoded, body) {
+        return None;
+    }
+    Some((
+        decoded.attempt_id,
+        decoded.step_hash,
+        ModelId::new(decoded.model_id).ok()?,
+    ))
+}
+
 /// Memo-index admission gate (ONE-1344). A claim is trusted for the index only
 /// when BOTH bindings hold:
 ///

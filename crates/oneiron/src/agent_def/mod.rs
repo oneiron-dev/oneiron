@@ -31,7 +31,9 @@ pub use self::types::{
 pub(crate) use self::codec::{
     legacy_logical_id_row, validate_agent_definition_bytes, validate_agent_definition_update,
 };
-pub(crate) use self::manifest::{seed_system_agent_definitions, validate_reserved_logical_id};
+pub(crate) use self::manifest::{
+    seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
+};
 pub(crate) use self::types::forked_from_row_ref;
 
 // The flat agent_def.rs module used to provide these names to the sibling test
