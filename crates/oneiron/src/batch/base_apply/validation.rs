@@ -85,16 +85,6 @@ pub(super) fn validate_put_type(
             entity_type,
         )));
     }
-    // Connector admission is vault-local authority: peers cannot replace an
-    // indexed Pending key with a self-asserted Active body.
-    if allow_maintenance
-        && allow_reserved_predicate
-        && entity_type == crate::registry::ENTITY_TYPE_CONNECTOR_KEY
-    {
-        return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-            entity_type,
-        )));
-    }
     // Same-vault custody replication is opt-out per credential. A
     // remote portable body cannot widen a locally narrowed record.
     if allow_maintenance

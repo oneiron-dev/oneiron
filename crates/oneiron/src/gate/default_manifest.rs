@@ -19,11 +19,11 @@ use super::constants::{
     GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY, GATE_RETENTION_HORIZON_SECS_KEY,
     GATE_RETENTION_MAX_SWEEP_ROWS_KEY, GATE_RETENTION_PRECEDENCE_KEY, LOCAL_WRITE_ACTOR_CLASS,
     POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
-    POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
-    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
-    POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
-    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_CONNECTOR_ADMISSION_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
+    POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
+    POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY,
+    POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
+    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
     POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
@@ -133,7 +133,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let bytes = rmp_serde::to_vec_named(&policy_values).expect("encode shipped policy values");
     let policy_values =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("decode shipped policy values");
-    let manifest = Value::Map(vec![
+    let entries = vec![
         (Value::from("policy_values"), policy_values),
         (
             Value::from(crate::failure_signals::policy::POLICY_KEY),
@@ -142,6 +142,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
             Value::from(POLICY_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(POLICY_CONNECTOR_ADMISSION_KEY),
+            super::connector_admission::ConnectorAdmissionPolicy::default_rows(),
         ),
         (
             Value::from(super::constants::POLICY_ASK_POLICY_KEY),
@@ -831,9 +835,20 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ])]),
         ),
-    ]);
+    ];
+    encode_with_native_mail_policy(entries)
+}
+
+/// The shipped native-mail dial is one vault row; hosts narrow it with their
+/// own vault, holder or identity rows in the same manifest key.
+fn encode_with_native_mail_policy(mut entries: Vec<(Value, Value)>) -> Vec<u8> {
+    entries.push((
+        Value::from(super::mail_policy::MANIFEST_KEY),
+        Value::Array(vec![super::mail_policy::default_row()]),
+    ));
     let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .expect("encode default policy manifest");
     data
 }
 

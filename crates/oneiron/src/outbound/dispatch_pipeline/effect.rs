@@ -10,9 +10,9 @@ use crate::gate::{ExternalEffectGateInput, GateOutcome};
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
-    OutboundExecutionOutcomeKind, OutboundExecutionSink,
+    OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionSink,
 };
-use crate::outbound_intent_ledger::IntentState;
+use crate::outbound_intent_ledger::{IntentResolution, UnconfirmedDelivery};
 use crate::receipt::ReceiptRecord;
 
 pub(super) struct EffectInput<'a, S> {
@@ -25,6 +25,7 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) attempt_id: AttemptId,
     pub(super) idempotency_supported: bool,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    pub(super) parked: Option<OutboundDispatchOutcome>,
     pub(super) suppression_receipt: Option<ReceiptRecord>,
 }
 
@@ -41,6 +42,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         attempt_id,
         idempotency_supported,
         verified_actor,
+        parked,
         suppression_receipt,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
@@ -63,7 +65,10 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
     let effect_result = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
         &authority,
-        crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
+        match parked {
+            Some(_) => crate::outbound_chokepoint::OutboundEffectCommand::Park(prepared),
+            None => crate::outbound_chokepoint::OutboundEffectCommand::New(prepared),
+        },
         request.occurred_at,
         &mut transport,
     )
@@ -93,26 +98,17 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             )));
         }
     };
-    let outcome =
-        if effect_result.dedupe_suppressed {
-            OutboundDispatchOutcome::Suppressed
-        } else {
-            match effect_result.dispatch.state {
-                Some(IntentState::Done) => OutboundDispatchOutcome::DeliveredToChannel,
-                Some(IntentState::Pending) => {
-                    if transport.execution.as_ref().is_some_and(|execution| {
-                        execution.kind == OutboundExecutionOutcomeKind::Failed
-                    }) {
-                        OutboundDispatchOutcome::Failed
-                    } else {
-                        OutboundDispatchOutcome::Held
-                    }
-                }
-                Some(IntentState::Abandoned) => OutboundDispatchOutcome::Failed,
-                None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
-                None => OutboundDispatchOutcome::Suppressed,
-            }
-        };
+    let resolution = effect_result.resolution;
+    let outcome = if effect_result.dedupe_suppressed {
+        OutboundDispatchOutcome::Suppressed
+    } else {
+        outbound_effect_outcome(
+            resolution,
+            transport.execution.as_ref(),
+            gate_outcome_kind,
+            parked,
+        )
+    };
     // A replay has no new decision id; never invent a non-queryable gate ref.
     Ok(DispatchVerdict {
         gate_decision_ref: effect_result.gate_decision_id,
@@ -121,8 +117,43 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         gate_receipt_reasons: effect_result.gate_receipt_reasons,
         effector_charge: effect_result.budget_charge,
         effect_state: effect_result.dispatch.state,
+        resolution,
         outcome,
         execution: transport.execution,
         suppression_receipt: effect_result.suppression_receipt,
     })
+}
+
+/// Outcome naming consumes one ledger resolution. The execution result is
+/// evidence about THIS attempt only while the logical send remains Pending.
+fn outbound_effect_outcome(
+    resolution: Option<IntentResolution>,
+    execution: Option<&OutboundExecutionOutcome>,
+    gate_outcome_kind: GateOutcome,
+    parked: Option<OutboundDispatchOutcome>,
+) -> OutboundDispatchOutcome {
+    match resolution {
+        Some(IntentResolution::Delivered) => OutboundDispatchOutcome::DeliveredToChannel,
+        Some(IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::Unresolved,
+            ..
+        }) => OutboundDispatchOutcome::Ambiguous,
+        Some(IntentResolution::Stopped { .. }) => OutboundDispatchOutcome::Failed,
+        Some(IntentResolution::Pending { .. }) if parked.is_some() => parked.expect("matched Some"),
+        Some(IntentResolution::Pending { .. }) => match execution {
+            Some(execution) if execution.kind == OutboundExecutionOutcomeKind::Failed => {
+                if execution.delivery_may_have_occurred {
+                    OutboundDispatchOutcome::Ambiguous
+                } else {
+                    OutboundDispatchOutcome::Failed
+                }
+            }
+            _ => OutboundDispatchOutcome::Held,
+        },
+        None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
+        None if gate_outcome_kind == GateOutcome::Allow && parked.is_some() => {
+            parked.expect("matched Some")
+        }
+        None => OutboundDispatchOutcome::Suppressed,
+    }
 }

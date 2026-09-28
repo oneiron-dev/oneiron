@@ -164,6 +164,11 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.weave_report_precedence = resolution
                     .weave_report_precedence
                     .max(decoded.weave_report_precedence);
+                // Every trusted pack's mail rows join one set; resolution
+                // narrows them together, so a pack can only tighten.
+                resolution
+                    .native_mail_policy
+                    .extend(decoded.native_mail_policy);
                 resolution
                     .federation_grant_rows
                     .extend(decoded.federation_grant_rows);
@@ -271,6 +276,9 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(admission) = decoded.connector_admission {
+                    resolution.connector_admission.restrict(admission);
+                }
                 if let Some(voice_serving) = decoded.voice_serving {
                     resolution.voice_serving.push(voice_serving);
                 }

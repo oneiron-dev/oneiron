@@ -107,7 +107,7 @@ fn concurrent_first_admissions_bind_one_sender_principal_and_request()
                 admitted,
             )
         });
-        assert_eq!(first?.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(first?.outcome, OutboundDispatchOutcome::Ambiguous);
         assert_eq!(admitted.records.len(), 1);
         assert_eq!(admitted[0].state, IntentState::Pending);
         assert_eq!(admitted[0].recorded_outcome, None);

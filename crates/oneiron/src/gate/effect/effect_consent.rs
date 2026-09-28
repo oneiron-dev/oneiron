@@ -26,6 +26,22 @@ pub(in crate::gate) fn external_effect_composed_effect(
         .ok()
 }
 
+/// One native-mail cold send has a distinct approve-once digest for its
+/// sending identity, canonical recipient and logical send reference. Ordinary
+/// standing grants still use the existing `send` action requirement; only the
+/// one-shot digest changes, so approved send A cannot release send B.
+pub(in crate::gate) fn native_mail_cold_composed_effect(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::ComposedEffect> {
+    let canonical =
+        crate::channel_identity_provider::native_mail::CanonicalMailSend::from_effect(effect)?;
+    let mut facts = external_effect_facts(effect);
+    facts.operation_kind = canonical.approval_kind();
+    crate::consent::ComposedEffect::new(facts)
+        .with_action_requirement(external_effect_action_requirement(effect)?)
+        .ok()
+}
+
 pub(in crate::gate) fn external_effect_consent_context(
     effect: &ExternalEffectGateInput,
     approve_once: Option<&crate::consent::ApproveOnceAuthorization>,

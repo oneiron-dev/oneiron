@@ -1127,3 +1127,64 @@ fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Resu
     );
     Ok(())
 }
+
+#[test]
+fn manifest_staging_runs_probe_runner_on_exact_candidate() -> crate::error::Result<()> {
+    use crate::connector_key::{
+        ConnectorKeyRecord, ConnectorToolSchema, ProbeManifestQualifier, ResolvedConnectorManifest,
+    };
+    use crate::{EntityId, Vault, VaultConfig};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let id = EntityId::now();
+    vault.register_connector_key(&id, ConnectorKeyRecord::active("memory", None, vec![], 10))?;
+    let candidate = |input_schema: Value| {
+        ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+            name: "memory".into(),
+            permissions: BTreeSet::from(["read".into()]),
+            triggers: BTreeSet::new(),
+            input_schema,
+        }])
+    };
+    let stub = Stub {
+        fault: Fault::None,
+        connections: Cell::new(0),
+        effects: Rc::default(),
+    };
+    let plan = plan();
+    let suite = ProbeManifestQualifier {
+        connector: &stub,
+        plan: &plan,
+        oracle: &Oracle,
+    };
+    // A surface the connector does not declare is refused before any probe.
+    let differs = candidate(json!({"type":"object"}))?;
+    assert!(
+        vault
+            .stage_connector_manifest(&id, differs, "R1", &suite, 11)
+            .is_err()
+    );
+    assert!(stub.effects.borrow().is_empty());
+    let held = vault.get_connector_key(&id)?.unwrap();
+    assert!(
+        held.pending_manifest
+            .is_some_and(|pending| pending.qualification_report_hash.is_none())
+    );
+    // The exact declared surface runs the full suite and binds its report.
+    let exact =
+        candidate(json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}}))?;
+    vault.stage_connector_manifest(&id, exact.clone(), "R1", &suite, 12)?;
+    let pending = vault
+        .get_connector_key(&id)?
+        .unwrap()
+        .pending_manifest
+        .unwrap();
+    assert_eq!(pending.manifest, exact);
+    assert!(
+        pending
+            .qualification_report_hash
+            .is_some_and(|hash| hash.len() == 64)
+    );
+    assert!(!stub.effects.borrow().is_empty());
+    Ok(())
+}
