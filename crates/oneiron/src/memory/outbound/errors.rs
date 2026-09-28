@@ -57,6 +57,11 @@ pub(crate) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) ->
             "outbound effect durability failed",
             &["Retry after checking local storage health."],
         ),
+        OutboundDispatchError::ObsoleteAskConfirmation => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "ask confirmation was answered or settled before outbound dispatch",
+            &["Do not retry this obsolete notice."],
+        ),
         OutboundDispatchError::InvalidBoundActor => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "the bound actor is no longer authorized for outbound dispatch",

@@ -80,6 +80,9 @@ pub(crate) fn resolve_policy_manifest(
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
                 resolution
+                    .federation_grant_rows
+                    .extend(decoded.federation_grant_rows);
+                resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
                 resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;
@@ -160,11 +163,28 @@ pub(crate) fn resolve_policy_manifest(
                 }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
+                if let Some(limits) = decoded.livequery_tracker_limits {
+                    if let Some(existing) = &mut resolution.livequery_tracker_limits {
+                        existing.restrict(limits);
+                    } else {
+                        resolution.livequery_tracker_limits = Some(limits);
+                    }
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
                         Some(existing) if existing == bounds => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
+                if let Some(ask_policy) = decoded.ask_policy {
+                    match &mut resolution.ask_policy {
+                        Some(current) => {
+                            if current.restrict(&ask_policy).is_none() {
+                                resolution.diagnostics.malformed_manifest_seen = true;
+                            }
+                        }
+                        None => resolution.ask_policy = Some(ask_policy),
                     }
                 }
                 // Advisory threshold composition is deterministic and never
@@ -199,6 +219,9 @@ pub(crate) fn resolve_policy_manifest(
                 resolution
                     .retry_source_policy
                     .extend(decoded.retry_source_policy);
+                if let Some(policy) = decoded.compilation_policy {
+                    resolution.compilation_policies.push(policy);
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

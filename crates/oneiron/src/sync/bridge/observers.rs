@@ -385,6 +385,8 @@ pub struct MaterializedDiffSummary {
     pub containers: Vec<String>,
     /// Total changed key and binary-value bytes, for accounting only.
     pub bytes: usize,
+    /// Revision identities captured at the transaction or bridge-commit door.
+    pub revision_events: Vec<super::RevisionEvent>,
 }
 
 /// Transport correlation only; never actor authority.
@@ -485,12 +487,26 @@ fn subscribe_map_observer(
                 // its post-commit notification; never invalidate on this event.
                 return;
             }
-            if event.origin == BRIDGE_ORIGIN {
-                // The bridge mirrors an already committed LMDB write.
+            if super::provenance::is_bridge(event.origin) {
+                // A mirror identifies its source in the same Loro commit.
+                // Other/legacy bridge commits are independent foreign changes.
+                let sources = super::provenance::mirror_sources(event.origin);
                 for cdiff in &event.events {
                     if let Some(delta) = cdiff.diff.as_map() {
                         let path = format!("w:{window_key}/{}", live_query.0);
-                        let diff = entity_document_diff(&path, live_query.0, delta);
+                        let mut diff = entity_document_diff(&path, live_query.0, delta);
+                        if live_query.0 == "entities" {
+                            for key in delta.updated.keys() {
+                                if let Ok(entity) = EntityId::from_hex(key) {
+                                    diff.revision_events.push(super::RevisionEvent::Mirror {
+                                        entity,
+                                        source_revision: sources
+                                            .as_ref()
+                                            .and_then(|s| s.get(&entity).copied()),
+                                    });
+                                }
+                            }
+                        }
                         materializer.notify_live_queries(
                             &path,
                             &diff,
@@ -503,19 +519,38 @@ fn subscribe_map_observer(
                 }
                 return;
             }
-            let _guard = materializer.lock();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    let committed = materialize(
-                        &callback_doc,
-                        map_delta,
-                        &vault,
-                        &window_key,
-                        lease_vault_id,
-                    );
+                    let (committed, changes) = {
+                        let _guard = materializer.lock();
+                        if live_query.0 == "entities" {
+                            super::entities::materialize_entities_with_changes(
+                                &callback_doc,
+                                map_delta,
+                                &vault,
+                                &window_key,
+                                lease_vault_id,
+                            )
+                        } else {
+                            (
+                                materialize(
+                                    &callback_doc,
+                                    map_delta,
+                                    &vault,
+                                    &window_key,
+                                    lease_vault_id,
+                                ),
+                                Vec::new(),
+                            )
+                        }
+                    };
                     if committed {
                         let path = format!("w:{window_key}/{}", live_query.0);
-                        let diff = entity_document_diff(&path, live_query.0, map_delta);
+                        let mut diff = entity_document_diff(&path, live_query.0, map_delta);
+                        diff.revision_events = changes
+                            .into_iter()
+                            .map(super::RevisionEvent::Original)
+                            .collect();
                         let by = OriginMark {
                             conn_id: event
                                 .origin
@@ -559,5 +594,6 @@ fn entity_document_diff(
     MaterializedDiffSummary {
         containers: containers.into_iter().collect(),
         bytes,
+        revision_events: Vec::new(),
     }
 }
