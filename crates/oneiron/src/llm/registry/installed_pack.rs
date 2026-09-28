@@ -34,6 +34,15 @@ impl CatalogSeed {
         {
             return Err(invalid("installed model catalog hash differs"));
         }
+        // Knowledge-only bytes enter the same hash-bound scan ledger as skills
+        // at the hub fetch door. Verdicts stay signals on the install ask; only
+        // bytes that never reached that ledger are refused here.
+        if vault
+            .skill_scan_verdicts_for_content_hash(source.content_hash())?
+            .is_empty()
+        {
+            return Err(invalid("installed model catalog has no scan evidence"));
+        }
         let files = source.files();
         if files.len() != 2 {
             return Err(invalid("model catalog has unexpected source facets"));

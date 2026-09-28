@@ -75,10 +75,7 @@ impl crate::skill_hub::SkillHubAdapter for CatalogAdapter {
     fn endpoint(&self) -> Option<&str> {
         Some(&self.endpoint)
     }
-    fn fetch_package(
-        &self,
-        _: &crate::skill_hub::HubRef,
-    ) -> Result<crate::skill_hub::HubPackage> {
+    fn fetch_package(&self, _: &crate::skill_hub::HubRef) -> Result<crate::skill_hub::HubPackage> {
         Err(crate::Error::EntityNotFound)
     }
 }
