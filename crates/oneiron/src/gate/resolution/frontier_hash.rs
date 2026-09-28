@@ -343,6 +343,12 @@ pub(super) fn hash_policy_frontier_v0(
         }
     }
 
+    if let Some(policy) = resolution.judge_calibration {
+        hash_str(hasher, "judge_calibration");
+        hash_u64(hasher, u64::from(policy.ask_minutes));
+        hash_u64(hasher, u64::from(policy.max_context_bytes));
+    }
+
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

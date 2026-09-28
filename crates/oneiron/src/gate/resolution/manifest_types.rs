@@ -194,6 +194,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
     pub(super) carry_forward_authored: bool,
+    pub(crate) judge_calibration: Option<crate::skill_optimize::policy::JudgeCalibrationPolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,

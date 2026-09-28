@@ -184,6 +184,18 @@ impl PolicyManifestResolution {
         self.goal_limits.unwrap_or_default()
     }
 
+    #[must_use]
+    pub(crate) fn judge_calibration_policy(
+        &self,
+    ) -> Option<crate::skill_optimize::policy::JudgeCalibrationPolicy> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.judge_calibration.unwrap_or_default())
+        }
+    }
+
+    #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
