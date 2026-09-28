@@ -107,6 +107,14 @@ impl WakeLedger {
         })
     }
 
+    pub(super) fn verify_widen_action(
+        &self,
+        action: &oneiron_vault_contract::ManagedWidenAction,
+        body: &[u8],
+    ) -> bool {
+        action.verify(&self.token, &self.vault_name, body)
+    }
+
     pub fn rev(&self) -> u64 {
         self.rev.load(Ordering::SeqCst)
     }

@@ -36,6 +36,7 @@ mod mcp_scoping;
 mod mcp_tool_endpoints;
 mod mcp_write_guards;
 mod reactive;
+mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_tree;

@@ -238,6 +238,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_routes = Router::new()
+        // A consumed approval must never replay a cached 200, even with an idempotency key.
+        .route("/consent/widen/accept", post(core_accept_widen))
         .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
