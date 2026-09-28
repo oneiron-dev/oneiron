@@ -76,7 +76,6 @@ pub(super) fn queue_dreamer_vad_approvals(vault: &Vault, txn: &RwTxn<'_>, ids: V
 
 /// Mark transaction-owned claim writes for the owner's post-commit watch.
 /// A rolled-back scope drops the marker without signaling the timer.
-#[cfg(feature = "sync")]
 pub(crate) fn queue_proactivity_change(vault: &Vault, txn: &RwTxn<'_>) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
