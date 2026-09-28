@@ -131,7 +131,7 @@ fn teacher_policy_stricter_vault_bar_refuses_old_eighty_five_percent_approval() 
         850_000,
     )
     .unwrap();
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(bytes.as_slice());
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
         panic!("default policy must be a map");
@@ -176,7 +176,7 @@ fn teacher_policy_stricter_vault_bar_refuses_old_eighty_five_percent_approval() 
 }
 
 fn set_teacher_probe_policy_row(vault: &Vault, minimum: u64, holder: Option<(&str, u64)>) {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap()
     else {
         panic!("seeded manifest is a map");

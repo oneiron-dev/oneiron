@@ -1124,7 +1124,7 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     let root = server.vault.root_project().expect("root project");
     let project = seeded_test_entity_id(0x2094_0103);
     let mut roster =
-        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner);
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
     roster.roster.push(peer.to_hex());
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
     let exact_room = oneiron::workspace_roster::ProjectRoom {
@@ -1366,7 +1366,7 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
     bind_room_owner(&server, owner);
     let root = server.vault.root_project().unwrap();
     let project = seeded_test_entity_id(0x2094_0202);
-    let record = oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner);
+    let record = oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
     server.vault.put_project(project, &record, 1).unwrap();
     let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
     let private = seed_text_turn(&server, "owner alone private2094");

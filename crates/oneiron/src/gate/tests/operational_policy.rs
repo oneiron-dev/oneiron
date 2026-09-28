@@ -42,7 +42,7 @@ fn put(vault: &crate::Vault, seed: u8, rows: Vec<(Value, Value)>) -> Result<()> 
 fn shipped_defaults_are_authored_and_resolve_in_snapshot() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let default =
-        decode_policy_manifest(&default_policy_manifest()).expect("default manifest decodes");
+        decode_policy_manifest(&default_policy_manifest().unwrap()).expect("default manifest decodes");
     assert_eq!(
         default
             .linear_mirror

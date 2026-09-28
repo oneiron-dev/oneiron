@@ -90,9 +90,16 @@ pub(crate) const TASK_ASK_ANSWER: &[u8] = b"oneiron.tasks.ask.answer.v1";
 /// `receipt`.
 pub(crate) const TASK_ASK_SETTLEMENT: &[u8] = b"oneiron.tasks.ask.settlement";
 
+/// An ask's soft-confirm notice (`task_verb::ask_soft_confirm`). Parts: group, person.
+pub(crate) const TASK_ASK_SOFT_CONFIRM: &[u8] = b"oneiron.tasks.ask.soft_confirm.v1";
+
+/// A guest's federation grant on one ask (`task_verb::ask_guest`). Parts: group,
+/// person.
+pub(crate) const TASK_ASK_GUEST_GRANT: &[u8] = b"oneiron.tasks.ask.guest.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 23] = [
+pub(crate) const ALL: [&[u8]; 25] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -116,4 +123,6 @@ pub(crate) const ALL: [&[u8]; 23] = [
     TASK_ASK_MEMBER,
     TASK_ASK_ANSWER,
     TASK_ASK_SETTLEMENT,
+    TASK_ASK_SOFT_CONFIRM,
+    TASK_ASK_GUEST_GRANT,
 ];

@@ -287,7 +287,7 @@ fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> 
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        ).unwrap();
         posterior.source = Some(ClaimSource::Observed);
         vault.with_write_txn(|txn| {
             vault.put_reserved_claim_in_txn(
@@ -372,7 +372,7 @@ fn executor_pair_controls_production_pack_skill_ranking() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        ).unwrap();
         body.source = Some(ClaimSource::Observed);
         vault.with_write_txn(|txn| {
             vault.put_reserved_claim_in_txn(

@@ -102,7 +102,7 @@ pub(crate) fn guard_ask_fact_put(
                 if group.guest_grants.len() != guests.len()
                     || group.guest_grants.iter().any(|(person, grant)| {
                         !guests.contains_key(person)
-                            || derived_id(b"oneiron.tasks.ask.guest.v1", id, person.as_bytes()).ok()
+                            || crate::EntityId::derive(crate::entity_id::derived_domains::TASK_ASK_GUEST_GRANT, &[id.as_bytes(), person.as_bytes()]).ok()
                                 != Some(*grant)
                     })
                 {
@@ -144,11 +144,7 @@ pub(crate) fn guard_ask_fact_put(
                 decode(data, crate::task_verb::ask_soft_confirm::SOFT_CONFIRM)?
                     .ok_or_else(invalid)?;
             if notice.revision == 0
-                || derived_id(
-                    b"oneiron.tasks.ask.soft_confirm.v1",
-                    notice.group_ref,
-                    notice.person_ref.as_bytes(),
-                )? != id
+                || crate::EntityId::derive(crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM, &[notice.group_ref.as_bytes(), notice.person_ref.as_bytes()])? != id
             {
                 return Err(invalid());
             }

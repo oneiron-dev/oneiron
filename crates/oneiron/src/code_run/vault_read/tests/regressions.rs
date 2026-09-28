@@ -576,7 +576,7 @@ fn in_process_context_pack_keeps_ranked_owner_claim_when_l2_is_implicit() {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    ).unwrap();
     let now = crate::unix_seconds_now();
     vault
         .put_claim(

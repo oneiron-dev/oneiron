@@ -584,7 +584,7 @@ fn install_attribution_limits_with_id(
     holder: Option<(EntityId, u64)>,
 ) -> Result<()> {
     use std::io::Cursor;
-    let raw = crate::gate::default_policy_manifest();
+    let raw = crate::gate::default_policy_manifest().unwrap();
     let mut manifest = rmpv::decode::read_value(&mut Cursor::new(raw)).expect("shipped manifest");
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map")

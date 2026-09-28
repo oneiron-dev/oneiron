@@ -30,7 +30,7 @@ fn manifest(ask: Option<Value>) -> Vec<u8> {
 }
 #[test]
 fn ask_manifest_ships_defaults_and_absent_override_matches() -> Result<()> {
-    let shipped = decode_policy_manifest(&default_policy_manifest()).expect("default manifest");
+    let shipped = decode_policy_manifest(&default_policy_manifest().unwrap()).expect("default manifest");
     assert_eq!(shipped.ask_policy, Some(AskOperationalPolicy::default()));
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, test_id(0x45), &manifest(None))?;

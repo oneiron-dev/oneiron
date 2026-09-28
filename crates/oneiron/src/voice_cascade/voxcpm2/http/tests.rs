@@ -9,7 +9,7 @@ fn queued_render_after_withdrawal_never_uploads_deleted_reference() -> Result<()
     crate::test_util::put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let owner = EntityId::now();
     vault.store_voice_ref_pack(&VoiceRefPack {

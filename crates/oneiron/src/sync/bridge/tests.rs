@@ -4365,7 +4365,7 @@ fn invalid_deferred_participant_erasure_cannot_activate_verified_merge() {
                 1.0,
                 ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Active,
-            );
+            ).unwrap();
             crate::claim::encode_claim_body(&claim).unwrap()
         } else {
             b"facet fixture".to_vec()
@@ -4704,7 +4704,7 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
     vault
         .put_project(
             child,
-            &ProjectRecord::new(child, Some(root), root, leader),
+            &ProjectRecord::new(child, Some(root), root, leader).unwrap(),
             1,
         )
         .unwrap();
@@ -4729,7 +4729,7 @@ fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
                 0.9,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            ).unwrap(),
             TimeRange { start: 2, end: 2 },
             2,
         )

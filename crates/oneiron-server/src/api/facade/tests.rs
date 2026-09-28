@@ -589,7 +589,7 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
         Some(vault.root_project().unwrap()),
         vault.root_project().unwrap(),
         actor,
-    );
+    ).unwrap();
     vault.put_project(project, &record, 1).unwrap();
     let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
     let server = Arc::new(

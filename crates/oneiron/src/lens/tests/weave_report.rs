@@ -28,7 +28,7 @@ fn resident_section_recipe_renders_a_scoped_digest_atom() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ),
+        ).unwrap(),
         TimeRange { start: 1, end: 1 },
         1,
     )?;

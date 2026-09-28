@@ -319,11 +319,7 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
         let txn = vault.store.env.read_txn()?;
         super::super::ask_record::read_group(&vault, &txn, ask.group_ref)?.expect("ask group")
     };
-    let reference = super::super::ask_record::derived_id(
-        b"oneiron.tasks.ask.settlement",
-        ask.group_ref,
-        b"receipt",
-    )?;
+    let reference = crate::EntityId::derive(crate::entity_id::derived_domains::TASK_ASK_SETTLEMENT, &[ask.group_ref.as_bytes(), b"receipt"])?;
     let electorate: BTreeSet<_> = friends.into();
     for friend in [friends[1], friends[2]] {
         let answer = TaskAskAnswer {

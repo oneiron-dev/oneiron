@@ -333,7 +333,7 @@ fn repaired_tree_cannot_choose_a_parent_using_rewritten_child_counts() {
 /// Replace just the decision rows in the real seeded POLICY_MANIFEST, as a
 /// locally trusted owner edit. The normal manifest fold must see the change.
 fn write_policy_rows(vault: &crate::Vault, rows: &[SelectionPolicyRow]) {
-    let raw = crate::gate::default_policy_manifest();
+    let raw = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut raw.as_slice()).unwrap()
     else {
         panic!("seed is a manifest map")

@@ -912,7 +912,7 @@ fn seed_disclosure_claim_in_world(
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    ).unwrap();
     claim.world = Some(world);
     // Tier B is required here: otherwise the tier check rejects this claim
     // before the test can exercise the contact's world clearance.

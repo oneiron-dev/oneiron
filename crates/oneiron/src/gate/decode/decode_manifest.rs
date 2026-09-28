@@ -1135,7 +1135,7 @@ mod sheet_answer_limit_tests {
 
     #[test]
     fn default_and_nested_manifest_rows_restrict_holder_at_vault() {
-        let shipped = crate::gate::default_manifest::default_policy_manifest();
+        let shipped = crate::gate::default_manifest::default_policy_manifest().unwrap();
         let default = decode_policy_manifest(&shipped).expect("shipped manifest decodes");
         assert_eq!(default.sheet_answer_limits[0].max_count, 4096);
         assert_eq!(

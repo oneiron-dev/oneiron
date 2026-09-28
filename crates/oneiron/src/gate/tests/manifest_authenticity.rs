@@ -133,7 +133,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
         let _dir = tempfile::tempdir()?;
         let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
         let actor = test_id(0xB4);
-        let projector = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+        let projector = crate::commitment_schedule::commitment_projection_actor().unwrap().entity_ref();
         let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
             unreachable!("source trust fixture is a map")
         };
@@ -197,7 +197,7 @@ fn trusted_disjoint_generated_actor_bindings_preserve_each_permit() -> Result<()
     let _dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
     let actor = test_id(0x86);
-    let default_actor = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+    let default_actor = crate::commitment_schedule::commitment_projection_actor().unwrap().entity_ref();
     let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
         unreachable!("source trust fixture is a map")
     };
@@ -411,7 +411,7 @@ fn authenticated_install_without_optional_notification_table_remains_editable() 
         true,
         crate::store::GateDecisionId::now(),
     )?;
-    let data = crate::gate::default_policy_manifest();
+    let data = crate::gate::default_policy_manifest().unwrap();
     let mut manifest =
         rmpv::decode::read_value(&mut data.as_slice()).expect("default policy decodes");
     let Value::Map(ref mut fields) = manifest else {

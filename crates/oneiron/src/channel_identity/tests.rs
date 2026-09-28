@@ -231,7 +231,7 @@ fn vault_create_transition_and_never_recycle_invariant() -> Result<()> {
     crate::test_util::put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let id = entity(0x60);
     let identity = sample_identity();

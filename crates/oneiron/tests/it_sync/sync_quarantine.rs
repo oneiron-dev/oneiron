@@ -1974,7 +1974,7 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
     vault
         .put_project(
             other,
-            &ProjectRecord::new(other, Some(root), root, leader),
+            &ProjectRecord::new(other, Some(root), root, leader).unwrap(),
             1,
         )
         .unwrap();
@@ -1982,7 +1982,7 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
     vault
         .put_project(
             child,
-            &ProjectRecord::new(child, Some(root), root, leader),
+            &ProjectRecord::new(child, Some(root), root, leader).unwrap(),
             2,
         )
         .unwrap();
@@ -2010,7 +2010,7 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
                 0.9,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            ).unwrap(),
             valid_time_range(),
             LEARNED_AT,
         )

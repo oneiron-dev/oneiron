@@ -44,7 +44,7 @@ fn bank(vault: &Vault) -> Result<EntityId> {
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     vault.store_voice_ref_pack(&VoiceRefPack {
         version: 1,
@@ -320,7 +320,7 @@ fn resolved_serving_row_narrows_and_widening_holder_is_refused() -> Result<()> {
     use rmpv::Value;
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let holder = EntityId::now();
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let mut value =
         rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|e| invalid(&e.to_string()))?;
     let Value::Map(entries) = &mut value else {

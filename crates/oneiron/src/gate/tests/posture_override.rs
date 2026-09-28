@@ -502,7 +502,7 @@ fn opt_out_receipt_names_value_row_and_precedence_fallback() -> Result<()> {
     for (seed, body, expected) in [
         (
             0xB0,
-            default_policy_manifest(),
+            default_policy_manifest().unwrap(),
             "policy_precedence_row_default.scope_precedence",
         ),
         (

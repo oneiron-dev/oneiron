@@ -1476,6 +1476,7 @@ async fn contact_opt_out_family_supersession_retains_original_diff_after_edit() 
         .opted_out(CounterpartyOptOutReason::Stop, 30)
         .expect("later contact wording")
         .claim_bodies(contact)
+        .expect("contact claim bodies")
         .into_iter()
         .find(|body| body.predicate == PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT)
         .expect("replacement value");

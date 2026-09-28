@@ -16,7 +16,7 @@ fn typed_recall_keeps_an_implicit_l2_claim_and_its_count() {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    ).unwrap();
     vault
         .put_claim(
             &id,

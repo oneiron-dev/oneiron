@@ -284,7 +284,7 @@ fn mint_fixture(
         Some(vault.root_project()?),
         vault.root_project()?,
         person,
-    );
+    ).unwrap();
     vault.put_project(staging, &staging_project, 20)?;
     let room = EntityId::from_hex(&staging_project.home_room)?;
     vault
@@ -567,7 +567,7 @@ fn project_born_from_is_message_at_typed_batch_and_replay_doors() -> Result<()> 
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
-    let mut project = ProjectRecord::new(id, Some(root), root, leader);
+    let mut project = ProjectRecord::new(id, Some(root), root, leader).unwrap();
     let at = TimeRange { start: 21, end: 21 };
     for source in [root, crate::test_util::entity(0x79)] {
         project.born_from = Some(source.to_hex());
@@ -629,12 +629,12 @@ fn project_dag_accepts_two_parents_and_diamond_but_rejects_secondary_cycles() ->
     for parent in [left, right] {
         vault.put_project(
             parent,
-            &ProjectRecord::new(parent, Some(root), root, leader),
+            &ProjectRecord::new(parent, Some(root), root, leader).unwrap(),
             1,
         )?;
     }
     let shared = EntityId::now();
-    let mut child = ProjectRecord::new(shared, Some(left), root, leader);
+    let mut child = ProjectRecord::new(shared, Some(left), root, leader).unwrap();
     child.role = ProjectRole::Corpus;
     child.parents.push(right.to_hex());
     vault.put_project(shared, &child, 2)?;
@@ -693,7 +693,7 @@ fn stored_claim(vault: &Vault) -> Result<EntityId> {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        ),
+        ).unwrap(),
         TimeRange { start: 2, end: 2 },
         2,
     )?;
@@ -709,7 +709,7 @@ fn generic_edges_cannot_invent_or_retire_project_parents() -> Result<()> {
     let child = EntityId::now();
     vault.put_project(
         child,
-        &ProjectRecord::new(child, Some(root), root, leader),
+        &ProjectRecord::new(child, Some(root), root, leader).unwrap(),
         1,
     )?;
     for result in [
@@ -737,7 +737,7 @@ fn generic_edges_cannot_invent_or_retire_project_parents() -> Result<()> {
     let other = EntityId::now();
     vault.put_project(
         other,
-        &ProjectRecord::new(other, Some(root), root, leader),
+        &ProjectRecord::new(other, Some(root), root, leader).unwrap(),
         2,
     )?;
     let mut new_body = vault.project(child)?.unwrap();
@@ -817,7 +817,7 @@ fn generic_and_replay_edges_cannot_link_claims_to_hubs() -> Result<()> {
         vault
             .put_project(
                 future,
-                &ProjectRecord::new(future, Some(root), root, leader),
+                &ProjectRecord::new(future, Some(root), root, leader).unwrap(),
                 3,
             )
             .unwrap_err()
@@ -872,11 +872,11 @@ fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_pa
     let second_parent = EntityId::now();
     vault.put_project(
         second_parent,
-        &ProjectRecord::new(second_parent, Some(root), root, leader),
+        &ProjectRecord::new(second_parent, Some(root), root, leader).unwrap(),
         1,
     )?;
     let venture = EntityId::now();
-    let original = ProjectRecord::new(venture, Some(root), root, leader);
+    let original = ProjectRecord::new(venture, Some(root), root, leader).unwrap();
     vault.put_project(venture, &original, 2)?;
     let org = EntityId::now();
     vault.put_entity(
@@ -939,7 +939,7 @@ fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
     let root = vault.root_project()?;
     let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
     let id = EntityId::now();
-    let project = ProjectRecord::new(id, Some(root), root, leader);
+    let project = ProjectRecord::new(id, Some(root), root, leader).unwrap();
     vault.put_project(id, &project, 1)?;
     let room = EntityId::from_hex(&project.home_room)?;
     let changes = vault.project_room_changes(id)?;

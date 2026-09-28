@@ -1430,7 +1430,7 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     crate::test_util::put_policy_manifest_bytes(
         &vault,
         policy_id,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let installed = vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4);
     vault.with_write_txn(|txn| {

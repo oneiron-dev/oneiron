@@ -1214,7 +1214,7 @@ fn receipt_retention_keeps_active_share_admission_gate() -> Result<()> {
     put_policy_manifest_bytes(
         &vault,
         EntityId::now(),
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let owner = vault.authenticate_owner(
         issuer.entity_ref(),

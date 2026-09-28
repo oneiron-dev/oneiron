@@ -131,7 +131,7 @@ fn admit_word_with_source(
         && let Some(notice) = read::<super::super::TaskAskSoftConfirmNotice>(
             vault,
             txn,
-            derived_id(b"oneiron.tasks.ask.soft_confirm.v1", id, person.as_bytes())?,
+            crate::EntityId::derive(crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM, &[id.as_bytes(), person.as_bytes()])?,
             super::super::ask_soft_confirm::SOFT_CONFIRM,
         )?
         && notice.companion_answer_ref != word_ref

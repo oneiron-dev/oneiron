@@ -437,7 +437,7 @@ impl Memory<'_> {
                             kind: neighbor
                                 .peer_type
                                 .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type),
-                            edge_kind: edge_kind_name(edge.kind).to_owned(),
+                            edge_kind: edge.kind.name().to_owned(),
                             weight: edge.weight,
                             direction: if neighbor.outbound { "out" } else { "in" }.to_owned(),
                         })

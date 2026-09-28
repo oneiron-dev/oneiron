@@ -2116,7 +2116,7 @@ fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
 
 fn install_failure_rules(vault: &Vault, rows: &[(&str, &str, bool, bool)]) -> Result<()> {
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .expect("default manifest");
     let rmpv::Value::Map(entries) = &mut manifest else {
         panic!("manifest map")

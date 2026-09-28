@@ -4684,7 +4684,7 @@ fn claim_gate_receipt_stamps_verified_world_project_retention_context() -> Resul
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    ).unwrap();
     body.world = Some(world);
     body.scope_project = project;
     vault.put_claim(&claim, &body, TimeRange { start: 2, end: 2 }, 2)?;

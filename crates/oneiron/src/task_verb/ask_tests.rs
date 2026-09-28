@@ -2931,7 +2931,7 @@ fn slot_commitment_human_can_approve_or_reject_typed_notice() -> Result<()> {
 #[test]
 fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
-    let mut bytes = crate::gate::default_policy_manifest();
+    let mut bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy manifest map")
     else {

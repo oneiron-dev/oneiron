@@ -72,6 +72,8 @@ fn entity_blob(entity_type: u8, at: u64, body: &[u8]) -> Vec<u8> {
 fn identity_topology_blob() -> Result<Vec<u8>> {
     let record = StoredIdentityOpEvent {
         seq: 50,
+        validated_at_write: false,
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
