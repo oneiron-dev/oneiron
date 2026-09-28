@@ -227,6 +227,10 @@ pub(crate) fn resolve_policy_manifest(
                 {
                     resolution.diagnostics.malformed_manifest_seen = true;
                 }
+                if let Some(limits) = decoded.docx_archive_limits {
+                    resolution.docx_archive_limits.push(limits);
+                }
+
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
