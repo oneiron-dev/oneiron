@@ -66,6 +66,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
+    pub(in crate::gate) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
@@ -125,6 +126,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
                 | "room_thread"
+                | "booking_conversion"
                 | POLICY_HOSTED_TTS_KEY
 
                 | "diagnostic_bounds"
@@ -273,6 +275,21 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(crate::gate::RoomThreadManifest::decode(value)?),
     };
+    let booking_conversion_rows = match single_map_value(&entries, "booking_conversion") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) if rows.len() <= 128 => rows
+            .iter()
+            .map(|row| {
+                let json: serde_json::Value = rmpv::ext::from_value(row.clone()).ok()?;
+                let parsed: crate::booking::BookingConversionPolicyRow =
+                    serde_json::from_value(json).ok()?;
+                parsed.validate().ok()?;
+                Some(parsed)
+            })
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
@@ -372,6 +389,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         pack_install_policy,
         room_thread,
+        booking_conversion_rows,
         hosted_tts,
 
         diagnostic_bounds,

@@ -155,6 +155,19 @@ impl PolicyManifestResolution {
         crate::llm::manifest::TeacherProbePolicy::resolved(vault_min, effective, holder_ref).ok()
     }
 
+    /// Conversion UI/notification choices from trusted, resolved manifest
+    /// rows. A malformed policy cannot silently become shipped defaults.
+    pub(crate) fn booking_conversion_policy(
+        &self,
+        holder_ref: Option<&str>,
+    ) -> Option<crate::booking::BookingConversionPolicy> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        crate::booking::resolve_booking_conversion_rows(&self.booking_conversion_rows, holder_ref)
+            .ok()
+    }
+
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
     /// forces fail-closed (malformed, unsupported schema, engine-version
     /// floor, unknown axis, row-count overflow) exposes no usable table, and
