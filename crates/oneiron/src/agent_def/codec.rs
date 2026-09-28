@@ -8,15 +8,16 @@ use super::manifest::system_agent_manifest;
 use super::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_ID_MAX_BYTES,
     AGENT_INSTRUCTIONS_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES,
-    AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, ContextBudgetSplit,
-    DreamingMode, KEY_AGENT_ID, KEY_APPROVAL_STATUS, KEY_CEILING, KEY_CODE_MODE_MCPS,
-    KEY_CONFIDENCE, KEY_CONNECTORS, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_DESC,
-    KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED, KEY_FORKED_FROM,
+    AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence,
+    ContextBudgetSplit, DreamingMode, KEY_AGENT_ID, KEY_APPROVAL_STATUS, KEY_CEILING,
+    KEY_CODE_MODE_MCPS, KEY_CONFIDENCE, KEY_CONNECTORS, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID,
+    KEY_DESC, KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED, KEY_FORKED_FROM,
     KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS, KEY_LOGICAL_ID,
     KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
     KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_WINDOW_TOKEN_BUDGET, KEY_PROVENANCE, KEY_SCOPE,
     KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS, KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES,
-    KEY_SPLIT_TURNS, KEY_VERSION, KEY_WORLD, MemoryProfile, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
+    KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE, KEY_WORLD, MemoryProfile, SCOPE_ALL,
+    SCOPE_BASE, SCOPE_WORLD,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
@@ -123,6 +124,9 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
         entries.push((Value::from(KEY_DREAMING_MODEL), Value::from(model.as_str())));
     }
 
+    if let Some(cadence) = def.wake_cadence {
+        entries.push((Value::from(KEY_WAKE_CADENCE), encode_wake_cadence(cadence)));
+    }
     let value = Value::Map(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -230,6 +234,7 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let mut memory_profile = None;
     let mut dreaming = None;
     let mut dreaming_model = None;
+    let mut wake_cadence = None;
     let mut seen = [false; AGENT_DEF_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -410,6 +415,7 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
                     "dreamingModel must be a non-empty UTF-8 string at most 256 bytes",
                 )?));
             }
+            KEY_WAKE_CADENCE => wake_cadence = Some(decode_wake_cadence(value)?),
             _ => unreachable!("index resolved from AGENT_DEF_BODY_KEYS"),
         }
     }
@@ -469,6 +475,7 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
         memory_profile,
         dreaming,
         dreaming_model,
+        wake_cadence,
     };
     validate_agent_definition(&definition)?;
     Ok(definition)
@@ -584,4 +591,53 @@ fn encode_context_budget_split(split: ContextBudgetSplit) -> Value {
         ),
         (Value::from(KEY_SPLIT_OTHER), Value::F32(split.other)),
     ])
+}
+
+fn encode_wake_cadence(cadence: AgentWakeCadence) -> Value {
+    let (kind, every_turns) = match cadence {
+        AgentWakeCadence::Companion { every_turns } => ("companion", every_turns),
+        AgentWakeCadence::Leader { every_turns } => ("leader", every_turns),
+        AgentWakeCadence::Worker => ("worker", None),
+    };
+    let mut entries = vec![(Value::from("kind"), Value::from(kind))];
+    if let Some(turns) = every_turns {
+        entries.push((Value::from("everyTurns"), Value::from(turns)));
+    }
+    Value::Map(entries)
+}
+
+fn decode_wake_cadence(value: &Value) -> Result<AgentWakeCadence> {
+    let Value::Map(entries) = value else {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "wakeCadence must be a map",
+        )));
+    };
+    let (mut kind, mut every_turns) = (None, None);
+    for (key, value) in entries {
+        match key.as_str() {
+            Some("kind") if kind.is_none() => {
+                kind = Some(value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDefBody("wakeCadence kind must be a string"),
+                ))?);
+            }
+            Some("everyTurns") if every_turns.is_none() => {
+                every_turns = Some(value.as_u64().filter(|n| *n > 0).ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDefBody("wakeCadence everyTurns must be positive"),
+                ))?);
+            }
+            _ => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                    "unknown or duplicate wakeCadence key",
+                )));
+            }
+        }
+    }
+    match kind {
+        Some("companion") => Ok(AgentWakeCadence::Companion { every_turns }),
+        Some("leader") => Ok(AgentWakeCadence::Leader { every_turns }),
+        Some("worker") if every_turns.is_none() => Ok(AgentWakeCadence::Worker),
+        _ => Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "invalid wakeCadence kind or interval",
+        ))),
+    }
 }

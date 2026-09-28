@@ -25,7 +25,7 @@ use rmpv::Value;
 /// `memory_profile` (RT-05, ONE-1687) and the dreaming mode/model fields
 /// append in that order and are elided when absent, so older bodies re-encode
 /// byte-for-byte. Absent dreaming means inherit, on by default.
-pub const AGENT_DEF_BODY_KEYS: [&str; 25] = [
+pub const AGENT_DEF_BODY_KEYS: [&str; 26] = [
     "agentId",
     "desc",
     "version",
@@ -51,6 +51,7 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 25] = [
     "memory_profile",
     "dreaming",
     "dreamingModel",
+    "wakeCadence",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
@@ -137,6 +138,7 @@ pub(super) const KEY_MEMORY_PROFILE: &str = AGENT_DEF_BODY_KEYS[22];
 pub(super) const KEY_DREAMING: &str = AGENT_DEF_BODY_KEYS[23];
 
 pub(super) const KEY_DREAMING_MODEL: &str = AGENT_DEF_BODY_KEYS[24];
+pub(super) const KEY_WAKE_CADENCE: &str = AGENT_DEF_BODY_KEYS[25];
 
 pub(super) const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
 
@@ -365,6 +367,15 @@ impl DreamingMode {
     }
 }
 
+/// Resident wake dial. A cadence interval of `None` inherits the vault grain.
+/// Surprise and agency are independent signals; a worker never wakes on time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentWakeCadence {
+    Companion { every_turns: Option<u64> },
+    Leader { every_turns: Option<u64> },
+    Worker,
+}
+
 /// Optional per-entity-class share of the window budget.
 ///
 /// Absent means the engine default split holds. Every fraction is validated
@@ -477,6 +488,8 @@ pub struct AgentDefinition {
     pub dreaming: Option<DreamingMode>,
     /// Optional per-resident model slot for `Own` dreaming. Host-resolved.
     pub dreaming_model: Option<ModelTierRef>,
+    /// An absent role follows the owner-editable wake-policy absent-role row.
+    pub wake_cadence: Option<AgentWakeCadence>,
 }
 
 impl AgentDefinition {
@@ -533,7 +546,28 @@ impl AgentDefinition {
             memory_profile: None,
             dreaming: None,
             dreaming_model: None,
+            wake_cadence: None,
         }
+    }
+
+    /// Resolve this definition's due decision against the live policy row.
+    /// Absence, role triggers and precedence are owner-editable policy data.
+    #[must_use]
+    pub fn dream_wake_due(
+        &self,
+        policy: &crate::dreamer_wake::DreamerWakePolicy,
+        turn_ordinal: u64,
+        signals: crate::dreamer_wake::AgentWakeSignals,
+    ) -> bool {
+        policy
+            .agent_cadence
+            .due(self, policy.wake_grain_turns, turn_ordinal, signals)
+    }
+
+    #[must_use]
+    pub fn with_wake_cadence(mut self, cadence: AgentWakeCadence) -> Self {
+        self.wake_cadence = Some(cadence);
+        self
     }
 
     /// Effective setting: an absent key is inherit, ON by default.

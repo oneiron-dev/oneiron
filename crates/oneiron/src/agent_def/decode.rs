@@ -333,6 +333,20 @@ fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
 }
 
 pub(super) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
+    if matches!(
+        def.wake_cadence,
+        Some(
+            super::types::AgentWakeCadence::Companion {
+                every_turns: Some(0)
+            } | super::types::AgentWakeCadence::Leader {
+                every_turns: Some(0)
+            }
+        )
+    ) {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "wakeCadence everyTurns must be positive",
+        )));
+    }
     validate_text_field(
         &def.agent_id,
         AGENT_ID_MAX_BYTES,

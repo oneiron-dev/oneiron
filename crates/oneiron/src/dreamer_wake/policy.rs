@@ -1,5 +1,6 @@
 //! Row-backed wake admission. The host supplies liveness; the vault owns the decision.
 use crate::Vault;
+use crate::agent_def::{AgentDefinition, AgentWakeCadence};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, decode_claim_body};
 use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
@@ -25,6 +26,8 @@ fn invalid() -> Error {
 #[serde(deny_unknown_fields)]
 pub struct DreamerWakePolicy {
     pub wake_grain_turns: u64,
+    /// Resident trigger table, missing-role rule and nested rate precedence.
+    pub agent_cadence: AgentWakePolicy,
     /// New explicit CLAIMs plus user TURNs since the last weave.
     pub new_records: u64,
     pub longest_wait_secs: u64,
@@ -34,6 +37,93 @@ pub struct DreamerWakePolicy {
     /// Independent quiet-window trigger for Weave, even below accumulation.
     pub quiet_weave_secs: u64,
 }
+/// Which role a definition without an explicit cadence dial receives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWakeRole {
+    Companion,
+    Leader,
+    Worker,
+}
+
+/// The owner-selected cadence precedence. The shipped default prevents a
+/// nested definition from making cadence more frequent than its vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CadencePrecedence {
+    VaultFloor,
+    AgentOverride,
+}
+
+/// Which signal classes admit a wake for one role. Each bit is policy data,
+/// not a hardcoded role switch in the scheduler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWakeTriggers {
+    pub cadence: bool,
+    pub surprise: bool,
+    pub agency: bool,
+    pub event: bool,
+}
+
+/// Role table on the owner-editable wake-policy row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWakePolicy {
+    pub absent_role: AgentWakeRole,
+    pub precedence: CadencePrecedence,
+    pub companion: AgentWakeTriggers,
+    pub leader: AgentWakeTriggers,
+    pub worker: AgentWakeTriggers,
+}
+
+/// Trigger facts supplied to the engine scheduler; the policy selects which
+/// facts a resident role may use. Cadence is derived, never caller asserted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AgentWakeSignals {
+    pub surprise: bool,
+    pub agency: bool,
+    pub event: bool,
+}
+
+impl AgentWakePolicy {
+    /// Resolve role, interval and trigger permissions under a single row.
+    #[must_use]
+    pub fn due(
+        self,
+        definition: &AgentDefinition,
+        vault_grain: u64,
+        ordinal: u64,
+        signals: AgentWakeSignals,
+    ) -> bool {
+        if !definition.enabled || definition.dreaming_mode() == crate::agent_def::DreamingMode::Off
+        {
+            return false;
+        }
+        let (role, interval) = match definition.wake_cadence {
+            Some(AgentWakeCadence::Companion { every_turns }) => {
+                (AgentWakeRole::Companion, every_turns)
+            }
+            Some(AgentWakeCadence::Leader { every_turns }) => (AgentWakeRole::Leader, every_turns),
+            Some(AgentWakeCadence::Worker) => (AgentWakeRole::Worker, None),
+            None => (self.absent_role, None),
+        };
+        let triggers = match role {
+            AgentWakeRole::Companion => self.companion,
+            AgentWakeRole::Leader => self.leader,
+            AgentWakeRole::Worker => self.worker,
+        };
+        let interval = match self.precedence {
+            CadencePrecedence::VaultFloor => interval.unwrap_or(vault_grain).max(vault_grain),
+            CadencePrecedence::AgentOverride => interval.unwrap_or(vault_grain),
+        };
+        (triggers.cadence && ordinal != 0 && interval != 0 && ordinal.is_multiple_of(interval))
+            || (triggers.surprise && signals.surprise)
+            || (triggers.agency && signals.agency)
+            || (triggers.event && signals.event)
+    }
+}
+
 impl DreamerWakePolicy {
     pub(crate) fn validate(self) -> Result<Self> {
         if self.wake_grain_turns == 0
@@ -153,7 +243,7 @@ struct WakeState {
     pending_nightly: std::collections::BTreeMap<String, u64>,
 }
 
-fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DreamerWakePolicy> {
+pub(crate) fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DreamerWakePolicy> {
     let row = vault.store.vault_meta.get(txn, POLICY_KEY)?;
     let policy: DreamerWakePolicy = match row {
         Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
@@ -404,6 +494,27 @@ impl Vault {
             Ok(())
         })
     }
+    /// Update just the grain on the same owner-authenticated policy row used
+    /// by the host tick scheduler and the projector's turn door.
+    pub fn set_wake_grain(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        grain: super::grain::WakeGrain,
+    ) -> Result<()> {
+        super::grain::WakeGrain::new(grain.turns_per_wake)?;
+        self.with_write_txn(|txn| {
+            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
+            let mut policy = policy_in_txn(self, txn)?;
+            policy.wake_grain_turns = grain.turns_per_wake;
+            self.store.vault_meta.put(
+                txn,
+                POLICY_KEY,
+                &serde_json::to_vec(&policy).map_err(|_| invalid())?,
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn dreamer_wake_policy(&self) -> Result<DreamerWakePolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
