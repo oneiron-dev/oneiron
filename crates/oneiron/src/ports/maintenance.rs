@@ -10,8 +10,6 @@ use crate::{EntityId, error::Result};
 pub(crate) enum ScrubbedRecord {
     /// SoftErase: the body goes and the header stays.
     Shell,
-    /// An identity-topology event body re-encoded without its author stamp.
-    AuthorStampRemoved(Vec<u8>),
 }
 
 pub(crate) trait EntityStoreMaintenance: Transactions {

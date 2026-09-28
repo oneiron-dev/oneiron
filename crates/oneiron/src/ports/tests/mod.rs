@@ -19,7 +19,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, RegistryError, Result};
 use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
-    SurvivorshipPlan, decode_identity_topology_event_body,
+    SurvivorshipPlan,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_REDACTION_AUDIT};
 use crate::write_envelope::WriteActor;
@@ -183,23 +183,33 @@ fn an_erased_record_is_rewritten_through_the_scrub_port() -> Result<()> {
         outcome => panic!("auto merge must apply, got {outcome:?}"),
     };
     let authored = vault.get_raw(&event)?.expect("ledger event");
-    let authored_event =
-        decode_identity_topology_event_body(&authored[ENTITY_METADATA_HEADER_LEN..])?;
+    let authored_event = vault
+        .identity_topology_event(&event)?
+        .expect("ledger event");
     assert!(authored_event.actor.is_some());
 
+    // ARCH-0055: the redirect-aware erase walk scrubs the retained event's
+    // author stamp. The decision core stays byte-exact; the stamp lives in a
+    // separate attribution carrier that the walk erases.
     vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
 
-    let scrubbed = vault.get_raw(&event)?.expect("retained ledger event");
     assert_eq!(
-        scrubbed[..ENTITY_METADATA_HEADER_LEN],
-        authored[..ENTITY_METADATA_HEADER_LEN]
+        vault.get_raw(&event)?.expect("retained ledger event"),
+        authored
     );
-    let scrubbed_event =
-        decode_identity_topology_event_body(&scrubbed[ENTITY_METADATA_HEADER_LEN..])?;
+    let scrubbed_event = vault
+        .identity_topology_event(&event)?
+        .expect("retained ledger event");
     assert_eq!(scrubbed_event.actor, None);
     assert_eq!(scrubbed_event.action, authored_event.action);
+
+    // SoftErase rewrites the record to its header-only shell through the one
+    // scrub port, which writes the mutation audit row.
+    vault.delete_entity_with_reason(&loser, DeleteReason::UserDelete)?;
+    let shell = vault.get_raw(&loser)?.expect("retained shell");
+    assert_eq!(shell.len(), ENTITY_METADATA_HEADER_LEN);
     let rtxn = vault.store.env.read_txn()?;
-    let audit = vault.port_changelog_list_by_entity(&rtxn, &event, 100)?;
+    let audit = vault.port_changelog_list_by_entity(&rtxn, &loser, 100)?;
     assert!(
         audit.iter().any(|row| row.op == ChangeOp::Redact),
         "{audit:?}"
