@@ -62,7 +62,8 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
         }
     }
     for note in ids {
-        let Some(raw) = vault.store.entities.get(&txn, note.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &note)?
+        else {
             continue;
         };
         if EntityMetadataHeader::parse(&raw)

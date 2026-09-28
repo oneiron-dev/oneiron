@@ -56,9 +56,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<LfsPutOutcome> {
         let params = self.lfs_chunk_parameters()?;
-        let staging = self.store.lfs_staging_directory();
-        std::fs::create_dir_all(&staging)?;
-        let mut spool = tempfile::tempfile_in(staging)?;
+        let mut spool = self.store.lfs_staging_file()?;
         let mut sha = Sha256::new();
         let mut scanner = super::scanner::CredentialStream::default();
         let mut buffer = vec![0u8; LFS_CHUNK_MAX];
@@ -174,7 +172,9 @@ impl Vault {
                     {
                         return Err(chunks::invalid("lfs upload was cancelled"));
                     }
-                    if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
+                    if let Some(raw) =
+                        crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+                    {
                         let body = raw
                             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                             .ok_or(Error::CorruptedIndex("lfs chunk header"))?;

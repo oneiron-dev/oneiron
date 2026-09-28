@@ -826,7 +826,13 @@ fn a_pass_that_dies_between_clusters_leaves_the_unreached_one_minable() -> Resul
         )
         .land(&vault)?;
     }
-    assert!(vault.delete_entity(&skill)?, "the skill goes away");
+    assert!(
+        vault.delete_entity_with_options(
+            &skill,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?,
+        "the skill goes away"
+    );
 
     assert!(
         run_substitution_miner(&vault, &run).is_err(),

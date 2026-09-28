@@ -214,7 +214,9 @@ pub(super) fn check_source_binding_update(
         && record.content_hash == Some(source.content_hash()?)
         && (record.skill_id != source.record.skill_id
             || record.version != source.record.version
-            || record.desc != source.record.desc)
+            || record.desc != source.record.desc
+            || record.role != source.record.role
+            || record.call != source.record.call)
     {
         return Err(invalid(
             "source-backed skill revision requires an owning source transaction",
@@ -236,6 +238,8 @@ impl Vault {
             || record.skill_id != package.record.skill_id
             || record.version != package.record.version
             || record.desc != package.record.desc
+            || record.role != package.record.role
+            || record.call != package.record.call
         {
             return Err(invalid("stored package differs from its native skill"));
         }
@@ -246,10 +250,7 @@ impl Vault {
         // Same-transaction ordinary ASSET carrier: the replicated custody row
         // for this exact tree hash. The stamps are the skill's own header so
         // the carrier reads as contemporaneous evidence, not new activity.
-        let raw = self
-            .store
-            .entities
-            .get(txn, entity.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, entity)?
             .ok_or(Error::EntityNotFound)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("skill row header"))?;
@@ -264,7 +265,9 @@ impl Vault {
         // — the scan verdict on the skill row is what gates activation.
         let carrier_dirty =
             crate::batch::secret_scan::scan_file_content("", &encoded_carrier).is_some();
-        if !carrier_dirty && self.store.entities.get(txn, carrier.as_bytes())?.is_none() {
+        if !carrier_dirty
+            && crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &carrier)?.is_none()
+        {
             self.batch_in()
                 .put(
                     &carrier,
@@ -304,6 +307,8 @@ impl Vault {
             || package.record.skill_id != record.skill_id
             || package.record.version != record.version
             || package.record.desc != record.desc
+            || package.record.role != record.role
+            || package.record.call != record.call
         {
             return Err(invalid("replicated source differs from its native skill"));
         }
@@ -330,6 +335,8 @@ impl Vault {
             || record.skill_id != package.record.skill_id
             || record.version != package.record.version
             || record.desc != package.record.desc
+            || record.role != package.record.role
+            || record.call != package.record.call
         {
             return Err(invalid("runtime package differs from the admitted skill"));
         }

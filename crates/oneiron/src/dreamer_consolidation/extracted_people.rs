@@ -4,12 +4,14 @@
 //! admissible turns in this extraction's working set may mint a new row. The
 //! mint door stamps Generated provenance and refuses existing/deleted ids.
 
+use super::resources::FallbackOutputPin;
 use super::support::invalid_consolidation;
 use super::watermark::read_turn_facts_in_txn;
 use crate::Vault;
 use crate::analyzer::normalize::{casefold, nfkc};
 use crate::claim::ClaimSource;
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
+use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::{ContentPart, LlmResponse};
@@ -53,6 +55,8 @@ pub(super) fn mint_extracted_people(
     working_set: &[EntityId],
     scope: &crate::llm::Scope,
     now: u64,
+    fallback_binding: Option<(FallbackOutputPin, EntityId)>,
+    deadline: Option<&WakePassDeadline>,
 ) -> Result<()> {
     let text: String = response
         .message
@@ -69,6 +73,30 @@ pub(super) fn mint_extracted_people(
         return Ok(());
     };
     vault.with_write_txn(|txn| {
+        // Check before the first write. Once admitted, the gated write is not
+        // interrupted mid-transaction by the wake clock.
+        if deadline.is_some_and(WakePassDeadline::expired) {
+            return Err(invalid_consolidation(
+                "wake pass expired before person mint",
+            ));
+        }
+        if let Some((binding, actor)) = fallback_binding {
+            let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+            if !crate::llm::verified_step_consolidation_eligible_in_txn(
+                vault,
+                txn,
+                &policy,
+                binding.step,
+                actor,
+                binding.response_hash,
+            )
+            .map_err(|_| invalid_consolidation("invalid extraction fallback checkpoint"))?
+            {
+                return Err(invalid_consolidation(
+                    "extraction fallback eligibility revoked",
+                ));
+            }
+        }
         for person in people {
             let Some(id) = person
                 .get("id")

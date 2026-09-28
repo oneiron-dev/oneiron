@@ -47,7 +47,8 @@ pub(super) const MAX_PPR_DEPTH: u32 = 10;
 /// `ClaimOf` traversal so synthetic hint records do not consume transition
 /// mass. v5 = stored-edge VAD salience, with both alphas in cache identity.
 /// v6 = deterministic Forward-Push rounds with retained below-threshold residual.
-pub(super) const PPR_FORMULA_VERSION: u32 = 6;
+/// v7 = hub-specific `belongs_to` traversal budget for PROJECT collections.
+pub(super) const PPR_FORMULA_VERSION: u32 = 7;
 pub(crate) const MAX_PPR_SEEDS: usize = 256;
 /// Recency-tiered `ppr_cache` serve TTL (ARCH-0019 "PPR cache TTL" table /
 /// ARCH-0014 "TTL strategy"; ONE-1116 pinned decision).
@@ -79,7 +80,7 @@ pub(super) fn recency_tiered_cache_ttl_secs(
 ) -> Result<u64> {
     let mut max_learned_at: Option<u64> = None;
     for seed in seeds {
-        let Some(raw) = store.entities().get(txn, seed.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, seed)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -368,27 +369,16 @@ fn seed_is_live_for_ppr(
     txn: &RoTxn<'_>,
     entity_id: &EntityId,
 ) -> Result<bool> {
-    if store.entities().get(txn, entity_id.as_bytes())?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, entity_id)?.is_some() {
         return Ok(true);
     }
 
-    if store
-        .edges_out()
-        .prefix_iter(txn, entity_id.as_bytes())?
-        .next()
-        .transpose()?
-        .is_some()
-    {
-        return Ok(true);
-    }
-
-    if store
-        .edges_in()
-        .prefix_iter(txn, entity_id.as_bytes())?
-        .next()
-        .transpose()?
-        .is_some()
-    {
+    if crate::ports::EdgeStoreRead::port_edge_has_any(
+        store,
+        txn,
+        entity_id,
+        crate::ports::EdgeDirection::Both,
+    )? {
         return Ok(true);
     }
 

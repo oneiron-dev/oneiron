@@ -35,7 +35,7 @@ pub(crate) fn restore_recovery_shell_in_txn(
     if vault.local_hard_delete_marker_exists_in_txn(txn, id)? {
         return Err(invalid().into());
     }
-    if let Some(previous) = vault.store.entities.get(txn, id.as_bytes())?
+    if let Some(previous) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         && previous.get(..ENTITY_METADATA_HEADER_LEN) != Some(blob)
     {
         return Err(invalid().into());

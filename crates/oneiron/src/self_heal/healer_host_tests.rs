@@ -140,21 +140,46 @@ fn deployment_and_production_capabilities_refuse_code_at_admission() {
         assert!(v.healer_proposal(&id).unwrap().is_none());
     }
 }
+fn set_proposal_threshold(vault: &Vault, threshold: u64) {
+    let id = crate::gate::default_policy_manifest_id().unwrap();
+    let body = vault.get(&id).unwrap().unwrap();
+    let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(body)).unwrap();
+    let Value::Map(entries) = &mut manifest else {
+        panic!("manifest map")
+    };
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        panic!("value rows")
+    };
+    let Value::Map(fields) = rows
+        .iter_mut()
+        .find(|row| match row {
+            Value::Map(fields) => fields.iter().any(|(key, value)| {
+                key.as_str() == Some("key") && value.as_str() == Some("proposal_check_threshold")
+            }),
+            _ => false,
+        })
+        .unwrap()
+    else {
+        panic!("threshold row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from(threshold);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
+    crate::test_util::put_policy_manifest_bytes(vault, id, &bytes).unwrap();
+}
+
 #[test]
 fn counted_burst_stays_proposed_one_check_and_one_reversal() {
     let (_d, v, owner, actor) = fixture();
-    // Seed already-recorded prior submissions; four new calls cross the real
-    // fleet-scale threshold without making this fixture perform 100,000 writes.
-    let previous = super::healer_host::PROPOSAL_BURST_THRESHOLD - 2;
-    v.with_write_txn(|txn| {
-        let mut key = b"healer:count:".to_vec();
-        key.extend_from_slice(actor.entity_ref().as_bytes());
-        let body = rmp_serde::to_vec_named(&serde_json::json!({"count": previous, "check": null}))
-            .unwrap();
-        v.store.vault_meta.put(txn, &key, &body)?;
-        Ok(())
-    })
-    .unwrap();
+    set_proposal_threshold(&v, 2);
     let registration = v
         .register_dev_healer(HealerDeployment::SelfHostSingleWriter, actor)
         .unwrap();
@@ -178,10 +203,22 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
         .unwrap()
         .unwrap();
     assert_eq!(check.actor, actor.entity_ref());
-    assert_eq!(
-        check.count,
-        super::healer_host::PROPOSAL_BURST_THRESHOLD + 1
-    );
+    assert_eq!(check.count, 3);
+    let typed = v
+        .proposal_submission_check(&actor.entity_ref())
+        .unwrap()
+        .unwrap();
+    assert_eq!(typed.actor, actor.entity_ref().to_hex());
+    assert_eq!(typed.count, 3);
+    assert_eq!(typed.threshold, 2);
+    assert_eq!(typed.proposal_ref, format!("healer:{}", ids[2].to_hex()));
+    for id in &ids {
+        let receipt = v
+            .proposal_submission_receipt(&actor.entity_ref(), &format!("healer:{}", id.to_hex()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.actor, actor.entity_ref().to_hex());
+    }
     let backup_dir = tempfile::tempdir().unwrap();
     let checkpoint = backup_dir.path().join("checkpoint");
     v.snapshot_checkpoint(&checkpoint, 100).unwrap();
@@ -273,16 +310,7 @@ fn production_refs_refuse_protected_namespaces_before_persistence() {
 #[test]
 fn actor_burst_reversal_covers_distinct_run_names() {
     let (_dir, v, owner, actor) = fixture();
-    let previous = super::healer_host::PROPOSAL_BURST_THRESHOLD - 1;
-    v.with_write_txn(|txn| {
-        let mut key = b"healer:count:".to_vec();
-        key.extend_from_slice(actor.entity_ref().as_bytes());
-        let body = rmp_serde::to_vec_named(&serde_json::json!({"count": previous, "check": null}))
-            .unwrap();
-        v.store.vault_meta.put(txn, &key, &body)?;
-        Ok(())
-    })
-    .unwrap();
+    set_proposal_threshold(&v, 1);
     let registration = v
         .register_dev_healer(HealerDeployment::SelfHostSingleWriter, actor)
         .unwrap();
@@ -299,6 +327,13 @@ fn actor_burst_reversal_covers_distinct_run_names() {
         .proposal_burst_check(&actor.entity_ref())
         .unwrap()
         .unwrap();
+    assert_eq!(
+        v.proposal_submission_check(&actor.entity_ref())
+            .unwrap()
+            .unwrap()
+            .count,
+        2
+    );
     let receipts = v.reverse_healer_burst(&owner, &check).unwrap();
     assert_eq!(receipts.len(), 2);
     assert!(receipts.iter().all(|receipt| receipt.reversed));
@@ -393,4 +428,34 @@ fn healer_diagnostic_events_read_returns_its_receipt() {
     assert_eq!(corpus.value.len(), 1);
     assert_eq!(corpus.value[0].0, id);
     assert_eq!(corpus.receipt.suppressed_count, 0);
+}
+
+#[test]
+fn policy_revocation_between_preflight_and_proposal_write_refuses_all_receipts() -> Result<()> {
+    let (_dir, vault, owner, actor) = fixture();
+    let manifest = vault.manifest_contributions()?;
+    assert_eq!(manifest.len(), 1, "fixture has one live policy");
+    let policy_id = EntityId::from_hex(&manifest[0].id)?;
+    let proposal = patch(RepairOperation::DevPatch {
+        repo_ref: "repo".into(),
+        patch_ref: "patch".into(),
+    });
+    let id = proposal.proposal_id;
+    let registration = vault.register_dev_healer(HealerDeployment::Daemon, actor)?;
+    let err = registration
+        .submit_with_pre_write("revoked", "session", proposal, || {
+            // Deterministic interleaving: this would admit under the previous
+            // read-snapshot evaluation, then persist using stale consent.
+            vault.quarantine_manifest_contribution(&owner, policy_id)
+        })
+        .expect_err("the write snapshot must observe manifest revocation");
+    assert_eq!(err.kind(), crate::ErrorKind::InvalidConfig);
+    assert!(vault.healer_proposal(&id)?.is_none());
+    assert!(
+        vault
+            .healer_run_receipt(&actor.entity_ref(), "revoked")?
+            .is_none()
+    );
+    assert!(vault.proposal_burst_check(&actor.entity_ref())?.is_none());
+    Ok(())
 }

@@ -103,5 +103,5 @@ fn invalid() -> Error {
     Error::InvalidClaimBody("invalid or stale representation proposal")
 }
 
-pub(crate) use approval::validate_dispatch;
+pub(crate) use approval::{representation_approval_is_live_in_txn, validate_dispatch};
 pub(super) use proposal::run;

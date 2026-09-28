@@ -70,8 +70,9 @@ pub(crate) fn bind_task_answer_in_txn(
                 ceiling: DecisionRung::Human,
                 band,
             },
+            activation: QuestionActivation::OneOff,
             refresh: RefreshPolicy {
-                on_arrival: true,
+                on_arrival: false,
                 every_seconds: None,
             },
             delivery: "tasks.wait".into(),
@@ -95,6 +96,9 @@ pub(crate) fn bind_task_answer_in_txn(
                 principal: input.principal,
                 providers: Vec::new(),
                 band,
+                band_version: 0,
+                evidence_versions: Vec::new(),
+                cost_per_thousand: None,
             },
             human_ask: None,
         },
@@ -192,10 +196,7 @@ pub(crate) fn validate_task_answer_unit(
             return Err(Error::EntityNotFound);
         }
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, unit.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &unit)?
         .ok_or(Error::EntityNotFound)?;
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("ask result header"))?;

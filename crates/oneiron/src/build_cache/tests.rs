@@ -697,7 +697,10 @@ fn deleted_artifact_tombstones_get_and_put_without_changing_row() {
         .expect("store");
     let before = raw_row(&vault, &key).expect("row");
     vault
-        .delete_entity(reference.artifact_id())
+        .delete_entity_with_options(
+            reference.artifact_id(),
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
         .expect("delete artifact");
     assert!(matches!(
         cache.get(&key),

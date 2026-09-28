@@ -36,6 +36,13 @@ pub(super) fn scope_value(scope: &ScopeSelector) -> Value {
         ScopePath::SubSession(id) => {
             Value::Map(vec![(Value::from("sub_session"), Value::from(id.to_hex()))])
         }
+        ScopePath::BranchSpan { after, through } => Value::Map(vec![(
+            Value::from("branch_span"),
+            Value::Map(vec![
+                (Value::from("after"), Value::from(after.to_hex())),
+                (Value::from("through"), Value::from(through.to_hex())),
+            ]),
+        )]),
     };
     Value::Map(vec![
         (
@@ -95,6 +102,13 @@ fn parse_scope(value: &Value) -> Result<ScopeSelector> {
         match entries[0].0.as_str() {
             Some("branch") => ScopePath::Branch(id(&entries[0].1)?),
             Some("sub_session") => ScopePath::SubSession(id(&entries[0].1)?),
+            Some("branch_span") => {
+                let span = closed_map(&entries[0].1, &["after", "through"])?;
+                ScopePath::BranchSpan {
+                    after: id(span[0])?,
+                    through: id(span[1])?,
+                }
+            }
             _ => return Err(invalid("unknown scope path")),
         }
     } else {
@@ -129,6 +143,11 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
         && body.scope.session.is_some_and(|id| id != session)
     {
         return Err(invalid("conflicting summary session selectors"));
+    }
+    if matches!(body.scope.path, ScopePath::BranchSpan { .. })
+        && (body.scope.include_forks || body.covers.is_empty())
+    {
+        return Err(invalid("branch span requires nonempty no-forks covers"));
     }
     Ok(())
 }

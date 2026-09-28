@@ -51,6 +51,12 @@ side_tables! {
     /// Reverse citation-pin row keyed by the cited source document. Key: hex32(document) ":"
     /// hex32(citing) ":" hex64(hash).
     NOTE_PIN_SOURCE: VaultMeta b"note.pin/source/" LegacyJson;
+    /// One author's reservation of a normalized NOTE title; value id16(note). Key: hex32(author)
+    /// ":" hex64(blake3(normalized title)).
+    NOTE_TITLE_RESERVATION: VaultMeta b"note.title/v1/author/" Raw;
+    /// A NOTE's current title reservation; value is NOTE_TITLE_RESERVATION's full key. Key:
+    /// hex32(note).
+    NOTE_TITLE_BY_NOTE: VaultMeta b"note.title/v1/id/" Raw;
     /// Recorded NOTE fork awaiting review/decision. Key: id16(fork head).
     NOTE_FORK: VaultMeta b"note_fork:v1:" Named;
     /// A NOTE's current head document id and head-move sequence number. Key: id16.
@@ -134,6 +140,10 @@ side_tables! {
     ORIGIN_VISIBLE_REF: VaultMeta b"origin:visible_ref:v1:" Raw;
     /// Best-effort de-duplication lease for one authorized-outbound recovery sweep. Key: ().
     OUTBOUND_AUTHORIZED_RECOVERY_LEASE: VaultMeta b"outbound:authorized_recovery_lease:v1" Raw;
+    /// Hash of semantic send key -> (intent id hash32, reservation timestamp u64be). Key: hash32.
+    OUTBOUND_DEDUPE_RESERVATION: VaultMeta b"outbound:dedupe:v1:" Raw;
+    /// Intent id -> semantic send key's full `outbound:dedupe:v1:` key. Key: hash32.
+    OUTBOUND_DEDUPE_INTENT: VaultMeta b"outbound:dedupe_intent:v1:" Raw;
     /// Unique index from one logical dispatch call to its immutable intent id. Key: id16(attempt) +
     /// u64be(call seq).
     OUTBOUND_INTENT_ATTEMPT_INDEX: VaultMeta b"outbound:intent_attempt:v1:" Raw;
@@ -143,6 +153,12 @@ side_tables! {
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
     /// hash32.
     OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw;
+    /// Deterministic receipt id -> intent id. Key: id16.
+    OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
+    /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).
+    OUTBOUND_SUPPRESSION_RECEIPT: VaultMeta b"outbound:suppression_receipt:v1:" Named;
+    /// Direct host dispatch receipt by content-derived hash32.
+    OUTBOUND_DIRECT_RECEIPT: VaultMeta b"outbound_direct_receipt:v2:" Named;
     /// Gate outcome of a scheduled outbound attempt's first dispatch. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): `store::outbound_send_receipt`
@@ -157,11 +173,41 @@ side_tables! {
     /// Per-envelope usage/rate-window accounting shared by every standing grant naming that envelope.
     /// Key: bytes (channel-identity envelope ref).
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
+    /// Owner policy-row change event. Key: event id.
+    OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
+    /// Pending owner policy-row change proposal. Key: proposal id.
+    OWNER_POLICY_CHANGE_PROPOSAL: VaultMeta b"owner_policy:change:proposal:v1:" Raw;
+    /// Owner policy-row change receipt, in sequence order. Key: u64be sequence.
+    OWNER_POLICY_CHANGE_RECEIPT: VaultMeta b"owner_policy:change:receipt:v1:" Raw;
+    /// Last owner policy-row change sequence (u64be). Key: ().
+    OWNER_POLICY_CHANGE_SEQUENCE: VaultMeta b"owner_policy:change:seq:v1" Raw;
+    /// Delivery cursor over the queued owner policy notifications. Key: ().
+    OWNER_POLICY_NOTIFICATION_CURSOR: VaultMeta b"owner_policy:notification:cursor:v1" Raw;
+    /// Owner policy digest rows of one recipient. Key: recipient ':' tag.
+    OWNER_POLICY_NOTIFICATION_DIGEST_RECIPIENT: VaultMeta b"owner_policy:notification:digest_recipient:v1:" Raw;
+    /// Open owner policy digest window of one recipient. Key: recipient.
+    OWNER_POLICY_NOTIFICATION_DIGEST_WINDOW: VaultMeta b"owner_policy:notification:digest_window:v1:" Raw;
+    /// Failed delivery of one queued owner policy notification. Key: its queue key suffix.
+    OWNER_POLICY_NOTIFICATION_FAILURE: VaultMeta b"owner_policy:notification:failure:v1:" Raw;
+    /// Owner policy notification preference of one recipient. Key: recipient.
+    OWNER_POLICY_NOTIFICATION_PREFERENCE: VaultMeta b"owner_policy:notification:preference:v1:" Raw;
+    /// Queued owner policy notification. Key: queue order ‖ recipient.
+    OWNER_POLICY_NOTIFICATION_QUEUED: VaultMeta b"owner_policy:notification:queued:v1:" Raw;
+    /// Receipt of one owner policy notification rule. Key: receipt id.
+    OWNER_POLICY_NOTIFICATION_RULE_RECEIPT: VaultMeta b"owner_policy:notification:rule_receipt:v1:" Raw;
+    /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
+    SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
+    /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
+    SKILL_HUB_PACK_CANDIDATE: VaultMeta b"pack.candidate.v1/" LegacyJson;
     /// Installed knowledge-pack receipt, keyed by pack name. Key: string.
     SKILL_HUB_PACK_INSTALL: VaultMeta b"pack.install.v1/" LegacyJson;
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
     /// string.
     SKILL_HUB_PACK_PREDICATE: VaultMeta b"pack.predicate.v1/" Raw;
+    /// Alias minted for one skill from a pack. Key: id16 + blake3(JSON hub ref).
+    SKILL_HUB_PACK_SKILL_ALIAS: VaultMeta b"pack.skill-alias.v1/" Raw;
+    /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
+    SKILL_HUB_PACK_SOURCE_ALIAS: VaultMeta b"pack.source-alias.v1/" LegacyJson;
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
     /// never synced or imported. Key: ().
     PACK_BYTE_MAP_LOCAL_HEAD: VaultMeta b"pack_byte_map:local_head:v1" Raw;
@@ -188,6 +234,20 @@ side_tables! {
     PORTS_TOMBSTONE: VaultMeta b"ports:tombstone:v1:" Raw;
     /// Community snapshot rows: meta, node:hex32, members:hex32. Key: string.
     PPR_COMMUNITY_CACHE: VaultMeta b"ppr_community_cache:v0:" Raw;
+    /// Local admission marker of one goal claim: `[1]` + body hash32 (sealed), `[2]` + project id16
+    /// + payload hash32 (armed birth), or `[3]` + prior hash32 + allowed hash32 (supersession).
+    /// Key: id16 (goal claim).
+    PROJECT_GOAL_INTAKE_ADMISSION: VaultMeta b"project.goal_intake.admission/" Raw;
+    /// Goal claim a single-use interview confirmation committed. Key: id16 (confirmation turn).
+    PROJECT_GOAL_INTAKE_CONFIRMATION: VaultMeta b"project.goal_intake.confirmation/" Raw;
+    /// A project's goal generation (u64be). Key: id16 (project).
+    PROJECT_GOAL_INTAKE_GENERATION: VaultMeta b"project.goal_intake.generation/" Raw;
+    /// Permit for one goal-pointer change: old goal id16, new goal id16 (zeros for none), project
+    /// body hash32. Key: id16 (project).
+    PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw;
+    /// Durable owner tap of one project card: (tap digest, mint receipt). Key: blake3 hash32 of
+    /// the card id.
+    PROJECT_MINT_TAP: VaultMeta b"project.mint.tap.v1/" Named;
     /// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
     /// id16 (change event id).
     PROJECT_ROOM_CHANGES: VaultMeta b"project.room_changes.v1/" Named;
@@ -196,6 +256,12 @@ side_tables! {
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw;
     /// The root project's entity id, seeded once at first boot. Key: ().
     PROJECT_ROOT: VaultMeta b"project.root.v1" Raw;
+    /// Number and first threshold-crossing for one actor. Key: id16.
+    PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named;
+    /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
+    PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named;
+    /// Latest receipt keyed by actor id16 ":" proposal identity string.
+    PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named;
     /// Disposable cache: which PERSON actor currently represents one provider key. Key: bytes32
     /// (sha256 of provider key).
     PROVIDER_ACTOR_INDEX: VaultMeta b"provider_confidence/actor/v1\0" Raw;
@@ -256,6 +322,11 @@ side_tables! {
     REPO_MUTATION_SNAPSHOT: VaultMeta b"repo_mutation:snapshot:v1:" Named;
     /// Log of checkpoint restore/wake/migrate events, one row per epoch. Key: u64be(sequence).
     RESTORE_EPOCH: VaultMeta b"restore:epoch:v1:" Named;
+    /// Published base-ledger retrieval run's capture time, for expiry and cap pruning; empty
+    /// value. Key: u64be (captured at) + id16 (run id).
+    RETRIEVAL_AGE: VaultMeta b"retr_age:v0:" Raw;
+    /// A retrieval run's capture time (u64be), locating its age row. Key: id16 (run id).
+    RETRIEVAL_AGE_BY_RUN: VaultMeta b"retr_age_run:v0:" Raw;
     /// Active reward-tuned blend weights. Key: ().
     ///
     /// Codec fixed to `Raw` (T47 store slice): decode also enforces the
@@ -311,4 +382,6 @@ side_tables! {
     /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
     /// (turn id).
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson;
+    /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
+    RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
 }

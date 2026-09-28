@@ -50,13 +50,19 @@ pub(super) fn enqueue_seal(
     if !state.ready_to_seal() {
         return Ok(());
     }
-    let event_count = super::ledger::events_in(vault, txn, document)?.len();
     let generation = if state.reseal_pending {
-        event_count as u64
+        super::ledger::events_in(vault, txn, document)?
+            .iter()
+            .rev()
+            .find(|row| matches!(row.event, EsignEvent::ResealRequested { .. }))
+            .ok_or_else(|| invalid("reseal request missing"))?
+            .sequence
+            + 1
     } else {
         0
     };
-    crate::attempt_queue::AttemptQueue::new(vault).enqueue_in_txn(
+    crate::ports::JobQueue::port_job_enqueue(
+        vault,
         txn,
         crate::attempt_queue::EnqueueAttempt {
             kind: ESIGN_SEAL_ATTEMPT_KIND.into(),
@@ -79,12 +85,13 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
-        let now = crate::unix_seconds_now();
-        // Commit accounting independently, including refused mutation attempts.
-        self.with_write_txn(|txn| {
+        let now = self.now_recorded_at();
+        // Observe independently, including refused mutation attempts. A failed
+        // observation transaction cannot turn a valid ceremony into a refusal.
+        let _ = self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
-            super::rate::admit(self, txn, &cap.document, &cap.recipient, now)
-        })?;
+            super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
+        });
         self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
             let document = EntityId::from_hex(&cap.document)?;
@@ -209,7 +216,7 @@ impl Vault {
                     {
                         return Ok(SigningOutcome::HumanActionRequired);
                     }
-                    append(
+                    let advanced = append(
                         self,
                         txn,
                         document,
@@ -219,6 +226,27 @@ impl Vault {
                         },
                         actor,
                         now,
+                    )?;
+                    let promoted = advanced
+                        .recipients
+                        .iter()
+                        .filter(|(id, progress)| {
+                            progress.signing == SigningStatus::Ready
+                                && state.recipients[*id].signing != SigningStatus::Ready
+                        })
+                        .map(|(id, _)| id.clone())
+                        .collect::<Vec<_>>();
+                    super::lifecycle::notify(
+                        self,
+                        txn,
+                        document,
+                        &advanced,
+                        "pending",
+                        &promoted,
+                        super::lifecycle::NoticeTrigger {
+                            dispatch_ref: None,
+                            now,
+                        },
                     )?;
                     enqueue_seal(self, txn, document, now)?;
                     return Ok(SigningOutcome::AwaitingSeal);

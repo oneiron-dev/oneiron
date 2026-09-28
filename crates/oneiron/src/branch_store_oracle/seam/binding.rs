@@ -393,10 +393,11 @@ fn binding_oracle_config() -> crate::engine_executor::EngineExecutorConfig {
     crate::engine_executor::EngineExecutorConfig {
         run_id: EntityId::now(),
         task: "binding oracle".to_owned(),
-        prompt_package_root: crate::prompt::workspace_prompt_package_root()
-            .expect("workspace prompt package"),
+        prompt_package_root: crate::prompt::workspace_test_prompt_package_root()
+            .expect("workspace test prompt package"),
         model: crate::ModelId::new("test/binding@v1").expect("model id"),
         model_locality: crate::ModelLocality::OwnServer,
+        seat_effort: None,
         global_tier: crate::ModelTierRef("binding-tier".to_owned()),
         determinism: crate::code_run::CodeRunDeterminism::new(1_719_000_005_000, [0xB7; 32]),
         limits: crate::engine_executor::EngineExecutorLimits::default(),

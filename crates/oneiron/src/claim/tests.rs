@@ -1548,6 +1548,60 @@ fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) 
     id
 }
 
+#[test]
+fn gate_receipt_horizon_does_not_block_later_retraction_of_a_live_claim() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let vault = Vault::open(temp.path().join("vault"), crate::VaultConfig::device())?;
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let claim = guard_claim(&vault, &subject, "osaka", 2);
+    let owner = vault.authenticate_owner(
+        subject,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    // Seed an old, claim-bound receipt without changing the live CLAIM. The
+    // following lifecycle write must receive fresh custody after the sweep.
+    let old = crate::store::GateDecisionRecord {
+        version: crate::store::GATE_DECISION_LEDGER_VERSION,
+        decision_id: crate::store::GateDecisionId::now(),
+        created_at: 1,
+        outcome: "approved".to_owned(),
+        reason_codes: vec!["gate.test.receipt_family".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "agent".to_owned(),
+        actor_ref: None,
+        content_kind: "claim".to_owned(),
+        policy_manifest_version: "v0".to_owned(),
+        claim_id: Some(*claim.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![0xAA],
+        read_frontier_hash: [0xBB; 32],
+        redacted_at: None,
+    };
+    vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &old))?;
+    vault.set_gate_decision_retention_secs(&owner, Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("live claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    vault.retract_claim(&claim, vault.store.clock.now_recorded_at())?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("retracted").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
 fn guard_short_ref(vault: &Vault, id: &EntityId) -> String {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     vault.claim_short_ref_in(&rtxn, id).expect("short ref")
@@ -4240,7 +4294,7 @@ fn claim_aging_class_treats_core_relationship_root_as_durable() {
         // from being reclassified by a namespace rule.
         "core.hobby.collects",
         "core.identity.legal_name",
-        "eiri.location.city",
+        "persona.location.city",
     ] {
         assert_eq!(
             claim_aging_class(predicate),
@@ -4398,7 +4452,7 @@ fn claim_access_factor_override_is_a_bounded_live_claim_seam() {
 fn classifier_table() {
     for (predicate, expected) in [
         ("companion.expression", DreamerIsolationClass::PersonaCore),
-        ("eiri.persona.voice", DreamerIsolationClass::PersonaCore),
+        ("persona.identity.voice", DreamerIsolationClass::PersonaCore),
         ("core.identity.name", DreamerIsolationClass::PersonaCore),
         ("core.opinion.food", DreamerIsolationClass::MirroringProne),
         ("core.belief.justice", DreamerIsolationClass::MirroringProne),
@@ -4460,7 +4514,7 @@ fn classifier_table() {
         "core.conflict.open",
         "companion",
         "companionship.tone",
-        "eiri.personality.voice",
+        "persona.personality.voice",
         "core.identityx.name",
         "core.values.list",
         "affect",
@@ -4471,151 +4525,29 @@ fn classifier_table() {
     }
 }
 
-// ── ONE-1914 · corpus scope inside the opaque `scope` map ───────────────
+// ── ONE-2668 · corpus is a project-axis selection ──────────────────────
 
-fn corpus_scope_body(scope: Option<Value>) -> ClaimBody {
+#[test]
+fn corpus_id_in_opaque_scope_does_not_change_project_stamp() -> Result<()> {
+    let project = EntityId::from_bytes([0x72; 16]).expect("valid id");
     let mut body = ClaimBody::new(
-        "profile.corpus_scope",
+        "profile.project_scope",
         ClaimSubject::Entity(EntityId::from_bytes([0x71; 16]).expect("valid id")),
         Value::from("value"),
         0.7,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    body.scope = scope;
-    body
-}
-
-fn corpus_entry(id: &EntityId) -> (Value, Value) {
-    (
-        Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-        Value::Binary(id.as_bytes().to_vec()),
-    )
-}
-
-/// The corpus id survives a full encode/decode round trip ALONGSIDE the
-/// engine's other scope stamps and an entry the crate does not recognize —
-/// the map stays opaque, it just now has one entry retrieval can read.
-#[test]
-fn corpus_id_round_trips_through_the_claim_codec() -> Result<()> {
-    let corpus = crate::corpus::CorpusId::from_entity_id(
-        EntityId::from_bytes([0x72; 16]).expect("valid id"),
-    );
-    let existing = Value::Map(vec![
-        (Value::from("sensitivity"), Value::from("internal")),
-        (
-            Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
-            Value::from(ClaimSource::ToolOutput.as_str()),
-        ),
+    )?;
+    body.scope_project = project;
+    // Pre-release scope-v2 decoders must not interpret the old nested entry.
+    // Even a malformed value is opaque; only the required stamp selects claims.
+    body.scope = Some(Value::Map(vec![
+        (Value::from("corpus_id"), Value::Array(vec![Value::Nil])),
         (Value::from("unknown_future_key"), Value::from("opaque")),
-    ]);
-    let body = corpus_scope_body(Some(crate::corpus::scope_with_corpus_id(
-        Some(existing),
-        corpus,
-    )?));
-
-    let encoded = encode_claim_body(&body)?;
-    let decoded = validate_claim_body_and_decode(&encoded, false)?;
-
-    assert_eq!(
-        decoded.scope, body.scope,
-        "scope map survives byte-for-byte"
-    );
-    assert_eq!(claim_corpus_id(&decoded)?, Some(corpus));
-    assert_eq!(claim_sensitivity_band(&decoded), Some(1));
-    assert_eq!(
-        claim_evidence_taint(&decoded),
-        Some(ClaimSource::ToolOutput)
-    );
-    Ok(())
-}
-
-/// A claim with no corpus entry is unscoped/core, not an error — including a
-/// claim with no scope map at all.
-#[test]
-fn absent_corpus_id_decodes_as_unscoped() -> Result<()> {
-    for scope in [
-        None,
-        Some(Value::Map(Vec::new())),
-        Some(Value::Map(vec![(
-            Value::from("sensitivity"),
-            Value::from("public"),
-        )])),
-    ] {
-        let body = corpus_scope_body(scope);
-        let decoded = validate_claim_body_and_decode(&encode_claim_body(&body)?, false)?;
-        assert_eq!(claim_corpus_id(&decoded)?, None);
-    }
-    Ok(())
-}
-
-/// Fail-closed at the codec: an ambiguous or malformed corpus entry is
-/// rejected on every validated decode, so it can neither be written nor read
-/// back into a retrieval scope decision.
-#[test]
-fn malformed_corpus_id_is_rejected_by_the_claim_codec() -> Result<()> {
-    let a = EntityId::from_bytes([0x73; 16]).expect("valid id");
-    let b = EntityId::from_bytes([0x74; 16]).expect("valid id");
-    let table: Vec<(&str, Value)> = vec![
-        (
-            "duplicate corpus entries",
-            Value::Map(vec![corpus_entry(&a), corpus_entry(&b)]),
-        ),
-        (
-            "non-binary value",
-            Value::Map(vec![(
-                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-                Value::from(a.to_hex()),
-            )]),
-        ),
-        (
-            "wrong-length binary",
-            Value::Map(vec![(
-                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-                Value::Binary(vec![0x73; 8]),
-            )]),
-        ),
-        (
-            "reserved id",
-            Value::Map(vec![(
-                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-                Value::Binary(vec![0x00; 16]),
-            )]),
-        ),
-    ];
-
-    for (label, scope) in table {
-        let encoded = encode_claim_body(&corpus_scope_body(Some(scope)))?;
-        assert_matches!(
-            validate_claim_body_bytes(&encoded, false),
-            Err(Error::InvalidClaimBody(_)),
-            "{label} must fail the write chokepoint"
-        );
-        assert_matches!(
-            decode_claim_body(&encoded, true),
-            Err(Error::InvalidClaimBody(_)),
-            "{label} must fail the read decode too"
-        );
-    }
-    Ok(())
-}
-
-/// The check is scoped to the entries the engine recognizes: an unknown
-/// sibling may be duplicated, malformed or any shape at all and still decode.
-#[test]
-fn unrecognized_scope_entries_stay_opaque() -> Result<()> {
-    let scope = Value::Map(vec![
-        (Value::from("unknown_future_key"), Value::from(1)),
-        (Value::from("unknown_future_key"), Value::Array(Vec::new())),
-        (Value::from("another_unknown"), Value::Binary(vec![0x00; 3])),
-    ]);
-    let body = corpus_scope_body(Some(scope.clone()));
-
+    ]));
     let decoded = validate_claim_body_and_decode(&encode_claim_body(&body)?, false)?;
-
-    assert_eq!(decoded.scope, Some(scope));
-    assert_eq!(claim_corpus_id(&decoded)?, None);
+    assert_eq!(decoded.scope_project, project);
+    assert_eq!(decoded.scope, body.scope);
     Ok(())
 }
 
@@ -4726,6 +4658,52 @@ fn relationship_candidate_stamps_and_rejects_unknown_or_wrong_kind() -> Result<(
             .unwrap_err();
         assert_eq!(error.kind(), ErrorKind::InvalidRelationship);
         assert!(vault.get_claim(&rejected)?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn claim_gate_receipt_stamps_verified_world_project_retention_context() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), crate::VaultConfig::device())?;
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+    let world = EntityId::now();
+    let project = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let mut body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(subject),
+        Value::from("osaka"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    body.scope_project = project;
+    vault.put_claim(&claim, &body, TimeRange { start: 2, end: 2 }, 2)?;
+    vault.retract_claim(&claim, vault.store.clock.now_recorded_at())?;
+    let txn = vault.store.env.read_txn()?;
+    let decisions = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?;
+    assert!(!decisions.is_empty());
+    for decision in decisions {
+        assert_eq!(
+            vault.store.gate_retention_context_in_txn(&txn, &decision)?,
+            crate::gate::GateRetentionContext {
+                world: Some(world),
+                project: Some(project),
+                sub_project: None,
+                thread: None
+            }
+        );
     }
     Ok(())
 }

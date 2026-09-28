@@ -10,12 +10,24 @@ use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
 /// Resolved authority, not caller-provided hints. Identity fields never imply membership.
-#[derive(Debug, Clone)]
-pub struct AccessContext {
+#[derive(Clone)]
+pub struct AccessContext<'v> {
     principal: Option<EntityId>,
     relationships: BTreeSet<EntityId>,
     grants: Vec<AccessGrant>,
-    clock: crate::ports::StoreClock,
+    vault: &'v Vault,
+    observed_at: u64,
+}
+
+impl std::fmt::Debug for AccessContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccessContext")
+            .field("principal", &self.principal)
+            .field("relationships", &self.relationships)
+            .field("grants", &self.grants)
+            .field("observed_at", &self.observed_at)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -33,19 +45,19 @@ pub struct GrantedData<T> {
     pub access_limited: Option<AccessLimited>,
 }
 
-impl AccessContext {
+impl<'v> AccessContext<'v> {
     pub(crate) fn load(
-        vault: &Vault,
+        vault: &'v Vault,
         txn: &heed::RoTxn<'_>,
         principal: Option<EntityId>,
     ) -> Result<Self> {
-        let clock = vault.store.clock.clone();
-        let now = clock.now_recorded_at();
+        let now = crate::ports::authorization_floor_in_txn(&vault.store, txn)?;
         let mut context = Self {
             principal,
             relationships: BTreeSet::new(),
             grants: Vec::new(),
-            clock,
+            vault,
+            observed_at: now,
         };
         if principal.is_none() {
             return Ok(context);
@@ -54,10 +66,7 @@ impl AccessContext {
             for row in vault.store.type_index.prefix_iter(txn, &[kind])? {
                 let (key, _) = row?;
                 let id = crate::vault::entity_id_from_type_index_key(&key)?;
-                let raw = vault
-                    .store
-                    .entities
-                    .get(txn, id.as_bytes())?
+                let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                     .ok_or(Error::CorruptedIndex("access context row"))?;
                 let header = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("access context header"))?;
@@ -83,14 +92,13 @@ impl AccessContext {
                         && let ClaimSubject::Entity(space) = body.subject
                     {
                         // A member binding is only a relationship membership when its subject really is one.
-                        if vault
-                            .store
-                            .entities
-                            .get(txn, space.as_bytes())?
-                            .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                            .is_some_and(|h| {
-                                h.entity_type == crate::registry::ENTITY_TYPE_RELATIONSHIP
-                            })
+                        if crate::ports::EntityStoreRead::port_entity_raw(
+                            &vault.store,
+                            txn,
+                            &space,
+                        )?
+                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                        .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_RELATIONSHIP)
                         {
                             context.relationships.insert(space);
                         }
@@ -102,7 +110,39 @@ impl AccessContext {
     }
 
     /// Applies the C1-C3 matrix. Private rows cannot be shared by an AccessGrant.
-    pub fn allows(&self, entity_type: u8, space: Option<EntityId>, private: bool) -> bool {
+    pub fn allows(
+        &self,
+        entity_type: u8,
+        space: Option<EntityId>,
+        private: bool,
+        record: &crate::federation::Scope,
+    ) -> bool {
+        // A retained context must still check live expiry, and must not expose
+        // an observation that failed to reach the durable floor.
+        self.vault
+            .store
+            .authorization_now()
+            .is_ok_and(|now| self.allows_at(entity_type, space, private, record, now))
+    }
+
+    pub(crate) fn allows_at_snapshot(
+        &self,
+        entity_type: u8,
+        space: Option<EntityId>,
+        private: bool,
+        record: &crate::federation::Scope,
+    ) -> bool {
+        self.allows_at(entity_type, space, private, record, self.observed_at)
+    }
+
+    fn allows_at(
+        &self,
+        entity_type: u8,
+        space: Option<EntityId>,
+        private: bool,
+        record: &crate::federation::Scope,
+        now: u64,
+    ) -> bool {
         if private {
             return false;
         }
@@ -118,13 +158,13 @@ impl AccessContext {
             ENTITY_TYPE_CLAIM => AccessGrantCapability::RelationshipClaimsRead,
             _ => return false,
         };
-        let now = self.clock.now_recorded_at();
         self.grants.iter().any(|grant| {
             grant.allows_relationship_read(
                 self.principal
                     .expect("a grant is loaded only for a bound principal"),
                 space,
                 capability,
+                record,
                 now,
             )
         })
@@ -132,7 +172,8 @@ impl AccessContext {
 }
 
 impl Vault {
-    pub fn access_context(&self, principal: EntityId) -> Result<AccessContext> {
+    pub fn access_context(&self, principal: EntityId) -> Result<AccessContext<'_>> {
+        self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         AccessContext::load(self, &txn, Some(principal))
     }
@@ -207,10 +248,29 @@ mod tests {
             expires_at: Some(u64::MAX),
             authority_scope: crate::federation::scope_codec::read_preset(),
         };
+        // The actual MESSAGE stamp is one kind at Sensitive, not All kinds
+        // at Restricted. Narrowing to it must still admit the read.
+        grant.authority_scope.bands =
+            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                ENTITY_TYPE_MESSAGE,
+            ]));
+        grant.authority_scope.sensitivity = crate::federation::SensitivityCeiling::AtMost(
+            crate::federation::Sensitivity::Sensitive,
+        );
         vault.create_access_grant(&grant_ref, &grant)?;
         let context = vault.access_context(principal)?;
-        assert!(!context.allows(ENTITY_TYPE_MESSAGE, None, false));
-        assert!(!context.allows(ENTITY_TYPE_SUMMARY, None, false));
+        assert!(!context.allows(
+            ENTITY_TYPE_MESSAGE,
+            None,
+            false,
+            &crate::federation::Scope::top()
+        ));
+        assert!(!context.allows(
+            ENTITY_TYPE_SUMMARY,
+            None,
+            false,
+            &crate::federation::Scope::top()
+        ));
         // A plain key reads nothing without a manifest grant; the relationship
         // grant under test only narrows what that base read admits.
         crate::test_util::authorize_readers(&vault, &["reader"]);
@@ -275,7 +335,8 @@ mod tests {
             // Corrupt/legacy payloads cannot enter through today's witness door.
             // Seed only this read fixture, preserving the valid MESSAGE header.
             let mut txn = vault.store.env.write_txn()?;
-            let raw = vault.store.entities.get(&txn, message.as_bytes())?.unwrap();
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &message)?
+                .unwrap();
             let mut malformed_raw = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
             malformed_raw.extend_from_slice(&bytes);
             vault
@@ -321,6 +382,100 @@ mod tests {
             .read(&[crate::claim::PointRead::id(message)], None)?
             .single();
         assert!(value.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn relationship_claim_read_uses_claim_project_not_default_project() -> Result<()> {
+        use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+        use crate::federation::{ScopeAxis, ScopeId};
+        use rmpv::Value;
+        use std::collections::BTreeSet;
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let principal = EntityId::now();
+        let space = EntityId::now();
+        let other_project = EntityId::now();
+        let permitted = EntityId::now();
+        let outside = EntityId::now();
+        let when = crate::TimeRange { start: 1, end: 1 };
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            when,
+            1,
+            b"relationship",
+        )?;
+        for (id, project) in [
+            (permitted, crate::claim::default_project_id()),
+            (outside, other_project),
+        ] {
+            let mut body = ClaimBody::new(
+                "test.relationship_scope",
+                ClaimSubject::Entity(space),
+                Value::from("fact"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            body.rel = Some(space);
+            body.scope_project = project;
+            vault.put_claim(&id, &body, when, 1)?;
+        }
+        let mut grant = AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
+            principal_ref: principal,
+            scope: AccessGrantScope::RelationshipClaims { space_ref: space },
+            capability: AccessGrantCapability::RelationshipClaimsRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: None,
+        };
+        grant.authority_scope.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM]));
+        grant.authority_scope.audience =
+            ScopeAxis::Some(BTreeSet::from([
+                ScopeId(crate::claim::default_project_id()),
+            ]));
+        vault.create_access_grant(&EntityId::now(), &grant)?;
+        // The actor's manifest admits both projects; only the relationship
+        // grant's stored Scope can refuse the out-of-project claim.
+        crate::test_util::authorize_readers(&vault, &["reader"]);
+        let broad = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
+        assert!(
+            broad
+                .read(&[crate::claim::PointRead::id(permitted)], None)?
+                .single()
+                .value
+                .is_some()
+        );
+        assert!(
+            broad
+                .read(&[crate::claim::PointRead::id(outside)], None)?
+                .single()
+                .value
+                .is_some()
+        );
+        let reader = vault.scoped_read(
+            ScopedReadActorKey::new("reader")
+                .unwrap()
+                .require_access_grants(Some(principal)),
+        );
+        assert!(
+            reader
+                .read(&[crate::claim::PointRead::id(permitted)], None)?
+                .single()
+                .value
+                .is_some()
+        );
+        assert!(
+            reader
+                .read(&[crate::claim::PointRead::id(outside)], None)?
+                .single()
+                .value
+                .is_none()
+        );
         Ok(())
     }
 }

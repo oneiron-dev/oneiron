@@ -87,14 +87,14 @@ pub(crate) fn validate_receipt_archive_put(
     {
         return Err(invalid());
     }
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("receipt source header"))?;
         if header.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != *body {
             return Err(invalid());
         }
     }
-    if let Some(raw) = store.entities.get(txn, holder.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &holder)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("receipt source holder"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM
@@ -131,7 +131,9 @@ pub(crate) fn stage_receipt_archive_put(
             // holder. Retire a now-provably-uncited payload, not the claim.
             let hash = super::codec::digest(body);
             for source_id in owned {
-                let Some(raw) = store.entities.get(txn, source_id.as_bytes())? else {
+                let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw(store, txn, &source_id)?
+                else {
                     continue;
                 };
                 let header = EntityMetadataHeader::parse(&raw)
@@ -174,7 +176,7 @@ pub(super) fn read_source(
     if retired(store, txn, RETIRED_SOURCE, id)? {
         return Ok(None);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -227,7 +229,7 @@ pub(crate) fn retire_receipt_archives_for_holder(
     Ok(())
 }
 fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(());
     };
     let header =
@@ -263,7 +265,7 @@ pub(crate) fn receipt_archive_custody_exists(
     holder: &EntityId,
 ) -> Result<bool> {
     for id in receipt_archives_for_holder(store, txn, holder)? {
-        if store.entities.get(txn, id.as_bytes())?.is_some() {
+        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
             return Ok(true);
         }
     }

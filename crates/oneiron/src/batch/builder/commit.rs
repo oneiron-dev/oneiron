@@ -57,13 +57,13 @@ impl BatchBuilder<'_> {
     }
 
     fn commit_inner(
-        self,
+        mut self,
         checker: Option<&BoundedAutoChecker>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         CommitCheck::run_all(&self.commit_checks, self.vault, &self.ops)?;
-        if let Some(err) = self.validation_error {
+        if let Some(err) = self.validation_error.take() {
             return Err(err);
         }
         let vault = self.vault;
@@ -78,9 +78,9 @@ impl BatchBuilder<'_> {
         let mut wtxn = vault.store.env.write_txn()?;
         target_guard(&wtxn)?;
         #[cfg(feature = "sync")]
-        let mut ops = self.ops;
+        let mut ops = std::mem::take(&mut self.ops);
         #[cfg(not(feature = "sync"))]
-        let ops = self.ops;
+        let ops = std::mem::take(&mut self.ops);
         #[cfg(feature = "sync")]
         super::apply::admit_federated_puts(vault, &mut wtxn, &mut ops, &self.federated_puts)?;
         let mut staged_gate_decisions = Vec::new();
@@ -112,6 +112,7 @@ impl BatchBuilder<'_> {
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
         // content bytes rather than to any departing holder.
+        let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&ops);
         apply_ops_with_origin(
             &vault.store,
             &vault.config,
@@ -129,6 +130,9 @@ impl BatchBuilder<'_> {
             vault.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         crate::ports::recorded_at_in_txn(&vault.store, &mut wtxn)?;
         wtxn.commit()?;
+        if changes_claims {
+            self.vault.store.notify_proactivity_changes();
+        }
         while vault.collect_lfs_garbage(32)? != 0 {}
         for decision in staged_gate_decisions {
             decision.record_metrics(&vault.store.diagnostics.gate);

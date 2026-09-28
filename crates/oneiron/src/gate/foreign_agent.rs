@@ -77,9 +77,7 @@ fn resolve_chain(
         return Ok(None);
     };
     let owner = EntityId::from_bytes(row.owner)?;
-    if store
-        .entities
-        .get(txn, owner.as_bytes())?
+    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &owner)?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
         .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)
     {
@@ -122,12 +120,14 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             if foreign == introducer.entity_ref()
-                || self.store.entities.get(txn, foreign.as_bytes())?.is_none()
-                || self
-                    .store
-                    .entities
-                    .get(txn, introducer.entity_ref().as_bytes())?
+                || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &foreign)?
                     .is_none()
+                || crate::ports::EntityStoreRead::port_entity_raw(
+                    &self.store,
+                    txn,
+                    &introducer.entity_ref(),
+                )?
+                .is_none()
             {
                 return Err(Error::InvalidClaimBody("foreign introduction identity"));
             }
@@ -286,10 +286,7 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let id = super::default_policy_manifest_id()?;
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("policy manifest header"))?;

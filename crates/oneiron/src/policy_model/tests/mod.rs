@@ -9,7 +9,6 @@ pub(super) use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain};
 pub(super) use super::*;
 pub(super) use crate::Vault;
 pub(super) use crate::config::VaultConfig;
-pub(super) use crate::entity_id::bytes_to_hex_lower;
 pub(super) use crate::error::{Error, Result};
 pub(super) use crate::gate;
 pub(super) use crate::llm::{
@@ -34,6 +33,7 @@ pub(super) use std::sync::{
 pub(super) use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 pub(super) use tempfile::TempDir;
 
+mod anonymous_chat;
 mod cloud_dual;
 mod dial_pattern_roles;
 mod edge_identity;

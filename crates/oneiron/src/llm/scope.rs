@@ -89,15 +89,14 @@ mod tests {
             writable: BTreeSet::from([projection.clone()]),
         };
         let envelope = super::super::CallEnvelope {
+            seat_effort: None,
             scope: scope.clone(),
             purpose: super::super::CallPurpose::Consolidation,
             class: super::super::CallClass::BestEffort,
-            tier: super::super::TierPrecedence {
-                per_call: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: super::super::ModelTierRef("background".into()),
-            },
+            tier: super::super::TierPrecedence::for_purpose(
+                &super::super::CallPurpose::Consolidation,
+                super::super::ModelTierRef("background".into()),
+            ),
             response_format: super::super::ResponseFormat::Text,
             locality: super::super::ModelLocality::OnDevice,
         };

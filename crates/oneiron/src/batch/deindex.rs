@@ -6,6 +6,7 @@ use heed::RwTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result};
+use crate::ports::EntityStoreStaging;
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -15,15 +16,22 @@ use crate::store::Store;
 /// of full entity deindex. Key: hex32.
 const TRUSTED_MANIFEST_ORIGIN: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_TRUSTED_ORIGIN);
+/// The `gate` module's seeded-default body hash, deleted with the manifest
+/// it vouches for. Key: hex32.
+const SEEDED_MANIFEST_CONFIDENCE: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_SEEDED_CONFIDENCE);
 
 pub(super) fn reject_engine_authored_delete(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
+    crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
-    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+    crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(());
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -45,11 +53,15 @@ pub(crate) fn deindex_entity(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::config::failure_signals::purge_tier2_for_source_in_txn(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
     crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
     crate::skill_hub::remove_hub_package_in_txn(store, wtxn, id)?;
+    crate::skill_hub::erase_claim_refinement_in_txn(store, wtxn, id)?;
+    crate::skill_hub::erase_refinement_custody_in_txn(store, wtxn, id)?;
+    crate::skill_hub::remove_refinement_carrier_in_txn(store, wtxn, id)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;
 
@@ -95,7 +107,16 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    // The shared physical tear is reached by facade deletes, public batch
+    // deletes and lexical-hint cascades. Every one must erase claim decisions
+    // and the pending tray before the entity bytes leave this transaction.
+    store.redact_gate_decisions_for_claim_in_txn(
+        wtxn,
+        id.as_bytes(),
+        store.clock.now_recorded_at(),
+    )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     store
@@ -152,13 +173,16 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     let related_neighbors = delete_related_edges(store, wtxn, id)?;
     had_graph_mutation |= !related_neighbors.is_empty();
     neighbors.extend(related_neighbors);
 
     delete_short_id_rows_for_id(store, wtxn, id)?;
+    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
 
-    let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(entity_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)?
+    else {
         let cleanup = crate::affect::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
         had_vector |= cleanup.had_vector;
         had_graph_mutation |= cleanup.had_graph_mutation;
@@ -189,6 +213,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
             Err(error) => return Err(error),
         }
     }
+    crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
@@ -211,8 +236,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
     TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
+    SEEDED_MANIFEST_CONFIDENCE.delete(store, wtxn, &HexId(*id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
-    store.entities.delete(wtxn, id.as_bytes())?;
+    store.port_remove_entity_row(wtxn, id)?;
     crate::ports::audit_mutation_in_txn(
         store,
         wtxn,

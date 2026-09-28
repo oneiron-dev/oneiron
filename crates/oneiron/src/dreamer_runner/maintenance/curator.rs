@@ -24,10 +24,28 @@ pub struct CuratorRubric {
     pub edge_weight_factor: f32,
     pub confidence_factor: f32,
     pub cadence_secs: u64,
+    /// Agent-authored questions stored as policy data, not Rust prompt text.
+    pub questions: CuratorQuestions,
+}
+/// The three questions the curator must answer from stored, verifiable facts.
+/// Hosts may edit the wording through the owner-set rubric.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CuratorQuestions {
+    pub authorship: String,
+    pub freshness: String,
+    pub least_force: String,
 }
 impl CuratorRubric {
     fn validate(&self) -> Result<()> {
         if self.cadence_secs == 0
+            || [
+                &self.questions.authorship,
+                &self.questions.freshness,
+                &self.questions.least_force,
+            ]
+            .iter()
+            .any(|question| question.trim().is_empty())
             || ![self.edge_weight_factor, self.confidence_factor]
                 .iter()
                 .all(|x| x.is_finite() && (0.0..1.0).contains(x))
@@ -106,7 +124,7 @@ pub(super) fn run(
     let actor = vault.dreamer_authority()?.entity_ref();
     let txn = vault.store.env.read_txn()?;
     let mut candidates = Vec::new();
-    for row in vault.store.entities.iter(&txn)? {
+    for row in crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, &txn)? {
         let (id, bytes) = row?;
         let Some(header) = EntityMetadataHeader::parse(&bytes) else {
             return Err(invalid());
@@ -128,9 +146,8 @@ pub(super) fn run(
         {
             continue;
         }
-        let id_bytes: &[u8] = &id;
-        let id = EntityId::from_bytes(id_bytes.try_into().map_err(|_| invalid())?)?;
-        let action = match claim_demotion_rung(&body)? {
+        let prior_rung = claim_demotion_rung(&body)?;
+        let action = match prior_rung {
             None => {
                 serde_json::json!({"kind":"claim_of_weight","factor":rubric.edge_weight_factor})
             }
@@ -140,7 +157,16 @@ pub(super) fn run(
             Some(ClaimDemotionRung::Weakened) => serde_json::json!({"kind":"stale"}),
             Some(ClaimDemotionRung::Stale) => serde_json::json!({"kind":"retract"}),
         };
-        candidates.push((id,serde_json::json!({"target":id.to_hex(),"source_hash":blake3::hash(&bytes[ENTITY_METADATA_HEADER_LEN..]).to_hex().to_string(),"action":action,"rubric":rubric})));
+        let proposed_action = action["kind"].clone();
+        candidates.push((id,serde_json::json!({"target":id.to_hex(),"source_hash":blake3::hash(&bytes[ENTITY_METADATA_HEADER_LEN..]).to_hex().to_string(),"action":action,"rubric":rubric,"grade":{
+            "authorship":"verified_dreamer_generated",
+            "freshness":{"learned_at":header.learned_at,"minimum_age_secs":rubric.minimum_age_secs},
+            "least_force":{"prior_rung":prior_rung.map(|r| match r {
+                ClaimDemotionRung::Decayed => "decayed",
+                ClaimDemotionRung::Weakened => "weakened",
+                ClaimDemotionRung::Stale => "stale",
+            }),"proposed_action":proposed_action}
+        }})));
     }
     drop(txn);
     candidates

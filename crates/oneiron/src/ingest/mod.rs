@@ -9,21 +9,25 @@ mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
 pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
 mod docs;
+mod docs_deep;
 mod docs_import;
 mod summary_ladder;
 pub use docs::{
     DOCS_EXPORT_SOURCE_ID, DocsExport, DocsExportSource, DocsPage, DocsSegment, docs_extraction_id,
     docs_semantic_segments,
 };
+pub(crate) use docs_deep::invalidate_docs_source_before_put;
+pub use docs_deep::{DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger};
 pub use docs_import::{
     DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
     DocsSummaryModel,
 };
-pub use summary_ladder::DocsSummaryHit;
+pub use summary_ladder::{DocsExpansion, DocsExpansionLevel, DocsSummaryHit};
 mod identity_key;
 pub use identity_key::identity_fields_for_kind;
 pub(crate) use identity_key::reindex_identity_hints;
 mod admission;
+mod bulk_review;
 pub mod image;
 pub mod meeting_audio;
 mod provider;
@@ -44,6 +48,9 @@ pub use self::admission::{
     admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
     admit_imported_mention_claim,
 };
+pub use self::bulk_review::{
+    ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt,
+};
 pub use self::registry::{
     FILE_DROP_TRANSCRIPT_SOURCE_ID, ICS_FEED_SOURCE_ID, INGEST_SOURCE_REGISTRY,
     IngestAdapterSkillRef, IngestHarnessConfig, IngestSource, IngestSourceConfig,
@@ -61,6 +68,8 @@ pub use self::types::{
     NormalizedIngestRecord,
 };
 
+#[cfg(test)]
+mod bulk_review_tests;
 #[cfg(test)]
 mod docs_tests;
 #[cfg(test)]

@@ -382,7 +382,10 @@ fn deleting_skill_cleans_index_and_stale_rows_do_not_block_import_dedup() -> Res
     let entity = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(1), 2)?;
     let key = (*fixture_hash().as_bytes(), entity);
 
-    assert!(vault.delete_entity(&entity)?);
+    assert!(vault.delete_entity_with_options(
+        &entity,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
 
     // A lagging index row must not resurrect the departed holder.
     let mut wtxn = vault.store.env.write_txn()?;
@@ -1910,7 +1913,10 @@ fn verdict_anchored_to_content_hash_survives_every_holder_departure() -> Result<
     assert_eq!(discoverable(&vault)?, 1);
 
     // Hard-delete one holder → still discoverable on the anchor.
-    assert!(vault.delete_entity(&imported_entity)?);
+    assert!(vault.delete_entity_with_options(
+        &imported_entity,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     assert_eq!(discoverable(&vault)?, 1);
 
     // Soft-erase the last remaining holder → still discoverable.
@@ -1967,7 +1973,10 @@ fn content_anchor_is_delete_protected_on_every_door() -> Result<()> {
     // Targeted delete door refuses the anchor; the verdict survives.
     assert!(
         matches!(
-            vault.delete_entity(&anchor_id),
+            vault.delete_entity_with_options(
+                &anchor_id,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            ),
             Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 _
             )))

@@ -17,6 +17,18 @@ pub enum RegistryError {
     /// Names are global identity. Another owner, source or schema cannot replace one.
     #[error("pack kind name collision: {0}")]
     PackKindNameCollision(String),
+    /// A predicate declaration is already held by a different installed pack.
+    #[error(
+        "predicate {predicate} is declared by installed pack {installed_pack}; cannot install pack {installing_pack}"
+    )]
+    PackPredicateNameCollision {
+        predicate: String,
+        installed_pack: String,
+        installing_pack: String,
+    },
+    /// A pack install rule blocks approval. The card displays this exact diagnostic.
+    #[error("pack install blocked: {reason}")]
+    PackInstallRuleBlocked { reason: String },
     /// Only a locally installed exact identity may admit instances.
     #[error("pack kind is not installed locally: {0}")]
     PackKindNotInstalled(String),
@@ -174,6 +186,8 @@ impl RegistryError {
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
             Self::PackKindNameCollision(_) => ErrorKind::PackKindNameCollision,
+            Self::PackPredicateNameCollision { .. } => ErrorKind::PackPredicateNameCollision,
+            Self::PackInstallRuleBlocked { .. } => ErrorKind::PackInstallRuleBlocked,
             Self::PackKindNotInstalled(_) => ErrorKind::PackKindNotInstalled,
             Self::InvalidPackByteMap(_) => ErrorKind::InvalidPackByteMap,
             // The structural ChildOf tree rejections are coarse-mapped onto

@@ -17,6 +17,7 @@ use crate::entity_id::EntityId;
 use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreMaintenance;
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 #[cfg(all(feature = "sync", test))]
 use crate::sync::window_rows::WINDOW_UPDATE;
@@ -96,7 +97,10 @@ pub(super) fn finalize_job(
             let id_bytes: [u8; 16] = type_key[1..17]
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("type index key"))?;
-            let Some(raw) = vault.store.entities.get(&*wtxn, &id_bytes)? else {
+            let Some(raw) = vault
+                .store
+                .port_entity_raw(&*wtxn, &EntityId::from_bytes(id_bytes)?)?
+            else {
                 continue;
             };
             let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -267,7 +271,12 @@ pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
         if type_key.len() != 17 {
             return Err(Error::CorruptedIndex("type index key"));
         }
-        let Some(raw) = vault.store.entities.get(&rtxn, &type_key[1..17])? else {
+        let id = EntityId::from_bytes(
+            type_key[1..17]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("type index key"))?,
+        )?;
+        let Some(raw) = vault.store.port_entity_raw(&rtxn, &id)? else {
             continue;
         };
         let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;

@@ -48,6 +48,8 @@ side_tables! {
     /// Channel pointer (published/preview) naming the fork hash a codebase artifact currently serves.
     /// Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
+    /// Immutable publish admission receipt keyed by publish entity id16.
+    ARTIFACT_PUBLISH_ADMISSION: VaultMeta b"artifact:publish:admission:v1:" LegacyJson;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
@@ -69,6 +71,8 @@ side_tables! {
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
+    /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
+    BLOB_ARTIFACT_HIGHWATER: VaultMeta b"blob_artifact:highwater:v1:" Raw;
     /// Edit proposal settlement ledger row. Key: id16 + hash32.
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.
@@ -178,9 +182,17 @@ side_tables! {
     CHECKOUT_SETTLEMENT: VaultMeta b"checkout:settlement:v1:" Raw;
     /// Retired checkout epoch high-water mark. Key: hex32.
     CHECKOUT_TOMBSTONE: VaultMeta b"checkout:tombstone:v1:" Raw;
+    /// Two-slot channel assignment index: occupant id16 then predecessor id16, all-zero for an
+    /// empty slot. Key: bytes32 (blake3 of the length-framed channel and address).
+    CHANNEL_IDENTITY_ASSIGNMENT: VaultMeta b"cid_assign:v1:" Raw;
+    /// Deletion evidence (the single byte 1) for a soft-erased channel identity's retained
+    /// header-only shell, staged with slot removal. Key: id16.
+    CHANNEL_IDENTITY_ASSIGNMENT_ERASED: VaultMeta b"cid_assign_erased:v1:" Raw;
     /// A destructive claim action (supersede/decay/weaken/stale) parked behind unresolved gate
     /// consent. Key: id16.
     CLAIM_DEFERRED: VaultMeta b"claim.deferred.v1:" Named;
+    /// Immutable before/after revision binding for an accepted supersession. Key: old id16 + new id16.
+    CLAIM_SUPERSESSION_DIFF: VaultMeta b"claim.supersession_diff.v1:" Raw;
     /// Private local binding digest (row_digest, 32 bytes) proving which writer authored/finalized a
     /// CLAIM row. Key: id16.
     CLAIM_MATERIALIZATION_AUTHORED: VaultMeta b"claim:materialization:authored:v1:" Raw;
@@ -239,6 +251,9 @@ side_tables! {
     CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
     CODE_REVISION_SESSION_INDEX: VaultMeta b"code_revision:session:v1:" Raw;
+    /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
+    /// id16(run) + id16(summary).
+    CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw;
     /// The taint refs beside one raw-output row, keyed by the same content handle, in the same
@@ -295,6 +310,8 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
+    CONNECTOR_GRANT_SLATE_BINDING: VaultMeta b"connector.grant_slate.binding.v1/" Raw;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.
     CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson;
     /// Idempotent wake-decision record for one connector-event subscription match. Key: hash32.
@@ -320,6 +337,9 @@ side_tables! {
     CONSENT_STANDING_GRANT: VaultMeta b"consent.grant.v1:" Raw;
     /// Approve-once marker. Key: bytes32.
     CONSENT_APPROVE_ONCE_MARKER: VaultMeta b"consent.once.v1:" Raw;
+    /// Owner-reason rule behind a derived standing grant. Key: string (grant ref) ":" id16 (rule
+    /// decision id).
+    CONSENT_OWNER_REASON_RULE: VaultMeta b"consent.owner_reason.v1:" Named;
     /// Parked authority-widening request. Key: hex64.
     CONSENT_WIDEN_PROPOSAL: VaultMeta b"consent.widen.v1:" LegacyJson;
     /// Marker for a ruled conflict packet. Key: bytes32.
@@ -341,6 +361,20 @@ side_tables! {
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
     CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named;
+    /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
+    /// id16 (room).
+    CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;
+    /// Per-person room erasure fence: `[1]` while the sweep is in flight, `[2]` once it completed.
+    /// Key: id16 (room) + id16 (person).
+    CONVERSATION_ERASED_PERSON: VaultMeta b"conversation:erased_person:v1:" Raw;
+    /// Durable room (id16) of a MESSAGE, kept after its incident edges are purged. Key: id16
+    /// (message).
+    CONVERSATION_MESSAGE_OWNER: VaultMeta b"conversation:message_owner:v1:" Raw;
+    /// Host-local room role grant of one current member. Key: id16 (room) + id16 (person).
+    CONVERSATION_ROLE_GRANT: VaultMeta b"conversation:role_grant:v1:" Named;
+    /// Single-byte `[1]` marker that the room role door is rewriting a room body, set and cleared
+    /// inside its write transaction. Key: id16 (room).
+    CONVERSATION_ROLE_UPDATE: VaultMeta b"conversation:role_update:" Raw;
     /// Transient in-txn permit binding a legacy ChildOf-append record id to the conversation it may
     /// append to. Key: id16.
     CONVERSATION_DAG_APPEND_PERMIT: VaultMeta b"conversation_dag:append_in_txn:v1:" Raw;
@@ -350,10 +384,27 @@ side_tables! {
     /// Per-record pointer marking a DAG record canonical (points to its successor), or absent for
     /// terminal. Key: id16.
     CONVERSATION_DAG_CANONICAL: VaultMeta b"conversation_dag:canonical:v1:" Raw;
+    /// Single-byte `[1]` reverse Parent witness kept when a DAG record is purged, by parent then
+    /// child. Key: id16 (parent) + id16 (child).
+    CONVERSATION_DAG_ERASED_CHILD: VaultMeta b"conversation_dag:erased_child:v1:" Raw;
+    /// SpawnedBy anchor (id16) of a session whose anchoring DAG record was purged. Key: id16
+    /// (session).
+    CONVERSATION_DAG_ERASED_SPAWN: VaultMeta b"conversation_dag:erased_spawn:v1:" Raw;
+    /// Content-free topology pin (room, parent, session, thread flag, PERSON author) of a soft- or
+    /// hard-erased DAG record. Key: id16 (record).
+    CONVERSATION_DAG_ERASED_TOPOLOGY: VaultMeta b"conversation_dag:erased_topology:v1:" Named;
     /// Per-conversation pointer to the current local-head DAG record id. Key: id16.
     CONVERSATION_DAG_LOCAL_HEAD: VaultMeta b"conversation_dag:local_head:v1:" Raw;
     /// Single-byte [1] marker that a conversation has adopted the DAG record model. Key: id16.
     CONVERSATION_DAG_MIGRATED: VaultMeta b"conversation_dag:migrated:v1:" Raw;
+    /// Durable room (id16) of a room TURN, kept after its ChildOf edge is deleted or purged. Key:
+    /// id16 (TURN).
+    CONVERSATION_DAG_ROOM_OWNER: VaultMeta b"conversation_dag:room_owner:v1:" Raw;
+    /// Cached thread projection of a trunk: `[1]`, root id16, reply count u64be, last reply at
+    /// u64be. Key: id16 (trunk).
+    CONVERSATION_DAG_THREAD_META: VaultMeta b"conversation_dag:thread_meta:v1:" Raw;
+    /// Single-byte `[1]` marker that a trunk's cached thread projection is stale. Key: id16.
+    CONVERSATION_DAG_THREAD_META_DIRTY: VaultMeta b"conversation_dag:thread_meta_dirty:v1:" Raw;
     /// Row count / next-sequence counter (u64be) for a conversation's membership ledger. Key: id16.
     CONVERSATION_MEMBERSHIP_SEQ: VaultMeta b"conversation_membership:seq:v1:" Raw;
     /// One append-only membership-ledger event (join/leave/history-visibility change) for a
@@ -365,4 +416,6 @@ side_tables! {
     /// Lookup index from (identity ref, normalized counterparty) to the contact entity id. Key: id16
     /// + hash32(sha256).
     COUNTERPARTY_CONTACT_INDEX: VaultMeta b"counterparty_contact.index.v1:" Raw;
+    /// Terminal custom-agent dispatch failure classification. Key: id16(attempt).
+    CUSTOM_AGENT_FAILURE: VaultMeta b"custom-agent:failure:v1:" Raw;
 }

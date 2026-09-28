@@ -297,7 +297,7 @@ pub fn filtered_window_doc(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(vault, source, key, grant_scope, selector, &position)
+    filter_window_doc(vault, source, key, selector, &position)
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -334,7 +334,7 @@ pub fn guest_share_envelope_body(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    let filtered = filter_window_doc(vault, source, key, grant_scope, selector, &position)?;
+    let filtered = filter_window_doc(vault, source, key, selector, &position)?;
     let stripped = strip_guest_share_metadata(vault, &filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())

@@ -69,7 +69,10 @@ impl Vault {
             })?;
             return Ok(false);
         };
-        let deleted = self.delete_entity(&object.asset_id)?;
+        let deleted = self.delete_entity_with_options(
+            &object.asset_id,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(deleted)
     }
@@ -222,7 +225,7 @@ pub(crate) fn guard_lfs_asset_put(
             "content-addressed lfs assets cannot change kind",
         ));
     }
-    let Some(old) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         // GC retires bytes, not the chunk-id reservation. Only authenticated
         // bytes can restore that chunk; a missing published manifest is corrupt.
         let Some(hash) = chunk_hash.filter(|_| !manifest) else {

@@ -18,10 +18,21 @@ mod app_reads;
 pub use app_reads::{scoped_subscription_pending, scoped_subscription_receipts};
 
 mod childof;
+pub(in crate::sync) use childof::{defer_child_of, settle_child_of};
 mod companion_identity;
 mod edges;
 mod entities;
 mod observers;
+mod provenance;
+pub use provenance::RevisionEvent;
+pub(in crate::sync) use provenance::origin_for_mirrors;
+
+mod parent_retry;
+pub(crate) use parent_retry::has_unresolved_parent_for_source_in_txn;
+pub(in crate::sync) use parent_retry::{
+    ParentOutcome, defer_spawned_by, has_pending_source_in_txn, retry_in_txn,
+    submit as submit_parent_in_txn,
+};
 mod recovery;
 pub(crate) use recovery::preflight_canonical_recovery;
 mod tombstones;
@@ -32,7 +43,7 @@ mod tombstones;
 pub(in crate::sync) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
 pub(crate) use self::companion_identity::ingest_replicated_identity_topology_event_in_txn;
 pub(in crate::sync) use self::companion_identity::{
-    CompanionCrdtScrub, companion_register_sync_admitted, scrub_local_only_companions_from_crdt,
+    CompanionCrdtScrub, scrub_local_only_companions_from_crdt,
 };
 pub use self::companion_identity::{
     encode_edge_value_for_crdt, format_edge_key, parse_edge_key, parse_edge_value,

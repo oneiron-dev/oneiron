@@ -101,8 +101,11 @@ fn revoke_actor_applies_immediately_despite_an_unrelated_pending_widen() {
 
     // Baseline: with no revocation the binding authorizes, so the assertions
     // below pin the revocation's effect and not a broken fixture.
-    let before =
-        fold_authority_log_with_seen_times(&freeze.entries, &freeze.first_seen, freeze.now_secs);
+    let before = fold_legacy_authority_log_with_seen_times(
+        &freeze.entries,
+        &freeze.first_seen,
+        freeze.now_secs,
+    );
     assert!(
         before.pending_widens.contains_key(&freeze.widen_hash),
         "fixture: the widen must start inside its veto delay"
@@ -116,7 +119,7 @@ fn revoke_actor_applies_immediately_despite_an_unrelated_pending_widen() {
     entries.push(revoke);
     let mut first_seen = freeze.first_seen.clone();
     first_seen.insert(revoke_hash, freeze.now_secs);
-    let after = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    let after = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
 
     assert!(
         after.issues.is_empty(),
@@ -191,7 +194,8 @@ fn bind_and_rebind_still_defer_behind_a_pending_widen() {
         let mut first_seen = freeze.first_seen.clone();
         first_seen.insert(entry_hash, freeze.now_secs);
 
-        let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+        let fold =
+            fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
         assert!(
             fold.pending_widens.contains_key(&freeze.widen_hash),
             "{label}: fixture — the widen must still be pending"
@@ -270,7 +274,7 @@ fn revoke_actor_folds_past_a_grant_frozen_in_its_own_ancestry() {
     let mut first_seen = freeze.first_seen.clone();
     first_seen.insert(stall_hash, freeze.now_secs);
     first_seen.insert(revoke_hash, freeze.now_secs);
-    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    let fold = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
 
     assert!(
         fold.valid_entries.contains(&revoke_hash),
@@ -353,7 +357,7 @@ fn revoke_actor_folds_past_a_grant_frozen_through_only_one_of_its_parents() {
     let mut first_seen = freeze.first_seen.clone();
     first_seen.insert(stall_hash, freeze.now_secs);
     first_seen.insert(revoke_hash, freeze.now_secs);
-    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    let fold = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
 
     // Fixture: the mixed-parent grant really is frozen, and the sibling branch
     // really did fold clean — that pairing is the whole point of the row.
@@ -517,7 +521,7 @@ fn a_veto_may_not_ride_the_revocation_ancestry_bypass() {
     let mut first_seen = freeze.first_seen.clone();
     first_seen.insert(stall_hash, freeze.now_secs);
     first_seen.insert(veto_hash, freeze.now_secs);
-    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    let fold = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
 
     assert!(
         !fold.valid_entries.contains(&veto_hash),
@@ -574,7 +578,7 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
 
     // Same log, one clock apart: frozen, then matured.
     let matured_at = freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    let after = fold_authority_log_with_seen_times(&entries, &first_seen, matured_at);
+    let after = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, matured_at);
     assert!(
         !after.pending_widens.contains_key(&freeze.widen_hash),
         "fixture: the widen must have matured at the later reading"
@@ -598,119 +602,287 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
     );
 }
 
-/// fix-leg 11 P1-2: a matured ENROLLMENT must survive a restart under a
-/// rolled-back wall clock, which is what makes the write fold's floor
-/// persistence load-bearing in the GRANT direction.
-///
-/// `readonly_fold_rolled_back_injected_clock_keeps_elapsed_rotation_applied`
-/// already pins the revoke direction: a matured `RotateKey` must stay applied, or
-/// the retired key's owner binding comes back. That test cannot catch a
-/// regression in the other direction, because a lost floor pushes a rotation back
-/// INTO `pending_widens`, which for a rotation is the fail-OPEN outcome its
-/// assertions are built around.
-///
-/// The grant direction fails the opposite way and needs its own row. An
-/// `EnrollDevice` matured on this vault's monotonic clock authorizes its child
-/// bind; if the floor is not persisted, a restart drops the in-memory clock,
-/// the fold falls back to a wall clock sitting far BELOW the observation, and the
-/// enrollment reverts to pending — so a legitimately matured owner enrollment
-/// silently loses its authority. That is fail-CLOSED but wrong, and it is
-/// indistinguishable from the feature simply not working: the operator waited out
-/// the veto window, and a reboot took it back.
-///
-/// MUTATION PROBE: drop the floor `put` from `Vault::authority_fold`'s write txn
-/// and this test fails at the post-reopen assertions.
+/// A frozen grant can later fail its own transition when the widen matures.
+/// Its verified child revoke must retain the floor, not its invalid parent.
 #[test]
-fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
-    let dir = tempfile::tempdir().unwrap();
-    // Park the authority clock ten days ahead of the reopen's injected clock,
-    // so every later observation is written from a future reading and
-    // `rolled_back` is the BACKWARD-skewed clock a reopen would otherwise trust.
-    let rolled_back = 1_000;
-    let future = rolled_back + 10 * 24 * 60 * 60;
-    let vault = open_vault_at(dir.path(), future);
-    assert!(authority_observation_secs(&vault.store, 0, future) >= future);
+fn revoke_floor_survives_frozen_grant_later_becoming_invalid() {
+    let freeze = pending_widen_freeze(253);
+    let key = freeze.fixture.owner_key.clone();
+    // A second BindActor on this live key is invalid after maturity, but while
+    // the widen is pending this grant waits before its transition is checked.
+    let invalid_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&key, scope_entity(0x76), "human", 10),
+        104,
+    );
+    let invalid_hash = authority_entry_hash(&invalid_grant).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![invalid_hash],
+        5,
+        revoke_actor_op(&key, 10),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let mut entries = freeze.entries;
+    entries.extend([invalid_grant, revoke.clone()]);
+    let mut first_seen = freeze.first_seen;
+    first_seen.insert(invalid_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
 
+    let frozen = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    assert!(frozen.valid_entries.contains(&revoke_hash));
+    assert!(!frozen.valid_entries.contains(&invalid_hash));
+    assert_eq!(
+        folded_status(&frozen, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+
+    let matured = fold_legacy_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+    );
+    assert!(!matured.pending_widens.contains_key(&freeze.widen_hash));
+    assert_eq!(
+        binding_rejection(&matured, &entries[4]),
+        Some(ActorBindingRejection::BindingExists)
+    );
+    assert!(
+        matured
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
+    );
+    assert!(!matured.valid_entries.contains(&invalid_hash));
+    assert_eq!(
+        folded_status(&matured, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(
+        &matured,
+        &freeze.fixture.actor,
+        "human"
+    ));
+
+    // A bad co-signature cannot inherit the ancestry exception.
+    let mut bad_revoke = revoke;
+    bad_revoke.cosigns[0].signature[0] ^= 1;
+    entries[5] = bad_revoke;
+    let bad = fold_legacy_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+    );
+    assert_eq!(folded_status(&bad, &key), Some(ActorBindingStatus::Active));
+}
+
+#[test]
+fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
     let owner = ed_key(231);
     let owner_key = authority_key_from_ed(&owner);
+    let actor = scope_entity(232);
     let genesis = genesis_entry(231, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
-    let second = ed_key(232);
-    let second_key = authority_key_from_ed(&second);
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
     let enroll = enroll_device_entry(
         vault_id,
-        &genesis,
+        &bind,
         &owner,
         EnrollSpec {
-            seed: 232,
-            roles: ROLE_OWNER | ROLE_ADMIN,
+            seed: 233,
+            roles: ROLE_AGENT,
             tier: AuthorityTier::Software,
-            seq: 1,
-            ts: 2,
+            seq: 2,
+            ts: 3,
         },
     );
     let enroll_hash = authority_entry_hash(&enroll).unwrap();
-    let actor = scope_entity(0x67);
-    let bind = cosign_ed(
+    let prior = fold_authority_log(&[genesis.clone(), bind.clone()]);
+    assert!(actor_binding_is_active(&prior, &actor, "human"));
+    let revoke = sign_ed(
         unsigned_entry(
             Some(vault_id),
-            2,
-            vec![enroll_hash],
-            bind_op(&second_key, actor, "human", 1),
-            owner_key,
             3,
+            vec![enroll_hash],
+            revoke_actor_op(&owner_key, 5),
+            owner_key.clone(),
+            4,
         ),
         &owner,
-        &second,
     );
-    vault
-        .put_authority_log_entries(&[
-            (genesis, TimeRange { start: 1, end: 1 }, 1),
-            (enroll, TimeRange { start: 2, end: 2 }, 2),
-            (bind, TimeRange { start: 3, end: 3 }, 3),
-        ])
-        .unwrap();
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let entries = [genesis.clone(), bind.clone(), enroll.clone(), revoke];
+    for ordered in [entries.to_vec(), entries.iter().rev().cloned().collect()] {
+        let fold =
+            fold_authority_log_with_seen_times(&ordered, &BTreeMap::from([(enroll_hash, 1)]), 1);
+        assert!(!fold.valid_entries.contains(&enroll_hash));
+        assert!(
+            fold.valid_entries.contains(&revoke_hash),
+            "issues: {:?}; status: {:?}",
+            fold.issues,
+            folded_status(&fold, &owner_key)
+        );
+        assert!(!actor_binding_is_active(&fold, &actor, "human"));
+        assert_eq!(
+            folded_status(&fold, &owner_key),
+            Some(ActorBindingStatus::Revoked)
+        );
+    }
+    // A signature from the rejected device has no independent ancestry.
+    let rejected_key = ed_key(233);
+    let wrong = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            0,
+            vec![enroll_hash],
+            revoke_actor_op(&owner_key, 5),
+            authority_key_from_ed(&rejected_key),
+            5,
+        ),
+        &rejected_key,
+    );
+    let wrong_hash = authority_entry_hash(&wrong).unwrap();
+    let fold = fold_authority_log(&[genesis, bind, enroll, wrong]);
+    assert!(!fold.valid_entries.contains(&wrong_hash));
+    assert!(actor_binding_is_active(&fold, &actor, "human"));
+}
 
-    let before = vault.authority_fold().unwrap();
-    assert!(
-        before.pending_widens.contains_key(&enroll_hash),
-        "the enrollment starts inside its veto delay"
+#[test]
+fn verified_revoke_survives_one_of_two_frozen_branches_becoming_invalid() {
+    let freeze = pending_widen_freeze(220);
+    let key = freeze.fixture.owner_key.clone();
+    let invalid_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&key, scope_entity(0x76), "human", 10),
+        104,
     );
-    assert!(
-        !actor_binding_is_active(&before, &actor, "human"),
-        "its child bind must not authorize while the enrollment is pending"
+    let invalid_hash = authority_entry_hash(&invalid_grant).unwrap();
+    let second_widen = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.bind_hash],
+        5,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&ed_key(225)),
+                ROLE_AGENT,
+                AuthorityTier::Software,
+            ),
+        },
+        105,
     );
-
-    // Run the local monotonic clock past the delay, then let a WRITE fold record
-    // the observation — this is the commit whose floor must outlive the process.
-    let matured_at = future + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    assert!(authority_observation_secs(&vault.store, matured_at, 0) >= matured_at);
-    let full = vault.authority_fold().unwrap();
-    assert!(
-        !full.pending_widens.contains_key(&enroll_hash),
-        "the enrollment must mature once the local clock passes its delay"
+    let second_widen_hash = authority_entry_hash(&second_widen).unwrap();
+    let frozen_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![second_widen_hash],
+        6,
+        rebind_op(&key, freeze.fixture.actor, "human", 10),
+        106,
     );
-    assert!(
-        actor_binding_is_active(&full, &actor, "human"),
-        "the matured enrollment must authorize its child bind"
+    let frozen_hash = authority_entry_hash(&frozen_grant).unwrap();
+    let merge_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![invalid_hash, frozen_hash],
+        7,
+        rebind_op(&key, freeze.fixture.actor, "human", 20),
+        107,
     );
-
-    // Restart. The in-memory clock dies with the vault, so the rolled-back
-    // wall clock is the only other candidate reading — the persisted floor is
-    // the sole thing keeping the enrollment matured.
-    drop(vault);
-    let reopened = open_vault_at(dir.path(), rolled_back);
-    let rtxn = reopened.store.env.read_txn().unwrap();
-    let after_reopen = reopened.authority_fold_readonly_in_txn(&rtxn).unwrap();
-    drop(rtxn);
-    assert!(
-        !after_reopen.pending_widens.contains_key(&enroll_hash),
-        "a restart under a rolled-back wall clock must not un-mature the \
-         enrollment — the persisted floor is what carries the observation across"
+    let merge_hash = authority_entry_hash(&merge_grant).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![merge_hash],
+        8,
+        revoke_actor_op(&key, 21),
+        108,
     );
-    assert!(
-        actor_binding_is_active(&after_reopen, &actor, "human"),
-        "a legitimately matured owner enrollment must keep authorizing its child \
-         bind across a restart"
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let mut entries = freeze.entries.clone();
+    entries.extend([
+        invalid_grant,
+        second_widen,
+        frozen_grant,
+        merge_grant,
+        revoke,
+    ]);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(
+        freeze.widen_hash,
+        freeze.now_secs - DEFAULT_PENDING_WIDEN_DELAY_SECS + 10,
+    );
+    for hash in [
+        invalid_hash,
+        second_widen_hash,
+        frozen_hash,
+        merge_hash,
+        revoke_hash,
+    ] {
+        first_seen.insert(hash, freeze.now_secs);
+    }
+    let before = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    assert!(before.pending_widens.contains_key(&freeze.widen_hash));
+    assert!(before.pending_widens.contains_key(&second_widen_hash));
+    assert!(before.valid_entries.contains(&revoke_hash));
+    assert_eq!(
+        folded_status(&before, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert_eq!(
+        before.actor_write_disposition(&freeze.fixture.actor, "human", None),
+        CausalWriteDisposition::Quarantined,
+    );
+    let later = freeze.now_secs + 11;
+    let after = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, later);
+    assert!(!after.pending_widens.contains_key(&freeze.widen_hash));
+    assert!(after.pending_widens.contains_key(&second_widen_hash));
+    assert_eq!(
+        binding_rejection(&after, &entries[4]),
+        Some(ActorBindingRejection::BindingExists),
+    );
+    for hash in [invalid_hash, frozen_hash, merge_hash] {
+        assert!(!after.valid_entries.contains(&hash));
+    }
+    assert_eq!(
+        folded_status(&after, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert_eq!(
+        after.actor_write_disposition(&freeze.fixture.actor, "human", None),
+        CausalWriteDisposition::Quarantined,
+    );
+    let mut bad_primary = entries.clone();
+    bad_primary[8].signer.signature[0] ^= 1;
+    assert_eq!(
+        folded_status(
+            &fold_legacy_authority_log_with_seen_times(&bad_primary, &first_seen, later),
+            &key
+        ),
+        Some(ActorBindingStatus::Active)
+    );
+    let mut bad_cosign = entries.clone();
+    bad_cosign[8].cosigns[0].signature[0] ^= 1;
+    assert_eq!(
+        folded_status(
+            &fold_legacy_authority_log_with_seen_times(&bad_cosign, &first_seen, later),
+            &key
+        ),
+        Some(ActorBindingStatus::Active)
+    );
+    entries.reverse();
+    assert_eq!(
+        fold_legacy_authority_log_with_seen_times(&entries, &first_seen, later),
+        after
     );
 }

@@ -140,6 +140,19 @@ impl CatalogSeed {
         Self::from_json(include_bytes!("catalog-seed.json"))
     }
 }
+/// Read the registry in the caller's snapshot. Binding may already hold a
+/// read transaction; opening another LMDB reader on the same thread fails.
+pub(super) fn read_model_registry_row(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    model: &ModelId,
+) -> Result<Option<ModelRegistryRow>> {
+    let Some(row) = REGISTRY_ROW.get(store, txn, &model.as_str().to_owned())? else {
+        return Ok(None);
+    };
+    row.validate()?;
+    Ok(Some(row))
+}
 impl Vault {
     pub fn put_model_registry_row(&self, row: &ModelRegistryRow) -> Result<()> {
         row.validate()?;
@@ -161,11 +174,7 @@ impl Vault {
     }
     pub fn model_registry_row(&self, model: &ModelId) -> Result<Option<ModelRegistryRow>> {
         let txn = self.store.env.read_txn()?;
-        let Some(row) = REGISTRY_ROW.get(&self.store, &txn, &model.as_str().to_owned())? else {
-            return Ok(None);
-        };
-        row.validate()?;
-        Ok(Some(row))
+        read_model_registry_row(&self.store, &txn, model)
     }
     pub fn model_registry_rows(&self) -> Result<Vec<ModelRegistryRow>> {
         let txn = self.store.env.read_txn()?;

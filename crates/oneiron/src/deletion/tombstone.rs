@@ -360,6 +360,14 @@ pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
 pub(crate) const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
+/// Local evidence that a soft delete was applied. Unlike the temporary
+/// `pt:` propagation intent, this survives publication so an out-of-order
+/// proposal cancellation cannot become effective against a live entity.
+/// `pub(crate)` because `identity_topology/` reads it before a proposal
+/// cancellation settles.
+pub(crate) const IDENTITY_SOFT_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_IDENTITY_SOFT_DELETE_MARKER);
+
 // ─── Cleanup-archive marker (`ac:`) — durable LOCAL archive truth ───────────
 //
 // ARCH-0073 / ONE-1931. Key = `ac:{entity_id_hex}` (32-char lowercase hex,

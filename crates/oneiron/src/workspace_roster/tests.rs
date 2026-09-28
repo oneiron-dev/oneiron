@@ -27,7 +27,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::{ErrorKind, RecordError};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
-use crate::test_util::{entity, open_test_vault_with};
+use crate::test_util::entity;
 
 const VAULT_ID: u64 = 7;
 const AT: u64 = 1_700_000_000;
@@ -43,7 +43,6 @@ const ADMIN_GRANT: u8 = 0xB7;
 const COMPANION_PERSON: u8 = 0xC1;
 const COMPANION_ACTOR: u8 = 0xC2;
 const COMPANION_FACET: u8 = 0xC3;
-const COMPANION_RECORD: u8 = 0xC4;
 const PROFILE_GRANT: u8 = 0xC5;
 const MAILBOX_IDENTITY: u8 = 0xC6;
 
@@ -52,7 +51,9 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     cfg.map_size = 32 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
-    open_test_vault_with(cfg)
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), cfg).unwrap();
+    (dir, vault)
 }
 
 fn writer(seed: u8) -> WriteActor {
@@ -163,7 +164,6 @@ fn companion_birth() -> CompanionBirthIntent {
         person_ref: entity(COMPANION_PERSON),
         actor_ref: entity(COMPANION_ACTOR),
         work_facet_ref: entity(COMPANION_FACET),
-        companion_record_ref: entity(COMPANION_RECORD),
         profile_grant_ref: entity(PROFILE_GRANT),
         actor_definition: definition("fixture.companion"),
         display_name: "Quillfeather".to_owned(),
@@ -355,17 +355,17 @@ fn companion_birth_is_full_person() -> Result<()> {
             .any(|edge| edge.kind == EdgeKind::HasFacet && edge.target == birth.work_facet_ref)
     );
 
-    // The persona is a FACET over the companion PERSON, never the actor definition.
-    assert_eq!(
-        vault.get_entity_type(&birth.companion_record_ref)?,
-        Some(ENTITY_TYPE_FACET)
-    );
-    let persona = vault
-        .get_companion_record(&birth.companion_record_ref)?
-        .expect("persona facet");
-    assert!(
-        matches!(persona.subject,crate::companion::CompanionSubject::Persona { persona_ref } if persona_ref==birth.person_ref)
-    );
+    // The identity baseline is on PERSON, not an extra persona-shaped FACET.
+    let raw = vault
+        .get(&birth.person_ref)?
+        .expect("companion PERSON body");
+    let body: Value = rmpv::decode::read_value(&mut &raw[..]).expect("valid PERSON body");
+    let Value::Map(fields) = body else {
+        panic!("companion PERSON must be a map");
+    };
+    assert!(fields.iter().any(|(key, value)| {
+        key.as_str() == Some("persona_definition") && matches!(value, Value::Map(_))
+    }));
     assert_eq!(type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER), 0);
 
     // Exactly the requested companion-profile read, and nothing wider.
@@ -410,6 +410,103 @@ fn companion_birth_is_full_person() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()> {
+    for invalid_baseline in [
+        Value::Nil,
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(2)),
+            (Value::from("baseline"), Value::Map(vec![])),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("baseline"), Value::Array(vec![])),
+        ]),
+    ] {
+        let (_dir, vault, mut intent) = fixture("Antevon");
+        let birth = companion_birth();
+        intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+        intent.companion_birth = Some(birth.clone());
+        let body = encode_value(&Value::Map(vec![
+            (
+                Value::from("schema_version"),
+                Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+            ),
+            (
+                Value::from("display_name"),
+                Value::from(birth.display_name.as_str()),
+            ),
+            (Value::from("persona_definition"), invalid_baseline),
+        ]))?;
+        vault.put_entity(
+            &birth.person_ref,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: AT, end: AT },
+            AT,
+            &body,
+        )?;
+        assert!(
+            vault
+                .onboard_workspace_member(intent.clone(), &writer(WRITER), None)
+                .is_err()
+        );
+        assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_none());
+        assert_ne!(
+            read_journal(&vault, &intent.onboarding_id)?.map(|row| row.step),
+            Some(MemberOnboardingStep::Complete)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn existing_companion_person_preserves_valid_edited_baseline_on_resume() -> Result<()> {
+    let (_dir, vault, mut intent) = fixture("Antevon");
+    let birth = companion_birth();
+    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+    intent.companion_birth = Some(birth.clone());
+    let edited = serde_json::json!({"display_name": "edited identity", "tone": "patient"});
+    let body = encode_value(&Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+        ),
+        (
+            Value::from("display_name"),
+            Value::from(birth.display_name.as_str()),
+        ),
+        (
+            Value::from("persona_definition"),
+            crate::companion::companion_value_from_json(
+                &serde_json::json!({"schema_version": 1, "baseline": edited}),
+            )?,
+        ),
+    ]))?;
+    vault.put_entity(
+        &birth.person_ref,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: AT, end: AT },
+        AT,
+        &body,
+    )?;
+    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+    assert_eq!(
+        crate::companion::validated_persona_baseline(
+            &vault.get(&birth.person_ref)?.expect("PERSON")
+        )?,
+        edited
+    );
+    assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_some());
+    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    assert_eq!(
+        crate::companion::validated_persona_baseline(
+            &vault.get(&birth.person_ref)?.expect("PERSON")
+        )?,
+        edited
+    );
+    Ok(())
+}
+
 /// Done-means 5: the mailbox row carries a custody NAME and read scopes. The
 /// intent has no field a token could occupy, so the stored body cannot hold one.
 #[test]
@@ -433,13 +530,13 @@ fn optional_delegated_mailbox_uses_custody_ref_only() -> Result<()> {
         .expect("delegated identity");
     assert!(identity.is_delegated());
     assert_eq!(
-        identity.binding,
+        identity.binding(),
         ChannelIdentityBinding::agent(entity(MEMBER_ACTOR)),
         "the member's actor holds the mailbox"
     );
-    assert_eq!(identity.state, ChannelIdentityState::Requested);
+    assert_eq!(identity.state(), ChannelIdentityState::Requested);
     assert!(!identity.may_send());
-    let grant = identity.grant.expect("custody handle");
+    let grant = identity.grant().expect("custody handle");
     assert_eq!(grant.custody_record_ref, requested.custody_name);
     assert_eq!(grant.scopes, requested.scopes);
 
@@ -522,7 +619,6 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     let mut second_birth = companion_birth();
     second_birth.person_ref = entity(0xD1);
     second_birth.actor_ref = entity(0xD2);
-    second_birth.companion_record_ref = entity(0xD3);
     second_birth.profile_grant_ref = entity(0xD4);
     second_birth.actor_definition = definition("fixture.second_companion");
     second_birth.display_name = "Silverleaf".to_owned();
@@ -606,6 +702,25 @@ fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
         }]
     });
     let bytes = rmp_serde::to_vec_named(&manifest).expect("fixture policy");
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture manifest map")
+    else {
+        panic!("fixture policy must be a map")
+    };
+    let default = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(default_entries) =
+        rmpv::decode::read_value(&mut default.as_slice()).expect("seeded manifest")
+    else {
+        panic!("seeded policy must be a map")
+    };
+    let rows = default_entries
+        .into_iter()
+        .find(|(key, _)| key.as_str() == Some(crate::federation::grant_policy::ROWS_KEY))
+        .expect("seeded grant rows");
+    entries.push(rows);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .expect("fixture policy with grant rows");
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
@@ -641,7 +756,7 @@ fn bind_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
             .identity
             .as_ref()
             .expect("identity")
-            .pending_fulfillment,
+            .pending_fulfillment(),
         Some(crate::channel_identity::ChannelIdentityFulfillment::Manual)
     );
     assert_mailbox_lifecycle_receipt(vault, identity, &result, "bind", Some("allow"))
@@ -661,7 +776,7 @@ fn fulfill_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
             .identity
             .as_ref()
             .expect("identity")
-            .pending_fulfillment,
+            .pending_fulfillment(),
         None
     );
     assert_mailbox_lifecycle_receipt(vault, identity, &result, "fulfill", None)

@@ -16,6 +16,7 @@ mod codec;
 pub mod events;
 mod lifecycle;
 mod meter;
+pub mod qualification;
 mod record;
 mod slate;
 mod txn;
@@ -29,7 +30,7 @@ pub use self::codec::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, decode_connector_key_body,
     encode_connector_key_body,
 };
-pub use self::lifecycle::{ConnectorCallRoute, ConnectorDescription};
+pub use self::lifecycle::{ConnectorCallRoute, ConnectorDescription, ConnectorQualificationError};
 pub use self::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
@@ -50,6 +51,7 @@ pub(crate) use self::charter::{
 };
 pub(crate) use self::meter::{
     EffectorBudgetChargeOutcome, budget_exhausted_reason, charge_effector_budgets,
+    preflight_effector_budgets,
 };
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
@@ -95,3 +97,12 @@ pub use slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateOwnerOverride,
     SlateRow, SlateToolManifest, draft_connector_slate,
 };
+
+/// Scoped connector-pack admission reads the key under its own writer txn.
+pub(crate) fn read_key_for_pack_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &crate::EntityId,
+) -> crate::Result<Option<ConnectorKeyRecord>> {
+    txn::read_connector_key_in_txn(&vault.store, txn, id)
+}

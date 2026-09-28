@@ -33,8 +33,8 @@ pub enum SelfCall {
     MemorySupersedeClaim(SelfMemorySupersedeClaimCall),
     /// Public first-party `self.memory.put_edge(...)` trap.
     MemoryPutEdge(SelfMemoryPutEdgeCall),
-    /// Fixture for `self.ask_human(...)`.
-    AskHuman(SelfAskHumanCall),
+    /// Fixture for `ask(...)`.
+    Ask(SelfAskCall),
     /// Fixture for destructive effects, which must park as durable waits.
     DestructiveFixture(SelfFixtureEffectCall),
     /// Fixture for outbound effects, which must park as durable waits.
@@ -54,6 +54,14 @@ pub enum SelfCall {
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
+    /// Reusable definition authoring, independent of launching a child.
+    AgentsPut(Box<SelfAgentDefinitionPutCall>),
+    /// Read the active inference rows through the host-bound resident action.
+    InferenceDefaultsRead,
+    /// Replace validated inference rows under the host's delegated policy gate.
+    InferenceDefaultsReplace(String),
+    /// Host-authorized action; a guest request alone carries no owner proof.
+    WakePolicyWrite(SelfWakePolicyWriteCall),
 }
 
 impl SelfCall {
@@ -62,6 +70,7 @@ impl SelfCall {
     pub const fn effect(&self) -> SelfEffect {
         match self {
             Self::AgentsSpawn(_) => SelfEffect::AgentsSpawn,
+            Self::AgentsPut(_) => SelfEffect::AgentsPut,
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
@@ -69,7 +78,7 @@ impl SelfCall {
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
             Self::MemorySupersedeClaim(_) => SelfEffect::MemorySupersedeClaim,
             Self::MemoryPutEdge(_) => SelfEffect::MemoryPutEdge,
-            Self::AskHuman(_) => SelfEffect::AskHuman,
+            Self::Ask(_) => SelfEffect::Ask,
             Self::DestructiveFixture(_) => SelfEffect::DestructiveFixture,
             Self::OutboundFixture(_) => SelfEffect::OutboundFixture,
             Self::Context(_) => SelfEffect::Context,
@@ -77,6 +86,9 @@ impl SelfCall {
             Self::Think(_) => SelfEffect::Think,
             Self::Express(_) => SelfEffect::Express,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
+            Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
+            Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
+            Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
         }
     }
 
@@ -116,7 +128,7 @@ pub enum SelfEffect {
     MemoryPutClaim,
     MemorySupersedeClaim,
     MemoryPutEdge,
-    AskHuman,
+    Ask,
     DestructiveFixture,
     OutboundFixture,
     /// A workflow step handing work to a peer executor over the synced TASK
@@ -133,6 +145,10 @@ pub enum SelfEffect {
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
     ReportBlocked,
+    AgentsPut,
+    InferenceDefaultsRead,
+    InferenceDefaultsReplace,
+    WakePolicyWrite,
 }
 
 impl SelfEffect {
@@ -141,6 +157,7 @@ impl SelfEffect {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AgentsSpawn => "agents.spawn",
+            Self::AgentsPut => "vault.agents.put",
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::MemorySearch => "self.memory.search",
@@ -148,7 +165,7 @@ impl SelfEffect {
             Self::MemoryPutClaim => "self.memory.put_claim",
             Self::MemorySupersedeClaim => "self.memory.supersede_claim",
             Self::MemoryPutEdge => "self.memory.put_edge",
-            Self::AskHuman => "self.ask_human",
+            Self::Ask => "ask",
             Self::DestructiveFixture => "self.fixture.destructive",
             Self::OutboundFixture => "self.fixture.outbound",
             Self::TaskDelegate => "self.tasks.delegate",
@@ -157,6 +174,9 @@ impl SelfEffect {
             Self::Think => "self.think",
             Self::Express => "self.express",
             Self::ReportBlocked => "self.report_blocked",
+            Self::InferenceDefaultsRead => "self.inference_defaults.read",
+            Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
+            Self::WakePolicyWrite => "dreamer.wake_policy.set",
         }
     }
 
@@ -173,6 +193,7 @@ impl SelfEffect {
             Self::Think => Some(ExecutorUtterance::Think),
             Self::Express => Some(ExecutorUtterance::Express),
             Self::AgentsSpawn
+            | Self::AgentsPut
             | Self::TasksAsk
             | Self::TasksWait
             | Self::MemorySearch
@@ -180,12 +201,15 @@ impl SelfEffect {
             | Self::MemoryPutClaim
             | Self::MemorySupersedeClaim
             | Self::MemoryPutEdge
-            | Self::AskHuman
+            | Self::Ask
             | Self::DestructiveFixture
             | Self::OutboundFixture
             | Self::TaskDelegate
             | Self::Context
-            | Self::ReportBlocked => None,
+            | Self::ReportBlocked
+            | Self::InferenceDefaultsRead
+            | Self::InferenceDefaultsReplace => None,
+            Self::WakePolicyWrite => None,
         }
     }
 
@@ -193,6 +217,20 @@ impl SelfEffect {
     #[must_use]
     pub const fn is_speech(self) -> bool {
         self.speech_utterance().is_some()
+    }
+}
+
+/// An owner-authorized row update requested by an agent action. The owner
+/// proof is HOST-BOUND on the dispatcher, never supplied in this guest call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfWakePolicyWriteCall {
+    pub policy: crate::dreamer_wake::DreamerWakePolicy,
+}
+
+impl SelfWakePolicyWriteCall {
+    #[must_use]
+    pub const fn new(policy: crate::dreamer_wake::DreamerWakePolicy) -> Self {
+        Self { policy }
     }
 }
 
@@ -305,13 +343,13 @@ impl SelfMemoryPutEdgeCall {
     }
 }
 
-/// Arguments for the `self.ask_human` fixture call.
+/// Arguments for the `ask` fixture call.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelfAskHumanCall {
+pub struct SelfAskCall {
     pub prompt: String,
 }
 
-impl SelfAskHumanCall {
+impl SelfAskCall {
     #[must_use]
     pub fn new(prompt: impl Into<String>) -> Self {
         Self {
@@ -391,6 +429,7 @@ impl SelfFixtureEffectCall {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfDispatchOutcome {
     AgentSpawn(SelfAgentSpawnResult),
+    AgentDefinitionPut(SelfAgentDefinitionPutResult),
     TaskAsk(crate::task_verb::TaskAskReceipt),
     TaskAskStatus(crate::task_verb::TaskAskStatus),
     MemorySearch(SelfMemorySearchResult),
@@ -406,6 +445,10 @@ pub enum SelfDispatchOutcome {
     ReportBlocked {
         receipt: EntityId,
     },
+    /// JSON of the effective rows after a read or atomic replacement.
+    InferenceDefaults(String),
+    /// The authorized v1 policy row that was persisted in the vault.
+    WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.
@@ -506,6 +549,21 @@ pub const fn peer_result_wait(task_ref: EntityId) -> SelfDurableWait {
         reason: SelfDurableWaitReason::PeerResult,
         prompt: None,
     }
+}
+
+/// No actor, source, lease or approval fields are accepted from guest code.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfAgentDefinitionPutCall {
+    pub id: EntityId,
+    pub definition: Box<crate::agent_def::AgentDefinition>,
+    pub occurred: TimeRange,
+    pub learned_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfAgentDefinitionPutResult {
+    pub id: EntityId,
+    pub disposition: crate::agent_def::AgentDefinitionPutDisposition,
 }
 
 /// No parent/run/actor fields are accepted from guest code.

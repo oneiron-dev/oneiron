@@ -1,5 +1,5 @@
-//! Structural puts (habit checkins, companion records, imported-claim
-//! admission, blob artifacts) and `author_take`.
+//! Structural puts (habit checkins, imported-claim admission, blob artifacts)
+//! and `author_take`.
 //! Split from the flat `facade.rs`; surface re-exported by [`super`].
 
 mod affiliated;
@@ -9,9 +9,8 @@ mod puts;
 mod types;
 
 pub use self::types::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CompanionRecordInput,
-    EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
-    TextIndexField,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
+    HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 
 pub(super) use self::codec::kind_string_for_type;

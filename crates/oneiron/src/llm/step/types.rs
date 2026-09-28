@@ -1,6 +1,6 @@
 //! Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome.
 
-use super::super::{LlmError, LlmResponse};
+use super::super::{LlmError, LlmRequest, LlmResponse};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
@@ -147,6 +147,72 @@ pub(super) const STEP_HEX_DIGEST_LEN: usize = 64;
 
 pub(super) const TRAP_CHAIN_WALK_CAP: usize = 64;
 
+/// Exact durable-step identity frozen beside an outbound payload. This is a
+/// correlation key, never a caller-authored permission bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StepEffectBinding {
+    pub(crate) attempt_id: AttemptId,
+    pub(crate) step_hash: [u8; 32],
+}
+
+impl StepEffectBinding {
+    pub(crate) fn for_request(
+        attempt_id: AttemptId,
+        request: &LlmRequest,
+    ) -> DurableStepResult<Self> {
+        Ok(Self {
+            attempt_id,
+            step_hash: request.canonical_hash()?,
+        })
+    }
+
+    pub(crate) fn frozen_value(self) -> serde_json::Value {
+        serde_json::json!({
+            "attempt_id": crate::entity_id::bytes_to_hex_lower(self.attempt_id.as_bytes()),
+            "step_hash": crate::entity_id::bytes_to_hex_lower(&self.step_hash),
+        })
+    }
+
+    /// No key means an ordinary non-step effect. A present but malformed key
+    /// refuses rather than dropping the step restriction.
+    pub(crate) fn from_frozen_payload(payload: &[u8]) -> Result<Option<Self>, Error> {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) else {
+            return Ok(None);
+        };
+        let Some(value) = value.get("dreamer_step") else {
+            return Ok(None);
+        };
+        let invalid = || Error::InvalidClaimBody("invalid frozen dreamer step binding");
+        let object = value.as_object().ok_or_else(invalid)?;
+        if object.len() != 2 {
+            return Err(invalid());
+        }
+        let attempt_hex = object
+            .get("attempt_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(invalid)?;
+        let hash_hex = object
+            .get("step_hash")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(invalid)?;
+        if attempt_hex.len() != 32 || hash_hex.len() != 64 {
+            return Err(invalid());
+        }
+        let attempt_ref = EntityId::from_hex(attempt_hex).map_err(|_| invalid())?;
+        let attempt_id = AttemptId::from_bytes(attempt_ref.as_bytes()).map_err(|_| invalid())?;
+        let hash = blake3::Hash::from_hex(hash_hex).map_err(|_| invalid())?;
+        if crate::entity_id::bytes_to_hex_lower(attempt_id.as_bytes()) != attempt_hex
+            || crate::entity_id::bytes_to_hex_lower(hash.as_bytes()) != hash_hex
+        {
+            return Err(invalid());
+        }
+        Ok(Some(Self {
+            attempt_id,
+            step_hash: *hash.as_bytes(),
+        }))
+    }
+}
+
 pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
 
 /// Typed failure surface of the durable-step layer.
@@ -159,10 +225,28 @@ pub enum DurableStepError {
     },
     #[error("JSON schema validation failed after {attempts} attempts: {errors:?}")]
     SchemaValidation { attempts: u8, errors: Vec<String> },
+    /// Terminal provider response(s) failed schema validation after real spend.
+    #[error("JSON schema validation failed after {attempts} spent attempts: {errors:?}")]
+    SpentSchemaValidation {
+        attempts: u8,
+        errors: Vec<String>,
+        usage: Box<super::super::LlmUsage>,
+    },
+    /// A fresh correction was refused after prior provider responses spent units.
+    #[error("durable step correction refused at wake-pass deadline after spent usage")]
+    SpentFinalizeRefused { usage: Box<super::super::LlmUsage> },
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]
     Llm(#[from] LlmError),
+    /// The step's sole retry authority has exhausted or refused this call.
+    /// The decision records the resident rule without granting a new route.
+    #[error("classified LLM failure: {source}")]
+    ClassifiedLlm {
+        #[source]
+        source: LlmError,
+        failure_policy: super::super::DreamerFailureDecision,
+    },
     #[error("durable step canonicalization failed: {0}")]
     Canonical(#[from] serde_json::Error),
     #[error(transparent)]
@@ -171,8 +255,8 @@ pub enum DurableStepError {
     /// finalize window (ONE-1305); memoized hits still return.
     #[error("durable step refused: wake pass is in its finalize window")]
     FinalizeRefused,
-    /// The in-flight call lost the race against the wake-pass deadline: the
-    /// lease was aborted and the attempt parked at the hard cut (ONE-1305).
+    /// Hard-cut signal still handled by attempt executors. An admitted LLM
+    /// call no longer emits it when the wake-pass deadline expires.
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
 }
@@ -311,8 +395,8 @@ pub struct DurableStepContext<'a> {
     pub envelope_actor: WriteActor,
     pub subject: EntityId,
     /// The wake-pass deadline (ONE-1305): Some inside wake passes. Enables
-    /// the finalize-window refusal for NEW steps, the mid-call deadline
-    /// race, and the budget legibility envelope on finished outcomes.
+    /// the finalize-window refusal for NEW steps and the budget legibility
+    /// envelope on finished outcomes. Admitted calls may finish after expiry.
     pub deadline: Option<&'a WakePassDeadline>,
     pub now_ms: u64,
 }
@@ -345,6 +429,12 @@ pub enum StepOutcome {
         /// Budget legibility (ONE-1305): Some inside wake passes (when
         /// [`DurableStepContext::deadline`] is set), None outside.
         legibility: Option<BudgetLegibilityEnvelope>,
+        /// Restrictive policy for a deterministic failure result; never an authority grant.
+        failure_policy: Option<super::super::DreamerFailureDecision>,
     },
-    Trapped(TrapRef),
+    Trapped {
+        trap: TrapRef,
+        /// Budget-denial policy, resolved before parking this attempt.
+        failure_policy: super::super::DreamerFailureDecision,
+    },
 }

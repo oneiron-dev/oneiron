@@ -777,535 +777,397 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
 }
 
 #[tokio::test]
-#[expect(clippy::too_many_lines)]
-async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes() {
+async fn retired_companion_register_routes_are_absent_from_http_and_openapi() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let neutral_id = seeded_test_entity_id(0x1219_0001).to_hex();
-    let personal_id = seeded_test_entity_id(0x1219_0002).to_hex();
-    let shared_id = seeded_test_entity_id(0x1219_0003).to_hex();
-    let actor_ref = seeded_test_entity_id(0x1219_0004).to_hex();
-    let persona_ref = seeded_test_entity_id(0x1219_0005).to_hex();
-    let person_ref = seeded_test_entity_id(0x1219_0006).to_hex();
-    let source_ref = seeded_test_entity_id(0x1219_0007).to_hex();
-    let target_ref = seeded_test_entity_id(0x1219_0008).to_hex();
-
-    let provenance = json!({
-        "actor_ref": actor_ref,
-        "actor_class": 1,
-        "source": "user_stated",
-        "approval": "approved",
-        "value": { "source": "settings" }
-    });
-    let neutral_record = json!({
-        "kind": "persona",
-        "scope": { "kind": "neutral" },
-        "subject": { "kind": "persona", "persona_ref": persona_ref },
-        "value": { "style": "neutral @Oneiron" },
-        "provenance": provenance.clone(),
-        "sensitivity": "public"
-    });
-    let personal_record = json!({
-        "kind": "persona",
-        "scope": { "kind": "personal", "person_ref": person_ref },
-        "subject": { "kind": "persona", "persona_ref": persona_ref },
-        "value": { "note": "private per-person companion note" },
-        "provenance": provenance.clone(),
-        "sensitivity": "restricted"
-    });
-    let shared_record = json!({
-        "kind": "relationship",
-        "scope": { "kind": "shared_vault", "vault_id": 7_u64 },
-        "subject": {
-            "kind": "relationship",
-            "relationship_ref": {
-                "source_ref": source_ref,
-                "target_ref": target_ref
-            }
-        },
-        "value": { "note": "shared-vault boundary note" },
-        "provenance": provenance.clone(),
-        "sensitivity": "private"
-    });
-
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
+    let record = seeded_test_entity_id(0x2284_0001).to_hex();
+    for (method, path) in [
+        ("POST", "/v1/companion/register/records".to_owned()),
+        ("GET", format!("/v1/companion/register/records/{record}")),
+        ("POST", format!("/v1/companion/register/records/{record}")),
+        (
             "POST",
-            "/v1/companion/register/records",
-            "core:write",
-            Some(&json!({
-                "id": seeded_test_entity_id(0x1219_0010).to_hex(),
-                "record": neutral_record.clone()
-            })),
+            format!("/v1/companion/register/records/{record}/retire"),
         ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_error_envelope(&body, "FORBIDDEN");
-    assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
-        Value::from("companion:register:write")
-    );
-
-    for (id, record, learned_at) in [
-        (&neutral_id, neutral_record.clone(), 30_u64),
-        (&personal_id, personal_record.clone(), 31_u64),
-        (&shared_id, shared_record.clone(), 32_u64),
+        (
+            "POST",
+            format!("/v1/companion/register/records/{record}/end-relationship"),
+        ),
     ] {
-        let request = json!({ "id": id, "learned_at": learned_at, "record": record });
-        let (status, body) = route_json(
+        let (status, _, _) = route_bytes(
             server.clone(),
-            core_request(
-                "POST",
-                "/v1/companion/register/records",
-                "companion:register:write",
-                Some(&request),
-            ),
+            core_request(method, &path, "core:auth", None),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["id"], Value::from(id.clone()));
-        assert_eq!(body["record"]["lifecycle"], Value::from("active"));
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
     }
+}
 
-    // The retired export-classification spellings are not sensitivity rungs:
-    // they fail closed on the sensitivity door, never resolving to a rung.
-    let mut shared_scope_bad_sensitivity = shared_record.clone();
-    shared_scope_bad_sensitivity["sensitivity"] = Value::from("portable");
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            "/v1/companion/register/records",
-            "companion:register:write",
-            Some(&json!({
-                "id": seeded_test_entity_id(0x1219_0009).to_hex(),
-                "record": shared_scope_bad_sensitivity
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&body, "BAD_REQUEST");
-    assert_eq!(
-        error_envelope(&body)["details"]["field"],
-        Value::from("record.sensitivity")
-    );
-
-    let mut neutral_scope_bad_sensitivity = neutral_record.clone();
-    neutral_scope_bad_sensitivity["sensitivity"] = Value::from("shared_vault");
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            "/v1/companion/register/records",
-            "companion:register:write",
-            Some(&json!({
-                "id": seeded_test_entity_id(0x1219_000A).to_hex(),
-                "record": neutral_scope_bad_sensitivity
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&body, "BAD_REQUEST");
-    assert_eq!(
-        error_envelope(&body)["details"]["field"],
-        Value::from("record.sensitivity")
-    );
-
-    let mut retired_create_record = personal_record.clone();
-    retired_create_record["lifecycle"] = Value::from("retracted");
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            "/v1/companion/register/records",
-            "companion:register:write",
-            Some(&json!({
-                "id": seeded_test_entity_id(0x1219_000C).to_hex(),
-                "record": retired_create_record
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&body, "BAD_REQUEST");
-    assert_eq!(
-        error_envelope(&body)["details"]["field"],
-        Value::from("record.lifecycle")
-    );
-
-    let read_path = format!("/v1/companion/register/records/{personal_id}");
-    let (status, body) = route_json(
-        server.clone(),
-        core_request("GET", &read_path, "core:read", None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_error_envelope(&body, "FORBIDDEN");
-    assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
-        Value::from("companion:register:read")
-    );
-
-    let (status, body) = route_json(
-        server.clone(),
-        core_request("GET", &read_path, "companion:register:read", None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["record"]["value"]["note"],
-        Value::from("private per-person companion note")
-    );
-
-    let mut scalar_update_record = body["record"].clone();
-    scalar_update_record["value"] = Value::from("scalar private per-person note");
-    scalar_update_record["provenance"]["value"] = Value::from(true);
-    let scalar_update_request = json!({ "learned_at": 32_u64, "record": scalar_update_record });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &read_path,
-            "companion:register:write",
-            Some(&scalar_update_request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["record"]["value"],
-        Value::from("scalar private per-person note")
-    );
-    assert_eq!(body["record"]["provenance"]["value"], Value::from(true));
-
-    let scalar_roundtrip_request =
-        json!({ "learned_at": 33_u64, "record": body["record"].clone() });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &read_path,
-            "companion:register:write",
-            Some(&scalar_roundtrip_request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["record"]["value"],
-        Value::from("scalar private per-person note")
-    );
-
-    let updated_record = json!({
-        "kind": "persona",
-        "scope": { "kind": "personal", "person_ref": person_ref },
-        "subject": { "kind": "persona", "persona_ref": persona_ref },
-        "value": { "note": "updated private per-person companion note" },
-        "provenance": body["record"]["provenance"].clone(),
-        "sensitivity": "restricted"
+#[tokio::test]
+async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_gets() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
     });
-    let update_request = json!({ "learned_at": 34_u64, "record": updated_record });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &read_path,
-            "companion:register:write",
-            Some(&update_request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["record"]["value"]["note"],
-        Value::from("updated private per-person companion note")
-    );
-
-    let mut retire_via_update_record = updated_record.clone();
-    retire_via_update_record["lifecycle"] = Value::from("retracted");
-    let retire_via_update = json!({
-        "learned_at": 35_u64,
-        "record": retire_via_update_record
-    });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &read_path,
-            "companion:register:write",
-            Some(&retire_via_update),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&body, "BAD_REQUEST");
-    assert_eq!(
-        error_envelope(&body)["details"]["field"],
-        Value::from("record.lifecycle")
-    );
-
-    let retire_path = format!("/v1/companion/register/records/{personal_id}/retire");
-    let retire_request = json!({ "retired_at": 36_u64 });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &retire_path,
-            "companion:register:write",
-            Some(&retire_request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["record"]["lifecycle"], Value::from("retracted"));
-
-    let reactivate_request = json!({
-        "learned_at": 37_u64,
-        "record": {
-            "kind": "persona",
-            "scope": { "kind": "personal", "person_ref": person_ref },
-            "subject": { "kind": "persona", "persona_ref": persona_ref },
-            "value": { "note": "reactivated private note" },
-            "provenance": body["record"]["provenance"].clone(),
-            "sensitivity": "restricted"
-        }
-    });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &read_path,
-            "companion:register:write",
-            Some(&reactivate_request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&body, "BAD_REQUEST");
-
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            "/v1/companion/register/records",
-            "companion:register:write",
-            Some(&json!({
-                "id": seeded_test_entity_id(0x1219_0009).to_hex(),
-                "record": neutral_record
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_error_envelope(&body, "INVALID_STATE");
-    assert_eq!(
-        error_envelope(&body)["details"]["state"],
-        Value::from("companion_record_exists")
-    );
-
-    let ending_id = seeded_test_entity_id(0x1219_0011).to_hex();
-    let ending_private_note = "route-private-relationship-note-one1488";
-    let ending_record = json!({
-        "kind": "relationship",
-        "scope": { "kind": "personal", "person_ref": person_ref },
-        "subject": {
-            "kind": "relationship",
-            "relationship_ref": {
-                "source_ref": person_ref,
-                "target_ref": persona_ref
-            }
-        },
-        "value": { "note": ending_private_note },
-        "provenance": provenance.clone(),
-        "sensitivity": "restricted"
-    });
-    let (status, _body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            "/v1/companion/register/records",
-            "companion:register:write",
-            Some(&json!({
-                "id": ending_id,
-                "learned_at": 38_u64,
-                "record": ending_record.clone()
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let general_id = seeded_test_entity_id(0x1219_0013);
+    let principal = seeded_test_entity_id(0x0002_1201);
+    let other = seeded_test_entity_id(0x0002_1202);
+    let person = seeded_test_entity_id(0x0002_1203);
+    let first = seeded_test_entity_id(0x0002_1204);
+    let second = seeded_test_entity_id(0x0002_1205);
+    let hidden = seeded_test_entity_id(0x0002_1206);
+    for (n, p, persona) in [
+        (7, principal, first),
+        (8, principal, second),
+        (9, other, hidden),
+    ] {
+        seed_companion_profile_access(
+            &server,
+            seeded_test_entity_id(0x0002_1200 + n),
+            p,
+            person,
+            persona,
+        );
+    }
+    let literal = "O:45 C:82 E:78 A:35 N:40 — direct and kind";
     server
         .vault
-        .batch()
-        .put(
-            &general_id,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            oneiron::TimeRange { start: 38, end: 38 },
-            38,
-            b"route-general-vault-data",
-        )
-        .commit()
-        .expect("seed general vault data");
-
-    let end_path = format!("/v1/companion/register/records/{ending_id}/end-relationship");
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &end_path,
-            "companion:register:write",
-            Some(&json!({
-                "ended_at": 39_u64,
-                "ended_badly": false,
-                "run_id": "route-goodbye-one1488"
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["record"]["lifecycle"], Value::from("retracted"));
-    assert_eq!(
-        body["record"]["value"]["kind"],
-        Value::from("relationship_ended")
-    );
-    assert_eq!(
-        body["record"]["value"]["private_memory"],
-        Value::from("removed")
-    );
-    assert!(
-        !body["record"]["value"]
-            .to_string()
-            .contains(ending_private_note),
-        "ended relationship response must not retain private memory"
-    );
-    assert_eq!(
-        server
-            .vault
-            .get(&general_id)
-            .expect("read general data")
-            .as_deref(),
-        Some(b"route-general-vault-data".as_slice())
-    );
-    assert_eq!(body["goodbye_artifact"]["status"], Value::from("enqueued"));
-    assert_eq!(
-        body["goodbye_artifact"]["task"],
-        Value::from("goodbye_artifact")
-    );
-    assert_eq!(
-        body["goodbye_artifact"]["run_id"],
-        Value::from("route-goodbye-one1488")
-    );
-    assert_eq!(
-        body["goodbye_artifact"]["job_id"]
-            .as_str()
-            .expect("attempt id")
-            .len(),
-        32
-    );
-    let claimed = oneiron::companion::CompanionQueue::new(server.vault.as_ref())
-        .claim(oneiron::companion::ClaimCompanionTask {
-            lease_owner: "route-goodbye-worker".to_owned(),
-            now: 40,
-        })
-        .expect("claim goodbye artifact task");
-    let oneiron::companion::ClaimCompanionTaskOutcome::Claimed(claimed) = claimed else {
-        panic!("amicable route ending must enqueue a claimable goodbye task");
-    };
-    assert_eq!(
-        claimed.task.kind,
-        oneiron::CompanionTaskKind::GoodbyeArtifact
-    );
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &end_path,
-            "companion:register:write",
-            Some(&json!({
-                "ended_at": 41_u64,
-                "run_id": "route-goodbye-retry-one1488"
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["goodbye_artifact"]["status"],
-        Value::from("already_ended")
-    );
-    assert!(body["goodbye_artifact"]["job_id"].is_null());
-    assert!(
-        !body["record"]["value"]
-            .to_string()
-            .contains(ending_private_note),
-        "idempotent route ending must keep private memory scrubbed"
-    );
-
-    let bad_end_id = seeded_test_entity_id(0x1219_0012).to_hex();
-    let mut bad_end_record = ending_record;
-    bad_end_record["subject"]["relationship_ref"]["source_ref"] = Value::from(source_ref);
-    bad_end_record["subject"]["relationship_ref"]["target_ref"] = Value::from(target_ref);
-    bad_end_record["value"] = json!({ "note": "route-bad-end-private-note-one1488" });
-    let (status, _body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            "/v1/companion/register/records",
-            "companion:register:write",
-            Some(&json!({
-                "id": bad_end_id,
-                "learned_at": 41_u64,
-                "record": bad_end_record
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let bad_end_path = format!("/v1/companion/register/records/{bad_end_id}/end-relationship");
-    let (status, body) = route_json(
-        server.clone(),
-        core_request(
-            "POST",
-            &bad_end_path,
-            "companion:register:write",
-            Some(&json!({
-                "ended_at": 42_u64,
-                "ended_badly": true,
-                "run_id": "route-bad-end-one1488"
-            })),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["goodbye_artifact"]["status"],
-        Value::from("skipped_bad_end")
-    );
-    assert!(body["goodbye_artifact"]["job_id"].is_null());
-    assert_eq!(
-        oneiron::companion::CompanionQueue::new(server.vault.as_ref())
-            .claim(oneiron::companion::ClaimCompanionTask {
-                lease_owner: "route-goodbye-worker".to_owned(),
-                now: 43,
-            })
-            .expect("bad end should not enqueue another task"),
-        oneiron::companion::ClaimCompanionTaskOutcome::Empty
-    );
-
-    assert!(
-        server
-            .vault
-            .get_companion_record(
-                &oneiron::EntityId::from_hex(&shared_id).expect("shared record id")
+        .put_psych_profile(
+            &first,
+            &oneiron::PsychProfile::new(
+                first,
+                literal,
+                "text tier",
+                "narrative tier",
+                vec![seeded_test_entity_id(0x0002_1210)],
+                oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
             )
-            .expect("read shared record")
-            .is_some()
+            .unwrap(),
+        )
+        .unwrap();
+    let path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let (status, response) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "GET",
+            &path,
+            "companion:profile:read",
+            &principal.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let items = response["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items
+            .iter()
+            .find(|row| row["persona_ref"] == first.to_hex())
+            .unwrap()["personalityCompact"],
+        literal
     );
+    assert!(
+        items
+            .iter()
+            .find(|row| row["persona_ref"] == second.to_hex())
+            .unwrap()["personalityCompact"]
+            .is_null()
+    );
+    assert!(
+        !items
+            .iter()
+            .any(|row| row["persona_ref"] == hidden.to_hex())
+    );
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "GET",
+            &path,
+            "companion:profile:read",
+            &other.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK); // Other principal cannot see the first two.
+    let request_id = seeded_test_entity_id(0x0002_1220);
+    server
+        .vault
+        .request_access(
+            request_id,
+            oneiron::AccessGrant::companion_profile_read(principal, person, first, 10),
+        )
+        .unwrap();
+    let request_path = "/v1/companion/personas/access-requests";
+    let (forbidden, _) = route_json(
+        server.clone(),
+        core_request("GET", request_path, "companion:profile:read", None),
+    )
+    .await;
+    assert_eq!(forbidden, StatusCode::FORBIDDEN);
+    let (status, response) =
+        route_json(server, core_request("GET", request_path, "core:auth", None)).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["items"][0]["id"], request_id.to_hex());
+    let preview = response["items"][0]["grantContentPreview"]
+        .as_str()
+        .unwrap();
+    assert!(preview.contains("companion_profile"));
+    assert!(preview.contains(&first.to_hex()));
+}
+
+#[test]
+fn old_companion_list_fixtures_deserialize_without_previews() {
+    let personas: super::super::companion::PersonasListResponse =
+        serde_json::from_value(json!({"items":[{"persona_ref":"a", "person_ref":"b"}]})).unwrap();
+    assert!(serde_json::to_value(personas).unwrap()["items"][0]["personalityCompact"].is_null());
+    let requests: super::super::companion::AccessRequestsListResponse = serde_json::from_value(
+        json!({"items":[{"id":"a", "principal_ref":"b", "capability":"messages.read"}]}),
+    )
+    .unwrap();
+    assert!(serde_json::to_value(requests).unwrap()["items"][0]["grantContentPreview"].is_null());
+}
+
+#[tokio::test]
+async fn pending_access_requests_list_exposes_every_page_after_one_hundred() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let grant = oneiron::AccessGrant::companion_profile_read(
+        seeded_test_entity_id(0x0002_2201),
+        seeded_test_entity_id(0x0002_2202),
+        seeded_test_entity_id(0x0002_2203),
+        10,
+    );
+    for n in 0..101_u128 {
+        server
+            .vault
+            .request_access(seeded_test_entity_id(0x0002_2300 + n), grant.clone())
+            .unwrap();
+    }
+    let path = "/v1/companion/personas/access-requests?limit=100";
+    let (status, first) =
+        route_json(server.clone(), core_request("GET", path, "core:auth", None)).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let first_items = first["items"].as_array().unwrap();
+    assert_eq!(first_items.len(), 100);
+    let cursor = first["nextCursor"].as_str().expect("more pending requests");
+    assert_eq!(cursor, first_items[99]["id"]);
+    let (status, last) = route_json(
+        server,
+        core_request("GET", &format!("{path}&after={cursor}"), "core:auth", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{last}");
+    assert_eq!(last["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        last["items"][0]["id"],
+        seeded_test_entity_id(0x0002_2364).to_hex()
+    );
+    assert!(last["nextCursor"].is_null());
+}
+
+#[tokio::test]
+async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_rows() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x0002_5001);
+    let other = seeded_test_entity_id(0x0002_5002);
+    let person = seeded_test_entity_id(0x0002_5003);
+    let first = seeded_test_entity_id(0x0002_5004);
+    let second = seeded_test_entity_id(0x0002_5005);
+    let first_grant = seeded_test_entity_id(0x0002_5006);
+    let unrelated_grant = seeded_test_entity_id(0x0002_5007);
+    seed_companion_profile_access(&server, first_grant, principal, person, first);
+    seed_companion_profile_access(
+        &server,
+        seeded_test_entity_id(0x0002_5008),
+        principal,
+        person,
+        second,
+    );
+    seed_companion_profile_access(&server, unrelated_grant, other, person, first);
+    for (id, compact) in [(first, "first compact"), (second, "second compact")] {
+        server
+            .vault
+            .put_psych_profile(
+                &id,
+                &oneiron::PsychProfile::new(
+                    id,
+                    compact,
+                    "text",
+                    "narrative",
+                    vec![seeded_test_entity_id(0x0002_5009)],
+                    oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let list = |server: Arc<SyncServer>| {
+        let path = path.clone();
+        async move {
+            let (status, body) = route_json(
+                server,
+                core_request_with_principal_ref(
+                    "GET",
+                    &path,
+                    "companion:profile:read",
+                    &principal.to_hex(),
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["items"].as_array().unwrap().clone()
+        }
+    };
+    server
+        .vault
+        .delete_entity_with_reason(&unrelated_grant, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(server.vault.is_deleted_shell(&unrelated_grant).unwrap());
+    let rows = list(server.clone()).await;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == first.to_hex())
+            .unwrap()["personalityCompact"],
+        "first compact"
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == second.to_hex())
+            .unwrap()["personalityCompact"],
+        "second compact"
+    );
+
+    server
+        .vault
+        .delete_entity_with_reason(&first, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(server.vault.is_deleted_shell(&first).unwrap());
+    let rows = list(server.clone()).await;
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == first.to_hex())
+            .unwrap()["personalityCompact"]
+            .is_null()
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == second.to_hex())
+            .unwrap()["personalityCompact"],
+        "second compact"
+    );
+
+    server
+        .vault
+        .delete_entity_with_reason(&first_grant, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    let rows = list(server).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["persona_ref"], second.to_hex());
+    assert_eq!(rows[0]["personalityCompact"], "second compact");
+}
+
+#[tokio::test]
+async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_rollback() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let clock = oneiron::store::ports::ManualClock::new(1_000);
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).expect("vault"));
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some("secret".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("server"),
+    );
+    let principal = seeded_test_entity_id(0x0002_6001);
+    let person = seeded_test_entity_id(0x0002_6002);
+    let persona = seeded_test_entity_id(0x0002_6003);
+    let mut grant = oneiron::AccessGrant::companion_profile_read(principal, person, persona, 1_000);
+    grant.expires_at = Some(2_000);
+    server
+        .vault
+        .create_access_grant(&seeded_test_entity_id(0x0002_6004), &grant)
+        .unwrap();
+    server
+        .vault
+        .put_psych_profile(
+            &persona,
+            &oneiron::PsychProfile::new(
+                persona,
+                "stored compact before expiry",
+                "text",
+                "narrative",
+                vec![seeded_test_entity_id(0x0002_6005)],
+                oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let list_uri = format!(
+        "/v1/companion/personas?person_ref={}&principal_ref={}",
+        person.to_hex(),
+        principal.to_hex()
+    );
+    let get_uri = format!(
+        "/v1/companion/profiles/{}?person_ref={}&principal_ref={}",
+        persona.to_hex(),
+        person.to_hex(),
+        principal.to_hex()
+    );
+    let read = |server: Arc<SyncServer>, uri: &str| {
+        let uri = uri.to_owned();
+        async move {
+            route_json(
+                server,
+                core_request_with_authz("GET", &uri, owner_bearer(), None),
+            )
+            .await
+        }
+    };
+    let (status, listed) = read(server.clone(), &list_uri).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["items"][0]["personalityCompact"],
+        "stored compact before expiry"
+    );
+    let (status, profile) = read(server.clone(), &get_uri).await;
+    assert_eq!(status, StatusCode::OK, "{profile}");
+    assert_eq!(
+        profile["profile"]["compact"],
+        "stored compact before expiry"
+    );
+
+    for at in [2_100, 1_900] {
+        clock.set(at);
+        let (status, listed) = read(server.clone(), &list_uri).await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        assert_eq!(
+            listed["items"],
+            json!([]),
+            "grant must not resurrect at {at}"
+        );
+        let (status, _) = read(server.clone(), &get_uri).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "GET and list must agree at {at}"
+        );
+    }
 }

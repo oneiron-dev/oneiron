@@ -8,7 +8,8 @@ use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
-    store::Store,
+    ports::{EdgeDirection, EdgeStoreRead},
+    store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -37,6 +38,12 @@ struct Stamp {
 /// One entity's digest-bound record-position stamp, keyed by entity id.
 const SCOPE_RECORD: SideTable<EntityId, Stamp, LegacyJson> =
     SideTable::new(&side_table::SCOPE_RECORD);
+/// Retire an id's scope sidecar with the body so same-id rewrites cannot inherit it.
+pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+    SCOPE_RECORD.delete(store, txn, &id)?;
+    Ok(())
+}
+
 fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
     h.update(&[kind]);
@@ -46,7 +53,7 @@ fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
 }
-fn default_stamp(kind: u8, facet: EntityId) -> Scope {
+pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
     Scope {
         worlds: singleton(ScopeId(crate::claim::base_world_id())),
         facets: singleton(ScopeId(facet)),
@@ -66,16 +73,23 @@ fn carries_birth_stamp(kind: u8) -> bool {
 /// The facet a NOTE or ASSET was born under: the target of its one stored
 /// `FacetOf` edge.
 pub(crate) fn birth_facet(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<EntityId>> {
-    let prefix = crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::FacetOf);
-    let Some(row) = store.edges_out.prefix_iter(txn, &prefix)?.next() else {
+    let Some(row) = store
+        .port_edges(
+            txn,
+            &id,
+            EdgeDirection::Out,
+            Some(crate::edge::EdgeKind::FacetOf),
+            None,
+        )?
+        .next()
+    else {
         return Ok(None);
     };
-    let (key, value) = row?;
-    Ok(Some(crate::vault::parse_edge_record(&key, &value)?.target))
+    Ok(Some(row?.target))
 }
 pub(crate) fn stamp_put(
     store: &Store,
@@ -88,10 +102,7 @@ pub(crate) fn stamp_put(
     let mut scope = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
         body.record_scope("read")
-    } else if replicated
-        && !(kind == crate::registry::ENTITY_TYPE_FACET
-            && crate::companion::is_identity_facet_body(data))
-    {
+    } else if replicated {
         // Same bytes may retain their locally authored stamp. A changed opaque
         // replay must not inherit one from an earlier row at the same id.
         if stored_scope(store, txn, id, kind, data)?.is_none() {
@@ -109,8 +120,14 @@ pub(crate) fn stamp_put(
     } else {
         default_stamp(kind, crate::claim::substrate_facet_id(id)?)
     };
-    if kind == crate::registry::ENTITY_TYPE_FACET
-        && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
+    // A locally authored RELATIONSHIP may declare its sensitivity just as a
+    // FACET does. The resulting digest-bound record position, not a raw body
+    // string read at export time, is the portable disclosure ceiling. Replayed
+    // opaque rows above remain unstamped and cannot become public here.
+    if matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
+    ) && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
     {
         let bands: Vec<_> = entries
             .iter()
@@ -122,10 +139,16 @@ pub(crate) fn stamp_put(
                 Some("private") => Sensitivity::Private,
                 Some("sensitive") => Sensitivity::Sensitive,
                 Some("restricted") => Sensitivity::Restricted,
-                _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
+                _ => {
+                    return Err(Error::InvalidClaimBody(
+                        "invalid facet or relationship sensitivity",
+                    ));
+                }
             });
         } else if !bands.is_empty() {
-            return Err(Error::InvalidClaimBody("duplicate facet sensitivity"));
+            return Err(Error::InvalidClaimBody(
+                "duplicate facet or relationship sensitivity",
+            ));
         }
     }
     scope.verbs = ScopeAxis::Bottom;
@@ -138,7 +161,7 @@ pub(crate) fn stamp_put(
     Ok(())
 }
 fn stored_scope(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
@@ -152,10 +175,68 @@ fn stored_scope(
     }
     Ok(Some(stamp.scope))
 }
+/// Keep a digest-proved TASK scope when the reducer changes only derived
+/// streak counters. Opaque replay and absent/stale stamps remain unstamped.
+/// This belongs to materialization, not to either check-in facade.
+pub(crate) fn preserve_task_projection_scope(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    before: &[u8],
+    after: &[u8],
+) -> Result<()> {
+    if before == after {
+        return Ok(());
+    }
+    let Some(scope) = stored_scope(store, txn, id, crate::registry::ENTITY_TYPE_TASK, before)?
+    else {
+        // A stale stamp cannot become a valid stamp for a new body by accident.
+        SCOPE_RECORD.delete(store, txn, &id)?;
+        return Ok(());
+    };
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 1,
+            digest: digest(crate::registry::ENTITY_TYPE_TASK, after),
+            scope,
+        },
+    )?;
+    Ok(())
+}
+
+/// Preserve an existing, digest-proved scope when a text document replaces only
+/// its row body with a pointer. Do not mint reach for an unstamped or stale row.
+#[cfg(feature = "sync")]
+pub(crate) fn restamp_document_pointer(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    original: &[u8],
+    pointer: &[u8],
+) -> Result<()> {
+    let Some(scope) = stored_scope(store, txn, id, kind, original)? else {
+        return Ok(());
+    };
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 1,
+            digest: digest(kind, pointer),
+            scope,
+        },
+    )?;
+    Ok(())
+}
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
 /// This is the sync-export seam; arbitrary remote opaque rows remain unstamped.
 pub(crate) fn scope_for_blob(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
@@ -189,7 +270,8 @@ impl Vault {
     /// Read the current positive stamp. Missing or stale stamps are not inferred.
     pub fn record_scope(&self, id: &EntityId) -> Result<Option<Scope>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
+        else {
             return Ok(None);
         };
         let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
@@ -221,13 +303,8 @@ impl Vault {
         }
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
-        for row in self.store.entities.iter(&txn)? {
-            let (key, raw) = row?;
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("record id"))?,
-            )?;
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
+            let (id, raw) = row?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             let scope = stored_scope(
@@ -244,7 +321,7 @@ impl Vault {
             if allowed || view == ScopeView::Debug {
                 out.push(ScopedRecord {
                     id,
-                    bytes: raw.into_owned(),
+                    bytes: raw,
                     scope,
                     suppressed: !allowed,
                 });
@@ -261,13 +338,8 @@ impl Vault {
     ) -> Result<Vec<ScopedRecord>> {
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
-        for row in self.store.entities.iter(&txn)? {
-            let (key, raw) = row?;
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("record id"))?,
-            )?;
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
+            let (id, raw) = row?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             if let Some(scope) = stored_scope(
@@ -281,7 +353,7 @@ impl Vault {
             {
                 out.push(ScopedRecord {
                     id,
-                    bytes: raw.into_owned(),
+                    bytes: raw,
                     scope: Some(scope),
                     suppressed: false,
                 });
@@ -298,13 +370,8 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         self.with_write_txn(|txn| {
             let mut ids = Vec::new();
-            for row in self.store.entities.iter(txn)? {
-                let (key, raw) = row?;
-                let id = EntityId::from_bytes(
-                    key.as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("record id"))?,
-                )?;
+            for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)? {
+                let (id, raw) = row?;
                 let h = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("record header"))?;
                 if let Some(scope) = stored_scope(
@@ -330,3 +397,7 @@ impl Vault {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "record_scope/tests.rs"]
+mod tests;

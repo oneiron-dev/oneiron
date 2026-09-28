@@ -68,12 +68,14 @@
 //! decision from the stored base rather than assuming it landed.
 
 mod codec;
+mod effect;
 mod engine;
 mod model;
 mod storage_codec;
 
 pub(crate) use self::codec::LINEAR_LINKS;
 pub use self::codec::{linear_event_digest, linear_operation_id};
+pub use self::effect::{LinearEffectKind, LinearEffectRequest};
 pub use self::engine::LinearSyncAdapter;
 pub use self::model::{
     LINEAR_ENGINE_AUTHORITATIVE_FIELDS, LINEAR_FIELD_ASSIGNEE_REF, LINEAR_FIELD_DESCRIPTION,
@@ -82,8 +84,8 @@ pub use self::model::{
     LINEAR_SYNC_SCHEMA_VERSION, LinearChangePage, LinearChangeSource, LinearEgress,
     LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
     LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection, LinearSyncError,
-    LinearSyncRegistration, LinearSyncResult, LinearTaskStore, MirroredTaskFields, TaskIssueLink,
-    TaskMirrorSnapshot, WaveResult,
+    LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWriteActor,
+    MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot, WaveResult,
 };
 
 #[cfg(test)]

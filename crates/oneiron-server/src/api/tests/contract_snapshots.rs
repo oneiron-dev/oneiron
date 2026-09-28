@@ -826,16 +826,23 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "/v1/companion/access-grants",
         "/v1/companion/access-grants/{grant_id}/revoke",
         "/v1/companion/profiles/{persona_ref}",
-        "/v1/companion/register/records",
-        "/v1/companion/register/records/{record_id}",
-        "/v1/companion/register/records/{record_id}/retire",
-        "/v1/companion/register/records/{record_id}/end-relationship",
         "/api/lease/revoke",
         "/api/health",
         "/v1/usage/events",
         "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
     ] {
         assert!(paths.contains_key(path), "missing path {path}");
+    }
+    for retired in [
+        "/v1/companion/register/records",
+        "/v1/companion/register/records/{record_id}",
+        "/v1/companion/register/records/{record_id}/retire",
+        "/v1/companion/register/records/{record_id}/end-relationship",
+    ] {
+        assert!(
+            !paths.contains_key(retired),
+            "retired path is present: {retired}"
+        );
     }
     assert!(
         !paths.contains_key("/api/context-pack"),
@@ -964,14 +971,6 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         ("/v1/companion/access-grants", "post"),
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
         ("/v1/companion/profiles/{persona_ref}", "get"),
-        ("/v1/companion/register/records", "post"),
-        ("/v1/companion/register/records/{record_id}", "get"),
-        ("/v1/companion/register/records/{record_id}", "post"),
-        ("/v1/companion/register/records/{record_id}/retire", "post"),
-        (
-            "/v1/companion/register/records/{record_id}/end-relationship",
-            "post",
-        ),
     ] {
         assert_eq!(
             spec["paths"][path][method]["security"],

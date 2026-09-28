@@ -56,7 +56,7 @@ pub(super) const ENTITY_DOC_PIN: SideTable<HexPair, CitationPin, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PIN);
 /// Durable proof of one owner-authorized shallow history purge, keyed by
 /// entity then receipt id.
-const ENTITY_DOC_PURGE_RECEIPT: SideTable<HexPair, PurgeReceipt, Named> =
+pub(super) const ENTITY_DOC_PURGE_RECEIPT: SideTable<HexPair, PurgeReceipt, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PURGE_RECEIPT);
 
 fn pins(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Vec<CitationPin>> {

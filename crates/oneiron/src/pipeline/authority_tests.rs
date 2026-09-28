@@ -462,6 +462,18 @@ fn authority_disjoint_type_grants_are_alternatives_not_global_restrictions() -> 
     Ok(())
 }
 
+fn add_project_selector(scope: Value, project: EntityId) -> Value {
+    let Value::Map(mut entries) = scope else {
+        panic!("scope map fixture")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("scopeProjectId"));
+    entries.push((
+        Value::from("scopeProjectId"),
+        Value::Binary(project.as_bytes().to_vec()),
+    ));
+    Value::Map(entries)
+}
+
 #[test]
 fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() -> Result<()> {
     let (_tmp, vault) = open_test_vault();
@@ -469,8 +481,8 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
     let world_b = entity_id(0xE2);
     let facet_a = entity_id(0xE6);
     let facet_b = entity_id(0xE7);
-    let corpus_a = crate::corpus::CorpusId::from_entity_id(entity_id(0xE4));
-    let corpus_b = crate::corpus::CorpusId::from_entity_id(entity_id(0xE5));
+    let corpus_a = entity_id(0xE4);
+    let corpus_b = entity_id(0xE5);
     let scope_a = map(vec![
         ("relationship", Value::from("alpha")),
         ("facet", Value::from(facet_a.to_hex())),
@@ -481,8 +493,8 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
         ("facet", Value::from(facet_b.to_hex())),
         ("sensitivity", Value::from(3)),
     ]);
-    let scope_a = crate::corpus::scope_with_corpus_id(Some(scope_a), corpus_a)?;
-    let scope_b = crate::corpus::scope_with_corpus_id(Some(scope_b), corpus_b)?;
+    let scope_a = add_project_selector(scope_a, corpus_a);
+    let scope_b = add_project_selector(scope_b, corpus_b);
     let first = read_grant(
         "authority-reader",
         map(vec![
@@ -510,10 +522,12 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
     let mut a = claim();
     a.world = Some(world_a);
     a.scope = Some(scope_a);
+    a.scope_project = corpus_a;
     a.salience = Some(0.25);
     let mut b = claim();
     b.world = Some(world_b);
     b.scope = Some(scope_b);
+    b.scope_project = corpus_b;
     b.confidence = 0.25;
     b.stale = true;
     let a_id = entity_id(0x90);
@@ -537,25 +551,26 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
         ("facet", Value::from(facet_b.to_hex())),
         ("sensitivity", Value::from(1)),
     ]));
-    wrong_facet_a.scope = Some(crate::corpus::scope_with_corpus_id(
-        wrong_facet_a.scope,
+    wrong_facet_a.scope = Some(add_project_selector(
+        wrong_facet_a.scope.take().expect("scope"),
         corpus_a,
-    )?);
+    ));
     let mut wrong_corpus_a = a.clone();
-    wrong_corpus_a.scope = Some(crate::corpus::scope_with_corpus_id(
-        wrong_corpus_a.scope,
+    wrong_corpus_a.scope = Some(add_project_selector(
+        wrong_corpus_a.scope.take().expect("scope"),
         corpus_b,
-    )?);
+    ));
+    wrong_corpus_a.scope_project = corpus_b;
     let mut wrong_relationship_a = a;
     wrong_relationship_a.scope = Some(map(vec![
         ("relationship", Value::from("beta")),
         ("facet", Value::from(facet_a.to_hex())),
         ("sensitivity", Value::from(1)),
     ]));
-    wrong_relationship_a.scope = Some(crate::corpus::scope_with_corpus_id(
-        wrong_relationship_a.scope,
+    wrong_relationship_a.scope = Some(add_project_selector(
+        wrong_relationship_a.scope.take().expect("scope"),
         corpus_a,
-    )?);
+    ));
     for (index, body) in [
         low_confidence_a,
         low_salience_b,

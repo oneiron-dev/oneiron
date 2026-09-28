@@ -226,7 +226,8 @@ impl FloorWrites<'_> {
         // terminus every gated batch uses; the only thing promotion adds is the
         // origin that lets THIS session's overlay ids through the K4 guard.
         let grant = PromoteReplayGrant::mint(plan);
-        BatchBuilder::promotion_replay(vault, plan.ops.clone(), &grant)
+        let replay_ops = plan.ops.clone();
+        BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());

@@ -91,6 +91,8 @@ pub struct EngineExecutorConfig {
     pub prompt_package_root: PathBuf,
     pub model: ModelId,
     pub model_locality: ModelLocality,
+    /// Immutable seat pin; absent on explicit legacy runs without a manifest.
+    pub seat_effort: Option<crate::llm::ReasoningEffort>,
     pub global_tier: ModelTierRef,
     pub determinism: CodeRunDeterminism,
     pub limits: EngineExecutorLimits,
@@ -174,6 +176,13 @@ impl ExecutorLegibility<'_> {
 
 /// Host import bridge exposed to a JS runtime component.
 pub trait JsCodeModeHost {
+    /// Resolves only a reserved recoverable-output virtual path. Other hosts
+    /// deny by default; the linked sandbox.fs.read_file bridge routes normal
+    /// file reads to its existing adapter.
+    fn read_recoverable_output(&mut self, _path: &str) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     /// Dispatches one typed `self.*` call through the host-owned traps.
     /// Every response carries the budget legibility envelope inside a wake
     /// pass (design D5: attached to EVERY host-call response) — including
@@ -259,4 +268,5 @@ pub struct EngineExecutorOutcome {
     pub status: EngineExecutorStatus,
     pub steps_run: u32,
     pub replay_record: CodeRunReplayRecord,
+    pub seat_receipt: Option<crate::llm::seat::SeatChoiceReceipt>,
 }

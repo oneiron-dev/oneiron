@@ -94,6 +94,45 @@ impl L2BaseCache {
     }
 }
 
+/// Select the vault-owned user identity. A generic PERSON row is not proof
+/// that it is this context's user. Its evidence still passes every retrieval,
+/// disclosure, and scoped-read gate.
+pub(super) fn default_l2_subjects(
+    vault: &Vault,
+    reader: Option<&ScopedRead<'_>>,
+) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    let person_id = match reader {
+        Some(read) => read.actor_key().authenticated_person(),
+        None => Some(owner),
+    };
+    let principal = if let Some(id) = person_id {
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?
+            .as_deref()
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+            .map(|_| id)
+    } else {
+        None
+    };
+    let mut subjects = BTreeSet::new();
+    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &owner)?.is_some() {
+        subjects.insert(owner);
+    }
+    if let Some(person) = principal {
+        subjects.insert(person);
+    }
+    drop(txn);
+    if subjects.len() > 8 {
+        // An automatically discovered optional prefix must not turn an
+        // otherwise valid context pack into a failed read. Explicit selections
+        // retain the producer's strict eight-subject error.
+        return Ok(Vec::new());
+    }
+    Ok(subjects.into_iter().collect())
+}
+
 pub(super) fn produce_l2_base(
     vault: &Vault,
     pipeline: &PipelineBuilder<'_>,
@@ -114,6 +153,9 @@ pub(super) fn produce_l2_base(
         return Err(Error::InvalidConfig(
             "L2 reader belongs to another vault".into(),
         ));
+    }
+    if let Some(reader) = reader {
+        reader.persist_grant_clock()?;
     }
     // Capture before opening the snapshot. A later erasure invalidates any
     // producer with this revision, even if it finishes after that write.
@@ -141,9 +183,17 @@ pub(super) fn produce_l2_base(
             let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
                 return Err(Error::InvariantViolation("L2 non-entity subject"));
             };
+            let mut value = crate::serialize::null_credentials(
+                "val",
+                &super::hydration::rmpv_to_json(&body.value),
+            );
+            // Provider codecs apply a second, stricter credential scrub to
+            // ranked rows. Apply it before caching so every L2 format shares
+            // one stable safe prefix, including keys such as `ssh_key`.
+            crate::serialize::scrub_provider_credential("val", &mut value);
             Ok(serde_json::json!({
                 "id": id.to_hex(), "subj": subject.to_hex(),
-                "pred": body.predicate, "val": super::hydration::rmpv_to_json(&body.value),
+                "pred": body.predicate, "val": value,
                 "world": body.world.map(|world| world.to_hex()),
             }))
         })

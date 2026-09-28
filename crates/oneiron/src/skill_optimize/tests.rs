@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use super::job::PROVENANCE_OPTIMIZE_PRINCIPAL_KEY;
 use super::*;
 
 use crate::attempt_queue::{
@@ -118,6 +119,20 @@ fn put_actor(vault: &Vault, id: &EntityId) {
 /// Runs one attempt whose pack loaded `skill_id@1.0.0` to its terminal door
 /// and returns the receipt id its close STAMPED.
 fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
+    stamped_receipt_version(vault, skill_id, FIXTURE_VERSION, now)
+}
+
+fn stamped_receipt_version(vault: &Vault, skill_id: &str, version: &str, now: u64) -> String {
+    stamped_receipt_version_as(vault, skill_id, version, now, None)
+}
+
+fn stamped_receipt_version_as(
+    vault: &Vault,
+    skill_id: &str,
+    version: &str,
+    now: u64,
+    actor: Option<EntityId>,
+) -> String {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue
         .enqueue(EnqueueAttempt {
@@ -131,10 +146,15 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    if let Some(actor) = actor {
+        vault
+            .bind_actor_attempt(attempt.id, &actor)
+            .expect("bind executor");
+    }
     queue
         .append_manifest_entry(
             attempt.id,
-            ManifestEntry::new(ManifestKind::Skill, skill_id, FIXTURE_VERSION, now),
+            ManifestEntry::new(ManifestKind::Skill, skill_id, version, now),
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
@@ -146,6 +166,14 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    queue
+        .set_executor_model(
+            attempt.id,
+            "skill-opt-worker",
+            leased.attempt_count,
+            "fixture/model@1",
+        )
+        .expect("stamp model");
     let CompleteOutcome::Completed(_) = queue
         .complete(CompleteAttempt {
             id: attempt.id,
@@ -157,7 +185,10 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
     else {
         panic!("a leased attempt completes exactly once");
     };
-    attempt_pack_receipt_id(&attempt.id)
+    let receipt_id = attempt_pack_receipt_id(&attempt.id);
+    crate::receipt::make_attempt_receipt_legacy_for_tests(vault, &receipt_id)
+        .expect("emulate historical unknown-executor evidence");
+    receipt_id
 }
 
 /// Attributes SK-04 skill DEFECTS until the DEV partition holds `count` more of
@@ -203,7 +234,7 @@ fn attribute_defects(vault: &Vault, skill: &EntityId, skill_id: &str, count: u32
             "a four-in-five dev draw reaches {count} long before {minted} attempts"
         );
         let at = 100 + u64::from(minted) * 10;
-        let receipt = stamped_receipt(vault, skill_id, at);
+        let receipt = stamped_receipt_version_as(vault, skill_id, FIXTURE_VERSION, at, Some(actor));
         minted += 1;
         attribute(&receipt, at);
         receipts.push(receipt);
@@ -217,7 +248,7 @@ fn attribute_defects(vault: &Vault, skill: &EntityId, skill_id: &str, count: u32
             "one receipt in five is reserved, so {minted} draws is not a near miss"
         );
         let at = 100 + u64::from(minted) * 10;
-        let receipt = stamped_receipt(vault, skill_id, at);
+        let receipt = stamped_receipt_version_as(vault, skill_id, FIXTURE_VERSION, at, Some(actor));
         minted += 1;
         if !receipt_is_held_out(skill, &receipt) {
             continue;
@@ -357,6 +388,7 @@ fn losing_skill_with_proposal(vault: &Vault, skill_id: &str) -> (EntityId, Entit
 struct StubScorer {
     before: f32,
     after: f32,
+    revision: &'static str,
     seen: RefCell<Vec<(String, Vec<String>)>>,
 }
 
@@ -365,6 +397,7 @@ impl StubScorer {
         Self {
             before,
             after,
+            revision: "fixture-judge@1",
             seen: RefCell::new(Vec::new()),
         }
     }
@@ -372,6 +405,11 @@ impl StubScorer {
     /// The proposed text replays better than the text it replaces.
     fn improving() -> Self {
         Self::new(0.40, 0.75)
+    }
+
+    fn with_revision(mut self, revision: &'static str) -> Self {
+        self.revision = revision;
+        self
     }
 
     /// Every held-out list this scorer was handed.
@@ -385,6 +423,9 @@ impl StubScorer {
 }
 
 impl HeldOutReplayScorer for StubScorer {
+    fn judge_revision(&self) -> &str {
+        self.revision
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         self.seen.borrow_mut().push((
             case.instructions.to_owned(),
@@ -396,14 +437,55 @@ impl HeldOutReplayScorer for StubScorer {
             self.after
         })
     }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
 }
 
 /// A scorer that must never be reached.
 struct UnreachableScorer;
 
 impl HeldOutReplayScorer for UnreachableScorer {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, _case: &HeldOutReplayCase<'_>) -> Result<f32> {
         panic!("a refused proposal must not reach the replay tier");
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 
@@ -1050,6 +1132,266 @@ fn the_split_is_deterministic_disjoint_and_invisible_to_the_author() -> Result<(
     Ok(())
 }
 
+/// The second author sees the failed edit and its reason, not the held-out
+/// receipts or numeric scores, and can draft a different correction.
+#[test]
+fn a_rejected_edit_informs_the_next_draft_without_repeating_it() -> Result<()> {
+    struct AvoidRejectedEdit {
+        seen: RefCell<Option<SkillOptimizeBrief>>,
+    }
+
+    impl SkillOptimizeAuthor for AvoidRejectedEdit {
+        fn draft(&self, brief: &SkillOptimizeBrief) -> Result<SkillEditDraft> {
+            *self.seen.borrow_mut() = Some(brief.clone());
+            let desc = if brief
+                .rejected_edits
+                .iter()
+                .any(|edit| edit.desc == DRAFTED_DESC)
+            {
+                "Do the thing. Verify the result, then the other thing."
+            } else {
+                DRAFTED_DESC
+            };
+            Ok(SkillEditDraft::Edit {
+                desc: desc.to_owned(),
+                rationale: "use the prior rejection to avoid repeating it".to_owned(),
+            })
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.rejected-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.rejected-buffer");
+    let first_author = StubAuthor::editing();
+    let first = run(&vault, &first_author)?.proposal.expect("first edit");
+    assert!(first_author.brief().rejected_edits.is_empty());
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-rejected", 10),
+        900,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
+
+    let second_author = AvoidRejectedEdit {
+        seen: RefCell::new(None),
+    };
+    let second = run(&vault, &second_author)?.proposal.expect("second edit");
+    let brief = second_author.seen.borrow();
+    let brief = brief.as_ref().expect("the second author saw a brief");
+    assert_eq!(brief.skill, skill);
+    assert_eq!(brief.rejected_edits.len(), 1);
+    assert_eq!(brief.rejected_edits[0].proposal, first);
+    assert_eq!(brief.rejected_edits[0].desc, DRAFTED_DESC);
+    assert_eq!(
+        brief.rejected_edits[0].author_rationale,
+        "five attributed defects name the missing check"
+    );
+    assert_eq!(
+        brief.rejected_edits[0].rejection_reason,
+        RejectedSkillEditReason::Regression
+    );
+    assert_ne!(stored(&vault, &second).desc, stored(&vault, &first).desc);
+    assert!(
+        brief
+            .cited_receipts
+            .iter()
+            .all(|id| !verdict.held_out_receipts.contains(id))
+    );
+    Ok(())
+}
+
+/// A tie is still feedback; verdicts for another target never appear here.
+#[test]
+fn rejected_edit_buffer_is_scoped_and_classifies_ties() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tie-buffer");
+    let (other, other_proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.other-buffer");
+    let tie = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::new(0.60, 0.60),
+        wake(&vault, "wake-tie", 10),
+        900,
+    )?;
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &other_proposal,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-other", 10),
+        901,
+    )?;
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("skill still eligible after rejection");
+    let brief = optimize_brief(&vault, &candidate)?;
+    assert_eq!(brief.rejected_edits.len(), 1);
+    assert_eq!(brief.rejected_edits[0].proposal, tie.proposal);
+    assert_eq!(
+        brief.rejected_edits[0].rejection_reason,
+        RejectedSkillEditReason::Tie
+    );
+    assert_ne!(brief.rejected_edits[0].proposal, other_proposal);
+    assert_ne!(brief.skill, other);
+    Ok(())
+}
+
+/// Owner-scoped rejection feedback is not a back door into another
+/// principal's preference evidence, including an unbound optimizer job.
+#[test]
+fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.private-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.private-buffer");
+    let owner_id = EntityId::now();
+    let other_id = EntityId::now();
+    put_actor(&vault, &owner_id);
+    put_actor(&vault, &other_id);
+    let owner = crate::write_envelope::WriteActor::new(owner_id, crate::EdgeActorClass::Human);
+    let other = crate::write_envelope::WriteActor::new(other_id, crate::EdgeActorClass::Human);
+    let first = run_skill_optimize_as(
+        &vault,
+        enqueue_attempt(&vault, None, 5),
+        &StubAuthor::editing(),
+        t(300),
+        301,
+        owner,
+    )?
+    .proposal
+    .expect("owner-scoped edit");
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-private", 10),
+        900,
+    )?;
+    // The ordinary candidate update door permits this provenance value to
+    // change before scoring. The verdict digest therefore binds the MALFORMED
+    // body: a digest comparison by itself does not make the stamp unbound.
+    for (index, malformed_value) in [Value::Nil, Value::from(42), Value::from("not-an-id")]
+        .into_iter()
+        .enumerate()
+    {
+        let proposal = run_skill_optimize_as(
+            &vault,
+            enqueue_attempt(&vault, None, 20 + index as u64),
+            &StubAuthor::editing(),
+            t(400 + index as u64),
+            401 + index as u64,
+            owner,
+        )?
+        .proposal
+        .expect("owner-scoped edit");
+        let mut malformed = stored(&vault, &proposal);
+        malformed.version = format!("opt-malformed-{index}");
+        let Value::Map(ref mut provenance) = malformed.provenance else {
+            panic!("optimizer provenance is a map");
+        };
+        let (_, stamp) = provenance
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY))
+            .expect("owner stamp");
+        *stamp = malformed_value;
+        vault.update_skill_record(
+            &proposal,
+            &malformed,
+            t(500 + index as u64),
+            501 + index as u64,
+        )?;
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &StubScorer::new(0.60, 0.55),
+            wake(&vault, "wake-malformed", 10),
+            910 + index as u64,
+        )?;
+    }
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("still eligible");
+    assert!(
+        optimize_brief(&vault, &candidate)?
+            .rejected_edits
+            .is_empty()
+    );
+    assert!(
+        optimize_brief_for_principal_at(&vault, &candidate, other, 301)?
+            .rejected_edits
+            .is_empty()
+    );
+    assert_eq!(
+        optimize_brief_for_principal_at(&vault, &candidate, owner, 301)?.rejected_edits[0].proposal,
+        first
+    );
+    Ok(())
+}
+
+/// The cap bounds what the author can READ, not the verdicts visited: 64
+/// later rejections for another owner cannot evict one usable rejection.
+#[test]
+fn rejected_edit_buffer_caps_after_audience_filtering() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.crowded-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.crowded-buffer");
+    let a_id = EntityId::now();
+    let b_id = EntityId::now();
+    put_actor(&vault, &a_id);
+    put_actor(&vault, &b_id);
+    let a = crate::write_envelope::WriteActor::new(a_id, crate::EdgeActorClass::Human);
+    let b = crate::write_envelope::WriteActor::new(b_id, crate::EdgeActorClass::Human);
+    let cycle = wake(&vault, "wake-crowded", 10);
+    let first = run_skill_optimize_as(
+        &vault,
+        enqueue_attempt(&vault, None, 20),
+        &StubAuthor::editing(),
+        t(300),
+        301,
+        a,
+    )?
+    .proposal
+    .expect("A's draft");
+    score_gate_skill_edit_in_cycle(&vault, &first, &StubScorer::new(0.60, 0.55), cycle, 900)?;
+
+    for index in 0..SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE {
+        let now = 400 + index as u64;
+        let proposal = run_skill_optimize_as(
+            &vault,
+            enqueue_attempt(&vault, None, now),
+            &StubAuthor::editing(),
+            t(now),
+            now + 1,
+            b,
+        )?
+        .proposal
+        .expect("B's draft");
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &StubScorer::new(0.60, 0.55),
+            cycle,
+            901 + index as u64,
+        )?;
+    }
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("still eligible");
+    let a_edits = optimize_brief_for_principal_at(&vault, &candidate, a, 500)?.rejected_edits;
+    assert_eq!(a_edits.len(), 1);
+    assert_eq!(a_edits[0].proposal, first);
+    assert_eq!(
+        optimize_brief_for_principal_at(&vault, &candidate, b, 500)?
+            .rejected_edits
+            .len(),
+        SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE
+    );
+    Ok(())
+}
+
 // ─── ONE-1449: the strict-improvement gate ──────────────────────────────
 
 #[test]
@@ -1435,6 +1777,15 @@ fn optimizer_proposal_record_citing(
             Value::from(target.to_hex()),
         ),
         (
+            Value::from(GOAL_ID_KEY),
+            Value::from(
+                SkillGoalId::of(target, &target_record)
+                    .expect("valid target goal")
+                    .entity()
+                    .to_hex(),
+            ),
+        ),
+        (
             Value::from(PROVENANCE_OPTIMIZE_OF_VERSION_KEY),
             Value::from(target_record.version.as_str()),
         ),
@@ -1524,7 +1875,10 @@ fn a_candidate_citing_live_sources_activates_and_one_citing_a_deleted_source_doe
     // The cited source is erased AFTER the gate passed. ONE-1447's sweep
     // deliberately steps past candidates, so the record carries no mark to
     // read — the admission door has to resolve the id itself.
-    assert!(vault.delete_entity(&doomed)?);
+    assert!(vault.delete_entity_with_options(
+        &doomed,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     let target_before = stored(&vault, &skill);
 
     assert_eq!(
@@ -1705,12 +2059,18 @@ fn a_skill_with_no_reserved_evidence_is_never_drafted_for_and_never_closed() -> 
     let mut dev_only = 0u32;
     for index in 0..80u64 {
         let at = 20_000 + index * 10;
-        let receipt = stamped_receipt(&vault, "oneiron.skill.bare", at);
+        let actor = EntityId::now();
+        put_actor(&vault, &actor);
+        let receipt = stamped_receipt_version_as(
+            &vault,
+            "oneiron.skill.bare",
+            FIXTURE_VERSION,
+            at,
+            Some(actor),
+        );
         if receipt_is_held_out(&bare, &receipt) {
             continue;
         }
-        let actor = EntityId::now();
-        put_actor(&vault, &actor);
         record_attribution_evidence(
             &vault,
             &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, at + 5)
@@ -1797,8 +2157,9 @@ fn stamped_receipt_in_partition(
     skill_id: &str,
     reserved: bool,
     at: u64,
+    actor: Option<EntityId>,
 ) -> String {
-    let template_id = stamped_receipt(vault, skill_id, at);
+    let template_id = stamped_receipt_version_as(vault, skill_id, FIXTURE_VERSION, at, actor);
     let mut receipt = crate::receipt::attempt_pack_receipt(vault, &template_id)
         .expect("read pack receipt")
         .expect("stamped pack receipt");
@@ -1814,6 +2175,13 @@ fn stamped_receipt_in_partition(
     receipt.receipt_id.clone_from(&receipt_id);
     crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)
         .expect("seed partitioned pack receipt");
+    if let Some(actor) = actor {
+        vault
+            .with_write_txn(|txn| {
+                crate::skill::resident::bind_receipt_in_txn(vault, txn, &receipt_id, &actor)
+            })
+            .expect("bind synthetic fixture's executor");
+    }
     receipt_id
 }
 
@@ -1823,7 +2191,7 @@ fn reserve_one_more_held_out_receipt(
     skill_id: &str,
     at: u64,
 ) -> String {
-    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, true, at);
+    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, true, at, None);
     record_skill_contributing_win(vault, skill, &receipt, at + 5).expect("credit win");
     receipt
 }
@@ -1896,6 +2264,9 @@ struct RacingScorer<'a> {
 }
 
 impl HeldOutReplayScorer for RacingScorer<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         *self.scored.borrow_mut() += 1;
         if !self.raced.replace(true) {
@@ -1906,6 +2277,25 @@ impl HeldOutReplayScorer for RacingScorer<'_> {
         } else {
             0.75
         })
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 
@@ -1926,6 +2316,9 @@ struct DuplicatingScorer<'a> {
 }
 
 impl HeldOutReplayScorer for DuplicatingScorer<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         *self.scored.borrow_mut() += 1;
         if !self.delivered.replace(true) {
@@ -1939,6 +2332,25 @@ impl HeldOutReplayScorer for DuplicatingScorer<'_> {
             0.75
         })
     }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
 }
 
 /// The host's judge, registered process-globally: no interior state, because a
@@ -1946,12 +2358,34 @@ impl HeldOutReplayScorer for DuplicatingScorer<'_> {
 struct HostScorer;
 
 impl HeldOutReplayScorer for HostScorer {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         Ok(if case.instructions == TARGET_DESC {
             0.25
         } else {
             0.80
         })
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 
@@ -2284,18 +2718,27 @@ fn evidence_arriving_mid_flight_aborts_retryably_and_writes_nothing() -> Result<
 
 #[test]
 fn a_terminal_reason_that_stops_holding_aborts_instead_of_refusing() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (tmp, vault) = temp_vault();
     // Leaked so the race hook — a `'static` thread-local, because the gate that
     // fires it holds no test state — can reach this exact vault. The temp dir
-    // still drops with the test; only the handle outlives it.
+    // is leaked with it: the handle keeps its root registered as open, so
+    // deleting the files would free their inodes for a later test's vault and
+    // fail that open with DuplicateOpenRoot.
+    let _tmp: &'static tempfile::TempDir = Box::leak(Box::new(tmp));
     let vault: &'static Vault = Box::leak(Box::new(vault));
     let (skill, _) = put_standard_active(vault, "oneiron.skill.losing");
     attribute_defects_across_split(vault, &skill, "oneiron.skill.losing");
     let proposal = optimizer_proposal_citing(vault, &skill, Value::Array(Vec::new()));
 
-    // The predecessor is gone when the lock-free pre-read runs, so the reason
-    // that read forms is a terminal stale-target refusal.
-    assert!(vault.delete_entity(&skill)?);
+    // The predecessor is absent when the lock-free pre-read runs, so the reason
+    // that read forms is a terminal stale-target refusal. Use internal batch
+    // removal rather than an owner hard delete: that permanent marker would
+    // correctly forbid the later recreate, obscuring this transaction race.
+    vault.batch().delete(&skill).commit()?;
+    assert!(
+        vault.get_skill_record(&skill)?.is_none(),
+        "the target is absent"
+    );
 
     // The window the repair closed: the reason was read BEFORE the transaction
     // that would have written it, and the world moved in between — here the
@@ -3090,7 +3533,10 @@ fn the_birth_marker_survives_deletion_and_refuses_a_later_recreate() -> Result<(
     assert!(origin_marked(&vault, &proposal));
 
     // The most destructive door there is, and then a whole separate batch.
-    assert!(vault.delete_entity(&proposal)?);
+    assert!(vault.delete_entity_with_options(
+        &proposal,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     assert!(
         vault.get_skill_record(&proposal)?.is_none(),
         "the body really is gone"
@@ -3150,12 +3596,23 @@ fn the_birth_marker_leaves_ordinary_and_replicated_writes_alone() -> Result<()> 
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let born = stored(&vault, &proposal);
     let remote = crate::skill::encode_skill_record(&born)?;
-    assert!(vault.delete_entity(&proposal)?);
+    // Internal removal lets the replica re-present this ID. An owner hard
+    // delete would instead make that ID permanently unavailable.
+    vault.batch().delete(&proposal).commit()?;
+    assert!(
+        vault.get_skill_record(&proposal)?.is_none(),
+        "the body is gone"
+    );
     vault
         .batch()
         .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(400), 401, &remote)
         .commit()?;
-    assert_eq!(stored(&vault, &proposal), born);
+    assert!(
+        vault
+            .get_skill_record(&proposal)?
+            .is_none_or(|record| record == born)
+    );
+    assert!(origin_marked(&vault, &proposal));
     Ok(())
 }
 
@@ -3358,8 +3815,18 @@ fn set_row_field(entries: &mut [(Value, Value)], key: &str, value: &Value) {
     panic!("the row names {key}");
 }
 
+fn rename_row_field(entries: &mut [(Value, Value)], from: &str, to: &str) {
+    for (name, _) in entries.iter_mut() {
+        if name.as_str() == Some(from) {
+            *name = Value::from(to);
+            return;
+        }
+    }
+    panic!("the row names {from}");
+}
+
 #[test]
-fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
+fn a_verdict_row_is_schema_v6_and_every_older_row_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let scorer = StubScorer::improving();
@@ -3373,7 +3840,7 @@ fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
     assert_eq!(
         skill_edit_verdict(&vault, &proposal)?.expect("a standing verdict"),
         accepted,
-        "a v3 row round-trips, bound proposal tier included"
+        "a v6 row round-trips with measurements, judge provenance, goal identity and tier"
     );
     assert_eq!(accepted.proposal_tier, Some(SkillGovernanceTier::Standard));
 
@@ -3390,9 +3857,71 @@ fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
         ErrorKind::CorruptedIndex
     );
 
-    // …and so is the retired disposition, whatever schema claims to carry it.
+    // A v3 row has no judge measurements and cannot claim this schema.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
         set_row_field(entries, "v", &Value::from(3u64));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("v3 is missing measurements")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // V4 has measurements but no goal vector. It cannot authorize an edit.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "v", &Value::from(4u64));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("v4 has no scored goal vector")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // A v5 row carries a judge revision but no goal vector, goal revision or
+    // goal identity, so it cannot say which goal admitted the edit.
+    rewrite_verdict_row(&vault, |entries| {
+        set_row_field(entries, "v", &Value::from(5u64));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("v5 lacks the scored goal vector")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    // The same v5 shape relabelled v6 is still missing the goal fields.
+    let goal_keys = [
+        "goal_axes",
+        "goal_revision",
+        "goal_id",
+        "tradeoff_resolution",
+    ];
+    rewrite_verdict_row(&vault, |entries| {
+        set_row_field(entries, "v", &Value::from(6u64));
+        for key in goal_keys {
+            rename_row_field(entries, key, &format!("v5_{key}"));
+        }
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("a v5-shaped row cannot claim v6")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    rewrite_verdict_row(&vault, |entries| {
+        for key in goal_keys {
+            rename_row_field(entries, &format!("v5_{key}"), key);
+        }
+    });
+    assert!(
+        skill_edit_verdicts(&vault).is_ok(),
+        "restoring the goal fields restores the v6 row"
+    );
+
+    // …and so is the retired disposition, whatever schema claims to carry it.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "v", &Value::from(6u64));
         set_row_field(
             entries,
             "disposition",
@@ -3405,6 +3934,21 @@ fn a_verdict_row_is_schema_v3_and_every_older_row_fails_closed() -> Result<()> {
             .kind(),
         ErrorKind::CorruptedIndex
     );
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "disposition", &Value::from("accepted"));
+    });
+    // A judged v6 verdict cannot carry an absent or nil audit pair.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "v", &Value::from(6u64));
+        set_row_field(entries, "measurements", &Value::Nil);
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("judged row lost its audits")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
     Ok(())
 }
 
@@ -3426,7 +3970,10 @@ fn a_target_purged_after_acceptance_refuses_with_the_pair_it_earned() -> Result<
     // The predecessor is erased between the acceptance and the door. The old
     // shape exited on a bare `EntityNotFound`, which left the acceptance
     // standing, the proposal open, and the real pair unrecorded.
-    assert!(vault.delete_entity(&skill)?);
+    assert!(vault.delete_entity_with_options(
+        &skill,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     assert_eq!(
         admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
             .expect_err("a purged predecessor is not one this candidate can supersede")
@@ -3468,7 +4015,10 @@ fn a_gate_call_against_an_unreadable_target_refuses_durably_and_closes_it() -> R
 
     // Purged: the target row is simply gone.
     let (purged, orphan) = losing_skill_with_proposal(&vault, "oneiron.skill.purged");
-    assert!(vault.delete_entity(&purged)?);
+    assert!(vault.delete_entity_with_options(
+        &purged,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     assert_eq!(
         score_gate_skill_edit_in_cycle(
             &vault,
@@ -3503,7 +4053,10 @@ fn a_gate_call_against_an_unreadable_target_refuses_durably_and_closes_it() -> R
 
     // An unreadable SHELL: an entity of another kind now occupies the id.
     let (shelled, shell_proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.shelled");
-    assert!(vault.delete_entity(&shelled)?);
+    assert!(vault.delete_entity_with_options(
+        &shelled,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     put_actor(&vault, &shelled);
     assert_eq!(
         score_gate_skill_edit_in_cycle(
@@ -3547,6 +4100,9 @@ struct ProposalEditingScorer<'a> {
 const RE_EDITED_DESC: &str = "A second author rewrote this while the judge read.";
 
 impl HeldOutReplayScorer for ProposalEditingScorer<'_> {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         if !self.edited.replace(true) {
             let mut edited = stored(self.vault, &self.proposal);
@@ -3561,6 +4117,25 @@ impl HeldOutReplayScorer for ProposalEditingScorer<'_> {
         } else {
             0.75
         })
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 
@@ -3748,9 +4323,14 @@ fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Res
         "the replica records the origin of an id it is meeting for the first time"
     );
 
-    // So the laundering road is closed on the replica too: delete the body and
-    // re-present the id as an ordinary candidate.
-    assert!(replica.delete_entity(&proposal)?);
+    // So the laundering road is closed on the replica too: remove the body
+    // without an owner hard-delete marker, then re-present it as an ordinary
+    // candidate. The optimizer birth marker itself must still enforce this.
+    replica.batch().delete(&proposal).commit()?;
+    assert!(
+        replica.get_skill_record(&proposal)?.is_none(),
+        "the body is gone"
+    );
     assert!(
         origin_marked(&replica, &proposal),
         "no delete road clears the marker"
@@ -3767,12 +4347,19 @@ fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Res
     );
     assert!(replica.get_skill_record(&proposal)?.is_none());
 
-    // The honest remat of the same body still lands, so convergence is intact.
+    // The same-origin replay is admitted, but a local hard delete still
+    // dominates its older body. The immutable origin marker survives either
+    // outcome; accepting a replay is not authority to resurrect an ID.
     replica
         .batch()
         .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(404), 405, &proposal_body)
         .commit()?;
-    assert_eq!(stored(&replica, &proposal), born);
+    assert!(
+        replica
+            .get_skill_record(&proposal)?
+            .is_none_or(|record| record == born)
+    );
+    assert!(origin_marked(&replica, &proposal));
     Ok(())
 }
 
@@ -3862,7 +4449,7 @@ fn discovery_proposal_receipt(
 ) -> String {
     let actor = EntityId::now();
     put_actor(vault, &actor);
-    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, reserved, at);
+    let receipt = stamped_receipt_in_partition(vault, skill, skill_id, reserved, at, Some(actor));
     record_attribution_evidence(
         vault,
         &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, at + 5)
@@ -3949,3 +4536,2164 @@ fn the_longest_queue_accepted_run_id_still_names_a_cycle() -> Result<()> {
     assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
     Ok(())
 }
+
+// OF-214: audit measurements do not vote on scalar admission. World labels,
+// unlike rubric scores, come from the outcome ledger and are scored per axis.
+struct MeasuredScorer {
+    phases: RefCell<Vec<&'static str>>,
+}
+
+impl HeldOutReplayScorer for MeasuredScorer {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
+    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+        self.phases.borrow_mut().push("score");
+        Ok(if case.instructions == TARGET_DESC {
+            0.40
+        } else {
+            0.75
+        })
+    }
+
+    fn structural_audit(&self, _task: &str, instructions: &str) -> Result<f32> {
+        self.phases.borrow_mut().push("structural");
+        Ok(if instructions == TARGET_DESC {
+            0.9
+        } else {
+            0.1
+        })
+    }
+
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        self.phases.borrow_mut().push("blind");
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        case: &HeldOutReplayCase<'_>,
+        blind: &[BlindPreference],
+    ) -> Result<f32> {
+        assert_eq!(blind[0].preferred, PreferredResponse::First);
+        self.phases.borrow_mut().push("contrastive");
+        Ok(if case.instructions == TARGET_DESC {
+            0.8
+        } else {
+            0.2
+        })
+    }
+
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        self.phases.borrow_mut().push("predict");
+        let prediction = if case.instructions == TARGET_DESC {
+            0.1
+        } else {
+            0.9
+        };
+        Ok(vec![prediction; case.held_out_receipts.len()])
+    }
+}
+
+#[test]
+fn decoevo_audits_are_receipted_measurements_and_world_scores_follow_labels() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.measured");
+    let reserved = held_out_receipts(&vault, &skill)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let outcomes = crate::skill_reliability::attributed_outcome_results(&vault, &rtxn, &skill)?;
+    let truth: Vec<bool> = outcomes
+        .into_iter()
+        .filter(|(receipt, _)| reserved.contains(receipt))
+        .map(|(_, won)| won)
+        .collect();
+    drop(rtxn);
+    assert!(!truth.is_empty());
+    let scorer = MeasuredScorer {
+        phases: RefCell::new(Vec::new()),
+    };
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &scorer,
+        wake(&vault, "measurement", 10),
+        900,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(
+        scorer.phases.borrow().as_slice(),
+        [
+            "blind",
+            "structural",
+            "structural",
+            "contrastive",
+            "contrastive",
+            "predict",
+            "predict",
+            "score",
+            "score"
+        ]
+    );
+    let measurement = verdict
+        .measurements
+        .as_ref()
+        .expect("judged verdict has measurements");
+    assert_eq!(
+        measurement.structural,
+        AuditPair {
+            before: 0.9,
+            after: 0.1
+        }
+    );
+    assert_eq!(
+        measurement.contrastive,
+        AuditPair {
+            before: 0.8,
+            after: 0.2
+        }
+    );
+    assert_eq!(measurement.blind_preferences.len(), 1);
+    assert_eq!(measurement.blind_preferences[0].pair_ref, "fixture-pair");
+    let axis = &measurement.world_axes["task_success"];
+    assert_eq!(axis.labelled_receipts, truth.len() as u64);
+    let wins = truth.iter().filter(|won| **won).count() as f32;
+    let expected_before = (wins * 0.1 + (truth.len() as f32 - wins) * 0.9) / truth.len() as f32;
+    let expected_after = (wins * 0.9 + (truth.len() as f32 - wins) * 0.1) / truth.len() as f32;
+    assert!((axis.before - expected_before).abs() < 0.000_001);
+    assert!((axis.after - expected_after).abs() < 0.000_001);
+    let stored = skill_edit_verdict(&vault, &proposal)?.expect("durable verdict");
+    assert_eq!(stored.measurements, verdict.measurements);
+    let receipt = verdict_receipt(&vault, &verdict);
+    let projected: JudgeMeasurements =
+        serde_json::from_str(&receipt.fields["skill_edit_measurements"])
+            .expect("receipt carries typed measurement JSON");
+    assert_eq!(projected, *measurement);
+    Ok(())
+}
+
+#[test]
+fn a_missing_auditor_does_not_write_a_judged_verdict() -> Result<()> {
+    struct ScalarOnly;
+    impl HeldOutReplayScorer for ScalarOnly {
+        fn judge_revision(&self) -> &str {
+            "fixture-judge@1"
+        }
+        fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
+            Ok(0.75)
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.no_auditor");
+    let result = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &ScalarOnly,
+        wake(&vault, "no-auditor", 10),
+        900,
+    );
+    assert_eq!(
+        result.expect_err("auditor required").kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_contrastive_audit_without_frozen_preference_cannot_write_a_verdict() -> Result<()> {
+    struct NoPairs;
+    impl HeldOutReplayScorer for NoPairs {
+        fn judge_revision(&self) -> &str {
+            "fixture-judge@1"
+        }
+        fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
+            panic!("rubric-aware scoring must not run before a blind preference")
+        }
+        fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+            Ok(Vec::new())
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.no_pairs");
+    let result = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &NoPairs,
+        wake(&vault, "no-pairs", 10),
+        900,
+    );
+    assert_eq!(
+        result.expect_err("blind sample required").kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn judged_verdict_rejects_unsupported_world_axes_and_unbound_counts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.corrupt_axes");
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "axes", 10),
+        900,
+    )?;
+    let original = serde_json::to_value(verdict.measurements.expect("judged row"))
+        .expect("serialize measurements");
+    // Every case leaves the body and evidence digests intact. Decoding must
+    // still reject a receipt that names an unsupported axis or invents labels.
+    for alteration in 0..3 {
+        let mut changed = original.clone();
+        let axes = changed["world_axes"].as_object_mut().expect("axis map");
+        match alteration {
+            0 => {
+                let score = axes.remove("task_success").expect("supported axis");
+                axes.insert(String::new(), score);
+            }
+            1 => {
+                axes.insert("not_a_world_axis".to_owned(),
+                    serde_json::json!({"before": 0.5, "after": 0.5, "labelled_receipts": verdict.held_out_count}));
+            }
+            _ => {
+                axes.get_mut("task_success").expect("supported axis")["labelled_receipts"] =
+                    serde_json::json!(verdict.held_out_count + 1);
+            }
+        }
+        let json = serde_json::to_string(&changed).expect("measurement JSON");
+        rewrite_verdict_row(&vault, |entries| {
+            set_row_field(entries, "measurements", &Value::from(json.as_str()));
+        });
+        assert_eq!(
+            skill_edit_verdicts(&vault)
+                .expect_err("invalid world axis is corrupt")
+                .kind(),
+            ErrorKind::CorruptedIndex,
+        );
+        assert_eq!(
+            vault
+                .receipts(crate::receipt::ReceiptQuery::default())
+                .expect_err("receipt projection must not repeat the false measurement")
+                .kind(),
+            ErrorKind::CorruptedIndex,
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.long_history");
+    // Seed a large, valid local outcome ledger in one transaction; making
+    // thousands of attempt/receipt queue entries would measure that unrelated
+    // fixture machinery instead of the gate's outcome join. The real gate and
+    // admission doors must still read these rows through the production codec.
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(
+        &mut encoded,
+        &Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1u64)),
+            (Value::from("win"), Value::Boolean(true)),
+            (Value::from("at"), Value::from(500u64)),
+        ]),
+    )
+    .expect("encode outcome row");
+    vault.with_write_txn(|wtxn| {
+        for index in 0..8_000u32 {
+            // Select a distinct id in the requested partition instead of
+            // hoping 1,600 random draws reserve enough evidence. The count is
+            // fixed for every skill id and on every test host.
+            let want_reserved = index % 5 == 0;
+            let receipt = (0..=u64::MAX)
+                .map(|nonce| format!("load:{index:05}:{nonce}"))
+                .find(|id| receipt_is_held_out(&skill, id) == want_reserved)
+                .expect("each partition has a fixture id");
+            let mut key = b"skill_reliability:outcome:v1:".to_vec();
+            key.extend_from_slice(skill.as_bytes());
+            key.extend_from_slice(receipt.as_bytes());
+            vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        }
+        Ok(())
+    })?;
+    let reserved = held_out_receipts(&vault, &skill)?;
+    assert!(reserved.len() >= 1_600);
+    assert!(reserved.iter().all(|id| receipt_is_held_out(&skill, id)));
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "long-history", 10),
+        900,
+    )?;
+    assert_eq!(verdict.held_out_count, reserved.len() as u64);
+    let measured = verdict.measurements.as_ref().expect("judged measurements");
+    assert_eq!(
+        measured.world_axes["task_success"].labelled_receipts,
+        verdict.held_out_count
+    );
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    // The standing verdict and the admission door each recompute the same
+    // complete labelled basis in ledger order, with no new ruling on replay.
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &UnreachableScorer,
+            wake(&vault, "long-history-retry", 20),
+            901
+        )?,
+        verdict,
+    );
+    admit_optimized_skill_revision(&vault, &proposal, t(400), 401)?;
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Active
+    );
+    Ok(())
+}
+
+fn vector_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let id = EntityId::now();
+    vault
+        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"goal owner")
+        .expect("person");
+    vault
+        .authenticate_owner(
+            id,
+            "principal:goal-owner",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner")
+}
+
+fn vector_axes() -> Vec<GoalAxisSpec> {
+    vec![
+        GoalAxisSpec {
+            name: "held_out".into(),
+            kind: GoalAxisKind::Primary,
+        },
+        GoalAxisSpec {
+            name: "quality".into(),
+            kind: GoalAxisKind::Primary,
+        },
+        GoalAxisSpec {
+            name: "safety".into(),
+            kind: GoalAxisKind::Floor,
+        },
+        GoalAxisSpec {
+            name: "human_minutes".into(),
+            kind: GoalAxisKind::Cost,
+        },
+    ]
+}
+
+fn put_narrowing_goal_manifest(vault: &Vault, id: EntityId, axes: Vec<GoalAxisSpec>) -> Result<()> {
+    let baseline = crate::gate::default_policy_manifest();
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(baseline))
+        .expect("shipped manifest decodes")
+    else {
+        panic!("manifest map")
+    };
+    let (_, policy) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("skill_edit_goal_policy"))
+        .expect("shipped goal policy row");
+    let mut narrowed = vec![GoalAxisSpec {
+        name: "held_out".into(),
+        kind: GoalAxisKind::Primary,
+    }];
+    narrowed.extend(axes);
+    *policy = rmpv::ext::to_value(serde_json::json!({
+        "precedence": "nested_narrowing", "holder_max_scope": "vault", "axes": narrowed
+    }))
+    .expect("encode policy value");
+    let parsed = crate::gate::SkillEditGoalPolicy::decode(policy.clone())
+        .expect("goal-policy fixture value roundtrips");
+    assert_eq!(parsed.precedence, "nested_narrowing");
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(vault, id, &encoded)
+}
+
+// ONE-2114: a headline win is not an admission when any goal axis regresses.
+struct VectorScorer {
+    primary: (f32, f32),
+    floor: (f32, f32),
+    cost: (f32, f32),
+    baseline: &'static str,
+    axes: Option<Vec<GoalAxisSpec>>,
+    seen: RefCell<Vec<(String, String, Vec<String>)>>,
+}
+
+impl VectorScorer {
+    fn new(primary: (f32, f32), floor: (f32, f32), cost: (f32, f32)) -> Self {
+        Self {
+            primary,
+            floor,
+            cost,
+            baseline: TARGET_DESC,
+            axes: None,
+            seen: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn with_baseline(mut self, baseline: &'static str) -> Self {
+        self.baseline = baseline;
+        self
+    }
+
+    fn with_axes(mut self, axes: Vec<GoalAxisSpec>) -> Self {
+        self.axes = Some(axes);
+        self
+    }
+}
+
+impl HeldOutReplayScorer for VectorScorer {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
+    fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
+        panic!("a multi-axis scorer cannot fall back to a scalar")
+    }
+    fn goal_axes(&self, _: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        Ok(self.axes.clone().unwrap_or_else(vector_axes))
+    }
+    fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
+        self.seen.borrow_mut().push((
+            axis.name.clone(),
+            case.instructions.to_owned(),
+            case.held_out_receipts.to_vec(),
+        ));
+        let (before, after) = match axis.name.as_str() {
+            "quality" | "held_out" => self.primary,
+            "safety" => self.floor,
+            "human_minutes" => self.cost,
+            _ => panic!("unknown axis"),
+        };
+        Ok(if case.instructions == self.baseline {
+            before
+        } else {
+            after
+        })
+    }
+    fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "pair".into(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(&self, _: &HeldOutReplayCase<'_>, _: &[BlindPreference]) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
+}
+
+#[test]
+fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Result<()> {
+    for (label, primary, floor, cost, expected) in [
+        (
+            "dominates",
+            (0.4, 0.7),
+            (0.8, 0.8),
+            (0.5, 0.6),
+            SkillEditDisposition::Accepted,
+        ),
+        (
+            "dominated",
+            (0.7, 0.4),
+            (0.8, 0.8),
+            (0.6, 0.5),
+            SkillEditDisposition::Rejected,
+        ),
+        (
+            "tie",
+            (0.4, 0.4),
+            (0.8, 0.8),
+            (0.5, 0.5),
+            SkillEditDisposition::Rejected,
+        ),
+        (
+            "floor",
+            (0.4, 0.9),
+            (0.8, 0.7),
+            (0.5, 0.6),
+            SkillEditDisposition::Rejected,
+        ),
+        (
+            "cost",
+            (0.4, 0.9),
+            (0.8, 0.8),
+            (0.6, 0.5),
+            SkillEditDisposition::NeedsTradeoffDecision,
+        ),
+        (
+            "quality_cost_tradeoff",
+            (0.7, 0.4),
+            (0.8, 0.8),
+            (0.5, 0.7),
+            SkillEditDisposition::NeedsTradeoffDecision,
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let (skill, proposal) =
+            losing_skill_with_proposal(&vault, &format!("oneiron.skill.vector.{label}"));
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+        let scorer = VectorScorer::new(primary, floor, cost);
+        let verdict = score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &scorer,
+            wake(&vault, label, 10),
+            900,
+        )?;
+        assert_eq!(verdict.disposition, expected, "{label}");
+        assert_eq!(verdict.accepted, expected.admits(), "{label}");
+        assert_eq!(verdict.goal_axes["quality"].before, primary.0);
+        assert_eq!(verdict.goal_axes["quality"].after, primary.1);
+        assert_eq!(verdict.goal_axes["safety"].kind, GoalAxisKind::Floor);
+        assert_eq!(verdict.goal_axes["human_minutes"].kind, GoalAxisKind::Cost);
+        assert_eq!(
+            scorer.seen.borrow().len(),
+            8,
+            "both bodies on all four axes"
+        );
+        let reserved = held_out_receipts(&vault, &skill)?;
+        assert!(
+            scorer
+                .seen
+                .borrow()
+                .iter()
+                .all(|(_, _, receipts)| *receipts == reserved)
+        );
+        assert_eq!(
+            skill_edit_verdict(&vault, &proposal)?.unwrap().goal_axes,
+            verdict.goal_axes
+        );
+        let receipt = verdict_receipt(&vault, &verdict);
+        let projected: std::collections::BTreeMap<String, GoalAxisScore> =
+            serde_json::from_str(&receipt.fields["skill_edit_goal_axes"]).expect("receipt vector");
+        assert_eq!(projected, verdict.goal_axes);
+        if expected == SkillEditDisposition::NeedsTradeoffDecision {
+            assert_eq!(
+                stored(&vault, &proposal).approval_status,
+                ClaimApprovalStatus::Proposed
+            );
+            assert_eq!(
+                score_gate_skill_edit_in_cycle(
+                    &vault,
+                    &proposal,
+                    &UnreachableScorer,
+                    wake(&vault, "tradeoff-retry", 20),
+                    901,
+                )?,
+                verdict,
+                "a pending tradeoff is not re-scored in a later cycle"
+            );
+            assert_eq!(
+                skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+                1
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_goal_axis_score_aborts_without_a_verdict() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.nan");
+    set_skill_edit_goal_axes(&vault, &vector_owner(&vault), &skill, vector_axes())?;
+    let scorer = VectorScorer::new((0.4, 0.7), (0.8, f32::NAN), (0.5, 0.6));
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(&vault, &proposal, &scorer, wake(&vault, "nan", 10), 900)
+            .expect_err("invalid floor score must fail closed")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn an_accepted_vector_cannot_be_rewritten_to_regress_a_floor() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.corrupt");
+    set_skill_edit_goal_axes(&vault, &vector_owner(&vault), &skill, vector_axes())?;
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &VectorScorer::new((0.4, 0.7), (0.8, 0.8), (0.5, 0.6)),
+        wake(&vault, "vector-corrupt", 10),
+        900,
+    )?;
+    rewrite_verdict_row(&vault, |entries| {
+        let axes = serde_json::json!({
+            "quality": {"kind":"primary","before":0.4,"after":0.7},
+            "safety": {"kind":"floor","before":0.8,"after":0.7},
+            "human_minutes": {"kind":"cost","before":0.5,"after":0.6}
+        });
+        set_row_field(entries, "goal_axes", &Value::from(axes.to_string()));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("accepted floor regression is corrupt")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    Ok(())
+}
+
+#[test]
+fn a_protected_goal_tradeoff_refuses_instead_of_waiting_open() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.protected");
+    set_skill_edit_goal_axes(&vault, &vector_owner(&vault), &skill, vector_axes())?;
+    let mut marked = stored(&vault, &skill);
+    marked.governance_tier = Some(SkillGovernanceTier::Identity);
+    vault.update_skill_record(&skill, &marked, t(500), 501)?;
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.8), (0.6, 0.5)),
+            wake(&vault, "protected-tradeoff", 10),
+            900,
+        )
+        .expect_err("protected tier outranks tradeoff")
+        .kind(),
+        ErrorKind::InvalidSkillBody,
+    );
+    let verdict = skill_edit_verdict(&vault, &proposal)?.expect("durable refusal");
+    assert_eq!(
+        verdict.disposition,
+        SkillEditDisposition::RefusedProtectedTier
+    );
+    assert_eq!(verdict.goal_axes["human_minutes"].after, 0.5);
+    Ok(())
+}
+
+#[test]
+fn a_new_goal_floor_revokes_cached_acceptance_before_admission() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.goal_change");
+    let accepted = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "goal-A", 10),
+        900,
+    )?;
+    assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+    let owner = vector_owner(&vault);
+    let revision = set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+    assert_ne!(accepted.goal_revision, revision);
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+            .expect_err("old permission cannot cross a goal change")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    // A gate retry must use the NEW scorer and cannot reuse the old acceptance.
+    // The admission refusal closes this proposal; use a second fixture to
+    // verify rescore of a still-open accepted candidate.
+    let (_other_tmp, other_vault) = temp_vault();
+    let (other, other_proposal) =
+        losing_skill_with_proposal(&other_vault, "oneiron.skill.vector.rescore");
+    let other_accepted = score_gate_skill_edit_in_cycle(
+        &other_vault,
+        &other_proposal,
+        &StubScorer::improving(),
+        wake(&other_vault, "goal-C", 20),
+        900,
+    )?;
+    set_skill_edit_goal_axes(
+        &other_vault,
+        &vector_owner(&other_vault),
+        &other,
+        vector_axes(),
+    )?;
+    let rescored = score_gate_skill_edit_in_cycle(
+        &other_vault,
+        &other_proposal,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)),
+        wake(&other_vault, "goal-D", 30),
+        901,
+    )?;
+    assert_eq!(rescored.disposition, SkillEditDisposition::Rejected);
+    assert_ne!(rescored.id, other_accepted.id);
+    assert_ne!(rescored.goal_revision, other_accepted.goal_revision);
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&other_vault, &other_proposal)?.len(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn authenticated_tradeoff_resolution_approves_rejects_and_refuses_stale_decisions() -> Result<()> {
+    for choice in [TradeoffChoice::Approve, TradeoffChoice::Reject] {
+        let (_tmp, vault) = temp_vault();
+        let (skill, proposal) =
+            losing_skill_with_proposal(&vault, "oneiron.skill.vector.resolution");
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+        let pending = score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &VectorScorer::new((0.4, 0.8), (0.9, 0.9), (0.7, 0.4)),
+            wake(&vault, "resolution", 10),
+            900,
+        )?;
+        assert_eq!(
+            pending.disposition,
+            SkillEditDisposition::NeedsTradeoffDecision
+        );
+        let resolved = resolve_skill_edit_tradeoff(
+            &vault,
+            &proposal,
+            pending.id,
+            &owner,
+            "human-pick:123",
+            choice,
+            901,
+        )?;
+        assert_eq!(resolved.goal_axes, pending.goal_axes);
+        assert_eq!(
+            resolved.tradeoff_resolution.as_ref().unwrap().pending,
+            pending.id
+        );
+        assert_eq!(
+            resolved,
+            resolve_skill_edit_tradeoff(
+                &vault,
+                &proposal,
+                pending.id,
+                &owner,
+                "human-pick:123",
+                choice,
+                902
+            )?
+        );
+        assert_eq!(
+            skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+            2
+        );
+        assert!(
+            verdict_receipt(&vault, &resolved)
+                .fields
+                .contains_key("skill_edit_tradeoff_resolution")
+        );
+        match choice {
+            TradeoffChoice::Approve => {
+                assert_eq!(resolved.disposition, SkillEditDisposition::AcceptedTradeoff);
+                admit_optimized_skill_revision(&vault, &proposal, t(400), 401)?;
+                assert_eq!(
+                    stored(&vault, &proposal).lifecycle_status,
+                    SkillLifecycle::Active
+                );
+                assert_eq!(
+                    resolve_skill_edit_tradeoff(
+                        &vault,
+                        &proposal,
+                        pending.id,
+                        &owner,
+                        "human-pick:123",
+                        choice,
+                        903
+                    )?,
+                    resolved
+                );
+            }
+            TradeoffChoice::Reject => {
+                assert_eq!(resolved.disposition, SkillEditDisposition::RejectedTradeoff);
+                assert_eq!(
+                    stored(&vault, &proposal).approval_status,
+                    ClaimApprovalStatus::Rejected
+                );
+                assert_eq!(
+                    admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+                        .expect_err("rejected choice cannot activate")
+                        .kind(),
+                    ErrorKind::InvalidSkillBody
+                );
+            }
+        }
+    }
+    for protect in [false, true] {
+        let (_tmp, vault) = temp_vault();
+        let (skill, proposal) =
+            losing_skill_with_proposal(&vault, "oneiron.skill.vector.stale_decision");
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+        let pending = score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &VectorScorer::new((0.4, 0.8), (0.9, 0.9), (0.7, 0.4)),
+            wake(&vault, "stale", 10),
+            900,
+        )?;
+        if protect {
+            let mut marked = stored(&vault, &skill);
+            marked.governance_tier = Some(SkillGovernanceTier::Identity);
+            vault.update_skill_record(&skill, &marked, t(400), 401)?;
+        } else {
+            set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+        }
+        assert_eq!(
+            resolve_skill_edit_tradeoff(
+                &vault,
+                &proposal,
+                pending.id,
+                &owner,
+                "human-pick:stale",
+                TradeoffChoice::Approve,
+                902
+            )
+            .expect_err("stale choice cannot authorize")
+            .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert_eq!(
+            skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+            1
+        );
+        assert_eq!(
+            stored(&vault, &proposal).approval_status,
+            ClaimApprovalStatus::Proposed
+        );
+    }
+    Ok(())
+}
+
+fn successor_goal_proposal(vault: &Vault, target: &EntityId) -> EntityId {
+    let id = EntityId::now();
+    let mut record = optimizer_proposal_record_citing(
+        vault,
+        target,
+        Value::Array(Vec::new()),
+        HAND_CRAFTED_CYCLE,
+    );
+    record.desc = "Next generation instructions.".to_owned();
+    vault
+        .put_skill_record(&id, &record, t(300), 301)
+        .expect("put successor proposal");
+    id
+}
+
+#[test]
+fn goal_definition_survives_erased_predecessor_and_owner_edit_revokes_successor_permission()
+-> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (a, b) = losing_skill_with_proposal(&vault, "oneiron.skill.goal_lineage");
+    let owner = vector_owner(&vault);
+    let original = set_skill_edit_goal_axes(&vault, &owner, &a, vector_axes())?;
+    let b_pass = score_gate_skill_edit_in_cycle(
+        &vault,
+        &b,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)),
+        wake(&vault, "lineage-a", 10),
+        900,
+    )?;
+    assert_eq!(b_pass.disposition, SkillEditDisposition::Accepted);
+    admit_optimized_skill_revision(&vault, &b, t(400), 401)?;
+    vault.supersede_skill_record(&a, &b, t(402), 403)?;
+    assert!(
+        vault.delete_entity(&a)?,
+        "the person can erase A's old instructions"
+    );
+    assert!(vault.get_skill_record(&a)?.is_none());
+
+    // Give B its own held-out outcome. This isolates the gate's lineage law
+    // from the separate selector and attribution projector.
+    let receipt = (0u64..)
+        .map(|n| format!("successor-reserve:{n}"))
+        .find(|id| receipt_is_held_out(&b, id))
+        .expect("a held-out receipt exists");
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(
+        &mut encoded,
+        &Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1u64)),
+            (Value::from("win"), Value::Boolean(false)),
+            (Value::from("at"), Value::from(500u64)),
+        ]),
+    )
+    .expect("encode outcome");
+    vault.with_write_txn(|txn| {
+        let mut key = b"skill_reliability:outcome:v1:".to_vec();
+        key.extend_from_slice(b.as_bytes());
+        key.extend_from_slice(receipt.as_bytes());
+        vault.store.vault_meta.put(txn, &key, &encoded)?;
+        Ok(())
+    })?;
+    let c = successor_goal_proposal(&vault, &b);
+    let floor_loss = score_gate_skill_edit_in_cycle(
+        &vault,
+        &c,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+        wake(&vault, "lineage-b", 20),
+        901,
+    )?;
+    assert_eq!(floor_loss.goal_revision, original);
+    assert_eq!(floor_loss.disposition, SkillEditDisposition::Rejected);
+    assert!(floor_loss.goal_axes["safety"].after < floor_loss.goal_axes["safety"].before);
+    assert!(floor_loss.goal_axes["quality"].after > floor_loss.goal_axes["quality"].before);
+    // A later human edit on the current successor changes the shared ruler.
+    let next = successor_goal_proposal(&vault, &b);
+    let accepted = score_gate_skill_edit_in_cycle(
+        &vault,
+        &next,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+        wake(&vault, "lineage-c", 30),
+        902,
+    )?;
+    assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+    let changed = set_skill_edit_goal_axes(&vault, &owner, &b, vector_axes())?;
+    assert_ne!(original, changed);
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &next, t(404), 405)
+            .expect_err("new human goal invalidates B's pending permission")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    Ok(())
+}
+
+#[test]
+fn a_tradeoff_scored_by_a_displaced_judge_cannot_be_resolved() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.displaced");
+    let owner = vector_owner(&vault);
+    set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+    let pending = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &VectorScorer::new((0.4, 0.8), (0.9, 0.9), (0.7, 0.4)),
+        wake(&vault, "displaced", 10),
+        900,
+    )?;
+    assert_eq!(
+        pending.disposition,
+        SkillEditDisposition::NeedsTradeoffDecision
+    );
+    assert_eq!(
+        supersede_skill_edit_judge(&vault, "fixture-judge@1", "fixture-judge@2")?,
+        vec![pending.id]
+    );
+    assert_eq!(
+        resolve_skill_edit_tradeoff(
+            &vault,
+            &proposal,
+            pending.id,
+            &owner,
+            "human-pick:123",
+            TradeoffChoice::Approve,
+            901,
+        )
+        .expect_err("a retired judge's vector is not a permission")
+        .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+        1
+    );
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+            .expect_err("nothing admits the proposal")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    Ok(())
+}
+
+#[test]
+fn approved_tradeoff_uses_a_proven_later_cycle_after_original_cap_is_full() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    set_skill_edit_cycle_cap(&vault, 1)?;
+    let (_, first) = losing_skill_with_proposal(&vault, "oneiron.skill.cap_first");
+    let (skill, pending_id) = losing_skill_with_proposal(&vault, "oneiron.skill.cap_tradeoff");
+    let owner = vector_owner(&vault);
+    set_skill_edit_goal_axes(&vault, &owner, &skill, vector_axes())?;
+    let c = wake(&vault, "cap-C", 10);
+    let accepted =
+        score_gate_skill_edit_in_cycle(&vault, &first, &StubScorer::improving(), c, 900)?;
+    assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+    let pending = score_gate_skill_edit_in_cycle(
+        &vault,
+        &pending_id,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.7, 0.4)),
+        c,
+        901,
+    )?;
+    assert_eq!(
+        pending.disposition,
+        SkillEditDisposition::NeedsTradeoffDecision
+    );
+    assert_eq!(
+        resolve_skill_edit_tradeoff(
+            &vault,
+            &pending_id,
+            pending.id,
+            &owner,
+            "pick:cap",
+            TradeoffChoice::Approve,
+            902
+        )
+        .expect_err("cycle C is full")
+        .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&vault, &pending_id)?.len(),
+        1
+    );
+    let d = wake(&vault, "cap-D", 20);
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(&vault, &pending_id, &UnreachableScorer, d, 903)?,
+        pending
+    );
+    let resolved = resolve_skill_edit_tradeoff_in_cycle(
+        &vault,
+        &pending_id,
+        pending.id,
+        &owner,
+        "pick:cap",
+        TradeoffChoice::Approve,
+        d,
+        904,
+    )?;
+    assert_eq!(resolved.cycle, "run:cap-D");
+    assert_eq!(resolved.goal_axes, pending.goal_axes);
+    assert_eq!(
+        resolve_skill_edit_tradeoff_in_cycle(
+            &vault,
+            &pending_id,
+            pending.id,
+            &owner,
+            "pick:cap",
+            TradeoffChoice::Approve,
+            d,
+            905
+        )?,
+        resolved
+    );
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&vault, &pending_id)?.len(),
+        2
+    );
+    let (_, third) = losing_skill_with_proposal(&vault, "oneiron.skill.cap_third");
+    let blocked = score_gate_skill_edit_in_cycle(&vault, &third, &StubScorer::improving(), d, 906)?;
+    assert_eq!(blocked.disposition, SkillEditDisposition::DeferredCycleCap);
+    admit_optimized_skill_revision(&vault, &pending_id, t(400), 401)?;
+    assert_eq!(
+        stored(&vault, &pending_id).lifecycle_status,
+        SkillLifecycle::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn shipped_goal_manifest_is_effective_and_holder_may_narrow_but_not_widen() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.manifest_default");
+    let owner = vector_owner(&vault);
+    let dropped_primary = vec![GoalAxisSpec {
+        name: "quality".into(),
+        kind: GoalAxisKind::Primary,
+    }];
+    assert_eq!(
+        set_skill_edit_goal_axes(&vault, &owner, &skill, dropped_primary)
+            .expect_err("holder may not drop shipped primary axis")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    // No policy override landed. The shipped manifest row still selects the
+    // scalar replay path; this is not a hardcoded Rust fallback.
+    let scalar = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "shipped", 10),
+        900,
+    )?;
+    assert_eq!(scalar.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(scalar.goal_axes.len(), 1);
+    assert_eq!(scalar.goal_axes["held_out"].kind, GoalAxisKind::Primary);
+    let (other, second) = losing_skill_with_proposal(&vault, "oneiron.skill.manifest_narrow");
+    set_skill_edit_goal_axes(&vault, &owner, &other, vector_axes())?;
+    let narrowed = score_gate_skill_edit_in_cycle(
+        &vault,
+        &second,
+        &VectorScorer::new((0.4, 0.7), (0.8, 0.8), (0.5, 0.6)),
+        wake(&vault, "narrow", 20),
+        901,
+    )?;
+    assert_eq!(narrowed.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(narrowed.goal_axes["safety"].kind, GoalAxisKind::Floor);
+    Ok(())
+}
+
+#[test]
+fn inherited_policy_floor_change_revokes_a_cached_acceptance_and_scores_fresh() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.policy_change");
+    let old = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "policy-old", 10),
+        900,
+    )?;
+    assert_eq!(old.disposition, SkillEditDisposition::Accepted);
+    put_narrowing_goal_manifest(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        vec![GoalAxisSpec {
+            name: "safety".into(),
+            kind: GoalAxisKind::Floor,
+        }],
+    )?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn()?)?;
+    assert!(
+        policy.skill_edit_goal_policies().is_some(),
+        "policy diagnostics: {:?}; contributions: {:?}",
+        policy.diagnostics(),
+        vault.manifest_contributions()?
+    );
+    assert_eq!(
+        admit_optimized_skill_revision(&vault, &proposal, t(400), 401)
+            .expect_err("inherited floor change revokes old acceptance")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    let fresh = optimizer_proposal_citing(&vault, &skill, Value::Array(Vec::new()));
+    let new = score_gate_skill_edit_in_cycle(
+        &vault,
+        &fresh,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_axes(vec![
+            GoalAxisSpec {
+                name: "held_out".into(),
+                kind: GoalAxisKind::Primary,
+            },
+            GoalAxisSpec {
+                name: "safety".into(),
+                kind: GoalAxisKind::Floor,
+            },
+        ]),
+        wake(&vault, "policy-new", 20),
+        902,
+    )?;
+    assert_eq!(new.disposition, SkillEditDisposition::Rejected);
+    assert_ne!(new.goal_revision, old.goal_revision);
+    assert!(new.goal_axes["safety"].after < new.goal_axes["safety"].before);
+    Ok(())
+}
+
+fn seed_successor_outcome(vault: &Vault, skill: &EntityId) -> Result<()> {
+    let receipt = (0u64..)
+        .map(|n| format!("portable-goal-reserve:{n}"))
+        .find(|id| receipt_is_held_out(skill, id))
+        .expect("held-out id exists");
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(
+        &mut encoded,
+        &Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1u64)),
+            (Value::from("win"), Value::Boolean(false)),
+            (Value::from("at"), Value::from(500u64)),
+        ]),
+    )
+    .expect("encode outcome");
+    vault.with_write_txn(|txn| {
+        let mut key = b"skill_reliability:outcome:v1:".to_vec();
+        key.extend_from_slice(skill.as_bytes());
+        key.extend_from_slice(receipt.as_bytes());
+        vault.store.vault_meta.put(txn, &key, &encoded)?;
+        Ok(())
+    })
+}
+
+#[test]
+fn portable_goal_survives_replayed_activation_and_first_active_rematerialization() -> Result<()> {
+    for first_active in [false, true] {
+        let (_origin_tmp, origin) = temp_vault();
+        let (a, b) = losing_skill_with_proposal(&origin, "oneiron.skill.portable_goal");
+        let candidate = stored(&origin, &b);
+        let mut active = candidate.clone();
+        active.approval_status = ClaimApprovalStatus::Approved;
+        active.lifecycle_status = SkillLifecycle::Active;
+        let (_receiver_tmp, receiver) = temp_vault();
+        let a_body = crate::skill::encode_skill_record(&stored(&origin, &a))?;
+        receiver
+            .batch()
+            .put_replicated(&a, ENTITY_TYPE_SKILL, t(400), 401, &a_body)
+            .commit()?;
+        let owner = vector_owner(&receiver);
+        let original = set_skill_edit_goal_axes(&receiver, &owner, &a, vector_axes())?;
+        if !first_active {
+            let candidate_body = crate::skill::encode_skill_record(&candidate)?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(402), 403, &candidate_body)
+                .commit()?;
+            let active_body = crate::skill::encode_skill_record(&active)?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, &active_body)
+                .commit()?;
+            assert!(receiver.delete_entity(&a)?);
+        } else {
+            // The receiver never saw B before and A has already been erased.
+            assert!(receiver.delete_entity(&a)?);
+            let active_body = crate::skill::encode_skill_record(&active)?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(404), 405, &active_body)
+                .commit()?;
+            receiver
+                .batch()
+                .put_replicated(&b, ENTITY_TYPE_SKILL, t(406), 407, &active_body)
+                .commit()?;
+        }
+        assert_eq!(
+            stored(&receiver, &b).lifecycle_status,
+            SkillLifecycle::Active
+        );
+        seed_successor_outcome(&receiver, &b)?;
+        let c = successor_goal_proposal(&receiver, &b);
+        let lost_floor = score_gate_skill_edit_in_cycle(
+            &receiver,
+            &c,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+            wake(&receiver, "portable-c", 10),
+            900,
+        )?;
+        assert_eq!(lost_floor.disposition, SkillEditDisposition::Rejected);
+        assert!(lost_floor.goal_axes["safety"].after < lost_floor.goal_axes["safety"].before);
+        let d = successor_goal_proposal(&receiver, &b);
+        let pending = score_gate_skill_edit_in_cycle(
+            &receiver,
+            &d,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.8), (0.6, 0.5)).with_baseline(DRAFTED_DESC),
+            wake(&receiver, "portable-d", 20),
+            901,
+        )?;
+        assert_eq!(
+            pending.disposition,
+            SkillEditDisposition::NeedsTradeoffDecision
+        );
+        let changed = set_skill_edit_goal_axes(&receiver, &owner, &b, vector_axes())?;
+        assert_ne!(original, changed);
+        assert_eq!(
+            resolve_skill_edit_tradeoff(
+                &receiver,
+                &d,
+                pending.id,
+                &owner,
+                "pick:stale",
+                TradeoffChoice::Approve,
+                902
+            )
+            .expect_err("goal change revokes pending tradeoff")
+            .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        let e = successor_goal_proposal(&receiver, &b);
+        let accepted = score_gate_skill_edit_in_cycle(
+            &receiver,
+            &e,
+            &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+            wake(&receiver, "portable-e", 30),
+            903,
+        )?;
+        assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+        set_skill_edit_goal_axes(&receiver, &owner, &b, vector_axes())?;
+        assert_eq!(
+            admit_optimized_skill_revision(&receiver, &e, t(410), 411)
+                .expect_err("goal change revokes acceptance")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn optimizer_goal_identity_is_strict_on_birth_update_and_same_id_recreate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (a, b) = losing_skill_with_proposal(&vault, "oneiron.skill.goal_guard");
+    let born = stored(&vault, &b);
+    let mut missing = born.clone();
+    missing.provenance = without_provenance(&missing, GOAL_ID_KEY);
+    let mut malformed = born.clone();
+    let Value::Map(entries) = &mut malformed.provenance else {
+        panic!("provenance")
+    };
+    for (name, value) in entries {
+        if name.as_str() == Some(GOAL_ID_KEY) {
+            *value = Value::from("not-an-id");
+        }
+    }
+    let mut conflicting = born.clone();
+    let Value::Map(entries) = &mut conflicting.provenance else {
+        panic!("provenance")
+    };
+    for (name, value) in entries {
+        if name.as_str() == Some(GOAL_ID_KEY) {
+            *value = Value::from(EntityId::now().to_hex());
+        }
+    }
+    let mut duplicate = born.clone();
+    let Value::Map(entries) = &mut duplicate.provenance else {
+        panic!("provenance")
+    };
+    entries.push((Value::from(GOAL_ID_KEY), Value::from(a.to_hex())));
+    // The public codec itself refuses duplicate provenance keys before a body
+    // can reach any write door. The other cases exercise the shared guard.
+    assert_eq!(
+        crate::skill::encode_skill_record(&duplicate)
+            .expect_err("duplicate goal identity cannot encode")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    for row in [&missing, &malformed, &conflicting] {
+        let fresh = EntityId::now();
+        let body = crate::skill::encode_skill_record(row)?;
+        assert_eq!(
+            vault
+                .batch()
+                .put(&fresh, ENTITY_TYPE_SKILL, t(400), 401, &body)
+                .commit()
+                .expect_err("local birth must bind the parent goal")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&fresh, ENTITY_TYPE_SKILL, t(400), 401, &body)
+                .commit()
+                .expect_err("known predecessor constrains replay")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert!(vault.get_skill_record(&fresh)?.is_none());
+        assert_eq!(
+            vault
+                .update_skill_record(&b, row, t(402), 403)
+                .expect_err("goal identity is immutable on update")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+    }
+    let saved = crate::skill::encode_skill_record(&born)?;
+    // Internal removal, as in the birth-marker tests: a user delete keeps a
+    // shell and an owner hard delete retires the ID, so neither re-presents it.
+    vault.batch().delete(&b).commit()?;
+    assert!(vault.get_skill_record(&b)?.is_none(), "the body is gone");
+    assert_eq!(
+        vault
+            .batch()
+            .put(
+                &b,
+                ENTITY_TYPE_SKILL,
+                t(404),
+                405,
+                &crate::skill::encode_skill_record(&conflicting)?
+            )
+            .commit()
+            .expect_err("delete and recreate cannot rebind goal")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    vault
+        .batch()
+        .put(&b, ENTITY_TYPE_SKILL, t(406), 407, &saved)
+        .commit()?;
+    assert_eq!(SkillGoalId::of(&b, &stored(&vault, &b))?.entity(), a);
+    Ok(())
+}
+
+#[test]
+fn second_generation_materializes_after_both_predecessors_were_erased() -> Result<()> {
+    let (_origin_tmp, origin) = temp_vault();
+    let (a, b) = losing_skill_with_proposal(&origin, "oneiron.skill.three_generations");
+    let a_body = crate::skill::encode_skill_record(&stored(&origin, &a))?;
+    let owner = vector_owner(&origin);
+    set_skill_edit_goal_axes(&origin, &owner, &a, vector_axes())?;
+    score_gate_skill_edit_in_cycle(
+        &origin,
+        &b,
+        &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)),
+        wake(&origin, "gen-1", 10),
+        900,
+    )?;
+    admit_optimized_skill_revision(&origin, &b, t(400), 401)?;
+    origin.supersede_skill_record(&a, &b, t(402), 403)?;
+    seed_successor_outcome(&origin, &b)?;
+    let c = successor_goal_proposal(&origin, &b);
+    score_gate_skill_edit_in_cycle(
+        &origin,
+        &c,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.8), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+        wake(&origin, "gen-2", 20),
+        901,
+    )?;
+    admit_optimized_skill_revision(&origin, &c, t(404), 405)?;
+    origin.supersede_skill_record(&b, &c, t(406), 407)?;
+    let c_body = crate::skill::encode_skill_record(&stored(&origin, &c))?;
+    assert!(origin.delete_entity(&a)?);
+    assert!(origin.delete_entity(&b)?);
+    assert_eq!(SkillGoalId::of(&c, &stored(&origin, &c))?.entity(), a);
+
+    let (_receiver_tmp, receiver) = temp_vault();
+    receiver
+        .batch()
+        .put_replicated(&a, ENTITY_TYPE_SKILL, t(410), 411, &a_body)
+        .commit()?;
+    let receiver_owner = vector_owner(&receiver);
+    set_skill_edit_goal_axes(&receiver, &receiver_owner, &a, vector_axes())?;
+    assert!(receiver.delete_entity(&a)?);
+    receiver
+        .batch()
+        .put_replicated(&c, ENTITY_TYPE_SKILL, t(412), 413, &c_body)
+        .commit()?;
+    seed_successor_outcome(&receiver, &c)?;
+    let d = successor_goal_proposal(&receiver, &c);
+    let verdict = score_gate_skill_edit_in_cycle(
+        &receiver,
+        &d,
+        &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6))
+            .with_baseline("Next generation instructions."),
+        wake(&receiver, "gen-3", 30),
+        902,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
+    assert_eq!(verdict.goal_id, Some(a));
+    set_skill_edit_goal_axes(&receiver, &receiver_owner, &c, vector_axes())?;
+    Ok(())
+}
+
+#[test]
+fn orphaned_replay_checks_erased_parent_origin_before_accepting_a_goal() -> Result<()> {
+    for erase_root in [false, true] {
+        let (_tmp, vault) = temp_vault();
+        let (a, b) = losing_skill_with_proposal(&vault, "oneiron.skill.retained_parent_goal");
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &a, vector_axes())?;
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &b,
+            &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)),
+            wake(&vault, "retained-parent", 10),
+            900,
+        )?;
+        admit_optimized_skill_revision(&vault, &b, t(400), 401)?;
+        let c = EntityId::now();
+        let mut settled = optimizer_proposal_record_citing(
+            &vault,
+            &b,
+            Value::Array(Vec::new()),
+            HAND_CRAFTED_CYCLE,
+        );
+        settled.approval_status = ClaimApprovalStatus::Approved;
+        settled.lifecycle_status = SkillLifecycle::Active;
+        assert!(vault.delete_entity(&b)?);
+        if erase_root {
+            assert!(vault.delete_entity(&a)?);
+        }
+        let mut contradictory = settled.clone();
+        let Value::Map(entries) = &mut contradictory.provenance else {
+            panic!("provenance map")
+        };
+        for (name, value) in entries {
+            if name.as_str() == Some(GOAL_ID_KEY) {
+                *value = Value::from(EntityId::now().to_hex());
+            }
+        }
+        let bad_body = crate::skill::encode_skill_record(&contradictory)?;
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&c, ENTITY_TYPE_SKILL, t(402), 403, &bad_body)
+                .commit()
+                .expect_err("retained B origin knows C's proposed ruler is wrong")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert!(vault.get_skill_record(&c)?.is_none());
+        let marker_key = gate::optimizer_origin_marker_key(&b);
+        let retained = {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .vault_meta
+                .get(&txn, &marker_key)?
+                .expect("B retains a birth marker")
+                .to_vec()
+        };
+        vault.with_write_txn(|txn| {
+            vault
+                .store
+                .vault_meta
+                .put(txn, &marker_key, b"invalid retained origin")?;
+            Ok(())
+        })?;
+        let good_body = crate::skill::encode_skill_record(&settled)?;
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, &good_body)
+                .commit()
+                .expect_err("malformed retained parent fact fails closed")
+                .kind(),
+            ErrorKind::CorruptedIndex
+        );
+        assert!(vault.get_skill_record(&c)?.is_none());
+        vault.with_write_txn(|txn| {
+            vault.store.vault_meta.put(txn, &marker_key, &retained)?;
+            Ok(())
+        })?;
+        // The same new id with the correct portable goal still materializes.
+        vault
+            .batch()
+            .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, &good_body)
+            .commit()?;
+        assert_eq!(SkillGoalId::of(&c, &stored(&vault, &c))?.entity(), a);
+        seed_successor_outcome(&vault, &c)?;
+        let d = successor_goal_proposal(&vault, &c);
+        let floor_loss = score_gate_skill_edit_in_cycle(
+            &vault,
+            &d,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+            wake(&vault, "retained-child", 20),
+            901,
+        )?;
+        assert_eq!(floor_loss.disposition, SkillEditDisposition::Rejected);
+        assert!(floor_loss.goal_axes["safety"].after < floor_loss.goal_axes["safety"].before);
+    }
+    Ok(())
+}
+
+#[test]
+fn replacing_candidate_judge_retains_scores_but_removes_standing_acceptance() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_skill, proposal) = losing_skill_with_proposal(&vault, "judge.swap.fixture");
+    let first = StubScorer::improving();
+    let accepted = score_gate_skill_edit_with_scorer(&vault, &proposal, &first)?;
+    assert!(accepted.accepted);
+    assert_eq!(accepted.judge_revision.as_deref(), Some("fixture-judge@1"));
+    assert_eq!(
+        verdict_receipt(&vault, &accepted).fields["skill_edit_judge_revision"],
+        "fixture-judge@1"
+    );
+    let marked = supersede_skill_edit_judge(&vault, "fixture-judge@1", "fixture-judge@2")?;
+    assert!(marked.contains(&accepted.id));
+    let historical = skill_edit_verdict(&vault, &proposal)?.unwrap();
+    assert_eq!(
+        (historical.before, historical.after),
+        (accepted.before, accepted.after)
+    );
+    assert_eq!(
+        historical.displaced_by_revision.as_deref(),
+        Some("fixture-judge@2")
+    );
+    let receipt = verdict_receipt(&vault, &accepted);
+    assert_eq!(
+        receipt.fields["skill_edit_judge_displaced_by"],
+        "fixture-judge@2"
+    );
+    assert!(admit_optimized_skill_revision(&vault, &proposal, t(999), 999).is_err());
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    let replacement = StubScorer::improving().with_revision("fixture-judge@2");
+    let ruled = score_gate_skill_edit_with_scorer(&vault, &proposal, &replacement)?;
+    assert_ne!(ruled.id, accepted.id);
+    assert!(ruled.accepted);
+    assert_eq!(ruled.judge_revision.as_deref(), Some("fixture-judge@2"));
+    assert_eq!(replacement.evidence().len(), 2);
+    assert_eq!(
+        supersede_skill_edit_judge(&vault, "fixture-judge@1", "fixture-judge@2")?,
+        marked
+    );
+    assert!(supersede_skill_edit_judge(&vault, "fixture-judge@1", "fixture-judge@3").is_err());
+    Ok(())
+}
+
+// ─── OF-495 goal-axis measurements ──────────────────────────────────────
+
+struct AxisJudge {
+    events: RefCell<Vec<String>>,
+    bad_offline: bool,
+    bad_minutes: bool,
+}
+
+impl AxisJudge {
+    fn new() -> Self {
+        Self {
+            events: RefCell::new(Vec::new()),
+            bad_offline: false,
+            bad_minutes: false,
+        }
+    }
+}
+
+impl GoalAxisScorer for AxisJudge {
+    fn offline_score(&self, axis: &str, case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        assert!(!case.held_out_receipts.is_empty());
+        assert!(
+            case.held_out_receipts
+                .iter()
+                .all(|receipt| receipt_is_held_out(&case.skill, receipt))
+        );
+        self.events
+            .borrow_mut()
+            .push(format!("offline:{axis}:{}", case.version));
+        Ok(if self.bad_offline {
+            f64::NAN
+        } else if case.version == FIXTURE_VERSION {
+            0.4
+        } else {
+            0.8
+        })
+    }
+
+    fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        self.events
+            .borrow_mut()
+            .push(format!("minutes:{}", case.version));
+        Ok(if self.bad_minutes {
+            -1.0
+        } else if case.version == FIXTURE_VERSION {
+            3.5
+        } else {
+            1.25
+        })
+    }
+}
+
+struct AxisBanditStub {
+    events: RefCell<Vec<AxisArm>>,
+    separated: bool,
+    invalid_bound: bool,
+}
+
+impl AxisBanditStub {
+    fn new(separated: bool) -> Self {
+        Self {
+            events: RefCell::new(Vec::new()),
+            separated,
+            invalid_bound: false,
+        }
+    }
+}
+
+impl GoalAxisBandit for AxisBanditStub {
+    fn pull(&self, _axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
+        self.events.borrow_mut().push(arm);
+        Ok(OnlineAxisSample {
+            success: arm == AxisArm::Candidate,
+            human_minutes: if arm == AxisArm::Candidate { 0.25 } else { 0.5 },
+        })
+    }
+
+    fn confidence_interval(
+        &self,
+        _axis: &str,
+        arm: AxisArm,
+        _wins: u32,
+        _pulls: u32,
+    ) -> Result<ConfidenceInterval> {
+        Ok(if self.invalid_bound {
+            ConfidenceInterval {
+                lower: f64::NAN,
+                upper: 1.0,
+            }
+        } else if self.separated {
+            match arm {
+                AxisArm::Incumbent => ConfidenceInterval {
+                    lower: 0.1,
+                    upper: 0.3,
+                },
+                AxisArm::Candidate => ConfidenceInterval {
+                    lower: 0.7,
+                    upper: 0.9,
+                },
+            }
+        } else {
+            ConfidenceInterval {
+                lower: 0.2,
+                upper: 0.8,
+            }
+        })
+    }
+}
+
+fn goal_axis_plan(pulls_per_axis: u32) -> GoalAxisPlan {
+    GoalAxisPlan {
+        offline: vec!["quality".to_owned(), "safety".to_owned()],
+        online: vec!["world_outcome".to_owned()],
+        pulls_per_axis,
+    }
+}
+
+#[test]
+fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-test");
+    attribute_defects_across_split(&vault, &skill, "goal-axis-test");
+    let mut candidate = incumbent.clone();
+    candidate.version = "2.0.0".to_owned();
+    candidate.desc = DRAFTED_DESC.to_owned();
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(true);
+    let report = measure_goal_axes(
+        &vault,
+        skill,
+        &incumbent,
+        &candidate,
+        &goal_axis_plan(6),
+        &judge,
+        &bandit,
+    )?;
+    assert_eq!(report.offline.len(), 2);
+    assert_eq!(
+        report.offline[0].1,
+        AxisScores {
+            before: 0.4,
+            after: 0.8
+        }
+    );
+    assert_eq!(
+        report.human_minutes,
+        AxisScores {
+            before: 4.0,
+            after: 1.5
+        }
+    );
+    assert_eq!(report.online[0].outcome, OnlineAxisOutcome::CandidateBetter);
+    assert_eq!(
+        report.online[0].human_minutes,
+        AxisScores {
+            before: 0.5,
+            after: 0.25
+        }
+    );
+    assert_eq!(
+        (report.online[0].before_pulls, report.online[0].after_pulls),
+        (1, 1)
+    );
+    assert_eq!(
+        bandit.events.borrow().as_slice(),
+        &[AxisArm::Incumbent, AxisArm::Candidate]
+    );
+    assert_eq!(
+        judge.events.borrow().as_slice(),
+        &[
+            "offline:quality:1.0.0",
+            "offline:quality:2.0.0",
+            "offline:safety:1.0.0",
+            "offline:safety:2.0.0",
+            "minutes:1.0.0",
+            "minutes:2.0.0",
+        ]
+    );
+    assert_eq!(report.held_out_receipts, held_out_receipts(&vault, &skill)?);
+    assert!(
+        report
+            .held_out_receipts
+            .iter()
+            .all(|receipt| !dev_receipts(&vault, &skill).unwrap().contains(receipt))
+    );
+    Ok(())
+}
+
+#[test]
+fn goal_axes_reject_bad_offline_or_cost_before_any_live_pull() {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-errors");
+    attribute_defects_across_split(&vault, &skill, "goal-axis-errors");
+    let bandit = AxisBanditStub::new(true);
+    for judge in [
+        AxisJudge {
+            bad_offline: true,
+            ..AxisJudge::new()
+        },
+        AxisJudge {
+            bad_minutes: true,
+            ..AxisJudge::new()
+        },
+    ] {
+        assert!(
+            measure_goal_axes(
+                &vault,
+                skill,
+                &incumbent,
+                &incumbent,
+                &goal_axis_plan(2),
+                &judge,
+                &bandit
+            )
+            .is_err()
+        );
+        assert!(bandit.events.borrow().is_empty());
+    }
+}
+
+#[test]
+fn goal_axes_unseparated_bounds_exhaust_cap_and_never_claim_improvement() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-bounds");
+    attribute_defects_across_split(&vault, &skill, "goal-axis-bounds");
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(false);
+    let report = measure_goal_axes(
+        &vault,
+        skill,
+        &incumbent,
+        &incumbent,
+        &goal_axis_plan(5),
+        &judge,
+        &bandit,
+    )?;
+    assert_eq!(
+        report.online[0].before_pulls + report.online[0].after_pulls,
+        5
+    );
+    assert_eq!(report.online[0].outcome, OnlineAxisOutcome::Inconclusive);
+    assert_eq!(bandit.events.borrow().len(), 5);
+    let bad = AxisBanditStub {
+        invalid_bound: true,
+        ..AxisBanditStub::new(false)
+    };
+    assert!(
+        measure_goal_axes(
+            &vault,
+            skill,
+            &incumbent,
+            &incumbent,
+            &goal_axis_plan(5),
+            &judge,
+            &bad
+        )
+        .is_err()
+    );
+    assert_eq!(bad.events.borrow().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn goal_axes_empty_reserve_or_invalid_plan_never_reaches_scorer_or_bandit() {
+    let (_tmp, vault) = temp_vault();
+    let (skill, incumbent) = put_standard_active(&vault, "goal-axis-empty");
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(false);
+    assert!(
+        measure_goal_axes(
+            &vault,
+            skill,
+            &incumbent,
+            &incumbent,
+            &goal_axis_plan(2),
+            &judge,
+            &bandit
+        )
+        .is_err()
+    );
+    let mut plan = goal_axis_plan(2);
+    plan.online[0] = "quality".into();
+    assert!(
+        measure_goal_axes(
+            &vault, skill, &incumbent, &incumbent, &plan, &judge, &bandit
+        )
+        .is_err()
+    );
+    assert!(judge.events.borrow().is_empty());
+    assert!(bandit.events.borrow().is_empty());
+}
+
+#[test]
+fn goal_axes_refuse_another_skills_evidence_before_any_measurement() {
+    let (_tmp, vault) = temp_vault();
+    let (skill_a, _) = put_standard_active(&vault, "goal-axis-a");
+    attribute_defects_across_split(&vault, &skill_a, "goal-axis-a");
+    let (_, incumbent_b) = put_standard_active(&vault, "goal-axis-b");
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(true);
+
+    // A has a reserve, but neither of these B records belongs to A.
+    let mut candidate_b = incumbent_b.clone();
+    candidate_b.version = "2.0.0".to_owned();
+    let error = measure_goal_axes(
+        &vault,
+        skill_a,
+        &incumbent_b,
+        &candidate_b,
+        &goal_axis_plan(4),
+        &judge,
+        &bandit,
+    )
+    .expect_err("B's record cannot be scored against A's evidence");
+    assert_eq!(error.kind(), ErrorKind::InvalidConfig);
+
+    // Matching skill_id alone is not enough: a fabricated incumbent body
+    // cannot masquerade as the version currently stored at A.
+    let mut invented_a = stored(&vault, &skill_a);
+    invented_a.desc.push_str(" Incorrectly revised.");
+    let error = measure_goal_axes(
+        &vault,
+        skill_a,
+        &invented_a,
+        &invented_a,
+        &goal_axis_plan(4),
+        &judge,
+        &bandit,
+    )
+    .expect_err("an invented incumbent cannot use A's reserve");
+    assert_eq!(error.kind(), ErrorKind::InvalidConfig);
+    assert!(judge.events.borrow().is_empty());
+    assert!(bandit.events.borrow().is_empty());
+}
+
+#[test]
+fn displaced_candidate_judge_cannot_commit_a_score_started_before_replacement() -> Result<()> {
+    struct SlowOld<'a> {
+        vault: &'a Vault,
+        displaced: std::cell::Cell<bool>,
+    }
+    impl HeldOutReplayScorer for SlowOld<'_> {
+        fn judge_revision(&self) -> &str {
+            "old-candidate@1"
+        }
+        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+            if !self.displaced.replace(true) {
+                // The scorer runs outside the write txn. Replacement commits
+                // before this callback hands its stale answer back.
+                supersede_skill_edit_judge(self.vault, "old-candidate@1", "new-candidate@2")?;
+            }
+            Ok(if case.instructions == TARGET_DESC {
+                0.4
+            } else {
+                0.8
+            })
+        }
+        fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+            Ok(vec![BlindPreference {
+                pair_ref: "race".into(),
+                preferred: PreferredResponse::First,
+            }])
+        }
+        fn contrastive_audit(
+            &self,
+            _: &HeldOutReplayCase<'_>,
+            _: &[BlindPreference],
+        ) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+            Ok(vec![0.5; case.held_out_receipts.len()])
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let (_skill, proposal) = losing_skill_with_proposal(&vault, "judge.inflight");
+    let old = SlowOld {
+        vault: &vault,
+        displaced: std::cell::Cell::new(false),
+    };
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &old).is_err());
+    assert!(skill_edit_verdict(&vault, &proposal)?.is_none());
+    assert!(admit_optimized_skill_revision(&vault, &proposal, t(900), 900).is_err());
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &old).is_err());
+    let new = StubScorer::improving().with_revision("new-candidate@2");
+    assert!(score_gate_skill_edit_with_scorer(&vault, &proposal, &new)?.accepted);
+    Ok(())
+}
+
+#[test]
+fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> Result<()> {
+    struct RecipeScorer;
+    impl HeldOutReplayScorer for RecipeScorer {
+        fn judge_revision(&self) -> &str {
+            "fixture-recipe-judge@1"
+        }
+        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+            Ok(if case.instructions == DRAFTED_DESC {
+                0.75
+            } else {
+                0.40
+            })
+        }
+        fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn blind_preference(
+            &self,
+            _task: &str,
+            _receipts: &[String],
+        ) -> Result<Vec<BlindPreference>> {
+            Ok(vec![BlindPreference {
+                pair_ref: "fixture-pair".to_owned(),
+                preferred: PreferredResponse::First,
+            }])
+        }
+        fn contrastive_audit(
+            &self,
+            _case: &HeldOutReplayCase<'_>,
+            _blind: &[BlindPreference],
+        ) -> Result<f32> {
+            Ok(0.5)
+        }
+        fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+            Ok(vec![0.5; case.held_out_receipts.len()])
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let mut recipe = record(
+        "fixture.context-recipe",
+        Some(SkillGovernanceTier::Standard),
+        None,
+    )
+    .with_role(crate::skill::SkillRole::Workflow, None);
+    recipe.desc = "Load task index, then the matched sources; shed examples first.".into();
+    let files = vec![
+        HubFile::new(
+            "SKILL.md",
+            format!(
+                "---\nname: {}\ndescription: {}\nversion: {}\nrole: workflow\n---\n{}\n",
+                recipe.skill_id, recipe.desc, recipe.version, recipe.desc
+            )
+            .into_bytes(),
+        ),
+        HubFile::new("references/ordering.txt", b"context order fixture".to_vec()),
+    ];
+    recipe.content_hash = Some(crate::skill::canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_slice())),
+    )?);
+    let mut package = HubPackage::new(recipe.clone(), files, SkillCapabilitySurface::default());
+    package.format = crate::skill_hub::SkillPackageFormat::Native;
+    vault.with_write_txn(|txn| {
+        vault.put_skill_record_in_txn(txn, &skill, &recipe, t(10), 11)?;
+        vault.persist_hub_package_in_txn(txn, &skill, &package)
+    })?;
+    let mut before = recipe;
+    before.lifecycle_status = SkillLifecycle::Active;
+    vault.update_skill_record(&skill, &before, t(12), 13)?;
+    let evidence = attribute_defects(&vault, &skill, &before.skill_id, 5);
+    let outcome = run(&vault, &StubAuthor::editing()).expect("recipe improver");
+    let proposal_id = outcome.proposal.expect("improver drafts a recipe edit");
+    let proposed = stored(&vault, &proposal_id);
+    assert_eq!(proposed.role, crate::skill::SkillRole::Workflow);
+    assert_eq!(proposed.lifecycle_status, SkillLifecycle::Candidate);
+    assert_eq!(proposed.approval_status, ClaimApprovalStatus::Proposed);
+    assert_eq!(proposed.skill_id, before.skill_id);
+    assert!(
+        matches!(&proposed.provenance, Value::Map(entries) if entries.iter().any(|(key, value)|
+        key.as_str() == Some(PROVENANCE_OPTIMIZE_RECEIPTS_KEY)
+        && value.as_array().is_some_and(|rows| rows.iter().any(|row| evidence.iter().any(|r| row.as_str() == Some(r))))))
+    );
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal_id,
+        &RecipeScorer,
+        wake(&vault, "recipe-wake", 10),
+        900,
+    )
+    .expect("recipe held-out score");
+    admit_optimized_skill_revision(&vault, &proposal_id, t(400), 401).expect("recipe admission");
+    vault.supersede_skill_record(&skill, &proposal_id, t(404), 405)?;
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "recipe.attempt".into(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 500,
+    })?
+    else {
+        panic!("fresh recipe attempt")
+    };
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "recipe-worker".into(),
+        now: 501,
+    })?
+    else {
+        panic!("leased recipe attempt")
+    };
+    let loaded = vault.load_attempt_skill_pack(
+        attempt.id,
+        &proposal_id,
+        "recipe-worker",
+        leased.attempt_count,
+        "fixture-recipe-model@1",
+        501,
+    )?;
+    let source = loaded
+        .source_files
+        .expect("source-backed recipe stays source-backed");
+    assert!(source.iter().any(|file| file.path == "SKILL.md"
+        && String::from_utf8_lossy(&file.content).contains(DRAFTED_DESC)));
+    assert!(
+        source
+            .iter()
+            .any(|file| file.path == "references/ordering.txt"
+                && file.content == b"context order fixture")
+    );
+    assert!(matches!(
+        queue.complete(CompleteAttempt {
+            id: attempt.id,
+            lease_owner: "recipe-worker".into(),
+            attempt_count: leased.attempt_count,
+            now: 502,
+        })?,
+        CompleteOutcome::Completed(_)
+    ));
+    let receipt = attempt_pack_receipt_id(&attempt.id);
+    record_skill_contributing_win(&vault, &proposal_id, &receipt, 503)?;
+    assert!(crate::skill_reliability::skill_reliability_posterior(&vault, &proposal_id)?.is_none());
+    // The attributed outcome is held under the NEW skill entity and exact
+    // revision, never copied from the previous recipe's receipt history.
+    assert_eq!(
+        crate::skill_reliability::attributed_outcome_receipts(
+            &vault,
+            &vault.store.env.read_txn()?,
+            &proposal_id
+        )?,
+        vec![receipt]
+    );
+    Ok(())
+}
+
+mod resident;

@@ -61,6 +61,29 @@ fn put_workbook(vault: &Vault, actor: WriteActor, at: u64) -> EntityId {
     artifact_id
 }
 
+fn recreate_workbook(vault: &Vault, artifact_id: EntityId, actor: WriteActor) -> Result<u64> {
+    assert!(vault.delete_entity(&artifact_id)?);
+    vault.put_blob_artifact(
+        &artifact_id,
+        &BlobArtifactBody::new(
+            "forecast.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        test_time(11),
+        11,
+    )?;
+    Ok(vault
+        .append_blob_artifact_version(
+            &artifact_id,
+            b"recreated workbook bytes",
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(12),
+            12,
+        )?
+        .version)
+}
+
 fn xlsx_anchor(artifact_id: EntityId, version: u64, sheet: &str, range: &str) -> Anchor {
     Anchor::new(
         artifact_id,
@@ -582,6 +605,157 @@ fn open_thread_rejects_bad_anchor_version() {
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
 }
 
+#[test]
+fn recreated_blob_rejects_deleted_anchor_version_and_admits_new_root() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact_id = put_workbook(&vault, actor, 10);
+    let new_version = recreate_workbook(&vault, artifact_id, actor)?;
+    assert_eq!(new_version, 2);
+    assert!(
+        vault
+            .blob_artifact_version_metadata(&artifact_id, 1)?
+            .is_none()
+    );
+    let error = vault
+        .open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", "A1"),
+            actor,
+            "must not anchor a deleted version",
+            test_time(13),
+            13,
+        )
+        .expect_err("deleted version must refuse thread opening");
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidAnchor);
+    assert!(
+        vault
+            .annotation_threads_for_artifact(&artifact_id)?
+            .is_empty()
+    );
+    assert!(live_thread_head_claim_ids(&vault, &artifact_id).is_empty());
+    let current = vault.open_annotation_thread(
+        &xlsx_anchor(artifact_id, new_version, "Sheet1", "A1"),
+        actor,
+        "new root exists",
+        test_time(13),
+        13,
+    )?;
+    assert_eq!(current.anchor.version, new_version);
+    assert_eq!(
+        vault
+            .annotation_thread_comments(&artifact_id, &current.thread_id)?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn reanchor_refuses_deleted_prefix_in_both_write_doors() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact_id = put_workbook(&vault, actor, 10);
+    let new_version = recreate_workbook(&vault, artifact_id, actor)?;
+    let thread = vault.open_annotation_thread(
+        &xlsx_anchor(artifact_id, new_version, "Sheet1", "B2"),
+        actor,
+        "anchored to new root",
+        test_time(13),
+        13,
+    )?;
+    let before = live_thread_head_claim_ids(&vault, &artifact_id);
+    let ops = [ReanchorOp::InsertRows {
+        sheet: "Sheet1".into(),
+        at_row: 1,
+        count: 1,
+    }];
+    let error = vault
+        .reanchor_annotation_threads(&artifact_id, new_version, 1, &ops, actor, test_time(14), 14)
+        .expect_err("public reanchor cannot target deleted version");
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidAnchor);
+    let error = vault
+        .with_write_txn(|wtxn| {
+            vault.reanchor_annotation_threads_in_txn(
+                wtxn,
+                &artifact_id,
+                new_version,
+                1,
+                &ops,
+                actor,
+                test_time(14),
+                14,
+            )
+        })
+        .expect_err("transactional reanchor cannot target deleted version");
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidAnchor);
+    assert_eq!(live_thread_head_claim_ids(&vault, &artifact_id), before);
+    assert_eq!(
+        vault
+            .get_annotation_thread(&artifact_id, &thread.thread_id)?
+            .expect("original thread head")
+            .anchor
+            .version,
+        new_version
+    );
+    let next = vault.append_blob_artifact_version(
+        &artifact_id,
+        b"next workbook bytes",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(15),
+        15,
+    )?;
+    assert_eq!(next.version, new_version + 1);
+    assert_eq!(
+        vault
+            .reanchor_annotation_threads(
+                &artifact_id,
+                new_version,
+                next.version,
+                &ops,
+                actor,
+                test_time(16),
+                16,
+            )?
+            .remapped
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn anchor_refuses_non_artifact_and_unadapted_code_kind() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let person_id = actor.entity_ref();
+    let code_id = EntityId::now();
+    vault.put_code_artifact(
+        &code_id,
+        &crate::code_artifact::CodeArtifactBody::new(
+            "summary",
+            [1; 32],
+            "github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277",
+        )
+        .with_class(crate::code_artifact::CodeArtifactClass::Artifact),
+        test_time(10),
+        10,
+    )?;
+    for id in [person_id, code_id] {
+        let err = vault
+            .open_annotation_thread(
+                &xlsx_anchor(id, 1, "Sheet1", "A1"),
+                actor,
+                "not a blob version",
+                test_time(11),
+                11,
+            )
+            .expect_err("only an adapted version chain can be anchored");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
+    }
+    Ok(())
+}
+
 // PR #397 fix 1: the live-read gate ([`claim_surfaceable`]) hides an
 // agent-authored (Proposed) head, so it can never override an admitted
 // human head via newest-UUID-wins selection.
@@ -869,7 +1043,7 @@ fn persisted_brief_transcript_is_stable_after_later_comment() -> Result<()> {
 }
 
 #[test]
-fn anchored_thread_binds_existing_room_message_without_copy_or_head_mutation() -> Result<()> {
+fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let human = put_actor(&vault, 10);
     let agent = put_agent_actor(&vault, 10);
@@ -889,29 +1063,107 @@ fn anchored_thread_binds_existing_room_message_without_copy_or_head_mutation() -
         11,
     )?;
     let room = EntityId::now();
+    vault.put_entity(
+        &room,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        test_time(12),
+        12,
+        &[0x80],
+    )?;
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)?;
+    let record = |parent, advance| crate::conversation_dag::AppendRecord {
+        conversation: room,
+        parent,
+        reply_to: None,
+        address: crate::conversation_dag::AddressMode::Broadcast,
+        recipients: vec![],
+        advance,
+        kind: crate::registry::ENTITY_TYPE_TURN,
+        occurred: test_time(12),
+        learned_at: 12,
+        body: vec![0x80],
+        text: vec![],
+        session: None,
+        actor: human,
+    };
+    let root = vault.append_dag_record(&record(None, true))?.id;
+    let trunk = vault.append_dag_record(&record(Some(root), true))?.id;
+    let fork = vault.reply_in_thread(root, &record(Some(root), false))?.id;
+    let node = AnnotationConversationNode {
+        conversation_ref: room,
+        turn_ref: fork,
+    };
+    assert_eq!(vault.head(&room)?, Some(trunk));
+    // A MESSAGE is not a DAG TURN, even when it belongs to a conversation.
     let message = EntityId::now();
+    let other_room = EntityId::now();
     vault
         .memory(human.entity_ref(), human.actor_class())
         .witness(&crate::memory::WitnessTurn {
-            conversation_ref: room.to_hex(),
+            conversation_ref: other_room.to_hex(),
             turn_ref: None,
             occurred_at: 12,
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::memory::WitnessAuthor::User,
                 message_type: "text".to_owned(),
-                content: "node".to_owned(),
+                content: "message".to_owned(),
                 metadata: None,
                 is_visible: true,
                 order: 0,
             }],
         })
-        .expect("witness room node");
-    let node = AnnotationConversationNode {
-        conversation_ref: room,
-        message_ref: message,
-    };
+        .expect("witness other conversation");
+    assert!(
+        vault
+            .bind_annotation_conversation_node(
+                artifact,
+                two.thread_id,
+                AnnotationConversationNode {
+                    conversation_ref: room,
+                    turn_ref: message
+                },
+                human,
+                13
+            )
+            .is_err()
+    );
+    let foreign_turn = vault
+        .head(&other_room)?
+        .expect("witnessed conversation has a turn");
+    assert!(
+        vault
+            .bind_annotation_conversation_node(
+                artifact,
+                two.thread_id,
+                AnnotationConversationNode {
+                    conversation_ref: room,
+                    turn_ref: foreign_turn
+                },
+                human,
+                13,
+            )
+            .is_err()
+    );
+    vault
+        .bind_annotation_conversation_node(artifact, one.thread_id, node, human, 13)
+        .expect("bind DAG node");
     vault.bind_annotation_conversation_node(artifact, one.thread_id, node, human, 13)?;
+    assert!(
+        vault
+            .bind_annotation_conversation_node(
+                artifact,
+                one.thread_id,
+                AnnotationConversationNode {
+                    conversation_ref: room,
+                    turn_ref: trunk
+                },
+                human,
+                13,
+            )
+            .is_err()
+    );
+    assert_eq!(vault.head(&room)?, Some(trunk));
     assert_eq!(
         vault.annotation_conversation_node(artifact, one.thread_id)?,
         Some(node)
@@ -927,13 +1179,62 @@ fn anchored_thread_binds_existing_room_message_without_copy_or_head_mutation() -
         vault.annotation_collaboration_state(artifact, two.thread_id)?,
         AnnotationCollaborationState::Open
     );
+    assert_eq!(
+        vault.annotation_collaboration_state(artifact, one.thread_id)?,
+        AnnotationCollaborationState::Open
+    );
+    // A separately admitted generated reply proves the intermediate state.
+    // The first (proposed) agent comment above remains outside live reads.
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, agent, true)?;
+    let reply_id = EntityId::now();
+    let envelope = crate::WriteEnvelope::new(
+        agent,
+        crate::ClaimSource::Generated,
+        crate::WriteProvenance::new(Value::from("approved annotation reply"))?,
+        ClaimApprovalStatus::Approved,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &reply_id,
+            ClaimCandidate::new(
+                ANNOTATION_COMMENT_PREDICATE,
+                ClaimSubject::Entity(artifact),
+                encode_comment_value(&one.thread_id, &agent.entity_ref(), "admitted reply", 15),
+                1.0,
+            ),
+            &envelope,
+            test_time(15),
+            15,
+        )
+        .commit()?;
+    assert_eq!(
+        vault.annotation_collaboration_state(artifact, one.thread_id)?,
+        AnnotationCollaborationState::AgentReplied
+    );
+    vault.add_annotation_comment(
+        &artifact,
+        &one.thread_id,
+        human,
+        "follow-up",
+        test_time(16),
+        16,
+    )?;
+    assert_eq!(
+        vault.annotation_collaboration_state(artifact, one.thread_id)?,
+        AnnotationCollaborationState::AgentReplied
+    );
+    assert_eq!(
+        vault.annotation_collaboration_state(artifact, two.thread_id)?,
+        AnnotationCollaborationState::Open
+    );
     vault.set_annotation_thread_state(
         &artifact,
         &one.thread_id,
         ThreadState::Resolved,
         human,
-        test_time(15),
-        15,
+        test_time(17),
+        17,
     )?;
     assert_eq!(
         vault.annotation_collaboration_state(artifact, one.thread_id)?,

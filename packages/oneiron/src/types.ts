@@ -151,6 +151,9 @@ export type RetrievalMeta = {
   deepPending?: boolean
 }
 
+/** A full-vault render in one of the five pack serialization formats. */
+export type MemoryExport = { format: string; rendered: string }
+
 /** The engine `MemoryPack`, unchanged apart from field spelling. */
 export type MemoryPack = {
   items: MemoryItem[]
@@ -159,6 +162,8 @@ export type MemoryPack = {
   /** Always equal to the engine's `MEMORY_PACK_VERSION`, and to this package's major. */
   packVersion: number
   rendered?: string
+  /** The actor-scoped read receipt for candidates and rendered content. */
+  narrowing: ReadReceipt
 }
 
 /** One gate decision receipt. */

@@ -62,6 +62,35 @@ pub(crate) fn admit_witness(
             }
         }
     }
+    // A reply within an existing thread inherits its trunk anchor. This is
+    // the same thread_of fact the room index uses to keep HEAD on the trunk;
+    // neither an omitted metadata field nor a nested reply may advance HEAD.
+    if let Some(parent) = reply_to {
+        let mut cursor = Some(parent);
+        let mut seen = BTreeSet::new();
+        while let Some(id) = cursor {
+            if !seen.insert(id) || seen.len() > 100_000 {
+                return Err(invalid());
+            }
+            let ancestor = turn_in(vault, txn, id)?;
+            if ancestor.room_id != room.to_hex() {
+                return Err(invalid());
+            }
+            if let Some(anchor) = ancestor.thread_of {
+                let anchor = EntityId::from_hex(&anchor)?;
+                if thread_of.is_some_and(|explicit| explicit != anchor) {
+                    return Err(invalid());
+                }
+                thread_of = Some(anchor);
+                break;
+            }
+            cursor = ancestor
+                .reply_to
+                .as_deref()
+                .map(EntityId::from_hex)
+                .transpose()?;
+        }
+    }
     // An agent cannot masquerade as a user to evade a claim. The witness
     // author ceiling remains an additional, independent gate below this one.
     let is_response = class != EdgeActorClass::Human

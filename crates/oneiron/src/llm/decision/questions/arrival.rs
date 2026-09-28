@@ -3,13 +3,14 @@
 use super::{
     records::*,
     store::{
-        LabelKey, QUESTION_ANSWER, QUESTION_LABEL, QUESTION_VERSION, VersionKey, encode,
-        family_prefix,
+        LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
+        encode, family_prefix,
     },
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey};
 use crate::gate::PolicyManifestResolution;
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
@@ -45,12 +46,33 @@ impl SideKey for WatchKey {
 
 const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_WATCH);
+const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_UNIT_WATCH);
+pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_PENDING);
+pub(super) fn unwatch_units(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &QuestionRecord,
+) -> Result<()> {
+    for unit in &record.definition.units {
+        UNIT_WATCH.delete(store, txn, &(*unit, record.definition.question.id))?;
+        // A queued arrival for a still-covered unit survives the edit; all
+        // others are retired by the caller once the new definition is known.
+    }
+    Ok(())
+}
 
 pub(super) fn watch(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     record: &QuestionRecord,
 ) -> Result<()> {
+    if record.definition.refresh.on_arrival {
+        for unit in &record.definition.units {
+            UNIT_WATCH.put(store, txn, &(*unit, record.definition.question.id), &())?;
+        }
+    }
     let Some(binding) = &record.definition.binding else {
         return Ok(());
     };
@@ -83,7 +105,46 @@ pub(crate) fn project_arrivals_in_txn(
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
+    enqueue_arrivals(store, txn, ids)?;
     project(store, txn, ids, None)
+}
+
+fn enqueue_arrivals(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    ids: &std::collections::BTreeSet<EntityId>,
+) -> Result<()> {
+    for unit in ids {
+        let questions: Vec<EntityId> = UNIT_WATCH
+            .scan_from(store, txn, unit.as_bytes())?
+            .into_iter()
+            .map(|((_, question), _)| question)
+            .collect();
+        for question in questions {
+            let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))?
+            else {
+                continue;
+            };
+            let Some(record) = QUESTION_VERSION.get(
+                store,
+                txn,
+                &VersionKey {
+                    id: question,
+                    version: head.version,
+                },
+            )?
+            else {
+                continue;
+            };
+            if !head.paused
+                && record.definition.refresh.on_arrival
+                && record.definition.units.contains(unit)
+            {
+                PENDING.put(store, txn, &(question, *unit), &EntityId::now())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn project_question_in_txn(
@@ -107,7 +168,7 @@ fn project(
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     let mut count = 0;
     for id in ids {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -267,7 +328,8 @@ pub(super) fn evaluate_fact(
     {
         return Ok(None);
     }
-    let Some(raw) = store.entities.get(txn, answer.claim.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &answer.claim)?
+    else {
         return Ok(None);
     };
     let header =
@@ -281,7 +343,7 @@ pub(super) fn evaluate_fact(
     let encoded = encode(answer)?;
     let expected = rmpv::decode::read_value(&mut encoded.as_slice())
         .map_err(|_| Error::CorruptedIndex("outcome answer value"))?;
-    let facets = crate::claim::facet_refs_in_db(&store.edges_out, txn, &answer.claim)?;
+    let facets = crate::claim::facet_refs_in_port(store, txn, &answer.claim)?;
     if crate::vault_cleanup::is_archived_in_txn(store, txn, &answer.claim)?
         || !crate::gate::scoped_read_claim_allowed(policy, &actor, &prediction, &facets)
         || prediction.stale
@@ -343,9 +405,8 @@ fn linked(
     let Some(relation) = relation else {
         return Ok(false);
     };
-    for row in store.edges_out.prefix_iter(txn, unit.as_bytes())? {
-        let (key, value) = row?;
-        let edge = crate::vault::parse_edge_record(&key, &value)?;
+    for edge in store.port_edges(txn, unit, EdgeDirection::Out, None, None)? {
+        let edge = edge?;
         if edge.target == *subject
             && Some(edge.kind) == crate::edge::EdgeKind::from_name(relation)
             && edge.provenance.is_none_or(|p| {
@@ -368,7 +429,7 @@ pub(super) fn readable(
     if crate::vault_cleanup::is_archived_in_txn(store, txn, id)? {
         return Ok(false);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     let header =
@@ -380,7 +441,7 @@ pub(super) fn readable(
         return Ok(true);
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    let facets = crate::claim::facet_refs_in_db(&store.edges_out, txn, id)?;
+    let facets = crate::claim::facet_refs_in_port(store, txn, id)?;
     Ok(crate::claim::claim_surfaceable(&body)
         && crate::gate::scoped_read_claim_allowed(policy, actor, &body, &facets))
 }

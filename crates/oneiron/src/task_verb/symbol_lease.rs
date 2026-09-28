@@ -29,6 +29,19 @@ pub enum SymbolLeaseOutcome {
         blockers: Vec<EntityId>,
     },
 }
+impl SymbolLease {
+    /// Reacquire an expired or waiting declaration after overlap checks.
+    pub(crate) fn reacquire_at(&mut self, now: u64) -> Result<()> {
+        if !self.held || self.expires_at <= now {
+            let expires_at = now
+                .checked_add(self.ttl_seconds)
+                .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?;
+            self.expires_at = expires_at;
+            self.held = true;
+        }
+        Ok(())
+    }
+}
 
 fn load(store: &Store, txn: &heed::RoTxn<'_>, task: EntityId) -> Result<Option<SymbolLease>> {
     LEASES.get(store, txn, &task)
@@ -192,10 +205,7 @@ pub(crate) fn acquire_symbols(
             return Err(Error::ConcurrentWrite("overlapping symbol lease"));
         }
         if !lease.held || lease.expires_at <= now {
-            lease.held = true;
-            lease.expires_at = now
-                .checked_add(lease.ttl_seconds)
-                .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?;
+            lease.reacquire_at(now)?;
             save(store, txn, task, &lease)?;
         }
     }

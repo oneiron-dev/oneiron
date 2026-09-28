@@ -8,7 +8,9 @@
 
 mod inbox_sync;
 mod normalize_keys;
+mod sandbox_host;
 mod seat_policy;
+mod verified_connect;
 mod verified_send;
 
 use std::collections::HashSet;
@@ -17,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::error::{Error, Result};
 use crate::surface_event::{InboundSurfaceEventInput, SurfaceCounterpartyStamp};
 
@@ -36,11 +38,18 @@ use self::normalize_keys::{
     reference_kind_is, section_references, thread_id_from_payload_url, thread_id_from_reference,
     vault_scoped_secret_ref,
 };
+pub use self::sandbox_host::{
+    LinkedInContainerSandboxHost, LinkedInSeatHostServices, LinkedInSeatSandbox,
+};
 pub use self::seat_policy::{
     LinkedInAccountRiskLimits, LinkedInConsentScreenCopy, LinkedInKillSwitchState,
     LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatPolicyAction,
     LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy, linkedin_connect_consent_screen_copy,
     run_linkedin_kill_switch,
+};
+pub use self::verified_connect::{
+    LinkedInConnectionObservation, LinkedInConnectionState, LinkedInMcpConnectRequest,
+    LinkedInMcpConnectTransport, LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
 };
 pub use self::verified_send::{
     LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink,
@@ -331,12 +340,18 @@ impl LinkedInMcpConnectorAdapter {
         let payload = serde_json::to_vec(&config).map_err(|err| {
             Error::InvalidConfig(format!("LinkedIn inbox sync config did not encode: {err}"))
         })?;
-        AttemptQueue::new(vault).enqueue(EnqueueAttempt {
-            kind: LINKEDIN_INBOX_SYNC_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
-            run_id: None,
-            now,
+        vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                vault,
+                txn,
+                EnqueueAttempt {
+                    kind: LINKEDIN_INBOX_SYNC_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
+                    run_id: None,
+                    now,
+                },
+            )
         })
     }
 

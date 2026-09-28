@@ -4,13 +4,12 @@ use heed::RwTxn;
 
 use crate::affect::Vad;
 use crate::edge::{
-    EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
-    EDGE_VALUE_STRUCTURAL_LEN, EdgeKind, EdgeProvenanceFlags, encode_edge_value,
-    validate_edge_weight,
+    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
+    EdgeKind, EdgeProvenanceFlags, encode_edge_value, validate_edge_weight,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RegistryError, Result};
-use crate::ppr;
+use crate::ports::EdgeStoreStaging;
 use crate::store::Store;
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
@@ -57,8 +56,7 @@ pub(super) fn reject_if_existing_edge_is_provenanced(
         EDGE_VALUE_SEMANTIC_LEN + 2,
         "provenanced-edge detection is layout-length based; update the reject gate if the hot-flag layout changes"
     );
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    if let Some(existing) = store.edges_out.get(wtxn, &key_out)?
+    if let Some(existing) = store.port_edge_encoded(wtxn, &src, kind, &tgt)?
         && existing.len() == EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
     {
         return Err(Error::Claim(ClaimError::EdgeIsProvenanced {
@@ -95,12 +93,12 @@ pub(super) fn apply_public_edge_with_created_at(
 pub(super) fn read_edge_value_for_setter(
     store: &Store,
     wtxn: &RwTxn<'_>,
-    key_out: &[u8; EDGE_KEY_LEN],
+    src: &EntityId,
+    kind: EdgeKind,
+    dst: &EntityId,
 ) -> Result<Vec<u8>> {
     let existing = store
-        .edges_out
-        .get(wtxn, key_out)?
-        .map(|value| value.to_vec())
+        .port_edge_encoded(wtxn, src, kind, dst)?
         .ok_or(Error::EdgeNotFound)?;
     match existing.len() {
         EDGE_VALUE_STRUCTURAL_LEN
@@ -127,12 +125,10 @@ pub(super) fn apply_set_edge_weight(
     weight: f32,
 ) -> Result<()> {
     validate_edge_weight(weight)?;
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, src, kind, tgt, weight)?;
+    let mut value = read_edge_value_for_setter(store, wtxn, &src, kind, &tgt)?;
     value[0..4].copy_from_slice(&weight.to_le_bytes());
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
+    store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
     crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
@@ -155,9 +151,7 @@ pub(super) fn apply_set_edge_vad(
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
+    let mut value = read_edge_value_for_setter(store, wtxn, &src, kind, &tgt)?;
     if value.len() == EDGE_VALUE_STRUCTURAL_LEN {
         return Err(Error::InvariantViolation(
             "structural edges do not carry VAD",
@@ -166,8 +160,7 @@ pub(super) fn apply_set_edge_vad(
     value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
     value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
     value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
-    store.edges_out.put(wtxn, &key_out, &value)?;
-    store.edges_in.put(wtxn, &key_in, &value)?;
+    store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
     crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
     Ok(())
 }
@@ -198,7 +191,11 @@ pub(super) fn apply_edge_with_created_at(
     }
 
     let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
-    stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)
+    stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)?;
+    if kind == EdgeKind::RepliesTo {
+        crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
+    }
+    crate::conversation::pin_room_message_edge(store, wtxn, src, kind, tgt)
 }
 
 /// Applies one edge removal (`BatchOp::DeleteEdge`), clearing both LMDB
@@ -229,120 +226,20 @@ pub(super) fn apply_delete_edge(
     if kind == EdgeKind::Blocks {
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let deleted_out = store.edges_out.delete(wtxn, &key_out)?;
-    let _deleted_in = store.edges_in.delete(wtxn, &key_in)?;
-    Ok(deleted_out)
-}
-
-/// Applies one op of the edge family and invalidates the PPR caches of both
-/// endpoints when it changes an edge. Returns whether the graph changed: every
-/// edge op changes it except a delete of an edge that is not stored.
-pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) -> Result<bool> {
-    match op {
-        BatchOp::Edge {
-            src,
-            kind,
-            tgt,
-            weight,
-            vad,
-        } => {
-            validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-            apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::PublicEdgeWithCreatedAt {
-            src,
-            kind,
-            tgt,
-            weight,
-            created_at,
-            vad,
-        } => {
-            validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-            apply_public_edge_with_created_at(
-                store, wtxn, src, kind, tgt, weight, created_at, vad,
-            )?;
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        // UNGATED by design — this is the replicated/replay shape. A
-        // bare-over-provenanced LWW edge is a legitimate remote winner;
-        // gating here would turn a legitimate remote merge into a
-        // permanent local sync-wedging abort (H2). The public timestamped
-        // builders route through the gated `PublicEdgeWithCreatedAt` arm
-        // instead.
-        //
-        // Ungated is not unvalidated: the ONE-1645 `FacetOf` type table
-        // runs on every path INTO this arm instead, as a
-        // quarantine-and-continue rejection rather than an abort —
-        // `sync::window`'s forward-remat edge write and
-        // `sync::bridge`'s Observer-B edge batch both call
-        // `validate_facet_of_edge` after endpoint readiness, and
-        // `sync::selector`'s federation admission door drops a provably
-        // off-table row before it ever enters the admitted document. A
-        // federation peer therefore cannot replay a facet stamp local
-        // writers may not write.
-        BatchOp::EdgeWithCreatedAt {
-            src,
-            kind,
-            tgt,
-            weight,
-            created_at,
-            vad,
-            provenance,
-        } => {
-            apply_edge_with_created_at(
-                store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
-            )?;
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::SetEdgeWeight {
-            src,
-            kind,
-            tgt,
-            weight,
-        } => {
-            apply_set_edge_weight(store, wtxn, src, kind, tgt, weight)?;
-            // The weight at offset 0 is the PPR edge weight — invalidate
-            // and bump exactly like the plain edge-write arms.
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::SetEdgeVad {
-            src,
-            kind,
-            tgt,
-            vad,
-        } => {
-            apply_set_edge_vad(store, wtxn, src, kind, tgt, vad)?;
-            // Mirror the existing edge-write behavior: every edge value
-            // rewrite invalidates the endpoint PPR caches.
-            ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            Ok(true)
-        }
-        BatchOp::DeleteEdge { src, kind, tgt } => {
-            // Deleting or purging the source removes its stamp with it;
-            // a live NOTE or ASSET keeps the one it was born with.
-            if kind == crate::edge::EdgeKind::FacetOf
-                && matches!(
-                    stored_entity_type(store, wtxn, &src)?,
-                    Some(crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET)
-                )
-            {
-                return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
-            }
-            let deleted = apply_delete_edge(store, wtxn, src, kind, tgt)?;
-            if deleted {
-                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-            }
-            Ok(deleted)
-        }
-        _ => Err(Error::InvariantViolation(
-            "only an edge op reaches the edge applier",
-        )),
+    crate::workspace_roster::validate_project_edge_delete(store, wtxn, src, kind, tgt)?;
+    crate::conversation_dag::guard_room_membership_delete(store, wtxn, &src, kind, &tgt)?;
+    if matches!(
+        kind,
+        EdgeKind::PartOf | EdgeKind::BelongsTo | EdgeKind::AuthoredBy
+    ) && crate::conversation::room_message_owner_in(store, wtxn, src)?.is_some()
+    {
+        return Err(crate::error::RecordError::InvalidConversationDag(
+            "room MESSAGE membership requires the actor-bound door",
+        )
+        .into());
     }
+    if kind == EdgeKind::RepliesTo {
+        crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
+    }
+    store.port_remove_edge_rows(wtxn, &src, kind, &tgt)
 }

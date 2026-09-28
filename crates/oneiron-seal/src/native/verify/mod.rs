@@ -1,13 +1,20 @@
 //! Native verifier and profile classifier (§7.7).
 //!
 //! A parseable but cryptographically invalid sealed PDF yields
-//! `Ok(VerifyReport { valid: false, .. })`; [`SealError::InputInvalid`] is
+//! `Ok(VerifyReport)`; [`SealError::InputInvalid`] is
 //! reserved for bytes that cannot be safely parsed within limits. A malformed
 //! optional timestamp or DSS object is a failed verification, never an
 //! absent optional profile.
 
+mod evidence_time;
+#[cfg(test)]
+mod review_1842_tests;
+mod timestamp_evidence;
 mod verify_chain_gates;
 mod verify_dss_core;
+mod verify_evidence;
+mod verify_report_build;
+mod verify_revisions;
 mod verify_revocation;
 mod verify_sig_pipeline;
 #[cfg(test)]
@@ -17,12 +24,14 @@ mod verify_tests_fixtures_dss_a;
 #[cfg(test)]
 mod verify_tests_lta_probes;
 #[cfg(test)]
+mod verify_tests_review;
+#[cfg(test)]
 mod verify_tests_sig_shapes;
 #[cfg(test)]
 mod verify_tests_time_lta_a;
 
 pub(crate) use self::verify_chain_gates::{
-    VerifyCtx, issuer_permits_crl_sign, validate_chain, verify_document,
+    VerifyCtx, issuer_permits_crl_sign, pkix_path_status, validate_chain, verify_document,
 };
 pub(crate) use self::verify_dss_core::EmbeddedCert;
 pub(crate) use self::verify_revocation::{

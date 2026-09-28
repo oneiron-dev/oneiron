@@ -95,6 +95,7 @@ impl Memory<'_> {
             WitnessDoor::Guest,
             || {},
             |_| Ok(()),
+            |_| Ok(()),
         )
     }
 
@@ -115,6 +116,7 @@ impl Memory<'_> {
             WitnessTarget::Session { session, summary },
             WitnessDoor::HostTurn(host_turn_ref),
             || {},
+            |_| Ok(()),
             |_| Ok(()),
         )
     }

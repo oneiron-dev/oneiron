@@ -3,6 +3,7 @@
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
 };
@@ -173,10 +174,7 @@ impl Vault {
             if ENTITY_DOC_HEAD.contains(&self.store, txn, &HexId(*entity))? {
                 return Err(invalid("entity already owns a document"));
             }
-            let raw = self
-                .store
-                .entities
-                .get(txn, entity.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, entity)?
                 .ok_or(Error::EntityNotFound)?
                 .to_vec();
             let header =
@@ -222,6 +220,15 @@ impl Vault {
             // not change. The only replaced bytes are text -> head pointer.
             self.store
                 .port_entity_document_pointer_put(txn, entity, &pointer)?;
+            crate::federation::record_scope::restamp_document_pointer(
+                &self.store,
+                txn,
+                *entity,
+                header.entity_type,
+                body,
+                &pointer,
+            )?;
+
             let mut h = Head {
                 entity: entity.to_hex(),
                 incarnation: EntityId::now().to_hex(),
@@ -297,9 +304,7 @@ pub(crate) fn guard_record_put(
     data: &[u8],
 ) -> Result<()> {
     if ENTITY_DOC_HEAD.contains(store, txn, &HexId(*entity))? {
-        let old = store
-            .entities
-            .get(txn, entity.as_bytes())?
+        let old = crate::ports::EntityStoreRead::port_entity_raw(store, txn, entity)?
             .ok_or(Error::EntityNotFound)?;
         if old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data) {
             return Err(invalid(
@@ -335,8 +340,7 @@ pub(super) fn move_pointer(
     document: &str,
 ) -> Result<()> {
     let raw = store
-        .entities
-        .get(txn, entity.as_bytes())?
+        .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(
         &raw[ENTITY_METADATA_HEADER_LEN..],
@@ -353,6 +357,15 @@ pub(super) fn move_pointer(
     let mut body = Vec::new();
     rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("document pointer encoding"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    crate::federation::record_scope::restamp_document_pointer(
+        store,
+        txn,
+        *entity,
+        header.entity_type,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        &body,
+    )?;
     store.port_entity_document_pointer_put(txn, entity, &body)
 }
 
@@ -372,6 +385,15 @@ pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) 
 /// Errors and malformed heads must not fall through to another document codec.
 pub(crate) fn has_record_head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<bool> {
     ENTITY_DOC_HEAD.contains(store, txn, &HexId(*entity))
+}
+
+/// Read the exact durable document head after the live body was admitted.
+pub(crate) fn record_head_bytes(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    ENTITY_DOC_HEAD.get_bytes(store, txn, &HexId(*entity))
 }
 
 /// Read-only view for existing typed record readers; the durable row retains

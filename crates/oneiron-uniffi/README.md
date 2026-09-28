@@ -68,7 +68,7 @@ The declared verbs, in canonical SDK spelling:
 `witness`, `recall`, `receipts`, `commit`, `claimUpsert`, `remember`,
 `claimRetract`, `forget`, `claimList`, `claimHistory`, `safeDelete`,
 `pendingWrites`, `hydrate`, `getEntity`, `queryBm25`, `neighbors`,
-`putStructural`, `putHabitCheckin`, `putCompanionRecord`,
+`putStructural`, `putHabitCheckin`,
 `admitImportedClaim`, `putBlobArtifact`, `appendBlobVersion`,
 `readBlobVersion`, `enqueueConsolidation`, `dreamerJobStatus`,
 `seedClaims`, `scheduleOutbound`.

@@ -303,7 +303,7 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
     let record = CounterpartyContactRecord::user_introduction(identity, "mika@example.com", 10)?;
     vault.create_counterparty_contact(&contact_id, &record)?;
 
-    let scope = DisclosureScope::task_scoped("party", vec![entity(0x63)], 100)?;
+    let scope = DisclosureScope::new(crate::federation::Scope::top(), "party", 100)?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
     let input = InterlocutorResolutionInput {
         owner_session: true,
@@ -322,7 +322,7 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
     );
     assert_eq!(vault.resolve_interlocutors(&input)?, before_set);
     // And the disclosure writer still accepts the rebuilt row.
-    let mut wider = DisclosureScope::task_scoped("party and travel", vec![entity(0x63)], 100)?;
+    let mut wider = DisclosureScope::new(crate::federation::Scope::top(), "party and travel", 100)?;
     wider.updated_at = 200;
     vault.set_counterparty_disclosure_scope(&contact_id, &wider)?;
     assert_eq!(
@@ -335,20 +335,14 @@ fn disclosure_and_interlocutor_reads_identical() -> Result<()> {
 /// Seeds one ChannelIdentity so a contact recorded through it resolves to a
 /// channel class.
 fn put_identity(vault: &Vault, id: EntityId, channel: &str, address: &str) -> Result<()> {
-    let identity = crate::channel_identity::ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
-        channel: channel.to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
-        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x6F)),
-        state: crate::channel_identity::ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::test_util::self_held_identity_in_state(
+        channel,
+        address,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(entity(0x6F)),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault.create_channel_identity(&id, &identity)
 }
 

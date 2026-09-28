@@ -44,9 +44,7 @@ pub(super) fn read(store: &Store, txn: &RoTxn<'_>) -> Result<Option<PackByteMapS
     };
     let hash = pin.0;
     let id = carrier_id(&hash)?;
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
         .ok_or_else(|| invalid("local pack map carrier missing"))?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or_else(|| invalid("invalid pack map carrier header"))?;
@@ -78,7 +76,8 @@ pub(super) fn persist(
     let bytes = serde_json::to_vec(map).map_err(|_| invalid("pack map encoding failed"))?;
     let hash = *blake3::hash(&bytes).as_bytes();
     let id = carrier_id(&hash)?;
-    if let Some(existing) = vault.store.entities.get(txn, id.as_bytes())? {
+    if let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+    {
         let header = EntityMetadataHeader::parse(&existing)
             .ok_or_else(|| invalid("invalid occupied pack carrier id"))?;
         if header.entity_type != ENTITY_TYPE_ASSET

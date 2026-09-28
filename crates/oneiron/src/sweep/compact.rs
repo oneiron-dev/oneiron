@@ -257,12 +257,13 @@ fn compact_window(
     use loro::ExportMode;
 
     let window = key.to_string();
+    let update_prefix = format!("{window}:");
 
     // Read phase (one read txn, dropped before any Loro work).
     let (snapshot_bytes, update_rows) = {
         let rtxn = vault.store.env.read_txn()?;
         let snapshot = WINDOW_SNAPSHOT.get(&vault.store, &rtxn, &window)?;
-        let rows = WINDOW_UPDATE.scan_from(&vault.store, &rtxn, window.as_bytes())?;
+        let rows = WINDOW_UPDATE.scan_from(&vault.store, &rtxn, update_prefix.as_bytes())?;
         (snapshot, rows)
     };
     if snapshot_bytes.is_none() && update_rows.is_empty() {
@@ -347,7 +348,7 @@ fn compact_window(
         // payload-free. (Carrier completeness stays local here, not reliant
         // on any sibling d:w: co-write.)
         let current_keys: BTreeSet<Vec<u8>> = WINDOW_UPDATE
-            .scan_keys(&vault.store, wtxn, window.as_bytes())?
+            .scan_keys(&vault.store, wtxn, update_prefix.as_bytes())?
             .iter()
             .map(|k| WINDOW_UPDATE.key_bytes(k))
             .collect();
@@ -367,7 +368,7 @@ fn compact_window(
         // honestly fresh.
         WINDOW_SNAPSHOT.put(&vault.store, wtxn, &window, &shallow)?;
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &window, &vv)?;
-        WINDOW_UPDATE.delete_from(&vault.store, wtxn, window.as_bytes())?;
+        WINDOW_UPDATE.delete_from(&vault.store, wtxn, update_prefix.as_bytes())?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &window, &[1u8])?;
 
         // Wire/SLA pin: the swept window cannot serve pre-shallow deltas —
@@ -477,7 +478,11 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         let skill_holder = crate::skill_hub::source_carrier_holder(body);
         let agent_holder = crate::agent_def::birth_source_holder(body);
         let receipt_holder = crate::receipt::receipt_archive_holder(body);
-        let holder = skill_holder.or(agent_holder).or(receipt_holder);
+        let refinement_holder = crate::skill_hub::refinement_carrier_holder(body);
+        let holder = skill_holder
+            .or(agent_holder)
+            .or(receipt_holder)
+            .or(refinement_holder);
         let holder_erased = holder.is_some_and(|holder| erased.contains(&holder));
         let copied_input_erased = agent_holder.is_some_and(|child| {
             crate::agent_def::birth_source_id(&child).is_ok_and(|id| erased.contains(&id))
@@ -494,6 +499,7 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
                 && let Ok(id) = EntityId::from_hex(key)
                 && (crate::skill_hub::source_carrier_matches_id(body, &id)
                     || crate::receipt::receipt_archive_matches_id(body, &id)
+                    || crate::skill_hub::refinement_carrier_matches_id(body, &id)
                     || agent_holder.is_some_and(|child| {
                         crate::agent_def::birth_source_matches_id(&child, &id)
                     }))
@@ -551,4 +557,68 @@ fn birth_payload_contains_erased_id(
         }
         erased.contains(&lower)
     })
+}
+
+#[cfg(all(test, feature = "sync"))]
+mod scoped_update_tests {
+    use super::*;
+    use crate::sync::loro_support::{export_snapshot, export_updates_from};
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window_rows::WindowUpdateKey;
+    use crate::test_util::{embedding_test_config, open_test_vault_with};
+
+    #[test]
+    fn compact_window_ignores_prefix_colliding_update_and_preserves_it() {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let key = WindowKey::from_timestamp(1_771_027_200);
+        let window = key.to_string();
+        let colliding = format!("u:w:{window}x:00000000");
+        let doc = create_window_doc("scope-test", &key);
+        let snapshot = export_snapshot(&doc).unwrap();
+        let vv = doc.oplog_vv();
+        doc.get_map("entities").insert("benign", "value").unwrap();
+        doc.commit();
+        let update = export_updates_from(&doc, &vv).unwrap();
+        let update_key = WindowUpdateKey {
+            window: window.clone(),
+            seq: 0,
+        };
+        vault
+            .with_write_txn(|txn| {
+                WINDOW_SNAPSHOT.put(&vault.store, txn, &window, &snapshot)?;
+                WINDOW_UPDATE.put(&vault.store, txn, &update_key, &update)?;
+                // A damaged neighbor has no valid Loro payload. Its label only shares
+                // text with this window; it must neither block nor be pruned.
+                vault.sync_state_put_in_write_txn(txn, &colliding, b"bad-loro")
+            })
+            .unwrap();
+
+        assert!(matches!(
+            compact_window(&vault, &key, &BTreeSet::new()).unwrap(),
+            CompactOutcome::Compacted
+        ));
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            WINDOW_UPDATE
+                .get(&vault.store, &rtxn, &update_key)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, &colliding)
+                .unwrap()
+                .as_deref(),
+            Some(b"bad-loro".as_slice())
+        );
+        assert!(
+            WINDOW_SHALLOW_FENCE
+                .get(&vault.store, &rtxn, &window)
+                .unwrap()
+                .is_some()
+        );
+    }
 }

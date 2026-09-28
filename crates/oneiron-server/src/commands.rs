@@ -19,7 +19,8 @@ use crate::auth::revoke_token_jti;
 use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
 use crate::build_app;
 use crate::cli::{
-    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenPairArgs, TokenRevokeArgs, VaultArgs,
+    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenRevokeArgs,
+    VaultArgs,
 };
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::managed::{self, ServeListener};
@@ -104,15 +105,80 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// First-owner pairing from the local vault, with the daemon stopped.
+/// The command is intentionally not an HTTP route: possession of the host's
+/// local vault and issuer key is the admission. No bearer-only credential is
+/// revived and no root slip or signing key is printed.
+pub fn token_bootstrap(args: TokenBootstrapArgs) -> anyhow::Result<()> {
+    let link = token_bootstrap_link(&args)?;
+    println!("{link}");
+    Ok(())
+}
+
+fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !args.serve.managed_by_hypnos,
+        "managed vaults pair through their supervisor; local bootstrap is self-host only"
+    );
+    anyhow::ensure!(
+        args.serve.auth_secret.is_none(),
+        "set ONEIRON_AUTH_SECRET or a protected config file; never pass the issuer key in argv"
+    );
+    let origin = api::normalized_base(&args.url)?;
+    let url = reqwest::Url::parse(&origin)?;
+    anyhow::ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "pairing origin cannot contain userinfo"
+    );
+    let loopback = url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    anyhow::ensure!(
+        url.scheme() == "https" || loopback,
+        "non-loopback pairing origins must use HTTPS"
+    );
+    let config = resolve_serve_config(&args.serve)?;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let secret = config
+        .sync_server_config()
+        .auth_secret
+        .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+    // Init seeds the embedded owner. Never accept a caller-chosen holder on
+    // this offline root link, and never re-create a deleted owner actor.
+    let owner = vault.ensure_embedded_owner_actor()?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let link = vault.issue_pairing_link_for_principal(
+        &issuer,
+        oneiron::federation::Scope::top(),
+        args.lifetime_secs.unwrap_or(u64::MAX),
+        oneiron::authority::PairingPrincipal {
+            holder_ref: Some(owner.to_hex()),
+            actor_class: Some("human".into()),
+            org_ref: None,
+        },
+    )?;
+    Ok(oneiron::authority::format_pairing_link(
+        &origin,
+        &link.code,
+        &owner.to_hex(),
+    ))
+}
+
 /// Creates a pairing link on the running server and prints it.
 ///
 /// stdout is exactly one line, the link, so piping it yields nothing else; the
 /// expiry goes to stderr. It opens no vault, so it runs beside a live server,
-/// and the host secret reaches the server only on curl's config channel.
+/// and the slip plus holder proof reach curl only on its config channel.
 pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
-    let Ok(secret) = std::env::var(&args.secret_env) else {
-        anyhow::bail!("{} holds no host secret; nothing was sent", args.secret_env);
-    };
+    let token = std::env::var(&args.token_env)
+        .map_err(|_| anyhow::anyhow!("{} holds no capability slip", args.token_env))?;
+    let binding = api::signed_binding(&token, &args.binding_key_env)?;
     let mut scope = oneiron::federation::Scope::top();
     if let Some(verbs) = args.scope {
         scope.verbs = oneiron::federation::ScopeAxis::Some(verbs.into_iter().collect());
@@ -127,7 +193,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         "lifetime_secs": args.lifetime_secs,
         "principal": principal,
     }))?;
-    let (origin, link) = api::create_pairing_link(&args.url, &secret, body)?;
+    let (origin, link) = api::create_pairing_link(&args.url, &token, &binding, body)?;
     println!(
         "{}",
         oneiron::authority::format_pairing_link(&origin, &link.code, &args.principal_ref)
@@ -176,8 +242,7 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
         let id: [u8; 32] = bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid slip id"))?;
-        vault.revoke_capability_slip(&issuer, id)?;
-        true
+        vault.revoke_capability_slip_once(&issuer, id)?
     } else {
         revoke_token_jti(&vault, &args.jti)?
     };
@@ -516,6 +581,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         || Ok(()),
     );
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
+    let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let embedding_handle = sync_server.spawn_embedding_worker();
     let app = build_app(sync_server).layer(cors_layer);
@@ -528,6 +594,10 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     host.on_stop()?;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
+    if let Some(handle) = linear_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
     if let Some(handle) = embedding_handle {
         handle.abort();
         let _ = handle.await;

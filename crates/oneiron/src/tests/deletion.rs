@@ -275,25 +275,70 @@ fn hard_erase_of_a_merge_head_cascades_to_its_redirect_shell() -> Result<()> {
     };
     assert_eq!(vault.resolve_entity(&loser)?, vec![survivor]);
     assert!(!vault.get(&loser)?.expect("shell body").is_empty());
+    vault.set_gate_decision_partition_hold(Some(*loser.as_bytes()), true)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)
+            .is_err()
+    );
+    assert!(!vault.get(&loser)?.expect("held shell body").is_empty());
+    assert!(
+        vault.get(&survivor)?.is_some(),
+        "head cannot erase without held shell"
+    );
+    vault.set_gate_decision_partition_hold(Some(*loser.as_bytes()), false)?;
 
-    let author_pin = vault.pin_entity_revision(&event)?;
+    let attribution = {
+        let txn = vault.store.env.read_txn()?;
+        let mut found = None;
+        for entry in vault.store.type_index.prefix_iter(
+            &txn,
+            &[crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT],
+        )? {
+            let (key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let Some(row) = vault.identity_topology_event_in_txn(&txn, &id)? else {
+                continue;
+            };
+            if matches!(row.action,
+                crate::identity_topology::StoredIdentityOpAction::AuthorAttribution { target, .. }
+                if target == event)
+            {
+                found = Some(id);
+                break;
+            }
+        }
+        found.expect("separate author carrier minted beside immutable decision")
+    };
+    let author_pin = vault.pin_entity_revision(&attribution)?;
+    let core_pin = vault.pin_entity_revision(&event)?;
+    let original_core = vault.get_raw_with_mode(
+        &event,
+        crate::vault::entity_revision::ReadMode::Pinned(core_pin),
+    )?;
     let outcome = vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
-    assert!(matches!(
+    assert_eq!(
         vault.get_raw_with_mode(
-            &event,
-            crate::vault::entity_revision::ReadMode::Pinned(author_pin)
-        ),
-        Err(Error::EntityNotFound)
-    ));
-    let scrubbed_pin = vault.pin_entity_revision(&event)?;
-    assert_ne!(author_pin, scrubbed_pin);
+            &attribution,
+            crate::vault::entity_revision::ReadMode::Pinned(author_pin),
+        )?,
+        None,
+        "the personal carrier is physically absent even through a pinned read",
+    );
+    assert_eq!(
+        vault.get_raw(&attribution)?,
+        None,
+        "active personal attribution must also be erased"
+    );
     assert_eq!(
         vault.get_raw_with_mode(
             &event,
-            crate::vault::entity_revision::ReadMode::Pinned(scrubbed_pin)
+            crate::vault::entity_revision::ReadMode::Pinned(core_pin),
         )?,
-        vault.get_raw_with_mode(&event, crate::vault::entity_revision::ReadMode::Live)?
+        original_core,
+        "the immutable core and its pinned revision survive erasure byte-identically"
     );
+    assert_eq!(vault.get_raw(&event)?, original_core);
     assert!(outcome.existed);
 
     // The leak r6 §9 names: neither the head nor its shell may still read.
@@ -828,5 +873,229 @@ fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
     assert!(peer.search_vector(&[0.1, 0.2, 0.3, 0.4], 10)?.is_empty());
     assert_eq!(redaction_audit_receipts(&peer)?.len(), 1);
     assert_eq!(hard_erase_sweep_rows(&peer)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn plain_delete_is_tombstone_tier_and_explicit_purge_is_irreversible() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let soft = EntityId::now();
+    let hard = EntityId::now();
+    for id in [soft, hard] {
+        vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"body")?;
+    }
+    assert!(vault.delete_entity(&soft)?);
+    assert_eq!(vault.get(&soft)?.as_deref(), Some([].as_slice()));
+    assert!(
+        vault.delete_entity_with_options(
+            &hard,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
+    assert_eq!(vault.get(&hard)?, None);
+    let txn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .sync_state
+            .get(&txn, &crate::deletion::local_hard_delete_key(&hard))?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn deleting_record_retires_scope_stamp_even_for_same_id_same_bytes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let raw = b"stable bytes";
+    vault.put_entity(&id, 1, test_time_range(10, 10), 20, raw)?;
+    assert!(vault.record_scope(&id)?.is_some());
+    // Generic deindex is intentionally used here: unlike hard delete it has no
+    // permanent dt: marker, and a same-id same-body put can reveal a stale stamp.
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity(&vault.store, txn, &id)?;
+        Ok(())
+    })?;
+    assert!(vault.record_scope(&id)?.is_none());
+    // Replaying byte-identical content at the same id does not inherit the
+    // erased record's locally authored scope; a normal local put would mint a
+    // new stamp and would not exercise this identity-reuse boundary.
+    vault
+        .batch()
+        .put_replicated(&id, 1, test_time_range(10, 10), 20, raw)
+        .commit()?;
+    assert_eq!(vault.get(&id)?.as_deref(), Some(raw.as_slice()));
+    assert!(vault.record_scope(&id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn held_key_partition_defers_hard_erase_without_a_tombstone() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"keep while held")?;
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), true)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
+            .is_err()
+    );
+    assert_eq!(
+        vault.get(&id)?.as_deref(),
+        Some(b"keep while held".as_slice())
+    );
+    assert!(redaction_audit_receipts(&vault)?.is_empty());
+    assert!(hard_erase_sweep_rows(&vault)?.is_empty());
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), false)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?
+            .existed
+    );
+    Ok(())
+}
+
+#[test]
+fn held_partition_after_tombstone_publication_defers_local_purge() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"late hold")?;
+    let result = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |txn| {
+        let mut key = b"gate_decision:partition_hold:v1:".to_vec();
+        key.push(1);
+        key.extend_from_slice(id.as_bytes());
+        vault.store.vault_meta.put(txn, &key, &[1])?;
+        Ok(())
+    });
+    assert!(matches!(result, Err(Error::InvalidConfig(_))));
+    let txn = vault.store.env.read_txn()?;
+    let physical = vault
+        .store
+        .entities
+        .get(&txn, id.as_bytes())?
+        .expect("held entity still has its physical row");
+    assert!(physical.ends_with(b"late hold"));
+    drop(txn);
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), false)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?
+            .existed
+    );
+    Ok(())
+}
+
+/// ARCH-0038's partition hold defers an erasure; it never cancels one. The
+/// first request already published, so its tombstone stays on the wire, and
+/// the retry's new request takes its unpurged reservation over.
+#[cfg(feature = "sync")]
+#[test]
+fn hard_delete_retry_after_released_hold_completes_and_accepts_the_first_replay() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"late hold")?;
+    let result = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |txn| {
+        let mut key = b"gate_decision:partition_hold:v1:".to_vec();
+        key.push(1);
+        key.extend_from_slice(id.as_bytes());
+        vault.store.vault_meta.put(txn, &key, &[1])?;
+        Ok(())
+    });
+    assert!(matches!(result, Err(Error::InvalidConfig(_))));
+    let txn = vault.store.env.read_txn()?;
+    let first = crate::deletion::topology_delete_reservation_in_txn(&vault.store, &txn, &id)?
+        .expect("the published first request keeps its reservation");
+    drop(txn);
+    assert_eq!(
+        first.phase,
+        crate::deletion::topology_delete_intent::TopologyDeletePhase::Published
+    );
+    let first_replay = crate::deletion::TombstoneValueV2 {
+        reason: first.reason,
+        deleted_at: first.deleted_at,
+        request_id: first.request_id,
+    }
+    .encode();
+
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), false)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?
+            .existed
+    );
+    assert!(vault.get(&id)?.is_none());
+    let txn = vault.store.env.read_txn()?;
+    let marker = vault
+        .store
+        .sync_state
+        .get(&txn, &crate::deletion::local_hard_delete_key(&id))?
+        .expect("the retry's purge writes its dt: marker");
+    assert_ne!(
+        crate::deletion::decode_tombstone_value(&marker).request_id,
+        Some(first.request_id),
+        "the retry purged under its own request"
+    );
+    drop(txn);
+    assert!(matches!(
+        vault.apply_replayed_tombstone(&id, &first_replay)?,
+        ReplayedTombstoneOutcome::HardPurged { erased: false, .. }
+    ));
+    assert!(vault.get(&id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn replayed_hard_erase_defers_entire_redirect_cascade_for_held_shell() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let survivor = EntityId::now();
+    let shell = EntityId::now();
+    for id in [&actor, &survivor, &shell] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(200, 200),
+            201,
+            b"replay body",
+        )?;
+    }
+    let outcome = vault.apply_identity_topology_op(
+        &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![shell],
+            survivor,
+            evidence: crate::identity_topology::IdentityOpEvidence::default(),
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        }),
+        &crate::identity_topology::IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(actor, EdgeActorClass::Human)),
+        202,
+    )?;
+    assert!(matches!(
+        outcome,
+        crate::identity_topology::IdentityOpOutcome::Applied { .. }
+    ));
+    vault.set_gate_decision_partition_hold(Some(*shell.as_bytes()), true)?;
+    let tombstone = wire_tombstone(2, 1_771_300_100, 0xB7);
+    assert!(
+        vault
+            .apply_replayed_tombstone(&survivor, &tombstone)
+            .is_err()
+    );
+    let txn = vault.store.env.read_txn()?;
+    for id in [&survivor, &shell] {
+        assert!(
+            vault.store.entities.get(&txn, id.as_bytes())?.is_some(),
+            "held cascade must preserve both physical rows"
+        );
+    }
+    drop(txn);
+    vault.set_gate_decision_partition_hold(Some(*shell.as_bytes()), false)?;
+    assert!(matches!(
+        vault.apply_replayed_tombstone(&survivor, &tombstone)?,
+        ReplayedTombstoneOutcome::HardPurged { erased: true, .. }
+    ));
+    assert!(vault.get(&survivor)?.is_none());
+    assert_eq!(vault.get(&shell)?.expect("soft shell").len(), 0);
     Ok(())
 }

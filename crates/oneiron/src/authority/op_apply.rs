@@ -3,8 +3,6 @@
 //! Roster, tier-floor, actor-binding, federation-lifecycle, and pact-merge
 //! mutations. Treated as a black box by [`super::entry_transition`].
 
-use std::collections::BTreeSet;
-
 use crate::federation::{
     FederationDirectionScope, FederationPactScope, encode_federation_pact_scope,
 };
@@ -33,15 +31,7 @@ pub(super) fn apply_op(
             }
         }
         AuthorityOp::RevokeDevice { revoked_key } => {
-            state
-                .fork_resolution_revocations
-                .insert(revoked_key.clone());
             revoke_key(state, revoked_key);
-            for fork in state.authority_forks.values_mut() {
-                if fork.signer == *revoked_key && fork.status == AuthorityForkStatus::Quarantined {
-                    fork.status = AuthorityForkStatus::Resolved;
-                }
-            }
         }
         AuthorityOp::RetiredCeiling { .. }
         | AuthorityOp::SlipMint(_)
@@ -94,22 +84,10 @@ pub(super) fn apply_op(
             record_tier_floor(state, entry_hash, *tier_floor);
         }
         AuthorityOp::ReRoot { new_device } => {
-            let revoked_keys: BTreeSet<_> = state.roster.keys().cloned().collect();
-            state
-                .fork_resolution_revocations
-                .extend(revoked_keys.iter().cloned());
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
-            state.migrated_roots.insert(new_device.key.clone());
             upsert_device(state, new_device);
-            for fork in state.authority_forks.values_mut() {
-                if fork.status == AuthorityForkStatus::Quarantined
-                    && revoked_keys.contains(&fork.signer)
-                {
-                    fork.status = AuthorityForkStatus::Resolved;
-                }
-            }
         }
         AuthorityOp::VetoPendingWiden { .. } => {}
         // The VetoPendingWiden precedent: `apply_op` returns `()` and cannot
@@ -122,6 +100,26 @@ pub(super) fn apply_op(
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. } => {}
     }
+}
+
+/// One max/union transition for both ordinarily folded revokes and verified
+/// log-derived restrictive facts. Never carries permissive binding content.
+pub(super) fn record_actor_revoke(
+    state: &mut FoldState,
+    authority_key: &AuthorityKey,
+    epoch: u64,
+    entry_hash: AuthorityEntryHash,
+) {
+    let watermark = state
+        .actor_binding_revocations
+        .entry(authority_key.clone())
+        .or_insert(0);
+    *watermark = (*watermark).max(epoch);
+    state
+        .actor_revocation_hashes
+        .entry(authority_key.clone())
+        .or_default()
+        .insert(entry_hash);
 }
 
 /// The actor-binding transition table (ONE-1604-D2).
@@ -142,16 +140,7 @@ pub(super) fn apply_actor_binding(
             authority_key,
             epoch,
         } => {
-            let watermark = state
-                .actor_binding_revocations
-                .entry(authority_key.clone())
-                .or_insert(0);
-            *watermark = (*watermark).max(*epoch);
-            state
-                .actor_revocation_hashes
-                .entry(authority_key.clone())
-                .or_default()
-                .insert(entry_hash);
+            record_actor_revoke(state, authority_key, *epoch, entry_hash);
             return Ok(());
         }
         AuthorityOp::BindActor {
@@ -414,7 +403,9 @@ pub(super) fn apply_federation_lifecycle(
                 .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
             let ceiling =
                 local_outbound_scope(&local_vault_id, &pact.peer_vault_id, &pact.pact_scope);
-            if !effective.is_narrowing_of(&ceiling) {
+            if !crate::federation::Ceiling::new(effective.clone())
+                .is_within(&crate::federation::Ceiling::new(ceiling))
+            {
                 return Err(FederationLifecycleRejection::WidenWithoutGesture);
             }
             pact.effective_scope = effective.clone();

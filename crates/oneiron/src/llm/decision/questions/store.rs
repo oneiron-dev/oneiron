@@ -17,7 +17,7 @@ pub(super) fn family_prefix(id: EntityId, family: &[u8]) -> Vec<u8> {
     out
 }
 
-fn decode_family<'b>(bytes: &'b [u8], family: &[u8]) -> Option<(EntityId, &'b [u8])> {
+pub(super) fn decode_family<'b>(bytes: &'b [u8], family: &[u8]) -> Option<(EntityId, &'b [u8])> {
     let (id_bytes, rest) = bytes.split_at_checked(16)?;
     let id = EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?;
     let suffix = rest
@@ -127,6 +127,9 @@ pub fn create_question(
     mut definition: QuestionDefinition,
     now: u64,
 ) -> Result<QuestionRecord> {
+    if definition.activation != QuestionActivation::Standing {
+        return Err(invalid("one-off questions only save receipts"));
+    }
     definition.question.id = EntityId::now();
     definition.question.version = 1;
     definition.validate()?;
@@ -196,9 +199,28 @@ pub fn edit_question(
             .version
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("question version"))?;
+        if definition.activation != QuestionActivation::Standing {
+            return Err(invalid("one-off questions only save receipts"));
+        }
         definition.question.id = id;
         definition.question.version = version;
         definition.validate()?;
+        let old = QUESTION_VERSION
+            .get(
+                &vault.store,
+                txn,
+                &VersionKey {
+                    id,
+                    version: head.version,
+                },
+            )?
+            .ok_or(Error::CorruptedIndex("question version"))?;
+        super::arrival::unwatch_units(&vault.store, txn, &old)?;
+        for unit in &old.definition.units {
+            if !definition.refresh.on_arrival || !definition.units.contains(unit) {
+                super::arrival::PENDING.delete(&vault.store, txn, &(id, *unit))?;
+            }
+        }
         let record = QuestionRecord {
             schema_version: 1,
             principal,
@@ -209,8 +231,10 @@ pub fn edit_question(
         QUESTION_VERSION.put(&vault.store, txn, &VersionKey { id, version }, &record)?;
         super::arrival::watch(&vault.store, txn, &record)?;
         head.version = version;
+        head.last_refresh = None;
         secret_scan_before_put(&head)?;
         QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)?;
+
         Ok(record)
     })
 }

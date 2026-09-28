@@ -26,6 +26,13 @@ world guest {
     record edge-output { src: string, kind: string, tgt: string }
     record wait-output { wait-id: string }
     record speech-output { order: u32, is-visible: bool }
+    record blocked-output { receipt: string }
+    record agent-put-input {
+        id: string,
+        // @json
+        definition: string,
+    }
+    record agent-put-output { id: string, disposition: string }
     record supersede-input { new-id: string, old-id: string, now: u64 }
     record edge-input { src: string, kind: string, tgt: string, weight: option<f32> }
     record prompt-input { prompt: string }
@@ -37,9 +44,13 @@ world guest {
         args: string,
     }
     record file-proposal { path: string, bytes: list<u8> }
+    record file-delete-proposal { path: string }
+    record file-rename-proposal { origin: string, destination: string }
     variant proposal-delta {
         file-write(file-proposal),
         claim-candidate(claim-input),
+        file-delete(file-delete-proposal),
+        file-rename(file-rename-proposal),
     }
     record step-result {
         result-json: string,
@@ -57,6 +68,15 @@ world guest {
 
     // First-party-only imports. Foreign components must not import these;
     // their writes are exported as proposals and never linked as host effects.
+    // @js vault.agents.put
+    import agents-put: func(input: agent-put-input) -> result<agent-put-output, string>;
+    // @js self.json.validate
+    import json-validate: func(
+        // @json
+        schema: string,
+        // @json
+        value: string
+    ) -> result<bool, string>;
     // @js self.memory.search
     import memory-search: func(input: search-input) -> result<search-output, string>;
     // @js self.memory.put_claim
@@ -65,10 +85,10 @@ world guest {
     import memory-supersede-claim: func(input: supersede-input) -> result<claim-output, string>;
     // @js self.memory.put_edge
     import memory-put-edge: func(input: edge-input) -> result<edge-output, string>;
-    // @js self.ask_human
-    import ask-human: func(input: prompt-input) -> result<wait-output, string>;
-    // @js self.askHuman
-    import ask-human-camel: func(input: prompt-input) -> result<wait-output, string>;
+    // @js self.report_blocked
+    import report-blocked: func(category: string, detail: string) -> result<blocked-output, string>;
+    // @js ask
+    import ask: func(input: prompt-input) -> result<wait-output, string>;
     // @js self.speak
     import speak: func(input: text-input) -> result<speech-output, string>;
     // @js self.think

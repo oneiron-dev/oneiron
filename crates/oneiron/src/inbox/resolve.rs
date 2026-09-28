@@ -5,7 +5,7 @@ use sha2::Digest;
 use sha2::Sha256;
 
 use crate::Vault;
-use crate::batch::{BatchOp, apply_ops};
+use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
     AmendmentDelta, DeltaCaptureContext, OUTCOME_APPROVED_AMENDED, attach_amendment_deltas,
@@ -496,7 +496,12 @@ fn accept_member_with_amendment_in_txn(
             crate::batch::ClaimMaterialization::apply_approval(vault, wtxn, put, true)?;
         } else {
             // The approver rewrote the text: the landed body has no single author.
-            apply_ops(
+            let transition = crate::batch::VerifiedClaimTransition::after_consented_edit(
+                &vault.store,
+                wtxn,
+                &put,
+            )?;
+            crate::batch::apply_ops_with_gate_mode(
                 &vault.store,
                 &vault.config,
                 &vault.analyzer,
@@ -505,8 +510,8 @@ fn accept_member_with_amendment_in_txn(
                 vault
                     .text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
-                false,
-                true,
+                crate::batch::ApplyOpsGateMode::new(false, true)
+                    .with_verified_claim_transitions(vec![transition]),
             )?;
         }
     }
@@ -664,7 +669,21 @@ fn append_bundle_decision_in_txn(
             .map_or([0; 32], |record| record.read_frontier_hash),
         redacted_at: None,
     };
-    vault.store.append_gate_decision_in_txn(wtxn, &record)?;
+    let claim_refs = basis
+        .iter()
+        .map(|member| {
+            member
+                .claim_id
+                .ok_or(Error::CorruptedIndex("inbox bundle member claim"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if claim_refs.is_empty() {
+        vault.store.append_gate_decision_in_txn(wtxn, &record)?;
+    } else {
+        vault
+            .store
+            .append_gate_decision_with_claim_refs_in_txn(wtxn, &record, &claim_refs)?;
+    }
     Ok(record)
 }
 

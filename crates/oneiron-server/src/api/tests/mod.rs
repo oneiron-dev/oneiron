@@ -36,6 +36,7 @@ mod mcp_scoping;
 mod mcp_tool_endpoints;
 mod mcp_write_guards;
 mod reactive;
+mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_tree;
@@ -69,6 +70,9 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
     ("/v1/core/run-tree", "get"),
     ("/v1/core/run-tree/observe", "get"),
     ("/v1/core/run-tree/intervene", "post"),
+    ("/v1/core/memory/{id}/watch", "get"),
+    ("/v1/core/memory/{id}/watch", "put"),
+    ("/v1/core/memory/{id}/watch", "delete"),
     ("/v1/core/conversations", "get"),
     ("/v1/core/conversations", "post"),
     ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -146,6 +150,8 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreHydrateResponse",
     "CoreHydrateStatus",
     "CoreListQuery",
+    "CoreMemoryChange",
+    "CoreMemoryWatchResponse",
     "CoreMemoryOperationKind",
     "CoreMemoryTimelineRecord",
     "CoreMemoryTimelineRecordState",
@@ -220,7 +226,9 @@ pub(super) fn test_server_with_config(
     config: SyncServerConfig,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
     (dir, server)
@@ -268,8 +276,25 @@ pub(super) fn ingest_artifact_snapshot(
     artifact: &str,
     learned_at: u64,
 ) -> oneiron::codebase::RepoIngestResult {
-    let config = oneiron::codebase::RepoIngestConfig::new(repo_dir, ["index.html", "app.js"])
-        .expect("repo ingest config");
+    let mut paths = vec!["index.html", "app.js"];
+    for extra in [
+        "style.css",
+        "next.html",
+        "c/app.js",
+        "f/style.css",
+        "b/next.html",
+        "_s/nested/app.js",
+        "_t/nested/style.css",
+        "report#1.js",
+        "report?2.js",
+        "literal%20.js",
+    ] {
+        if repo_dir.join(extra).is_file() {
+            paths.push(extra);
+        }
+    }
+    let config =
+        oneiron::codebase::RepoIngestConfig::new(repo_dir, paths).expect("repo ingest config");
     let result = server
         .vault
         .ingest_local_repo_at_commit(
@@ -439,9 +464,9 @@ pub(super) fn test_bearer(claims: &str) -> String {
     format!("{}{claims}", slip_credentials::RECIPE_PREFIX)
 }
 
-/// Owner-grade credential: the bare trust root over the standard header.
+/// Owner-grade fixture credential: an unattenuated top-scope slip.
 pub(super) fn owner_bearer() -> String {
-    "Bearer secret".to_owned()
+    test_bearer("jti=owner-bearer")
 }
 
 pub(super) fn core_request(
@@ -855,14 +880,65 @@ pub(super) fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::Entity
 pub(super) fn seed_disclosure_scope(
     server: &SyncServer,
     contact_id: oneiron::EntityId,
-    entities: Vec<oneiron::EntityId>,
+    clearance: oneiron::federation::Scope,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
+    let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
+
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)
         .expect("set disclosure scope");
+}
+
+fn disclosure_base_world_clearance() -> oneiron::federation::Scope {
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some([ScopeId(oneiron::claim::base_world_id())].into());
+    scope
+}
+
+fn seed_disclosure_claim_in_world(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+    world: oneiron::EntityId,
+) -> oneiron::EntityId {
+    let id = oneiron::EntityId::now();
+    let mut claim = oneiron::ClaimBody::new(
+        "event.diary",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(text),
+        1.0,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    claim.world = Some(world);
+    // Tier B is required here: otherwise the tier check rejects this claim
+    // before the test can exercise the contact's world clearance.
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("private"),
+    )]));
+    server
+        .vault
+        .put_claim(
+            &id,
+            &claim,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .expect("seed out-of-world claim");
+    server
+        .vault
+        .batch()
+        .text(&id, &[("body", text)])
+        .commit()
+        .expect("index out-of-world claim");
+    id
 }
 
 // ─── Surface events (ONE-1259) ───────────────────────────────────────────────
@@ -872,20 +948,40 @@ pub(super) fn seed_disclosure_scope(
 pub(super) fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> String {
     let identity_ref = seeded_test_entity_id(counter);
     let agent_ref = seeded_test_entity_id(counter + 1);
-    let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+    let identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
         oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
         1_782_357_000,
     );
-    identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     server
         .vault
         .create_channel_identity(&identity_ref, &identity)
         .expect("seed channel identity");
+    // ACTIVE is reached by walking the machine, not by assigning the state: the
+    // fixture goes through the same two steps a provisioned identity does.
+    activate_seeded_identity(server, identity_ref, 1_782_357_000);
     agent_ref.to_hex()
+}
+
+/// Walks a freshly created self-held row `Requested -> Pending -> Active`.
+pub(super) fn activate_seeded_identity(
+    server: &SyncServer,
+    identity_ref: oneiron::EntityId,
+    at: u64,
+) {
+    for step in [
+        oneiron::channel_identity::ChannelIdentityStep::Bind(
+            oneiron::channel_identity::ChannelIdentityFulfillment::Api,
+        ),
+        oneiron::channel_identity::ChannelIdentityStep::Fulfill,
+    ] {
+        server
+            .vault
+            .step_channel_identity(&identity_ref, step, at)
+            .expect("activate seeded identity");
+    }
 }
 
 pub(super) fn surface_event_body(address: &str, correlation_id: &str) -> Value {

@@ -18,18 +18,22 @@ mod types;
 pub mod workflow;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
+pub(crate) use self::doors::AgentAuthorLease;
+pub use self::doors::AgentDefinitionPutDisposition;
 pub use self::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
     AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,
-    AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, CONTEXT_BUDGET_SPLIT_KEYS,
-    CompactionOwnership, ContextBudgetSplit, DreamingMode, MCP_REF_KEYS, MEMORY_PROFILE_KEYS,
-    McpRef, MemoryProfile,
+    AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence,
+    CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, DreamingMode, MCP_REF_KEYS,
+    MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
 };
 
 pub(crate) use self::codec::{
     legacy_logical_id_row, validate_agent_definition_bytes, validate_agent_definition_update,
 };
-pub(crate) use self::manifest::{seed_system_agent_definitions, validate_reserved_logical_id};
+pub(crate) use self::manifest::{
+    seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
+};
 pub(crate) use self::types::forked_from_row_ref;
 
 // The flat agent_def.rs module used to provide these names to the sibling test
@@ -114,7 +118,9 @@ mod one_1698_tests {
 
 mod portable;
 mod portable_binding;
-pub(crate) use portable::{agent_pack_files, resolve_agent_skill_refs, select_agent_knowledge};
+pub(crate) use portable::{
+    AgentSkillReference, agent_pack_files, resolve_agent_skill_refs, select_agent_knowledge,
+};
 pub(crate) use portable_binding::{
     agent_fork_hash_in_txn, bind_agent_birth_in_txn, import_agent_fork_hash_in_txn,
 };

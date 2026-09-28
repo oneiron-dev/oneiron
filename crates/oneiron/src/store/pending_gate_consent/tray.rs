@@ -17,8 +17,7 @@ use super::sequence_sweep::SEQUENCE_INDEX;
 use super::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT};
 
 /// Pending gate-consent tray row, keyed by claim id. Codec fixed `Raw` (see
-/// the decls.rs note): [`RawValue`] delegates to
-/// [`encode_pending_gate_consent`]/[`decode_pending_gate_consent`].
+/// the declaration note): `RawValue` delegates to its owning codec.
 pub(super) const TRAY: SideTable<[u8; 16], PendingGateConsentRecord, Raw> =
     SideTable::new(&side_table::PENDING_GATE_CONSENT);
 
@@ -122,7 +121,7 @@ impl Store {
         let Some(original) = self.gate_decision_in_txn(wtxn, pending.decision_id)? else {
             return Err(Error::CorruptedIndex("pending gate consent"));
         };
-        if original.decision_id != pending.decision_id {
+        if original.decision_id != pending.decision_id || original.redacted_at.is_some() {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
         let record = GateDecisionRecord {

@@ -1,5 +1,6 @@
 //! Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators.
 
+mod artifact_kinds;
 mod families;
 mod namespaces;
 pub mod pack_byte_map;
@@ -8,6 +9,7 @@ mod type_bytes;
 mod validation;
 mod zones;
 
+pub use self::artifact_kinds::{ArtifactFamilyId, ArtifactFamilyKindId, artifact_family_kind_of};
 pub(crate) use self::families::family_matches;
 pub use self::families::{
     TYPE_BYTE_FAMILIES, TypeByteFamily, TypeByteFamilyEntry, allocate_type_byte, family_of,
@@ -31,10 +33,10 @@ pub use self::type_bytes::{
     ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
     ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PLACE, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SECRET_CUSTODY,
-    ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
-    ENTITY_TYPE_SKILL_HUB, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
-    ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW, ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_RECEIPT_RECORD, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_RELATIONSHIP,
+    ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SKILL_HUB, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW, ENTITY_TYPE_WORLD,
 };
 pub use self::type_bytes::{ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_SUSPICIOUS_WAKE};
 pub use self::zones::{

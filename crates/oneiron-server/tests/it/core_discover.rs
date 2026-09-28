@@ -3,8 +3,9 @@
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use oneiron::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
@@ -50,10 +51,45 @@ fn config_with_secret(secret: &str) -> SyncServerConfig {
     }
 }
 
+struct HostRootAuth {
+    issuer: HostSlipIssuer,
+    slip: CapabilitySlip,
+}
+
+impl HostRootAuth {
+    fn principal(&self) -> String {
+        let slip_id = self
+            .slip
+            .claims
+            .slip_id
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        format!("slip:{slip_id}")
+    }
+}
+
+fn host_root_auth(vault: &oneiron::Vault, secret: &str) -> HostRootAuth {
+    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+    let slip = vault.ensure_host_root_slip(&issuer).unwrap();
+    HostRootAuth { issuer, slip }
+}
+
+enum HttpAuth<'a> {
+    Bearer(&'a str),
+    HostRoot(&'a HostRootAuth),
+}
+
 async fn spawn_server(
     vault: Arc<oneiron::Vault>,
     config: SyncServerConfig,
-) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+) -> (SocketAddr, tokio::task::JoinHandle<()>, HostRootAuth) {
+    let secret = config
+        .auth_secret
+        .as_deref()
+        .expect("authenticated test server needs a host root secret");
+    let root_auth = host_root_auth(&vault, secret);
+
     let server = Arc::new(SyncServer::new(vault, config).unwrap());
     let app = build_app(server);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -61,16 +97,45 @@ async fn spawn_server(
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (addr, handle)
+    (addr, handle, root_auth)
 }
 
-async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String {
+fn auth_headers(auth: Option<HttpAuth<'_>>) -> String {
+    match auth {
+        None => String::new(),
+        Some(HttpAuth::Bearer(token)) => format!("Authorization: Bearer {token}\r\n"),
+        Some(HttpAuth::HostRoot(root)) => {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after Unix epoch")
+                .as_secs();
+            let nonce = EntityId::now().to_hex();
+            let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+            let signature = root
+                .issuer
+                .binding_proof(&root.slip, challenge.as_bytes())
+                .unwrap()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            format!(
+                "Authorization: Bearer {}\r\nx-oneiron-binding: {}\r\n",
+                root.slip.to_token().unwrap(),
+                serde_json::json!({
+                    "timestamp": timestamp,
+                    "nonce": nonce,
+                    "signature": signature,
+                })
+            )
+        }
+    }
+}
+
+async fn http_get(addr: SocketAddr, path: &str, auth: Option<HttpAuth<'_>>) -> String {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let secret_header = secret
-        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
-        .unwrap_or_default();
+    let auth_headers = auth_headers(auth);
     let request =
-        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{secret_header}\r\n");
+        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{auth_headers}\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
 
     let mut response = Vec::new();
@@ -81,13 +146,11 @@ async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String 
     String::from_utf8(response).unwrap()
 }
 
-async fn http_post(addr: SocketAddr, path: &str, secret: Option<&str>, body: &str) -> String {
+async fn http_post(addr: SocketAddr, path: &str, auth: Option<HttpAuth<'_>>, body: &str) -> String {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let secret_header = secret
-        .map(|secret| format!("Authorization: Bearer {secret}\r\n"))
-        .unwrap_or_default();
+    let auth_headers = auth_headers(auth);
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{secret_header}\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth_headers}\r\n{body}",
         body.len()
     );
     stream.write_all(request.as_bytes()).await.unwrap();
@@ -144,15 +207,36 @@ fn str_array_set(value: &Value) -> BTreeSet<&str> {
 async fn context_board_requires_auth_and_deserializes() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
 
     let missing = http_post(addr, "/v1/core/context-board", None, "{}").await;
     assert_http_status(&missing, 401);
 
-    let wrong = http_post(addr, "/v1/core/context-board", Some("wrong"), "{}").await;
+    let wrong = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::Bearer("wrong")),
+        "{}",
+    )
+    .await;
     assert_http_status(&wrong, 401);
 
-    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
+    let bare_secret = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::Bearer("secret")),
+        "{}",
+    )
+    .await;
+    assert_http_status(&bare_secret, 401);
+
+    let response = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::HostRoot(&root_auth)),
+        "{}",
+    )
+    .await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
@@ -190,8 +274,14 @@ async fn context_board_counts_by_type_and_reports_latest_activity() {
         )
         .unwrap();
 
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::HostRoot(&root_auth)),
+        "{}",
+    )
+    .await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
@@ -223,14 +313,14 @@ async fn context_board_counts_by_type_and_reports_latest_activity() {
 async fn context_board_filters_surfaced_notification_by_exact_id() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+    let caller = host_root_auth(&vault, "secret").principal();
 
-    // The bare secret authenticates as principal `bearer`; notification scope
-    // and surfaced markers key on that identity.
+    // Notification scope and surfaced markers key on the logged host-root slip.
     let surfaced = EntityId::now();
     let pending = EntityId::now();
     let surfaced_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "seen",
-        "surfaced_by": ["bearer"]
+        "surfaced_by": [caller]
     }))
     .unwrap();
     let pending_body = rmp_serde::to_vec(&serde_json::json!({
@@ -256,8 +346,14 @@ async fn context_board_filters_surfaced_notification_by_exact_id() {
         )
         .unwrap();
 
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::HostRoot(&root_auth)),
+        "{}",
+    )
+    .await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
@@ -312,8 +408,14 @@ async fn context_board_skips_malformed_and_non_object_notifications() {
         )
         .unwrap();
 
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::HostRoot(&root_auth)),
+        "{}",
+    )
+    .await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
@@ -328,19 +430,20 @@ async fn context_board_skips_malformed_and_non_object_notifications() {
 async fn context_board_requires_all_present_scope_keys_to_match() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+    let caller = host_root_auth(&vault, "secret").principal();
 
     let conflicting = EntityId::now();
     let matched = EntityId::now();
     let conflicting_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "conflict",
-        "caller": "bearer",
+        "caller": caller,
         "recipient": "other"
     }))
     .unwrap();
     let matched_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "match",
-        "caller": "bearer",
-        "recipient": "bearer"
+        "caller": caller,
+        "recipient": caller
     }))
     .unwrap();
 
@@ -363,8 +466,14 @@ async fn context_board_requires_all_present_scope_keys_to_match() {
         )
         .unwrap();
 
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::HostRoot(&root_auth)),
+        "{}",
+    )
+    .await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
@@ -402,8 +511,14 @@ async fn context_board_bounds_pending_notification_response_to_latest_items() {
     }
     batch.commit().unwrap();
 
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::HostRoot(&root_auth)),
+        "{}",
+    )
+    .await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
@@ -431,6 +546,7 @@ async fn context_board_returns_latest_pending_notification_over_type_cap() {
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), large_test_vault_config()).unwrap());
+    let caller = host_root_auth(&vault, "secret").principal();
 
     let acked_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "old-acked",
@@ -439,7 +555,7 @@ async fn context_board_returns_latest_pending_notification_over_type_cap() {
     .unwrap();
     let surfaced_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "old-surfaced",
-        "surfaced_by": ["bearer"]
+        "surfaced_by": [caller]
     }))
     .unwrap();
     let pending = seeded_entity_id(ID_BASE + HISTORICAL_ROWS as u128);
@@ -475,8 +591,14 @@ async fn context_board_returns_latest_pending_notification_over_type_cap() {
         .commit()
         .unwrap();
 
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(
+        addr,
+        "/v1/core/context-board",
+        Some(HttpAuth::HostRoot(&root_auth)),
+        "{}",
+    )
+    .await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("context board should deserialize");
@@ -502,9 +624,11 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
     let expected_counts = [
         (oneiron::registry::ENTITY_TYPE_AGENT_DEF, 7u64),
         (oneiron::registry::ENTITY_TYPE_SKILL, 4),
+        (oneiron::registry::ENTITY_TYPE_SKILL_HUB, 1),
         (oneiron::registry::ENTITY_TYPE_CLAIM, 8),
         (oneiron::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR, 4),
-        (oneiron::registry::ENTITY_TYPE_ASSET, 4),
+        // Four bootstrap skill carriers plus four built-in pack sources.
+        (oneiron::registry::ENTITY_TYPE_ASSET, 8),
         (oneiron::registry::ENTITY_TYPE_CONVERSATION, 1),
         (vault.project_type_byte().unwrap(), 1),
         // The seeded open births the owner PERSON, and that put mints the
@@ -512,15 +636,24 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
         (ENTITY_TYPE_PERSON, 1),
         (oneiron::registry::ENTITY_TYPE_FACET, 1),
     ];
-    let (addr, handle) = spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;
+    let (addr, handle, root_auth) =
+        spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;
 
     let missing = http_get(addr, "/api/core/discover", None).await;
     assert_http_status(&missing, 401);
 
-    let wrong = http_get(addr, "/api/core/discover", Some("wrong")).await;
+    let wrong = http_get(addr, "/api/core/discover", Some(HttpAuth::Bearer("wrong"))).await;
     assert_http_status(&wrong, 401);
 
-    let response = http_get(addr, "/api/core/discover", Some("secret")).await;
+    let bare_secret = http_get(addr, "/api/core/discover", Some(HttpAuth::Bearer("secret"))).await;
+    assert_http_status(&bare_secret, 401);
+
+    let response = http_get(
+        addr,
+        "/api/core/discover",
+        Some(HttpAuth::HostRoot(&root_auth)),
+    )
+    .await;
     assert_http_status(&response, 200);
     assert!(
         http_headers(&response)
@@ -680,9 +813,14 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
 async fn discover_advertises_context_board_and_not_companion_resume() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
 
-    let response = http_get(addr, "/api/core/discover", Some("secret")).await;
+    let response = http_get(
+        addr,
+        "/api/core/discover",
+        Some(HttpAuth::HostRoot(&root_auth)),
+    )
+    .await;
     assert_http_status(&response, 200);
     let body = http_json(&response);
     let capabilities = str_array_set(&body["feature_flags"]["capabilities"]);
@@ -706,9 +844,14 @@ async fn discover_advertises_context_board_and_not_companion_resume() {
 async fn discover_and_health_advertise_every_mounted_search_channel() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
 
-    let discover = http_get(addr, "/api/core/discover", Some("secret")).await;
+    let discover = http_get(
+        addr,
+        "/api/core/discover",
+        Some(HttpAuth::HostRoot(&root_auth)),
+    )
+    .await;
     assert_http_status(&discover, 200);
     let discover_body = http_json(&discover);
     let discovered = str_array_set(&discover_body["feature_flags"]["capabilities"]);
@@ -736,15 +879,33 @@ async fn discover_and_health_advertise_every_mounted_search_channel() {
 async fn skills_pack_requires_auth_and_serves_static_markdown() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
-    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let (addr, handle, root_auth) = spawn_server(vault, config_with_secret("secret")).await;
 
     let missing = http_get(addr, "/api/skills/oneiron.skills.md", None).await;
     assert_http_status(&missing, 401);
 
-    let wrong = http_get(addr, "/api/skills/oneiron.skills.md", Some("wrong")).await;
+    let wrong = http_get(
+        addr,
+        "/api/skills/oneiron.skills.md",
+        Some(HttpAuth::Bearer("wrong")),
+    )
+    .await;
     assert_http_status(&wrong, 401);
 
-    let response = http_get(addr, "/api/skills/oneiron.skills.md", Some("secret")).await;
+    let bare_secret = http_get(
+        addr,
+        "/api/skills/oneiron.skills.md",
+        Some(HttpAuth::Bearer("secret")),
+    )
+    .await;
+    assert_http_status(&bare_secret, 401);
+
+    let response = http_get(
+        addr,
+        "/api/skills/oneiron.skills.md",
+        Some(HttpAuth::HostRoot(&root_auth)),
+    )
+    .await;
     assert_http_status(&response, 200);
     assert!(
         http_headers(&response)
@@ -813,9 +974,15 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
         .put_claim(&claim, &claim_body, time_range(5, 5), 50)
         .unwrap();
 
-    let (addr, handle) = spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;
+    let (addr, handle, root_auth) =
+        spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;
 
-    let response = http_get(addr, "/api/core/discover", Some("secret")).await;
+    let response = http_get(
+        addr,
+        "/api/core/discover",
+        Some(HttpAuth::HostRoot(&root_auth)),
+    )
+    .await;
     assert_http_status(&response, 200);
     let body = http_json(&response);
 

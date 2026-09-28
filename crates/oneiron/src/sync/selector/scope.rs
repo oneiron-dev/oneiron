@@ -8,12 +8,11 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, FederationPactStatus};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimLifecycleStatus};
-use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    FederationDirectionScope, FederationGrantScope, ScopeAxis, ScopeId, SelectorRange,
+    FederationDirectionScope, ScopeAxis, ScopeId, SelectorRange,
     selector_range_of,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
@@ -179,6 +178,10 @@ fn coreference_shared_for_pact_in_txn(
     b: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
+    // Diary NOTE links are local Empty-scope edges, never federation identity.
+    if !crate::federation::person_pair_in_txn(vault, rtxn, a, b)? {
+        return Ok(false);
+    }
     for (source, target) in [(a, b), (b, a)] {
         if edge_exists_in_txn(vault, rtxn, &source, EdgeKind::SameAs, &target)?
             && coreference_consent_names_pact_in_txn(vault, rtxn, source, target, pact_id)?
@@ -234,8 +237,7 @@ fn edge_exists_in_txn(
     kind: EdgeKind,
     tgt: &EntityId,
 ) -> Result<bool> {
-    let key = crate::store::Store::encode_edge_key(src, kind, tgt);
-    Ok(vault.store.edges_out.get(rtxn, &key)?.is_some())
+    Ok(crate::ports::EdgeStoreRead::port_edge_get(&vault.store, rtxn, src, kind, tgt)?.is_some())
 }
 
 /// Resolve just the candidate link from the committing document writer.
@@ -524,7 +526,6 @@ pub(super) fn band_filter(
 pub(super) fn entity_selector_decision(
     vault: &Vault,
     entity: (&EntityId, &[u8]),
-    grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
     position: &FederationDirectionScope,
@@ -532,6 +533,11 @@ pub(super) fn entity_selector_decision(
 ) -> Option<EntitySelectorDecision> {
     let (id, blob) = entity;
     let header = EntityMetadataHeader::parse(blob)?;
+    // Delegated ChannelIdentity rows carry local custody and consent facts.
+    // Filter from the carrier body itself, never from its peer-chosen map key.
+    if crate::sync::window::is_delegated_channel_identity_carrier(blob) {
+        return None;
+    }
     if !claim_sync_allowed(blob) {
         return None;
     }
@@ -545,10 +551,12 @@ pub(super) fn entity_selector_decision(
     {
         return None;
     }
-    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-        && !companion_register_passes_selector(blob, grant_scope)
-    {
+    // Companion-shaped FACETs are retired identity stores, not masks.
+    // Never let them leave as generic FACETs under any selector/grant.
+    if crate::companion::is_retired_identity_carrier(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    ) {
         return None;
     }
     // Registration is mandatory even for an unfiltered selector. Unknown
@@ -631,23 +639,6 @@ fn coreference_claim_passes(
     }
     crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
         .is_ok_and(|body| coreference.claim_travels(&body))
-}
-
-fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantScope) -> bool {
-    let Ok(record) = decode_companion_record_body(&blob[ENTITY_METADATA_HEADER_LEN..]) else {
-        return false;
-    };
-    if !matches!(
-        record.lifecycle,
-        ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Retracted
-    ) {
-        return false;
-    }
-    let FederationGrantScope::Vault { vault_id } = grant_scope;
-    crate::channel_identity::ChannelIdentityBinding::vault(vault_id)
-        .permits_companion_scope(&record.scope)
-        && crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Sensitive)
-            .permits(record.sensitivity)
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {

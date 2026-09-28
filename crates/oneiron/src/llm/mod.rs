@@ -11,14 +11,22 @@ mod backend;
 mod bus;
 mod subscribers;
 pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
-pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunker};
+pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker};
 mod budget;
 mod burst_inputs;
 mod call;
 mod defaults;
+mod inference_admission;
 #[cfg(test)]
 mod streaming_tests;
-pub use defaults::PurposeDefault;
+pub use defaults::{
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
+    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
+};
+pub use inference_admission::{
+    AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
+    InferencePolicySnapshot,
+};
 pub mod scope;
 pub use self::scope::{Scope, ScopeResource};
 mod catalog;
@@ -26,13 +34,21 @@ pub(crate) mod entity_refs;
 mod error;
 mod fallback;
 pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
+mod failure_policy;
+pub use failure_policy::{DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute};
+pub(crate) use failure_policy::{
+    DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
+    parse_failure_rules,
+};
 pub mod image;
 pub mod manifest;
 mod model_id;
 mod protocol;
 pub mod registry;
+pub mod routing;
 mod safeguard;
 pub mod score_scraper;
+pub mod seat;
 mod step;
 pub mod tagger;
 
@@ -47,8 +63,10 @@ pub use step::{
     validate_json_schema,
 };
 pub(crate) use step::{
-    consume_step_wait_in_txn, deindex_dreamer_step_claim, index_dreamer_step_claim_for_put,
-    open_step_wait_in_txn, register_detached_step_in_txn, signal_step_wait_in_txn,
+    StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim,
+    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
+    signal_step_wait_in_txn, verified_step_consolidation_eligible_in_txn,
+    verified_step_effector_eligible_in_txn,
 };
 
 pub use budget::{
@@ -92,6 +110,7 @@ pub use self::safeguard::{
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, SafeguardModelBinding,
     SafeguardModelBindingError,
 };
+pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
 
 #[cfg(test)]
 mod tests;
@@ -130,6 +149,7 @@ use std::time::Duration;
 /// Typed question and outcome contracts.
 pub mod decision;
 pub use budget::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiSettlement, RsiSpendPurpose,
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
+    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
 };
 pub(crate) use step::resume_peer_result_steps;

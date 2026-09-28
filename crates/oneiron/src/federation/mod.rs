@@ -6,11 +6,18 @@
 //! scope kinds, and preset/role mismatches are rejected.
 
 mod codec;
+mod content_write;
+pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
 mod coreference;
 pub mod derivation;
 #[cfg(feature = "sync")]
-pub(crate) use coreference::coreference_shared_for_pact_in_txn;
+pub(crate) use coreference::{coreference_shared_for_pact_in_txn, person_pair_in_txn};
 mod grant;
+pub(crate) mod grant_policy;
+mod membership_gate;
+pub use membership_gate::SharedVaultWrite;
+#[cfg(feature = "sync")]
+pub(crate) use membership_gate::grant_allows_content_write;
 pub(crate) mod grant_scope;
 mod ruling_integrity;
 mod rulings;
@@ -35,8 +42,9 @@ pub use self::coreference::{
 };
 pub use self::grant::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
-    FederationGrantPreset, FederationGrantRole, FederationGrantScope, MAX_DELEGATE_TTL_SECS,
-    decode_federation_grant_body, encode_federation_grant_body,
+    FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    MAX_DELEGATE_TTL_SECS, MAX_GUEST_DISCLOSED_REFS, decode_federation_grant_body,
+    encode_federation_grant_body,
 };
 pub use self::guest::{
     GUEST_SHARE_ENVELOPE_BODY_KEYS, GUEST_SHARE_ENVELOPE_KEYS, GUEST_SHARE_ENVELOPE_SCHEMA_VERSION,
@@ -44,8 +52,9 @@ pub use self::guest::{
     encode_guest_share_envelope_body, sign_guest_share_envelope,
 };
 pub use self::pact_scope::{
-    FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationPactScope,
-    SelectorRange, decode_federation_pact_scope, encode_federation_pact_scope, selector_range_of,
+    Ceiling, FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationPactScope,
+    Position, SelectorRange, decode_federation_pact_scope, encode_federation_pact_scope,
+    selector_range_of,
 };
 pub use self::peer_authority::{
     MAX_PEER_AUTHORITY_ENTRIES_PER_PEER, PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry,
@@ -87,6 +96,8 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
+#[cfg(test)]
+mod membership_gate_tests;
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]

@@ -97,10 +97,9 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(anchors, AT_UNIX);
         let report = engine.verify_sealed_pdf(&future).unwrap();
-        assert!(!report.valid, "future-dated token must fail verification");
+        assert!(!report.valid(), "future-dated token must fail verification");
         let ts = report
-            .checks
-            .iter()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::SignatureTimestamp)
             .unwrap();
         assert_eq!(
@@ -119,8 +118,8 @@ pub(crate) mod tests {
             AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS - 1,
         );
         let report = engine.verify_sealed_pdf(&near).unwrap();
-        assert!(report.valid, "within-skew token must pass: {report:?}");
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+        assert!(report.valid(), "within-skew token must pass: {report:?}");
+        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
     }
 
     #[test]
@@ -135,8 +134,7 @@ pub(crate) mod tests {
         let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
         let report = engine.verify_sealed_pdf(&b2).unwrap();
         let dts = report
-            .checks
-            .iter()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
             .unwrap();
         assert_eq!(
@@ -147,7 +145,7 @@ pub(crate) mod tests {
             ),
             "future-dated DocTimeStamp must fail its check"
         );
-        assert!(!report.valid);
+        assert!(!report.valid());
     }
 
     #[test]
@@ -193,6 +191,7 @@ pub(crate) mod tests {
         let anchors = anchors_of(&tsa);
         let bytes = b"%PDF-fake-body-for-hash";
         let entry = SigEntry {
+            field_name: "test".into(),
             is_doc_ts: true,
             byte_range: [4, 2, 10, 4], // s1 != 0: ByteRange check fails
             contents: {
@@ -215,7 +214,10 @@ pub(crate) mod tests {
             &mut covered,
             AT_UNIX * 1000,
         );
-        assert!(got.is_none(), "bad ByteRange rejects the DocTimeStamp");
+        assert!(
+            got.trusted.is_none(),
+            "bad ByteRange rejects the DocTimeStamp"
+        );
         assert!(
             covered.is_empty(),
             "a rejected DocTimeStamp leaves its TSA chain out of the binding set"
@@ -551,11 +553,14 @@ pub(crate) mod tests {
         let fx = lta_multisig();
         let engine = verify_engine(fx.anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&fx.bytes).unwrap();
-        assert!(
-            report.valid,
-            "covering DocTimeStamp must keep the archived profile: {report:?}"
+        // The later second signature is not a whitelisted LTA renewal.
+        // Its presence does not erase the first signer's archived profile.
+        assert_eq!(report.modifications, crate::api::Modifications::Suspicious);
+        assert!(!report.valid());
+        assert_eq!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
         );
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
     }
 
     #[test]
@@ -574,11 +579,10 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(fx.anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&attacked).unwrap();
-        assert_ne!(report.achieved_profile, Some(PadesProfile::BaselineLt));
-        assert_ne!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+        assert_ne!(report.achieved_profile(), Some(PadesProfile::BaselineLt));
+        assert_ne!(report.achieved_profile(), Some(PadesProfile::BaselineLta));
         let vm = report
-            .checks
-            .iter()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(

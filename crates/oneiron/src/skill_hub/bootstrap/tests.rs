@@ -117,7 +117,7 @@ fn deferred_judge_import_with_capability(
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest()?,
+        &crate::gate::default_policy_manifest(),
     )?;
     let imported = EntityId::now();
     let (name, markdown) = FILES[1];
@@ -250,7 +250,7 @@ fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<(
     put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest()?,
+        &crate::gate::default_policy_manifest(),
     )?;
     let (name, markdown) = FILES[1];
     let id = stable_id(name)?;
@@ -313,5 +313,232 @@ fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<(
     assert_eq!(vault.hub_import_receipt(&id, &source)?, Some(receipt));
     assert!(vault.hub_import_receipt(&id, &bootstrap_source)?.is_none());
     assert!(SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
+    Ok(())
+}
+
+#[test]
+fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let id = stable_id("judge")?;
+    let other = package(
+        "different-skill",
+        "---\nname: different-skill\ndescription: earlier import\n---\nDifferent files.\n",
+    )?;
+    let hash = other.content_hash()?;
+    assert_ne!(hash, package("judge", FILES[1].1)?.content_hash()?);
+    let mut adapter = LocalDirSkillHubAdapter::new(EntityId::now());
+    let source = HubRef::new(
+        adapter.hub_id(),
+        "external/different",
+        HubPin::ContentHash(hash.to_hex()),
+    )?;
+    adapter.insert_package(&source.ref_string, source.pin.clone(), other.clone());
+    let entry = HubIndexEntry {
+        name: other.record.skill_id.clone(),
+        description: other.record.desc.clone(),
+        version: other.record.version,
+        content_hash: hash,
+        ref_string: source.ref_string.clone(),
+    };
+    assert_eq!(
+        vault.ingest_skill_from_adapter_checked(
+            &adapter,
+            &entry,
+            id,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?,
+        id,
+    );
+    let before = vault.get_raw(&id)?;
+    let provenance_before = vault.skill_hub_provenance_count(&id)?;
+    let receipt_before = vault.hub_import_receipt(&id, &source)?;
+    drop(vault);
+
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(vault.get_raw(&id)?, before);
+    assert_eq!(vault.skill_hub_provenance_count(&id)?, provenance_before);
+    assert_eq!(vault.hub_import_receipt(&id, &source)?, receipt_before);
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().skill_id,
+        "different-skill"
+    );
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SKILL)?,
+        FILES.len() as u64
+    );
+    assert!(SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
+    Ok(())
+}
+
+fn restore_owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
+    let actor = EntityId::now();
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"restore owner",
+    )?;
+    vault.authenticate_owner(
+        actor,
+        "principal:skill-restore",
+        true,
+        crate::store::GateDecisionId::now(),
+    )
+}
+
+#[test]
+fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let name = "judge";
+    let old = stable_id(name)?;
+    let hash = package(name, FILES[1].1)?.content_hash()?;
+    assert!(vault.delete_entity(&old)?);
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert!(vault.get_skill_record(&old)?.is_none());
+    let owner = restore_owner(&vault)?;
+    let restored = vault.restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
+    assert_eq!(restored.len(), 1);
+    let id = restored[0];
+    assert_ne!(id, old);
+    let record = vault.get_skill_record(&id)?.expect("restored candidate");
+    assert_eq!(record.content_hash, Some(hash));
+    assert_eq!(record.lifecycle_status, SkillLifecycle::Candidate);
+    let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .content_hash,
+        hash.to_hex()
+    );
+    assert_eq!(
+        vault.restore_default_skills(&owner, TimeRange { start: 3, end: 3 }, 3)?,
+        Vec::<EntityId>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn restore_does_not_reactivate_retired_default_or_overwrite_foreign_holder() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let old = stable_id("judge")?;
+    let mut retired = vault.get_skill_record(&old)?.unwrap();
+    retired.lifecycle_status = SkillLifecycle::Stale;
+    vault.update_skill_record(&old, &retired, TimeRange { start: 1, end: 1 }, 1)?;
+    let before = vault.get_raw(&old)?;
+    let owner = restore_owner(&vault)?;
+    let restored = vault.restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
+    assert_eq!(restored.len(), 1);
+    assert_ne!(restored[0], old);
+    assert_eq!(vault.get_raw(&old)?, before);
+    assert_eq!(
+        vault
+            .get_skill_record(&restored[0])?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    Ok(())
+}
+
+#[test]
+fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let (name, markdown) = FILES[1];
+    let package = package(name, markdown)?;
+    let hash = package.content_hash()?;
+    let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+    // The retired UUID sorts strictly before a restored clock UUID, so the
+    // previous first-imported-row selector would return the wrong holder.
+    let mut bytes = [0_u8; 16];
+    bytes[6] = 0x80;
+    bytes[8] = 0x80;
+    let old = EntityId::from_bytes(bytes)?;
+    assert_eq!(
+        vault.import_skill_from_hub_with_id(
+            &source,
+            &package,
+            old,
+            TimeRange { start: 1, end: 1 },
+            1
+        )?,
+        old
+    );
+    let mut record = vault.get_skill_record(&old)?.unwrap();
+    record.lifecycle_status = SkillLifecycle::Active;
+    let data = crate::skill::encode_skill_record(&record)?;
+    vault.with_write_txn(|txn| {
+        vault.admit_hub_skill_record_in_txn(
+            txn,
+            TimeRange { start: 2, end: 2 },
+            2,
+            data.clone(),
+            HubAdmissionProof::bootstrap(old, &data),
+        )
+    })?;
+    record.lifecycle_status = SkillLifecycle::Stale;
+    vault.update_skill_record(&old, &record, TimeRange { start: 3, end: 3 }, 3)?;
+    let owner = restore_owner(&vault)?;
+    let restored = vault.restore_default_skills(&owner, TimeRange { start: 4, end: 4 }, 4)?;
+    let replacement = restored
+        .into_iter()
+        .find(|id| {
+            vault
+                .get_skill_record(id)
+                .ok()
+                .flatten()
+                .is_some_and(|row| row.skill_id == name)
+        })
+        .expect("restored judge");
+    assert_ne!(replacement, old);
+    assert!(old.as_bytes() < replacement.as_bytes());
+    assert_eq!(
+        vault.import_skill_from_hub(&source, &package, TimeRange { start: 5, end: 5 }, 5)?,
+        replacement
+    );
+    assert_eq!(
+        vault.get_skill_record(&old)?.unwrap().lifecycle_status,
+        SkillLifecycle::Stale
+    );
+    assert_eq!(vault.skill_hub_provenance_count(&replacement)?, 1);
+    assert_eq!(
+        vault.restore_default_skills(&owner, TimeRange { start: 6, end: 6 }, 6)?,
+        Vec::<EntityId>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn restore_refuses_owner_who_is_no_longer_active() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = restore_owner(&vault)?;
+    let old = stable_id("judge")?;
+    assert!(vault.delete_entity(&old)?);
+    assert!(vault.delete_entity(&owner.actor())?);
+    let before = vault.count_entities_by_type(ENTITY_TYPE_SKILL)?;
+    assert!(
+        vault
+            .restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)
+            .is_err()
+    );
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_SKILL)?, before);
     Ok(())
 }

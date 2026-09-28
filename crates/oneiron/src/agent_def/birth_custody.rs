@@ -54,7 +54,7 @@ pub(super) fn check_birth_custody(
     {
         return Err(invalid());
     }
-    if let Some(raw) = store.entities.get(txn, child.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, child)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("agent birth holder header"))?;
         if header.entity_type != ENTITY_TYPE_AGENT_DEF || raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -122,7 +122,7 @@ pub(crate) fn birth_custody_exists_in_txn(
 ) -> Result<bool> {
     for id in super::birth_dependencies::birth_carriers_for_erased_entity_in_txn(store, txn, child)?
     {
-        if store.entities.get(txn, id.as_bytes())?.is_some() {
+        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
             return Ok(true);
         }
     }
@@ -137,7 +137,7 @@ pub(crate) fn retire_birth_source_holder_in_txn(
 ) -> Result<()> {
     mark_birth_source_retired(store, txn, child)?;
     for id in birth_carriers_for_holder_in_txn(store, txn, child)? {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -166,7 +166,7 @@ pub(crate) fn remove_birth_custody_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("agent source delete header"))?;
         if header.entity_type == ENTITY_TYPE_ASSET

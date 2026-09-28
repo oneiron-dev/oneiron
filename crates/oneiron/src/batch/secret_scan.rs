@@ -75,6 +75,13 @@ pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Apply the same raw/structured scan as ordinary non-custody batch puts to
+/// source bytes staged outside the entity tables, before their first write.
+pub(crate) fn scan_staged_payload(data: &[u8]) -> Result<()> {
+    let _secrets_nulled = scan_payload(data)?;
+    Ok(())
+}
+
 fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     let haystack = String::from_utf8_lossy(data);
     let secrets_nulled =

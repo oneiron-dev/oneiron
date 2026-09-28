@@ -1511,14 +1511,14 @@ mod calendar_invite_fixture {
             .expect("put event");
         oneiron::calendar::index_passport_uid(&vault, UID, &event_ref()).expect("index uid");
 
-        let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+        let identity = crate::common::self_held_identity_in_state(
             "email",
             "me@primary.test",
             oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
             oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
+            oneiron::channel_identity::ChannelIdentityState::Active,
             100,
         );
-        identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
         vault
             .create_channel_identity(&id(0x93), &identity)
             .expect("create sending identity");
@@ -1581,6 +1581,7 @@ mod calendar_invite_fixture {
     #[derive(Default)]
     pub(super) struct InviteSink {
         pub(super) parts: Vec<(String, Vec<u8>)>,
+        pub(super) uncertain_first: bool,
     }
 
     impl oneiron::outbound::OutboundExecutionSink for InviteSink {
@@ -1594,6 +1595,12 @@ mod calendar_invite_fixture {
                 .expect("a calendar.invite send carries its iMIP part");
             self.parts
                 .push((part.content_type.clone(), part.ics.clone()));
+            if self.uncertain_first && self.parts.len() == 1 {
+                return oneiron::outbound::OutboundExecutionOutcome::failed(
+                    "uncertain_wire_crossing",
+                )
+                .with_possible_delivery();
+            }
             oneiron::outbound::OutboundExecutionOutcome::delivered_to_channel("oracle:imip-send")
         }
     }
@@ -1605,6 +1612,55 @@ mod calendar_invite_fixture {
             .find(|(_, value)| value.uid == UID)
             .map(|(_, value)| value.last_sequence)
     }
+}
+
+/// A calendar revision is semantic replacement, unlike queue-emulated sends:
+/// an ambiguous transport result must leave its frozen revision replayable.
+#[test]
+fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
+    use calendar_invite_fixture as fixture;
+    use oneiron::outbound_intent_ledger::{IntentState, intent_ledger_records};
+
+    let (_dir, vault, blob_ref) = fixture::admitted_vault();
+    vault
+        .memory(fixture::actor_ref(), oneiron::EdgeActorClass::Human)
+        .calendar_invite(&fixture::invite(&blob_ref))
+        .expect("schedule invite");
+    let mut sink = fixture::InviteSink {
+        uncertain_first: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 200)
+            .expect("ambiguous send"),
+        0
+    );
+    assert_eq!(sink.parts.len(), 1);
+    let first = intent_ledger_records(&vault).expect("pending intent");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].state, IntentState::Pending);
+    assert!(
+        first[0].idempotency_supported,
+        "same revision is replay safe"
+    );
+    let frozen_hash = first[0].payload_hash;
+
+    // The transport curve re-arms at 200+60. No new UID, SEQUENCE or method
+    // may be minted when that durable attempt resumes.
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 261)
+            .expect("retry"),
+        1
+    );
+    assert_eq!(sink.parts.len(), 2);
+    assert_eq!(sink.parts[0], sink.parts[1], "identical iMIP bytes");
+    let done = intent_ledger_records(&vault).expect("completed intent");
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].state, IntentState::Done);
+    assert_eq!(done[0].payload_hash, frozen_hash);
+    assert_eq!(fixture::live_sequence(&vault), Some(0));
 }
 
 /// CAL-04's spine oracle: gate first, one durable intent, exactly once.

@@ -8,7 +8,7 @@ impl ScopedRead<'_> {
     /// Current engine-issued refs for live claims in declared critical classes.
     /// Policy, row admission and reference binding share one read snapshot.
     pub fn manifest_pinned_refs(&self) -> Result<ScopedReadResult<Vec<String>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::new();
         let mut suppressed = 0;

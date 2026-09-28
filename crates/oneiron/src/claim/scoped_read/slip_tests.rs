@@ -69,12 +69,15 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     let world = EntityId::from_bytes([0x31; 16])?;
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(world)]));
-    world_only.attenuate(SlipCaveat {
-        scope: Some(scope),
-        ..Default::default()
-    })?;
+    issuer.attenuate(
+        &mut world_only,
+        SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        },
+    )?;
     let narrowed = vault.verify_capability_slip(
-        &issuer,
+        &issuer.public_key(),
         &world_only,
         b"read-world",
         &issuer.binding_proof(&world_only, b"read-world")?,
@@ -87,12 +90,16 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
             .is_none()
     );
     let mut named = root.clone();
-    named.attenuate(SlipCaveat {
-        records: Some(BTreeSet::from([opaque.to_hex()])),
-        ..Default::default()
-    })?;
+    issuer.attenuate(
+        &mut named,
+        SlipCaveat {
+            records: Some(BTreeSet::from([opaque.to_hex()])),
+            ..Default::default()
+        },
+    )?;
     let named_proof = issuer.binding_proof(&named, b"named read")?;
-    let verified = vault.verify_capability_slip(&issuer, &named, b"named read", &named_proof)?;
+    let verified =
+        vault.verify_capability_slip(&issuer.public_key(), &named, b"named read", &named_proof)?;
     let limited = vault.scoped_read(ScopedReadActorKey::from_verified_slip(&verified).unwrap());
     assert!(
         limited

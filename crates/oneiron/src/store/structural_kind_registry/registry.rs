@@ -6,9 +6,6 @@ use std::str;
 use heed::{Env, RwTxn};
 
 use crate::batch::secret_scan;
-use crate::companion::{
-    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
-};
 use crate::error::{Error, RegistryError, Result};
 use crate::overlay_db::OverlayDb;
 use crate::registry::{
@@ -289,9 +286,6 @@ pub(super) fn build_structural_kind_registry(
         if entity_type_registry_entry(registration.type_byte).is_some()
             || static_short_id_prefix_collision(&registration.short_id_prefix)
         {
-            if is_compatible_legacy_companion_register_row(&registration) {
-                continue;
-            }
             if is_post_dynamic_static_collision(&registration) {
                 // Forward-compat, not corruption (OF-368 ARTL-1 review): the
                 // row was written while its byte/prefix was legitimately
@@ -332,13 +326,6 @@ fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -
             entity_type_registry_entry(*byte).and_then(|entry| entry.short_id_prefix)
                 == Some(registration.short_id_prefix.as_str())
         })
-}
-
-fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegistration) -> bool {
-    registration.type_byte == ENTITY_TYPE_COMPANION_REGISTER
-        && registration.short_id_prefix == COMPANION_REGISTER_SHORT_ID_PREFIX
-        && registration.zone == TypeByteZone::CompiledProduct
-        && registration.pack == COMPANION_REGISTER_PACK_ID
 }
 
 fn vault_meta_has_structural_kind_prefix(

@@ -1,10 +1,10 @@
 //! Top-level fold orchestration.
 //!
 //! `FoldContext` plus the topological entry-by-entry driver and its local,
-//! peer, and seen-time variants. Fork handling and per-entry state transitions
-//! are called as black boxes from [`super::fork_resolution`] and
-//! [`super::entry_transition`].
+//! peer, and seen-time variants. Per-entry state transitions are delegated
+//! to [`super::entry_transition`].
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
@@ -13,17 +13,14 @@ use super::*;
 pub(super) struct FoldContext<'a> {
     pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(super) now_secs: Option<u64>,
+    /// Minimum future eligibility observed during ANY fold pass, including a
+    /// pending widen subsequently removed by an accepted veto.
+    pub(super) deadline_observer: Option<&'a Cell<Option<u64>>>,
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(super) enforce_seen_time_delay: bool,
     pub(super) vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
-    pub(super) authority_forks: &'a BTreeMap<(AuthorityKey, u64), AuthorityFork>,
-    pub(super) authority_fork_vault_ids:
-        &'a BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
-    pub(super) equivocation_groups: &'a BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>,
-    pub(super) unresolved_equivocation_groups: &'a BTreeSet<(AuthorityKey, u64)>,
     pub(super) entry_ancestors:
         Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
-    pub(super) chain_validated_fork_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
     /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
     ///
     /// EVIDENCE for FED-01 gesture acceptance, never a local consent
@@ -38,12 +35,23 @@ pub(super) struct FoldContext<'a> {
     /// [`folded_peer_device_is_consent_root`] only inside
     /// [`fold_peer_authority_log`].
     pub(super) consent_arm: fn(&FoldedDevice) -> bool,
+    /// Only verified pre-handoff ancestry can use retired device-key ops.
+    /// None is the legacy-only reference fold, never the posture-aware vault door.
+    pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldContext<'_> {
     pub(super) fn device_can_consent(self, device: &FoldedDevice) -> bool {
         (self.consent_arm)(device)
     }
+}
+
+#[derive(Default, Clone, Copy)]
+struct FoldLocalInputs<'a> {
+    observations: Option<&'a AuthorityLocalObservations>,
+    deadline_observer: Option<&'a Cell<Option<u64>>>,
+    retire_device_ops: bool,
+    pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 /// Folds a set of authority entries into a deterministic roster.
@@ -60,7 +68,10 @@ pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         true,
         &peer_consent_roots,
         folded_device_can_authority_consent,
-        None,
+        FoldLocalInputs {
+            retire_device_ops: true,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
@@ -77,7 +88,52 @@ pub(super) fn fold_authority_log_without_seen_time_delay(
         false,
         &peer_consent_roots,
         folded_device_can_authority_consent,
+        FoldLocalInputs::default(),
+    )
+}
+
+// Historical signed-history reference for unit tests of pre-handoff ancestry.
+// Never used by Vault, peers, cache, replay admission, or public authorization.
+#[cfg(test)]
+pub(super) fn fold_legacy_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        &BTreeMap::new(),
+        Some(0),
+        true,
+        &BTreeMap::new(),
+        folded_device_can_authority_consent,
+        FoldLocalInputs::default(),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn fold_legacy_authority_log_with_seen_times(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: u64,
+) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        first_seen_at_secs,
+        Some(now_secs),
+        true,
+        &BTreeMap::new(),
+        folded_device_can_authority_consent,
+        FoldLocalInputs::default(),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn fold_legacy_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
+    fold_authority_log_inner(
+        entries,
+        &BTreeMap::new(),
         None,
+        false,
+        &BTreeMap::new(),
+        folded_peer_device_is_consent_root,
+        FoldLocalInputs::default(),
     )
 }
 
@@ -119,7 +175,10 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
         true,
         peer_consent_roots,
         folded_device_can_authority_consent,
-        None,
+        FoldLocalInputs {
+            retire_device_ops: true,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
@@ -144,7 +203,10 @@ pub fn fold_authority_log_for_posture(
         true,
         peer_consent_roots,
         consent,
-        None,
+        FoldLocalInputs {
+            retire_device_ops: true,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
@@ -169,32 +231,46 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         false,
         &peer_consent_roots,
         folded_peer_device_is_consent_root,
-        None,
+        FoldLocalInputs {
+            retire_device_ops: true,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
-pub(super) fn fold_authority_log_with_local_observations_and_posture(
+/// Return the same reference fold plus the earliest future eligibility
+/// observed in its fixed-point passes. This is cache metadata, not fold output.
+/// A veto can erase its target from the final pending map even though that
+/// target's eligibility still changes whether the veto is valid later.
+pub(super) fn fold_authority_log_with_local_observations_and_posture_with_deadline(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: u64,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     observations: &AuthorityLocalObservations,
     posture: crate::HostingPrivacyPosture,
-) -> AuthorityFold {
+) -> (AuthorityFold, Option<u64>) {
     let consent = if posture == crate::HostingPrivacyPosture::Hosted {
         folded_host_device_can_consent
     } else {
         folded_device_can_authority_consent
     };
-    fold_authority_log_inner(
+    let deadline = Cell::new(None);
+    let fold = fold_authority_log_inner(
         entries,
         first_seen_at_secs,
         Some(now_secs),
         true,
         peer_consent_roots,
         consent,
-        Some(observations),
-    )
+        FoldLocalInputs {
+            observations: Some(observations),
+            deadline_observer: Some(&deadline),
+            retire_device_ops: true,
+            pre_handoff_entries: None,
+        },
+    );
+    (fold, deadline.get())
 }
 
 fn fold_authority_log_inner(
@@ -204,78 +280,95 @@ fn fold_authority_log_inner(
     enforce_seen_time_delay: bool,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     consent_arm: fn(&FoldedDevice) -> bool,
-    observations: Option<&AuthorityLocalObservations>,
+    local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
+    if local.retire_device_ops {
+        // An unrelated retired sibling must not vote in a handoff probe:
+        // its tier floor could otherwise disqualify a valid rotation before
+        // the strict fold ever gets a chance to reject the sibling. Validate
+        // each candidate against ONLY its own claimed signed ancestry.
+        let (mut candidates, pending_handoff_ancestry) = verified_handoff_candidates(
+            entries,
+            first_seen_at_secs,
+            now_secs,
+            enforce_seen_time_delay,
+            peer_consent_roots,
+            consent_arm,
+            local,
+        );
+        loop {
+            let allowed = verified_handoff_ancestors(entries, &candidates);
+            let result = fold_authority_log_inner(
+                entries,
+                first_seen_at_secs,
+                now_secs,
+                enforce_seen_time_delay,
+                peer_consent_roots,
+                consent_arm,
+                FoldLocalInputs {
+                    retire_device_ops: false,
+                    pre_handoff_entries: Some(&allowed),
+                    ..local
+                },
+            );
+            let retained: BTreeSet<_> = candidates
+                .intersection(&result.valid_entries)
+                .copied()
+                .collect();
+            if retained == candidates {
+                let mut result = result;
+                // Pending pre-handoff ancestry does not grant a client key, but
+                // its observed deadline still decides when a signed handoff
+                // may retire the old root. Keep that fact for cache expiry and
+                // fail-closed readonly folds with a missing local sidecar.
+                result.pending_widens.extend(pending_handoff_ancestry);
+                return result;
+            }
+            candidates = retained;
+        }
+    }
     let mut vetoed_widens = BTreeSet::new();
-    let sequence_floors = observations.map(|local| &local.sequence_floors);
-    let stale_roster_window_secs = observations.map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
-        local.policy.stale_roster_window_secs
-    });
-    let mut authority_forks = BTreeMap::new();
-    let mut authority_fork_vault_ids = BTreeMap::new();
-    let empty_equivocation_groups = BTreeMap::new();
-    let empty_unresolved_equivocation_groups = BTreeSet::new();
-    let (mut fold, mut folded_authority_fork_vault_ids) = fold_authority_log_once(
+    let sequence_floors = local
+        .observations
+        .map(|observations| &observations.sequence_floors);
+    let stale_roster_window_secs = local
+        .observations
+        .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
+            local.policy.stale_roster_window_secs
+        });
+    let mut fold = fold_authority_log_once(
         entries,
         FoldContext {
             first_seen_at_secs,
             now_secs,
+            deadline_observer: local.deadline_observer,
             sequence_floors,
             enforce_seen_time_delay,
             vetoed_widens: &vetoed_widens,
-            authority_forks: &authority_forks,
-            authority_fork_vault_ids: &authority_fork_vault_ids,
-            equivocation_groups: &empty_equivocation_groups,
-            unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
             entry_ancestors: None,
-            chain_validated_fork_candidates: None,
             peer_consent_roots,
             consent_arm,
+            pre_handoff_entries: local.pre_handoff_entries,
         },
     );
     for _ in 0..=entries.len() {
-        // Every fork discovered by the pass becomes quarantined input to the
-        // next pass, even when a later sibling resolved its reported row. The
-        // seeded quarantine is positional: entries outside the resolver's
-        // ancestry are re-checked without the forked key, while folding the
-        // resolver lifts the quarantine only for its descendants. Scope sets
-        // keep this safe when the same fork spans conflicting vault roots.
-        let mut next_authority_forks = BTreeMap::new();
-        let mut next_authority_fork_vault_ids = BTreeMap::new();
-        for fork in &fold.authority_forks {
-            let key = (fork.signer.clone(), fork.seq);
-            if let Some(fork_vault_ids) = folded_authority_fork_vault_ids.get(&key) {
-                let mut quarantined = fork.clone();
-                quarantined.status = AuthorityForkStatus::Quarantined;
-                next_authority_forks.insert(key.clone(), quarantined);
-                next_authority_fork_vault_ids.insert(key, fork_vault_ids.clone());
-            }
-        }
-        if fold.vetoed_widens == vetoed_widens
-            && next_authority_forks == authority_forks
-            && next_authority_fork_vault_ids == authority_fork_vault_ids
-        {
+        if fold.vetoed_widens == vetoed_widens {
             break;
         }
         vetoed_widens = fold.vetoed_widens.clone();
-        authority_forks = next_authority_forks;
-        authority_fork_vault_ids = next_authority_fork_vault_ids;
-        (fold, folded_authority_fork_vault_ids) = fold_authority_log_once(
+        fold = fold_authority_log_once(
             entries,
             FoldContext {
                 first_seen_at_secs,
                 now_secs,
+                deadline_observer: local.deadline_observer,
                 sequence_floors,
                 enforce_seen_time_delay,
                 vetoed_widens: &vetoed_widens,
-                authority_forks: &authority_forks,
-                authority_fork_vault_ids: &authority_fork_vault_ids,
-                equivocation_groups: &empty_equivocation_groups,
-                unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
                 entry_ancestors: None,
-                chain_validated_fork_candidates: None,
                 peer_consent_roots,
                 consent_arm,
+                pre_handoff_entries: local.pre_handoff_entries,
             },
         );
     }
@@ -288,8 +381,8 @@ fn fold_authority_log_inner(
     );
     fold.append_heads = fold.valid_entries.clone();
     for entry in entries {
-        // Advance beyond even a signed rejected local entry. Reusing a seq
-        // would create an equivocation, not a retry.
+        // Advance beyond even a signed rejected local entry. A new local write
+        // never reuses a sequence, though independently received siblings may.
         fold.append_sequences
             .entry(entry.signer.public_key.clone())
             .and_modify(|seq| *seq = (*seq).max(entry.seq))
@@ -303,24 +396,152 @@ fn fold_authority_log_inner(
     fold
 }
 
+/// Probe each signed re-root against its own causal history. A tier-floor or
+/// other retired sibling outside that history has zero authority to eliminate
+/// a candidate. The final strict fold rechecks these candidates as a set.
+fn verified_handoff_candidates(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: Option<u64>,
+    enforce_seen_time_delay: bool,
+    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    consent_arm: fn(&FoldedDevice) -> bool,
+    local: FoldLocalInputs<'_>,
+) -> (
+    BTreeSet<AuthorityEntryHash>,
+    BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
+) {
+    let by_hash: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+        .collect();
+    let mut candidates = BTreeSet::new();
+    let mut pending = BTreeMap::new();
+    for (candidate, entry) in &by_hash {
+        if !matches!(entry.op, AuthorityOp::ReRoot { .. })
+            || entry.validate_shape().is_err()
+            || verify_entry_signatures(entry).is_err()
+        {
+            continue;
+        }
+        let mut closure = BTreeSet::new();
+        let mut stack = vec![*candidate];
+        let mut complete = true;
+        while let Some(hash) = stack.pop() {
+            if !closure.insert(hash) {
+                continue;
+            }
+            let Some(ancestor) = by_hash.get(&hash) else {
+                complete = false;
+                break;
+            };
+            stack.extend(ancestor.parent_hashes.iter().copied());
+        }
+        if !complete {
+            continue;
+        }
+        let scoped: Vec<_> = closure
+            .iter()
+            .map(|hash| (*by_hash[hash]).clone())
+            .collect();
+        let probe = fold_authority_log_inner(
+            &scoped,
+            first_seen_at_secs,
+            now_secs,
+            enforce_seen_time_delay,
+            peer_consent_roots,
+            consent_arm,
+            FoldLocalInputs {
+                deadline_observer: local.deadline_observer,
+                retire_device_ops: false,
+                pre_handoff_entries: None,
+                ..local
+            },
+        );
+        if !probe.vault_root_is_conflicted() {
+            pending.extend(probe.pending_widens);
+            if probe.valid_entries.contains(candidate) {
+                candidates.insert(*candidate);
+            }
+        }
+    }
+    (candidates, pending)
+}
+
+/// Retired device operations are usable only in a verified re-root's signed
+/// ancestry and only before the first handoff on that branch. A later re-root
+/// never revives device-key enrollment after a prior handoff.
+fn verified_handoff_ancestors(
+    entries: &[AuthorityLogEntry],
+    valid_handoffs: &BTreeSet<AuthorityEntryHash>,
+) -> BTreeSet<AuthorityEntryHash> {
+    let by_hash: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+        .collect();
+    let mut permitted = BTreeSet::new();
+    for (hash, entry) in &by_hash {
+        if !valid_handoffs.contains(hash) || !matches!(entry.op, AuthorityOp::ReRoot { .. }) {
+            continue;
+        }
+        let mut stack = entry.parent_hashes.clone();
+        let mut visited = BTreeSet::new();
+        while let Some(parent) = stack.pop() {
+            if !visited.insert(parent) {
+                continue;
+            }
+            let Some(ancestor) = by_hash.get(&parent) else {
+                continue;
+            };
+            if matches!(ancestor.op, AuthorityOp::ReRoot { .. }) {
+                continue;
+            }
+            stack.extend(ancestor.parent_hashes.iter().copied());
+            if matches!(
+                ancestor.op,
+                AuthorityOp::EnrollDevice { .. }
+                    | AuthorityOp::RotateKey { .. }
+                    | AuthorityOp::SetTierFloor { .. }
+                    | AuthorityOp::VetoPendingWiden { .. }
+            ) && !has_re_root_ancestor(ancestor, &by_hash)
+            {
+                permitted.insert(parent);
+            }
+        }
+    }
+    permitted
+}
+
+fn has_re_root_ancestor(
+    entry: &AuthorityLogEntry,
+    by_hash: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> bool {
+    let mut stack = entry.parent_hashes.clone();
+    let mut visited = BTreeSet::new();
+    while let Some(hash) = stack.pop() {
+        if !visited.insert(hash) {
+            continue;
+        }
+        if let Some(ancestor) = by_hash.get(&hash) {
+            if matches!(ancestor.op, AuthorityOp::ReRoot { .. }) {
+                return true;
+            }
+            stack.extend(ancestor.parent_hashes.iter().copied());
+        }
+    }
+    false
+}
+
 fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
-) -> (
-    AuthorityFold,
-    BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
-) {
+) -> AuthorityFold {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
-    let mut by_signer_seq = BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>::new();
     for entry in entries {
         match authority_entry_hash(entry) {
             Ok(hash) if verify_entry_signatures(entry).is_ok() => {
                 by_hash.entry(hash).or_insert_with(|| entry.clone());
-                by_signer_seq
-                    .entry((entry.signer_key().clone(), entry.seq))
-                    .or_default()
-                    .insert(hash);
             }
             Ok(hash) => issues.push(AuthorityFoldIssue::InvalidEntry(hash)),
             Err(_) => issues.push(AuthorityFoldIssue::InvalidEntry([0; 32])),
@@ -331,47 +552,15 @@ fn fold_authority_log_once(
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
+        entry_ancestors: Some(&entry_ancestors),
         ..context
     };
 
-    let mut equivocation_groups =
-        BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>::new();
-    let mut equivocation_by_hash = BTreeMap::<AuthorityEntryHash, (AuthorityKey, u64)>::new();
-    for ((signer, seq), hashes) in by_signer_seq {
-        if hashes.len() > 1 {
-            if restore_prefix_divergence(&hashes, &by_hash, &entry_ancestors, context) {
-                continue;
-            }
-            for hash in &hashes {
-                equivocation_by_hash.insert(*hash, (signer.clone(), seq));
-            }
-            equivocation_groups.insert((signer.clone(), seq), hashes);
-        }
-    }
-    // `entry_ancestors` is deliberately a raw graph index: fold scheduling
-    // needs claimed ancestry to avoid making a parent wait on the candidate
-    // that names it. It is not sufficient evidence that an entry predates a
-    // fork, because signature-valid but chain-invalid candidates also
-    // contribute arbitrary parent claims. Restrict that security-sensitive
-    // exemption to candidates that independently fold over their complete
-    // available ancestry.
-    let chain_validated_fork_candidates = equivocation_groups
-        .values()
-        .flatten()
-        .filter(|hash| {
-            entry_folds_on_available_ancestry(**hash, &by_hash, &entry_ancestors, context)
-        })
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let mut authority_forks = context.authority_forks.clone();
-    let mut authority_fork_vault_ids = context.authority_fork_vault_ids.clone();
-    let mut reported_authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
-    let mut reported_authority_fork_resolved_vault_ids =
-        BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>::new();
-    let mut unresolved_equivocation_groups =
-        BTreeSet::<(AuthorityKey, u64)>::from_iter(equivocation_groups.keys().cloned());
-
+    // Restrictive facts are proved independently of the surviving roster.
+    let revoke_facts =
+        super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
+    let mut rejected_permissive = BTreeSet::new();
     let mut pending: BTreeSet<AuthorityEntryHash> = by_hash.keys().copied().collect();
     let mut progressed = true;
     while progressed {
@@ -393,77 +582,33 @@ fn fold_authority_log_once(
                 break;
             }
             let entry = &by_hash[&hash];
-            if let Some(group_key) = equivocation_by_hash.get(&hash) {
-                let group_key = group_key.clone();
-                let group = &equivocation_groups[&group_key];
-                let fold_context = FoldContext {
-                    authority_forks: &authority_forks,
-                    authority_fork_vault_ids: &authority_fork_vault_ids,
-                    equivocation_groups: &equivocation_groups,
-                    unresolved_equivocation_groups: &unresolved_equivocation_groups,
-                    entry_ancestors: Some(&entry_ancestors),
-                    chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
-                    ..context
-                };
-                match resolve_equivocation_group(
-                    &group_key,
-                    group,
-                    &by_hash,
-                    &states,
-                    &pending,
-                    fold_context,
-                ) {
-                    EquivocationResolution::Waiting => continue,
-                    EquivocationResolution::Resolved {
-                        winner,
-                        fork,
-                        fork_vault_ids,
-                        issues: group_issues,
-                    } => {
-                        // The per-round hash snapshot can revisit a second
-                        // member of an already-resolved group; only the first
-                        // resolution may emit facts, or every group member
-                        // duplicates the detection and loser issues.
-                        if !unresolved_equivocation_groups.remove(&group_key) {
-                            continue;
-                        }
-                        if let Some(fork) = fork {
-                            authority_forks.insert(group_key.clone(), fork.clone());
-                            reported_authority_forks.insert(group_key.clone(), fork);
-                            authority_fork_vault_ids.insert(group_key.clone(), fork_vault_ids);
-                        }
-                        if let Some((winner_hash, state)) = winner {
-                            issues.push(AuthorityFoldIssue::EquivocationDetected {
-                                signer: group_key.0.clone(),
-                                seq: group_key.1,
-                            });
-                            states.insert(winner_hash, *state);
-                        }
-                        issues.extend(group_issues);
-                        for group_hash in group {
-                            pending.remove(group_hash);
-                        }
-                        progressed = true;
-                        continue;
-                    }
-                }
-            }
-            let fold_context = FoldContext {
-                authority_forks: &authority_forks,
-                authority_fork_vault_ids: &authority_fork_vault_ids,
-                equivocation_groups: &equivocation_groups,
-                unresolved_equivocation_groups: &unresolved_equivocation_groups,
-                entry_ancestors: Some(&entry_ancestors),
-                chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
-                ..context
-            };
-            match fold_entry_state(entry, hash, &states, fold_context) {
+            let fold_context = context;
+            match super::ancestry_evaluator::evaluate_entry(
+                entry,
+                hash,
+                &by_hash,
+                &states,
+                &pending,
+                fold_context,
+                super::ancestry_evaluator::EvaluationPhase::Normal,
+            ) {
                 EntryFold::Ready(state) => {
                     states.insert(hash, state);
                     pending.remove(&hash);
                     progressed = true;
                 }
                 EntryFold::Invalid(issue) => {
+                    // Only the retired client-key door may be crossed as a
+                    // valid folded revoke. Other rejected grants keep the
+                    // separate, restriction-only proof path: their children
+                    // do not become ordinary valid entries.
+                    if matches!(entry.op, AuthorityOp::EnrollDevice { .. })
+                        && context
+                            .pre_handoff_entries
+                            .is_some_and(|allowed| !allowed.contains(&hash))
+                    {
+                        rejected_permissive.insert(hash);
+                    }
                     issues.push(issue);
                     pending.remove(&hash);
                     progressed = true;
@@ -478,30 +623,17 @@ fn fold_authority_log_once(
             // ancestry ABOVE a parent that will never fold.
             let stalled: Vec<_> = pending.iter().copied().collect();
             for hash in stalled {
-                if equivocation_by_hash.contains_key(&hash) {
-                    continue;
-                }
                 let entry = &by_hash[&hash];
-                let fold_context = FoldContext {
-                    authority_forks: &authority_forks,
-                    authority_fork_vault_ids: &authority_fork_vault_ids,
-                    equivocation_groups: &equivocation_groups,
-                    unresolved_equivocation_groups: &unresolved_equivocation_groups,
-                    entry_ancestors: Some(&entry_ancestors),
-                    chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
-                    ..context
-                };
-                let Some(bypass_states) =
-                    revocation_bypass_states(entry, &by_hash, &states, &pending, fold_context)
-                else {
-                    continue;
-                };
-                // Ready only. A revocation the bypass cannot justify stays
-                // pending and is reported as `InvalidAncestry` below, exactly as
-                // before — the bypass may rescue a revocation, never admit one.
-                if let EntryFold::Ready(state) =
-                    fold_entry_state(entry, hash, &bypass_states, fold_context)
-                {
+                let fold_context = context;
+                if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
+                    entry,
+                    hash,
+                    &by_hash,
+                    &states,
+                    &pending,
+                    fold_context,
+                    super::ancestry_evaluator::EvaluationPhase::Stalled(&rejected_permissive),
+                ) {
                     states.insert(hash, state);
                     pending.remove(&hash);
                     progressed = true;
@@ -528,44 +660,29 @@ fn fold_authority_log_once(
                 vault_id: state.vault_id,
             });
         }
-        for state in states.values() {
-            reconcile_reported_authority_forks(
-                &mut reported_authority_forks,
-                &authority_fork_vault_ids,
-                &mut reported_authority_fork_resolved_vault_ids,
-                state,
-            );
-        }
-        let authority_forks: Vec<_> = reported_authority_forks.values().cloned().collect();
-        let fork_alarms = build_fork_alarms(&authority_forks);
-        return (
-            AuthorityFold {
-                append_heads: BTreeSet::new(),
-                append_sequences: BTreeMap::new(),
-                actor_revocation_affected_writers: BTreeSet::new(),
-                actor_write_frontiers: BTreeMap::new(),
-                revoked_actor_keys: BTreeSet::new(),
-                slips: SlipAuthorityState::default(),
-                vault_id: None,
-                valid_entries: BTreeSet::new(),
-                roster: BTreeMap::new(),
-                tier_floor: None,
-                genesis_fragile: false,
-                pending_widens: BTreeMap::new(),
-                vetoed_widens: BTreeSet::new(),
-                authority_forks,
-                fork_alarms,
-                federation_pacts: BTreeMap::new(),
-                federation_confirms: BTreeMap::new(),
-                critical_write_confirms: BTreeMap::new(),
-                consumed_critical_write_confirm_nonces: BTreeSet::new(),
-                conflicted_critical_write_confirms: BTreeSet::new(),
-                federation_grant_bindings: BTreeMap::new(),
-                actor_bindings: BTreeMap::new(),
-                issues,
-            },
-            authority_fork_vault_ids,
-        );
+        return AuthorityFold {
+            append_heads: BTreeSet::new(),
+            append_sequences: BTreeMap::new(),
+            actor_revocation_affected_writers: BTreeSet::new(),
+            actor_write_frontiers: BTreeMap::new(),
+            revoked_actor_keys: BTreeSet::new(),
+            slips: SlipAuthorityState::default(),
+            vault_id: None,
+            valid_entries: BTreeSet::new(),
+            roster: BTreeMap::new(),
+            tier_floor: None,
+            genesis_fragile: false,
+            pending_widens: BTreeMap::new(),
+            vetoed_widens: BTreeSet::new(),
+            federation_pacts: BTreeMap::new(),
+            federation_confirms: BTreeMap::new(),
+            critical_write_confirms: BTreeMap::new(),
+            consumed_critical_write_confirm_nonces: BTreeSet::new(),
+            conflicted_critical_write_confirms: BTreeSet::new(),
+            federation_grant_bindings: BTreeMap::new(),
+            actor_bindings: BTreeMap::new(),
+            issues,
+        };
     }
 
     let mut merged: Option<FoldState> = None;
@@ -578,16 +695,6 @@ fn fold_authority_log_once(
         });
     }
 
-    if let Some(state) = &merged {
-        reconcile_reported_authority_forks(
-            &mut reported_authority_forks,
-            &authority_fork_vault_ids,
-            &mut reported_authority_fork_resolved_vault_ids,
-            state,
-        );
-    }
-    let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
-    let fork_alarms = build_fork_alarms(&authority_forks);
     // Collision poison is part of the externally auditable fold result, not
     // merely a settlement-time guard. Emit one deterministic issue per id.
     if let Some(state) = &merged {
@@ -602,73 +709,69 @@ fn fold_authority_log_once(
                 ),
         );
     }
+    if let Some(state) = &mut merged {
+        revoke_facts.apply_to(state);
+    }
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
-        folded_actor_bindings(state, &authority_forks, context.consent_arm)
+        folded_actor_bindings(state, context.consent_arm)
     });
 
-    (
-        AuthorityFold {
-            append_heads: BTreeSet::new(),
-            append_sequences: BTreeMap::new(),
-            actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
-                &states,
-                merged.as_ref(),
-            ),
-            actor_write_frontiers: super::causal_write::causal_actor_frontiers(
-                &states,
-                merged.as_ref(),
-                &actor_bindings,
-            ),
-            revoked_actor_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
-                state.actor_revocation_hashes.keys().cloned().collect()
+    AuthorityFold {
+        append_heads: BTreeSet::new(),
+        append_sequences: BTreeMap::new(),
+        actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
+            &states,
+            merged.as_ref(),
+        ),
+        actor_write_frontiers: super::causal_write::causal_actor_frontiers(
+            &states,
+            merged.as_ref(),
+            &actor_bindings,
+        ),
+        revoked_actor_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state.actor_revocation_hashes.keys().cloned().collect()
+        }),
+        slips: merged
+            .as_ref()
+            .map_or_else(SlipAuthorityState::default, |state| state.slips.clone()),
+        vault_id: merged.as_ref().map(|state| state.vault_id),
+        valid_entries,
+        roster: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.roster.clone()),
+        tier_floor: merged.as_ref().map(|state| state.tier_floor),
+        genesis_fragile: merged.as_ref().is_some_and(|state| {
+            state.genesis_recovery_dismissed && !state.recovery_redundancy_established
+        }),
+        pending_widens: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.pending_widens.clone()),
+        vetoed_widens: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, |state| state.vetoed_widens.clone()),
+        federation_pacts: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
+        federation_confirms: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.federation_confirms.clone()),
+        critical_write_confirms: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.critical_write_confirms.clone()),
+        consumed_critical_write_confirm_nonces: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, |state| {
+                state.consumed_critical_write_confirm_nonces.clone()
             }),
-            slips: merged
-                .as_ref()
-                .map_or_else(SlipAuthorityState::default, |state| state.slips.clone()),
-            vault_id: merged.as_ref().map(|state| state.vault_id),
-            valid_entries,
-            roster: merged
-                .as_ref()
-                .map_or_else(BTreeMap::new, |state| state.roster.clone()),
-            tier_floor: merged.as_ref().map(|state| state.tier_floor),
-            genesis_fragile: merged.as_ref().is_some_and(|state| {
-                state.genesis_recovery_dismissed && !state.recovery_redundancy_established
-            }),
-            pending_widens: merged
-                .as_ref()
-                .map_or_else(BTreeMap::new, |state| state.pending_widens.clone()),
-            vetoed_widens: merged
-                .as_ref()
-                .map_or_else(BTreeSet::new, |state| state.vetoed_widens.clone()),
-            authority_forks,
-            fork_alarms,
-            federation_pacts: merged
-                .as_ref()
-                .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
-            federation_confirms: merged
-                .as_ref()
-                .map_or_else(BTreeMap::new, |state| state.federation_confirms.clone()),
-            critical_write_confirms: merged
-                .as_ref()
-                .map_or_else(BTreeMap::new, |state| state.critical_write_confirms.clone()),
-            consumed_critical_write_confirm_nonces: merged
-                .as_ref()
-                .map_or_else(BTreeSet::new, |state| {
-                    state.consumed_critical_write_confirm_nonces.clone()
-                }),
-            conflicted_critical_write_confirms: merged
-                .as_ref()
-                .map_or_else(BTreeSet::new, |state| {
-                    state.conflicted_critical_write_confirms.clone()
-                }),
-            federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-                state.federation_grant_bindings.clone()
-            }),
-            actor_bindings,
-            issues,
-        },
-        authority_fork_vault_ids,
-    )
+        conflicted_critical_write_confirms: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            state.conflicted_critical_write_confirms.clone()
+        }),
+        federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            state.federation_grant_bindings.clone()
+        }),
+        actor_bindings,
+        issues,
+    }
 }
 
 fn reject_replayed_federation_confirms(

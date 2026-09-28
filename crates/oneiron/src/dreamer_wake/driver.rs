@@ -11,7 +11,7 @@ use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
     DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneKind,
-    DreamerRunnerStore, SettleDreamerBudget,
+    DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
 };
 use crate::error::Result;
 use crate::llm::{
@@ -31,9 +31,9 @@ use super::types::{
 /// Park reason stamped on attempts cut at the wake-pass ceiling.
 pub const DREAMER_HARD_CUT_PARK_REASON: &str = "wake-pass hard cut";
 
-/// Park-owner token for deadline hard-cut parks: the step layer parks the
-/// cut attempt under this token (no trap is opened at the ceiling), and only a
-/// resumer presenting it may clear the row.
+/// Park-owner token for a step-layer hard-cut park. Retained for recovery of
+/// existing park rows; admitted LLM calls now finish and settle before the
+/// enclosing executor stops run continuation.
 pub const DREAMER_HARD_CUT_PARK_OWNER: &str = "dreamer.step:hard-cut";
 
 /// Park reason stamped on attempts preempted by a cooperative cancellation
@@ -257,6 +257,7 @@ impl<'a> DreamerWakeDriver<'a> {
         // attempt is admitted and outside the budget/lease loop entirely.
         crate::llm::resume_peer_result_steps(self.vault, input.now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
+        self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
 
         let mut report = WakePassReport {
             admitted: 0,
@@ -268,6 +269,13 @@ impl<'a> DreamerWakeDriver<'a> {
             stop: WakePassStop::QueueEmpty,
         };
 
+        // Keep one MVCC revision for the wake's evidence accounting. Any source
+        // changed before commit is rejected by the existing write fence.
+        let prepared_wake = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
+            self.vault,
+            input.scope,
+            input.host_scope.as_ref(),
+        )?;
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
             // self-wake per iteration, so a supervisor selecting over this
@@ -286,9 +294,8 @@ impl<'a> DreamerWakeDriver<'a> {
             }
             self.maybe_fire_wrap_notice();
             if self.deadline.expired() {
-                // Hard cut, unconditionally: the sequential driver holds no
-                // in-flight leases here (the step layer's deadline race
-                // aborts and parks mid-step losers before returning).
+                // Hard cut at the attempt boundary: any admitted LLM call has
+                // settled before the sequential driver reaches this check.
                 report.stop = WakePassStop::DeadlineHardCut;
                 break;
             }
@@ -450,12 +457,36 @@ impl<'a> DreamerWakeDriver<'a> {
                 // propagating it directly would leave the admitted attempt
                 // leased and its reservation held.
                 Err(publish_error)
+            } else if admitted.status.attempt.kind == input.scope.attempt_kind()
+                && !prepared_wake.contains_attempt(attempt_id)
+            {
+                // Enqueued after the frozen wake revision: never admit it to
+                // this snapshot or fall back to a newer per-attempt read.
+                Ok(DreamerAttemptExecution::Deferred {
+                    completed_units: 0,
+                    retry_at: input.now.saturating_add(1),
+                })
+            } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
+                reason,
+                ..
+            }) = prepared_wake.preparation(attempt_id)
+            {
+                Ok(DreamerAttemptExecution::Park {
+                    reason: (*reason).to_owned(),
+                })
             } else {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
+                    prepared_wake: Some(&prepared_wake),
+                    prepared_attempt: match prepared_wake.preparation(attempt_id) {
+                        Some(crate::dreamer_consolidation::AttemptPreparation::Ready(plan)) => {
+                            Some(plan)
+                        }
+                        _ => None,
+                    },
                 };
                 // Panic containment at the per-attempt boundary (ONE-1683): a
                 // panicking executor unwinding past the driver would skip
@@ -504,12 +535,9 @@ impl<'a> DreamerWakeDriver<'a> {
             let execution = match executed {
                 Ok(execution) => execution,
                 Err(error) => {
-                    // A mid-step deadline loss may surface as an executor
-                    // ERROR (a host propagating the step layer's
-                    // DeadlineHardCut instead of mapping it to Park). The
-                    // budget refund, the park bookkeeping, and the
-                    // checkpoint milestone must still run — treat it as the
-                    // hard-cut park it is instead of bailing out.
+                    // An executor may already have parked a hard-cut attempt
+                    // before surfacing an error. The budget refund, park
+                    // bookkeeping, and checkpoint milestone must still run.
                     let step_layer_parked = self
                         .store
                         .parked_attempt(attempt_id)?
@@ -637,6 +665,38 @@ impl<'a> DreamerWakeDriver<'a> {
                         input.now,
                     )?;
                     report.landed += 1;
+                }
+                DreamerAttemptExecution::ParkWithSpend {
+                    reason,
+                    completed_units,
+                    step_hashes,
+                } => {
+                    // The in-flight call finished and was charged. Stop the run
+                    // at this boundary without refunding its real spend or
+                    // publishing post-deadline output.
+                    let reason = clamp_park_reason(reason);
+                    self.store.settle_checkpoint_budget(
+                        SettleDreamerBudget {
+                            budget_id: self.budget_id.clone(),
+                            child_attempt: attempt_id,
+                            actual_units: completed_units,
+                            now: input.now,
+                        },
+                        &step_hashes,
+                        ParkDreamerAttempt {
+                            attempt_id,
+                            reason: reason.clone(),
+                            park_owner: input.lease_owner.clone(),
+                            now: input.now,
+                        },
+                    )?;
+                    self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
+                    self.write_milestone(
+                        attempt_id,
+                        DreamerMilestoneKind::CheckpointReached,
+                        input.now,
+                    )?;
+                    report.parked += 1;
                 }
                 DreamerAttemptExecution::Park { reason } => {
                     // Executor-authored reasons get the same clamp as the

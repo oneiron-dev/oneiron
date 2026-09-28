@@ -574,6 +574,42 @@ pub(super) fn budget_read_from_states(
     }
 }
 
+/// Read-only preflight for a set of connector keys charged in ONE Gate
+/// transaction. Callers preflight every distinct key before writing usage to
+/// any of them, so a later exhausted key cannot partially debit an earlier.
+pub(crate) fn preflight_effector_budgets(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    record: &ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+) -> Result<Option<(u16, EffectorBudgetOnExhaust)>> {
+    let states = load_budget_row_states(
+        store,
+        txn,
+        key_id,
+        record,
+        Some(effect_channel),
+        send_like,
+        now,
+    )?;
+    Ok(states
+        .iter()
+        .find(|state| {
+            if !state.matched {
+                return false;
+            }
+            let used = state.usage.used();
+            match state.budget.dimension {
+                EffectorBudgetDimension::Spend => used >= state.budget.limit,
+                _ => used.saturating_add(state.amount) > state.budget.limit,
+            }
+        })
+        .map(|state| (state.row_index, state.budget.on_exhaust)))
+}
+
 /// Evaluates and (only when every matched row passes) debits a key's budget
 /// rows for one admitted external effect. Evaluate-all-then-apply-all across
 /// the key/compiled union: an exhausted outcome applies NO debits. The charge

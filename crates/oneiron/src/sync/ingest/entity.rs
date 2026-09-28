@@ -5,13 +5,12 @@ use loro::LoroMap;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
+use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+    ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD, ENTITY_TYPE_REDACTION_AUDIT,
 };
-use crate::sync::bridge::{
-    companion_register_sync_admitted, ingest_replicated_identity_topology_event_in_txn,
-};
+use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
 use crate::sync::loro_support::{tombstone_map_contains_id, tombstone_values_for_id};
 use crate::sync::pack_sync;
 use crate::sync::quarantine::{
@@ -54,8 +53,8 @@ pub(in crate::sync) enum EntityStep {
     /// Nothing to write: a delete gate holds, the local bytes already match, or the kind never
     /// replicates.
     Skip,
-    /// A restricted companion register row. It stays local, and its carrier and every edge
-    /// touching it must leave the shared document.
+    /// A retired identity carrier (a companion register row). It stays local, and its carrier
+    /// and every edge touching it must leave the shared document.
     LocalOnlyCompanion(EntityId),
     /// The replicated row was written.
     Materialized(EntityId),
@@ -101,7 +100,12 @@ pub(in crate::sync) enum RefusalRetry {
 impl RefusalRetry {
     fn of(err: &Error) -> Self {
         if crate::subject_model::subject_model_dependency_pending(err)
-            || err.kind() == ErrorKind::ProjectDependencyPending
+            || matches!(
+                err.kind(),
+                ErrorKind::ProjectDependencyPending
+                    | ErrorKind::ResidentOwnerDependencyPending
+                    | ErrorKind::AskDependencyPending
+            )
         {
             Self::DependencyPending
         } else if matches!(
@@ -215,6 +219,20 @@ fn admit(
     {
         return Ok(EntityStep::Skip);
     }
+    // ONE-1881: a terminal receipt takes its own writer-locked door BEFORE the generic
+    // delete-wins and exact-byte shortcuts; the door refuses every tombstone naming it and
+    // neutralizes its `dt:` poison in this transaction.
+    if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {
+        let wrote = crate::sync::receipt_ingest::ingest_in_txn(
+            vault,
+            wtxn,
+            ctx.tombstones_map,
+            ctx.window_key,
+            &id,
+            blob,
+        )?;
+        return Ok(EntityStep::Protected { id, wrote });
+    }
     let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
         return Ok(EntityStep::Skip);
@@ -227,15 +245,12 @@ fn admit(
         return Ok(EntityStep::Skip);
     }
     let data = &blob[ENTITY_METADATA_HEADER_LEN..];
-    if header.entity_type == ENTITY_TYPE_FACET && crate::companion::is_identity_facet_body(data) {
-        if !companion_register_sync_admitted(data)? {
-            tracing::warn!(
-                entity = %id.to_hex(),
-                "sync ingest: refused local-only companion register materialization"
-            );
-            return Ok(EntityStep::LocalOnlyCompanion(id));
-        }
-        vault.ensure_companion_register_kind()?;
+    if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
+        tracing::warn!(
+            entity = %id.to_hex(),
+            "sync ingest: refused local-only companion register materialization"
+        );
+        return Ok(EntityStep::LocalOnlyCompanion(id));
     }
     if header.entity_type == ENTITY_TYPE_DIAGNOSTIC {
         // T1 observations and eligibility receipts are local to their account: replay may not
@@ -251,7 +266,7 @@ fn admit(
         ENTITY_TYPE_REDACTION_AUDIT
             | ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
             | ENTITY_TYPE_AUTHORITY_LOG
-    ) && let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())?
+    ) && let Some(local) = vault.store.port_entity_raw(wtxn, &id)?
     {
         // Pack echo: the local row holds receiver-local bytes (local handle/generation) while
         // the carrier holds canonical origin bytes, so byte equality never holds after a
@@ -288,8 +303,7 @@ fn admit(
         ENTITY_TYPE_AUTHORITY_LOG => {
             if vault
                 .store
-                .entities
-                .get(&*wtxn, id.as_bytes())?
+                .port_entity_raw(wtxn, &id)?
                 .is_some_and(|local| *local == *blob)
             {
                 refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
@@ -413,7 +427,7 @@ fn admit_receipt(
 ) -> Result<ReceiptAdmission> {
     let vault = ctx.vault;
     crate::deletion::validate_redaction_receipt_body(data)?;
-    if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+    if let Some(local) = vault.store.port_entity_raw(wtxn, id)? {
         if *local == *blob
             || crate::deletion::redaction_receipt_is_stale_finalization_echo(&local, blob)
         {

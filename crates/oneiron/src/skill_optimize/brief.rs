@@ -14,7 +14,11 @@ use crate::skill_attribution::{
 };
 use crate::skill_reliability::SkillReliabilityPosterior;
 
-use super::gate::{dev_receipts, receipt_is_held_out};
+use super::gate::{
+    SkillEditDisposition, dev_receipts, receipt_is_held_out, skill_body_binding_digest,
+    skill_edit_verdicts,
+};
+use super::job::{PROVENANCE_OPTIMIZE_PRINCIPAL_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY};
 use super::selection::SkillOptimizeCandidate;
 
 /// Upper bound on any one evidence list handed to the author.
@@ -76,6 +80,29 @@ pub struct SkillOptimizeBrief {
     /// substitution carries the correction TEXT, which is the held-out outcome
     /// restated in the most usable form there is.
     pub substitution_proposals: Vec<MinedSkillEditProposal>,
+    /// Earlier rejected drafts for this exact skill, alongside the open
+    /// proposals. Only the categorical rejection reason crosses from the
+    /// held-out gate: never its scores, basis, or reserved receipt ids.
+    pub rejected_edits: Vec<RejectedSkillEdit>,
+}
+
+/// Why a scored edit did not clear the strict-improvement gate.
+/// No scores or held-out evidence are exposed to the drafting author.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectedSkillEditReason {
+    Tie,
+    Regression,
+}
+
+/// A previously rejected edit the author can avoid repeating.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedSkillEdit {
+    pub proposal: EntityId,
+    pub desc: String,
+    /// The first author's stated reason for proposing this text.
+    pub author_rationale: String,
+    /// The gate's categorical reason for rejecting it.
+    pub rejection_reason: RejectedSkillEditReason,
 }
 
 /// The author's answer.
@@ -209,6 +236,68 @@ pub(super) fn optimize_brief_bound_at(
     }
     truncate_oldest(&mut substitution_proposals);
 
+    // A rejection is feedback about the author's own draft, not a license to
+    // inspect the held-out exam. Read only terminal, scored rejections for this
+    // exact target, then join their proposal text and author rationale. A
+    // removed or since-mutated proposal cannot truthfully describe the body
+    // the gate scored; do not display it as that body's edit.
+    let mut rejected_edits = Vec::new();
+    // Newest first: the cap counts only entries that actually survive the
+    // proposal, digest, and audience joins. Otherwise 64 other principals'
+    // verdicts could evict the one rejection this author may learn from.
+    for verdict in skill_edit_verdicts(vault)?.into_iter().rev() {
+        if verdict.skill != candidate.skill || verdict.disposition != SkillEditDisposition::Rejected
+        {
+            continue;
+        }
+        let Some(proposal) = vault.get_skill_record(&verdict.proposal)? else {
+            continue;
+        };
+        if skill_body_binding_digest(&proposal)? != verdict.proposal_digest {
+            continue;
+        }
+        let Value::Map(provenance) = &proposal.provenance else {
+            continue;
+        };
+        // An owner-scoped draft can carry private preference corrections.
+        // Never echo it to an unbound job or another principal. Unbound
+        // drafts contain no owner-specific evidence and remain visible to all.
+        let bound_to = provenance
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY))
+            .map(|(_, value)| value.as_str().and_then(|hex| EntityId::from_hex(hex).ok()));
+        // Absent is public; present but unreadable is NOT unbound. Treat any
+        // malformed stamp as ineligible, including for an unbound author.
+        if bound_to.is_some_and(|owner| owner.is_none() || owner != principal) {
+            continue;
+        }
+        let Some(author_rationale) = provenance.iter().find_map(|(key, value)| {
+            (key.as_str() == Some(PROVENANCE_OPTIMIZE_RATIONALE_KEY))
+                .then(|| value.as_str())
+                .flatten()
+        }) else {
+            continue;
+        };
+        rejected_edits.push(RejectedSkillEdit {
+            proposal: verdict.proposal,
+            desc: proposal.desc,
+            author_rationale: author_rationale.to_owned(),
+            rejection_reason: if verdict
+                .goal_axes
+                .values()
+                .all(|axis| axis.after == axis.before)
+            {
+                RejectedSkillEditReason::Tie
+            } else {
+                RejectedSkillEditReason::Regression
+            },
+        });
+        if rejected_edits.len() == SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE {
+            break;
+        }
+    }
+    rejected_edits.reverse();
+
     Ok(SkillOptimizeBrief {
         skill: candidate.skill,
         principal,
@@ -225,6 +314,7 @@ pub(super) fn optimize_brief_bound_at(
         defect_receipts,
         discovery_proposals,
         substitution_proposals,
+        rejected_edits,
     })
 }
 

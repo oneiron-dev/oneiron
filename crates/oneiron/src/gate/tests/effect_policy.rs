@@ -358,7 +358,11 @@ fn external_effect_pending_reason_and_receipt_changes_mint_distinct_rows() -> Re
         let reason = coalescing_effect_record(&vault.store, wtxn, &opted_out, &policy)?;
         let receipt = coalescing_effect_record(&vault.store, wtxn, &explained, &policy)?;
         assert_ne!(reason.reason_codes, first.reason_codes);
-        assert_eq!(reason.receipt_reasons, first.receipt_reasons);
+        assert!(first.receipt_reasons.is_empty());
+        assert_eq!(
+            reason.receipt_reasons,
+            vec!["policy_precedence_shipped_default"]
+        );
         assert_eq!(receipt.reason_codes, reason.reason_codes);
         assert_ne!(receipt.receipt_reasons, reason.receipt_reasons);
         assert_ne!(first.decision_id, reason.decision_id);

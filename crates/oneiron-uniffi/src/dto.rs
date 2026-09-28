@@ -475,25 +475,6 @@ pub struct HabitCheckinInput {
     pub learned_at: Option<i64>,
 }
 
-/// One companion persona registration.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct CompanionRecordInput {
-    /// Deterministic 32-hex record id; omitted means generated.
-    pub id: Option<String>,
-    /// Owner ref (personal scope).
-    pub owner_ref: String,
-    /// Companion persona ref.
-    pub persona_ref: String,
-    /// Opaque record value.
-    pub value: WireJson,
-    /// Provenance source; omitted uses the engine default.
-    pub source: Option<String>,
-    /// Retire the record at this time after creation (Unix seconds).
-    pub retired_at: Option<i64>,
-    /// Creation time (Unix seconds).
-    pub learned_at: i64,
-}
-
 /// One imported-evidence claim admission.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct AdmitImportedClaimInput {
@@ -642,6 +623,8 @@ pub struct MemoryPack {
     pub pack_version: u32,
     /// Text rendering in the requested format; absent means typed only.
     pub rendered: Option<String>,
+    /// The actor-scoped read receipt.
+    pub narrowing: ReadReceipt,
 }
 
 // ── jobs and effects ────────────────────────────────────────────────────

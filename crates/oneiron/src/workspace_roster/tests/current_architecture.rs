@@ -16,7 +16,7 @@ pub(super) fn assert_mailbox_lifecycle_receipt(
     assert_eq!(result.identity.as_ref(), Some(&stored));
     assert!(!stored.may_send());
     if gate_outcome == Some("allow") || gate_outcome.is_none() {
-        assert_eq!(result.outcome, stored.state.as_str());
+        assert_eq!(result.outcome, stored.state().as_str());
     }
     let receipt = vault
         .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::IdentityLifecycle))?
@@ -30,11 +30,11 @@ pub(super) fn assert_mailbox_lifecycle_receipt(
         Some(format!("entity:{}", identity.to_hex()))
     );
     assert_eq!(field("verb"), Some(verb));
-    assert_eq!(field("state"), Some(stored.state.as_str()));
+    assert_eq!(field("state"), Some(stored.state().as_str()));
     assert_eq!(
         field("fulfillment_mode"),
         stored
-            .pending_fulfillment
+            .pending_fulfillment()
             .map(crate::channel_identity::ChannelIdentityFulfillment::as_str)
     );
     assert_eq!(
@@ -348,6 +348,24 @@ fn house_name_can_be_owner_edited_without_rewriting_the_seed_or_replay() -> Resu
 }
 
 #[test]
+fn mailbox_verification_clock_observation_does_not_invalidate_its_own_revision() -> Result<()> {
+    let (_dir, vault, intent, owner) = mailbox_fixture()?;
+    let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
+    assert_mailbox_waiting(&vault, &intent, &owner)?;
+    activate_mailbox(&vault, requested.identity_ref)?;
+    vault.apply_channel_identity_autonomy(&requested.autonomy, &owner)?;
+    // Make the next authorization read advance time without any unrelated
+    // writer. Its own durable clock observation cannot invalidate the proof.
+    vault
+        .store
+        .clock
+        .observe_floor(vault.now_recorded_at().saturating_add(10))?;
+    let revision = verify_mailbox_revision(&vault, &intent, Some(&owner))?;
+    require_mailbox_revision(&vault, revision)?;
+    Ok(())
+}
+
+#[test]
 fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() -> Result<()> {
     for checkpoint in 0..5 {
         let (dir, vault, intent, owner) = mailbox_fixture()?;
@@ -469,7 +487,10 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
         );
         assert_eq!(type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY), 1);
         assert_eq!(type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER), 0);
-        assert_eq!(vault.companion_register()?.len(), 1);
+        assert_eq!(
+            vault.get_entity_type(&intent.required_companion()?.person_ref)?,
+            Some(ENTITY_TYPE_PERSON)
+        );
         assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 2);
         assert_eq!(
             type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
@@ -599,7 +620,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
         let identity = vault
             .get_channel_identity(&requested.identity_ref)?
             .expect("identity");
-        assert_eq!(identity.state, ChannelIdentityState::Requested);
+        assert_eq!(identity.state(), ChannelIdentityState::Requested);
         for (outcome, gate_outcome) in [("denied", "deny"), ("held", "pending")] {
             let mut request = mailbox_bind_request(requested.identity_ref, &owner);
             if outcome == "denied" {

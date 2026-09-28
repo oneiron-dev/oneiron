@@ -1,9 +1,7 @@
 use super::*;
 use crate::access_grant::AccessGrant;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
-use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     encode_federation_grant_body,
@@ -11,9 +9,6 @@ use crate::federation::{
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
 use crate::temporal::TimeRange;
-use crate::write_envelope::WriteActor;
-use crate::write_envelope::WriteEnvelope;
-use crate::write_envelope::WriteProvenance;
 
 fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir()?;
@@ -180,26 +175,6 @@ fn append_pending_gate_consent(
         )
     })?;
     Ok(decision_id)
-}
-
-fn provenance(actor: EntityId) -> CompanionProvenance {
-    let envelope = WriteEnvelope::new(
-        WriteActor::new(actor, EdgeActorClass::Agent),
-        ClaimSource::UserStated,
-        WriteProvenance::new(rmpv::Value::from("receipt fixture")).unwrap(),
-        ClaimApprovalStatus::Approved,
-    );
-    CompanionProvenance::from_envelope(&envelope)
-}
-
-fn companion_record(actor: EntityId) -> CompanionRecord {
-    CompanionRecord::persona(
-        CompanionScope::neutral(),
-        entity(0x51),
-        rmpv::Value::from("persona"),
-        provenance(actor),
-        crate::federation::Sensitivity::Public,
-    )
 }
 
 fn put_federation_grant(vault: &Vault, id: EntityId, learned_at: u64) -> Result<()> {
@@ -443,9 +418,6 @@ fn receipt_query_returns_mixed_kinds_and_filters() -> Result<()> {
         "gate.pending.actor_ceiling",
     )?;
 
-    let identity_actor = entity(0x50);
-    vault.create_companion_record(&entity(0x52), &companion_record(identity_actor), 20)?;
-
     let access_grant =
         AccessGrant::companion_profile_read(entity(0x60), entity(0x62), entity(0x63), 30);
     vault.create_access_grant(&entity(0x64), &access_grant)?;
@@ -457,17 +429,12 @@ fn receipt_query_returns_mixed_kinds_and_filters() -> Result<()> {
         .map(|receipt| receipt.receipt_kind)
         .collect();
     assert!(kinds.contains(&ReceiptKind::Gate));
-    assert!(kinds.contains(&ReceiptKind::IdentityLifecycle));
     assert!(kinds.contains(&ReceiptKind::ScopedRead));
     assert!(kinds.contains(&ReceiptKind::Share));
 
     let gate = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
     assert_eq!(gate.len(), 1);
     assert_eq!(gate[0].actor.as_deref(), Some("agent-alpha"));
-
-    let by_actor = vault.receipts(ReceiptQuery::new(10).with_actor(identity_actor.to_hex()))?;
-    assert_eq!(by_actor.len(), 1);
-    assert_eq!(by_actor[0].receipt_kind, ReceiptKind::IdentityLifecycle);
 
     let by_outcome = vault.receipts(ReceiptQuery::new(10).with_outcome("active"))?;
     assert_eq!(by_outcome.len(), 1);
@@ -1146,6 +1113,7 @@ fn test_prompt_stamp() -> PromptRecompileStamp {
         compiled_at_secs: 1_700_000_000,
         source_fingerprint: "feedbead".to_owned(),
         resolved_fingerprint: "deadbeef".to_owned(),
+        assembled_fingerprint: None,
         source_paths: vec!["eiri/v3.md".to_owned()],
     }
 }
@@ -1699,6 +1667,28 @@ fn the_pack_receipt_ledger_resolves_only_ids_it_stamped() -> Result<()> {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    assert!(
+        queue
+            .complete(CompleteAttempt {
+                id: attempt.id,
+                lease_owner: "worker".to_owned(),
+                attempt_count: leased.attempt_count,
+                now: 13,
+            })
+            .is_err(),
+        "skill-bearing attempt cannot settle without a model"
+    );
+    assert!(attempt_pack_receipt(&vault, &attempt_pack_receipt_id(&attempt.id))?.is_none());
+    assert_eq!(
+        queue.get(attempt.id)?.unwrap().state,
+        crate::attempt_queue::AttemptState::Leased
+    );
+    queue.set_executor_model(
+        attempt.id,
+        "worker",
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     queue.complete(CompleteAttempt {
         id: attempt.id,
         lease_owner: "worker".to_owned(),
@@ -1909,5 +1899,48 @@ fn brief_share_preserves_legacy_share_receipt_bytes_and_namespaces() -> Result<(
         .len(),
         4
     );
+    Ok(())
+}
+
+#[test]
+fn unrelated_asset_inventory_cannot_disable_outbound_receipt_queries() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let mut config = embedding_test_config();
+    config.map_size = 256 * 1024 * 1024;
+    let vault = Vault::open(tmp.path(), config)?;
+    let asset_type = crate::registry::ENTITY_TYPE_ASSET;
+    let initial_assets = vault.count_entities_by_type(asset_type)?;
+    // Fixture rows in one transaction avoid 100,001 independent commits. They
+    // carry the ordinary entity header and type index used by ASSET queries,
+    // but none is a suppression carrier.
+    vault.with_write_txn(|txn| {
+        let mut raw = vec![asset_type];
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(b"ordinary asset");
+        for n in 0..=100_000_u64 {
+            let mut bytes = [0_u8; 16];
+            bytes[6] = 0x70;
+            bytes[8..].copy_from_slice(&n.to_be_bytes());
+            bytes[8] = 0x80;
+            let id = EntityId::from_bytes(bytes)?;
+            vault.store.entities.put(txn, id.as_bytes(), &raw)?;
+            vault
+                .store
+                .type_index
+                .put(txn, &Store::encode_type_key(asset_type, &id), &[])?;
+        }
+        Ok(())
+    })?;
+    assert_eq!(
+        vault.count_entities_by_type(asset_type)?,
+        initial_assets + 100_001
+    );
+    let query = ReceiptQuery::new(1).with_kind(ReceiptKind::Outbound);
+    assert!(vault.receipts(query.clone())?.is_empty());
+    let scan = vault.scan_receipts(query)?;
+    assert!(scan.records.is_empty());
+    assert!(scan.complete);
     Ok(())
 }

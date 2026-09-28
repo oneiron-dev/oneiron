@@ -4,12 +4,14 @@ mod coop_request;
 mod delete;
 mod erase;
 mod gate;
+mod identity_event_stamps;
 mod publish;
 mod receipt;
 mod rendezvous;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
+pub(crate) mod topology_delete_intent;
 
 #[cfg(test)]
 mod tests;
@@ -20,7 +22,7 @@ pub use coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
 };
-pub use delete::DeleteEntityOutcome;
+pub use delete::{DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview};
 pub use sweep_queue::arch0038_carrier_classes;
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
@@ -39,9 +41,10 @@ pub(crate) use sweep_queue::{
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
 pub(crate) use tombstone::{
-    ARCHIVE_TOMBSTONE_PREFIX, HARD_DELETE_MARKER, LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE,
-    archive_tombstone_key, local_hard_delete_key,
+    ARCHIVE_TOMBSTONE_PREFIX, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER,
+    LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, archive_tombstone_key, local_hard_delete_key,
 };
+pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 // The replay outcome is read by sync production (`sync::quarantine`) and by
 // the white-box test modules that pin the base replay law; a plain
 // no-feature library reaches neither.

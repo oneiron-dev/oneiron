@@ -121,17 +121,15 @@ impl Drop for RegisteredPath {
 /// `SyncServer.vault`) — the last clone to drop closes the environment.
 pub(crate) struct OwnedEnv {
     pub(super) env: Env,
-    /// The existing-only door's bound root directory descriptor, kept alive for
-    /// the whole environment lifetime so the `/proc/self/fd/<dirfd>` path LMDB
-    /// was opened through can never become some recycled descriptor. `None` on
-    /// the create-capable door, which opens the caller's pathname. Deliberately
-    /// never read: holding it open IS the point.
+    /// The bound root directory descriptor, kept alive for the whole
+    /// environment lifetime. Existing-only LMDB uses its `/proc/self/fd` path;
+    /// both open doors use this descriptor for no-follow upload staging.
     ///
     /// Declared AFTER `env` on purpose. `Drop` runs the body above first, then
     /// drops fields in declaration order, so the environment closes
     /// (`mdb_env_close`) while the descriptor is still open and the descriptor
     /// is released only afterwards.
-    pub(super) _bound_root_dir: Option<std::fs::File>,
+    pub(in crate::store) _bound_root_dir: Option<std::fs::File>,
 }
 
 impl OwnedEnv {
@@ -141,6 +139,15 @@ impl OwnedEnv {
     pub(super) fn retain_bound_root(&mut self, dir: File) {
         self._bound_root_dir = Some(dir);
     }
+
+    #[cfg(target_os = "linux")]
+    pub(in crate::store) fn bound_root_dir(&self) -> Result<&File> {
+        self._bound_root_dir
+            .as_ref()
+            .ok_or(Error::InvariantViolation(
+                "vault root directory descriptor missing",
+            ))
+    }
 }
 
 /// Deletes only the LMDB files created during a failed first-open transaction.
@@ -148,28 +155,63 @@ impl OwnedEnv {
 /// The guard is armed only after an empty root has passed preflight. It remains
 /// armed until the initial database-creation transaction commits, so every
 /// `?` on that path receives the same cleanup without replacing its error.
+#[derive(Default)]
 pub(super) struct TornCreationCleanup {
-    pub(super) root: Option<PathBuf>,
+    #[cfg(target_os = "linux")]
+    bound_root_dir: Option<File>,
+    #[cfg(not(target_os = "linux"))]
+    root: Option<PathBuf>,
 }
 
 impl TornCreationCleanup {
+    #[cfg(target_os = "linux")]
+    pub(super) fn arm_bound(&mut self, dir: &File) -> Result<()> {
+        self.bound_root_dir = Some(dir.try_clone()?);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
     pub(super) fn arm(&mut self, root: PathBuf) {
         self.root = Some(root);
     }
 
     pub(super) fn disarm(&mut self) {
-        self.root = None;
+        #[cfg(target_os = "linux")]
+        {
+            self.bound_root_dir = None;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.root = None;
+        }
     }
 }
 
 impl Drop for TornCreationCleanup {
     fn drop(&mut self) {
-        let Some(root) = self.root.take() else {
-            return;
-        };
-        // Best effort by design: the original opening error is authoritative.
-        for name in ["data.mdb", "lock.mdb"] {
-            let _ = std::fs::remove_file(root.join(name));
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            let Some(dir) = self.bound_root_dir.take() else {
+                return;
+            };
+            // A private clone stays open through both unlinks. The caller's
+            // path can now name a different vault without becoming cleanup
+            // authority for this failed creation.
+            let path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+            for name in ["data.mdb", "lock.mdb"] {
+                let _ = std::fs::remove_file(path.join(name));
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let Some(root) = self.root.take() else {
+                return;
+            };
+            // Best effort: the original opening error is authoritative.
+            for name in ["data.mdb", "lock.mdb"] {
+                let _ = std::fs::remove_file(root.join(name));
+            }
         }
     }
 }

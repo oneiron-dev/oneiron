@@ -44,21 +44,21 @@ print("PASS error::tests::fixture")
 """
 
 
+# Main regenerates the code map (.github/workflows/codemap.yml); CODEMAP_CHECK=1
+# puts its check in front of the default gates.
+CODEMAP_GATE = ("codemap", ["scripts/codemap/check.sh"])
 GATES = [
-    ("codemap", ["scripts/codemap/check.sh"]),
     ("fmt", ["cargo", "fmt", "--check"]),
-    ("clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]),
-    ("clippy-featureless", ["cargo", "clippy", "-p", "oneiron", "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
-    ("clippy-server", ["cargo", "clippy", "-p", "oneiron-server", "--all-features", "--", "-D", "warnings"]),
-    ("rustdoc", ["env", "-u", "CARGO_ENCODED_RUSTDOCFLAGS", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--workspace", "--all-features", "--no-deps"]),
-    ("test", ["cargo", "nextest", "run", "--workspace", "--exclude", "oneiron-napi", "--all-features", "--profile", "full"]),
-    ("test-featureless", ["cargo", "test", "-p", "oneiron", "--lib", "--no-default-features"]),
-    ("doctest", ["cargo", "test", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"]),
+    ("clippy", ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]),
+    ("clippy-featureless", ["cargo", "clippy", "--locked", "-p", "oneiron", "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
+    ("clippy-server", ["cargo", "clippy", "--locked", "-p", "oneiron-server", "--all-features", "--", "-D", "warnings"]),
+    ("rustdoc", ["env", "-u", "CARGO_ENCODED_RUSTDOCFLAGS", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--locked", "--workspace", "--all-features", "--no-deps"]),
+    ("test", ["cargo", "nextest", "run", "--locked", "--workspace", "--all-features", "--profile", "full"]),
+    ("test-featureless", ["cargo", "test", "--locked", "-p", "oneiron", "--lib", "--no-default-features"]),
+    ("doctest", ["cargo", "test", "--locked", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"]),
 ]
 # The recorder sees Cargo, not env's options/assignments or the fixture's path.
-COMMANDS = [["codemap"], *[
-    command[command.index("cargo"):] for _, command in GATES[1:]
-]]
+COMMANDS = [command[command.index("cargo"):] for _, command in GATES]
 COMMAND_BY_STAGE = dict(zip((stage for stage, _ in GATES), COMMANDS))
 
 
@@ -79,7 +79,7 @@ class VerifyCase(unittest.TestCase):
         self.log = self.cwd / "commands.jsonl"
         self.env = {
             key: value for key, value in os.environ.items()
-            if not key.startswith("VERIFY_TEST_") and key not in ("LEG", "ONEIRON_FEATURELESS_RUNNER")
+            if not key.startswith("VERIFY_TEST_") and key not in ("LEG", "ONEIRON_FEATURELESS_RUNNER", "CODEMAP_CHECK")
         }
         self.env.update(PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}",
                         VERIFY_TEST_LOG=str(self.log), VERIFY_TEST_OS="Linux")
@@ -144,6 +144,7 @@ class VerifyCase(unittest.TestCase):
                 self.assertIn("featureless libtest stage is mandatory", result.stdout)
                 self.assertNotIn("nextest-8 selects", result.stdout)
                 self.assertIn(f"run all {len(GATES)} scripted stages", result.stdout)
+                self.assertIn("CODEMAP_CHECK=1", result.stdout)
                 self.assertNotIn("\nVERIFY-OK\n", result.stdout)
                 self.assertNotIn("VERIFY-STAGE-", result.stdout)
 
@@ -192,7 +193,7 @@ class VerifyCase(unittest.TestCase):
                 self.assertNotIn("VERIFY-OK", result.stdout)
                 self.assertNotIn("VERIFY-STAGE-", result.stdout)
 
-    def test_explicit_libtest_list_keeps_all_nine_commands_without_executing(self):
+    def test_explicit_libtest_list_keeps_every_command_without_executing(self):
         result = self.run_script("--list", env={"ONEIRON_FEATURELESS_RUNNER": "libtest"})
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(self.commands(), [])
@@ -212,6 +213,27 @@ class VerifyCase(unittest.TestCase):
                     self.assertIn("VERIFY-FAIL-usage", result.stdout)
                     self.assertNotIn("\nVERIFY-OK\n", result.stdout)
                     self.assertNotIn("VERIFY-STAGE-", result.stdout)
+
+    def test_codemap_stage_runs_first_only_with_codemap_check(self):
+        for value in ("1", "0", "", "true"):
+            gates = [CODEMAP_GATE, *GATES] if value == "1" else GATES
+            with self.subTest(CODEMAP_CHECK=value):
+                listed = self.run_script("--list", env={"CODEMAP_CHECK": value})
+                self.assertEqual(listed.returncode, 0, listed.stdout)
+                self.assertEqual([(stage, shlex.split(command)) for stage, command in
+                                  (line.split("\t", 1) for line in listed.stdout.splitlines())], gates)
+                result = self.run_script(env={"CODEMAP_CHECK": value})
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.commands(), ([["codemap"]] if value == "1" else []) + COMMANDS)
+                self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-OK")
+                self.assert_stage_timing(result.stdout, [stage for stage, _ in gates])
+
+    def test_stale_codemap_stops_the_gate_when_checked(self):
+        result = self.run_script(env={"CODEMAP_CHECK": "1", "VERIFY_TEST_FAIL_CALL": "1"})
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(self.commands(), [["codemap"]])
+        self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-FAIL-codemap")
+        self.assertNotIn("VERIFY-OK", result.stdout)
 
     def test_rustdoc_denies_warnings_without_changing_other_stage_environments(self):
         # Cargo gives encoded flags precedence even when their value is empty.
@@ -275,21 +297,19 @@ class VerifyCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(self.commands(), [
             COMMAND_BY_STAGE["fmt"],
-            COMMAND_BY_STAGE["clippy"],
+            ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"],
             ["cargo", "nextest", "run", "--workspace", "--all-features", "--profile", "full"],
-            COMMAND_BY_STAGE["doctest"],
+            ["cargo", "test", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"],
             ["cargo", "doc", "--workspace", "--all-features", "--no-deps"],
             ["cargo", "nextest", "run", "-p", "oneiron", "--features", "sync,test-hooks", "--profile", "full"],
         ])
         self.assertIn("CONFORMANCE GREEN for fixture", result.stdout)
 
-    def test_distributed_legs_keep_full_tier_and_host_specific_napi_coverage(self):
+    def test_distributed_legs_keep_full_tier_and_napi_coverage_on_both_hosts(self):
         for host in ("Linux", "Darwin"):
             nextest = COMMAND_BY_STAGE["test"]
-            if host == "Darwin":
-                nextest = [arg for arg in nextest if arg not in ("--exclude", "oneiron-napi")]
             legs = {
-                "fmt-clippy": COMMANDS[:3],
+                "fmt-clippy": COMMANDS[:2],
                 "tests:1/2": [nextest + ["--partition", "hash:1/2"], COMMAND_BY_STAGE["doctest"]],
                 "tests:2/2": [nextest + ["--partition", "hash:2/2"]],
             }
@@ -299,6 +319,12 @@ class VerifyCase(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout)
                     self.assertEqual(self.commands(), expected)
                     self.assertEqual(result.stdout.splitlines()[-1], f"VERIFY-LEG-OK {leg}")
+
+    def test_fmt_clippy_leg_checks_the_codemap_only_with_codemap_check(self):
+        result = self.run_script(script="verify-leg.sh", env={"LEG": "fmt-clippy", "CODEMAP_CHECK": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.commands(), [["codemap"], *COMMANDS[:2]])
+        self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-LEG-OK fmt-clippy")
 
     def test_missing_or_invalid_leg_fails_before_any_command(self):
         for env in ({}, {"LEG": "tests:3/3"}):
@@ -312,11 +338,11 @@ class VerifyCase(unittest.TestCase):
         for status, message in (("7", "fixture failure"), ("0", "error[E0308]: fixture error")):
             with self.subTest(status=status):
                 result = self.run_script(script="verify-leg.sh", env={
-                    "LEG": "fmt-clippy", "VERIFY_TEST_FAIL_CALL": "2",
+                    "LEG": "fmt-clippy", "VERIFY_TEST_FAIL_CALL": "1",
                     "VERIFY_TEST_EXIT": status, "VERIFY_TEST_OUTPUT": message,
                 })
                 self.assertEqual(result.returncode, 1, result.stdout)
-                self.assertEqual(self.commands(), COMMANDS[:2])
+                self.assertEqual(self.commands(), COMMANDS[:1])
                 self.assertEqual(result.stdout.splitlines()[-1], "VERIFY-LEG-FAIL-fmt fmt-clippy")
                 self.assertNotIn("VERIFY-LEG-OK", result.stdout)
 

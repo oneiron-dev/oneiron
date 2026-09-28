@@ -1,4 +1,4 @@
-//! Companion-register admission/scrub, identity topology ingest, and edge key/value helpers.
+//! Retired identity-carrier scrub, identity topology ingest, and edge key/value helpers.
 
 use std::collections::HashSet;
 
@@ -8,7 +8,6 @@ use super::BRIDGE_ORIGIN;
 
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::decode_companion_record_body;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
@@ -53,11 +52,9 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
     lease_vault_id: u64,
 ) -> Result<bool> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let byte_identical_replay = vault
-        .store
-        .entities
-        .get(&*wtxn, id.as_bytes())?
-        .map(|existing| *existing == *blob);
+    let byte_identical_replay =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, id)?
+            .map(|existing| *existing == *blob);
     match byte_identical_replay {
         Some(true) => {
             // The stored bytes equal the replayed bytes, so a decode
@@ -66,8 +63,21 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
             let record =
                 crate::identity_topology::decode_replicated_identity_topology_event_body(data)
                     .map_err(|_| crate::Error::CorruptedIndex("identity topology event body"))?;
-            validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
+            validate_replicated_identity_topology_record_before_mutation(
+                vault, &*wtxn, id, &record,
+            )?;
             vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
+            if let crate::identity_topology::StoredIdentityOpAction::AuthorAttribution {
+                target,
+                ..
+            }
+            | crate::identity_topology::StoredIdentityOpAction::AuthorRedaction {
+                target,
+                ..
+            } = record.action
+            {
+                crate::identity_topology::reconcile_author_attribution_in_txn(vault, wtxn, target)?;
+            }
             vault.neutralize_delete_protected_marker_in_txn(
                 wtxn,
                 id,
@@ -83,7 +93,11 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         None => {}
     }
     let record = crate::identity_topology::decode_replicated_identity_topology_event_body(data)?;
-    validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
+    validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, id, &record)?;
+    if crate::identity_topology::author_attribution_redacted_in_txn(&vault.store, &*wtxn, &record)?
+    {
+        return Ok(false);
+    }
     let quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
         vault,
         wtxn,
@@ -110,6 +124,12 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         return Err(err);
     }
     vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
+    if let crate::identity_topology::StoredIdentityOpAction::AuthorAttribution { target, .. }
+    | crate::identity_topology::StoredIdentityOpAction::AuthorRedaction { target, .. } =
+        record.action
+    {
+        crate::identity_topology::reconcile_author_attribution_in_txn(vault, wtxn, target)?;
+    }
     vault.reconcile_identity_topology_edges_in_txn(wtxn)?;
     vault.neutralize_delete_protected_marker_in_txn(
         wtxn,
@@ -126,8 +146,10 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
 fn validate_replicated_identity_topology_record_before_mutation(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
 ) -> Result<()> {
+    vault.validate_identity_disposition_binding_in_txn(rtxn, id, record)?;
     vault
         .validate_replicated_identity_topology_event_in_txn(rtxn, record)
         .map_err(|err| match err {
@@ -146,26 +168,14 @@ fn validate_replicated_identity_topology_record_before_mutation(
         })
 }
 
-pub(in crate::sync) fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
-    let record = decode_companion_record_body(data)?;
-    Ok(record.sensitivity != crate::federation::Sensitivity::Restricted)
-}
-
 pub(super) fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(Error::CorruptedIndex("entity metadata"));
     };
-    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
-        || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-    {
-        return Ok(false);
-    }
-    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
-        &blob[ENTITY_METADATA_HEADER_LEN..]
-    } else {
-        &[]
-    };
-    Ok(!companion_register_sync_admitted(data)?)
+    Ok(crate::companion::is_retired_identity_carrier(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    ))
 }
 
 pub(in crate::sync) struct CompanionCrdtScrub {
@@ -309,7 +319,7 @@ pub(super) fn ensure_entity_materialized_from_crdt(
         return Ok(EndpointHydration::Deferred);
     }
 
-    if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, id)? {
         if EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_NOTE)
             && crate::sync::quarantine::unproven_remat_marker_exists_in_txn(
@@ -367,6 +377,14 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     savepoint.commit()?;
     if step.written().is_none() {
         return Ok(EndpointHydration::Deferred);
+    }
+    // This savepoint has no postcommit owner. Carry an admitted claim
+    // hydration to the edge batch's OUTER transaction; only its commit may
+    // re-arm the digest timer. Rollback drops that owner's marker.
+    if EntityMetadataHeader::parse(&blob)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+    {
+        crate::batch::queue_proactivity_change(vault, wtxn);
     }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the

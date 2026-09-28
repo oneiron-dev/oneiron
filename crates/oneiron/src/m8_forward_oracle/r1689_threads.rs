@@ -1,20 +1,26 @@
-//! ONE-1689 RT-08: annotation-thread/DAG-wiring and per-thread state-machine oracles plus arming seams.
+//! ONE-1689 RT-08: admitted per-thread replies and anchored room-DAG wiring.
 
-use super::shared::{empty_map_body, open_vault, person_actor, t};
+use super::shared::{empty_map_body, person_actor, t};
 use crate::Vault;
-use crate::anchored_annotation::{Anchor, Locator, ThreadState};
+use crate::anchored_annotation::{
+    ANNOTATION_COMMENT_PREDICATE, Anchor, AnnotationCollaborationState, AnnotationConversationNode,
+    Locator, ThreadState,
+};
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::conversation_dag::AppendRecord;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::registry::ENTITY_TYPE_TURN;
-use crate::write_envelope::WriteActor;
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+use rmpv::Value;
 
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1689 — [RT-08] collaborative-doc / RLM layer
-// ═══════════════════════════════════════════════════════════════════════
+// The test fixture removes the shipped default criticality floor. An explicit
+// actor-bound grant below still decides whether the generated reply is admitted.
+fn open_vault() -> (tempfile::TempDir, Vault) {
+    crate::test_util::open_test_vault_with(crate::config::VaultConfig::device())
+}
 
-/// Puts a versioned office artifact so annotation threads can open on it
-/// with today's API (mirrors `anchored_annotation::tests::put_workbook`).
 fn put_workbook(vault: &Vault, actor: WriteActor, at: u64) -> EntityId {
     let artifact_id = EntityId::now();
     vault
@@ -41,143 +47,168 @@ fn put_workbook(vault: &Vault, actor: WriteActor, at: u64) -> EntityId {
     artifact_id
 }
 
-fn xlsx_anchor(artifact_id: EntityId, version: u64) -> Anchor {
+fn xlsx_anchor(artifact_id: EntityId) -> Anchor {
     Anchor::new(
         artifact_id,
-        version,
+        1,
         Locator::xlsx("Sheet1", "B2").expect("xlsx locator"),
     )
 }
 
-/// ARMING SEAM (ONE-1689): wire an anchored thread to an ARCH-0006a
-/// conversation-DAG node (fork/HEAD mechanics stay armer-owned — the
-/// WIRING is the contract this oracle pins).
-fn wire_thread_to_conversation_dag_node(
-    _vault: &Vault,
-    _artifact: &EntityId,
-    _thread_id: &EntityId,
-    _node: &EntityId,
+// An agent's first comment is Proposed and cannot surface as an answer. The
+// admitted copy uses that same writer-produced value, with an explicit test
+// policy and envelope, so provenance—not prose—marks the agent reply.
+fn admitted_agent_reply(
+    vault: &Vault,
+    artifact: EntityId,
+    thread: EntityId,
+    agent: WriteActor,
+    at: u64,
 ) {
-    unimplemented!("ONE-1689 arming seam: OF-368 ↔ conversation-DAG composition (wire)")
+    let proposed = vault
+        .add_annotation_comment(&artifact, &thread, agent, "agent answer", t(at), at)
+        .expect("proposed comment");
+    assert_eq!(
+        vault
+            .annotation_collaboration_state(artifact, thread)
+            .unwrap(),
+        AnnotationCollaborationState::Open,
+    );
+    let value = vault
+        .get_claim(&proposed.claim_id)
+        .expect("read proposal")
+        .expect("proposal exists")
+        .value;
+    crate::conversation_dag::test_support::put_dag_test_policy(vault, agent, true)
+        .expect("agent policy");
+    let envelope = WriteEnvelope::new(
+        agent,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::from("admitted annotation reply")).unwrap(),
+        ClaimApprovalStatus::Approved,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &EntityId::now(),
+            ClaimCandidate::new(
+                ANNOTATION_COMMENT_PREDICATE,
+                ClaimSubject::Entity(artifact),
+                value,
+                1.0,
+            ),
+            &envelope,
+            t(at + 1),
+            at + 1,
+        )
+        .commit()
+        .expect("admit agent comment");
 }
 
-/// ARMING SEAM (ONE-1689): resolve the conversation-DAG node an anchored
-/// thread is wired to.
-fn thread_conversation_dag_node(
-    _vault: &Vault,
-    _artifact: &EntityId,
-    _thread_id: &EntityId,
-) -> EntityId {
-    unimplemented!("ONE-1689 arming seam: OF-368 ↔ conversation-DAG composition (resolve)")
-}
-
-/// RT-08: branching opens an ANCHORED thread on the built
-/// anchored_annotation ARTIFACT and WIRES it to an ARCH-0006a
-/// conversation-DAG node — the OF-368 ↔ conversation-DAG composition. The
-/// DAG node is the wiring target, never the anchoring surface (documents
-/// anchor threads; conversations fork from them).
 #[test]
-#[ignore = "armed by ONE-1689"]
 fn one_1689_annotation_thread_anchors_to_a_conversation_dag_node() {
     let (_dir, vault) = open_vault();
     let human = person_actor(&vault, 0x31, EdgeActorClass::Human);
     let artifact = put_workbook(&vault, human, 100);
-
-    // The conversation-DAG node this branch forks from.
-    let node = EntityId::now();
+    let room = EntityId::now();
     vault
-        .put_entity(&node, ENTITY_TYPE_TURN, t(150), 150, &empty_map_body())
-        .expect("put conversation-DAG node");
-
-    let thread = vault
-        .open_annotation_thread(
-            &xlsx_anchor(artifact, 1),
-            human,
-            "fork the plan here",
-            t(200),
-            200,
+        .put_entity(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            t(150),
+            150,
+            &empty_map_body(),
         )
-        .expect("open thread on the artifact");
+        .expect("put room");
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)
+        .expect("room policy");
+    let record = |parent, advance| AppendRecord {
+        conversation: room,
+        parent,
+        reply_to: None,
+        address: crate::conversation_dag::AddressMode::Broadcast,
+        recipients: vec![],
+        advance,
+        kind: ENTITY_TYPE_TURN,
+        occurred: t(150),
+        learned_at: 150,
+        body: empty_map_body(),
+        text: vec![],
+        session: None,
+        actor: human,
+    };
+    let root = vault
+        .append_dag_record(&record(None, true))
+        .expect("root")
+        .id;
+    let trunk = vault
+        .append_dag_record(&record(Some(root), true))
+        .expect("trunk")
+        .id;
+    let fork = vault
+        .reply_in_thread(root, &record(Some(root), false))
+        .expect("room thread")
+        .id;
+    let thread = vault
+        .open_annotation_thread(&xlsx_anchor(artifact), human, "fork here", t(200), 200)
+        .expect("open annotation thread");
+    let binding = AnnotationConversationNode {
+        conversation_ref: room,
+        turn_ref: fork,
+    };
+    vault
+        .bind_annotation_conversation_node(artifact, thread.thread_id, binding, human, 201)
+        .expect("bind room thread");
     assert_eq!(
         vault
-            .annotation_threads_for_artifact(&artifact)
-            .expect("threads on the artifact")
-            .len(),
-        1,
-        "exactly one thread anchored on the artifact"
+            .annotation_conversation_node(artifact, thread.thread_id)
+            .unwrap(),
+        Some(binding),
     );
-
-    wire_thread_to_conversation_dag_node(&vault, &artifact, &thread.thread_id, &node);
-    assert_eq!(
-        thread_conversation_dag_node(&vault, &artifact, &thread.thread_id),
-        node,
-        "the thread's node linkage resolves to the wired conversation node"
-    );
+    assert_eq!(vault.head(&room).unwrap(), Some(trunk));
+    assert_eq!(vault.thread(root).unwrap().root, Some(fork));
 }
 
-/// ARMING SEAM (ONE-1689): the ticket's exact intermediate state. The
-/// arming ticket adds the variant (open → agent-replied → resolved) and
-/// replaces this stub with it.
-fn agent_replied_thread_state() -> ThreadState {
-    unimplemented!("ONE-1689 arming seam: the agent-replied variant between Open and Resolved")
-}
-
-/// RT-08: the per-thread state machine is open → agent-replied → resolved.
-/// An agent reply must advance the thread BEYOND `Open` without resolving
-/// it — this pins the intermediate state's existence and entry without
-/// naming the variant (signatures are the arming ticket's).
 #[test]
-#[ignore = "armed by ONE-1689"]
 fn one_1689_agent_reply_advances_the_thread_state_beyond_open() {
     let (_dir, vault) = open_vault();
     let human = person_actor(&vault, 0x32, EdgeActorClass::Human);
     let agent = person_actor(&vault, 0x33, EdgeActorClass::Agent);
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)
+        .expect("human policy");
     let artifact = put_workbook(&vault, human, 100);
-
     let thread = vault
         .open_annotation_thread(
-            &xlsx_anchor(artifact, 1),
+            &xlsx_anchor(artifact),
             human,
             "please check B2",
             t(300),
             300,
         )
         .expect("open thread");
-    assert_eq!(thread.state, ThreadState::Open);
-
-    vault
-        .add_annotation_comment(
-            &artifact,
-            &thread.thread_id,
-            agent,
-            "checked — the formula is fixed",
-            t(400),
-            400,
-        )
-        .expect("agent reply");
-
-    let replied = vault
-        .get_annotation_thread(&artifact, &thread.thread_id)
-        .expect("read thread")
-        .expect("thread exists");
-    assert_ne!(
-        replied.state,
-        ThreadState::Open,
-        "an agent reply must advance open → agent-replied"
-    );
-    assert_ne!(
-        replied.state,
-        ThreadState::Resolved,
-        "an agent reply alone must NOT resolve — resolution stays human"
-    );
     assert_eq!(
-        replied.state,
-        agent_replied_thread_state(),
-        "the EXACT ticket state machine: open → agent-replied → resolved, \
-         not any third state that happens to be neither Open nor Resolved"
+        vault
+            .annotation_collaboration_state(artifact, thread.thread_id)
+            .unwrap(),
+        AnnotationCollaborationState::Open,
     );
-
-    let resolved = vault
+    admitted_agent_reply(&vault, artifact, thread.thread_id, agent, 400);
+    assert_eq!(
+        vault
+            .annotation_collaboration_state(artifact, thread.thread_id)
+            .unwrap(),
+        AnnotationCollaborationState::AgentReplied,
+    );
+    // The agent did not supersede the human-owned head to claim resolution.
+    assert_eq!(
+        vault
+            .get_annotation_thread(&artifact, &thread.thread_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        ThreadState::Open
+    );
+    vault
         .set_annotation_thread_state(
             &artifact,
             &thread.thread_id,
@@ -186,85 +217,55 @@ fn one_1689_agent_reply_advances_the_thread_state_beyond_open() {
             t(500),
             500,
         )
-        .expect("resolve");
-    assert_eq!(resolved.state, ThreadState::Resolved);
+        .expect("human resolves");
+    assert_eq!(
+        vault
+            .annotation_collaboration_state(artifact, thread.thread_id)
+            .unwrap(),
+        AnnotationCollaborationState::Resolved,
+    );
 }
 
-/// RT-08: threads progress CONCURRENTLY, per-thread — the agent answers
-/// thread A while the human still types in thread B; there is no one
-/// global handoff. Linear chat is the degenerate case.
 #[test]
-#[ignore = "armed by ONE-1689"]
 fn one_1689_threads_progress_per_thread_not_one_global_handoff() {
     let (_dir, vault) = open_vault();
     let human = person_actor(&vault, 0x34, EdgeActorClass::Human);
     let agent = person_actor(&vault, 0x35, EdgeActorClass::Agent);
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)
+        .expect("human policy");
     let artifact = put_workbook(&vault, human, 100);
-
-    let thread_a = vault
-        .open_annotation_thread(&xlsx_anchor(artifact, 1), human, "thread A", t(300), 300)
-        .expect("open thread A");
-    let thread_b = vault
-        .open_annotation_thread(&xlsx_anchor(artifact, 1), human, "thread B", t(310), 310)
-        .expect("open thread B");
+    let a = vault
+        .open_annotation_thread(&xlsx_anchor(artifact), human, "A", t(300), 300)
+        .unwrap();
+    let b = vault
+        .open_annotation_thread(&xlsx_anchor(artifact), human, "B", t(310), 310)
+        .unwrap();
+    admitted_agent_reply(&vault, artifact, a.thread_id, agent, 400);
     assert_eq!(
         vault
-            .annotation_threads_for_artifact(&artifact)
-            .expect("threads")
-            .len(),
-        2
+            .annotation_collaboration_state(artifact, a.thread_id)
+            .unwrap(),
+        AnnotationCollaborationState::AgentReplied
     );
-
+    assert_eq!(
+        vault
+            .annotation_collaboration_state(artifact, b.thread_id)
+            .unwrap(),
+        AnnotationCollaborationState::Open
+    );
     vault
-        .add_annotation_comment(
-            &artifact,
-            &thread_a.thread_id,
-            agent,
-            "answering A",
-            t(400),
-            400,
-        )
-        .expect("agent answers A");
-
-    let a = vault
-        .get_annotation_thread(&artifact, &thread_a.thread_id)
-        .expect("read A")
-        .expect("A exists");
-    let b = vault
-        .get_annotation_thread(&artifact, &thread_b.thread_id)
-        .expect("read B")
-        .expect("B exists");
-    assert_ne!(a.state, ThreadState::Open, "A advanced by the agent reply");
+        .add_annotation_comment(&artifact, &b.thread_id, human, "still typing", t(410), 410)
+        .expect("human comments in B");
     assert_eq!(
-        a.state,
-        agent_replied_thread_state(),
-        "A sits in the exact agent-replied state"
+        vault
+            .annotation_collaboration_state(artifact, a.thread_id)
+            .unwrap(),
+        AnnotationCollaborationState::AgentReplied
     );
     assert_eq!(
-        b.state,
-        ThreadState::Open,
-        "B untouched — no global handoff"
-    );
-
-    // B still accepts the human's typing while A sits agent-replied.
-    vault
-        .add_annotation_comment(
-            &artifact,
-            &thread_b.thread_id,
-            human,
-            "still typing in B",
-            t(410),
-            410,
-        )
-        .expect("human keeps typing in B");
-    // Durable, not return-value: B re-read from the store stays Open.
-    let b_after = vault
-        .get_annotation_thread(&artifact, &thread_b.thread_id)
-        .expect("re-read B")
-        .expect("B exists");
-    assert_eq!(
-        b_after.state,
-        ThreadState::Open,
-        "the human's comment leaves B open in the STORE — per-thread progress only"
+        vault
+            .annotation_collaboration_state(artifact, b.thread_id)
+            .unwrap(),
+        AnnotationCollaborationState::Open
     );
 }

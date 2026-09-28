@@ -820,7 +820,7 @@ const CONSULT_NOW: u64 = 1_772_400_000;
 /// shared.
 mod human_fixture {
     use oneiron::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
         SelfHeldShape,
     };
     use oneiron::code_run::{SelfDurableWait, SelfDurableWaitReason, SelfEffect};
@@ -890,21 +890,17 @@ mod human_fixture {
                 )
                 .expect("create channel identity");
             vault
-                .transition_channel_identity(
+                .step_channel_identity(
                     &identity_ref,
-                    ChannelIdentityState::PendingFulfillment,
-                    Some(ChannelIdentityFulfillment::Api),
+                    ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
                     super::CONSULT_NOW,
-                    None,
                 )
                 .expect("enter fulfillment");
             vault
-                .transition_channel_identity(
+                .step_channel_identity(
                     &identity_ref,
-                    ChannelIdentityState::Active,
-                    None,
+                    ChannelIdentityStep::Fulfill,
                     super::CONSULT_NOW,
-                    None,
                 )
                 .expect("activate the identity");
             vault
@@ -933,7 +929,7 @@ mod human_fixture {
         pub(crate) fn human_input_wait(&self, task_ref: EntityId) -> SelfDurableWait {
             SelfDurableWait {
                 wait_id: task_ref,
-                effect: SelfEffect::AskHuman,
+                effect: SelfEffect::Ask,
                 reason: SelfDurableWaitReason::HumanInput,
                 prompt: None,
             }
@@ -2120,7 +2116,7 @@ mod cb_a {
         use oneiron::registry::ENTITY_TYPE_PERSON;
         use oneiron::{
             EdgeActorClass, EntityId, TimeRange, WriteActor, code_run::HostSelfDispatcher,
-            code_run::SelfAskHumanCall, code_run::SelfCall, code_run::SelfDispatchOutcome,
+            code_run::SelfAskCall, code_run::SelfCall, code_run::SelfDispatchOutcome,
             code_run::SelfDispatcher, task_verb::TaskAssignee, task_verb::TaskCreateSpec,
         };
 
@@ -2184,8 +2180,8 @@ mod cb_a {
         )
         .expect("bind dispatcher to the human TASK");
         let wait = match dispatcher
-            .dispatch(SelfCall::AskHuman(SelfAskHumanCall::new("decide")))
-            .expect("dispatch self.ask_human")
+            .dispatch(SelfCall::Ask(SelfAskCall::new("decide")))
+            .expect("dispatch ask")
         {
             SelfDispatchOutcome::DurableWait(wait) => wait,
             other => panic!("unexpected ask-human outcome: {other:?}"),

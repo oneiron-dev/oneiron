@@ -107,7 +107,11 @@ fn put_malformed_policy_manifest(vault: &Vault, seed: u8) -> Result<()> {
     put_indexed_manifest_at_two(vault, entity(seed), b"not-msgpack")
 }
 
-fn install_exact_actor_ceiling(vault: &Vault, actor: EntityId, ceiling: &str) -> Result<()> {
+pub(super) fn install_exact_actor_ceiling(
+    vault: &Vault,
+    actor: EntityId,
+    ceiling: &str,
+) -> Result<()> {
     clear_policy_manifests_for_test(vault)?;
     let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest()?);
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor)
@@ -378,10 +382,10 @@ fn code_run_replay_record_round_trips_and_replays_bridge_log_without_dispatch() 
         kind: EdgeKind::Mentions,
         tgt,
     });
-    let human_call = SelfCall::AskHuman(SelfAskHumanCall::new("continue?"));
+    let human_call = SelfCall::Ask(SelfAskCall::new("continue?"));
     let human_outcome = SelfDispatchOutcome::DurableWait(SelfDurableWait {
         wait_id,
-        effect: SelfEffect::AskHuman,
+        effect: SelfEffect::Ask,
         reason: SelfDurableWaitReason::HumanInput,
         prompt: Some("continue?".to_owned()),
     });
@@ -1198,8 +1202,8 @@ fn code_run_human_destructive_and_outbound_effects_become_durable_waits() -> Res
 
     let cases = [
         (
-            SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
-            SelfEffect::AskHuman,
+            SelfCall::Ask(SelfAskCall::new("continue?")),
+            SelfEffect::Ask,
             SelfDurableWaitReason::HumanInput,
         ),
         (
@@ -1374,7 +1378,7 @@ fn task_delegate_and_peer_result_round_trip_without_disturbing_landed_tokens() {
         SelfEffect::MemoryPutClaim,
         SelfEffect::MemorySupersedeClaim,
         SelfEffect::MemoryPutEdge,
-        SelfEffect::AskHuman,
+        SelfEffect::Ask,
         SelfEffect::DestructiveFixture,
         SelfEffect::OutboundFixture,
         SelfEffect::TaskDelegate,
@@ -1411,7 +1415,7 @@ fn task_delegate_and_peer_result_round_trip_without_disturbing_landed_tokens() {
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
-            "self.ask_human",
+            "ask",
             "self.fixture.destructive",
             "self.fixture.outbound",
             "self.tasks.delegate",
@@ -1609,7 +1613,7 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
         SelfEffect::MemoryPutClaim,
         SelfEffect::MemorySupersedeClaim,
         SelfEffect::MemoryPutEdge,
-        SelfEffect::AskHuman,
+        SelfEffect::Ask,
         SelfEffect::DestructiveFixture,
         SelfEffect::OutboundFixture,
         SelfEffect::TaskDelegate,
@@ -1627,7 +1631,7 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
             SelfEffect::MemoryPutClaim,
             SelfEffect::MemorySupersedeClaim,
             SelfEffect::MemoryPutEdge,
-            SelfEffect::AskHuman,
+            SelfEffect::Ask,
             SelfEffect::DestructiveFixture,
             SelfEffect::OutboundFixture,
             SelfEffect::TaskDelegate,
@@ -1641,7 +1645,7 @@ fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()>
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
-            "self.ask_human",
+            "ask",
             "self.fixture.destructive",
             "self.fixture.outbound",
             "self.tasks.delegate",
@@ -3104,6 +3108,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
         word_ref: EntityId::now(),
     };
     let ask_result = crate::task_verb::TaskAskResult {
+        effect_authorization: crate::task_verb::TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage: crate::task_verb::TaskAskCoverage {
             met: true,
             required: 1,
@@ -3120,6 +3125,9 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             person_ref: actor,
             order: 1,
             reason: crate::task_verb::TaskAskEvidenceReason::Counted,
+            ladder_changed: None,
+            soft_confirm: false,
+            delegation_grant_ref: None,
         }],
         settlement: crate::task_verb::TaskAskSettlement {
             group_ref: group,
@@ -3135,6 +3143,8 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
             question_digest: [0; 32],
             unmet_sources: Default::default(),
             outcome_answer_ref: None,
+            policy_surface: crate::task_verb::TaskAskSurface::Card,
+            link_result_proof: None,
         },
     };
     let outcomes = vec![
@@ -3170,4 +3180,89 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
     ] {
         assert_eq!(self_effect_from_str(effect.as_str()).unwrap(), effect);
     }
+}
+
+#[test]
+fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskStatus,
+        TaskAskTarget,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let friend = seed_person(&vault, 0xA7);
+    let question = entity(0xA8);
+    let body = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("role", "question")]))?;
+    vault.put_entity(
+        &question,
+        crate::registry::ENTITY_TYPE_TURN,
+        range(1),
+        1,
+        &body,
+    )?;
+    let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
+    what.options
+        .insert(TaskAskOptionId::new("yes")?, "Yes".into());
+    let mut spec = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People([friend].into())),
+        what,
+        Some(u64::MAX),
+        Default::default(),
+    );
+    spec.intent_key = "code-mode-void-cursor".into();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let handle = memory.tasks_ask(&spec)?.handle;
+    let first = memory.tasks_ask_option_link(handle, friend)?;
+    vault.void_ask_option_link(&first.token)?;
+    let run = entity(0xA9);
+    let dispatcher = GatedActorWrite::new(
+        &vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        "void-replay",
+    )?;
+    let call = SelfCall::TasksWait(handle);
+    let changed = dispatcher.dispatch_for_executor_run(run, call.clone())?;
+    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) =
+        &changed
+    else {
+        panic!("first void is observable before wait");
+    };
+    assert_eq!(voided, &vec![friend]);
+    assert_eq!(*generation, 1);
+    assert_eq!(
+        dispatcher.dispatch_for_executor_run(run, call.clone())?,
+        changed,
+        "an unrecorded result must be replayed after a crash"
+    );
+    let mut record = CodeRunReplayRecord::new(run, CodeRunDeterminism::new(1000, [4; 32]));
+    record
+        .bridge_calls
+        .push(CodeRunBridgeCall::record(0, &call, &changed, 1000, 1000)?);
+    vault.put_code_run_replay_record(&record)?;
+    assert!(
+        matches!(
+            dispatcher.dispatch_for_executor_run(run, call.clone())?,
+            SelfDispatchOutcome::DurableWait(_)
+        ),
+        "the recorded generation permits the next wait to park"
+    );
+    assert!(!crate::task_verb::has_option_link_void(
+        &vault,
+        handle.group_ref
+    )?);
+    let next = memory.tasks_ask_option_link(handle, friend)?;
+    vault.void_ask_option_link(&next.token)?;
+    let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { generation, .. }) =
+        dispatcher.dispatch_for_executor_run(run, call)?
+    else {
+        panic!("later void wakes again")
+    };
+    assert_eq!(generation, 2);
+    assert!(matches!(
+        memory.tasks_ask_status(handle)?,
+        TaskAskStatus::Pending { .. }
+    ));
+    Ok(())
 }

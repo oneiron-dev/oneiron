@@ -104,11 +104,13 @@ for row in schema['imports']:
     for p in row['params']: emit(p['type'])
     emit(row['result'])
 emit('file-proposal')
+emit('file-delete-proposal')
+emit('file-rename-proposal')
 # Claim input is generated in both tiers: the foreign output uses it for proposals.
 emit('claim-input')
 
 for row in schema['imports']:
-    first_party = row['js'].startswith('self.')
+    first_party = row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask'
     if first_party: parts.append('#ifndef ONEIRON_FOREIGN')
     name, result = snake(row['wit']), row['result']
     lines = [f'static JSValue call_{name}(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {{',
@@ -134,9 +136,9 @@ for row in schema['imports']:
     if first_party: parts.append('#endif')
 parts.append('static JSValue make_abi(JSContext *ctx) {\n JSValue abi = JS_NewObject(ctx);')
 for row in schema['imports']:
-    if row['js'].startswith('self.'): parts.append('#ifndef ONEIRON_FOREIGN')
+    if row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask': parts.append('#ifndef ONEIRON_FOREIGN')
     name = snake(row['wit'])
     parts.append(f'JS_SetPropertyStr(ctx, abi, "{row["wit"]}", JS_NewCFunction(ctx, call_{name}, "{row["wit"]}", {len(row["params"])}));')
-    if row['js'].startswith('self.'): parts.append('#endif')
+    if row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask': parts.append('#endif')
 parts.append('return abi;\n}')
 Path(sys.argv[2]).write_text('\n\n'.join(parts) + '\n')

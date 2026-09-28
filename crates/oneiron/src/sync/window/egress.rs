@@ -10,9 +10,10 @@ use super::loro_support::{
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::reverse::{
-    delete_edges_touching_entities, is_unsyncable_secret_custody,
-    quarantine_outbound_protected_tombstones, remove_entity_crdt_carriers,
-    reverse_remat_skip_redaction_receipt_mirror, skip_companion_register_sync_mirror,
+    delete_edges_touching_entities, is_delegated_channel_identity_carrier,
+    is_unsyncable_secret_custody, quarantine_outbound_protected_tombstones,
+    remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
+    skip_companion_register_sync_mirror,
 };
 use super::types::WindowKey;
 use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
@@ -95,7 +96,11 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 /// type byte is not. A malformed key cannot name an entity to scrub by id, so
 /// that row is deleted by its raw key and quarantined as the protocol violation
 /// it is.
-fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<bool> {
+pub(super) fn scrub_local_only_carriers(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
@@ -111,14 +116,17 @@ fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> R
                 h.entity_type,
                 crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                     | crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            )
+            ) && !is_delegated_channel_identity_carrier(blob)
         }) && !lfs_chunk
         {
             return;
         }
         match EntityId::from_hex(raw_key) {
             Ok(id) if id.to_hex() == raw_key => {
-                if lfs_chunk || is_unsyncable_secret_custody(blob) {
+                if lfs_chunk
+                    || is_unsyncable_secret_custody(blob)
+                    || is_delegated_channel_identity_carrier(blob)
+                {
                     custody_ids.insert(id);
                 } else {
                     portable_ids.push(id);
@@ -145,7 +153,11 @@ fn scrub_local_only_carriers(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> R
         // Quarantine keeps hashed evidence (never the bytes); the delete is
         // what stops the body from reaching an exported update.
         let blob = map_get_bytes(&entities_map, raw_key).unwrap_or_default();
-        let rejection = if crate::batch::EntityMetadataHeader::parse(&blob)
+        let rejection = if is_delegated_channel_identity_carrier(&blob) {
+            Error::Record(crate::error::RecordError::InvalidChannelIdentityBody(
+                "delegated ChannelIdentity rows are local custody facts and cannot be replicated",
+            ))
+        } else if crate::batch::EntityMetadataHeader::parse(&blob)
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
         {
             Error::InvalidKey
@@ -208,6 +220,50 @@ pub(super) fn scrub_local_claim_carriers(
     Ok(removed)
 }
 
+/// Remove attribution carriers defeated by permanent author-redaction facts.
+/// Check both local LMDB and the document: a redaction newly received in this
+/// window may not yet have been materialized, while its earlier attribution
+/// is already in Loro history. Even an empty live map needs the history-free
+/// pin once a redaction exists, because a prior delete does not erase Loro ops.
+pub(super) fn scrub_redacted_attribution_carriers(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
+    let entities = doc.get_map("entities");
+    let mut redacted = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
+    };
+    map_for_each_value_bytes(&entities, |_, blob| {
+        if let Some(key) = blob.and_then(crate::identity_topology::redaction_carrier_key) {
+            redacted.insert(key);
+        }
+    });
+    if redacted.is_empty() {
+        return Ok(false);
+    }
+    // Pin BEFORE deletion. A failed durable pin cannot leave a scrubbed doc
+    // eligible for an ordinary delta carrying old personal bytes.
+    require_history_free_window(vault, key)?;
+    let mut keys = Vec::new();
+    map_for_each_value_bytes(&entities, |map_key, blob| {
+        if blob
+            .and_then(crate::identity_topology::attribution_carrier_key)
+            .is_some_and(|key| redacted.contains(&key))
+        {
+            keys.push(map_key.to_owned());
+        }
+    });
+    for map_key in &keys {
+        map_delete(&entities, map_key)?;
+    }
+    if !keys.is_empty() {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    Ok(!keys.is_empty())
+}
+
 /// Exports a full-window response without carrying pre-scrub operation bytes.
 /// The peer VV is still decoded first so malformed-VV requests never become a
 /// full-export fallback.
@@ -226,7 +282,8 @@ pub fn export_window_updates_since(
     crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let scrubbed = secret_scrubbed || claims_scrubbed;
+    let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
+    let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -256,6 +313,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::note::refresh(vault, doc, key)?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
+    scrub_redacted_attribution_carriers(vault, key, doc)?;
     if history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -285,6 +343,11 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
     drop(rtxn);
 
     scrub_local_claim_carriers(vault, window_key, doc)?;
+    scrub_redacted_attribution_carriers(vault, window_key, doc)?;
+    let redacted_authors = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
+    };
     let entities_map = doc.get_map("entities");
     let tombstones_map = doc.get_map("tombstones");
     let edges_map = doc.get_map("edges");
@@ -320,13 +383,24 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
-            || skip_companion_register_sync_mirror(&raw)?
+            || is_delegated_channel_identity_carrier(&raw)
+            || skip_companion_register_sync_mirror(&raw)
         {
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {
                 require_history_free_window(vault, window_key)?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
+            vault.with_write_txn(|wtxn| {
+                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
+                Ok(())
+            })?;
+            continue;
+        }
+
+        if crate::identity_topology::attribution_carrier_key(&raw)
+            .is_some_and(|key| redacted_authors.contains(&key))
+        {
             vault.with_write_txn(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())

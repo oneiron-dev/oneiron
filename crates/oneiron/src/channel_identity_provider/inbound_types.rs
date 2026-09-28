@@ -29,6 +29,10 @@ pub struct EmailProviderInbound {
     pub provider_event_id: String,
     pub envelope_to: String,
     pub envelope_from: String,
+    /// Optional host-parsed Gmail header result. Other email providers leave
+    /// this absent and use `envelope_from` as their sender address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_mailbox: Option<super::gmail::HeaderMailbox>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
     pub received_at: u64,
@@ -47,9 +51,17 @@ impl EmailProviderInbound {
             provider_event_id: provider_event_id.into(),
             envelope_to: envelope_to.into(),
             envelope_from: envelope_from.into(),
+            header_mailbox: None,
             payload_ref: None,
             received_at,
         }
+    }
+
+    /// Attaches a typed From-header projection supplied by the Gmail wire.
+    #[must_use]
+    pub fn with_header_mailbox(mut self, header_mailbox: super::gmail::HeaderMailbox) -> Self {
+        self.header_mailbox = Some(header_mailbox);
+        self
     }
 
     /// Attaches an adapter-local payload reference.

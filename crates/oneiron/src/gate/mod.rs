@@ -3,34 +3,59 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
+pub(crate) mod class_policy;
 pub(crate) mod manifest_authenticity;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
-pub(crate) use manifest_authenticity::trusted_manifest_key;
+pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
+mod carry_forward_policy;
 mod confirm;
 mod constants;
 mod decision;
 mod decode;
 mod default_manifest;
 mod definition_ceiling;
+mod docedit_resource;
+mod docx_budget;
 mod doors;
 mod dreamer_precommit;
 mod effect;
 mod foreign_agent;
 mod grants;
+mod hosted_tts_policy;
 mod input;
+mod operational_policy;
+mod owner_policy_mutation;
+mod pack_install_policy;
+pub(crate) mod policy_values;
+pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
+mod tracker_limits;
+pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
+pub(crate) mod retrieval_retention;
+pub(crate) mod retry_source_policy;
+mod room_policy;
+mod room_thread;
+pub use room_thread::RoomThreadFill;
+pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
+mod skill_edit_goal_policy;
+pub(crate) mod voice_serving;
+mod weave_correction_policy;
+pub(crate) mod weave_policy;
 mod witness_message;
+pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
@@ -46,12 +71,14 @@ pub use self::confirm::{
 pub(crate) use self::confirm::{
     critical_write_confirm_binding, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
+pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
     FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
     POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_ROW_ACTION_KEY,
-    POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
+    POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY,
+    POLICY_ROW_WORLD_REF_KEY,
 };
 pub(crate) use self::constants::{POLICY_SCHEMA_VERSION, SCOPED_READ_EFFECTOR_CORE_READ};
 #[cfg(test)]
@@ -72,6 +99,10 @@ pub(crate) use self::doors::{
     check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
 };
+pub use self::pack_install_policy::PackInstallPolicyOverride;
+pub(crate) use self::pack_install_policy::{
+    EffectivePackInstallPolicy, HolderInstallRow, PackInstallPolicy, PackInstallRuleRow,
+};
 // The validator itself is reached through the write door; the direct
 // visibility below exists for the tests that pin its checks in isolation.
 #[cfg(test)]
@@ -80,26 +111,44 @@ use self::dreamer_precommit::{
     validate_dreamer_precommit,
 };
 pub(crate) use self::effect::{
-    ExternalEffectGovernance, check_external_effect_policy, evaluate_external_effect_policy,
+    ExternalEffectGovernance, check_external_effect_policy, check_external_effect_policy_pair,
+    evaluate_external_effect_policy, external_effect_approval_digest,
     record_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
     scoped_read_record_allowed,
 };
+pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
+#[cfg(test)]
+pub(crate) use self::operational_policy::default_manifest_with_linear_sync_pages_for_test;
+pub(crate) use self::operational_policy::{
+    LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
+};
+pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
+pub use self::owner_policy_mutation::{
+    PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
+};
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
-pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub(crate) use self::resolution::{
+    GateDecisionRetentionPolicy, GateRetentionContext, PolicyManifestResolution,
+    resolve_credential_lifetimes, resolve_gate_decision_retention, resolve_policy_manifest,
+    retention_edit_target,
+};
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
     ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,
 };
+pub(crate) use self::room_policy::{RoomAction, allows as room_policy_allows};
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;
+pub(crate) use self::skill_edit_goal_policy::SkillEditGoalPolicy;
+pub(crate) use self::voice_serving::VoiceServingLimits;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{

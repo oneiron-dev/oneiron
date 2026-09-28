@@ -2,7 +2,9 @@
 
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
 use crate::code_run::{ExecutorStorage, GatedActorWrite};
+use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
 use crate::entity_id::EntityId;
+use crate::llm::seat::ModelSeat;
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
 use crate::{BudgetLease, Error, LlmBackend, Vault};
@@ -12,10 +14,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct EngineNativeExecutor<'a> {
     pub(super) storage: ExecutorStorage<'a>,
     pub(super) backend: &'a dyn LlmBackend,
+    pub(super) seat: Option<&'a ModelSeat>,
     pub(super) lease: &'a BudgetLease,
     pub(super) runtime: &'a mut dyn JsCodeModeRuntime,
     pub(super) gated_write: &'a GatedActorWrite<'a>,
     pub(super) legibility: Option<ExecutorLegibility<'a>>,
+    pub(super) output_context: OutputWorkingContext,
+    pub(super) output_run: Option<EntityId>,
+    pub(super) output_decay: OutputDecayPolicy,
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
@@ -39,10 +45,17 @@ impl<'a> EngineNativeExecutor<'a> {
         Self {
             storage: ExecutorStorage::Canonical(vault),
             backend,
+            seat: None,
             lease,
             runtime,
             gated_write,
             legibility: None,
+            output_context: OutputWorkingContext::default(),
+            output_run: None,
+            output_decay: OutputDecayPolicy {
+                overview_after_turns: 2,
+                stub_after_turns: 5,
+            },
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -72,14 +85,29 @@ impl<'a> EngineNativeExecutor<'a> {
         Ok(Self {
             storage: ExecutorStorage::for_session(session)?,
             backend,
+            seat: None,
             lease,
             runtime,
             gated_write,
             legibility: None,
+            output_context: OutputWorkingContext::default(),
+            output_run: None,
+            output_decay: OutputDecayPolicy {
+                overview_after_turns: 2,
+                stub_after_turns: 5,
+            },
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
         })
+    }
+
+    /// Bind the already-resolved run seat. The executor applies the pin to
+    /// every provider request BEFORE canonical hashing and backend admission.
+    #[must_use]
+    pub fn with_model_seat(mut self, seat: &'a ModelSeat) -> Self {
+        self.seat = Some(seat);
+        self
     }
 
     /// Configures the wake-pass legibility context: every subsequent
@@ -88,6 +116,57 @@ impl<'a> EngineNativeExecutor<'a> {
     pub fn with_legibility(mut self, legibility: ExecutorLegibility<'a>) -> Self {
         self.legibility = Some(legibility);
         self
+    }
+
+    /// Host policy for code-run console context. The default keeps the most
+    /// recent observations full, then a bounded overview, then a reference.
+    #[must_use]
+    pub fn with_output_decay(mut self, policy: OutputDecayPolicy) -> Self {
+        self.output_decay = policy;
+        self
+    }
+
+    /// Land a native compaction in the SAME output context used to build this
+    /// executor's next model request. A rejected mint changes no output views.
+    pub fn integrate_compaction(
+        &mut self,
+        driver: &mut crate::compaction::CompactionDriver,
+        byline: crate::WriteActor,
+        request: &crate::compaction::CompactionRequest,
+        product: crate::compaction::CompactionProduct,
+        accumulated: &[crate::compaction::CompactionWindowMessage],
+    ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
+        self.verify_storage_dispatcher_binding()?;
+        let run_id = self.output_run.ok_or(crate::Error::InvalidConfig(
+            "executor output context has not assembled".into(),
+        ))?;
+        if !matches!(self.storage, ExecutorStorage::Canonical(_)) {
+            return Err(crate::Error::InvalidConfig(
+                "native compaction requires canonical executor storage".into(),
+            )
+            .into());
+        }
+        let record = self.storage.get_code_run_replay_record(&run_id)?.ok_or(
+            crate::Error::CorruptedIndex("missing executor replay record"),
+        )?;
+        let span = crate::code_run::ExecutorOutputSpan::from_replay(&record, request)?;
+        // The last committed step was not part of the preceding request's
+        // history. Synchronize it BEFORE the mint, even across a soft yield.
+        self.sync_output_context(&record)?;
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            unreachable!("canonical storage checked before sync")
+        };
+        let plan =
+            driver.integrate_with_coverage(vault, byline, request, product, accumulated, &span)?;
+        // This is only an in-memory cache; the next assembly re-derives it
+        // from the typed row joined to the committed SUMMARY.
+        let last = request
+            .window
+            .last()
+            .expect("integrated window is nonempty")
+            .turn;
+        self.output_context.compact_span(request.turn_start, last);
+        Ok(plan)
     }
 
     #[cfg(test)]

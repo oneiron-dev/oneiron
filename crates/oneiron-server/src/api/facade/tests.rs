@@ -205,7 +205,7 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         })
     };
     let (status, _) = post(&server, &format!("Bearer {SECRET}"), "tasks.ask", json!({})).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     for answer_first in [false, true] {
         let spec = ask_spec(format!("order-{answer_first}"));
         let (status, receipt) = post(&server, &owner_token, "tasks.ask", spec.clone()).await;
@@ -531,10 +531,13 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(actor)]));
     narrow
-        .attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &holder,
+        )
         .unwrap();
     let app = crate::build_app(Arc::clone(&server));
     for (credential, verb, input, status) in [
@@ -568,6 +571,119 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
             .await
             .unwrap();
         assert_eq!(response.status(), status, "{verb}");
+    }
+}
+
+#[tokio::test]
+async fn room_facade_refuses_record_channel_and_world_attenuations() {
+    use oneiron::authority::SlipCaveat;
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    use oneiron::workspace_roster::ProjectRecord;
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let project = oneiron::EntityId::now();
+    let record = ProjectRecord::new(
+        project,
+        Some(vault.root_project().unwrap()),
+        vault.root_project().unwrap(),
+        actor,
+    );
+    vault.put_project(project, &record, 1).unwrap();
+    let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("room-facade-narrow".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let recipe = format!(
+        "scope=core:read;principal_ref={};actor_class=human",
+        actor.to_hex()
+    );
+    let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
+    let mut record_slip = slip.clone();
+    record_slip
+        .attenuate(
+            SlipCaveat {
+                records: Some([actor.to_hex()].into()),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .unwrap();
+    let mut channel_slip = slip.clone();
+    channel_slip
+        .attenuate(
+            SlipCaveat {
+                channels: Some(["other-channel".to_owned()].into()),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .unwrap();
+    let mut world_slip = slip.clone();
+    let mut narrow = Scope::top();
+    narrow.worlds = ScopeAxis::Some([ScopeId(actor)].into());
+    world_slip
+        .attenuate(
+            SlipCaveat {
+                scope: Some(narrow),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .unwrap();
+    let app = crate::build_app(Arc::clone(&server));
+    for (verb, payload) in [
+        ("rooms.render", json!({"room_ref":room.to_hex()})),
+        ("rooms.find", json!({"room_ref":room.to_hex()})),
+        (
+            "rooms.get",
+            json!({"room_ref":room.to_hex(),"turn_ref":actor.to_hex()}),
+        ),
+        (
+            "rooms.trunk",
+            json!({"room_ref":room.to_hex(),"turn_ref":actor.to_hex()}),
+        ),
+    ] {
+        for narrowed in [&record_slip, &channel_slip, &world_slip] {
+            let request = Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap();
+            let response = app
+                .clone()
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server, narrowed, &holder, request,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{verb}");
+        }
+        if matches!(verb, "rooms.render" | "rooms.find") {
+            let request = Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap();
+            let response = app
+                .clone()
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server, &slip, &holder, request,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{verb}");
+        }
     }
 }
 
@@ -770,4 +886,173 @@ async fn http_tasks_update_writes_nothing_on_a_task_outside_the_callers_read_flo
         panic!("describe without a task returns the TASKS section");
     };
     assert!(section.rows.iter().any(|row| row.id == task.to_hex()));
+}
+
+#[tokio::test]
+async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
+    use oneiron::authority::SlipCaveat;
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    use oneiron::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let other = EntityId::now();
+    vault
+        .put_entity(
+            &other,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"another human",
+        )
+        .unwrap();
+    let note = vault
+        .memory(actor, EdgeActorClass::Human)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: actor },
+            source_revision_ref: [0x69; 16],
+            markdown: "private export owner diary".into(),
+            mask: None,
+        })
+        .unwrap();
+    assert!(
+        vault
+            .memory(other, EdgeActorClass::Human)
+            .get_entity(&note.id_hex)
+            .unwrap()
+            .is_none()
+    );
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("facade-export".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let owner_recipe = format!("principal_ref={};actor_class=human", actor.to_hex());
+    let reader_recipe = format!(
+        "scope=core:read;principal_ref={};actor_class=human",
+        other.to_hex()
+    );
+    let (owner, owner_key) = crate::test_credentials::credential(&server, &owner_recipe);
+    let (reader, reader_key) = crate::test_credentials::credential(&server, &reader_recipe);
+    let mut narrow = owner.clone();
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(actor)]));
+    narrow
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &owner_key,
+        )
+        .unwrap();
+    let app = crate::build_app(Arc::clone(&server));
+    for format in ["toon", "md", "json", "yaml", "txt"] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/facade/export")
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"format":format}).to_string()))
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server, &owner, &owner_key, request,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{format}");
+        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["format"], format);
+        let rendered = body["rendered"].as_str().unwrap();
+        assert!(rendered.contains("evidence_ledger"));
+        assert!(rendered.contains("private export owner diary"));
+        if format == "json" {
+            let document: Value = serde_json::from_str(rendered).unwrap();
+            assert!(
+                document["evidence_ledger"]["entities"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == actor.to_hex() && row["short_ref"].as_str().is_some())
+            );
+        }
+    }
+    // The host's logged root has no actor binding; its verified full-vault
+    // instrument is still an owner, not a read-only scoped slip.
+    let (host_slip, host_key) =
+        crate::test_credentials::credential(&server, "jti=facade-export-host-root");
+    let host = Request::builder()
+        .method("POST")
+        .uri("/v1/core/facade/export")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({"format":"json"}).to_string()))
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(crate::test_credentials::bind_slip_request(
+            &server, &host_slip, &host_key, host,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("private export owner diary"));
+
+    assert_eq!(
+        oneiron::task_verb::sdk::invoke(
+            &server.vault.memory(other, EdgeActorClass::Human),
+            "export",
+            json!({"format":"json"}),
+        )
+        .unwrap_err()
+        .code,
+        MEMORY_CODE_FORBIDDEN,
+    );
+    for (credential, holder, format, status) in [
+        (&reader, &reader_key, "json", StatusCode::FORBIDDEN),
+        (&narrow, &owner_key, "json", StatusCode::FORBIDDEN),
+        (&owner, &owner_key, "gemini", StatusCode::BAD_REQUEST),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/facade/export")
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"format":format}).to_string()))
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server, credential, holder, request,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{format}");
+        let body = to_bytes(response.into_body(), 8192).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert!(!body.to_string().contains("private export owner diary"));
+        assert!(!body.to_string().contains(&note.entity_ref));
+    }
+    crate::test_credentials::revoke(&server, &owner_recipe);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/core/facade/export")
+        .header("Content-Type", "application/json")
+        .body(Body::from("{\"format\":\"json\"}"))
+        .unwrap();
+    let response = app
+        .oneshot(crate::test_credentials::bind_slip_request(
+            &server, &owner, &owner_key, request,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

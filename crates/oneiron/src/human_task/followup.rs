@@ -54,10 +54,28 @@ pub fn resolve_native_human_route(
     resolve_native_human_route_in(vault, &txn, person_ref)
 }
 
+pub(crate) fn resolve_native_human_route_for_actor_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person_ref: EntityId,
+    owner_ref: EntityId,
+) -> HumanTaskResult<NativeHumanRoute> {
+    resolve_native_human_route_with_sender_in(vault, txn, person_ref, Some(owner_ref))
+}
+
 pub(crate) fn resolve_native_human_route_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
+) -> HumanTaskResult<NativeHumanRoute> {
+    resolve_native_human_route_with_sender_in(vault, txn, person_ref, None)
+}
+
+fn resolve_native_human_route_with_sender_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person_ref: EntityId,
+    owner_ref: Option<EntityId>,
 ) -> HumanTaskResult<NativeHumanRoute> {
     if vault.get_entity_type_in_txn(txn, &person_ref)? != Some(ENTITY_TYPE_PERSON) {
         return Err(HumanTaskError::NotAPerson);
@@ -77,12 +95,27 @@ pub(crate) fn resolve_native_human_route_in(
         let Some(identity) = vault.get_channel_identity_in_txn(txn, &channel_identity_ref)? else {
             continue;
         };
-        if identity.state != ChannelIdentityState::Active || vetoed.contains(&identity.channel) {
+        if identity.state() != ChannelIdentityState::Active || vetoed.contains(identity.channel()) {
             continue;
+        }
+        if let Some(owner) = owner_ref {
+            // The notice scheduler's outbound chokepoint selects this exact
+            // identity for (channel, owner). A contact on some other sender's
+            // identity, or a delegated read-only identity, is not our face.
+            if !identity.may_send()
+                || crate::outbound::resolve_channel_identity_ref_for_connector(
+                    &vault.store,
+                    txn,
+                    identity.channel(),
+                    Some(&owner),
+                )? != Some(channel_identity_ref)
+            {
+                continue;
+            }
         }
         // A channel the connector manifest does not serve is not a route,
         // however well connected the person is on it.
-        if outbound_verb_contract(&identity.channel, HUMAN_FOLLOWUP_VERB).is_err() {
+        if outbound_verb_contract(identity.channel(), HUMAN_FOLLOWUP_VERB).is_err() {
             continue;
         }
         let Some((_, contact)) =
@@ -96,7 +129,7 @@ pub(crate) fn resolve_native_human_route_in(
         return Ok(NativeHumanRoute {
             person_ref,
             channel_identity_ref,
-            channel: identity.channel,
+            channel: identity.channel().to_owned(),
             target: contact.counterparty,
         });
     }
@@ -279,7 +312,11 @@ impl<'a> HumanTaskFollowupDriver<'a> {
                     .tasks_ask_status_for_task(record.task_ref)
                     .map_err(|_| Error::InvalidClaimBody("ask follow-up projection"))?
                     .is_some_and(|status| {
-                        !matches!(status, crate::task_verb::TaskAskStatus::Pending { .. })
+                        !matches!(
+                            status,
+                            crate::task_verb::TaskAskStatus::Pending { .. }
+                                | crate::task_verb::TaskAskStatus::Changed { .. }
+                        )
                     })
             } else {
                 false
@@ -394,12 +431,34 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         let Some(owner_ref) = task_create_owner(self.vault, record.task_ref)? else {
             return Ok(None);
         };
-        let Ok(route) = resolve_native_human_route(self.vault, record.assignee_ref) else {
+        let route = {
+            let txn = self.vault.store.env.read_txn()?;
+            if crate::task_verb::ask_notice_at_in(
+                self.vault,
+                &txn,
+                record.task_ref,
+                record.reminders_sent,
+            )?
+            .is_some()
+            {
+                resolve_native_human_route_for_actor_in(
+                    self.vault,
+                    &txn,
+                    record.assignee_ref,
+                    owner_ref,
+                )
+            } else {
+                // Non-ask human TASK follow-ups retain their existing route
+                // semantics; only ask preflight promises a sending face.
+                resolve_native_human_route_in(self.vault, &txn, record.assignee_ref)
+            }
+        };
+        let Ok(route) = route else {
             return Ok(None);
         };
         let key = task_follow_up_dedupe_key(record.task_ref, stage_token);
         let facade = self.vault.memory(owner_ref, EdgeActorClass::Agent);
-        let Ok(receipt) = facade.schedule_outbound(&OutboundDraftInput {
+        let Ok((receipt, sender_ref)) = facade.schedule_human_followup(&OutboundDraftInput {
             verb: HUMAN_FOLLOWUP_VERB.to_owned(),
             channel: route.channel,
             target: route.target,
@@ -422,6 +481,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             stage_token: stage_token.to_owned(),
             intent_ref: receipt.intent_ref,
             outcome: receipt.outcome,
+            sender_ref,
         }))
     }
 
@@ -479,6 +539,10 @@ impl<'a> HumanTaskFollowupDriver<'a> {
 
 /// Drives every due human follow-up on one Dreamer wake pass.
 pub(crate) fn run_human_followups_on_wake(vault: &Vault, now: u64) -> Result<()> {
+    // A policy change lands without waiting for contact routing. Link its
+    // durable holder-push intent when a route becomes available, then let the
+    // ordinary human follow-up ladder drive the resulting TASK.
+    vault.drive_policy_notification_queue(now, FOLLOWUP_WAKE_LIMIT)?;
     HumanTaskFollowupDriver::new(vault)
         .run_due(now, FOLLOWUP_WAKE_LIMIT)
         .map(|_| ())

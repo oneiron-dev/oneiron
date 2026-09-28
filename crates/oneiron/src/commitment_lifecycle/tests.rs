@@ -630,6 +630,45 @@ fn due_now_is_not_overdue() -> Result<()> {
 }
 
 #[test]
+fn lapse_then_delete_erases_only_the_deleted_instances_gate_decisions() -> Result<()> {
+    let (_dir, vault) = temp_vault()?;
+    let parties = parties(&vault)?;
+    let first =
+        parties.put_interval_instance(&vault, &crate::test_util::entity(0x3E), 1_000_000)?;
+    let second =
+        parties.put_interval_instance(&vault, &crate::test_util::entity(0x3F), 1_000_000)?;
+
+    vault
+        .batch()
+        .commitment_gap_decay(&[first, second], &parties.envelope, 1_000_001)
+        .delete(&first)
+        .commit()?;
+    assert!(vault.get_claim(&first)?.is_none());
+    assert_eq!(status(&vault, &second)?, CommitmentStatus::Lapsed);
+    let rtxn = vault.store.env.read_txn()?;
+    let deleted = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&rtxn, first.as_bytes())?;
+    assert!(!deleted.is_empty());
+    assert!(
+        deleted
+            .iter()
+            .all(|row| row.redacted_at.is_some() && row.diff_handle.is_empty())
+    );
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, first.as_bytes())?
+            .is_empty()
+    );
+    let survivor = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&rtxn, second.as_bytes())?;
+    assert!(survivor.iter().any(|row| row.redacted_at.is_none()));
+    Ok(())
+}
+
+#[test]
 fn lapse_batch_resolves_local_claim_policy() -> Result<()> {
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;

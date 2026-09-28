@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 //! Full production socket + Hub + BoundSource + engine writes. No source override.
-use super::production_tests::{ACTOR, AT, SECRET, server, token, witness};
+use super::production_tests::{ACTOR, AT, server, token, witness};
 use super::*;
 use crate::server::SyncServer;
 use futures_util::{SinkExt, StreamExt};
@@ -94,9 +94,7 @@ async fn app(socket: &mut Socket, tag: u8) -> Value {
 
 async fn upgrade(f: &Fixture) -> Socket {
     let mut request = f.url.as_str().into_client_request().unwrap();
-    request
-        .headers_mut()
-        .insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
+    crate::test_credentials::bind_ws_request(&f.server, &mut request, "jti=production-upgrade");
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     socket
         .send(Message::Binary(

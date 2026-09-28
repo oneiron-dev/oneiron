@@ -38,16 +38,14 @@ pub(super) async fn layout(Json(request): Json<LayoutRequest>) -> Response {
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    peer: Result<
-        axum::extract::ConnectInfo<std::net::SocketAddr>,
-        axum::extract::rejection::ExtensionRejection,
-    >,
+    peer: NetworkPeer,
+    local_peer: LocalPeer,
     Json(request): Json<PdfRequest>,
 ) -> Response {
     let Ok(token) = EsignCapability::parse(&request.token) else {
         return refused();
     };
-    let Ok(axum::extract::ConnectInfo(peer)) = peer else {
+    let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
     let ua = headers
@@ -55,12 +53,10 @@ pub(super) async fn preview(
         .and_then(|v| v.to_str().ok())
         .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
-    let Ok((page, bytes)) = server.vault.esign_preview_for_capability(
-        &token,
-        request.item,
-        Some(peer.ip().to_string()),
-        ua,
-    ) else {
+    let Ok((page, bytes)) = server
+        .vault
+        .esign_preview_for_capability(&token, request.item, ip, ua)
+    else {
         return refused();
     };
     let Ok(pages) = render::inspect_pdf_pages(&bytes) else {
@@ -78,7 +74,13 @@ pub(super) async fn preview(
     .await
 }
 
-pub(super) async fn editor() -> Response {
+/// The owner's editor shell is not a public signing capability. Public
+/// geometry adapters only inspect caller-owned bytes and remain separately
+/// bounded; loading the owner editor itself needs a top-scope logged slip.
+pub(super) async fn editor(auth: crate::auth::CoreAuth) -> Response {
+    if !auth.is_owner_grade() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let html = "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><title>Field geography editor</title><main><h1>Field geography editor</h1><p>Load a PDF and a field geography pack. Positions are percentages of the visible page after rotation.</p><label>PDF <input id=pdf-file type=file accept=application/pdf></label><label>Pack JSON <input id=pack-file type=file accept=application/json></label><label>Item <input id=current-item type=number min=0 value=0></label><label>Recipient reference <input id=recipient></label><label>Field type <select id=field-kind><option>signature</option><option>initials</option><option>name</option><option>email</option><option>date</option><option>text</option><option>checkbox</option><option>select</option></select></label><label>Select options (one per line)<textarea id=select-options></textarea></label><button id=add>Add field</button><section id=fields></section><section id=preview></section><button id=save>Export geography pack</button><p id=status></p></main><script src=/sign/field-renderer.js></script><script src=/sign/editor.js></script></html>";
     ([ (header::CONTENT_SECURITY_POLICY,"default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; img-src blob:; base-uri 'none'; frame-ancestors 'none'"), (header::CACHE_CONTROL,"no-store") ],axum::response::Html(html)).into_response()
 }

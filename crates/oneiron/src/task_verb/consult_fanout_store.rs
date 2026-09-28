@@ -201,7 +201,7 @@ impl FanoutSurfaceSink for TxnSurface<'_, '_> {
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, self.txn)?;
         let mut decision = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::now(),
+            decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
             created_at: receipt.occurred_at / 1000,
             outcome: receipt.outcome.clone(),
             reason_codes: vec!["gate.fanout.human_ruling".to_owned()],

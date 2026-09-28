@@ -8,6 +8,8 @@ use crate::{
     WriteActor, WriteEnvelope, WriteProvenance,
 };
 use serde::{Deserialize, Serialize};
+mod policy;
+pub use policy::{DreamerAgentBoundary, dreamer_facet_for_job_type, warrants_new_agent};
 
 /// Pointer to the single vault-owned Dreamer principal actor entity id.
 const ACTOR: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::DREAMER_AUTHORITY_ACTOR);
@@ -32,7 +34,7 @@ impl Vault {
     /// Resolves the single principal. First use creates an ordinary actor,
     /// granting it NO ceiling, consent grant, or privilege.
     pub fn dreamer_authority(&self) -> Result<WriteActor> {
-        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, crate::unix_seconds_now()))
+        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, self.now_recorded_at()))
     }
     pub(super) fn dreamer_authority_in_txn(
         &self,
@@ -40,10 +42,7 @@ impl Vault {
         now: u64,
     ) -> Result<WriteActor> {
         if let Some(id) = ACTOR.get(&self.store, &*txn, &())? {
-            let entity = self
-                .store
-                .entities
-                .get(&*txn, id.as_bytes())?
+            let entity = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &id)?
                 .ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&entity)
                 .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
@@ -56,7 +55,9 @@ impl Vault {
         // namespace identity across nodes. Queue-local caches do not mint peers.
         let actor =
             crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])?;
-        if let Some(raw) = self.store.entities.get(&*txn, actor.as_bytes())? {
+        if let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &actor)?
+        {
             if EntityMetadataHeader::parse(&raw)
                 .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
                 || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
@@ -139,18 +140,28 @@ impl Vault {
         id: crate::attempt_queue::AttemptId,
     ) -> Result<Option<DreamerAuthorityStamp>> {
         let txn = self.store.env.read_txn()?;
+        self.dreamer_attempt_authority_in_txn(&txn, id)
+    }
+
+    /// Validates a queued authority stamp at the SAME wake ledger revision.
+    pub(crate) fn dreamer_attempt_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: crate::attempt_queue::AttemptId,
+    ) -> Result<Option<DreamerAuthorityStamp>> {
         ATTEMPT
-            .get(&self.store, &txn, &id)?
+            .get(&self.store, txn, &id)?
             .map(|stamp| {
                 if stamp.attempt_id != *id.as_bytes()
                     || stamp.facet.trim().is_empty()
-                    || ACTOR.get(&self.store, &txn, &())? != Some(stamp.actor)
-                    || self
-                        .store
-                        .entities
-                        .get(&txn, stamp.actor.as_bytes())?
-                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                    || ACTOR.get(&self.store, txn, &())? != Some(stamp.actor)
+                    || crate::ports::EntityStoreRead::port_entity_raw(
+                        &self.store,
+                        txn,
+                        &stamp.actor,
+                    )?
+                    .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                    .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
                 {
                     return Err(invalid());
                 }
@@ -159,7 +170,7 @@ impl Vault {
             .transpose()
     }
 }
-pub(super) fn stamp_attempt(
+pub(crate) fn stamp_attempt(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
@@ -173,7 +184,15 @@ pub(super) fn stamp_attempt(
     {
         return Ok(());
     }
+    // The queue dedupes by kind and key, not by payload. Do not let two
+    // different job types sharing a facet replay each other's queue row.
+    if super::decode_dreamer_attempt_payload(&record.payload)?.attempt_type != facet {
+        return Err(Error::InvalidConfig(
+            "Dreamer dedupe key refers to another job type".into(),
+        ));
+    }
     let actor = vault.dreamer_authority_in_txn(txn, record.created_at)?;
+    let facet = dreamer_facet_for_job_type(facet).unwrap_or(facet);
     if let Some(stamp) = ATTEMPT.get(&vault.store, &*txn, &record.id)? {
         if stamp.actor != actor.entity_ref()
             || stamp.attempt_id != *record.id.as_bytes()
@@ -183,7 +202,7 @@ pub(super) fn stamp_attempt(
         }
         return Ok(());
     }
-    let receipt_id = GateDecisionId::now();
+    let receipt_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
     let receipt = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: receipt_id,

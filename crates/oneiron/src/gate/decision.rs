@@ -279,6 +279,8 @@ pub(crate) enum GateReasonCode {
     /// answer as a hold, spelled differently so an owner can tell "the checker
     /// said no" from "nothing checked".
     PendingCheckerUnavailable,
+    /// A forward claim lacks the confidence for its subtype (care is stricter).
+    PendingCarryForwardConfidence,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -324,6 +326,7 @@ impl GateReasonCode {
             Self::PendingCounterpartyOptOut => "gate.pending.counterparty_opt_out",
             Self::PendingChecker => "gate.pending.checker",
             Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
+            Self::PendingCarryForwardConfidence => "gate.pending.carry_forward_confidence",
         }
     }
 
@@ -383,16 +386,27 @@ impl GateReasonCode {
             Self::PendingChecker | Self::PendingCheckerUnavailable => {
                 GateMetricReasonClass::SourceTrust
             }
+            Self::PendingCarryForwardConfidence => GateMetricReasonClass::CriticalityFloor,
         }
     }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PolicyRefusal {
+    pub(crate) level: Option<String>,
+    pub(crate) row_ref: Option<String>,
+    pub(crate) role: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GateDecision {
     outcome: GateOutcome,
     reason_codes: Vec<GateReasonCode>,
     receipt_reasons: Vec<&'static str>,
+    policy_row_ref: Option<String>,
+    precedence_row_ref: Option<Option<String>>,
+    policy_refusal: Option<PolicyRefusal>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -402,6 +416,9 @@ impl GateDecision {
             outcome: GateOutcome::Allow,
             reason_codes: vec![GateReasonCode::Allow],
             receipt_reasons: Vec::new(),
+            policy_row_ref: None,
+            precedence_row_ref: None,
+            policy_refusal: None,
         }
     }
 
@@ -410,6 +427,9 @@ impl GateDecision {
             outcome: GateOutcome::Deny,
             reason_codes: vec![reason_code],
             receipt_reasons: Vec::new(),
+            policy_row_ref: None,
+            precedence_row_ref: None,
+            policy_refusal: None,
         }
     }
 
@@ -418,7 +438,56 @@ impl GateDecision {
             outcome: GateOutcome::Pending,
             reason_codes,
             receipt_reasons: Vec::new(),
+            policy_row_ref: None,
+            precedence_row_ref: None,
+            policy_refusal: None,
         }
+    }
+
+    pub(super) fn with_policy_row_ref(mut self, row_ref: Option<&str>) -> Self {
+        self.policy_row_ref = row_ref.map(str::to_owned);
+        self
+    }
+
+    pub(super) fn with_policy_refusal(
+        mut self,
+        level: Option<String>,
+        row_ref: Option<&str>,
+        hidden_world: bool,
+    ) -> Self {
+        self.policy_refusal = Some(if hidden_world {
+            PolicyRefusal {
+                level: None,
+                row_ref: None,
+                role: None,
+            }
+        } else {
+            PolicyRefusal {
+                level,
+                row_ref: row_ref.map(str::to_owned),
+                role: Some("policy_power_holder"),
+            }
+        });
+        self
+    }
+
+    pub(crate) fn policy_refusal(&self) -> Option<&PolicyRefusal> {
+        self.policy_refusal.as_ref()
+    }
+
+    pub(super) fn with_precedence_row_ref(mut self, row_ref: Option<&str>) -> Self {
+        self.precedence_row_ref = Some(row_ref.map(str::to_owned));
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn precedence_row_ref(&self) -> Option<Option<&str>> {
+        self.precedence_row_ref.as_ref().map(|row| row.as_deref())
+    }
+
+    #[must_use]
+    pub(crate) fn policy_row_ref(&self) -> Option<&str> {
+        self.policy_row_ref.as_deref()
     }
 
     pub(super) fn with_receipt_reasons(

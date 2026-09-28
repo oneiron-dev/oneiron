@@ -102,17 +102,11 @@ npm install @oneiron/client   # or: bun add @oneiron/client
 It ships TypeScript source with no build step, so the runtime must load TypeScript:
 Bun 1.3+; plain `node` without a TS loader cannot import it.
 
-```ts
-import { HttpBaseClient } from "@oneiron/client";
-
-const client = new HttpBaseClient({
-  baseUrl: "http://127.0.0.1:3000",
-  secret: process.env.ONEIRON_SECRET, // placeholder credential, never a literal
-});
-
-const response = await client.discover();
-console.log(response.status, await response.text()); // status, headers, body as sent
-```
+`HttpBaseClient` is a low-level fetch wrapper. For a protected request, supply
+`Authorization: Bearer <v2.slip.*>` and a **fresh** signed
+`x-oneiron-binding` proof with that request. Its old `secret` option only sets a
+static bearer header; an issuer secret is not a credential, and one static proof
+cannot be reused across requests. Public endpoints need neither header.
 
 `request`, `discover`, `searchText`, `getEntity`, and `callVerb` all return
 `Promise<Response>`; every other route in the catalog is one
@@ -129,7 +123,8 @@ and plain `curl` is equivalent wherever the binary is absent.
 
 ```bash
 export ONEIRON_URL=http://127.0.0.1:3000
-export ONEIRON_SECRET=placeholder-dev-secret   # placeholder; never commit a real one
+export ONEIRON_SECRET='<logged-v2.slip-token>'  # the `api` CLI bearer environment
+export ONEIRON_BINDING_KEY='<64-hex-holder-seed>'  # keep outside argv and commits
 
 oneiron api discover
 oneiron api search "project kickoff notes" --limit 5
@@ -138,24 +133,11 @@ oneiron api call <verb> --data @request.json    # or --data - to read stdin
 oneiron api raw GET /api/health
 ```
 
-```bash
-curl --disable --config - "$ONEIRON_URL/api/core/discover" <<CONFIG_EOF
-silent
-show-error
-fail-with-body
-header = "Authorization: Bearer $ONEIRON_SECRET"
-CONFIG_EOF
-```
-
-The credential rides curl's config channel on stdin — the heredoc is unquoted so the
-shell expands `$ONEIRON_SECRET` into it — rather than a `--header` argument, so it
-stays out of argv and out of `ps`. `--disable` comes first and keeps a host
-`~/.curlrc` from adding a transfer that would be handed that same credential.
-
-The secret is read from `ONEIRON_SECRET`, never taken as an argument and never
-printed. Success bodies reach stdout byte for byte, curl diagnostics stay on
-stderr, and a 4xx or 5xx keeps its body and still exits non-zero. The verb
-grammar returned by `setup_oneiron` names the verbs `oneiron api call` accepts.
+The `oneiron api` command signs a fresh holder proof for each slip request and
+hands both headers to curl on its config stdin, never argv. Plain `curl` callers
+must generate a fresh `x-oneiron-binding` on every protected request and send it
+beside the logged slip. Issuer secrets, historical lease keys, and MAC tokens
+never authenticate protected routes.
 
 ## Lane: tool-first-mcp
 
@@ -168,18 +150,50 @@ which endpoint a connector reaches is a registration the operator makes.
 
 ## Authentication
 
-One credential travels, in the standard header: `Authorization: Bearer <credential>`.
+Protected requests carry a logged `v2.slip.*` capability slip in
+`Authorization: Bearer` **and** a fresh `x-oneiron-binding` holder proof
+`{"timestamp","nonce","signature"}` signed over the slip's request transcript.
+The configured issuer secret and device-lease keys are not bearer credentials.
 
-- **Owner-grade** — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. Required by the legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
-- **Scoped** — a paired slip `v2.slip.<hex>`, sent with a fresh `x-oneiron-binding` holder proof `{"timestamp","nonce","signature"}` signed by its connection key on every request. Accepted on `/v1/core/*` and companion control-plane routes with exactly the verbs it carries. Create a one-hour pairing link with `oneiron-server token pair --scope core:read[,…] --principal-ref <hex32> [--actor-class human]` and redeem it once at `POST /v1/core/pairing/redeem`; the SDKs' `pair(link)` does both halves.
+- **Owner-grade** — an unattenuated, verified top-scope slip. Required by the
+  legacy `/api/*` routes and the `/ws` sync upgrade, which read the whole vault.
+- **Scoped** — a paired slip whose verbs restrict `/v1/core/*` and companion
+  control-plane routes. Create a one-hour pairing link with
+  `oneiron-server token pair --scope core:read --principal-ref <hex32>` using an
+  existing owner slip (`ONEIRON_TOKEN`) and its binding seed
+  (`ONEIRON_BINDING_KEY`); redeem it once at `POST /v1/core/pairing/redeem`.
+  A fresh self-host has no client slip yet: stop the daemon and run
+  `ONEIRON_AUTH_SECRET=… oneiron token bootstrap --config <config> --url <origin>`
+  locally. This prints a one-time link for the existing embedded owner; it
+  never sends or prints the issuer secret. Start the daemon, then redeem the
+  link with a new holder key. Non-loopback origins must use HTTPS. The optional
+  `--lifetime-secs` can only shorten the trusted vault policy's initial-owner
+  ceiling (default one year); the link itself still expires after one hour.
+  A configured OAuth JWT is valid only at `POST /v1/core/pairing/oauth` with
+  a signed holder-key exchange request. Send `Authorization: Bearer <JWT>` and
+  JSON `{ "binding_key": "<64 lowercase hex>", "nonce": "<32 hex>",
+  "signature": "<128 lowercase hex>", "lifetime_secs": <optional positive seconds> }`.
+  Sign the byte transcript
+  `b"oneiron/oauth-slip-pair/v1" || BLAKE3(JWT bytes) || binding_key bytes || nonce UTF-8`
+  with the holder's Ed25519 key. The JWT subject must name an existing actor;
+  the returned logged slip carries only its `read`/`propose` verbs and no longer
+  than the JWT's remaining lifetime, the trusted vault policy's OAuth
+  ceiling (default one hour), or the optional caller-narrowed lifetime.
+  The `credential_lifetimes` policy-manifest map contains positive
+  `oauth_exchange_secs` and `initial_owner_secs` maxima. Trusted packs meet at
+  the shortest lifetime; malformed policies refuse issuance, not fall back.
+  The JWT itself is not
+  a data-route credential.
 
-The claims are visible but not editable: they are authenticated by a MAC keyed on the server's secret, which appears in no token. Editing, widening, or deleting the claims invalidates the token. Every authentication failure — absent, malformed, wrong MAC, unknown claim, revoked — returns the same `UNAUTHORIZED`; the response never says which.
+A slip is verified against the issuing host's public key and the authority log.
+Every production authentication failure returns `UNAUTHORIZED`. The explicit
+unauthenticated development mode is not a production credential.
 
 Every paired slip carries a slip id, its identity. Two pairings of identical claims produce two distinct slips, so one can be revoked without touching the other. A slip without its connection key authenticates nothing: the holder proof, not the slip, is what each request spends.
 
-**Revoking one token.** `oneiron token revoke --jti <hex32>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
+**Revoking one slip.** `oneiron token revoke --jti <hex64>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
 
-**Rotating the secret.** Replace the configured value and restart. Rotation rewraps the key the tokens are MAC'd under, so previously minted tokens and derived credential hashes stop resolving and must be reissued; credentials minted under the new secret work immediately. Rotation is the all-at-once lever; revoking an individual token is the separate, explicit act above, never a side effect of rotation.
+**Rotating credentials.** Rotate or revoke the logged slips. The issuer key is not a bearer token; replacing it alone is not a device-lease rotation ceremony. Receipt-attestation device keys remain verification records, not access credentials (ONE-2294 tracks slip-backed receipt attestation).
 ## Tier-1: Endpoint Activation Index
 
 Fetch Tier-1 first. It contains one endpoint block per live route literal and no Tier-2 parameters or Tier-3 schemas.
@@ -209,7 +223,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "open published artifact"
   - "preview local app artifact"
   - "serve artifact index"
-- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+- safety: Read-only local artifact serving. The published pointer pins a code snapshot or a numbered blob export; no public publishing tier is enabled.
 
 #### local-artifact-published-root-slash - `GET /a/{artifact}/`
 
@@ -218,16 +232,16 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "open artifact root"
   - "serve artifact home page"
   - "preview published artifact"
-- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+- safety: Read-only local artifact serving. The published pointer pins a code snapshot or a numbered blob export; no public publishing tier is enabled.
 
 #### local-artifact-file - `GET /a/{artifact}/{*path}`
 
-- when-to-use: Serve a specific file from a pinned local artifact snapshot, or select a preview pointer or explicit fork hash for immutable local inspection.
+- when-to-use: Serve a code snapshot file or a blob export, using a preview pointer, an explicit fork hash, or a numbered blob version.
 - trigger phrases:
   - "serve artifact file"
   - "load artifact asset"
   - "open pinned artifact snapshot"
-- safety: Read-only local artifact serving. Codebase-class snapshots are rejected; responses use restrictive local CSP and immutable cache headers.
+- safety: Read-only local artifact serving. Codebase-class snapshots are rejected; responses use restrictive local CSP, with no-cache headers on channels and immutable headers on direct versions.
 
 #### health - `GET /api/health`
 
@@ -237,6 +251,22 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "health check"
   - "what formats does the server support?"
 - safety: Read-only, unauthenticated by design.
+
+#### inference-defaults-read - `GET /v1/llm/defaults`
+
+- when-to-use: Read the vault's current seven purpose defaults and four live/batch ASR/TTS routing rows before changing inference policy.
+- trigger phrases:
+  - "show inference defaults"
+  - "read speech routing defaults"
+- safety: Read-only; requires an owner-grade bearer. Scoped credentials are refused.
+
+#### inference-defaults-replace - `PUT /v1/llm/defaults`
+
+- when-to-use: Replace the validated vault-local inference defaults after the owner asks an authorized agent to edit them. Read the current table first and preserve every row not changed.
+- trigger phrases:
+  - "change inference default tier"
+  - "edit ASR or TTS route"
+- safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
 
 #### mcp-gateway - `POST /mcp`
 
@@ -372,15 +402,6 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "assemble this turn's context"
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires core read auth. Retrieval, when requested, runs the same scoped context-pack pipeline as `POST /v1/core/context-pack` and advances the caller's cursor.
-
-#### companion-relationship-end - `POST /v1/companion/register/records/{record_id}/end-relationship`
-
-- when-to-use: End an active companion relationship record, scrub its private relationship memory, and optionally enqueue the goodbye-artifact task.
-- trigger phrases:
-  - "end companion relationship"
-  - "remove private relationship memory"
-  - "enqueue goodbye artifact"
-- safety: Mutating teardown endpoint. Requires companion register write auth and an idempotency key for retries; skips the goodbye-artifact hook when the request marks the ending as bad.
 
 #### usage-event - `POST /v1/usage/events`
 
@@ -534,6 +555,16 @@ Example response:
 }
 ```
 
+### Inference Defaults
+
+Methods: `GET` and `PUT` on the two Tier-1 inference-defaults routes.
+
+Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core token is not enough.
+
+`GET` returns `{ "purposes": { ... }, "voice": { ... } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`).
+
+`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
+
 ### OpenAPI Schema
 
 Method: `GET`
@@ -566,24 +597,25 @@ Response:
 
 Method: `GET`
 
-Authentication: None for this local serving endpoint.
+Authentication: configured API bearer credential, unless the server explicitly allows unauthenticated development access.
 
 Path parameters:
 
-- `artifact` required: stable artifact id segment for the local mount.
-- `path` optional: file path within the pinned snapshot. Root requests serve `index.html`.
+- `artifact` required: code project id or canonical lowercase hex blob entity id.
+- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Short entry URLs `/a/{artifact}/` and `/a/{artifact}/_t/{token}/` authorize first, then redirect to canonical `/a/{artifact}/_s/c/published/` or `/a/{artifact}/_t/{token}/_s/c/published/`. Preview uses `/_s/c/preview/`; immutable exports use `/_s/f/{forkHash}/` and `/_s/b/{blobVersion}/`, with the same optional token prefix. The fixed-position `_s` selector marker is never searched inside the artifact id or file suffix. Bundle paths after it may contain `c/`, `f/`, `b/`, `_s/`, or `_t/` as ordinary directories. Code roots select `index.html`; blob roots select the export. Every query-selected entry authorizes then redirects to its selector-bearing path so relative assets inherit both capability and selection. Names containing `#`, `?`, and `%` retain their encoded spelling across redirects.
 
 Query parameters:
 
 - `channel` optional: pointer channel to resolve, currently `published` by default or `preview`.
-- `forkHash` optional: 64-character hex immutable snapshot hash. Do not combine with `channel`.
+- `forkHash` optional: 64-character hex immutable code snapshot hash. Do not combine with `channel` or `blobVersion`.
+- `blobVersion` optional: positive numbered blob export version. Do not combine with `channel` or `forkHash`.
 
 Response behavior:
 
-- Resolves the pointer or fork hash to an artifact-class code snapshot and serves bytes from that pinned snapshot only.
-- Repointing a published or preview pointer affects future stable mount reads but does not mutate old fork-hash mounts.
-- Returns `404` when the pointer, snapshot, or file is absent, and `400` for malformed selectors or mutually exclusive selector parameters.
-- Sends `Cache-Control: public, max-age=31536000, immutable`, an ETag derived from the served file content hash, and a restrictive CSP for local artifact assets.
+- Resolves only an authorized live channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` require a matching live published or preview pin; unpinned versions and codebase-class snapshots are not hostable.
+- Serving tiers are private by default: an explicitly public pin serves anonymously; a link-token pin needs its 256-bit URL capability; a world-member pin needs a verified, unrestricted read credential and a live federation membership grant. Wrong or missing authority, absent files, and unpublished pointers return the same artifact `404`. Repointing and unpublishing revoke old direct-version serving, not the underlying immutable export.
+- Returns `400` for malformed or mutually exclusive selector parameters. No vault API is available to served bundles.
+- Public code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; pinned public code snapshots use `public, max-age=31536000, immutable`. Public blob channels use `private, no-cache, max-age=0, must-revalidate` and direct public blob versions use `private, max-age=31536000, immutable`. Token and member responses use `private, no-store`. All responses send `Referrer-Policy: no-referrer` to protect capability URLs. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`.
 
 ### Core Discovery
 
@@ -657,7 +689,7 @@ Example response:
 
 Method: `GET`
 
-Authentication: Core auth with read scope, either scoped bearer or the configured shared secret.
+Authentication: a logged slip carrying read scope, with a fresh holder proof.
 
 Query parameters:
 
@@ -946,7 +978,8 @@ Request body (every block is optional; `{}` returns the prefix beside the caller
 - `retrieval` optional: a Context Pack request body (see above). When present, retrieval runs and its pack rides the response.
 - `memories` optional: `enabled` (default `true`) and `slots` per-slot row caps (`claims`, `turns`, `summaries`, `facets`, `companions`, `other`).
 - `session` optional: `session_id` that carries the cursor across calls; defaults to the caller identity.
-- `companion` optional: `person_ref`, `persona_ref`, and `expression` (`professional`, `warm`, or `unrestricted`).
+- `companion` optional: `person_ref` identifies the PERSON, `persona_ref` supplies the other relationship endpoint, and `expression` selects `professional`, `warm`, or `unrestricted`.
+  Only an active relationship record can select a non-neutral companion scope.
 
 Response fields:
 
@@ -990,56 +1023,11 @@ Example response for an empty request body:
 }
 ```
 
-### Companion Relationship End
+### Receipt-Key Revocation
 
 Method: `POST`
 
-Authentication: scoped core bearer with `companion:register:write`, or an owner-grade bearer credential.
-
-Headers:
-
-- `Idempotency-Key` optional but recommended for retries after timeouts or connection loss. Same key plus same body replays the cached response. Same key plus a different body returns a replay-conflict error.
-
-Request body:
-
-- `ended_at` optional: Unix timestamp for the relationship-ending event. Defaults to server time.
-- `ended_badly` optional: `true` skips goodbye-artifact generation. Defaults to `false`.
-- `run_id` optional: run identifier to stamp on the goodbye-artifact job when one is enqueued.
-
-Response fields:
-
-- `id`: companion register record entity id.
-- `record`: retired relationship record with private memory replaced by a scrubbed ending marker.
-- `goodbye_artifact`: hook status, task kind, optional run id, and optional job id.
-
-Example response:
-
-```json
-{
-  "id": "0123456789abcdef0123456789abcdef",
-  "record": {
-    "kind": "relationship",
-    "lifecycle": "retracted",
-    "value": {
-      "kind": "relationship_ended",
-      "private_memory": "removed",
-      "ended_at": 1770000000
-    }
-  },
-  "goodbye_artifact": {
-    "status": "enqueued",
-    "task": "goodbye_artifact",
-    "run_id": "eiri-goodbye-artifact-1770000000",
-    "job_id": "0123456789abcdef0123456789abcdef"
-  }
-}
-```
-
-### Lease Revoke
-
-Method: `POST`
-
-Authentication: owner-grade credential required — the configured trust-root secret sent verbatim, or a minted token carrying no narrowing claims. This is a legacy `/api/*` route: a scoped bearer authenticates but is refused here with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Unauthenticated only when development config explicitly allows it.
+Authentication: an unattenuated owner-grade slip plus a fresh holder proof. The issuer secret and historical lease keys do not authorize this route; scoped slips are refused. Explicit unauthenticated development mode remains separate.
 
 Headers:
 

@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -18,6 +19,8 @@ pub(crate) struct DeletionGateContext {
     actor_class: EdgeActorClass,
     policy_manifest_version: String,
     read_frontier_hash: [u8; 32],
+    room_role: Option<crate::conversation::RoomRole>,
+    room: Option<EntityId>,
 }
 
 /// The facade's gated-deletion carrier: the evaluated decision record PLUS the
@@ -42,9 +45,13 @@ pub(crate) struct DeletionGateContext {
 /// transaction is still pre-publication. See
 /// [`reverify_deletion_authority_before_publication`] and
 /// [`reverify_deletion_authority_when_unpublished`].
+type DeletionCheck<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>;
+
 pub(crate) struct GatedDeletion<'a> {
     pub(super) context: DeletionGateContext,
-    reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+    reverify: DeletionCheck<'a>,
+    pre_scrub_check: Option<DeletionCheck<'a>>,
+    soft_scrub_committed: Cell<bool>,
 }
 
 impl<'a> GatedDeletion<'a> {
@@ -52,11 +59,36 @@ impl<'a> GatedDeletion<'a> {
         self.context.actor
     }
 
-    pub(crate) fn new(
+    pub(super) fn room_authority(&self) -> Option<(EntityId, crate::conversation::RoomRole)> {
+        Some((self.context.room?, self.context.room_role?))
+    }
+
+    pub(crate) fn new(context: DeletionGateContext, reverify: DeletionCheck<'a>) -> Self {
+        Self {
+            context,
+            reverify,
+            pre_scrub_check: None,
+            soft_scrub_committed: Cell::new(false),
+        }
+    }
+
+    /// A preview check stays active through reservation and local scrub, but
+    /// not publication after that scrub has deliberately changed the body.
+    pub(crate) fn with_pre_scrub_check(
         context: DeletionGateContext,
-        reverify: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+        reverify: DeletionCheck<'a>,
+        check: DeletionCheck<'a>,
     ) -> Self {
-        Self { context, reverify }
+        Self {
+            context,
+            reverify,
+            pre_scrub_check: Some(check),
+            soft_scrub_committed: Cell::new(false),
+        }
+    }
+
+    pub(super) fn note_soft_scrub_committed(&self) {
+        self.soft_scrub_committed.set(true);
     }
 }
 
@@ -80,10 +112,15 @@ pub(super) fn reverify_deletion_authority_before_publication(
     gate: Option<&GatedDeletion<'_>>,
     txn: &heed::RoTxn<'_>,
 ) -> Result<()> {
-    match gate {
-        Some(gate) => (gate.reverify)(txn),
-        None => Ok(()),
+    if let Some(gate) = gate {
+        (gate.reverify)(txn)?;
+        if !gate.soft_scrub_committed.get()
+            && let Some(check) = gate.pre_scrub_check
+        {
+            check(txn)?;
+        }
     }
+    Ok(())
 }
 
 /// Re-runs the authority check IF AND ONLY IF this delete published nothing —
@@ -132,6 +169,26 @@ impl DeletionGateContext {
             actor_class,
             policy_manifest_version,
             read_frontier_hash,
+            room_role: None,
+            room: None,
+        }
+    }
+
+    pub(crate) fn new_room(
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+        policy_manifest_version: String,
+        read_frontier_hash: [u8; 32],
+        room: EntityId,
+        role: crate::conversation::RoomRole,
+    ) -> Self {
+        Self {
+            actor,
+            actor_class,
+            policy_manifest_version,
+            read_frontier_hash,
+            room_role: Some(role),
+            room: Some(room),
         }
     }
 
@@ -146,6 +203,9 @@ impl DeletionGateContext {
         diff.update(b"oneiron.gate.deletion.v0");
         diff.update(self.actor.as_bytes());
         diff.update(target.as_bytes());
+        if let Some(room) = self.room {
+            diff.update(room.as_bytes());
+        }
         diff.update([TombstoneReason::from(reason).wire_byte()]);
         GateDecisionRecord {
             version: 0,
@@ -154,7 +214,10 @@ impl DeletionGateContext {
             decision_id: GateDecisionId::from_bytes(request_id),
             created_at,
             outcome: "allow".to_owned(),
-            reason_codes: vec!["gate.allow.owner_delete".to_owned()],
+            reason_codes: self.room_role.map_or_else(
+                || vec!["gate.allow.owner_delete".to_owned()],
+                |role| vec![format!("gate.allow.room_{role:?}").to_lowercase()],
+            ),
             receipt_reasons: Vec::new(),
             system_notices: Vec::new(),
             actor_class: self.actor_class.gate_actor_class().to_owned(),

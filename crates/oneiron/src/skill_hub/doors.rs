@@ -197,6 +197,54 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        self.import_skill_from_hub_checked_in_txn(
+            wtxn,
+            hub_ref,
+            package,
+            preferred_id,
+            occurred,
+            learned_at,
+            false,
+        )
+    }
+
+    /// Explicit restore births a new holder instead of deduplicating to a
+    /// locally changed or retired default. Its caller must establish the
+    /// shipped source and must select a fresh, non-tombstoned ID.
+    pub(super) fn restore_skill_from_hub_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        preferred_id: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.import_skill_from_hub_checked_in_txn(
+            wtxn,
+            hub_ref,
+            package,
+            preferred_id,
+            occurred,
+            learned_at,
+            true,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "import and explicit fresh restore share the same admission path"
+    )]
+    fn import_skill_from_hub_checked_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        preferred_id: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        fresh: bool,
+    ) -> Result<EntityId> {
         hub_ref.validate()?;
         encode_skill_record(&package.record)?;
         let content_hash = package.content_hash()?;
@@ -221,8 +269,20 @@ impl Vault {
                 "hub import package must carry imported source",
             )));
         }
-
-        let entity = match self.imported_skill_entity_for_content_hash_in_txn(wtxn, content_hash)? {
+        if fresh
+            && (crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &preferred_id)?
+                .is_some()
+                || self.local_hard_delete_marker_exists_in_txn(wtxn, &preferred_id)?)
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "restore target is not a fresh entity id",
+            )));
+        }
+        let entity = match if fresh {
+            None
+        } else {
+            self.imported_skill_entity_for_content_hash_in_txn(wtxn, content_hash, Some(hub_ref))?
+        } {
             Some(existing) => {
                 let existing_record = self.read_skill_record_in_txn(wtxn, &existing)?;
                 if existing_record.skill_id != package.record.skill_id {

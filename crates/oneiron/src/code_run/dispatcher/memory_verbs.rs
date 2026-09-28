@@ -60,7 +60,11 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemoryPutEdge
             | SelfEffect::MemoryWriteFixture
             | SelfEffect::ReportBlocked
+            | SelfEffect::InferenceDefaultsRead
+            | SelfEffect::InferenceDefaultsReplace
+            | SelfEffect::WakePolicyWrite
             | SelfEffect::AgentsSpawn
+            | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
             | SelfEffect::TaskDelegate => {
@@ -78,7 +82,7 @@ impl HostSelfDispatcher<'_> {
             // they evaporate with it. Refusing them here would make an
             // off-record room mute rather than private.
             SelfEffect::MemorySearch
-            | SelfEffect::AskHuman
+            | SelfEffect::Ask
             | SelfEffect::DestructiveFixture
             | SelfEffect::OutboundFixture
             | SelfEffect::Context
@@ -163,6 +167,18 @@ impl HostSelfDispatcher<'_> {
             &envelope,
             crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
         )?;
+        let authored_rules = crate::dreamer_consolidation::prepare_authored_claim(
+            &gate_body.predicate,
+            &gate_body.value,
+        )?;
+        if authored_rules.is_some()
+            && (gate_body.subject != ClaimSubject::Entity(self.actor.entity_ref())
+                || self.actor.actor_class() != crate::EdgeActorClass::Agent)
+        {
+            return Err(Error::InvalidConfig(
+                "Dreamer rule author is not the bound resident".into(),
+            ));
+        }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
@@ -183,6 +199,39 @@ impl HostSelfDispatcher<'_> {
             )?,
         }
 
+        if let Some(json) = authored_rules {
+            let admitted = match &self.storage {
+                ExecutorStorage::Canonical(vault) => {
+                    crate::dreamer_consolidation::admitted_authored_claim(
+                        vault, &call.id, self.actor,
+                    )?
+                }
+                ExecutorStorage::Session(binding) => {
+                    binding
+                        .session
+                        .admitted_executor_claim(&binding.route, &call.id, self.actor)?
+                }
+            };
+            if !admitted {
+                return Err(Error::InvalidConfig(
+                    "Dreamer rules require an admitted resident claim".into(),
+                ));
+            }
+            let record = crate::dreamer_consolidation::resident_record(self.actor, &json)?;
+            match &self.storage {
+                ExecutorStorage::Canonical(vault) => {
+                    vault.set_dreamer_failure_rules(self.actor, &json)?;
+                }
+                ExecutorStorage::Session(binding) => {
+                    binding.session.side_table_put_routed(
+                        &binding.route,
+                        &crate::dreamer_consolidation::DREAMER_FAILURE_RULES,
+                        &(),
+                        &record,
+                    )?;
+                }
+            }
+        }
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.id,
         }))

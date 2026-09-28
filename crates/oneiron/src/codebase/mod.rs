@@ -1,8 +1,11 @@
 mod ingest;
 mod repo_ref;
+mod residue;
+mod serve_lookup;
 mod snapshot;
 mod store;
 
+pub(crate) use self::ingest::read_asset_blob_in_txn;
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,
@@ -16,9 +19,9 @@ pub use self::snapshot::{
     encode_codebase_snapshot,
 };
 pub(crate) use self::store::{
-    codebase_candidate_matches_filters, codebase_candidate_matches_scope_key,
-    delete_codebase_snapshot_in_txn, entity_id_from_hash_material,
-    reconcile_codebase_snapshot_after_code_artifact_put,
+    codebase_artifact_snapshot_matches_in_txn, codebase_candidate_matches_filters,
+    codebase_candidate_matches_scope_key, delete_codebase_snapshot_in_txn,
+    entity_id_from_hash_material, reconcile_codebase_snapshot_after_code_artifact_put,
 };
 // Test-only seam: the sibling test module names these bare through
 // `use super::*`, as it did when they were private items of the flat file.

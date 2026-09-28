@@ -77,6 +77,18 @@ pub struct ClaimConflictReceipt {
     pub ruling_claim: EntityId,
 }
 
+/// Replaying a ruled dispute rebuilds its receipt from the recorded Gate
+/// decision, so the retention sweep keeps every decision a marker names.
+pub(crate) fn claim_conflict_ruling_gate_refs_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::HashSet<GateDecisionId>, Error> {
+    Ok(RESOLUTION
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(_, decision)| GateDecisionId::from_bytes(decision))
+        .collect())
+}
 /// The stored form of a packet: every member's `raw` bytes cleared. Storage
 /// and the content-address digest both run over this form, never the
 /// hydrated one a caller sees.

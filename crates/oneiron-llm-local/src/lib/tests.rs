@@ -250,6 +250,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("local/fixture@2026-07-06").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::Durable {
@@ -259,7 +260,7 @@ fn sample_request() -> LlmRequest {
                 },
             },
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: Some(ModelTierRef("local".to_owned())),
                 purpose_default: Some(ModelTierRef("tiny".to_owned())),
                 global_default: ModelTierRef("standard".to_owned()),

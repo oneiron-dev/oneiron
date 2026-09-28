@@ -90,7 +90,7 @@ async fn owner_approved_org_ticket_delivers_fixed_principal_and_only_approved_po
         &server,
         "POST",
         "/v1/core/pairing/links",
-        bearer(SECRET),
+        fixture.headers(&fixture.mint(|_| {})),
         Some(payload),
     )
     .await;
@@ -240,7 +240,7 @@ async fn mixed_org_request_is_refused_and_generic_pairing_remains_available() {
         &server,
         "POST",
         "/v1/core/pairing/links",
-        bearer(SECRET),
+        fixture.headers(&fixture.mint(|_| {})),
         Some(json!({"scope":scope,"lifetime_secs":600,"principal":principal(&fixture, org)})),
     )
     .await;
@@ -284,7 +284,7 @@ async fn paired_mcp_enrollment_requires_holder_proof_and_consumes_both_header_no
         &server,
         "POST",
         "/v1/core/pairing/links",
-        bearer(SECRET),
+        fixture.headers(&fixture.mint(|_| {})),
         Some(json!({"scope":scope,"lifetime_secs":600,"principal":{
             "holder_ref":fixture.actor.to_hex(),"actor_class":"human"}})),
     )
@@ -359,10 +359,13 @@ async fn paired_mcp_enrollment_requires_holder_proof_and_consumes_both_header_no
     let mut narrow_scope = Scope::top();
     narrow_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(oneiron::EntityId::now())]));
     narrow
-        .attenuate(SlipCaveat {
-            scope: Some(narrow_scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(narrow_scope),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let narrow_token = narrow.to_token().unwrap();
     server

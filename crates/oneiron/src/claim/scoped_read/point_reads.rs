@@ -5,6 +5,7 @@ use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::vault::ReadMode;
 use crate::{EntityId, Error, HydratedShortIdDeletion, Result, TimeRange};
+type EntityParts = (u8, u64, Vec<u8>);
 
 /// What one point read names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +14,56 @@ pub enum ReadTarget<'r> {
     Id(EntityId),
     /// An engine-issued short reference: short id plus content-hash byte.
     ShortRef { short_id: &'r str, content_hash: u8 },
+}
+
+impl ScopedRead<'_> {
+    /// Recheck a graph-ask source against the current write transaction's
+    /// authority, deletion, NOTE privacy and live-body projection. It cannot
+    /// turn an earlier scoped read into a permission after grants change.
+    pub(crate) fn graph_ask_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityParts>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let Some(raw) = self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+        else {
+            return Ok(None);
+        };
+        let header = EntityMetadataHeader::parse(&raw.raw)
+            .ok_or(Error::CorruptedIndex("graph ask entity header"))?;
+        Ok(Some((
+            header.entity_type,
+            header.learned_at,
+            raw.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        )))
+    }
+
+    /// Actor-gated entity bodies at a caller-owned ledger snapshot. A wake
+    /// can pass the SAME read transaction to every child accounting step.
+    pub(crate) fn get_entities_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> Result<Vec<Option<EntityParts>>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        ids.iter()
+            .map(|id| {
+                let Some(revision) =
+                    self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+                else {
+                    return Ok(None);
+                };
+                let header = EntityMetadataHeader::parse(&revision.raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?;
+                Ok(Some((
+                    header.entity_type,
+                    header.learned_at,
+                    revision.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                )))
+            })
+            .collect()
+    }
 }
 
 /// One read in a [`ScopedRead::read`] slice: its target and its frontier.
@@ -89,6 +140,52 @@ impl ReadRow {
 }
 
 impl ScopedRead<'_> {
+    /// Compatibility projection of point rows; policy and body share the read snapshot.
+    pub fn get_entity_parts_with_receipt(
+        &self,
+        id: &EntityId,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Option<EntityParts>>> {
+        self.get_entity_parts_with_mode_with_receipt(id, ReadMode::Live, requested)
+    }
+
+    pub fn get_entity_parts_with_mode_with_receipt(
+        &self,
+        id: &EntityId,
+        mode: ReadMode,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Option<EntityParts>>> {
+        let read = self.read(&[PointRead::id(*id).at(mode)], requested)?;
+        Ok(ScopedReadResult {
+            value: read
+                .value
+                .into_iter()
+                .next()
+                .flatten()
+                .and_then(|row| row.body.map(|body| (row.entity_type, row.learned_at, body))),
+            receipt: read.receipt,
+        })
+    }
+
+    pub fn get_entities_parts_with_receipt(
+        &self,
+        ids: &[EntityId],
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<Option<EntityParts>>>> {
+        let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+        let result = self.read(&reads, requested)?;
+        Ok(ScopedReadResult {
+            value: result
+                .value
+                .into_iter()
+                .map(|row| {
+                    row.and_then(|row| row.body.map(|body| (row.entity_type, row.learned_at, body)))
+                })
+                .collect(),
+            receipt: result.receipt,
+        })
+    }
+
     /// Reads every target in one snapshot under one policy resolution.
     ///
     /// Each slot answers its read in order; `None` is a missing target or a
@@ -100,43 +197,61 @@ impl ScopedRead<'_> {
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
+    }
+
+    /// Keeps the scoped rows, their receipt and a dependent projection in the
+    /// same read transaction. A projection must not open a newer snapshot for
+    /// metadata that labels these rows.
+    pub(crate) fn read_projected<T, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
-            let row = match read.target {
-                ReadTarget::Id(id) => {
-                    match self.entity_raw_with_mode_in(&txn, &policy, &filter, &id, read.mode)? {
-                        Some(revision) => Some(ReadRow::from_revision(id, revision)?),
-                        None => {
-                            suppressed += usize::from(self.entity_record_in(&txn, &id)?.is_some());
-                            None
-                        }
-                    }
-                }
+            let (row, withheld) = match read.target {
+                ReadTarget::Id(id) => self.id_row_in(&txn, &policy, &filter, id, read.mode)?,
                 ReadTarget::ShortRef {
                     short_id,
                     content_hash,
                 } => {
-                    let (row, withheld) = self.short_ref_in(
-                        &txn,
-                        &policy,
-                        &filter,
-                        short_id,
-                        content_hash,
-                        read.mode,
-                    )?;
-                    suppressed += withheld;
-                    row
+                    self.short_ref_in(&txn, &policy, &filter, short_id, content_hash, read.mode)?
                 }
             };
+            suppressed += withheld;
             value.push(row);
         }
+        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult {
-            value,
-            receipt: self.receipt_for(requested, &policy, &filter, suppressed),
+            value: project(&txn, value)?,
+            receipt,
         })
+    }
+
+    /// One id at one frontier: the admitted row and whether an existing row
+    /// was withheld. Value and denial count come from the same snapshot.
+    fn id_row_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        id: EntityId,
+        mode: ReadMode,
+    ) -> Result<(Option<ReadRow>, usize)> {
+        let admitted = self.admit_in(txn, &id, || {
+            self.entity_raw_with_mode_in(txn, policy, filter, &id, mode)
+        })?;
+        let withheld = admitted.suppression();
+        let row = admitted
+            .into_option()
+            .map(|revision| ReadRow::from_revision(id, revision))
+            .transpose()?;
+        Ok((row, withheld))
     }
 
     /// One short reference: the admitted row and whether an existing row was withheld.
@@ -159,13 +274,7 @@ impl ScopedRead<'_> {
                 else {
                     return Ok((None, 0));
                 };
-                return match self.entity_raw_with_mode_in(txn, policy, filter, &id, mode)? {
-                    Some(revision) => Ok((Some(ReadRow::from_revision(id, revision)?), 0)),
-                    None => Ok((
-                        None,
-                        usize::from(self.entity_record_in(txn, &id)?.is_some()),
-                    )),
-                };
+                return self.id_row_in(txn, policy, filter, id, mode);
             }
             ReadMode::Live | ReadMode::Indexed => {
                 self.vault
@@ -177,19 +286,9 @@ impl ScopedRead<'_> {
         };
         if hydrated.body.is_some() {
             // Resolve the requested frontier in this same transaction.
-            return match self.entity_raw_with_mode_in(txn, policy, filter, &hydrated.id, mode)? {
-                Some(revision) => Ok((
-                    Some(ReadRow {
-                        deletion: hydrated.deletion,
-                        ..ReadRow::from_revision(hydrated.id, revision)?
-                    }),
-                    0,
-                )),
-                None => Ok((
-                    None,
-                    usize::from(self.entity_record_in(txn, &hydrated.id)?.is_some()),
-                )),
-            };
+            let (row, withheld) = self.id_row_in(txn, policy, filter, hydrated.id, mode)?;
+            let deletion = hydrated.deletion;
+            return Ok((row.map(|row| ReadRow { deletion, ..row }), withheld));
         }
         // Erased relationship/private bodies cannot prove a scope.
         let revealed = hydrated.deletion.is_some()
@@ -207,9 +306,8 @@ impl ScopedRead<'_> {
                 .entity_types
                 .as_ref()
                 .is_none_or(|types| types.contains(&hydrated.entity_type))
-            // The row's old position cannot be proved. Only authority
-            // covering every possible position may reveal deletion
-            // metadata, never a narrow grant.
+            // Only authority covering every possible old position may reveal
+            // deletion metadata, never a narrow grant.
             && self.credential_allows_id(&hydrated.id)
             && crate::gate::scoped_read_record_allowed(
                 policy,
@@ -217,10 +315,11 @@ impl ScopedRead<'_> {
                 &crate::federation::scope_codec::read_preset(),
             );
         if !revealed {
-            return Ok((
-                None,
-                usize::from(self.entity_record_in(txn, &hydrated.id)?.is_some()),
-            ));
+            // A withheld private NOTE shell counts exactly like a missing row.
+            let withheld = self
+                .admit_in(txn, &hydrated.id, || Ok(None::<()>))?
+                .suppression();
+            return Ok((None, withheld));
         }
         let occurred = self
             .entity_record_in(txn, &hydrated.id)?

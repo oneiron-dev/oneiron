@@ -5,7 +5,7 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::{ManifestDbs, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT, Store};
 
 use super::keys::{
@@ -15,30 +15,23 @@ use super::keys::{
     gate_decision_grant_ref_index_key, gate_decision_grant_ref_index_prefix,
     logical_uuid_v7_successor,
 };
+use super::orcb;
 use super::types::{
     GATE_DECISION_LEDGER_VERSION, GateClaimIndexBackfill, GateDecisionId, GateDecisionRecord,
 };
 use super::vet::vet_gate_decision_record;
 
-/// Gate-decision ledger row, keyed by decision id. Codec fixed `Raw` (see the
-/// decls.rs note): [`RawValue`] delegates to
-/// [`encode_gate_decision`]/[`decode_gate_decision`].
-pub(super) const LEDGER: SideTable<GateDecisionId, GateDecisionRecord, Raw> =
+/// The stored value is plain named MessagePack or encrypted ORCB bytes;
+/// the Store door decodes with its current custody root after this typed read.
+pub(super) const LEDGER: SideTable<GateDecisionId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_LEDGER);
-
-impl RawValue for GateDecisionRecord {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_gate_decision(self)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_gate_decision(bytes)?)
-    }
-}
+const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_CUSTODY_ROOT);
 
 /// Presence marker literal byte `b"1"`, matching the marker already on disk
-/// for the grant-ref and attempt-run secondary indexes.
-struct OneMarker;
+/// for the grant-ref and attempt-run secondary indexes and the unapplied
+/// preflight marker.
+pub(super) struct OneMarker;
 
 impl RawValue for OneMarker {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -84,7 +77,48 @@ fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
         .ok_or(Error::CorruptedIndex(context))
 }
 
+#[cfg(test)]
+thread_local! {
+    static BEFORE_GATE_PAGE_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static BEFORE_GATE_GRANT_DECODE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_before_gate_page_decode(callback: impl FnOnce() + 'static) {
+    BEFORE_GATE_PAGE_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_before_gate_grant_decode(callback: impl FnOnce() + 'static) {
+    BEFORE_GATE_GRANT_DECODE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 impl Store {
+    /// Readers acquire this BEFORE opening an LMDB snapshot. Retirement takes
+    /// the write half BEFORE the exterior marker/unlink, so no healthy live
+    /// snapshot loses custody between its key check and file open.
+    pub(crate) fn gate_custody_read_guard(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
+        self.core
+            .gate_retirement_lock
+            .read()
+            .map_err(|_| Error::InvariantViolation("gate decision custody lock poisoned"))
+    }
+
+    /// Decode one row against its key, decrypting only claim-bound ORCB values.
+    pub(in crate::store) fn decode_gate_decision_value(
+        &self,
+        decision_id: GateDecisionId,
+        raw: &[u8],
+    ) -> Result<GateDecisionRecord> {
+        if orcb::is_orcb(raw) {
+            orcb::decode_hot(&self.core.gate_custody_root, decision_id, raw)
+        } else {
+            decode_gate_decision(raw)
+        }
+    }
+
     /// One-time ERASE-A (ONE-1637) backfill: indexes every pre-existing
     /// claim-bound ledger row and sets the durable completeness flag in ONE
     /// write txn, so a crash leaves either nothing or everything (RCPT-1
@@ -199,6 +233,19 @@ impl Store {
         record: &GateDecisionRecord,
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
+        if record.claim_id.is_some() {
+            // The first claim-bound append pins a path to LIVE exterior custody
+            // in the same LMDB transaction as the value. Restoring the image
+            // elsewhere reuses that path, never a backed-up key copy.
+            let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
+            match CUSTODY_ROOT.get(self, &*wtxn, &())? {
+                Some(bound) if bound != expected => {
+                    return Err(Error::CorruptedIndex("gate decision custody binding"));
+                }
+                Some(_) => {}
+                None => CUSTODY_ROOT.put(self, wtxn, &(), &expected)?,
+            }
+        }
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
@@ -233,13 +280,15 @@ impl Store {
     /// Both sidecar deletes are safe no-ops for a record without a `grant_ref`
     /// or `claim_id`. Takes a decoded record because the grant-ref and claim
     /// index keys are only reconstructible from the primary's bytes.
-    fn delete_gate_decision_record_in_txn(
+    pub(in crate::store) fn delete_gate_decision_record_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         record: &GateDecisionRecord,
     ) -> Result<()> {
         self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
         self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
+        self.delete_gate_retention_context_in_txn(wtxn, record.decision_id)?;
+        self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
         LEDGER.delete(self, wtxn, &record.decision_id)?;
         Ok(())
     }
@@ -257,13 +306,95 @@ impl Store {
         self.delete_gate_decision_record_in_txn(wtxn, &record)
     }
 
+    /// Rewrites every live row for a deleted claim to its retention skeleton
+    /// inside the caller's destructive transaction. The claim index is retained
+    /// for discovery of skeletons; the grant-ref index is removed because its
+    /// source field is scrubbed. Discovery falls back to a full scan until the
+    /// durable claim-index backfill has completed. A held key partition keeps
+    /// its rows, so every door that tears a held claim (facade, batch, cascade
+    /// or replay) is refused here, before anything is rewritten.
+    pub(crate) fn redact_gate_decisions_for_claim_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &[u8; 16],
+        redacted_at: u64,
+    ) -> Result<bool> {
+        self.reject_held_gate_partition_in_txn(&*wtxn, claim_id)?;
+        let id = crate::entity_id::EntityId::from_bytes(*claim_id)
+            .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
+        let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();
+        let mut records = self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?;
+        records.extend(self.bundle_gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?);
+        let mut changed = pending;
+        for mut record in records {
+            // Batch preflight stages receipts for *future* ops in this same
+            // txn. Their marker is consumed only after their op applies; a
+            // delete before that op must not scrub its future receipt.
+            if self.is_unapplied_preflight_decision_in_txn(&*wtxn, record.decision_id)? {
+                continue;
+            }
+            if record.redacted_at.is_some() {
+                if !self
+                    .gate_decision_claim_refs_in_txn(&*wtxn, record.decision_id)?
+                    .is_empty()
+                {
+                    return Err(Error::CorruptedIndex(
+                        "redacted gate decision claim references",
+                    ));
+                }
+                continue;
+            }
+            changed = true;
+            self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
+            self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
+            record.version = super::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
+            // v0 records a caller's empty class on an auditable denial; v1
+            // requires a non-empty retention label.
+            if record.actor_class.is_empty() {
+                record.actor_class = "unspecified".to_owned();
+            }
+            record.reason_codes.clear();
+            record.receipt_reasons.clear();
+            record.system_notices.clear();
+            record.actor_ref = None;
+            record.grant_ref = None;
+            record.diff_handle.clear();
+            // An injected clock at epoch zero must still produce a valid v1 row.
+            record.redacted_at = Some(redacted_at.max(1));
+            super::vet::vet_gate_decision_record(&record)?;
+            LEDGER.put(
+                self,
+                wtxn,
+                &record.decision_id,
+                &encode_gate_decision(&record)?,
+            )?;
+        }
+        // The tray carries the original content binding and can mint a fresh
+        // live v0 resolution from a v1 skeleton. Remove it and every index
+        // inside this same destructive transaction, before verification.
+        self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+        for decision_id in self.verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)? {
+            if !self.is_unapplied_preflight_decision_in_txn(&*wtxn, decision_id)? {
+                return Err(Error::CorruptedIndex("gate decision claim erasure"));
+            }
+        }
+        Ok(changed)
+    }
+
     /// Returns every gate decision carrying this grant reference, newest
     /// first, without scanning the global decision ledger.
     pub(crate) fn gate_decisions_for_grant_ref(
         &self,
         grant_ref: &str,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
+        #[cfg(test)]
+        BEFORE_GATE_GRANT_DECODE.with(|slot| {
+            if let Some(callback) = slot.borrow_mut().take() {
+                callback();
+            }
+        });
         let scan_prefix = suffix_of(
             gate_decision_grant_ref_index_prefix(grant_ref),
             GATE_DECISION_GRANT_REF_INDEX_PREFIX,
@@ -289,8 +420,10 @@ impl Store {
         Ok(records)
     }
 
-    /// Per-claim discovery for the erase coupling (ONE-1638) and any per-claim
-    /// receipt read. Index-accelerated ONLY when the durable backfill flag is
+    /// Singular-claim decision discovery for erasure and per-claim receipt
+    /// reads. Bundle receipts are deliberately excluded: callers selecting the
+    /// latest claim verdict must never receive a multi-claim bundle instead.
+    /// Index-accelerated ONLY when the durable backfill flag is
     /// set; otherwise a full keyspace scan, so a vault mid-backfill can never
     /// hide rows from an erase. Both paths return records ascending by
     /// decision_id and are result-identical.
@@ -298,7 +431,6 @@ impl Store {
     /// Redacted (version 1) skeletons ARE returned — they retain `claim_id` by
     /// design. Completeness is decided by
     /// [`Store::verify_claim_erasure_by_scan_in_txn`], never by this reader.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
     pub(crate) fn gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -328,7 +460,6 @@ impl Store {
 
     /// Full-keyspace per-claim discovery: the fallback path taken while the
     /// backfill flag is unset, and directly callable for parity checks.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
     pub(in crate::store) fn scan_gate_decisions_for_claim_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -350,15 +481,19 @@ impl Store {
     /// the erase cannot also certify it complete. An empty result means erasure
     /// is complete for this claim. Deliberately uncapped: a correctness scan
     /// takes no query-budget shortcut.
-    #[cfg_attr(not(test), allow(dead_code))] // seam for the ONE-1638 erase coupling
-    pub(in crate::store) fn verify_claim_erasure_by_scan_in_txn(
+    pub(crate) fn verify_claim_erasure_by_scan_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim_id: &[u8; 16],
     ) -> Result<Vec<GateDecisionId>> {
         let mut remaining = Vec::new();
         self.for_each_gate_decision_in_txn(txn, |record| {
-            if record.claim_id == Some(*claim_id) && record.redacted_at.is_none() {
+            if record.redacted_at.is_none()
+                && (record.claim_id == Some(*claim_id)
+                    || self
+                        .gate_decision_claim_refs_in_txn(txn, record.decision_id)?
+                        .contains(claim_id))
+            {
                 remaining.push(record.decision_id);
             }
             Ok(())
@@ -381,7 +516,9 @@ impl Store {
         mut visit: impl FnMut(GateDecisionRecord) -> Result<()>,
     ) -> Result<()> {
         for row in LEDGER.iter_from(self, txn, &[])? {
-            let (decision_id, record) = row?;
+            let (decision_id, raw) = row?;
+            let record = self.decode_gate_decision_value(decision_id, &raw)?;
+
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -410,9 +547,10 @@ impl Store {
         txn: &RoTxn<'_>,
         decision_id: GateDecisionId,
     ) -> Result<Option<GateDecisionRecord>> {
-        let Some(record) = LEDGER.get(self, txn, &decision_id)? else {
+        let Some(raw) = LEDGER.get(self, txn, &decision_id)? else {
             return Ok(None);
         };
+        let record = self.decode_gate_decision_value(decision_id, &raw)?;
         if record.decision_id != decision_id {
             return Err(Error::CorruptedIndex("gate decision ledger"));
         }
@@ -488,8 +626,42 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        let _custody = self.gate_custody_read_guard()?;
         let rtxn = self.env.read_txn()?;
-        self.gate_decisions_page_in_txn(&rtxn, before, limit)
+        match self.gate_decisions_page_in_txn(&rtxn, before, limit) {
+            Ok(rows) => Ok(rows),
+            Err(error @ Error::CorruptedIndex("gate decision ORCB")) => {
+                // Collect retirement witnesses while the old read snapshot is
+                // alive, then drop it BEFORE opening a fresh LMDB read slot.
+                // Raw rows, so a ledger key of another shape is not a scan
+                // failure here; only a row addressable by decision id can be
+                // re-read below as removed.
+                let mut retired_keys = Vec::new();
+                for row in LEDGER.iter_raw_from(self, &rtxn, &[])? {
+                    let (key, raw) = row?;
+                    if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)?
+                        && let Some(decision_id) = GateDecisionId::decode_key(&key)
+                    {
+                        retired_keys.push(decision_id);
+                    }
+                }
+                drop(rtxn);
+                if retired_keys.is_empty() {
+                    return Err(error);
+                }
+                let current = self.env.read_txn()?;
+                let mut removed = false;
+                for decision_id in retired_keys {
+                    removed |= !LEDGER.contains(self, &current, &decision_id)?;
+                }
+                if removed {
+                    self.gate_decisions_page_in_txn(&current, before, limit)
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) fn gate_decisions_page_in_txn(
@@ -498,13 +670,21 @@ impl Store {
         before: Option<GateDecisionId>,
         limit: usize,
     ) -> Result<Vec<GateDecisionRecord>> {
+        #[cfg(test)]
+        BEFORE_GATE_PAGE_DECODE.with(|slot| {
+            if let Some(callback) = slot.borrow_mut().take() {
+                callback();
+            }
+        });
         if limit == 0 {
             return Ok(Vec::new());
         }
         let upper = before.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
         for row in LEDGER.iter_rev_range(self, rtxn, Bound::Unbounded, upper)? {
-            let (decision_id, record) = row?;
+            let (decision_id, raw) = row?;
+            let record = self.decode_gate_decision_value(decision_id, &raw)?;
+
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -544,7 +724,20 @@ fn append_gate_decision_row_in_txn(
     if LEDGER.contains(store, wtxn, &record.decision_id)? {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
-    LEDGER.put(store, wtxn, &record.decision_id, record)?;
+    let value = if let Some(claim) = record.claim_id {
+        // A committed age sweep may still be retiring this partition's
+        // exterior key. No new ciphertext may reuse it in that interval.
+        if super::retention::RETIRE_PENDING.contains(store, &*wtxn, &claim)? {
+            return Err(Error::InvalidConfig(
+                "gate decision partition is retiring".into(),
+            ));
+        }
+        orcb::encode_hot(store.gate_key_root(), record)?
+    } else {
+        encode_gate_decision(record)?
+    };
+    LEDGER.put(store, wtxn, &record.decision_id, &value)?;
+    super::retention_scope::append_context_in_txn(store, wtxn, record)?;
     if let Some(grant_ref) = record.grant_ref.as_deref() {
         GRANT_REF_INDEX.put(
             store,

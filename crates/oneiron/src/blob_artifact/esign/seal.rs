@@ -197,7 +197,7 @@ impl Vault {
             }
             outputs.push((sealed.bytes, hash, prepared.audit_chain_sha256));
         }
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         self.with_write_txn(|txn| {
             live_attempt(self, txn, attempt)?;
             if snapshot_hash(&events_in(self, txn, document)?)? != fingerprint {
@@ -206,7 +206,7 @@ impl Vault {
             let artifact_actor = super::artifact_actor::actor(self, txn, now)?;
             let mut items = Vec::new();
             for (index, (bytes, hash, _)) in outputs.iter().enumerate() {
-                let id = EntityId::now();
+                let id = self.new_entity_id()?;
                 let mut body = originals[index].0.clone();
                 body.name = format!("sealed-{}.pdf", index + 1);
                 let body = super::super::encode_blob_artifact_body(&body)?;
@@ -255,7 +255,7 @@ impl Vault {
                 items,
                 rejected: state.rejection.is_some(),
             };
-            append(
+            let terminal = append(
                 self,
                 txn,
                 document,
@@ -275,6 +275,29 @@ impl Vault {
             )?;
             CANONICAL.put(&self.store, txn, &document, &manifest)?;
             RESULT.put(&self.store, txn, attempt.id.as_bytes(), &manifest)?;
+            let recipients = terminal
+                .document
+                .recipients
+                .iter()
+                .map(|r| r.id.clone())
+                .collect::<Vec<_>>();
+            super::lifecycle::notify(
+                self,
+                txn,
+                document,
+                &terminal,
+                if manifest.rejected {
+                    "rejection"
+                } else {
+                    "completed"
+                },
+                &recipients,
+                super::lifecycle::NoticeTrigger {
+                    dispatch_ref: None,
+                    now,
+                },
+            )?;
+
             let queue = AttemptQueue::new(self);
             let owner = attempt
                 .lease_owner
@@ -293,7 +316,8 @@ impl Vault {
                     now,
                 },
             )?;
-            queue.complete_in_txn(
+            crate::ports::JobQueue::port_job_complete(
+                self,
                 txn,
                 CompleteAttempt {
                     id: attempt.id,

@@ -1,6 +1,6 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
-use super::admission::verify_booking_effect;
+use super::admission::{enforce_step_failure_policy, verify_booking_effect};
 use super::types::{
     OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
 };
@@ -37,6 +37,10 @@ pub(super) fn replay_record<T: OutboundTransport>(
             true,
             None,
         )),
+        (
+            IntentState::Abandoned,
+            Some(RecordedOutboundOutcome::Abandoned(IntentEscalationReason::DedupeSuppressed)),
+        ) => suppression_result(vault, &record, true),
         (IntentState::Abandoned, Some(RecordedOutboundOutcome::Abandoned(reason))) => {
             Ok(effect_result(&record, None, true, Some(reason)))
         }
@@ -157,6 +161,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
     if let Some(prepared) = prepared {
         let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+        enforce_step_failure_policy(
+            vault,
+            &wtxn,
+            &policy,
+            &prepared.payload,
+            prepared.gate.provenance.actor_entity_ref,
+        )?;
         let required_grant_id = match &prepared.authorization {
             PreparedAuthorization::None => None,
             PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
@@ -183,6 +194,22 @@ fn send_pending_with_gate<T: OutboundTransport>(
             result.dispatch.replayed = replayed;
             return Ok(result);
         }
+    } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
+        // Engine-owned Resume has no PreparedEffect. Its frozen step identity
+        // still rechecks the resident restriction before a Pending live send.
+        let txn = vault.store.env.write_txn().map_err(Error::from)?;
+        let policy = gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let frozen: serde_json::Value = serde_json::from_slice(record.payload())
+            .map_err(|_| IntentLedgerError::InvalidRecord("invalid frozen outbound payload"))?;
+        let actor_hex = frozen
+            .get("actor_entity_ref")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(IntentLedgerError::InvalidRecord(
+                "step effect actor missing",
+            ))?;
+        let actor = crate::entity_id::EntityId::from_hex(actor_hex)
+            .map_err(|_| IntentLedgerError::InvalidRecord("step effect actor invalid"))?;
+        enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
     // F2 is checked again at the last in-process boundary before transport.
@@ -222,7 +249,16 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // idempotency. Clear that permit durably immediately before transport so a
     // crash after the wire may have started is once again Q4 Pending/uncertain.
     let record = if record.recorded_outcome == Some(RecordedOutboundOutcome::DefiniteNonDelivery) {
-        begin_definite_non_delivery_retry(vault, record.id, now_ms)?
+        let claimed = begin_definite_non_delivery_retry(vault, record.id, now_ms)?;
+        if claimed.state == IntentState::Abandoned {
+            return Ok(effect_result(
+                &claimed,
+                None,
+                replayed,
+                Some(IntentEscalationReason::DedupeReservationReplaced),
+            ));
+        }
+        claimed
     } else {
         record
     };
@@ -231,6 +267,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
     }
+    super::dedupe::touch_inflight(vault, &record.id)?;
     let outcome = transport.send(&call);
     vault.resume_from_slim_on_inbound()?;
     match outcome {
@@ -344,6 +381,8 @@ fn effect_result(
         gate_reason_codes: Vec::new(),
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        dedupe_suppressed: false,
+        suppression_receipt: None,
     }
 }
 
@@ -374,5 +413,24 @@ pub(super) fn gate_rejection(
             .map(|reason| (*reason).to_owned())
             .collect(),
         budget_charge: None,
+        dedupe_suppressed: false,
+        suppression_receipt: None,
     }
+}
+
+/// A suppressed attempt is terminal without a channel send. Its replicated
+/// receipt must still be present on replay; absence is corruption, not a new
+/// chance to spend approval or touch transport.
+pub(super) fn suppression_result(
+    vault: &Vault,
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    replayed: bool,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    let receipt = crate::receipt::suppression_for_intent(vault, &record.id)?;
+    let mut result = effect_result(record, None, replayed, None);
+    result.gate_outcome = Some("allow".to_owned());
+    result.gate_reason_codes.push("gate.allow".to_owned());
+    result.dedupe_suppressed = true;
+    result.suppression_receipt = Some(receipt);
+    Ok(result)
 }

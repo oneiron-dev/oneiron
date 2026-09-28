@@ -3,7 +3,7 @@
 
 use super::super::support::*;
 use super::super::*;
-use super::base::BaseSink;
+use super::base::{BaseGuards, BaseSink};
 use super::codec::{encode_witness_turn_body, incoming_turn_speaker, session_short_ref_string};
 use super::session::OverlaySink;
 use super::validation::{
@@ -166,20 +166,24 @@ impl Memory<'_> {
     /// Order, for both landings: request shape, target resolution, the plan
     /// (containers, speaker, message ids and bodies), the landing's pre-write
     /// state, `before_txn`, then ONE write transaction that runs the landing's
-    /// guards, the ceiling door on every envelope, the create-or-verify checks,
-    /// the landing's staging, `effect`, and the route revalidation.
+    /// guards, the erased-PERSON refusal, the ceiling door on every envelope,
+    /// the create-or-verify checks, the landing's staging, `effect`, and the
+    /// route revalidation.
     ///
     /// `before_txn` runs in the window between the ADVISORY container
     /// create-or-get and the transaction, which is the race the in-transaction
-    /// TURN re-read closes; production callers pass a no-op. `effect` shares
-    /// the transaction (stream sidecars, EntityDoc birth): its error rolls back
-    /// every row, index and receipt.
+    /// TURN re-read closes; production callers pass a no-op. `prepare` runs in
+    /// a base landing's transaction before the conversation is re-read (project
+    /// birth assembles its room there). `effect` shares the transaction (stream
+    /// sidecars, EntityDoc birth): its error rolls back every row, index and
+    /// receipt.
     pub(super) fn run_witness(
         &self,
         turn: &WitnessTurn,
         target: WitnessTarget<'_, '_>,
         door: WitnessDoor,
         before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         validate_witness_origin(turn, door.is_host())?;
@@ -240,24 +244,39 @@ impl Memory<'_> {
         before_txn();
 
         let landed = self.with_verified_actor_write_txn(|wtxn| {
+            let mut mint_conversation = false;
             let admission = match &sink {
                 WitnessSink::Base(_) => {
-                    if let Some(id) = self.base_guards_in_txn(&plan, wtxn)? {
-                        return Ok(Landed::HardDeleted(id));
-                    }
-                    self.admit_witness_in_txn(&plan, &self.vault.store, wtxn)?
+                    let person_author = match self.base_guards_in_txn(&plan, wtxn, prepare)? {
+                        BaseGuards::HardDeleted(id) => return Ok(Landed::HardDeleted(id)),
+                        BaseGuards::Clear {
+                            mint_conversation: absent,
+                            person_author,
+                        } => {
+                            mint_conversation = absent;
+                            person_author
+                        }
+                    };
+                    self.admit_witness_in_txn(&plan, &self.vault.store, wtxn, person_author)?
                 }
                 // Host-derived ids are create-or-verify in the COMPOSED
                 // overlay/base snapshot. The view is dropped before the
                 // overlay segment installs, and a divergent body or parent
                 // leaves no journal or index delta.
                 WitnessSink::Overlay(overlay) => {
-                    self.admit_witness_in_txn(&plan, &overlay.read_view()?, wtxn)?
+                    let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
+                    super::reject_erased_person_in_txn(
+                        self.vault,
+                        wtxn,
+                        plan.conversation_id,
+                        person_author,
+                    )?;
+                    self.admit_witness_in_txn(&plan, &overlay.read_view()?, wtxn, person_author)?
                 }
             };
             let landed = match &sink {
                 WitnessSink::Base(base) => {
-                    self.stage_in_base(&plan, &admission, base, wtxn)?;
+                    self.stage_in_base(&plan, &admission, base, mint_conversation, wtxn)?;
                     Landed::Base
                 }
                 WitnessSink::Overlay(overlay) => {
@@ -375,12 +394,14 @@ impl Memory<'_> {
 
     /// The in-transaction half both landings share: the ONE-1686 door on every
     /// envelope, then the create-or-verify checks against `dbs` (base for a
-    /// base landing, the composed room view for an overlay one).
+    /// base landing, the composed room view for an overlay one). A minted TURN
+    /// carries `person_author` as its immutable byline.
     fn admit_witness_in_txn<'p>(
         &self,
         plan: &'p WitnessPlan<'_>,
         dbs: &impl ManifestDbs,
         wtxn: &heed::RoTxn<'_>,
+        person_author: Option<EntityId>,
     ) -> MemoryResult<WitnessAdmission<'p>> {
         // ONE-1686 (RT-04): the approval-ceiling door, before ANY row stages.
         // The policy manifest is resolved from THIS transaction's snapshot, so
@@ -415,6 +436,7 @@ impl Memory<'_> {
             &plan.turn_id,
             &plan.conversation_id,
             plan.speaker,
+            person_author,
         )?;
         // Expected present and gone (a concurrent delete). Recreating it here
         // would silently mint the turn the caller asked to append to.
@@ -463,7 +485,7 @@ impl Memory<'_> {
             // the turn's role.
             None => match plan.speaker {
                 Some(speaker) => AdmittedTurn::Mint {
-                    body: encode_witness_turn_body(speaker)?,
+                    body: encode_witness_turn_body(speaker, person_author)?,
                 },
                 None => {
                     return Err(MemoryError::bad_request(

@@ -30,7 +30,8 @@ pub use self::types::{
     world_access_claim_body,
 };
 
-pub(crate) use self::authority::claim_ceiling_allowed;
+pub(crate) use self::authority::{claim_ceiling_allowed, type_allowed as retrieval_type_allowed};
+
 pub(crate) use self::types::DEFAULT_RESULT_LIMIT;
 
 #[cfg(test)]

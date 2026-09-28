@@ -55,7 +55,10 @@
 //! the canon has no store of its own — its concrete form is the gated
 //! skill-edit proposals ED-04's miner and SK-04's discovery arm already mint.
 //! This job LISTS the open ones for its skill and hands them to the author, so
-//! a question already asked is visible to whoever drafts the next one.
+//! a question already asked is visible to whoever drafts the next one. It also
+//! joins prior rejected optimizer edits for that skill to their proposals,
+//! showing the proposed text and categorical rejection reason without showing
+//! the held-out scores or receipts.
 //!
 //! # Exclusion is structural, and it fails closed
 //!
@@ -126,47 +129,71 @@
 //! skill. They converge to two open questions a decider answers, never to a
 //! silent double edit — nothing here writes canon.
 
+mod ask_band;
 mod brief;
 mod dials;
 mod gate;
+mod goal_axes;
+mod goal_binding;
 mod job;
+mod labels;
+pub(crate) mod policy;
 mod selection;
 mod tier;
 
+pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 pub use self::brief::{
-    SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE,
-    SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief, optimize_brief_for_principal_at, skill_optimize_call_purpose,
+    RejectedSkillEdit, RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME,
+    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft,
+    SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
+    skill_optimize_call_purpose,
 };
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
+};
+pub use self::goal_axes::{
+    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
+    GoalAxisScorer, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
 };
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
-    run_skill_optimize, run_skill_optimize_as,
+    run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
 };
-pub use self::selection::{SkillOptimizeCandidate, optimize_candidates};
+pub(crate) use self::labels::take_digest_asks_in_txn;
+pub use self::labels::{
+    JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,
+    judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
+};
+pub use self::selection::{
+    SkillOptimizeCandidate, optimize_candidates, optimize_candidates_for_resident,
+};
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
-    DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
-    HeldOutReplayCase, HeldOutReplayScorer, HeldOutVerdict, SKILL_EDIT_CYCLE_CAP_KEY,
-    SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle,
-    SkillEditDisposition, admit_optimized_skill_revision, dev_receipts,
-    held_out_receipt_set_digest, held_out_receipts, is_skill_edit_verdict_receipt,
-    receipt_is_held_out, register_held_out_replay_scorer, score_gate_skill_edit,
+    AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind, GoalAxisScore,
+    GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase,
+    HeldOutReplayScorer, HeldOutVerdict, JudgeMeasurements, PreferredResponse,
+    SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME,
+    SkillEditCycle, SkillEditDisposition, TradeoffChoice, TradeoffResolution, WorldAxisScore,
+    admit_optimized_skill_revision, dev_receipts, held_out_receipt_set_digest, held_out_receipts,
+    is_skill_edit_verdict_receipt, receipt_is_held_out, register_held_out_replay_scorer,
+    resolve_skill_edit_tradeoff, resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit,
     score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap,
-    skill_body_binding_digest, skill_edit_cycle_cap, skill_edit_score_call_purpose,
-    skill_edit_verdict, skill_edit_verdicts, skill_edit_verdicts_for_proposal,
+    set_skill_edit_goal_axes, skill_body_binding_digest, skill_edit_cycle_cap,
+    skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
+    skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
-    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
-    skill_edit_verdict_receipts, with_optimized_skill_admission,
+    check_optimizer_admission_in_txn, displaced_judge_revision_in_txn, ensure_current_judge_in_txn,
+    optimizer_birth_marker_for_create_in_txn, skill_edit_verdict_receipts, validate_judge_revision,
+    with_optimized_skill_admission,
 };
 
+pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
+use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
 pub(crate) use self::job::{SKILL_EDIT_CYCLE_RUN_PREFIX, proven_cycle};
 
 use self::dials::invalid;

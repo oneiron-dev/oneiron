@@ -369,12 +369,12 @@ pub(crate) fn store_doc(
     }
     super::ensure_citations_ready(&vault.store, txn, doc.note)?;
     super::verbs::note_core(vault, txn, doc.note)?;
-    super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?;
+    let title = super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?.title()?;
     NOTE_PROPOSAL_DOC.put(
         &vault.store,
         txn,
         &HexPair(HexId(doc.note), HexId(doc.head)),
-        &snapshot(&proposal_value(doc.note, &doc.text())?)?,
+        &snapshot(&proposal_value(doc.note, &doc.text(), title.as_deref())?)?,
     )
 }
 
@@ -486,12 +486,18 @@ impl Vault {
 
 /// Proposal content is a value, never an authenticated document snapshot.
 /// Fresh IDs and no pins/authorship prevent it retaining erased quote history.
-pub(crate) fn proposal_value(note: EntityId, text: &str) -> Result<LoroDoc> {
+pub(crate) fn proposal_value(note: EntityId, text: &str, title: Option<&str>) -> Result<LoroDoc> {
     super::validate_markdown(text)?;
     let doc = LoroDoc::new();
     doc.get_map("note")
         .insert("id", note.to_hex())
         .map_err(|_| invalid("proposal identity"))?;
+    if let Some(title) = title {
+        super::document::validate_title(title)?;
+        doc.get_map("note")
+            .insert("title", title)
+            .map_err(|_| invalid("proposal title"))?;
+    }
     doc.get_text("body")
         .insert(0, text)
         .map_err(|_| invalid("proposal text"))?;

@@ -89,6 +89,7 @@ impl AttemptQueue<'_> {
             // A retry is a NEW attempt: its attribution manifest starts empty,
             // the finalized source keeps the prior try's.
             manifest: Vec::new(),
+            executor_model: None,
             // Likewise its cancel lifecycle: the new try inherits neither the
             // source's refusal history nor its spent landing reserve. It DOES
             // inherit the dial's VALUES, so a retried try lands on the same
@@ -105,6 +106,8 @@ impl AttemptQueue<'_> {
             // A retry is a NEW attempt: it has produced nothing yet, and the
             // finalized source keeps sole ownership of the artifact its own
             // try left behind.
+            signals: Vec::new(),
+            asks: Vec::new(),
             placement: source.placement.as_ref().map(|placement| {
                 crate::attempt_queue::AttemptPlacement {
                     worker: placement.worker.clone(),
@@ -142,6 +145,14 @@ impl AttemptQueue<'_> {
         self.store
             .attempt_records
             .put(wtxn, source.id.as_bytes(), &encoded_source)?;
+        // A retry finalizes the source attempt. Its manifest and resident
+        // binding have the same terminal receipt promise as fail/complete.
+        crate::receipt::stamp_attempt_pack_receipt_in_txn(
+            self.store,
+            wtxn,
+            &source,
+            &input.lease_owner,
+        )?;
         let encoded_next = encode_record(&next)?;
         self.store
             .attempt_records
@@ -283,6 +294,7 @@ impl AttemptQueue<'_> {
                 AttemptState::Cancelled => AttemptInterventionEffect::AlreadyCancelled,
                 AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
+                    let actor = input.actor.clone();
                     append_attempt_event(
                         &mut record,
                         input.kind,
@@ -297,6 +309,11 @@ impl AttemptQueue<'_> {
                     record.last_error = None;
                     record.updated_at = input.now;
                     self.delete_dedupe_entry_for_record(wtxn, &record)?;
+                    // A queued/paused cancel can follow a pack load or resident
+                    // binding; stamp while the cancellation is still atomic.
+                    crate::receipt::stamp_attempt_pack_receipt_in_txn(
+                        self.store, wtxn, &record, &actor,
+                    )?;
                     AttemptInterventionEffect::Cancelled
                 }
                 state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),

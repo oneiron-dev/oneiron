@@ -6,27 +6,42 @@
 
 mod admission;
 mod graph;
+#[cfg(feature = "sync")]
+pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
+pub(crate) mod topology;
 pub(crate) use admission::{
-    guard_record_put, keep_membership_pin, pin_membership, pin_typed_record,
-    validate_local_membership,
+    guard_record_put, guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
+    pin_membership, pin_typed_record, room_turn_owner, validate_local_membership,
 };
+#[cfg(feature = "sync")]
+pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
+pub(crate) use topology::record_kind;
 mod membership;
 mod migration;
 pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
 
+mod branch_scope;
 mod policy;
+mod redacted;
 mod reply;
+pub(crate) mod retained_path;
 mod scopes;
+mod thread_projection;
 mod types;
 mod writes;
 
+pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
     actor_in_txn, conversation_of, edge_ids, is_sub_session_record, require_type,
 };
-pub use reply::{ReplyStrip, Thread};
+pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
+pub use reply::{ReplyStrip, Thread, ThreadMeta};
+pub(crate) use reply::{invalidate_thread_meta, invalidate_thread_meta_for_turn_put};
 pub(crate) use scopes::resolve_in_txn;
+pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{
-    AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector,
+    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath,
+    ScopeSelector,
 };
 pub(crate) use writes::append_in_txn;
 

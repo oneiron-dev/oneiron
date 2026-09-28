@@ -625,28 +625,3 @@ pub mod test_hooks {
 
 #[cfg(test)]
 mod tests;
-
-/// Read/write connection admission for a trusted local vault scope.
-/// Time expiry is liveness only; terminal revocation is checked at every door.
-pub fn require_vault_lease(
-    vault: &Vault,
-    vault_id: u64,
-    client_id: u64,
-    pubkey: &[u8; 32],
-) -> Result<()> {
-    let txn = vault.store.env.read_txn()?;
-    let record = claimed_lease_record_in_txn(vault, &txn, vault_id, client_id)?
-        .ok_or(Error::Sync(SyncError::ReceiptLeaseUnknown { client_id }))?;
-    if record.pubkey != *pubkey {
-        return Err(Error::Sync(SyncError::ReceiptLeaseUnknown { client_id }));
-    }
-    for (_, sibling) in LEASE.scan_from(&vault.store, &txn, &lease_scan_prefix(vault_id))? {
-        if sibling.vault_id != vault_id {
-            return Err(Error::CorruptedIndex("lease record vault_id"));
-        }
-        if sibling.pubkey == *pubkey && sibling.status == LeaseStatus::Revoked {
-            return Err(Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }));
-        }
-    }
-    Ok(())
-}

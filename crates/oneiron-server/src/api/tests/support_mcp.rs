@@ -440,10 +440,11 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
             task: task.to_owned(),
             // ONE-1929: the executor wire teaching comes from the DEPLOYED
             // prompt package, so every run input must carry its root.
-            prompt_package_root: oneiron::prompt::workspace_prompt_package_root()
-                .expect("workspace prompt package"),
+            prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
+                .expect("workspace test prompt package"),
             model: oneiron::ModelId::new("fixture/executor@v1").expect("fixture model id"),
             model_locality: oneiron::ModelLocality::OnDevice,
+            seat_effort: None,
             global_tier: oneiron::ModelTierRef("fixture-tier".to_owned()),
             determinism: oneiron::code_run::CodeRunDeterminism::new(
                 1_000,

@@ -4,8 +4,6 @@ use std::collections::HashSet;
 
 use heed::RwTxn;
 
-use crate::claim::ClaimLifecycleStatus;
-use crate::companion::decode_companion_record_body;
 use crate::edge::{encode_edge_value, validate_edge_weight};
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, RecordError, RegistryError, Result};
@@ -399,7 +397,9 @@ pub(crate) fn apply_ops_session(
                     // idempotent, while a same-id divergent retry is refused
                     // before any overlay mutation or journal entry stages.
                     crate::gate::validate_canonical_witness_message_body(data)?;
-                    if let Some(raw) = view.entities.get(&*wtxn, id.as_bytes())? {
+                    if let Some(raw) =
+                        crate::ports::EntityStoreRead::port_entity_raw(view, &*wtxn, id)?
+                    {
                         let header = EntityMetadataHeader::parse(&raw)
                             .ok_or(Error::CorruptedIndex("entity header"))?;
                         if header.entity_type != *entity_type {
@@ -533,31 +533,6 @@ pub(super) fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
                     && !(*allow_maintenance && *allow_reserved_predicate)
             )
     })
-}
-
-pub(super) fn companion_retired_histories_in_batch(
-    ops: &[BatchOp],
-) -> Result<CompanionRetiredHistoryOverlay> {
-    let mut histories = CompanionRetiredHistoryOverlay::new();
-    for op in ops {
-        let BatchOp::Put {
-            entity_type, data, ..
-        } = op
-        else {
-            continue;
-        };
-        if *entity_type != crate::registry::ENTITY_TYPE_FACET
-            || !crate::companion::is_identity_facet_body(data)
-        {
-            continue;
-        }
-        let record = decode_companion_record_body(data)?;
-        record.validate_current_schema_lifecycle_events()?;
-        if record.lifecycle == ClaimLifecycleStatus::Retracted {
-            histories.insert((record.key(), record.lifecycle_events));
-        }
-    }
-    Ok(histories)
 }
 
 pub(super) fn pending_gate_consent_ids_at_batch_start(

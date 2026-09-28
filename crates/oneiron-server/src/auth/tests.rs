@@ -116,6 +116,21 @@ fn assert_unauthorized(result: Result<CoreAuth, ApiError>) {
 }
 
 #[test]
+fn logged_slip_authenticates_without_a_configured_shared_secret() {
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+    let config = SyncServerConfig::default();
+    let headers = fixture.headers(&slip);
+    let auth = CoreAuth::from_headers(&headers, &config, fixture.vault.as_ref()).unwrap();
+    assert!(auth.has_scope(CoreScope::Read));
+    let proof = BindingProof::from_headers(&headers).unwrap();
+    assert!(
+        CoreAuth::bind_transport_once(&slip.to_token().unwrap(), &proof, fixture.vault.as_ref())
+            .is_ok()
+    );
+}
+
+#[test]
 fn legacy_headers_and_unlogged_v1_v2_tokens_never_authenticate() {
     let fixture = Fixture::new();
     let mut old_header = HeaderMap::new();
@@ -151,50 +166,28 @@ fn legacy_headers_and_unlogged_v1_v2_tokens_never_authenticate() {
 }
 
 #[test]
-fn bare_secret_is_a_revocable_logged_root_not_an_org_credential() {
+fn logged_host_root_does_not_make_the_verbatim_secret_a_credential() {
     let fixture = Fixture::new();
     let headers = bearer(SECRET);
-    let auth = require_owner_auth(&headers, &fixture.config, fixture.vault.as_ref()).unwrap();
-    assert_eq!(auth.principal_ref(), None);
-    assert_eq!(
-        auth.verified_slip().unwrap().claims().slip_id,
-        fixture.root.claims.slip_id
-    );
-    assert_eq!(
-        auth.jti(),
-        Some(
-            fixture
-                .root
-                .claims
-                .slip_id
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-                .as_str()
-        )
-    );
-    assert!(auth.require(CoreScope::Read).is_ok());
-    assert!(auth.require(CoreScope::Write).is_ok());
-    assert!(!auth.has_scope(CoreScope::OrgAdmin(OrgAdminPower::AddMember)));
-    assert!(auth.credential_is_live(fixture.vault.as_ref()));
-    assert!(!is_revoked_or_unreadable(
-        auth.jti().unwrap(),
-        fixture.vault.as_ref()
-    ));
-    fixture
-        .vault
-        .revoke_capability_slip(&fixture.issuer, fixture.root.claims.slip_id)
-        .unwrap();
-    assert!(!auth.credential_is_live(fixture.vault.as_ref()));
-    assert!(is_revoked_or_unreadable(
-        auth.jti().unwrap(),
-        fixture.vault.as_ref()
+    assert_unauthorized(CoreAuth::from_headers(
+        &headers,
+        &fixture.config,
+        fixture.vault.as_ref(),
     ));
     assert_unauthorized(require_owner_auth(
         &headers,
         &fixture.config,
         fixture.vault.as_ref(),
     ));
+    let slip = fixture.mint(|_| {});
+    let auth = require_owner_auth(
+        &fixture.headers(&slip),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    )
+    .unwrap();
+    assert!(auth.is_owner_grade());
+    assert!(auth.credential_is_live(fixture.vault.as_ref()));
 }
 
 #[test]
@@ -235,7 +228,11 @@ fn identified_exact_top_slips_are_owner_grade_and_individually_revocable() {
         )
         .is_ok()
     );
-    assert!(require_owner_auth(&bearer(SECRET), &fixture.config, fixture.vault.as_ref()).is_ok());
+    assert_unauthorized(require_owner_auth(
+        &bearer(SECRET),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
 }
 
 #[test]
@@ -295,10 +292,13 @@ fn every_capability_axis_and_offline_caveat_excludes_owner_grade() {
         assert!(auth.require_unrestricted_record_scope().is_err());
     }
     let mut slip = fixture.mint(|_| {});
-    slip.attenuate(SlipCaveat {
-        ttl_secs: Some(30),
-        ..Default::default()
-    })
+    slip.attenuate(
+        SlipCaveat {
+            ttl_secs: Some(30),
+            ..Default::default()
+        },
+        &fixture.holder,
+    )
     .unwrap();
     assert!(!fixture.auth(&slip).unwrap().is_owner_grade());
     let single_use = fixture.mint(|claims| {
@@ -321,10 +321,13 @@ fn scoped_slips_enforce_verbs_and_refuse_adapters_without_record_scope() {
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(fixture.actor)]));
     narrow
-        .attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let auth = fixture.auth(&narrow).unwrap();
     assert!(auth.require(CoreScope::Read).is_ok());
@@ -383,11 +386,14 @@ fn org_slips_are_closed_identified_and_never_owner_grade() {
         claims.holder_ref = "host".into();
     });
     assert_unauthorized(fixture.auth(&missing_admin));
-    assert_unauthorized(CoreAuth::from_headers(
+    let independent = CoreAuth::from_headers(
         &fixture.headers(&slip),
         &config_with_secret("independent-member-root"),
         fixture.vault.as_ref(),
-    ));
+    )
+    .unwrap();
+    assert_eq!(independent.org_ref(), slip.claims.org_ref.as_deref());
+    assert!(!independent.is_owner_grade());
 }
 
 #[test]
@@ -434,34 +440,29 @@ fn slip_tampering_wrong_holder_and_stale_or_missing_proofs_fail_closed() {
 }
 
 #[test]
-fn v2_shaped_secrets_are_still_verified_through_the_logged_root() {
+fn v2_shaped_secrets_cannot_bypass_slip_parsing() {
     for secret in ["v2.something.rest", "v2.slip.not-a-slip"] {
         let fixture = Fixture::with_secret(secret);
-        let auth =
-            require_owner_auth(&bearer(secret), &fixture.config, fixture.vault.as_ref()).unwrap();
-        assert!(auth.is_owner_grade());
-        assert!(auth.jti().is_some());
-        let scoped = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
-        assert!(!fixture.auth(&scoped).unwrap().is_owner_grade());
-        assert_unauthorized(CoreAuth::from_headers(
-            &bearer(&format!("{secret}x")),
+        assert_unauthorized(require_owner_auth(
+            &bearer(secret),
             &fixture.config,
             fixture.vault.as_ref(),
         ));
+        let scoped = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+        assert!(!fixture.auth(&scoped).unwrap().is_owner_grade());
     }
 }
 
 #[test]
-fn wrong_or_empty_secret_and_absent_credentials_fail_closed() {
+fn wrong_or_empty_secret_cannot_replace_a_logged_slip_and_absent_credentials_fail_closed() {
     let fixture = Fixture::new();
     let slip = fixture.mint(|_| {});
     for secret in ["unrecognized-host", ""] {
         let config = config_with_secret(secret);
-        assert_unauthorized(CoreAuth::from_headers(
-            &fixture.headers(&slip),
-            &config,
-            fixture.vault.as_ref(),
-        ));
+        let authenticated =
+            CoreAuth::from_headers(&fixture.headers(&slip), &config, fixture.vault.as_ref())
+                .unwrap();
+        assert_eq!(authenticated.jti(), fixture.auth(&slip).unwrap().jti());
         assert_unauthorized(CoreAuth::from_headers(
             &bearer(secret),
             &config,
@@ -482,19 +483,25 @@ fn idempotency_partitions_follow_the_verified_credential_and_attenuation() {
     let mut read = root.clone();
     let mut scope = Scope::top();
     scope.verbs = verbs(&["read"]);
-    read.attenuate(SlipCaveat {
-        scope: Some(scope),
-        ..Default::default()
-    })
+    read.attenuate(
+        SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        },
+        &fixture.holder,
+    )
     .unwrap();
     let mut write = root.clone();
     let mut scope = Scope::top();
     scope.verbs = verbs(&["write"]);
     write
-        .attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let sibling = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
     let principals: BTreeSet<_> = [root, read, write, sibling]
@@ -528,6 +535,37 @@ fn development_hatch_does_not_mint_authority_and_honours_explicit_revocation() {
 }
 
 #[test]
+fn concurrent_legacy_revokes_report_exactly_one_winner_per_jti() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+    let other = mint_token_jti();
+    for _ in 0..8 {
+        let jti = mint_token_jti();
+        let winners = std::thread::scope(|scope| {
+            let start = Arc::new(std::sync::Barrier::new(24));
+            let calls: Vec<_> = (0..24)
+                .map(|_| {
+                    let start = Arc::clone(&start);
+                    let vault = &vault;
+                    let jti = &jti;
+                    scope.spawn(move || {
+                        start.wait();
+                        revoke_token_jti(vault, jti).unwrap()
+                    })
+                })
+                .collect();
+            calls
+                .into_iter()
+                .map(|call| call.join().unwrap() as usize)
+                .sum::<usize>()
+        });
+        assert_eq!(winners, 1, "a JTI has one successful revoker");
+        assert!(vault.is_revoked(&jti).unwrap());
+    }
+    assert!(!vault.is_revoked(&other).unwrap());
+}
+
+#[test]
 fn revocation_registry_key_is_namespaced_and_id_keyed() {
     let jti = mint_token_jti();
     assert_eq!(
@@ -539,57 +577,32 @@ fn revocation_registry_key_is_namespaced_and_id_keyed() {
 }
 
 #[test]
-fn later_host_fork_revokes_cached_owner_auth_and_its_session_jti() {
-    use oneiron::authority::{
-        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-        AuthoritySignatureSuite, authority_transcript,
-    };
+fn revoked_host_root_closes_cached_owner_auth_and_its_session_jti() {
     let fixture = Fixture::new();
-    let auth =
-        require_owner_auth(&bearer(SECRET), &fixture.config, fixture.vault.as_ref()).unwrap();
-    let parent = fixture.vault.authority_fold().unwrap().slips.mints[&fixture.root.claims.slip_id]
-        .entry_hash;
-    let signing = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        SECRET.as_bytes(),
-    ));
-    let at = oneiron::TimeRange {
-        start: fixture.root.claims.issued_at,
-        end: fixture.root.claims.issued_at,
-    };
-    let mut rows = Vec::new();
-    for id in [[71; 32], [72; 32]] {
-        let mut entry = AuthorityLogEntry {
-            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-            vault_id: Some(fixture.root.claims.vault_id),
-            seq: 2,
-            parent_hashes: vec![parent],
-            op: AuthorityOp::SlipRevoke { slip_id: id },
-            signer: AuthoritySignature {
-                suite: AuthoritySignatureSuite::Ed25519,
-                public_key: fixture.issuer.public_key(),
-                signature: vec![0; 64],
-            },
-            cosigns: Vec::new(),
-            ts: at.start,
-        };
-        entry.signer.signature = signing
-            .sign(&authority_transcript(&entry).unwrap())
-            .to_bytes()
-            .to_vec();
-        rows.push((entry, at, at.start));
-    }
-    fixture.vault.put_authority_log_entries(&rows).unwrap();
+    let auth = CoreAuth::from_verified(
+        fixture
+            .vault
+            .verified_host_root_slip(&fixture.issuer)
+            .unwrap(),
+        true,
+    )
+    .unwrap();
+    assert!(auth.credential_is_live(fixture.vault.as_ref()));
+    fixture
+        .vault
+        .revoke_capability_slip(&fixture.issuer, fixture.root.claims.slip_id)
+        .unwrap();
     assert!(!auth.credential_is_live(fixture.vault.as_ref()));
     assert!(is_revoked_or_unreadable(
         auth.jti().unwrap(),
         fixture.vault.as_ref()
     ));
-    assert_unauthorized(require_owner_auth(
-        &bearer(SECRET),
-        &fixture.config,
-        fixture.vault.as_ref(),
-    ));
+    assert!(
+        fixture
+            .vault
+            .verified_host_root_slip(&fixture.issuer)
+            .is_err()
+    );
 }
 
 #[test]
@@ -604,7 +617,6 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
         }
         fn verify_slip(
             &self,
-            secret: &str,
             slip: &CapabilitySlip,
             timestamp: u64,
             nonce: &[u8],
@@ -614,7 +626,7 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
             let nonce = std::str::from_utf8(nonce).map_err(drop)?;
             let challenge = format!("oneiron-request:{timestamp}:{nonce}");
             slip.verify(
-                secret.as_bytes(),
+                &self.fixture.issuer.public_key(),
                 &fold,
                 self.now,
                 challenge.as_bytes(),
@@ -648,10 +660,13 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
     assert_eq!(first.idempotency_principal(), later.idempotency_principal());
     let mut narrowed = CapabilitySlip::from_token(&token).unwrap();
     narrowed
-        .attenuate(SlipCaveat {
-            ttl_secs: Some(30),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                ttl_secs: Some(30),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let narrowed_auth = CoreAuth::from_headers(
         &fixture.headers(&narrowed),

@@ -42,21 +42,9 @@ impl EntityStoreMaintenance for Store {
         record: ScrubbedRecord,
         recorded_at: u64,
     ) -> Result<bool> {
-        let (stored, entity_type) = stored_record(self, txn, id)?;
-        let mut scrubbed = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
-        if let ScrubbedRecord::AuthorStampRemoved(body) = record {
-            if entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
-                return Err(Error::CorruptedIndex("identity topology event type"));
-            }
-            let event = crate::identity_topology::decode_identity_topology_event_body(&body)
-                .map_err(|_| Error::InvariantViolation("an author-stamp scrub writes an event"))?;
-            if event.actor.is_some() {
-                return Err(Error::InvariantViolation(
-                    "an author-stamp scrub leaves no author stamp",
-                ));
-            }
-            scrubbed.extend_from_slice(&body);
-        }
+        let (stored, _) = stored_record(self, txn, id)?;
+        let ScrubbedRecord::Shell = record;
+        let scrubbed = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
         if scrubbed == stored {
             return Ok(false);
         }
@@ -132,7 +120,7 @@ impl EntityStoreMaintenance for Store {
         }
         self.entities.put(txn, id.as_bytes(), header)
     }
-    #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
+    #[cfg(all(feature = "sync", any(test, feature = "test-hooks")))]
     fn port_raw_record_seed(&self, txn: &mut RwTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<()> {
         self.entities.put(txn, id.as_bytes(), raw)
     }
@@ -203,6 +191,9 @@ impl EntityStoreMaintenance for Store {
         };
         let body = crate::habit::rewrite_habit_streak_fields(&row.body, streak)?;
         if body != row.body {
+            crate::federation::record_scope::preserve_task_projection_scope(
+                self, txn, *id, &row.body, &body,
+            )?;
             row.body = body;
             let payload = row.encode();
             crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;

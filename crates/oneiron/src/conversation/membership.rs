@@ -306,6 +306,10 @@ impl Vault {
                 },
             )?;
             body.member_ids = members.into_iter().collect();
+            if matches!(action, MembershipAction::Leave) {
+                body.roles.remove(&person.to_hex());
+                roles::ROLE_GRANTS.delete(&self.store, txn, &(conversation, person))?;
+            }
             let raw = require_kind(self, txn, conversation, ENTITY_TYPE_CONVERSATION)?;
             let h = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("conversation header"))?;

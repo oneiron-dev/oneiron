@@ -342,10 +342,13 @@ async fn same_key_and_body_are_isolated_by_principal() {
     scope.sensitivity =
         oneiron::federation::SensitivityCeiling::AtMost(oneiron::federation::Sensitivity::Public);
     narrow
-        .attenuate(oneiron::authority::SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            oneiron::authority::SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &read_key,
+        )
         .unwrap();
     let third = http_post_bound(
         &server,
@@ -411,7 +414,17 @@ async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
     assert_eq!(status(&rejected), 401);
     assert_eq!(counter.load(Ordering::SeqCst), 0);
 
-    let accepted = http_post(addr, r#"{"value":1}"#, "owner-key", Some("secret")).await;
+    let (owner, owner_key) = crate::test_credentials::credential(&server, "jti=owner-noncore");
+    let accepted = http_post_bound(
+        &server,
+        addr,
+        "/mutate",
+        r#"{"value":1}"#,
+        "owner-key",
+        &owner,
+        &owner_key,
+    )
+    .await;
     assert_eq!(status(&accepted), 200);
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 

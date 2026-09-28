@@ -39,6 +39,7 @@ impl RecoveryManifest {
         add("entities", pack(&snapshot.entity_blobs)?);
         add("edges", pack(&snapshot.base_edges)?);
         add("tombstones", pack(&snapshot.tombstones)?);
+        add("entity_documents", pack(&snapshot.entity_documents)?);
         add("document_heads", pack(&snapshot.document_heads)?);
         add("head_move_receipts", pack(&snapshot.head_move_receipts)?);
         add("note_forks", pack(&snapshot.note_forks)?);
@@ -260,15 +261,28 @@ pub fn recover_vault_window(
     {
         let txn = vault.store.env.read_txn()?;
         for entity in &snapshot.entity_blobs {
-            if vault.store.entities.get(&txn, &entity.id)?.as_deref()
+            let id = crate::EntityId::from_bytes(entity.id)?;
+            if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.as_deref()
                 != Some(entity.blob.as_slice())
             {
                 return Err(invalid("entity materialization incomplete"));
             }
         }
         for edge in &snapshot.base_edges {
-            let key = [&edge.source[..], &[edge.kind], &edge.target[..]].concat();
-            if vault.store.edges_out.get(&txn, &key)?.as_deref() != Some(edge.value.as_slice()) {
+            let source = crate::EntityId::from_bytes(edge.source)?;
+            let target = crate::EntityId::from_bytes(edge.target)?;
+            let kind = crate::EdgeKind::try_from_u8(edge.kind)
+                .ok_or_else(|| invalid("edge kind materialization"))?;
+            if crate::ports::EdgeStoreStaging::port_edge_encoded(
+                &vault.store,
+                &txn,
+                &source,
+                kind,
+                &target,
+            )?
+            .as_deref()
+                != Some(edge.value.as_slice())
+            {
                 return Err(invalid("edge materialization incomplete"));
             }
         }

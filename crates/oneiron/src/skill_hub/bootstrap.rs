@@ -2,7 +2,7 @@
 
 use rmpv::Value;
 
-use super::{HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
+use super::{HubAdmissionProof, HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::derived_domains::BOOTSTRAP_SKILL;
 use crate::error::{ArtifactError, Error, Result};
@@ -10,38 +10,6 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
-
-/// Exact-record activation proof, issued after local consent and held-out replay,
-/// or at bootstrap: the vault's own genesis authorizes the embedded install set,
-/// which is why first-open seeding needs no separately minted owner consent.
-#[derive(Debug)]
-pub(crate) struct HubAdmissionProof {
-    id: EntityId,
-    binding: blake3::Hash,
-}
-impl HubAdmissionProof {
-    pub(super) fn id(&self) -> EntityId {
-        self.id
-    }
-
-    pub(crate) fn binds(&self, id: &EntityId, data: &[u8]) -> bool {
-        self.id == *id && self.binding == blake3::hash(data)
-    }
-
-    pub(super) fn consent(
-        store: &crate::store::Store,
-        txn: &mut heed::RwTxn<'_>,
-        id: EntityId,
-        data: &[u8],
-        authorization: &crate::consent::ApproveOnceAuthorization,
-    ) -> Result<Self> {
-        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
-        Ok(Self {
-            id,
-            binding: blake3::hash(data),
-        })
-    }
-}
 
 impl Vault {
     pub(crate) fn admit_optimized_skill_in_txn(
@@ -57,10 +25,7 @@ impl Vault {
             proposal,
             learned_at,
             |txn, data| {
-                let proof = HubAdmissionProof {
-                    id: *proposal,
-                    binding: blake3::hash(&data),
-                };
+                let proof = HubAdmissionProof::optimized(*proposal, &data);
                 self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
             },
         )
@@ -164,6 +129,17 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         let package = package(name, markdown)?;
         let seed_id = stable_id(name)?;
         let content_hash = package.content_hash()?;
+        // A caller-chosen record (or a deleted seed) owns this ID regardless
+        // of its files. Never offer it to the import/update door: doing so
+        // could rewrite the holder or make Vault::open fail on immutable fields.
+        let deletion =
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &wtxn, &seed_id)?;
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &wtxn, &seed_id)?.is_some()
+            || deletion.deleted
+            || deletion.stale
+        {
+            continue;
+        }
         // A prior import already holds these exact files. Its entity ID is
         // not bootstrap admission, even when it equals our deterministic ID.
         // Check before the import door can attach provenance, scans, receipts
@@ -192,10 +168,7 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         if record.lifecycle_status == SkillLifecycle::Candidate {
             record.lifecycle_status = SkillLifecycle::Active;
             let data = crate::skill::encode_skill_record(&record)?;
-            let proof = HubAdmissionProof {
-                id,
-                binding: blake3::hash(&data),
-            };
+            let proof = HubAdmissionProof::bootstrap(id, &data);
             vault.admit_hub_skill_record_in_txn(&mut wtxn, occurred, 0, data, proof)?;
         }
     }
@@ -207,6 +180,83 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
     )?;
     wtxn.commit()?;
     Ok(())
+}
+
+impl Vault {
+    pub(super) fn default_skill_present_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &HubRef,
+        hash: crate::skill::SkillContentHash,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        for (id, record) in self.structured_skills_for_content_hash_in_txn(txn, hash)? {
+            if record.skill_id != name
+                || !matches!(
+                    record.lifecycle_status,
+                    SkillLifecycle::Candidate | SkillLifecycle::Active
+                )
+            {
+                continue;
+            }
+            if self.default_skill_present_for_entity_in_txn(txn, &id, source)? {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) fn default_skill_present_for_entity_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        source: &HubRef,
+    ) -> Result<bool> {
+        for (_, claim, _) in
+            self.active_claims_for_predicate_in_txn(txn, id, super::PREDICATE_SKILL_HUB_PROVENANCE)?
+        {
+            if let Some(value) = super::support::map_value(&claim.value, "hubRef")
+                && HubRef::from_value(value)? == *source
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Explicitly re-imports missing or locally retired shipped bootstrap
+    /// skills from the bytes embedded in this engine build. An unchanged
+    /// default is left alone. Restored skills get new IDs and enter as
+    /// Candidates through the ordinary scanner/import door; unlike first-open
+    /// seeding, this verb never grants activation authority.
+    pub fn restore_default_skills(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<Vec<EntityId>> {
+        let mut txn = self.store.env.write_txn()?;
+        self.check_restore_owner_in_txn(&txn, owner)?;
+        let mut restored = Vec::new();
+        for (name, markdown) in FILES {
+            let package = package(name, markdown)?;
+            let hash = package.content_hash()?;
+            let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+            if self
+                .default_skill_present_in_txn(&txn, &source, hash, name)?
+                .is_some()
+            {
+                continue;
+            }
+            let id = self.store.clock.entity_id()?;
+            self.restore_default_skill_in_txn(
+                &mut txn, owner, &source, &package, id, occurred, learned_at,
+            )?;
+            restored.push(id);
+        }
+        txn.commit()?;
+        Ok(restored)
+    }
 }
 
 #[cfg(test)]

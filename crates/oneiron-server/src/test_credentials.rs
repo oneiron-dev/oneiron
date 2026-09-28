@@ -10,6 +10,52 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RECIPE_PREFIX: &str = "OneironTestCredential ";
 
+/// A test-only stand-in for local Keychain custody: the stdio request carries
+/// NO bearer or holder id. The token and proof key come from this local source
+/// and cross the same `bind_slip_request` seam as remote holder credentials.
+pub(crate) struct TestKeychainCredentialSource {
+    token: zeroize::Zeroizing<String>,
+    holder_key: SigningKey,
+}
+
+impl TestKeychainCredentialSource {
+    pub(crate) fn from_recipe(server: &SyncServer, recipe: &str) -> Self {
+        let (slip, holder_key) = credential(server, recipe);
+        Self {
+            token: zeroize::Zeroizing::new(slip.to_token().unwrap()),
+            holder_key,
+        }
+    }
+
+    pub(crate) fn bind(&self, server: &SyncServer, request: Request<Body>) -> Request<Body> {
+        let slip = CapabilitySlip::from_token(&self.token).unwrap();
+        bind_slip_request(server, &slip, &self.holder_key, request)
+    }
+
+    pub(crate) fn verified_for_proposal(
+        &self,
+        server: &SyncServer,
+    ) -> oneiron::authority::VerifiedSlip {
+        let slip = CapabilitySlip::from_token(&self.token).unwrap();
+        let issuer =
+            HostSlipIssuer::from_secret(server.config.auth_secret.as_ref().unwrap().as_bytes())
+                .unwrap();
+        let challenge = b"local-stdio-proposal";
+        let signature = self
+            .holder_key
+            .sign(&slip.binding_transcript(challenge).unwrap());
+        server
+            .vault()
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                challenge,
+                &signature.to_bytes(),
+            )
+            .unwrap()
+    }
+}
+
 pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, SigningKey) {
     let fields: BTreeMap<_, _> = recipe
         .split(';')
@@ -107,7 +153,10 @@ pub(crate) fn bind_slip_request(
     key: &SigningKey,
     mut request: Request<Body>,
 ) -> Request<Body> {
-    let timestamp = server.vault().now_recorded_at();
+    // Freshness is judged on the authority plane's monotonic anchor, which a
+    // recording-clock step does not move; signing on the stepped recording
+    // clock would lock the holder out of a server whose wall clock jumped.
+    let timestamp = server.vault().capability_slip_now().unwrap();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature = hex(&key
@@ -128,6 +177,22 @@ pub(crate) fn bind_slip_request(
     );
     request
 }
+/// Signs a real top-scope slip for a WebSocket upgrade test.
+pub(crate) fn bind_ws_request(server: &SyncServer, request: &mut Request<()>, recipe: &str) {
+    let (slip, key) = credential(server, recipe);
+    let signed = bind_slip_request(
+        server,
+        &slip,
+        &key,
+        Request::builder().body(Body::empty()).unwrap(),
+    );
+    for name in ["authorization", "x-oneiron-binding"] {
+        request
+            .headers_mut()
+            .insert(name, signed.headers()[name].clone());
+    }
+}
+
 /// Engine-level reads carry the logged host root, as the authenticated server
 /// does. A plain actor key reads nothing until a trusted manifest grants it.
 pub(crate) fn host_reader(vault: &oneiron::Vault) -> oneiron::claim::ScopedReadActorKey {
@@ -174,4 +239,92 @@ pub(crate) fn bind_payload(server: &SyncServer, recipe: &str) -> serde_json::Val
         .unwrap();
     let request = bind_request(server, request);
     serde_json::json!({"token":request.headers()[AUTHORIZATION].to_str().unwrap().strip_prefix("Bearer ").unwrap(),"binding":serde_json::from_str::<serde_json::Value>(request.headers()["x-oneiron-binding"].to_str().unwrap()).unwrap()})
+}
+
+/// Binds `actor` as a human owner under the host key derived from `secret`.
+///
+/// The host signing key is re-derived from the same secret
+/// `SyncServer::new` used to bootstrap the genesis; the re-derivation is
+/// pinned against `HostSlipIssuer::binding_key` so a core KDF move fails
+/// loudly here instead of minting a signature the fold would reject.
+pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::EntityId) {
+    use ed25519_dalek::Signer;
+    use oneiron::TimeRange;
+    use oneiron::authority::{
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        actor_binding_is_active, authority_entry_hash, authority_transcript,
+    };
+    use std::collections::BTreeSet;
+
+    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).expect("host issuer");
+    let host_key = issuer.public_key();
+    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", secret.as_bytes());
+    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+    assert_eq!(
+        signing.verifying_key().to_bytes(),
+        issuer.binding_key(),
+        "fixture host-key re-derivation must match the issuer"
+    );
+    let fold = vault.authority_fold().expect("authority fold");
+    let vault_id = fold.vault_id.expect("host root bootstrapped");
+    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.clone();
+    let mut seq = 0u64;
+    let rows = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
+        .expect("authority rows");
+    for row in rows {
+        let entry = vault
+            .get_authority_log_entry(&row)
+            .expect("authority read")
+            .expect("authority row decodes");
+        let hash = authority_entry_hash(&entry).expect("entry hash");
+        if !fold.valid_entries.contains(&hash) {
+            continue;
+        }
+        for parent in &entry.parent_hashes {
+            heads.remove(parent);
+        }
+        if entry.signer.public_key == host_key {
+            seq = seq.max(entry.seq.saturating_add(1));
+        }
+    }
+    assert!(!heads.is_empty(), "a rooted log always has a head");
+    let now = vault.now_recorded_at();
+    let mut bind = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(vault_id),
+        seq,
+        parent_hashes: heads.into_iter().collect(),
+        op: AuthorityOp::BindActor {
+            authority_key: host_key.clone(),
+            actor_ref: actor,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        signer: AuthoritySignature {
+            suite: host_key.suite(),
+            public_key: host_key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: now,
+    };
+    bind.signer.signature = signing
+        .sign(&authority_transcript(&bind).expect("bind transcript"))
+        .to_bytes()
+        .to_vec();
+    vault
+        .put_authority_log_entry(
+            &bind,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect("owner binding lands");
+    assert!(
+        actor_binding_is_active(&vault.authority_fold().expect("refold"), &actor, "human"),
+        "fixture owner binding must fold active"
+    );
 }

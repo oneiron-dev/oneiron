@@ -4,9 +4,15 @@
 
 use super::*;
 
+mod claim_refs;
 mod keys;
 mod ledger;
 mod lookup;
+mod orcb;
+mod retention;
+mod retention_scope;
+#[cfg(test)]
+pub(in crate::store) use self::retention::arm_before_retire_lock;
 mod sidecar;
 mod types;
 mod vet;
@@ -16,6 +22,9 @@ pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     gate_decision_upper_bound,
 };
+pub(crate) use self::orcb::preflight_checkpoint_rows;
+pub(in crate::store) use self::orcb::{CUSTODY_ROOT_KEY, decode_custody_root};
+
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{
     GATE_DECISION_LEDGER_VERSION, GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN,
@@ -38,7 +47,12 @@ pub(in crate::store) use self::keys::{
     gate_decision_claim_index_prefix, gate_decision_grant_ref_index_key, gate_decision_key,
 };
 #[cfg(test)]
-pub(in crate::store) use self::ledger::{decode_gate_decision, encode_gate_decision};
+pub(in crate::store) use self::ledger::{
+    arm_before_gate_grant_decode, arm_before_gate_page_decode, decode_gate_decision,
+    encode_gate_decision,
+};
+#[cfg(test)]
+pub(in crate::store) use self::orcb::arm_after_key_marker_check;
 #[cfg(test)]
 pub(in crate::store) use self::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
 #[cfg(test)]

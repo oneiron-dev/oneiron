@@ -181,7 +181,14 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
         oneiron_vault_entity_exists(vault, entity.as_ptr(), entity.len(), &mut exists),
         OneironStatus::Ok
     );
-    assert_eq!(exists, 0);
+    assert_eq!(exists, 1, "plain delete retains the tombstone shell");
+    let mut shell = OneironBuffer::empty();
+    assert_eq!(
+        oneiron_vault_get_entity(vault, entity.as_ptr(), entity.len(), &mut shell),
+        OneironStatus::Ok
+    );
+    assert_eq!(shell.len, 0, "soft delete scrubs the body");
+    assert_eq!(oneiron_buffer_free(shell), OneironStatus::Ok);
 
     assert_eq!(
         oneiron_vault_entity_exists(ptr::null_mut(), entity.as_ptr(), entity.len(), &mut exists),

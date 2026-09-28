@@ -48,7 +48,9 @@ pub(crate) fn preflight_canonical_recovery(
         {
             return Err(refusal.err);
         }
-        if vault.store.entities.get(&txn, &entity.id)?.as_deref() != Some(entity.blob.as_slice()) {
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.as_deref()
+            != Some(entity.blob.as_slice())
+        {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "entity refused recovery preflight",
             )
@@ -60,7 +62,36 @@ pub(crate) fn preflight_canonical_recovery(
         let target = EntityId::from_bytes(edge.target)?;
         let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(crate::Error::InvalidKey)?;
         let fields = crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
-        if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+        if kind == crate::edge::EdgeKind::AddressedTo {
+            let trusted_soft = crate::recovery::trusted_soft_addressing_edge(
+                snapshot,
+                &source,
+                &target,
+                &edge.value,
+            )?;
+            if trusted_soft
+                && crate::batch::stored_entity_type(&vault.store, &txn, &target)?
+                    != Some(crate::registry::ENTITY_TYPE_PERSON)
+            {
+                return Err(ArtifactError::InvalidRecoveryArtifact(
+                    "retained addressing recipient missing or not a PERSON",
+                )
+                .into());
+            }
+            if !trusted_soft
+                && !crate::conversation_dag::addressed_to_echo_in_txn(
+                    &vault.store,
+                    &txn,
+                    &source,
+                    &target,
+                    fields,
+                )?
+            {
+                return Err(
+                    crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
+                );
+            }
+        } else if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
             let mandated_at =
                 vault.identity_topology_mandated_shell_edge_in_txn(&txn, &source, kind, &target)?;
             if !mandated_at.is_some_and(|at| {
@@ -69,8 +100,9 @@ pub(crate) fn preflight_canonical_recovery(
                 return Err(reserved);
             }
         }
-        if vault.store.entities.get(&txn, &edge.source)?.is_none()
-            || vault.store.entities.get(&txn, &edge.target)?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source)?.is_none()
+            || crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &target)?
+                .is_none()
         {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "edge endpoint missing at recovery",

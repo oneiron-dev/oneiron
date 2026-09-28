@@ -42,7 +42,7 @@ pub(in crate::sync) fn classify_tombstone(
     };
     if matches!(vault.read_entity_header(&id), Ok(None))
         && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
-        && let Some(header) = admitted_concurrent_delete_protected_header(&entity_blob)
+        && let Some(header) = admitted_concurrent_delete_protected_header(&id, &entity_blob)
     {
         return TombstoneStep::Refuse {
             id: Some(id),
@@ -58,10 +58,13 @@ pub(in crate::sync) fn classify_tombstone(
 }
 
 /// Classifies a concurrent peer envelope for tombstone protection only after running the same
-/// deterministic body predicate as replicated type-76 ingestion. Other established protected
-/// kinds keep their header classification; type-76 never gains protection from its header
-/// alone.
-fn admitted_concurrent_delete_protected_header(blob: &[u8]) -> Option<EntityMetadataHeader> {
+/// deterministic body predicate as replicated type-76 ingestion, and the receipt envelope check
+/// for a RECEIPT_RECORD. Other established protected kinds keep their header classification;
+/// type-76 and receipts never gain protection from their header alone.
+fn admitted_concurrent_delete_protected_header(
+    id: &EntityId,
+    blob: &[u8],
+) -> Option<EntityMetadataHeader> {
     let header = EntityMetadataHeader::parse(blob)?;
     if !crate::registry::is_delete_protected_engine_record(header.entity_type) {
         return None;
@@ -69,6 +72,9 @@ fn admitted_concurrent_delete_protected_header(blob: &[u8]) -> Option<EntityMeta
     if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
         let data = &blob[ENTITY_METADATA_HEADER_LEN..];
         crate::identity_topology::decode_replicated_identity_topology_event_body(data).ok()?;
+    }
+    if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+        crate::sync::receipt_ingest::validate_envelope(id, blob).ok()?;
     }
     Some(header)
 }

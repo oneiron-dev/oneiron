@@ -145,7 +145,7 @@ pub(super) fn append(
     body.source = Some(ClaimSource::Observed);
     vault.put_reserved_claim_in_txn(
         txn,
-        &EntityId::now(),
+        &vault.new_entity_id()?,
         &body,
         TimeRange {
             start: now,
@@ -232,7 +232,7 @@ pub(crate) fn reject_event_delete(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
         && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
         && let Ok(body) =

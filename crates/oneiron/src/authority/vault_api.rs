@@ -212,6 +212,28 @@ impl Vault {
             }
 
             AUTHORITY_FIRST_SEEN_BACKFILLED.put(&self.store, wtxn, &backfill_key, &[1])?;
+            advance_authority_cache_generation(&self.store, wtxn)?;
+
+            Ok(())
+        })
+    }
+
+    /// Advance the persisted authority-observation floor in test fixtures.
+    /// The generic sync-state write door remains guarded.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn advance_authority_clock_for_test(&self, observed_secs: u64) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            let floor_key = authority_first_seen_clock_key();
+            let previous = AUTHORITY_FIRST_SEEN
+                .get_lenient(&self.store, wtxn, &floor_key)?
+                .unwrap_or(0);
+            AUTHORITY_FIRST_SEEN.put(
+                &self.store,
+                wtxn,
+                &floor_key,
+                &previous.max(observed_secs),
+            )?;
             Ok(())
         })
     }
@@ -228,65 +250,23 @@ impl Vault {
     /// roster, hold local quorum, or change this vault's id.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
         self.backfill_authority_first_seen_sidecars()?;
-        let rtxn = self.store.env.read_txn()?;
-        let mut entries = Vec::new();
-        let mut first_seen_at_secs = std::collections::BTreeMap::new();
-        let previous_floor = AUTHORITY_FIRST_SEEN
-            .get_lenient(&self.store, &rtxn, &authority_first_seen_clock_key())?
-            .unwrap_or(0);
-        for entry in self
-            .store
-            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_AUTHORITY_LOG, None)?
-        {
-            let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(&rtxn, &id)?
-                .map(|row| row.encode())
-                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
-                return Err(Error::CorruptedIndex("type index row kind mismatch"));
-            }
-            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            let hash = authority_entry_hash(&entry)?;
-            if let Some(first_seen) = AUTHORITY_FIRST_SEEN.get_lenient(
-                &self.store,
-                &rtxn,
-                &authority_first_seen_sidecar_key(&hash),
-            )? {
-                first_seen_at_secs.insert(hash, first_seen);
-            }
-            entries.push(entry);
-        }
-        let peer_consent_roots =
-            crate::federation::admitted_peer_consent_roots_in_txn(self, &rtxn)?;
-        let observations = authority_local_observations_in_txn(&self.store, &rtxn, &entries)?;
-        drop(rtxn);
-        let now_secs = self.with_write_txn(|wtxn| {
+        // Update the monotonic local observation in a committed writer before
+        // the cached read view opens its own snapshot.
+        self.with_write_txn(|wtxn| {
             let floor_key = authority_first_seen_clock_key();
-            let previous_floor = AUTHORITY_FIRST_SEEN
+            let floor = AUTHORITY_FIRST_SEEN
                 .get_lenient(&self.store, wtxn, &floor_key)?
-                .unwrap_or(previous_floor);
-            let now_secs = authority_observation_secs(
-                &self.store,
-                previous_floor,
-                self.store.clock.now_recorded_at(),
-            );
-            if now_secs != previous_floor {
-                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &now_secs)?;
+                .unwrap_or(0);
+            let now =
+                authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
+            if now != floor {
+                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &now)?;
             }
-            Ok(now_secs)
+            Ok(())
         })?;
-        Ok(fold_authority_log_with_local_observations_and_posture(
-            &entries,
-            &first_seen_at_secs,
-            now_secs,
-            &peer_consent_roots,
-            &observations,
-            self.privacy_posture(),
-        ))
+        let rtxn = self.store.env.read_txn()?;
+        self.authority_view_readonly_in_txn(&rtxn)
+            .map(|view| (*view).clone())
     }
 
     pub(crate) fn authority_fold_readonly_in_txn(
@@ -294,5 +274,12 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
     ) -> Result<AuthorityFold> {
         authority_fold_readonly_for_store_in_txn(&self.store, self.privacy_posture(), txn)
+    }
+
+    pub(super) fn authority_view_readonly_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<AuthorityView> {
+        authority_view_readonly_for_store_in_txn(&self.store, self.privacy_posture(), txn)
     }
 }

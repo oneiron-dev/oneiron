@@ -114,7 +114,7 @@ const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PROPOSAL_BUNDLE);
 /// Durable settlement receipt for one fork's merge/switch/reject verdict,
 /// keyed by entity then receipt id.
-const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
+pub(super) const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
     SideTable::new(&side_table::ENTITY_DOC_RECEIPT);
 
 pub(super) fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) -> Result<()> {
@@ -180,10 +180,7 @@ pub(super) fn owner_in_txn(
     validate_actor(vault, txn, actor)?;
     crate::memory::verify_owner_actor_binding_in_txn(vault, txn, owner.actor())
         .map_err(|_| invalid("owner authority is no longer active"))?;
-    let header = vault
-        .store
-        .entities
-        .get(txn, owner.actor().as_bytes())?
+    let header = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &owner.actor())?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw));
     if header.is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON) {
         return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(

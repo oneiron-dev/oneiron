@@ -331,6 +331,46 @@ fn projector_replay_preserves_active_and_total_counts() -> CommResult<()> {
 }
 
 #[test]
+fn provider_stop_uses_one_recipient_class_for_projection_and_clear() -> CommResult<()> {
+    for channel in ["email_resend", "email_ses", "email_postmark"] {
+        let (_dir, vault) = open_vault();
+        let party = format!("party-{channel}");
+        record_comm_inbound_stop(&vault, &party, channel, 10)?;
+        run_comm_projector(&vault)?;
+        let party_ref = resolve_or_create_comm_party(&vault, &party)?;
+        let heads = {
+            let rtxn = vault.store.env.read_txn()?;
+            standing_opt_out_heads_in_txn(&vault, &rtxn, party_ref)?
+        };
+        assert_eq!(heads.len(), 1, "{channel}");
+        assert_eq!(
+            heads[0].channel_class.as_deref(),
+            Some("email"),
+            "{channel}"
+        );
+        assert!(heads[0].matches_channel(channel), "{channel}");
+        assert_eq!(
+            request_opt_out_clear(&vault, &party, channel, 11)?,
+            CommClearOptOutOutcome::PendingHumanRuling,
+            "{channel}"
+        );
+        approve_pending_opt_out_clear(
+            &vault,
+            &party,
+            channel,
+            WriteActor::new(party_ref, EdgeActorClass::Human),
+            13,
+        )?;
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, &party, "email")?,
+            0,
+            "{channel}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn consent_refusal_and_one_shot_human_approval_preserve_exact_counts() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     record_comm_inbound_stop(&vault, "party-a", "email", 10)?;
@@ -1376,7 +1416,10 @@ fn deleted_indexed_party_is_reminted_before_projector_reuse() -> CommResult<()> 
     run_comm_projector(&vault)?;
     let deleted_party = resolve_party(&vault, "party-reminted")?.ok_or(CommError::InvalidRecord)?;
 
-    assert!(vault.delete_entity(&deleted_party)?);
+    assert!(vault.delete_entity_with_options(
+        &deleted_party,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     assert_eq!(vault.get_entity_type(&deleted_party)?, None);
     // A cache hit naming a deleted row is stale, and synced truth holds no
     // replacement — absent, not the dangling id.
@@ -2091,18 +2134,39 @@ fn malformed_person_bodies_do_not_wedge_party_resolution() -> CommResult<()> {
     Ok(())
 }
 
-fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+/// Topology DECISION event ids. Each applied decision also stores a separate
+/// admission-disposition fact (and, when attributed, an attribution fact) in
+/// the same engine-owned family; those are not decisions.
+fn identity_topology_decision_ids(vault: &Vault) -> CommResult<Vec<EntityId>> {
+    use crate::identity_topology::StoredIdentityOpAction;
     let rtxn = vault.store.env.read_txn()?;
-    let mut count = 0;
+    let mut ids = Vec::new();
     for entry in vault
         .store
         .type_index
         .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
     {
-        entry?;
-        count += 1;
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        let is_decision = vault
+            .identity_topology_event_in_txn(&rtxn, &id)?
+            .is_some_and(|event| {
+                !matches!(
+                    event.action,
+                    StoredIdentityOpAction::AdmissionDisposition(_)
+                        | StoredIdentityOpAction::AuthorAttribution { .. }
+                        | StoredIdentityOpAction::AuthorRedaction { .. }
+                )
+            });
+        if is_decision {
+            ids.push(id);
+        }
     }
-    Ok(count)
+    Ok(ids)
+}
+
+fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+    Ok(identity_topology_decision_ids(vault)?.len())
 }
 
 #[test]
@@ -2158,16 +2222,7 @@ fn twin_merge_records_sorted_evidence_and_the_stable_rationale_token() -> CommRe
     run_comm_projector(&vault)?;
 
     let event_id = {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for entry in vault
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-        {
-            let (key, _) = entry?;
-            ids.push(entity_id_from_type_index_key(&key)?);
-        }
+        let ids = identity_topology_decision_ids(&vault)?;
         assert_eq!(ids.len(), 1);
         ids[0]
     };
@@ -3503,20 +3558,14 @@ fn gate_holds_for_counterparty_opt_out(vault: &Vault, counterparty: &str) -> Com
 
 /// Seeds one email ChannelIdentity so a contact resolves to a channel class.
 fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<()> {
-    let identity = crate::channel_identity::ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
-        channel: "email".to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
-        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
-        state: crate::channel_identity::ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::test_util::self_held_identity_in_state(
+        "email",
+        address,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault
         .create_channel_identity(&id, &identity)
         .map_err(CommError::Engine)
@@ -3590,5 +3639,145 @@ fn send_and_reply_receipts_project_only_last_touch() -> CommResult<()> {
         run_comm_projector(&vault)?;
         assert_eq!(vault.claims_for_subject(&party_ref)?.len(), rows);
     }
+    Ok(())
+}
+/// Insert the real node-local receipt shape without a transport adapter, so
+/// comm tests exercise the receipt importer rather than the manual event door.
+fn delivered_connector_receipt(
+    vault: &Vault,
+    seed: u8,
+    channel: &str,
+    verb: &str,
+    target: &str,
+    party: Option<&str>,
+) -> CommResult<()> {
+    let intent = crate::outbound::OutboundIntent::from_trigger(
+        crate::outbound::OutboundIntentDraft::new("actor", verb, channel, target),
+        crate::outbound::OutboundIntentTrigger::agent_immediate("comm-receipt-test"),
+    );
+    let mut receipt = crate::receipt::outbound_intent_receipt(
+        format!("comm-receipt-{seed}"),
+        format!("intent-{seed}"),
+        &intent,
+        u64::from(seed),
+        "delivered_to_channel",
+    );
+    if let Some(party) = party {
+        receipt
+            .fields
+            .insert("counterparty_ref".to_owned(), party.to_owned());
+    }
+    assert!(crate::receipt::persist_send_receipt(
+        vault,
+        entity(seed),
+        receipt,
+        crate::receipt::SendReceiptOutcome::Delivered,
+        true,
+        None,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn durable_message_verbs_project_party_not_destination_and_other_verbs_do_not() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    for (seed, channel, verb) in [
+        (0x81, "email", "send"),
+        (0x82, "line", "reply"),
+        (0x83, "line", "push"),
+        (0x84, "telegram", "send_media"),
+        (0x85, "linkedin", "send_dm"),
+        (0x8A, "line", "send_media"),
+        (0x8B, "imessage_bridge", "send_media"),
+        (0x8C, "email", "replace"),
+    ] {
+        let party = format!("party-{seed}");
+        let target = format!("transport-channel-{seed}");
+        delivered_connector_receipt(&vault, seed, channel, verb, &target, Some(&party))?;
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, &party, channel)?,
+            0
+        );
+        run_comm_projector(&vault)?;
+        assert_eq!(
+            count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, &party, channel)?,
+            1
+        );
+        assert_eq!(resolve_party(&vault, &target)?, None);
+        run_comm_projector(&vault)?;
+        assert_eq!(
+            count_total_comm_claim_rows(&vault, PREDICATE_COMM_LAST_TOUCH, &party, channel)?,
+            1
+        );
+    }
+    delivered_connector_receipt(
+        &vault,
+        0x86,
+        "telegram",
+        "react",
+        "group-channel",
+        Some("party-reaction"),
+    )?;
+    delivered_connector_receipt(&vault, 0x87, "slack", "send", "shared-channel", None)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(resolve_party(&vault, "party-reaction")?, None);
+    assert_eq!(resolve_party(&vault, "shared-channel")?, None);
+    Ok(())
+}
+
+#[test]
+fn durable_receipt_replay_survives_party_merge_and_projects_later_stop() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party = "durable-party-merge";
+    delivered_connector_receipt(&vault, 0x88, "email", "send", "shared-inbox", Some(party))?;
+    run_comm_projector(&vault)?;
+    let original = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let survivor = entity(0x01);
+    plant_comm_person(&vault, survivor, party)?;
+    assert!(survivor < original);
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&original)?,
+        EntityLifecycleState::Merged
+    );
+    assert_eq!(resolve_party(&vault, party)?, Some(survivor));
+    record_comm_inbound_stop(&vault, "independent-stop", "email", 40)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "independent-stop", "email")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn durable_receipt_replay_survives_party_deletion_and_remint() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party = "durable-party-remint";
+    delivered_connector_receipt(&vault, 0x89, "email", "send", "shared-inbox", Some(party))?;
+    run_comm_projector(&vault)?;
+    let original = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
+    assert!(vault.delete_entity_with_options(
+        &original,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
+    record_comm_inbound_stop(&vault, "independent-stop", "email", 41)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        resolve_party(&vault, party)?,
+        None,
+        "old receipt never remints the deleted party"
+    );
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "independent-stop", "email")?,
+        1
+    );
+    record_comm_inbound_reply(&vault, party, "email", 42)?;
+    run_comm_projector(&vault)?;
+    assert_ne!(resolve_party(&vault, party)?, Some(original));
+    assert_eq!(
+        count_active_comm_claims(&vault, PREDICATE_COMM_LAST_TOUCH, party, "email")?,
+        1
+    );
     Ok(())
 }

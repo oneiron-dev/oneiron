@@ -75,6 +75,9 @@ impl ScopedRead<'_> {
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        if !crate::claim::has_live_support_in_txn(&self.vault.store, rtxn, body)? {
+            return Ok(false);
+        }
         let principal = claim_principal_id(body)?;
         let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
         if principal.is_some() && principal != reader {
@@ -95,10 +98,20 @@ impl ScopedRead<'_> {
         if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
             return Ok(false);
         }
-        if !crate::authority::claim_causal_admitted(
-            &self.vault.authority_fold_readonly_in_txn(rtxn)?,
-            body,
-        ) {
+        let causal_admitted = {
+            let cached = self
+                .recall_authority
+                .lock()
+                .map_err(|_| Error::InvariantViolation("recall authority lock"))?;
+            match cached.as_ref() {
+                Some(fold) => crate::authority::claim_causal_admitted(fold, body),
+                None => crate::authority::claim_causal_admitted(
+                    &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+                    body,
+                ),
+            }
+        };
+        if !causal_admitted {
             return Ok(false);
         }
         let admitted = self.claim_status.admits(filter, body)

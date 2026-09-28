@@ -18,6 +18,8 @@ pub(crate) fn delete_document_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    super::title_index::remove_erased_in_txn(store, txn, *id)?;
+
     let own = DocumentSlot::of(*id);
     store.port_document_rows_delete(txn, own, &DocumentRow::ALL)?;
     SYNC_DS_E.delete(store, txn, &HexId(*id))?;

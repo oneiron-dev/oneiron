@@ -242,7 +242,10 @@ fn vault_delete_invalidates_and_enqueues_only_indexed_dependents() -> Result<()>
     vault.commit(txn)?;
 
     // Exercise the real deletion door, not a direct tombstone adapter call.
-    vault.delete_entity(&source)?;
+    vault.delete_entity_with_options(
+        &source,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     assert!(vault.get(&source)?.is_none());
     let mut txn = vault.write()?;
     for dependent in [first, second] {
@@ -282,4 +285,29 @@ fn vault_delete_invalidates_and_enqueues_only_indexed_dependents() -> Result<()>
         BTreeSet::from([first, second])
     );
     vault.commit(txn)
+}
+
+#[test]
+fn short_id_maintenance_port_uses_caller_owned_transaction() -> Result<()> {
+    use crate::ports::ShortIdStoreMaintenance;
+
+    let (_temp, vault, _memory, _clock) = fixtures();
+    // A corrupt reverse key is reaped by maintenance; aborting the caller's
+    // transaction must leave the same work for the next run.
+    let mut txn = vault.write()?;
+    vault
+        .store
+        .short_ids_reverse
+        .put(&mut txn, b"bad-key!", b"broken")?;
+    vault.commit(txn)?;
+
+    let mut txn = vault.write()?;
+    assert_eq!(vault.port_short_id_recompute_hashes(&mut txn)?, (0, 1));
+    drop(txn);
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.orphan_short_ids_deleted, 1);
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.orphan_short_ids_deleted, 0);
+    Ok(())
 }

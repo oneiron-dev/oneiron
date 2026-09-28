@@ -7,6 +7,8 @@ mod doctor_manifest;
 mod edges;
 mod entities;
 pub(crate) mod entity_revision;
+#[cfg(feature = "sync")]
+pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
@@ -34,9 +36,10 @@ pub use self::doctor_manifest::{
 pub(crate) use self::doctor_manifest::{
     ensure_text_index_manifest_matches_wtxn, verify_text_index_manifest, write_text_index_manifest,
 };
+#[cfg(test)]
+pub(crate) use self::edges::edge_kind_prefix;
 pub(crate) use self::edges::{
-    CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT, edge_kind_prefix,
-    parse_edge_record,
+    CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT,
 };
 pub use self::entities::HydratedShortId;
 /// The composed session census bounds itself exactly like [`Vault::entities_by_type`],
@@ -51,7 +54,11 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
+    /// Live seat prefixes are vault-owned, never process-global.
+    pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// Serializes per-request voice-ref uploads with consent withdrawal.
+    pub(crate) voice_ref_guard: std::sync::RwLock<()>,
     #[cfg(feature = "sync")]
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
@@ -81,6 +88,8 @@ pub struct Vault {
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
     /// outbound callback, no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
+    /// One in-process idle policy timer per open vault, released on wrapper drop.
+    pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,
     pub(crate) conversation_presence:
         std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the

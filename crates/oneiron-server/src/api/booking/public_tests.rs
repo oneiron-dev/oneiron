@@ -11,7 +11,13 @@ async fn public_booking_render_requires_no_authentication() {
     assert_inline(&response);
     let value: Value = serde_json::from_slice(&bytes(response).await).expect("page JSON");
     let expected = publication_input(fixture.page, true, 1, before + 86_400).value;
-    for field in ["owner_display", "event_types", "constraint_field", "theme"] {
+    for field in [
+        "owner_display",
+        "event_types",
+        "constraint_field",
+        "theme",
+        "landing",
+    ] {
         assert_eq!(
             value["model"][field], expected[field],
             "owner field {field}"
@@ -22,6 +28,20 @@ async fn public_booking_render_requires_no_authentication() {
         panic!("slots only")
     };
     assert!(!mask.slots.is_empty());
+    assert_eq!(
+        model.visitor_tz,
+        expected["initial_availability"]["visitor_tz"]
+    );
+    let policy = fixture
+        .server
+        .vault
+        .booking_conversion_policy(None)
+        .expect("policy");
+    let shortlist =
+        oneiron::booking::booking_shortlist(&mask.slots, 3, &policy).expect("shortlist");
+    assert_eq!(shortlist.recommended, mask.slots.first().cloned());
+    assert_eq!(shortlist.visible, mask.slots[..mask.slots.len().min(3)]);
+    assert_eq!(shortlist.more_count, mask.slots.len().saturating_sub(3));
     assert!(mask.window_start_utc >= before + 86_400);
     assert_eq!(mask.window_end_utc - mask.window_start_utc, 86_400);
     assert!(
@@ -31,6 +51,15 @@ async fn public_booking_render_requires_no_authentication() {
                 && slot.end_utc <= mask.window_end_utc
                 && slot.end_utc - slot.start_utc == 1_800)
     );
+    assert_eq!(
+        model.preview.visible,
+        mask.slots.iter().take(5).cloned().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        model.preview.remaining_count,
+        mask.slots.len().saturating_sub(5)
+    );
+    assert_eq!(model.visitor_tz, "UTC");
     let card: oneiron::lens::GeneratedUiCard =
         serde_json::from_value(value["card"].clone()).expect("existing card");
     assert_eq!(
@@ -59,6 +88,141 @@ async fn public_booking_render_requires_no_authentication() {
     assert_eq!(
         context.source_ip,
         "127.0.0.1".parse::<IpAddr>().expect("IP")
+    );
+}
+
+#[tokio::test]
+async fn linked_time_preselects_only_a_live_solver_slot() {
+    let fixture = Fixture::new();
+    let path = format!("/public/booking/{}", fixture.token);
+    let initial = fixture.route("GET", &path, Value::Null).await;
+    let initial: Value = serde_json::from_slice(&bytes(initial).await).expect("initial page");
+    let initial_end = initial["model"]["slots"]["rows"]["window_end_utc"]
+        .as_u64()
+        .expect("initial window");
+
+    // A second owner-published event type is an hour long. Its proposed
+    // slot sits well outside the page's initial intro-only 24h projection.
+    let vault = &fixture.server.vault;
+    let mut claim = vault
+        .get_claim(&id(0x72))
+        .expect("config read")
+        .expect("config");
+    let mut second = oneiron::booking::decode_event_type_claim_value(&claim.value).unwrap();
+    second.config.key = EventTypeKey("consultation&60".to_owned());
+    second.config.duration_min = 60;
+    claim.value = encode_event_type_claim_value(&second).unwrap();
+    vault
+        .put_claim(&id(0x75), &claim, TimeRange { start: 1, end: 1 }, 1)
+        .expect("second config");
+    let mut publication = publication_input(fixture.page, true, 1, now_secs().unwrap() + 86_400);
+    publication.value["event_types"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "key": "consultation&60", "title": "Consultation", "duration_min": 60,
+            "description": "Fixture",
+        }));
+    publication.value["event_config_hashes"]["consultation&60"] =
+        json!(oneiron::booking::booking_config_hash(&second.config).unwrap());
+    let owner = vault.memory(id(0x77), EdgeActorClass::Human);
+    let pending = owner
+        .claim_upsert(&publication)
+        .expect("owner updates page");
+    assert_eq!(pending.approval, "proposed");
+    owner
+        .confirm_booking_publication(&pending.claim_short_id, now_secs().unwrap())
+        .expect("owner confirms page revision");
+
+    let response = fixture
+        .route(
+            "POST",
+            &format!("{path}/availability"),
+            json!({
+                "event_type": "consultation&60",
+                "window": { "start": initial_end + 86_400, "end": initial_end + 2 * 86_400 - 1 },
+                "visitor_tz": "Europe/London", "constraint": null, "session_ref": "snippet-test",
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let answer: BookingOperationResponse =
+        serde_json::from_slice(&bytes(response).await).expect("availability");
+    let BookingOperationResponse::Availability { slots, .. } = answer else {
+        panic!("availability response")
+    };
+    let proposed = slots.first().expect("second event offers a future slot");
+    assert!(proposed.start_utc > initial_end);
+    assert_eq!(proposed.end_utc - proposed.start_utc, 3_600);
+    let mask = oneiron::booking::SlotMask {
+        event_type: EventTypeKey("consultation&60".to_owned()),
+        window_start_utc: proposed.start_utc,
+        window_end_utc: proposed.end_utc,
+        slots: vec![proposed.clone()],
+        flex_used: false,
+    };
+    let face = format!("https://book.example.org/schedule/{}", fixture.token);
+    let snippet = oneiron::booking::booking_slots_snippet(
+        &mask,
+        &[proposed.start_utc],
+        "Europe/London",
+        &PublicBookingPageToken(fixture.token.clone()),
+        &face,
+        oneiron::booking::BookingSnippetCopy {
+            introduction: "Available:",
+            optional_link_label: "All slots",
+        },
+        &fixture
+            .server
+            .vault
+            .booking_conversion_policy(None)
+            .expect("policy"),
+    )
+    .unwrap();
+    let href = snippet
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split_once("](")
+        .unwrap()
+        .1
+        .trim_end_matches(')');
+    let hint = oneiron::booking::booking_snippet_selection_from_url(
+        href,
+        &PublicBookingPageToken(fixture.token.clone()),
+    )
+    .expect("host page consumes its human link");
+    assert_eq!(hint.start_utc, proposed.start_utc);
+    assert_eq!(hint.end_utc, proposed.end_utc);
+    let query = href.split_once('?').unwrap().1;
+    let linked = format!("{path}?{query}");
+    let page = fixture.route("GET", &linked, Value::Null).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let selected: Value = serde_json::from_slice(&bytes(page).await).expect("linked page");
+    assert_eq!(
+        selected["model"]["slots"]["rows"]["event_type"],
+        "consultation&60"
+    );
+    assert_eq!(selected["model"]["visitor_tz"], "Europe/London");
+    assert_eq!(selected["suggested_slot"]["start_utc"], proposed.start_utc);
+    assert_eq!(selected["suggested_slot"]["end_utc"], proposed.end_utc);
+    // An unaligned (not solver-offered) slot keeps the event context but is
+    // never presented as a selectable booking.
+    let unoffered = linked
+        .replace(
+            &format!("start_utc={}", proposed.start_utc),
+            &format!("start_utc={}", proposed.start_utc + 60),
+        )
+        .replace(
+            &format!("end_utc={}", proposed.end_utc),
+            &format!("end_utc={}", proposed.end_utc + 60),
+        );
+    let rejected = fixture.route("GET", &unoffered, Value::Null).await;
+    let rejected: Value = serde_json::from_slice(&bytes(rejected).await).expect("unoffered page");
+    assert!(rejected["suggested_slot"].is_null());
+    assert_eq!(
+        rejected["model"]["slots"]["rows"]["event_type"],
+        "consultation&60"
     );
 }
 
@@ -421,7 +585,13 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
     let response = fixture.route("GET", &path, Value::Null).await;
     assert_eq!(response.status(), StatusCode::OK);
     let value: Value = serde_json::from_slice(&bytes(response).await).expect("page");
-    for field in ["owner_display", "event_types", "constraint_field", "theme"] {
+    for field in [
+        "owner_display",
+        "event_types",
+        "constraint_field",
+        "theme",
+        "landing",
+    ] {
         assert_eq!(value["model"][field], changed.value[field]);
     }
     // The same id as a HUMAN publication is not rewriteable as an agent head.
@@ -432,6 +602,64 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
         fixture.route("GET", &path, Value::Null).await.status(),
         StatusCode::OK
     );
+}
+
+#[tokio::test]
+async fn landing_serialized_bound_matches_owner_write_and_public_render() {
+    use oneiron::booking::{BookingFaq, BookingLandingContent};
+    let fixture = Fixture::unpublished();
+    let now = now_secs().expect("clock");
+    let mut input = publication_input(fixture.page, true, 1, now + 86_400);
+    let owner = fixture.server.vault.memory(id(0x77), EdgeActorClass::Human);
+    let mut landing = BookingLandingContent {
+        photo_path: None,
+        intro: "\"".repeat(2048),
+        faq: (0..8)
+            .map(|_| BookingFaq {
+                question: "Q".to_owned(),
+                answer: "\"".repeat(1024),
+            })
+            .collect(),
+        prep_path: None,
+        preconfirm_field_keys: Vec::new(),
+    };
+    assert!(serde_json::to_string(&landing).expect("JSON").len() > 16_384);
+    input.value["landing"] = serde_json::to_value(&landing).expect("value");
+    assert!(
+        owner.claim_upsert(&input).is_err(),
+        "non-renderable owner write must fail"
+    );
+    // Remove only escaped quote bytes to reach exactly the LensText ceiling.
+    let mut excess = serde_json::to_string(&landing).expect("JSON").len() - 16_384;
+    for faq in landing.faq.iter_mut().rev() {
+        let drop = (excess / 2).min(faq.answer.len() - 1);
+        faq.answer.truncate(faq.answer.len() - drop);
+        excess -= 2 * drop;
+    }
+    if excess == 1 {
+        let answer = &mut landing.faq[0].answer;
+        answer.replace_range(..1, "x");
+    }
+    assert_eq!(
+        serde_json::to_string(&landing)
+            .expect("boundary JSON")
+            .len(),
+        16_384
+    );
+    input.value["landing"] = serde_json::to_value(&landing).expect("value");
+    owner
+        .claim_upsert(&input)
+        .expect("renderable boundary writes");
+    let response = fixture
+        .route(
+            "GET",
+            &format!("/public/booking/{}", fixture.token),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let public: Value = serde_json::from_slice(&bytes(response).await).expect("public page");
+    assert_eq!(public["model"]["landing"], input.value["landing"]);
 }
 
 #[tokio::test]

@@ -8,10 +8,14 @@ use loro::LoroDoc;
 use super::companion_identity::{CompanionCrdtScrub, scrub_local_only_companions_from_crdt};
 
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_savepoint};
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
+use crate::vault::ReadMode;
+use crate::vault::entity_revision::revision_for_mode_in_txn;
 
 /// Materialize entity changes from a Loro MapDelta to LMDB.
 ///
@@ -35,6 +39,18 @@ pub(super) fn materialize_entities_from_delta(
     window_key: &str,
     lease_vault_id: u64,
 ) -> bool {
+    materialize_entities_with_changes(doc, delta, vault, window_key, lease_vault_id).0
+}
+
+/// Revision receipts are retained only after the nested savepoint and outer
+/// materialization transaction have both committed.
+pub(super) fn materialize_entities_with_changes(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
     let tombstones_map = doc.get_map("tombstones");
     let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones_map);
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
@@ -42,9 +58,20 @@ pub(super) fn materialize_entities_from_delta(
     // point (unlike the tombstone path), so the swallow site below needs
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
+    let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
-        for (key, new_val) in &delta.updated {
+        // One delta has no row order: an ask word or receipt must not reach
+        // its group check before a group or person carried by the same delta.
+        let mut updates: Vec<_> = delta.updated.iter().collect();
+        updates.sort_by_key(|(_, value)| {
+            matches!(
+                value,
+                Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
+                    if crate::task_verb::waits_for_ask_group(blob)
+            )
+        });
+        for (key, new_val) in updates {
             let value = match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
                     Some(&blob[..])
@@ -55,6 +82,11 @@ pub(super) fn materialize_entities_from_delta(
                 // refuses it as an undecodable remote op.
                 Some(_) => None,
             };
+            let previous_revision = EntityId::from_hex(key.as_ref())
+                .ok()
+                .map(|id| revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live))
+                .transpose()?
+                .flatten();
             match ingest_entity_in_savepoint(&ingest, wtxn, key.as_ref(), value)? {
                 EntityStep::LocalOnlyCompanion(id) => {
                     pending_companion_scrubs.push(CompanionCrdtScrub::new(key.as_ref(), id));
@@ -62,10 +94,37 @@ pub(super) fn materialize_entities_from_delta(
                 step => {
                     if let (Some(id), Some(blob)) = (step.written(), value) {
                         applied_ops.push((id, blob.to_vec()));
+                        // The savepoint has no postcommit owner. Carry its
+                        // claim change to the outer transaction's watch,
+                        // which fires only after THAT commit.
+                        if EntityMetadataHeader::parse(blob)
+                            .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+                        {
+                            crate::batch::queue_proactivity_change(vault, wtxn);
+                        }
+                        let revision =
+                            revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live)?;
+                        if previous_revision != revision {
+                            revision_changes.push(crate::vault::EntityRevisionChange {
+                                entity: id,
+                                previous_revision,
+                                revision,
+                                indexed_revision: revision_for_mode_in_txn(
+                                    &vault.store,
+                                    wtxn,
+                                    &id,
+                                    ReadMode::Indexed,
+                                )?,
+                            });
+                        }
                     }
                 }
             }
         }
+        let facts: Vec<_> = applied_ops.iter().map(|(id, _)| {
+            crate::conversation_dag::topology::Dependency::Entity(*id)
+        }).collect();
+        super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(crate::Error::Io(std::io::Error::other(
@@ -83,6 +142,45 @@ pub(super) fn materialize_entities_from_delta(
             window = %window_key,
             "observer-b: local-only companion CRDT scrub failed after entity batch commit"
         );
+    }
+
+    // An earlier ChildOf or SpawnedBy can have arrived before this body's
+    // endpoint and been deferred by the edge observer. Re-present only the
+    // now-reachable structural keys through that SAME edge gauntlet; no raw
+    // LMDB write or peer-controlled edge bypasses its validators. A pending
+    // Parent then wakes from the accepted membership/anchor fact.
+    if result.is_ok() && !applied_ops.is_empty() {
+        let arrived: HashSet<_> = applied_ops.iter().map(|(id, _)| *id).collect();
+        let edges = doc.get_map("edges");
+        let mut retry = loro::event::MapDelta {
+            updated: Default::default(),
+        };
+        edges.for_each(|key, value| {
+            if let Some((src, kind, tgt)) = super::parse_edge_key(key)
+                && matches!(
+                    kind,
+                    crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::SpawnedBy
+                )
+                && (arrived.contains(&src) || arrived.contains(&tgt))
+                && matches!(
+                    value,
+                    loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))
+                )
+            {
+                retry
+                    .updated
+                    .insert(std::borrow::Cow::Owned(key.to_string()), Some(value));
+            }
+        });
+        if !retry.updated.is_empty() {
+            super::edges::materialize_edges_from_delta(
+                doc,
+                &retry,
+                vault,
+                window_key,
+                lease_vault_id,
+            );
+        }
     }
 
     let committed = result.is_ok();
@@ -121,7 +219,14 @@ pub(super) fn materialize_entities_from_delta(
             "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
-    committed
+    (
+        committed,
+        if committed {
+            revision_changes
+        } else {
+            Vec::new()
+        },
+    )
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed
@@ -134,7 +239,7 @@ pub(super) fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob:
         return false;
     };
     matches!(
-        vault.store.entities.get(&rtxn, id.as_bytes()),
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id),
         Ok(Some(existing)) if *existing == *blob || pack_sync::pack_echo_equal(&existing, blob)
     )
 }

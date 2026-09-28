@@ -7,11 +7,13 @@ use super::ClaimMaterialization;
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
     pub(super) hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
+    pub(super) refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     pub(super) record_decisions: bool,
     pub(super) persist_pending_consent: bool,
     pub(super) include_source_in_gate_input: bool,
     pub(super) claim_gate_prechecked: bool,
     pub(super) claim_materializations: VecDeque<ClaimMaterialization>,
+    pub(super) claim_transitions: VecDeque<super::VerifiedClaimTransition>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
     /// The caller's active mask: the FACET every NOTE and ASSET born in this
@@ -23,14 +25,24 @@ impl ApplyOpsGateMode {
     pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
         Self {
             hub_admission: None,
+            refinement_admission: None,
             record_decisions,
             persist_pending_consent,
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
             claim_materializations: VecDeque::new(),
+            claim_transitions: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
             birth_mask: None,
         }
+    }
+
+    pub(crate) fn with_refinement_admission(
+        mut self,
+        proof: crate::skill_hub::RefinementAdmissionProof,
+    ) -> Self {
+        self.refinement_admission = Some(proof);
+        self
     }
 
     pub(super) fn with_birth_mask(mut self, mask: Option<EntityId>) -> Self {
@@ -43,11 +55,19 @@ impl ApplyOpsGateMode {
         self
     }
 
-    pub(super) fn with_claim_materializations(
+    pub(crate) fn with_claim_materializations(
         mut self,
         bindings: Vec<ClaimMaterialization>,
     ) -> Self {
         self.claim_materializations = bindings.into();
+        self
+    }
+
+    pub(crate) fn with_verified_claim_transitions(
+        mut self,
+        proofs: Vec<super::VerifiedClaimTransition>,
+    ) -> Self {
+        self.claim_transitions = proofs.into();
         self
     }
 

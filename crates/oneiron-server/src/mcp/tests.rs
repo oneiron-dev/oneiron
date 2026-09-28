@@ -1902,8 +1902,10 @@ fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
             json!({"spec":{"handle":{"group_ref":ACTOR_ID},"step_key":"step-one"}})
         }
         "rooms.list" => json!({}),
-        "rooms.messages" => json!({"room_ref":ACTOR_ID}),
-        "rooms.claim" => json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID}),
+        "rooms.messages" | "rooms.find" | "rooms.render" => json!({"room_ref":ACTOR_ID}),
+        "rooms.claim" | "rooms.get" | "rooms.trunk" => {
+            json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID})
+        }
         "rooms.speak" => json!({"room_ref":ACTOR_ID,"spec":{}}),
         "board.expand" => json!({ "key": "TASKS" }),
         "board.refresh" | "describe" => json!({}),
@@ -3321,6 +3323,88 @@ fn raw_decode_boundary_preserves_advertised_integer_number_text() {
     }
 }
 
+/// Raw fractional epochs must not become rounded integer epochs at admission.
+#[test]
+fn raw_board_expand_refuses_high_precision_fractional_epochs() {
+    let expand = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("board.expand")
+        .expect("board.expand is registered");
+    let mut args = endpoint_envelope("read_board");
+    args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 0 });
+
+    let integral = raw_args_with_number(&args, "/arguments/frame_epoch", "1.0");
+    let admitted =
+        validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(integral))
+            .expect("an exact integral spelling is valid");
+    let McpValidatedToolArgs::Verb(verb) = admitted else {
+        panic!("board.expand is a verb")
+    };
+    assert_eq!(verb.payload.arguments.frame_epoch, Some(1));
+
+    for token in ["1.00000000000000000001", "9007199254740993.5"] {
+        let raw = raw_args_with_number(&args, "/arguments/frame_epoch", token);
+        assert!(
+            matches!(
+                validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(raw)),
+                Err(McpToolValidationError::Decode {
+                    tool: "board.expand",
+                    ..
+                })
+            ),
+            "fractional raw epoch {token} must be refused before rounding"
+        );
+    }
+}
+
+/// Duplicate object keys use the same last-occurrence value as `serde_json`.
+/// A discarded fractional epoch (or discarded whole arguments object) is not
+/// an admitted field; a live fractional epoch must still fail closed.
+#[test]
+fn raw_board_expand_integer_walk_ignores_shadowed_object_members() {
+    let expand = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("board.expand")
+        .expect("board.expand is registered");
+    let mut args = endpoint_envelope("read_board");
+    args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 1 });
+    let base = args.to_string();
+    let shadowed_field = base.replacen(
+        "\"frame_epoch\":1",
+        "\"frame_epoch\":1.5,\"frame_epoch\":1",
+        1,
+    );
+    let shadowed_parent = base.replacen(
+        "\"arguments\":",
+        "\"arguments\":{\"key\":\"TASKS\",\"frame_epoch\":1.5},\"arguments\":",
+        1,
+    );
+    let live_fraction = base.replacen(
+        "\"frame_epoch\":1",
+        "\"frame_epoch\":1,\"frame_epoch\":1.5",
+        1,
+    );
+    for raw in [shadowed_field, shadowed_parent] {
+        assert_ne!(raw, base, "a duplicate was inserted");
+        let parsed: Value = serde_json::from_str(&raw).expect("valid JSON");
+        let expected = validate_mcp_endpoint_tool_args(expand, parsed)
+            .expect("parsed arguments select the final integer epoch");
+        let actual = validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(raw))
+            .expect("raw arguments must select the same epoch");
+        assert_eq!(actual, expected);
+        let McpValidatedToolArgs::Verb(verb) = actual else {
+            panic!("board.expand is a verb")
+        };
+        assert_eq!(verb.payload.arguments.frame_epoch, Some(1));
+    }
+    assert_ne!(live_fraction, base, "a live fractional epoch was inserted");
+    assert!(matches!(
+        validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(live_fraction)),
+        Err(McpToolValidationError::Decode {
+            tool: "board.expand",
+            ..
+        })
+    ));
+}
+
 /// The same raw boundary at the advertised 32-bit positions: restating a
 /// spelling never widens a field, so THIS field's own ceiling still decides.
 #[test]
@@ -4147,7 +4231,41 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             continue;
         }
         let input = oneiron::task_verb::sdk::input_schema(name).expect("input schema");
-        assert_eq!(input["type"], "object", "{name}");
+        if name == "tasks.ask" {
+            let branches = input["anyOf"]
+                .as_array()
+                .expect("rich and short ask branches");
+            assert_eq!(branches.len(), 2);
+            let rich = branches
+                .iter()
+                .find(|branch| {
+                    branch["required"]
+                        .as_array()
+                        .is_some_and(|fields| fields.contains(&json!("intent_key")))
+                })
+                .expect("rich");
+            let short = branches
+                .iter()
+                .find(|branch| {
+                    branch["required"]
+                        .as_array()
+                        .is_some_and(|fields| !fields.contains(&json!("intent_key")))
+                })
+                .expect("short");
+            for branch in [rich, short] {
+                assert_eq!(branch["type"], "object");
+                assert_eq!(branch["additionalProperties"], false);
+                assert!(
+                    branch["required"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!("what"))
+                );
+            }
+            assert!(short["properties"].get("intent_key").is_none());
+        } else {
+            assert_eq!(input["type"], "object", "{name}");
+        }
         if row["mcp"] == "none" {
             assert!(oneiron::task_verb::sdk::mcp_arguments_schema(name).is_none());
             assert!(surface.resolve(name).is_none());
@@ -4196,6 +4314,30 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
                 assert_eq!(shipped, expected, "{name}.{field}");
             }
         }
+    }
+    let ask = oneiron::task_verb::sdk::input_schema("tasks.ask").unwrap();
+    let question =
+        json!({"reference":{"turn": ACTOR_ID},"revision":1,"options":{},"context_refs":[]});
+    let short = json!({"what":question,"who":{"people":[ACTOR_ID]}});
+    let rich = json!({"intent_key":"rich-collect","what":question,"decide":null});
+    for value in [&short, &rich] {
+        assert!(draft2020_12_accepts(ask, value));
+        assert!(
+            serde_json::from_value::<oneiron::task_verb::sdk::TaskAskRequest>(value.clone())
+                .is_ok()
+        );
+    }
+    for invalid in [
+        json!({"who":{"people":[ACTOR_ID]}}),
+        json!({"intent_key":"rich-no-question"}),
+        json!({"what":question,"decide":null}),
+        json!({"what":question,"need":{"count":1,"of":"any"}}),
+        json!({"what":question,"on_disagree":{"branch":"hold","surface":"card"}}),
+    ] {
+        assert!(!draft2020_12_accepts(ask, &invalid));
+        assert!(
+            serde_json::from_value::<oneiron::task_verb::sdk::TaskAskRequest>(invalid).is_err()
+        );
     }
     assert!(oneiron::task_verb::sdk::input_schema("tasks.missing").is_none());
     assert!(oneiron::task_verb::sdk::mcp_arguments_schema("tasks.missing").is_none());

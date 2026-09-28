@@ -14,6 +14,7 @@ use crate::gate::{PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
 
+use super::coreutils_text::{append_grep_file_matches, join_graph_path, literal_grep_pattern};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -196,7 +197,7 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             0,
-            Some(read.receipt),
+            read.receipt,
         )
     }
 
@@ -225,7 +226,7 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             total,
-            Some(read.receipt),
+            read.receipt,
         )
     }
 
@@ -251,7 +252,7 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             0,
-            Some(read.receipt),
+            read.receipt,
         )
     }
 
@@ -270,13 +271,15 @@ impl GraphFsResolver<'_, '_> {
             if let Some(file) = &read.value {
                 append_grep_file_matches(path, file.bytes(), pattern, &mut out, &mut total);
             }
-            return Ok(WalkOutput::new(out, None, total, Some(read.receipt)));
+            return Ok(WalkOutput::new(out, None, total, read.receipt));
         }
 
         let (paths, mut receipt) = self.walk_paths(path, cursor)?;
         for path in paths {
             let read = self.read_file(&path)?;
-            fold_receipt(&mut receipt, read.receipt);
+            if let Some(read_receipt) = read.receipt {
+                fold_receipt(&mut receipt, read_receipt);
+            }
             let Some(file) = read.value else {
                 continue;
             };
@@ -309,6 +312,7 @@ impl GraphFsResolver<'_, '_> {
         let mut last_emitted = cursor.map(TemporalCursor::encode);
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -373,6 +377,7 @@ impl GraphFsResolver<'_, '_> {
         let mut last_emitted = cursor.map(TemporalCursor::encode);
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -532,6 +537,7 @@ impl GraphFsResolver<'_, '_> {
     }
 
     fn coreutils_entity_visible(&self, id: &EntityId) -> Result<bool> {
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         self.coreutils_entity_visible_in(&rtxn, &policy, id)
@@ -581,38 +587,51 @@ impl GraphFsResolver<'_, '_> {
         total_in_scope: usize,
         read_receipt: Option<ScopedReadReceipt>,
     ) -> Result<GraphFsCommandOutput> {
-        let run_id = RetrievalRunId::from_bytes(self.scoped_read.vault().store.clock.ulid()?);
-        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let telemetry_reason = format!(
-            "graph_fs_coreutils:{}:{}:{}",
-            verb.stable_label(),
-            decision.stable_label(),
-            decision_reason
-        );
-        let record = RetrievalRunRecord::new(
-            run_id,
-            RetrievalAction::GraphFsCoreutils,
-            started_at,
-            elapsed_us,
-            signals,
-            Vec::new(),
-            total_in_scope,
-            0,
-            Some(telemetry_reason),
-        );
-        if let Err(error) = self.scoped_read.vault().store.record_retrieval_run(&record) {
-            tracing::warn!(
-                ?error,
-                command = verb.stable_label(),
-                "graph-fs coreutils telemetry failed"
+        let telemetry_run_id = if self
+            .scoped_read
+            .vault()
+            .store
+            .retrieval_telemetry_capture_enabled()
+        {
+            let run_id = RetrievalRunId::from_bytes(self.scoped_read.vault().store.clock.ulid()?);
+            let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+            let telemetry_reason = format!(
+                "graph_fs_coreutils:{}:{}:{}",
+                verb.stable_label(),
+                decision.stable_label(),
+                decision_reason
             );
-        }
+            let record = RetrievalRunRecord::new(
+                run_id,
+                RetrievalAction::GraphFsCoreutils,
+                started_at,
+                elapsed_us,
+                signals,
+                Vec::new(),
+                total_in_scope,
+                0,
+                Some(telemetry_reason),
+            );
+            match self.scoped_read.vault().store.record_retrieval_run(&record) {
+                Ok(()) => Some(run_id),
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        command = verb.stable_label(),
+                        "graph-fs coreutils telemetry failed"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(GraphFsCommandOutput {
             bytes,
             next_cursor,
             decision,
             decision_reason: decision_reason.to_owned(),
-            telemetry_run_id: run_id,
+            telemetry_run_id,
             read_receipt,
         })
     }
@@ -655,59 +674,6 @@ fn parse_byte_cursor(cursor: Option<&str>) -> Result<usize> {
             .parse::<usize>()
             .map_err(|_| Error::InvalidConfig("invalid graph-fs byte cursor".to_owned())),
         None => Ok(0),
-    }
-}
-
-fn literal_grep_pattern(pattern: &str) -> Option<&str> {
-    let pattern = pattern.trim();
-    if pattern.is_empty() || !pattern.is_ascii() {
-        return None;
-    }
-    if pattern.bytes().any(|byte| {
-        matches!(
-            byte,
-            b'.' | b'*'
-                | b'+'
-                | b'?'
-                | b'['
-                | b']'
-                | b'('
-                | b')'
-                | b'{'
-                | b'}'
-                | b'|'
-                | b'^'
-                | b'$'
-                | b'\\'
-        )
-    }) {
-        return None;
-    }
-    Some(pattern)
-}
-
-fn append_grep_file_matches(
-    path: &str,
-    bytes: &[u8],
-    pattern: &str,
-    out: &mut CommandOutputBuilder,
-    total: &mut usize,
-) {
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines().filter(|line| line.contains(pattern)) {
-        let rendered = format!("{path}:{line}\n");
-        if !out.try_push(rendered.as_bytes()) {
-            break;
-        }
-        *total += 1;
-    }
-}
-
-fn join_graph_path(parent: &str, name: &str) -> String {
-    if parent == "/" {
-        format!("/{name}")
-    } else {
-        format!("{parent}/{name}")
     }
 }
 

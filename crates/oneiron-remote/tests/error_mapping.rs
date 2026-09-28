@@ -209,3 +209,56 @@ fn pair_refuses_a_malformed_link_without_echoing_it() {
             && !error.suggestions.iter().any(|line| line.contains(code))
     );
 }
+
+/// Native Node/Python methods use `agent_verb`, not the typed Rust method.
+/// A 200 response must still decode as this verb's declared output DTO.
+#[test]
+fn dynamic_binding_verbs_refuse_malformed_success_bodies() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+
+    for (verb, input) in [
+        (
+            "cancel",
+            serde_json::json!({"task_ref": "11111111111111111111111111111111"}),
+        ),
+        ("rooms.list", serde_json::json!({})),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback peer");
+        let address = listener.local_addr().unwrap();
+        let peer = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("facade request");
+            let mut reader = BufReader::new(&mut stream);
+            let mut content_length = 0;
+            loop {
+                let mut line = String::new();
+                assert_ne!(reader.read_line(&mut line).expect("request header"), 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((key, value)) = line.split_once(':')
+                    && key.eq_ignore_ascii_case("content-length")
+                {
+                    content_length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            let mut body = vec![0; content_length];
+            reader.read_exact(&mut body).expect("request body");
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}").expect("response");
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()
+        });
+        let client = OneironClient::connect(&format!("http://{address}"), "fixture").unwrap();
+        let response = client.agent_verb(verb, input.clone());
+        assert_eq!(
+            peer.join().expect("peer"),
+            input,
+            "{verb} reached the HTTP peer"
+        );
+        let error = response.expect_err("a malformed 200 body is not a verb result");
+        assert_eq!(error.code, MEMORY_CODE_INTERNAL, "{verb}");
+        assert!(
+            error.message.contains("200") && error.message.contains(verb),
+            "{error:?}"
+        );
+    }
+}

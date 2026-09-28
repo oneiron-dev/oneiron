@@ -31,6 +31,7 @@ pub(super) struct Snapshot {
     changes: BTreeMap<[u8; 16], ChangeLogRecord>,
     blobs: BTreeMap<[u8; 32], (Vec<u8>, BTreeSet<EntityId>)>,
     jobs: BTreeMap<[u8; 16], AttemptRecord>,
+    symbol_leases: BTreeMap<EntityId, crate::task_verb::SymbolLease>,
 }
 pub(super) struct MemoryWrite(Snapshot);
 impl Deref for MemoryWrite {
@@ -79,6 +80,27 @@ impl Memory {
             clock,
         }
     }
+    #[cfg(test)]
+    pub(super) fn seed_symbol_lease(
+        txn: &mut MemoryWrite,
+        task: EntityId,
+        lease: crate::task_verb::SymbolLease,
+    ) {
+        txn.symbol_leases.insert(task, lease);
+    }
+
+    #[cfg(test)]
+    pub(super) fn remove_symbol_lease(txn: &mut MemoryWrite, task: EntityId) {
+        txn.symbol_leases.remove(&task);
+    }
+    #[cfg(test)]
+    pub(super) fn symbol_lease_for_test(
+        &self,
+        task: EntityId,
+    ) -> Option<crate::task_verb::SymbolLease> {
+        self.read().symbol_leases.get(&task).cloned()
+    }
+
     pub(super) fn record_turn_session(
         &self,
         txn: &mut MemoryWrite,

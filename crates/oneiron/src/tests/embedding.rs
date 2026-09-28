@@ -435,9 +435,8 @@ fn embedding_migration_invalidates_inflight_async_fill_token() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 #[test]
-fn legacy_v1_marker_accepted_until_migration_then_rejected() -> Result<()> {
+fn legacy_v1_marker_cannot_fill_after_embedding_epoch_change() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
     cfg.embedding_model = Some("test/old@v1".to_owned());
@@ -457,13 +456,19 @@ fn legacy_v1_marker_accepted_until_migration_then_rejected() -> Result<()> {
     )?))?;
     vault
         .batch()
-        .put(&id, ENTITY_TYPE_CLAIM, test_time_range(1, 1), 1, &body)
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &body,
+        )
         .commit()?;
 
     let mut legacy_marker = [0_u8; 33];
     legacy_marker[0] = 1;
     legacy_marker[1..].copy_from_slice(&Sha256::digest(&body));
-    let marker_key = format!("pe:{}", id.to_hex());
+    let marker_key = crate::store::Store::pending_embedding_marker_key(&id);
     vault.with_write_txn(|wtxn| {
         vault
             .store
@@ -471,15 +476,31 @@ fn legacy_v1_marker_accepted_until_migration_then_rejected() -> Result<()> {
             .put(wtxn, marker_key.as_str(), &legacy_marker)?;
         Ok(())
     })?;
-    let accepted_legacy_marker = {
+    vault.begin_embedding_migration("test/new@v2")?;
+    let current_marker = {
         let rtxn = vault.store.env.read_txn()?;
         vault
             .store
             .pending_embedding_token(&rtxn, &id)?
-            .expect("v1 marker remains accepted before migration")
+            .expect("migration re-marked the claim")
     };
-    assert_eq!(accepted_legacy_marker, legacy_marker);
-    assert!(vault.with_write_txn(|wtxn| {
+    assert_eq!(current_marker[0], 2);
+    assert_ne!(current_marker, legacy_marker);
+
+    // A v1 row cannot prove which epoch produced its vector. Put the old row
+    // back after the flip to exercise the validator, not just the migration's
+    // replacement of it with an epoch-bound v2 token.
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .sync_state
+            .put(wtxn, marker_key.as_str(), &legacy_marker)?;
+        Ok(())
+    })?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(vault.store.pending_embedding_token(&rtxn, &id)?, None);
+    drop(rtxn);
+    assert!(!vault.with_write_txn(|wtxn| {
         vault
             .store
             .pending_embedding_matches_in_txn(wtxn, &id, &legacy_marker)
@@ -488,60 +509,34 @@ fn legacy_v1_marker_accepted_until_migration_then_rejected() -> Result<()> {
         .batch()
         .vector_for_pending_embedding(&id, &[1.0, 0.0, 0.0, 0.0], &legacy_marker)
         .commit()?;
-    assert_eq!(vault.get_vector(&id)?, Some(vec![1.0, 0.0, 0.0, 0.0]));
-    let cleared = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault.store.pending_embedding_token(&rtxn, &id)?
-    };
-    assert_eq!(cleared, None, "accepted legacy fill clears its marker");
+    assert_eq!(vault.get_vector(&id)?, None, "old-model fill is a no-op");
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, marker_key.as_str())?
+            .as_deref(),
+        Some(legacy_marker.as_slice()),
+        "rejected fill must not clear the marker"
+    );
+    drop(rtxn);
 
-    // Restore the legacy value after proving acceptance so migration itself must replace it.
+    // Fresh epoch-bound work still fills normally after the rejected attempt.
     vault.with_write_txn(|wtxn| {
         vault
             .store
             .sync_state
-            .put(wtxn, marker_key.as_str(), &legacy_marker)?;
+            .put(wtxn, marker_key.as_str(), &current_marker)?;
         Ok(())
     })?;
-
-    vault.begin_embedding_migration("test/new@v2")?;
-    let v2_marker = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .sync_state
-            .get(&rtxn, marker_key.as_str())?
-            .expect("migration re-marked claim")
-            .to_vec()
-    };
-    assert_eq!(v2_marker.len(), legacy_marker.len());
-    assert_eq!(v2_marker[0], 2, "migration stores a v2 marker");
-    assert_ne!(v2_marker, legacy_marker);
-
     vault
         .batch()
-        .vector_for_pending_embedding(&id, &[1.0, 0.0, 0.0, 0.0], &legacy_marker)
+        .vector_for_pending_embedding(&id, &[0.0, 1.0, 0.0, 0.0], &current_marker)
         .commit()?;
-    assert_eq!(vault.get_vector(&id)?, None, "old v1 fill is a no-op");
-    let v2_marker_after_old_fill = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .sync_state
-            .get(&rtxn, marker_key.as_str())?
-            .expect("v2 marker survives rejected v1 fill")
-            .to_vec()
-    };
-    assert_eq!(v2_marker_after_old_fill, v2_marker);
-
-    let vault = Arc::new(vault);
-    let jobs = SyncQueue::new(Arc::clone(&vault))?.drain_embed_jobs()?;
-    assert!(jobs.iter().any(|job| {
-        job.entity_id == id && job.priority == crate::embed::EMBED_PRIORITY_BACKFILL
-    }));
+    assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
     Ok(())
 }
-
 #[cfg(feature = "sync")]
 #[test]
 fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Result<()> {

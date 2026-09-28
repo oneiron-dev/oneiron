@@ -103,6 +103,14 @@ impl ScopedReadActorKey {
         Some(key)
     }
 
+    pub(crate) fn authenticated_person(&self) -> Option<EntityId> {
+        if self.enforce_access_grants {
+            self.principal_ref
+        } else {
+            EntityId::from_hex(&self.actor_ref).ok()
+        }
+    }
+
     pub(crate) fn authority_scope(&self) -> Option<&crate::federation::Scope> {
         self.proof
             .as_ref()

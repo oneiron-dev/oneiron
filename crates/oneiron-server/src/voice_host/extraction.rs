@@ -66,14 +66,16 @@ impl TinyExtractor {
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: oneiron::llm::Scope::default(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence {
-                    per_call: Some(ModelTierRef("tiny".to_owned())),
-                    vault_policy: None,
-                    purpose_default: None,
-                    global_default: ModelTierRef("tiny".to_owned()),
+                    per_seat: Some(ModelTierRef("tiny".to_owned())),
+                    ..TierPrecedence::for_purpose(
+                        &CallPurpose::Extraction,
+                        ModelTierRef("tiny".into()),
+                    )
                 },
                 response_format: ResponseFormat::Json {
                     schema: json!({

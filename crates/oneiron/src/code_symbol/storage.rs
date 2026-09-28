@@ -70,19 +70,30 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            self.put_code_symbol_graph_in_txn(wtxn, code_artifact_id, graph, occurred, learned_at)
+        })
+    }
+
+    /// Persist a derived graph alongside its owner and custody-filtered snapshot.
+    pub(crate) fn put_code_symbol_graph_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        code_artifact_id: &EntityId,
+        graph: &CodeSymbolGraph,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
         validate_code_symbol_manifest(&graph.manifest)?;
         scan_code_symbol_manifest_metadata(&graph.manifest)?;
-        {
-            let rtxn = self.store.env.read_txn()?;
-            validate_code_artifact_target(
-                &self.store,
-                &rtxn,
-                code_artifact_id,
-                &graph.manifest.repo_ref,
-            )?;
-        }
+        validate_code_artifact_target(
+            &self.store,
+            wtxn,
+            code_artifact_id,
+            &graph.manifest.repo_ref,
+        )?;
 
-        let mut batch = self.batch();
+        let mut batch = self.batch_in();
         let mut symbol_ids = BTreeSet::new();
         for symbol in &graph.manifest.symbols {
             let symbol_id = code_symbol_entity_id(&graph.manifest.repo_ref, symbol)?;
@@ -110,8 +121,21 @@ impl Vault {
                 batch = batch.edge(&edge.source, edge.kind, &edge.target, edge.weight);
             }
         }
-        batch.commit()?;
-        self.put_code_symbol_manifest(code_artifact_id, &graph.manifest)
+        batch.apply(wtxn)?;
+        MANIFEST.encode_value(&graph.manifest)?;
+        delete_code_symbol_manifest_in_txn(&self.store, wtxn, code_artifact_id)?;
+        MANIFEST.put(&self.store, wtxn, code_artifact_id, &graph.manifest)?;
+        for symbol in &graph.manifest.symbols {
+            let key = code_symbol_revision_index_key(
+                &graph.manifest.repo_ref,
+                &symbol.path,
+                &symbol.name,
+                &symbol.fingerprint,
+                code_artifact_id,
+            );
+            REVISION_INDEX.put(&self.store, wtxn, &key, &())?;
+        }
+        Ok(())
     }
 
     pub fn put_code_symbol_embedding_vectors(

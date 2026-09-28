@@ -12,12 +12,14 @@ pub mod anti_abuse;
 pub mod companion_preset;
 pub mod config;
 pub mod constraint;
+pub mod conversion;
 pub mod disclosure_rung;
 pub mod emergency_reschedule;
 pub mod invite_grant;
 pub mod lifecycle;
 pub mod public_lens;
 pub mod publication;
+mod reminder;
 pub mod solver;
 #[cfg(test)]
 mod tests;
@@ -43,6 +45,18 @@ pub use config::{
 pub use constraint::{
     BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotHostBinding, SlotMask,
     SlotOracle, SolveRequest, SolveResult,
+};
+pub use conversion::{
+    BookingConversionPolicy, BookingConversionPolicyRow, BookingFaq, BookingIntakeStages,
+    BookingLandingContent, BookingPolicyPrecedence, BookingPolicyScope, BookingReminder,
+    BookingShortlist, BookingSlotLinkHint, BookingSlotPreview, BookingSnippetCopy,
+    BookingSnippetLink, BookingSnippetSelection, ConfigurableReminderWake, ConversionError,
+    MeetingLocation, ReminderAction, ReminderStep, RepeatNoShowOffer, ZonedBookingTime,
+    booking_display_zones, booking_due_reminder, booking_intake_stages, booking_reminder_wakes,
+    booking_reminders, booking_shortlist, booking_slot_preview, booking_slots_snippet,
+    booking_snippet_links, booking_snippet_selection_from_url, booking_suggested_slot,
+    booking_zoned_time, parse_booking_slot_link, repeat_no_show_offer,
+    resolve_booking_conversion_rows,
 };
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,
@@ -84,6 +98,10 @@ pub use publication::{
     BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingPagePublication,
     PublicBookingAvailability, booking_config_hash, decode_public_booking_page_value,
     encode_public_booking_page_value, load_public_booking_page, resolve_public_booking_token,
+};
+pub use reminder::{
+    BOOKING_REMINDER_LEADS_SECS, BookingReminderStage, BookingReminderWake, NoShowEscalation,
+    booking_no_show_escalation, booking_reminder_is_due, plan_booking_reminders,
 };
 pub use solver::{
     ActiveHoldSource, BookingCountBucket, BookingCounts, BookingSolver, NoActiveHolds, slot_mask,

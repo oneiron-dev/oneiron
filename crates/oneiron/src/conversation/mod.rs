@@ -1,11 +1,20 @@
 //! Room bodies, membership windows, session presence and audience visibility.
 mod body;
+mod deletion;
 mod membership;
+mod preview;
+mod roles;
 mod session;
 mod visibility;
 
-pub(crate) use body::validate_put_in_txn;
-pub use body::{ConversationBody, ConversationKind};
+pub use body::{ConversationBody, ConversationKind, RoomRole};
+pub(crate) use body::{fresh_id_in_txn, validate_put_in_txn};
+#[cfg(test)]
+pub(crate) use deletion::ROOM_ERASURES;
+pub(crate) use deletion::{
+    guard_room_message_delete, pin_room_message_edge, replay_room_message_tombstone,
+    room_message_owner_in, room_person_write_allowed,
+};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
 pub(crate) use visibility::AudienceCache;
@@ -34,10 +43,7 @@ fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) ->
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
         return Err(Error::EntityNotFound);
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != kind {

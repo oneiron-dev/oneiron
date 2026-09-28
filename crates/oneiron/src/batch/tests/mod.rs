@@ -46,6 +46,7 @@ mod habit_streak;
 mod lexical_hints_lifecycle;
 mod lexical_hints_policy;
 mod provenance_edges;
+mod replicated_text;
 mod secret_policy_claim;
 mod seeded_actors;
 mod support;
@@ -168,6 +169,7 @@ fn fixture_task_fact() -> Vec<u8> {
             task_ref: entity(0x35),
             kind: crate::task_authority::TaskAuthorityFactKind::Owner,
             actor_ref: entity(0x31),
+            assigned_ref: None,
             occurred_at: 40,
         },
     )
@@ -268,15 +270,15 @@ fn batch_fixtures() -> Vec<BatchFixture> {
 const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     (
         "put",
-        "7ead77bf6ddab70220cce8c59eb8352cdda48a5df9be686e1a03a76c99ea648c",
+        "d19ef0dedc17b7a3d08d92338f38f764501603166499c402b58479e26cc855a7",
     ),
     (
         "put_habit_checkin",
-        "8b936130be9eb44d754196d954ddca88a49f93bb4a891a093939876c5d1fc8d2",
+        "0f1ef0d17c30f8f26b136b20224e80bcb9ebaf672faaa21d5c64e758e707dee7",
     ),
     (
         "edges",
-        "bfc5eb1422faa31e263861b987b38b42c080706637e0094c4b2ae4f05f24684e",
+        "f6eb2b00788648203176d314b0a3d2dd7ae006b1c9c56799606317e9c148a7f1",
     ),
     (
         "text",
@@ -292,30 +294,30 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "delete",
-        "f57afee9939ad92b59b75b3c91890b9bba0c3cda2b28d334b19da422bf2f2cee",
+        "db1d13e0a5b3c58da53c4e9d8fd1899f37c668727770302016dad4e46a2585e3",
     ),
     ("claim_candidate", CLAIM_CANDIDATE_DIGEST),
     (
         "put_internal",
-        "e4d242c9b3e6483ce43a753acbe117ca97681a9e57ff203544350336eb7be66d",
+        "88be088fff5e49968d84287b02a104aefd2db03208786200bfb85c80dd0f4857",
     ),
     (
         "put_task_fact",
-        "6fb47fae60c34fc0929c466e5d3656f6e19482ed39a1c341be4e6c5a63a9f5d8",
+        "6a8c18ae7bd4da2abd8f2443f37802a3da62ae610aacbde493ad53b3603f0cf9",
     ),
     (
         "put_authored_note",
-        "1548ea94abad9200e9c8717162f1fb4a276fd7fcec56b106001b2935af86cc65",
+        "c1411db395fcf1f23270fa51a7b5e3760dfae8cf87e44de166f75774d3e82a20",
     ),
 ];
 
 /// A `sync` build also queues the claim's embed job in the same batch.
 #[cfg(feature = "sync")]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "1fc461e743033c2b51add72fde31f8789b72e5b16fca44df69168de6dd17990f";
+    "196e42a78fa56c89222f1c1d823c5e90e4c839b90760be2c7a1566dcea6378bb";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "2ea5b9f3ef12c7a5bc16e456fadd2008a08c2433abce11f68ba0881e04306396";
+    "dd443e808094d95f9b88abcdcb077e85cf5773694548ef3eac91d811f0c2ea98";
 
 #[test]
 fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
@@ -351,6 +353,91 @@ fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
         .map(|(name, digest)| (*name, (*digest).to_owned()))
         .collect();
     assert_eq!(digests, pinned);
+    Ok(())
+}
+
+#[test]
+fn agent_birth_source_asset_inherits_batch_mask_on_both_terminals() -> Result<()> {
+    use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+    use crate::registry::ENTITY_TYPE_ASSET;
+
+    let agent = entity(0x58);
+    let source = crate::agent_def::birth_source_id(&agent)?;
+    let mask = entity(0x36);
+    let definition = AgentDefinition::new(
+        "fixture.masked-agent",
+        "Masked agent",
+        "1.0.0",
+        Some("Count carefully.\n".into()),
+        vec![],
+        vec![],
+        vec![],
+        None,
+        AgentScope::Base,
+        AgentCeiling::Auto,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::Generated,
+        1.0,
+        true,
+        false,
+        Value::Map(vec![(Value::from("fixture"), Value::from("masked-agent"))]),
+        None,
+        true,
+        None,
+    );
+    let body = crate::agent_def::encode_agent_definition(&definition)?;
+    let stamps = |vault: &Vault| -> Result<Vec<EntityId>> {
+        Ok(vault
+            .edges_out(&source)?
+            .into_iter()
+            .filter(|edge| edge.kind == EdgeKind::FacetOf)
+            .map(|edge| edge.target)
+            .collect())
+    };
+
+    for caller_txn in [false, true] {
+        let (_dir, vault) = deterministic_vault();
+        vault.put_entity(&mask, ENTITY_TYPE_FACET, test_time_range(1, 1), 2, b"mask")?;
+        assert_ne!(vault.default_facet()?, mask);
+        let batch = if caller_txn {
+            vault.batch_in()
+        } else {
+            vault.batch()
+        }
+        .mask(Some(mask))
+        .put(
+            &agent,
+            ENTITY_TYPE_AGENT_DEF,
+            test_time_range(10, 10),
+            11,
+            &body,
+        );
+        if caller_txn {
+            vault.with_write_txn(|txn| batch.apply(txn))?;
+        } else {
+            batch.commit()?;
+        }
+        assert_eq!(vault.get_entity_type(&source)?, Some(ENTITY_TYPE_ASSET));
+        assert_eq!(stamps(&vault)?, vec![mask]);
+    }
+
+    // Ordinary commit, without an explicit mask, stamps the source with
+    // the vault default rather than requiring caller attribution.
+    let (_dir, vault) = deterministic_vault();
+    vault
+        .batch()
+        .put(
+            &agent,
+            ENTITY_TYPE_AGENT_DEF,
+            test_time_range(10, 10),
+            11,
+            &body,
+        )
+        .commit()?;
+    assert_eq!(vault.get_entity_type(&source)?, Some(ENTITY_TYPE_ASSET));
+    assert_eq!(stamps(&vault)?, vec![vault.default_facet()?]);
     Ok(())
 }
 
@@ -483,7 +570,8 @@ fn put_in_own_txn(
                 write_policy: Some(&policy),
                 write_envelope: envelope,
                 hub_admission: None,
-                companion_retired_histories: None,
+                refinement_admission: None,
+                transition: None,
             },
         },
     )
@@ -864,6 +952,7 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
                             envelope: Some(&envelope),
                             auto_checker: None,
                             defer_metrics_until_commit: true,
+                            transition: None,
                         },
                         policy,
                         crate::gate::GateWriteMode {

@@ -14,6 +14,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_PSYCH_PROFILE;
 use crate::temporal::TimeRange;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 impl crate::Vault {
     /// Stores an engine-authored PsychProfile snapshot record.
@@ -62,6 +63,20 @@ impl crate::Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         decode_psych_profile_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// List-safe read: a deleted/archived profile is absent, while malformed
+    /// live profile bytes still fail closed in the same transaction snapshot.
+    pub fn get_live_psych_profile(&self, id: &EntityId) -> Result<Option<PsychProfile>> {
+        let txn = self.store.env.read_txn()?;
+        match live_entity_row_in_txn(&self.store, &txn, id)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_PSYCH_PROFILE,
+                body,
+            } => decode_psych_profile_body(&body).map(Some),
+            LiveEntityRow::Live { entity_type, .. } => Err(Error::InvalidEntityType(entity_type)),
+            LiveEntityRow::Absent | LiveEntityRow::DeletedShell => Ok(None),
+        }
     }
 
     /// Returns a typed missing/fresh/stale state for a PsychProfile snapshot.

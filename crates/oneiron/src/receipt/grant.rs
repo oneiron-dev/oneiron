@@ -170,7 +170,12 @@ pub(super) fn access_grant_receipts(
         "access grant type index",
         |id, _header, body| {
             let grant = decode_access_grant_body(body)?;
-            if matches!(grant.scope, AccessGrantScope::SharedBrief { .. }) {
+            // A vault-wide receipt would disclose an Empty-scope diary pair.
+            // This exact-pair grant has no general receipt projection.
+            if matches!(
+                grant.scope,
+                AccessGrantScope::SharedBrief { .. } | AccessGrantScope::DiaryCoreference { .. }
+            ) {
                 return Ok(());
             }
             let created = access_grant_receipt(id, &grant, grant.created_at, "active", "created");
@@ -487,6 +492,9 @@ fn append_access_grant_scope_fields(
             fields.insert("calendar_ref".to_owned(), calendar_ref.to_hex());
             fields.insert("rung".to_owned(), rung.as_str().to_owned());
         }
+        AccessGrantScope::DiaryCoreference { .. } => {
+            unreachable!("private diary grants have no vault-wide receipt projection")
+        }
     }
 }
 
@@ -504,6 +512,10 @@ fn append_outbound_grant_scope_fields(
             fields.insert("identity_ref".to_owned(), identity_ref.to_hex());
             fields.insert("envelope_ref".to_owned(), envelope_ref.to_hex());
             fields.insert("verb_class".to_owned(), verb_class.clone());
+        }
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => {
+            fields.insert("scope".to_owned(), "artifact_publish".to_owned());
+            fields.insert("artifact".to_owned(), artifact.clone());
         }
         StandingOutboundGrantScope::Contact { contact_ref } => {
             fields.insert("scope".to_owned(), "contact".to_owned());
@@ -577,6 +589,10 @@ fn append_federation_scope_fields(
         FederationGrantScope::Vault { vault_id } => {
             fields.insert("scope".to_owned(), "vault".to_owned());
             fields.insert("vault_id".to_owned(), vault_id.to_string());
+        }
+        FederationGrantScope::Ask { ask_ref } => {
+            fields.insert("scope".to_owned(), "ask".to_owned());
+            fields.insert("ask_ref".to_owned(), ask_ref.to_hex());
         }
     }
 }

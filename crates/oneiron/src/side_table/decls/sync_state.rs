@@ -16,6 +16,8 @@ side_tables! {
     AUTH_REVOKED_TOKEN_JTI: SyncState b"auth:revoked-token-jti:" Raw;
     /// First-seen sidecars per authority entry hash, plus the 'backfill:v1' and 'clock_floor' rows.
     /// Key: string.
+    /// Snapshot-local generation of the authority fold cache. Key: ().
+    AUTHORITY_CACHE_GENERATION: SyncState b"authlog:cache_generation:v1" Raw;
     AUTHLOG_FIRST_SEEN_SIDECAR: SyncState b"authlog:first_seen:" Raw;
     /// One recorded OF-520 ingest-burst check (24 bytes), raised once per peer per observation
     /// window. Key: hex64 ":" u64hex16.
@@ -35,6 +37,8 @@ side_tables! {
     /// Cached minted host-root capability-slip token ("v2.slip."+hex(JSON)) for one host signing key.
     /// Key: `:` + hex.
     AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
+    /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
+    AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
     /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
     /// Key: hex64.
     AUTHORITY_PAIRING_PENDING: SyncState b"authority:pairing:" LegacyJson;
@@ -54,6 +58,14 @@ side_tables! {
     SYNC_D_ROOT: SyncState b"d:root" Raw;
     /// A sync window's document snapshot (document family). Key: yyyy-mm (window key).
     WINDOW_SNAPSHOT: SyncState b"d:w:" Raw;
+    /// Deferred ChildOf candidate, keyed by window, source and target. Key: yyyy-mm ":" hex32 ":" hex32.
+    DEFERRED_CHILD_OF: SyncState b"dc:w:" Raw;
+    /// Endpoint index for a deferred ChildOf candidate. Key: hex32 ":" full dc:w: key.
+    DEFERRED_CHILD_OF_ENDPOINT: SyncState b"de:" Raw;
+    /// Dependency index for a deferred Parent candidate. Key: kind ":" hex32 ":" full dp:w: key.
+    DEFERRED_PARENT_DEPENDENCY: SyncState b"di:" Raw;
+    /// Deferred Parent candidate, keyed by window, source and target. Key: yyyy-mm ":" hex32 ":" hex32.
+    DEFERRED_PARENT: SyncState b"dp:w:" Raw;
     /// Per-entity text-document subscription row replayed as a REQUEST frame on every reconnect. Key:
     /// hex32 (entity id).
     SYNC_DS_E: SyncState b"ds:e:" Raw;
@@ -88,6 +100,10 @@ side_tables! {
     /// Cached HTTP response (status, headers, body) for one Idempotency-Key replay within its 24h
     /// TTL, keyed by principal and header value. Key: hex ":" hex (principal, idempotency key).
     HTTP_IDEMPOTENCY_REPLY: SyncState b"http:idempotency:" LegacyCompact;
+    /// Local evidence that a soft delete was applied; outlives the `pt:` propagation intent so an
+    /// out-of-order proposal cancellation never settles against a live entity. Presence-only,
+    /// empty value. Key: hex32 (entity id).
+    DELETION_IDENTITY_SOFT_DELETE_MARKER: SyncState b"it:deleted:" Raw;
     /// Durable provenance row (source/tier/thread/message/surface-event) for one ingested LinkedIn
     /// message. Key: hex16 (same hash as the seen marker).
     LINKEDIN_INBOX_SYNC_PROVENANCE: SyncState b"linkedin:inbox_sync:provenance:v1:" LegacyJson;
@@ -132,6 +148,12 @@ side_tables! {
     RC42_WIRE_MANIFEST: SyncState b"manifest:rc42:wire-observation:v1" Named;
     /// Maps a legacy policy-manifest id forward to its re-authored replacement id. Key: hex32.
     GATE_MANIFEST_REKEY: SyncState b"manifest:rekey:" Raw;
+    /// Body hash (blake3, 32 bytes) proving an authenticated vault owner authored a retention
+    /// override manifest; any generic write of the manifest clears it. Key: hex32.
+    GATE_MANIFEST_RETENTION_HOLDER: SyncState b"manifest:retention-holder:" Raw;
+    /// Body hash (blake3, 32 bytes) of an engine-seeded default policy manifest; an owner write
+    /// clears it. Key: hex32.
+    GATE_MANIFEST_SEEDED_CONFIDENCE: SyncState b"manifest:seeded_confidence:" Raw;
     /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
     /// Key: hex32.
     GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;
@@ -157,6 +179,8 @@ side_tables! {
     /// Deduplicated marker (single byte) recording which sync window a promoted turn's replayed
     /// closure spans, picked up by later sync replay. Key: yyyy-mm ":" hex32.
     OFF_RECORD_PROMOTE_PICKUP_MARKER: SyncState b"pm:" Raw;
+    /// Source index for a deferred Parent candidate. Key: hex32 ":" full dp:w: key.
+    DEFERRED_PARENT_SOURCE: SyncState b"ps:" Raw;
     /// Pending tombstone propagation marker. Key: yyyy-mm ":" hex32.
     DELETION_PENDING_TOMBSTONE: SyncState b"pt:" Raw;
     /// Durable unacknowledged local text-document edit frame, cleared once the peer's VV proves
@@ -174,6 +198,10 @@ side_tables! {
     /// Sidecar on a rm:w: marker proving it originated from replay/quarantine (not a delete-safety
     /// purge failure), so terminal quarantine may discharge it. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REPLAY_REMAT_MARKER_PROVENANCE: SyncState b"rmp:w:" Raw;
+    /// Deferred SpawnedBy anchor, keyed by window, session and turn. Key: yyyy-mm ":" hex32 ":" hex32.
+    DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw;
+    /// Endpoint index for a deferred SpawnedBy anchor. Key: hex32 ":" full sa:w: key.
+    DEFERRED_SPAWNED_BY_ENDPOINT: SyncState b"se:" Raw;
     /// An entity document's shallow-since version vector (document family). Key: hex32 (NOTE head
     /// id).
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
@@ -202,6 +230,10 @@ side_tables! {
     /// reached only from `#[cfg(test)]` code under `api/tests/`). Same
     /// rationale as `TEST_API_SLIP_CACHE`. Key: hex64 (blake3 of the label).
     TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw;
+    /// Request-bound reservation fencing topology writes on an entity between tombstone
+    /// publication and purge (34 bytes: phase, request id, reason, deleted_at LE, window_ts LE).
+    /// Key: hex32 (entity id).
+    DELETION_TOPOLOGY_DELETE_INTENT: SyncState b"topology-delete-intent:" Raw;
     /// One pending update of an entity document (document family). Key: hex32 (entity id) ":" hex8
     /// (sequence).
     DOCUMENT_UPDATE: SyncState b"u:e:" Raw;

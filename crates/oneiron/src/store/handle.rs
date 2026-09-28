@@ -106,6 +106,11 @@ pub struct RawDatabases {
 /// owner's always-on drop assertion enforces this at runtime; the session
 /// lifecycle drains leases before releasing its owner-bound handle.
 pub struct StoreCore {
+    /// Exterior key custody binding. On restore this remains the source vault's
+    /// canonical path; it is never reset to the new LMDB image's location.
+    pub(in crate::store) gate_custody_root: std::path::PathBuf,
+    /// Exterior retirement cannot race a live snapshot's decision decrypt.
+    pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
     pub(crate) env: Env,
@@ -125,16 +130,28 @@ pub struct StoreCore {
     /// A telemetry storage failure disables subsequent base-ledger writes for
     /// this vault handle. No process-global state or cross-vault kill switch.
     pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
+    pub(in crate::store) retrieval_telemetry_capture: bool,
+    #[cfg(target_os = "linux")]
+    pub(in crate::store) retrieval_telemetry_lease:
+        Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,
     /// This vault's monotonic authority first-seen observation clock. It dies
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
+    /// Exact fold of one committed authority generation and observation context.
+    pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
     pub(crate) clock: crate::ports::StoreClock,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
     pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    /// Content-free, per-vault digest deadline invalidation. The host
+    /// subscribes before reading its first deadline; no process-global timer.
+    pub(crate) proactivity_updates: tokio::sync::watch::Sender<u64>,
+    /// A failed digest lane stays quiet until a committed relevant change.
+    /// This is per-vault, content-free and never gates unrelated deadlines.
+    pub(crate) proactivity_suspended: Mutex<Option<u64>>,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
@@ -167,13 +184,12 @@ pub struct StoreOwner {
     /// invariant; see [`StoreCore`].
     pub(in crate::store) core: Weak<StoreCore>,
     /// Sole owner of the environment's close-on-last-clone semantics
-    /// (ONE-1142).
-    #[expect(
-        dead_code,
-        reason = "held for Drop only: OwnedEnv's close-on-last-clone must fire \
-                  before _registered_path releases the vault root (ONE-1142)"
-    )]
+    /// (ONE-1142). Unix LFS staging reads its bound root descriptor.
+    #[cfg(unix)]
     pub(in crate::store) env: OwnedEnv,
+    /// Same drop-order ownership on targets without descriptor-based staging.
+    #[cfg(not(unix))]
+    pub(in crate::store) _env: OwnedEnv,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
     // has closed the LMDB environment — a reopen racing this drop can never
@@ -375,6 +391,7 @@ macro_rules! manifest_dbs {
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
             fn clock(&self) -> &crate::ports::StoreClock;
+            fn gate_key_root(&self) -> &std::path::Path;
         }
 
         impl ManifestDbs for Store {
@@ -382,6 +399,7 @@ macro_rules! manifest_dbs {
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -389,6 +407,7 @@ macro_rules! manifest_dbs {
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
         }
     };
 }
@@ -471,6 +490,11 @@ pub(super) fn seed_default_policy_manifest_in_txn(
         &crate::gate::trusted_manifest_key(id),
         blake3::hash(&body).as_bytes(),
     )?;
+    sync_state.put(
+        wtxn,
+        &crate::gate::seeded_manifest_key(id),
+        blake3::hash(&body).as_bytes(),
+    )?;
     type_index.put(
         wtxn,
         &Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, id),
@@ -482,9 +506,25 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 }
 
 impl Store {
-    /// Upload staging shares the registered vault root and its storage budget.
-    pub(crate) fn lfs_staging_directory(&self) -> std::path::PathBuf {
-        self.owner._registered_path.path.join("lfs-staging")
+    /// Upload staging is anchored to the root held by this environment.
+    pub(crate) fn lfs_staging_file(&self) -> Result<std::fs::File> {
+        #[cfg(unix)]
+        {
+            let root = self
+                .owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
+            super::root_directory::lfs_staging_file(root)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+            Err(Error::InvalidConfig(
+                "lfs staging requires a descriptor-bound vault root".to_owned(),
+            ))
+        }
     }
 
     /// Captures one segment-aware snapshot and applies it to every database

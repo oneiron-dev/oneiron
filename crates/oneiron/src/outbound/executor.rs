@@ -10,7 +10,7 @@ use super::dispatch_types::{
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::receipt_fields::append_connector_task_window_receipt;
-use super::retry_audit::persist_failed_send_receipt_and_retry;
+use super::retry_audit::{persist_failed_send_receipt_and_retry, settle_suppressed_send};
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
@@ -73,13 +73,17 @@ impl Vault {
         let queue = AttemptQueue::new(self);
         let mut executed = 0_usize;
         loop {
-            let attempt = match queue.claim_kind(
-                crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
-                ClaimAttempt {
-                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                    now,
-                },
-            )? {
+            let attempt = match self.with_write_txn(|txn| {
+                crate::ports::JobQueue::port_job_claim(
+                    self,
+                    txn,
+                    Some(crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND),
+                    ClaimAttempt {
+                        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                        now,
+                    },
+                )
+            })? {
                 ClaimOutcome::Empty => break,
                 ClaimOutcome::Claimed(attempt) => attempt,
             };
@@ -88,7 +92,7 @@ impl Vault {
                     Ok(payload) => payload,
                     Err(_) => {
                         fail_connector_task_attempt(
-                            &queue,
+                            self,
                             &attempt,
                             now,
                             "invalid_attempt_payload",
@@ -99,7 +103,7 @@ impl Vault {
             let task_ref = match EntityId::from_hex(&payload.task_ref) {
                 Ok(task_ref) => task_ref,
                 Err(_) => {
-                    fail_connector_task_attempt(&queue, &attempt, now, "invalid_task_ref")?;
+                    fail_connector_task_attempt(self, &attempt, now, "invalid_task_ref")?;
                     continue;
                 }
             };
@@ -111,14 +115,14 @@ impl Vault {
                     ConnectorSendTaskOutcome::Delivered,
                     now,
                 )?;
-                complete_connector_task_attempt(&queue, &attempt, now)?;
+                complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
 
             let task = match self.connector_send_task(&task_ref) {
                 Ok(Some(task)) => task,
                 Ok(None) | Err(_) => {
-                    fail_connector_task_attempt(&queue, &attempt, now, "invalid_connector_task")?;
+                    fail_connector_task_attempt(self, &attempt, now, "invalid_connector_task")?;
                     continue;
                 }
             };
@@ -171,6 +175,9 @@ impl Vault {
             if task.human_explicit_instant {
                 request = request.delivery_window_human_explicit_instant();
             }
+            if let Some(party) = task.counterparty_ref.as_deref() {
+                request = request.counterparty_ref(party);
+            }
             if let Some(session_ref) = originating_session_ref {
                 request = request.originating_session(session_ref);
             }
@@ -188,11 +195,14 @@ impl Vault {
                 task.actor_class,
             ) {
                 Ok(result) => result,
-                Err(OutboundDispatchError::InvalidBoundActor) => {
+                Err(
+                    OutboundDispatchError::InvalidBoundActor
+                    | OutboundDispatchError::ObsoleteAskConfirmation,
+                ) => {
                     // Bound-actor validation fails before the chokepoint admits,
                     // charges, or sends the effect, so this is a definite
                     // non-delivery: fail the attempt terminally and project it.
-                    fail_connector_task_attempt(&queue, &attempt, now, "dispatch_rejected")?;
+                    fail_connector_task_attempt(self, &attempt, now, "dispatch_rejected")?;
                     project_connector_send_task_outcome(
                         self,
                         task_ref,
@@ -223,6 +233,17 @@ impl Vault {
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
                     append_connector_task_window_receipt(&mut result.receipt, &task);
+                    // Provider receipt fields cannot claim a PERSON binding the
+                    // scheduler did not freeze on the TASK. Only that binding
+                    // may feed the comm projector after durable delivery.
+                    if let Some(party) = task.counterparty_ref.as_ref() {
+                        result
+                            .receipt
+                            .fields
+                            .insert("counterparty_ref".to_owned(), party.clone());
+                    } else {
+                        result.receipt.fields.remove("counterparty_ref");
+                    }
                     let delivered_idempotency =
                         idempotency_key.as_deref().map(|key| (task.actor_ref, key));
                     if persist_send_receipt(
@@ -241,7 +262,7 @@ impl Vault {
                         ConnectorSendTaskOutcome::Delivered,
                         now,
                     )?;
-                    complete_connector_task_attempt(&queue, &attempt, now)?;
+                    complete_connector_task_attempt(self, &attempt, now)?;
                 }
                 OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
                     // The door supplies a window-edge retry_at when it knows one;
@@ -283,7 +304,16 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
-                    fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
+                    if result.receipt.fields.get("suppression").map(String::as_str)
+                        == Some("dedupe")
+                    {
+                        // The common door already committed the single durable,
+                        // replicated receipt. Settle only this TASK and queue,
+                        // atomically honoring any delivered winner.
+                        settle_suppressed_send(self, &attempt, task_ref, now)?;
+                        continue;
+                    }
+                    fail_connector_task_attempt(self, &attempt, now, result.outcome.as_str())?;
                     project_connector_send_task_outcome(
                         self,
                         task_ref,
@@ -352,7 +382,7 @@ impl Vault {
                             false,
                             None,
                         )?;
-                        fail_connector_task_attempt(&queue, &attempt, now, "transport_failed")?;
+                        fail_connector_task_attempt(self, &attempt, now, "transport_failed")?;
                         project_connector_send_task_outcome(
                             self,
                             task_ref,
@@ -386,32 +416,44 @@ fn connector_logical_send_intent_ref(task: &ConnectorSendTask) -> String {
 }
 
 fn complete_connector_task_attempt(
-    queue: &AttemptQueue<'_>,
+    vault: &Vault,
     attempt: &crate::attempt_queue::AttemptRecord,
     now: u64,
 ) -> Result<(), Error> {
-    match queue.complete(CompleteAttempt {
-        id: attempt.id,
-        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-        attempt_count: attempt.attempt_count,
-        now,
+    match vault.with_write_txn(|txn| {
+        crate::ports::JobQueue::port_job_complete(
+            vault,
+            txn,
+            CompleteAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now,
+            },
+        )
     })? {
         CompleteOutcome::Completed(_) | CompleteOutcome::AlreadyCompleted(_) => Ok(()),
     }
 }
 
 fn fail_connector_task_attempt(
-    queue: &AttemptQueue<'_>,
+    vault: &Vault,
     attempt: &crate::attempt_queue::AttemptRecord,
     now: u64,
     reason: &str,
 ) -> Result<(), Error> {
-    queue.fail(FailAttempt {
-        id: attempt.id,
-        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-        attempt_count: attempt.attempt_count,
-        reason: reason.to_owned(),
-        now,
+    vault.with_write_txn(|txn| {
+        crate::ports::JobQueue::port_job_fail(
+            vault,
+            txn,
+            FailAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                reason: reason.to_owned(),
+                now,
+            },
+        )
     })?;
     Ok(())
 }

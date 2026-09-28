@@ -3,6 +3,7 @@
 use super::subscriptions::{LiveQueries, LiveQuerySource, Push};
 use super::*;
 use crate::server::SyncServer;
+use oneiron::memory::{MemorySubscriptionOwner, ScopedView};
 use oneiron::sync::bridge::LiveQueryTee;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -85,6 +86,24 @@ impl Hub {
         }
     }
 
+    /// Indexed publication happens after the vault transaction commits, not
+    /// in Observer B. Feed only the published entity ids through the existing
+    /// dependency index; neither unindexed edits nor raw documents are pushed.
+    pub(crate) fn indexed_published(&self, publications: &[oneiron::memory::IndexedPublication]) {
+        let sessions: Vec<_> = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .map(|session| Arc::clone(&session.queries))
+            .collect();
+        for publication in publications {
+            for queries in &sessions {
+                queries.on_indexed_published(*publication);
+            }
+        }
+    }
+
     fn session(
         &self,
         auth: &CoreAuth,
@@ -107,6 +126,10 @@ impl Hub {
             ));
         }
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
+        let limits = server
+            .vault()
+            .policy_livequery_tracker_limits(auth.principal_ref())
+            .map_err(|_| AppError::internal_server_error("livequery tracker policy refused"))?;
         let document = oneiron::EntityId::now().to_hex();
         let session_budget = super::budget::Budget::new(super::budget::SESSION_BYTES);
         let source: Arc<dyn LiveQuerySource> = Arc::new(super::source::BoundSource::with_budgets(
@@ -121,6 +144,7 @@ impl Hub {
             source,
             session_budget,
             self.budget.clone(),
+            limits,
         ));
         let tee: Arc<dyn LiveQueryTee> = queries.clone();
         server
@@ -158,6 +182,34 @@ impl Hub {
                 }),
             );
         queries
+    }
+}
+
+// The socket keeps channel, cursor and origin; the engine facade supplies the
+// actor-bound subscription verb without taking ownership of socket state.
+struct SocketOwner<'a> {
+    queries: &'a LiveQueries,
+    channel: Channel,
+    cursor: Option<Cursor>,
+    origin: Option<String>,
+}
+
+impl MemorySubscriptionOwner for SocketOwner<'_> {
+    type Delivery = Vec<Push>;
+    type Error = AppError;
+
+    fn open(&self, id: u64, view: ScopedView) -> Result<Self::Delivery, Self::Error> {
+        self.queries.open(
+            id,
+            view,
+            self.channel,
+            self.cursor.as_ref(),
+            self.origin.clone(),
+        )
+    }
+
+    fn close(&self, id: u64) -> Result<(), Self::Error> {
+        self.queries.close(id)
     }
 }
 
@@ -218,7 +270,43 @@ impl Connection {
             return Err(AppError::not_found("subscription", None));
         }
         let closing = matches!(&request, SubRequest::Close { .. });
-        let pushes = session.queries.control(request)?;
+        let pushes = match request {
+            SubRequest::Open {
+                scoped_view,
+                channel,
+                cursor,
+                origin,
+                ..
+            } => {
+                let server = self.hub.server.upgrade().ok_or_else(unavailable)?;
+                let memory = bound_memory(server.vault(), auth)?;
+                memory.subscribe(
+                    &SocketOwner {
+                        queries: &session.queries,
+                        channel,
+                        cursor,
+                        origin,
+                    },
+                    id,
+                    scoped_view,
+                )?
+            }
+            SubRequest::Close { .. } => {
+                let server = self.hub.server.upgrade().ok_or_else(unavailable)?;
+                let memory = bound_memory(server.vault(), auth)?;
+                memory.unsubscribe(
+                    &SocketOwner {
+                        queries: &session.queries,
+                        channel: Channel::View,
+                        cursor: None,
+                        origin: None,
+                    },
+                    id,
+                )?;
+                Vec::new()
+            }
+            request => session.queries.control(request)?,
+        };
         if opening {
             self.active.insert(id);
             self.sent.remove(&id);

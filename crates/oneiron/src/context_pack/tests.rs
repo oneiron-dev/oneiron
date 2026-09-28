@@ -87,7 +87,9 @@ fn mcp_context_pack_ref_rejects_blank_fields_and_noncanonical_results() {
 }
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(embedding_test_config())
+    let mut config = embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    crate::test_util::open_test_vault_with(config)
 }
 
 fn msgpack_entity(fields: serde_json::Value) -> Vec<u8> {
@@ -286,117 +288,6 @@ fn memories_section_routes_asset_rows_by_ref_without_local_downgrade() {
     assert_eq!(asset_row.asset_ref.as_deref(), Some("as15:51"));
     assert_eq!(asset_text_row.asset_ref.as_deref(), Some("tx10:52"));
     assert_eq!(asset_row.entity_type, ENTITY_TYPE_ASSET);
-}
-
-#[test]
-fn companion_register_api_context_pack_retrieves_affect_without_private_note_leak() -> Result<()> {
-    let (_tmp, vault) = open_test_vault();
-    let private_note = "private-companion-note-one1219";
-    let private_provenance = "private-provenance-one1219";
-    let companion_id = EntityId::from_bytes_unchecked([0x71; 16]);
-    let turn_id = EntityId::from_bytes_unchecked([0x72; 16]);
-
-    let provenance = crate::CompanionProvenance::new(
-        EntityId::from_bytes_unchecked([0x73; 16]),
-        crate::EdgeActorClass::Agent,
-        crate::ClaimSource::UserStated,
-        crate::ClaimApprovalStatus::Approved,
-        crate::companion_value_from_json(
-            &serde_json::json!({ "source": "fixture", "note": private_provenance }),
-        )?,
-    );
-    let record = crate::CompanionRecord::persona(
-        crate::CompanionScope::personal(EntityId::from_bytes_unchecked([0x74; 16])),
-        EntityId::from_bytes_unchecked([0x75; 16]),
-        crate::companion_value_from_json(&serde_json::json!({ "note": private_note }))?,
-        provenance,
-        crate::federation::Sensitivity::Restricted,
-    );
-    vault.create_companion_record(&companion_id, &record, 20)?;
-    vault
-        .batch()
-        .text(&companion_id, &[("body", private_note)])
-        .commit()?;
-
-    put_text_entity(
-        &vault,
-        &turn_id,
-        crate::registry::ENTITY_TYPE_TURN,
-        "turn affect retrieval needle",
-        serde_json::json!({
-            "txt": "turn affect retrieval needle",
-            "spkr": "user",
-            "at": 21_u64
-        }),
-    )?;
-    vault.annotate_turn_vad(
-        &turn_id,
-        crate::VadAnnotation::new(
-            crate::Vad {
-                valence: 0.2,
-                arousal: 0.3,
-                dominance: 0.4,
-            },
-            crate::VadAnnotationSource::ModelInference,
-            22,
-        )?,
-    )?;
-
-    let private_pack = vault.context_pack().search_text(private_note, 10).run()?;
-    let companion = private_pack
-        .results
-        .iter()
-        .find(|entity| entity.id == companion_id)
-        .expect("indexed companion record should hydrate");
-    let fields = companion.fields.as_ref().expect("companion fields");
-    assert!(
-        !fields.contains_key("value"),
-        "context-pack must not expose opaque private companion value"
-    );
-    let events = fields
-        .get("lifecycle_events")
-        .and_then(serde_json::Value::as_array)
-        .expect("lifecycle events array");
-    let created = events
-        .iter()
-        .find(|event| event.get("kind").and_then(serde_json::Value::as_str) == Some("created"))
-        .expect("created lifecycle event");
-    assert!(
-        created.get("at").is_some_and(serde_json::Value::is_number),
-        "created lifecycle event carries a numeric timestamp"
-    );
-    assert!(
-        fields
-            .get("provenance")
-            .and_then(|value| value.get("value"))
-            .is_none(),
-        "context-pack must not expose opaque provenance payloads"
-    );
-    assert!(
-        !serde_json::to_string(fields)
-            .expect("fields serialize")
-            .contains(private_note),
-        "context-pack metadata must not leak private note text"
-    );
-    assert!(
-        !serde_json::to_string(fields)
-            .expect("fields serialize")
-            .contains(private_provenance),
-        "context-pack metadata must not leak private provenance text"
-    );
-
-    let affect_pack = vault
-        .context_pack()
-        .search_text("turn affect retrieval needle", 10)
-        .run()?;
-    assert!(
-        affect_pack
-            .results
-            .iter()
-            .any(|entity| entity.id == turn_id),
-        "companion register tuning must not block affect-bearing turn retrieval"
-    );
-    Ok(())
 }
 
 #[test]
@@ -2717,6 +2608,8 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        None,
+        None,
     )?;
     assert_eq!(finalized_run_id, Some(run_id));
 
@@ -2882,6 +2775,8 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        None,
+        None,
     )?;
 
     assert_eq!(
@@ -2957,6 +2852,8 @@ fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        None,
+        None,
     )
     .expect_err("a room's failed finalize fails the retrieval");
     assert_eq!(
@@ -3269,6 +3166,18 @@ fn put_disclosure_claim(
     text: &str,
     band: Option<&str>,
 ) {
+    put_disclosure_claim_in_world(vault, id, subject, predicate, text, band, None);
+}
+
+fn put_disclosure_claim_in_world(
+    vault: &Vault,
+    id: &EntityId,
+    subject: EntityId,
+    predicate: &str,
+    text: &str,
+    band: Option<&str>,
+    world: Option<EntityId>,
+) {
     let mut body = crate::claim::ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
@@ -3278,6 +3187,7 @@ fn put_disclosure_claim(
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    body.world = world;
     if let Some(band) = band {
         body.scope = Some(rmpv::Value::Map(vec![(
             rmpv::Value::from("sensitivity"),
@@ -3297,6 +3207,16 @@ fn put_disclosure_claim(
         .text(id, &[("body", text)])
         .commit()
         .expect("put claim");
+}
+
+// Clearance for the base world (or an explicit set of record worlds).
+fn disclosure_world_clearance(
+    worlds: impl IntoIterator<Item = EntityId>,
+) -> crate::federation::Scope {
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(worlds.into_iter().map(ScopeId).collect());
+    scope
 }
 
 fn pack_ids(pack: &ContextPack) -> Vec<EntityId> {
@@ -3370,10 +3290,21 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     );
     put_disclosure_turn(&vault, &marked, "owner marked private needle");
     vault.set_disclosure_tier_a(&marked, 100)?;
-    put_disclosure_turn(&vault, &diary, "private diary entry needle");
+    put_disclosure_claim_in_world(
+        &vault,
+        &diary,
+        party,
+        "event.diary",
+        "private diary entry needle",
+        Some("private"),
+        Some(disclosure_id(0xF1)),
+    );
 
-    let scope =
-        crate::disclosure::DisclosureScope::task_scoped("party planning", vec![party], 100)?;
+    let scope = crate::disclosure::DisclosureScope::new(
+        disclosure_world_clearance([crate::claim::base_world_id()]),
+        "party planning",
+        100,
+    )?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
@@ -3389,13 +3320,13 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     assert!(surfaced.contains(&party), "in-scope party event surfaces");
     assert!(
         surfaced.contains(&party_fact),
-        "claims about the allowlisted party are the payload"
+        "claims within the shared base world are the payload"
     );
     for (id, label) in [
         (off_record, "off-record turn"),
         (band2, "band-2 claim"),
         (marked, "owner-marked turn"),
-        (diary, "tier-B out-of-scope turn"),
+        (diary, "tier-B out-of-world claim"),
     ] {
         assert_id_absent_everywhere(&pack, &id, label);
     }
@@ -3435,10 +3366,22 @@ fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()>
     let party = disclosure_id(0x57);
     let diary = disclosure_id(0xD8);
     put_disclosure_turn(&vault, &party, "party summary needle2");
-    put_disclosure_turn(&vault, &diary, "private diary tangent");
+    put_disclosure_claim_in_world(
+        &vault,
+        &diary,
+        party,
+        "event.diary",
+        "private diary tangent",
+        Some("private"),
+        Some(disclosure_id(0xF2)),
+    );
     vault.put_edge(&party, crate::edge::EdgeKind::Mentions, &diary, 0.9)?;
 
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
+    let scope = crate::disclosure::DisclosureScope::new(
+        disclosure_world_clearance([crate::claim::base_world_id()]),
+        "party",
+        100,
+    )?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
@@ -3453,7 +3396,7 @@ fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()>
     assert!(pack_ids(&pack).contains(&party));
     assert!(
         pack.neighbors.is_empty(),
-        "tier-B out-of-scope 1-hop neighbor must be absent"
+        "tier-B out-of-world 1-hop neighbor must be absent"
     );
     assert_id_absent_everywhere(&pack, &diary, "out-of-scope edge neighbor");
 
@@ -3503,7 +3446,8 @@ fn n7_owner_drop_flips_on_next_assembly_with_no_sticky_state() -> Result<()> {
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
     let diary = disclosure_id(0xDA);
     put_disclosure_turn(&vault, &diary, "tier b private memory needle7");
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![], 100)?;
+    let scope =
+        crate::disclosure::DisclosureScope::new(crate::federation::Scope::default(), "party", 100)?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
 
     // Assembly 1 — supervised: Tier B present.
@@ -3547,17 +3491,52 @@ fn n8_disjoint_scopes_intersect_most_restrictive_wins() -> Result<()> {
     let event_a = disclosure_id(0xDB);
     let event_b = disclosure_id(0xDC);
     let event_c = disclosure_id(0xDD);
-    put_disclosure_turn(&vault, &event_a, "event alpha needle8");
-    put_disclosure_turn(&vault, &event_b, "event beta needle8");
-    put_disclosure_turn(&vault, &event_c, "event gamma needle8");
+    let base = crate::claim::base_world_id();
+    let world_a = disclosure_id(0xF3);
+    let world_c = disclosure_id(0xF4);
+    put_disclosure_claim_in_world(
+        &vault,
+        &event_a,
+        event_a,
+        "event.alpha",
+        "event alpha needle8",
+        Some("public"),
+        Some(world_a),
+    );
+    put_disclosure_claim_in_world(
+        &vault,
+        &event_b,
+        event_b,
+        "event.beta",
+        "event beta needle8",
+        Some("public"),
+        None,
+    );
+    put_disclosure_claim_in_world(
+        &vault,
+        &event_c,
+        event_c,
+        "event.gamma",
+        "event gamma needle8",
+        Some("public"),
+        Some(world_c),
+    );
 
     vault.set_counterparty_disclosure_scope(
         &contact_a,
-        &crate::disclosure::DisclosureScope::task_scoped("ab", vec![event_a, event_b], 100)?,
+        &crate::disclosure::DisclosureScope::new(
+            disclosure_world_clearance([world_a, base]),
+            "ab",
+            100,
+        )?,
     )?;
     vault.set_counterparty_disclosure_scope(
         &contact_b,
-        &crate::disclosure::DisclosureScope::task_scoped("bc", vec![event_b, event_c], 100)?,
+        &crate::disclosure::DisclosureScope::new(
+            disclosure_world_clearance([base, world_c]),
+            "bc",
+            100,
+        )?,
     )?;
 
     let ctx = DisclosureContext::resolve(
@@ -3592,10 +3571,10 @@ fn n10_tier_a_never_traversed_into_even_from_in_scope_seed() -> Result<()> {
     put_disclosure_turn(&vault, &vaulted, "reachable only by edge");
     vault.put_edge(&party, crate::edge::EdgeKind::Mentions, &vaulted, 0.9)?;
     // The target is IN scope but owner-marked Tier A: tier supremacy blocks
-    // the walk regardless of the allowlist (I2).
+    // the walk regardless of the Scope (I2).
     vault.set_disclosure_tier_a(&vaulted, 100)?;
     let scope =
-        crate::disclosure::DisclosureScope::task_scoped("party", vec![party, vaulted], 100)?;
+        crate::disclosure::DisclosureScope::new(crate::federation::Scope::top(), "party", 100)?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
 
     let ctx = absence_ctx_for_contact(&vault, contact_id);
@@ -3715,8 +3694,20 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
     let party = disclosure_id(0xE4);
     let diary = disclosure_id(0xE5);
     put_disclosure_turn(&vault, &party, "party trace needle25");
-    put_disclosure_turn(&vault, &diary, "private trace needle25");
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
+    put_disclosure_claim_in_world(
+        &vault,
+        &diary,
+        party,
+        "event.diary",
+        "private trace needle25",
+        Some("private"),
+        Some(disclosure_id(0xF5)),
+    );
+    let scope = crate::disclosure::DisclosureScope::new(
+        disclosure_world_clearance([crate::claim::base_world_id()]),
+        "party",
+        100,
+    )?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
 
     // Control: an owner-alone assembly with capture on records a stage trace.
@@ -3731,6 +3722,8 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
         record.trace.is_some(),
         "owner-alone trace capture stays unchanged"
     );
+    assert!(record.replay_inputs.is_some());
+    assert!(record.pack_output.is_some());
 
     // Clamped assembly: NO stage trace exists at all, so per_channel, fused,
     // blended, and reranked can never retain ids the clamp removed.
@@ -3747,6 +3740,8 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
         record.trace.is_none(),
         "a clamped assembly persists no retrieval stage trace"
     );
+    assert!(record.replay_inputs.is_none());
+    assert!(record.pack_output.is_none());
     // The finalized telemetry record itself carries only post-clamp ids.
     assert!(record.result_ids.contains(party.as_bytes()));
     assert!(
@@ -4444,5 +4439,176 @@ fn live_memories_keep_foreign_world_fences_without_edges() -> Result<()> {
         assert!(guest_text.contains("tier=index-only"));
         assert!(!guest_text.contains("\"v\""));
     }
+    Ok(())
+}
+
+#[test]
+fn non_default_pack_replay_config_matches_neighbors_vectors_and_serialized_bytes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let (root, child, leaf) = (EntityId::now(), EntityId::now(), EntityId::now());
+    let body = msgpack_entity(serde_json::json!({
+        "txt": "replay-root-marker", "spkr": "user", "at": 1_u64,
+    }));
+    vault
+        .batch()
+        .put(
+            &root,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .text(&root, &[("body", "replay-root-marker")])
+        .vector(&root, &[1.0, 0.0, 0.0, 0.0])
+        .commit()?;
+    put_text_entity(
+        &vault,
+        &child,
+        ENTITY_TYPE_TURN,
+        "child",
+        serde_json::json!({"txt": "child"}),
+    )?;
+    put_text_entity(
+        &vault,
+        &leaf,
+        ENTITY_TYPE_TURN,
+        "leaf",
+        serde_json::json!({"txt": "leaf"}),
+    )?;
+    vault.put_edge(&root, crate::edge::EdgeKind::Supports, &child, 1.0)?;
+    vault.put_edge(&child, crate::edge::EdgeKind::Supports, &leaf, 1.0)?;
+    let source = super::source_ranking::SourceRankingPolicy {
+        pack: "replay-test".into(),
+        ..Default::default()
+    };
+    let build = || {
+        vault
+            .context_pack()
+            .search_text("replay-root-marker", 10)
+            .with_temporal_now(100)
+            .edge_hop(2)
+            .include_vectors(true)
+            .field_profile(FieldProfile::Full)
+            .format(PackFormat::Plaintext)
+            .merge_neighbors(false)
+            .include_stats(false)
+            .token_budget(512)
+            .max_field_chars(120)
+            .source_ranking(source.clone())
+            .replay_query_ref("eval://queries/pack-2182")
+            .corpus_snapshot_ref("eval://corpus/pack-2182")
+            .capture_retrieval_trace(true)
+    };
+    let raw = build().run_with_telemetry()?;
+    let ids: Vec<_> = raw.value.neighbors.iter().map(|row| row.id).collect();
+    assert!(ids.contains(&child) && ids.contains(&leaf));
+    assert!(
+        raw.value
+            .results
+            .iter()
+            .any(|row| row.id == root && row.vector.is_some())
+    );
+    let row = vault
+        .retrieval_run(raw.run_id.expect("stored raw run"))?
+        .unwrap();
+    let inputs = row.replay_inputs.expect("resolved pack config");
+    let config = &inputs.config["pack"];
+    assert_eq!(config["assembly"]["edge_hop"], 2);
+    assert_eq!(config["assembly"]["hydrate"], true);
+    assert_eq!(config["assembly"]["include_vectors"], true);
+    assert_eq!(config["assembly"]["source_ranking"]["pack"], "replay-test");
+    assert_eq!(config["projection"]["format"], "Plaintext");
+    assert_eq!(config["projection"]["token_budget"], 512);
+    assert_eq!(config["terminal_kind"], "structured");
+    let output = row.pack_output.unwrap();
+    let restored: serde_json::Value = rmp_serde::from_slice(&output.bytes).unwrap();
+    assert_eq!(
+        restored["results"][0]["vector"],
+        serde_json::json!([1.0, 0.0, 0.0, 0.0])
+    );
+    assert_eq!(restored["neighbors"].as_array().unwrap().len(), ids.len());
+    let serialized = build().run_serialized_with_telemetry()?;
+    let row = vault
+        .retrieval_run(serialized.run_id.expect("stored serialized run"))?
+        .unwrap();
+    let recorded = row.replay_inputs.expect("recorded replay inputs");
+    assert_eq!(recorded.config["pack"]["terminal_kind"], "serialized");
+    assert_eq!(row.pack_output.unwrap().bytes, serialized.value);
+
+    // The host resolves the authorized query and corpus refs. Rebuild the
+    // engine settings only from the recorded config, not from `build()`.
+    assert_eq!(
+        recorded.query_ref.as_deref(),
+        Some("eval://queries/pack-2182")
+    );
+    assert_eq!(
+        recorded.corpus_snapshot_ref.as_deref(),
+        Some("eval://corpus/pack-2182")
+    );
+    let stored = &recorded.config;
+    let assembly = &stored["pack"]["assembly"];
+    let projection = &stored["pack"]["projection"];
+    let profile = match projection["profile"].as_str() {
+        Some("Full") => FieldProfile::Full,
+        other => panic!("unrecognized replay profile: {other:?}"),
+    };
+    let format = match projection["format"].as_str() {
+        Some("Plaintext") => PackFormat::Plaintext,
+        other => panic!("unrecognized replay format: {other:?}"),
+    };
+    let allocation = &projection["allocation"];
+    let restored_allocation = TokenAllocation {
+        claims: allocation["claims"].as_f64().unwrap() as f32,
+        turns: allocation["turns"].as_f64().unwrap() as f32,
+        summaries: allocation["summaries"].as_f64().unwrap() as f32,
+        other: allocation["other"].as_f64().unwrap() as f32,
+    };
+    let restore = || {
+        vault
+            .context_pack()
+            .search_text(
+                "replay-root-marker",
+                stored["channels"]["text_limit"].as_u64().unwrap() as usize,
+            )
+            .with_temporal_now(stored["temporal_now"].as_u64().unwrap())
+            .read_mode(serde_json::from_value(assembly["read_mode"].clone()).unwrap())
+            .hydrate(assembly["hydrate"].as_bool().unwrap())
+            .include_edges(assembly["include_edges"].as_bool().unwrap())
+            .edge_hop(assembly["edge_hop"].as_u64().unwrap() as u32)
+            .selected_edge_budget(assembly["selected_edge_budget"].as_u64().unwrap() as usize)
+            .include_vectors(assembly["include_vectors"].as_bool().unwrap())
+            .source_ranking(serde_json::from_value(assembly["source_ranking"].clone()).unwrap())
+            .field_profile(profile)
+            .format(format)
+            .token_allocation(restored_allocation)
+            .merge_neighbors(projection["merge_neighbors"].as_bool().unwrap())
+            .include_stats(projection["include_stats"].as_bool().unwrap())
+            .token_budget(projection["token_budget"].as_u64().unwrap() as usize)
+            .max_field_chars(projection["max_field_chars"].as_u64().unwrap() as usize)
+            .max_item_tokens(projection["max_item_tokens"].as_u64().unwrap() as usize)
+            .replay_query_ref(recorded.query_ref.clone().unwrap())
+            .corpus_snapshot_ref(recorded.corpus_snapshot_ref.clone().unwrap())
+            .capture_retrieval_trace(true)
+    };
+    let replayed_raw = restore().run_with_telemetry()?;
+    assert_eq!(
+        replayed_raw
+            .value
+            .neighbors
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
+        ids
+    );
+    assert_eq!(
+        replayed_raw.value.results[0].fields,
+        raw.value.results[0].fields
+    );
+    assert_eq!(
+        replayed_raw.value.results[0].vector,
+        raw.value.results[0].vector
+    );
+    let replayed_serialized = restore().run_serialized_with_telemetry()?;
+    assert_eq!(replayed_serialized.value, serialized.value);
     Ok(())
 }

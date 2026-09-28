@@ -81,6 +81,24 @@ impl Fixture {
     fn owner_link(&self) -> String {
         self.link(READ_WRITE, &self.person, Some("human")).0
     }
+
+    fn full_vault_link(&self) -> String {
+        let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+        let link = self
+            .vault
+            .issue_pairing_link_for_principal(
+                &issuer,
+                Scope::top(),
+                3600,
+                PairingPrincipal {
+                    holder_ref: Some(self.person.clone()),
+                    actor_class: Some("human".into()),
+                    org_ref: None,
+                },
+            )
+            .unwrap();
+        format_pairing_link(&self.origin, &link.code, &self.person)
+    }
 }
 
 /// The SDK client is blocking; it runs off the runtime that serves it.
@@ -149,6 +167,116 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paired_client_exports_full_vault_in_five_formats() {
+    let fixture = Fixture::serve().await;
+    let person = fixture.person.clone();
+    let link = fixture.full_vault_link();
+    blocking(move || {
+        let client = paired(&link);
+        for format in ["toon", "md", "json", "yaml", "txt"] {
+            let value = client
+                .agent_verb("export", serde_json::json!({"format":format}))
+                .unwrap();
+            assert_eq!(value["format"], format);
+            assert!(
+                value["rendered"]
+                    .as_str()
+                    .unwrap()
+                    .contains("evidence_ledger")
+            );
+            if format == "json" {
+                let document: serde_json::Value =
+                    serde_json::from_str(value["rendered"].as_str().unwrap()).unwrap();
+                assert!(
+                    document["evidence_ledger"]["entities"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|row| row["id"] == person && row["short_ref"].as_str().is_some())
+                );
+            }
+        }
+        assert_eq!(client.export(Some("json")).unwrap().format, "json");
+        assert_eq!(code(client.export(Some("gemini"))), "BAD_REQUEST");
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_only_paired_client_cannot_export_another_actors_private_note() {
+    use oneiron::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let fixture = Fixture::serve().await;
+    let owner = EntityId::from_hex(&fixture.person).unwrap();
+    let other = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &other,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"another person",
+        )
+        .unwrap();
+    let note = fixture
+        .vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: owner },
+            source_revision_ref: [0x77; 16],
+            markdown: "private export pairing fixture".into(),
+            mask: None,
+        })
+        .unwrap();
+    let (link, _) = fixture.link(&["core:read"], &other.to_hex(), Some("human"));
+    let (generic, typed) = blocking(move || {
+        let client = paired(&link);
+        (
+            client.agent_verb("export", serde_json::json!({"format":"json"})),
+            client.export(Some("json")),
+        )
+    })
+    .await;
+    for result in [
+        generic.map(|value| value.to_string()),
+        typed.map(|value| value.rendered),
+    ] {
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "FORBIDDEN");
+        assert!(!error.message.contains("private export pairing fixture"));
+        assert!(!error.message.contains(&note.entity_ref));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn logged_slip_reconnects_without_the_minting_host_secret() {
+    let fixture = Fixture::serve().await;
+    let link = fixture.owner_link();
+    let (_mint_origin, credential) = blocking(move || OneironClient::pair(&link).unwrap()).await;
+    let public_server =
+        Arc::new(SyncServer::new(fixture.vault.clone(), SyncServerConfig::default()).unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, build_app(public_server))
+            .await
+            .unwrap();
+    });
+    let read = blocking(move || {
+        OneironClient::connect(&url, &credential)
+            .unwrap()
+            .receipts(10)
+    })
+    .await;
+    task.abort();
+    assert!(
+        read.is_ok(),
+        "a logged slip needs no minting secret to verify"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn back_to_back_calls_each_spend_a_fresh_nonce() {
     let fixture = Fixture::serve().await;
     let link = fixture.owner_link();
@@ -206,7 +334,7 @@ async fn an_expired_link_is_unauthorized_at_pair() {
     let (link, expires_at) = fixture.link(READ_WRITE, &fixture.person, Some("human"));
     fixture
         .vault
-        .sync_state_put("authlog:first_seen:clock_floor", &expires_at.to_be_bytes())
+        .advance_authority_clock_for_test(expires_at.saturating_add(1))
         .unwrap();
     let refused = blocking(move || code(OneironClient::pair(&link))).await;
     assert_eq!(refused, "UNAUTHORIZED");
@@ -257,7 +385,7 @@ async fn a_revoked_slip_is_unauthorized_on_its_next_call() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_host_secret_crosses_with_no_proof_and_is_authenticated() {
+async fn host_secret_without_a_holder_proof_is_not_a_credential() {
     let fixture = Fixture::serve().await;
     let origin = fixture.origin.clone();
     let refused = blocking(move || {
@@ -265,6 +393,6 @@ async fn the_host_secret_crosses_with_no_proof_and_is_authenticated() {
         code(client.receipts(10))
     })
     .await;
-    // Authenticated, then refused at the facade: a secret names no principal.
-    assert_eq!(refused, "FORBIDDEN");
+    // An issuer secret is key material, not an owner-grade bearer.
+    assert_eq!(refused, "UNAUTHORIZED");
 }

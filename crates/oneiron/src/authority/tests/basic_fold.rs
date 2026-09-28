@@ -1,4 +1,4 @@
-//! Fold validation for enroll, rotate, recovery, revoke and equivocation.
+//! Fold validation for enroll, rotate, recovery, revoke and divergent ancestry.
 
 use super::support::*;
 use super::*;
@@ -121,7 +121,7 @@ fn delayed_rotation_that_would_leave_no_authority_consent_is_not_pending() {
     let rotate_hash = authority_entry_hash(&rotate).unwrap();
     let first_seen = BTreeMap::from([(rotate_hash, 10)]);
 
-    let fold = fold_authority_log_with_seen_times(&[genesis, rotate], &first_seen, 10);
+    let fold = fold_legacy_authority_log_with_seen_times(&[genesis, rotate], &first_seen, 10);
 
     assert!(!fold.pending_widens.contains_key(&rotate_hash));
     assert!(!fold.roster.contains_key(&agent_key));
@@ -176,7 +176,7 @@ fn fold_rejects_re_root_reusing_existing_key() {
 }
 
 #[test]
-fn fold_equivocation_dangling_fork_does_not_block_ready_winner() {
+fn dangling_sibling_does_not_block_valid_ancestor() {
     let owner = ed_key(50);
     let genesis = genesis_entry(50, 86_400, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
@@ -197,7 +197,7 @@ fn fold_equivocation_dangling_fork_does_not_block_ready_winner() {
     let ready_hash = authority_entry_hash(&ready).unwrap();
     let dangling_hash = authority_entry_hash(&dangling).unwrap();
 
-    let fold = fold_authority_log(&[dangling, ready, genesis]);
+    let fold = fold_legacy_authority_log(&[dangling, ready, genesis]);
     assert!(fold.valid_entries.contains(&ready_hash));
     assert!(!fold.valid_entries.contains(&dangling_hash));
     assert_eq!(fold.tier_floor, Some(AuthorityTier::Hardware));
@@ -276,241 +276,88 @@ fn fold_rejects_revoke_without_surviving_quorum() {
 }
 
 #[test]
-fn fold_detects_equivocation_by_signer_and_seq() {
-    let left = genesis_entry(16, 86_400, 1);
-    let right = genesis_entry(16, 86_400, 2);
-    let signer = authority_key_from_ed(&ed_key(16));
-    let left_hash = authority_entry_hash(&left).unwrap();
-    let right_hash = authority_entry_hash(&right).unwrap();
-    let winner_hash = left_hash.min(right_hash);
-    let winner_vault_id = if winner_hash == left_hash {
-        genesis_vault_id(&left).unwrap()
-    } else {
-        genesis_vault_id(&right).unwrap()
-    };
-
-    let fold = fold_authority_log(&[left, right]);
-    assert_eq!(fold.vault_id, Some(winner_vault_id));
-    assert!(fold.valid_entries.contains(&winner_hash));
-    assert_eq!(fold.valid_entries.len(), 1);
-    assert!(fold.issues.iter().any(|issue| matches!(
-        issue,
-        AuthorityFoldIssue::EquivocationDetected { signer: key, seq: 0 }
-            if *key == signer
-    )));
-    assert_eq!(
-        fold.authority_forks,
-        vec![AuthorityFork {
-            signer: signer.clone(),
-            seq: 0,
-            first_hash: left_hash.min(right_hash),
-            second_hash: left_hash.max(right_hash),
-            status: AuthorityForkStatus::Quarantined,
-        }]
-    );
-    assert_eq!(
-        fold.fork_alarms,
-        vec![AuthorityForkAlarm {
-            signer,
-            seq: 0,
-            first_hash: left_hash.min(right_hash),
-            second_hash: left_hash.max(right_hash),
-        }]
-    );
-    assert_eq!(AuthorityForkAlarm::KIND, AUTHORITY_FORK_ALARM_KIND);
-}
-
-#[test]
-fn fold_records_equivocation_loser_denial_fact() {
-    let left = genesis_entry(124, 86_400, 1);
-    let right = genesis_entry(124, 86_400, 2);
-    let signer = authority_key_from_ed(&ed_key(124));
-    let left_hash = authority_entry_hash(&left).unwrap();
-    let right_hash = authority_entry_hash(&right).unwrap();
-    let winner_hash = left_hash.min(right_hash);
-    let loser_hash = left_hash.max(right_hash);
-
-    let fold = fold_authority_log(&[left, right]);
-
-    assert!(fold.issues.iter().any(|issue| matches!(
-        issue,
-        AuthorityFoldIssue::EquivocationLoser {
-            entry,
-            signer: key,
-            seq: 0,
-            winner,
-        } if *entry == loser_hash && *key == signer && *winner == winner_hash
-    )));
-    assert!(!fold.issues.iter().any(|issue| matches!(
-        issue,
-        AuthorityFoldIssue::InvalidEntry(hash) if *hash == loser_hash
-    )));
-}
-
-#[test]
-fn fold_records_signed_invalid_equivocation_candidate_as_loser() {
-    let left = genesis_entry(125, 86_400, 1);
-    let right = genesis_entry(125, 86_400, 2);
-    let signer = ed_key(125);
-    let signer_key = authority_key_from_ed(&signer);
-    let signed_invalid = sign_ed(
-        unsigned_entry(
-            None,
-            0,
-            Vec::new(),
-            AuthorityOp::Genesis {
-                device: device(
-                    authority_key_from_ed(&ed_key(126)),
-                    ROLE_OWNER | ROLE_ADMIN,
-                    AuthorityTier::Software,
-                ),
-                genesis_nonce: [126; 32],
-                recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: 86_400,
-            },
-            signer_key.clone(),
-            3,
-        ),
-        &signer,
-    );
-    let mut ordinary_invalid = genesis_entry(127, 86_400, 4);
-    ordinary_invalid.signer.signature[0] ^= 0xff;
-    let left_hash = authority_entry_hash(&left).unwrap();
-    let right_hash = authority_entry_hash(&right).unwrap();
-    let winner_hash = left_hash.min(right_hash);
-    let ready_loser_hash = left_hash.max(right_hash);
-    let signed_invalid_hash = authority_entry_hash(&signed_invalid).unwrap();
-    let ordinary_invalid_hash = authority_entry_hash(&ordinary_invalid).unwrap();
-
-    let fold = fold_authority_log(&[left, right, signed_invalid, ordinary_invalid]);
-
-    assert!(fold.valid_entries.contains(&winner_hash));
-    for loser_hash in [ready_loser_hash, signed_invalid_hash] {
-        assert!(fold.issues.iter().any(|issue| matches!(
-            issue,
-            AuthorityFoldIssue::EquivocationLoser {
-                entry,
-                signer,
-                seq: 0,
-                winner,
-            } if *entry == loser_hash && *signer == signer_key && *winner == winner_hash
-        )));
-    }
-    assert!(fold.issues.iter().any(|issue| matches!(
-        issue,
-        AuthorityFoldIssue::SignerNotInAncestry(hash) if *hash == signed_invalid_hash
-    )));
-    assert!(fold.issues.iter().any(|issue| matches!(
-        issue,
-        AuthorityFoldIssue::InvalidEntry(hash) if *hash == ordinary_invalid_hash
-    )));
-    assert!(!fold.issues.iter().any(|issue| matches!(
-        issue,
-        AuthorityFoldIssue::EquivocationLoser { entry, .. } if *entry == ordinary_invalid_hash
-    )));
-}
-
-#[test]
-fn fold_records_missing_parent_equivocation_candidate_as_loser() {
-    let owner = ed_key(128);
-    let owner_key = authority_key_from_ed(&owner);
-    let genesis = genesis_entry(128, 86_400, 1);
+fn same_signer_same_sequence_siblings_fold_by_ancestry_without_quarantine() {
+    let owner = ed_key(16);
+    let genesis = genesis_entry(16, 86_400, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
-    let valid_candidate = set_ceiling_entry(vault_id, &genesis, &owner, 1, 2);
-    let missing_parent_candidate = sign_ed(
+    let left = enroll_entry(vault_id, &genesis, &owner, 17, 1, 2);
+    let right = enroll_entry(vault_id, &genesis, &owner, 18, 1, 3);
+    let left_hash = authority_entry_hash(&left).unwrap();
+    let right_hash = authority_entry_hash(&right).unwrap();
+    let entries = [genesis, left, right];
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+
+    assert!(fold.valid_entries.contains(&left_hash), "{:?}", fold.issues);
+    assert!(
+        fold.valid_entries.contains(&right_hash),
+        "{:?}",
+        fold.issues
+    );
+    assert_eq!(fold.roster.len(), 3);
+    assert!(fold.issues.is_empty(), "{:?}", fold.issues);
+
+    let reversed: Vec<_> = entries.into_iter().rev().collect();
+    assert_eq!(fold_authority_log_without_seen_time_delay(&reversed), fold);
+}
+
+#[test]
+fn fold_allows_newly_enrolled_signer_to_start_at_seq_zero() {
+    let owner = ed_key(32);
+    let new_signer = ed_key(33);
+    let genesis = genesis_entry(32, 86_400, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let owner_key = authority_key_from_ed(&owner);
+    let new_key = authority_key_from_ed(&new_signer);
+    let enroll_admin = sign_ed(
         unsigned_entry(
             Some(vault_id),
             1,
-            vec![[0xfe; 32]],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Hardware,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: device(new_key, ROLE_ADMIN, AuthorityTier::Software),
             },
-            owner_key.clone(),
-            3,
+            owner_key,
+            2,
         ),
         &owner,
     );
-    let winner_hash = authority_entry_hash(&valid_candidate).unwrap();
-    let loser_hash = authority_entry_hash(&missing_parent_candidate).unwrap();
+    let first_new_signer_entry = cosign_ed(
+        set_tier_floor_entry(
+            vault_id,
+            &enroll_admin,
+            &new_signer,
+            0,
+            AuthorityTier::Hardware,
+        ),
+        &new_signer,
+        &owner,
+    );
+    let first_hash = authority_entry_hash(&first_new_signer_entry).unwrap();
 
     let fold = fold_authority_log_without_seen_time_delay(&[
-        missing_parent_candidate,
-        valid_candidate,
+        first_new_signer_entry,
+        enroll_admin,
         genesis,
     ]);
-
-    assert!(fold.valid_entries.contains(&winner_hash));
-    assert!(fold.issues.iter().any(|issue| matches!(
+    assert!(fold.valid_entries.contains(&first_hash));
+    assert!(!fold.issues.iter().any(|issue| matches!(
         issue,
-        AuthorityFoldIssue::InvalidAncestry(hash) if *hash == loser_hash
-    )));
-    assert!(fold.issues.iter().any(|issue| matches!(
-        issue,
-        AuthorityFoldIssue::EquivocationLoser {
-            entry,
-            signer,
-            seq: 1,
-            winner,
-        } if *entry == loser_hash && *signer == owner_key && *winner == winner_hash
+        AuthorityFoldIssue::NonMonotonicSeq(hash) if *hash == first_hash
     )));
 }
 
 #[test]
-fn multiway_equivocation_alarm_spans_min_and_max_hashes() {
-    let owner = ed_key(64);
-    let second = ed_key(65);
-    let signer = authority_key_from_ed(&owner);
-    let genesis = genesis_entry(64, 86_400, 1);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let enroll_second = enroll_entry(vault_id, &genesis, &owner, 65, 1, 2);
-    let fork_enroll = cosign_ed(
-        enroll_entry(vault_id, &enroll_second, &owner, 66, 2, 3),
-        &owner,
-        &second,
-    );
-    let fork_ceiling = cosign_ed(
-        set_ceiling_entry(vault_id, &enroll_second, &owner, 2, 4),
-        &owner,
-        &second,
-    );
-    let fork_tier = cosign_ed(
-        set_tier_floor_entry(vault_id, &enroll_second, &owner, 2, AuthorityTier::Hardware),
-        &owner,
-        &second,
-    );
-    let mut hashes = [
-        authority_entry_hash(&fork_enroll).unwrap(),
-        authority_entry_hash(&fork_ceiling).unwrap(),
-        authority_entry_hash(&fork_tier).unwrap(),
-    ];
-    hashes.sort();
+fn fold_rejects_cross_vault_root_contamination() {
+    let local = genesis_entry(26, 86_400, 1);
+    let foreign = genesis_entry(27, 86_400, 1);
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fork_ceiling,
-        fork_tier,
-        fork_enroll,
-        enroll_second,
-        genesis,
-    ]);
-
-    assert_eq!(
-        fold.authority_forks,
-        vec![AuthorityFork {
-            signer: signer.clone(),
-            seq: 2,
-            first_hash: hashes[0],
-            second_hash: hashes[2],
-            status: AuthorityForkStatus::Quarantined,
-        }]
-    );
-    assert_eq!(
-        fold.fork_alarms,
-        vec![AuthorityForkAlarm {
-            signer,
-            seq: 2,
-            first_hash: hashes[0],
-            second_hash: hashes[2],
-        }]
+    let fold = fold_authority_log(&[local, foreign]);
+    assert_eq!(fold.vault_id, None);
+    assert!(fold.valid_entries.is_empty());
+    assert!(fold.roster.is_empty());
+    assert!(
+        fold.issues
+            .iter()
+            .any(|issue| matches!(issue, AuthorityFoldIssue::ConflictingVaultRoot { .. }))
     );
 }

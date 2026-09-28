@@ -24,7 +24,7 @@
 //! full structural validation. Well-formed UNKNOWN predicates are accepted — the crate is
 //! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
 //! well-known predicates are listed in [`CLAIM_PREDICATE_REGISTRY`] and carry
-//! the first-segment layer prefix `core`, `companion`, `eiri`, or `commitment`; that is a
+//! the first-segment layer prefix `core`, `companion`, `persona`, or `commitment`; that is a
 //! schema/code-review convention, not a package split, plugin runtime,
 //! consent matrix, or semantic dispatch registry.
 //!
@@ -50,6 +50,7 @@ mod core_types;
 mod decay;
 mod deferred;
 mod demotion;
+mod evidence_support;
 mod expression_archive;
 mod expression_preference;
 mod lexical_query_hint;
@@ -58,8 +59,8 @@ mod predicate_grammar;
 mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
-    claim_ids_for_predicate_in_txn, maintain_claim_projection_index,
-    pending_claim_ids_for_producer_in_txn, remove_claim_projection_index,
+    PENDING_PRODUCER, claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
+    maintain_claim_projection_index, remove_claim_projection_index,
 };
 mod put;
 mod read;
@@ -68,11 +69,13 @@ mod scope_stamp;
 mod scoped_read;
 mod source_trust;
 mod status;
+pub(crate) mod supersession_diff;
 mod supersession_provenance;
 mod write_target;
 
 pub use core_types::*;
 pub use decay::*;
+pub(crate) use evidence_support::has_live_support_in_txn;
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use lexical_query_hint::*;
 pub use predicate_grammar::*;
@@ -83,6 +86,7 @@ pub use scope_stamp::{
     PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
 };
 pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
+pub(crate) use scoped_read::invalidate_weave_digest_source_in_txn;
 pub use scoped_read::*;
 pub use source_trust::*;
 pub use status::*;

@@ -32,8 +32,8 @@ Discover the gate without compiling or running tests:
     scripts/verify.sh --help
     scripts/verify.sh --list
 
-For generated navigation, `scripts/codemap/check.sh` checks without writing;
-`python3 scripts/codemap/codemap.py` regenerates. See *Code map* for when to regenerate.
+The generated code map is regenerated on `main` after every push; never regenerate or commit
+it in a branch. See *Code map*.
 
 `--list` prints the live stage names and commands from the same definitions used by execution.
 It does not run the code-map check or emit `VERIFY-OK`. Unknown arguments fail before any stage.
@@ -94,7 +94,7 @@ Linux is the reference host. On macOS:
   Linux Rust tests enable napi-rs `dyn-symbols` through a Linux-only dev-dependency;
   normal production builds still resolve Node-API symbols from the importing Node host.
   Hostless Rust tests cover conversion/engine logic, not the JS ABI. Real Node-host tests
-  remain necessary. `scripts/verify.sh` retains its existing `--exclude oneiron-napi`.
+  remain necessary. `scripts/verify.sh` includes the crate's hostless Rust tests.
 - 7 `oneiron-bench` `eval::tests::*` cases fail on macOS with `VaultRootPreflight …
   UnsupportedPlatform` and pass on Linux. Known; ticket pending.
 - Full suite on an M4 Max (16 cores): ~8 min wall warm, ~9.5k tests across 41 binaries.
@@ -106,16 +106,16 @@ size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning m
 These maps cover `crates/` only; the workspace's macOS app lives separately at
 `apps/macos/src-tauri/` and is linked from the overview. Both map levels
 are generated deterministically by `scripts/codemap/`, along with the machine-readable
-`docs/codemap/codemap.json`. They are pinned by `scripts/codemap/check.sh` (stage 0 of
-`scripts/verify.sh`, CI `Checks`, and `ratchet.yml`): a stale map fails with `CODEMAP-STALE`
-and prints the regenerate command. No watcher or installed hook is needed.
+`docs/codemap/codemap.json`. Only `main` writes them (owner ruling 2026-09-27):
+`.github/workflows/codemap.yml` regenerates and commits the map after every push to `main`.
+PRs never touch `docs/CODEMAP.md` or `docs/codemap/`, and PR CI never checks them, so a branch's
+map can lag its own changes until they merge.
 
-After adding, moving, or deleting a Rust file, run `python3 scripts/codemap/codemap.py` and
-commit its output in the same change. Also regenerate when a file's leading `//!` purpose,
-public items, or size bucket changes. The check is read-only; generation updates only changed
-artifacts and removes orphan crate pages. `python3 scripts/codemap/codemap.py --sizes` prints
-live line counts without changing the maps. The index is a source summary, not a call graph
-or proof of which features compile.
+To read a fresh map for your branch, run `python3 scripts/codemap/codemap.py` locally and do not
+commit its output (`git restore docs/CODEMAP.md docs/codemap` drops it). `scripts/codemap/check.sh`
+is read-only; `scripts/verify.sh` runs it only with `CODEMAP_CHECK=1`.
+`python3 scripts/codemap/codemap.py --sizes` prints live line counts without changing the maps.
+The index is a source summary, not a call graph or proof of which features compile.
 
 For a narrow lookup, use `rg -n 'gate/evaluate|GateError' docs/codemap/oneiron.md`, then open the
 matching path under `crates/oneiron/`. Read only matching rows or a narrow line range;
@@ -148,9 +148,8 @@ build to work around an occupied target directory.
 
 - `oneiron-napi` hostless Rust tests are not JS ABI tests: Linux test builds use napi-rs
   dynamic symbols, and macOS uses `-undefined dynamic_lookup`. Production addons still need
-  a real Node host. `scripts/verify.sh` retains its exclusion on all hosts; distributed nextest
-  legs retain their Linux exclusion. Neither exclusion is changed by the test-link repair.
-  macOS CI includes the crate too.
+  a real Node host. Workspace nextest includes the crate on Linux and macOS;
+  the Rust tests do not replace real Node-host JS ABI tests.
 - Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
@@ -186,30 +185,35 @@ build to work around an occupied target directory.
 
 ## CI truth
 
-Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
-contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
+Every workflow except `codemap.yml` runs on our own runners since 2026-09-08 (HYG-06b) — hosts,
+labels and the cache contract are under *Self-hosted runners* below. All of them except
+`codemap.yml` honour `CI_PAUSED`.
 
-- `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
-  repo variable pauses every job (wave affordance); drafts do not run. No `paths` filter
-  (2026-09-11): every non-draft PR and every `main` push starts a run, because the `main` ruleset
-  requires the `Checks` and `Test` contexts and a filtered trigger starts no run at all, so a
-  docs-only PR reported neither and was blocked forever (#921 needed `--admin`). The `changes` job
-  still detects a rust diff; it now gates STEPS, not the run. Jobs: `changes` (path detector) /
-  `checks` (fmt, workspace + featureless + server-production clippy, strict rustdoc,
-  code-map pin, tooling fixture tests, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
-  `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
-  no `RUSTFLAGS` (see *Self-hosted runners*). `checks` and `test` both run on every non-draft
-  `pull_request`, on every `push` to `main` and on `workflow_dispatch`, so both required contexts
-  always report; each gates its cargo steps on a rust diff (always on dispatch and tags, fail-open
-  if the detector broke), so a docs-only run still checks the code-map pin, tooling fixtures, typos, and
-  `cargo-deny` policy. `.cargo/**` changes count as Rust-relevant. `test` runs the macOS recipe
-  (the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
-  filtered out by name — ONE-1996 — then the featureless lib tests and doctests); on `push` that
-  job keeps the rust-diff gate at job level; `test-linux` runs the `--profile full` suite with
-  only the napi exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
-  only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
-  trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy,
-  strict rustdoc and tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
+**Per-PR CI is off (owner ruling 2026-09-27).** The repository variable `CI_PAUSED` is `true`, so every PR
+check reports *skipped*, which counts as passing. Before you open or update a PR, run the touched tests (both
+tiers) and clippy yourself; never wait for CI or report it as a blocker. A PR merges when its review passes. The
+full gate runs on `main` after PRs merge (at most once an hour, and only when something new landed), and a red
+gate gets a fix PR. The workflows below describe what runs when the variable is `false`.
+
+- `ci.yml` — scoped CI (owner ruling 2026-09-26: test only what changed). `pull_request` (non-draft) and
+  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints the touched packages and their
+  transitive workspace reverse dependents with `--all-targets` (plus the featureless build when `oneiron`
+  changed), `Test` runs nextest for the touched packages and only the touched
+  top-level `oneiron` modules (integration tests only when `crates/oneiron/tests` changed; no doctests), and
+  `Test (featureless)` runs the shared-process `cargo test` lane for those modules. `cargo-deny` runs only
+  when `Cargo.lock` or `deny.toml` changed, the tooling tests only when `scripts/` or `.github/` changed.
+  The full gate (workspace clippy in three feature graphs, strict rustdoc, the whole nextest suite, doctests,
+  both featureless process models) runs nightly at 03:00 JST (`schedule`), on `workflow_dispatch`, and when a
+  build file changes (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, clippy/rustfmt/nextest
+  config). `Test (macOS)` and the mutation audit are dispatch-only. `Checks`, `Test` and `Test (featureless)`
+  are required contexts and always report. All three, and `Detect changed paths`, run on the self-hosted Linux
+  runners; the Macs take only the dispatch jobs.
+  `CI_PAUSED=true` pauses every job. `package` waits for a `v*` tag.
+- `codemap.yml` — `push` to `main` path-scoped to `crates/**`, `scripts/codemap/**` and the map
+  itself, plus `workflow_dispatch`; never on PR. The code map's only writer: it regenerates the
+  map on the newest `main` and commits `codemap: regenerate` as `oneiron-codemap`, retrying up to
+  three times when `main` moves. A GitHub-hosted runner with Python 3.12; not gated on
+  `CI_PAUSED`, because it writes rather than checks.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
@@ -232,22 +236,24 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
 - Hosts and labels: MacBook `self-hosted,macos,arm64,mbp` (16 cores, the first and strongest);
   the Mac mini joins with the same macOS labels; Arch box `self-hosted,linux,x64,arch` (16 cores,
-  the Wave host — only `test-linux`, `package` and dispatch runs touch it). Workflows target
+  the Wave host — both Linux test jobs and `package` can run on it). Workflows target
   `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host name.
 - Cache contract: each runner's `~/actions-runner/.env` exports `CARGO_TARGET_DIR=~/ci/target`
   (persistent, outside the checkout, so `clean: true` checkouts never wipe it; on macOS it must
   also stay outside `~/Desktop`, `~/Documents` and `~/Downloads` — the runner is a launchd agent
   without those TCC grants, and its first `open()` there blocks on a consent prompt nobody sees),
   `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
-  `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR` and never add cache or
-  toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and no
-  workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
+  `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR`. `ci.yml` compiler
+  steps use the pinned sccache action and GitHub Actions cache alongside the persistent host
+  target; other workflows do not use shared compilation caching. The toolchain is host rustup
+  resolving `rust-toolchain.toml`, not a toolchain action. No workflow sets `RUSTFLAGS`:
+  `-Dwarnings` there also reaches the vendored `crates/heed` path
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
   flags let the runner caches share fingerprints with developer builds. Cargo does not evict stale
-  artifacts itself. Cache maintenance is opt-in per workflow: the macOS Checks/Test jobs and
-  binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; `test-linux` currently has
-  no cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
+  artifacts itself. Cache maintenance is opt-in per workflow: the Checks job, the macOS Test job and
+  the binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; neither Linux test job
+  has a cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
   commands live in `docs/ops/build-performance.md`; the script is the behavior source of truth.
   Never share a runner's target directory with concurrent developer jobs.
 - Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
@@ -255,8 +261,9 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   full Xcode, not Command Line Tools alone, so it targets the capability label `xcode`; add that
   label to a runner only after Xcode is installed there (today: both Macs). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
   lacks it) go under `~/ci/tools`, installed by the job on first use and reused after.
-- One runner runs one job at a time; a PR takes a `checks` slot and a `test` slot, so with one
-  macOS runner they serialise. Every job has `timeout-minutes` so a hang cannot hold the slot.
+- One runner runs one job at a time; a PR takes a `checks` slot and two Linux test slots.
+  With enough Linux runners the test jobs run in parallel. Every job has `timeout-minutes`
+  so a hang cannot hold the slot.
 - Waves: set the repository variable `CI_PAUSED=true` while a wave lands commits and every job
   in every workflow skips; flip it back when the wave closes.
 - Adding a runner: mint a registration token (repo Settings → Actions → Runners → New

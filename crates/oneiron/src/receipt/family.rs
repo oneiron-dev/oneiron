@@ -3,14 +3,13 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::brief_share::brief_share_receipts;
+use super::dispatch_observation::dispatch_observations;
 use super::grant::{
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_receipts,
     federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
     scan_entities_by_type, standing_outbound_grants_lens,
 };
-use super::identity_kind::{
-    channel_identity_lifecycle_receipts, companion_lifecycle_receipts, identity_topology_receipts,
-};
+use super::identity_kind::{channel_identity_lifecycle_receipts, identity_topology_receipts};
 use super::kernel::{
     FIELD_BUNDLE_REF, FIELD_GRANT_REF, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery,
     ReceiptRecord, ReceiptScan, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
@@ -28,6 +27,7 @@ use super::projection::{
     finalize_receipt_scan, project_receipts_by_brief,
     project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
+use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -103,6 +103,10 @@ impl Vault {
         // The durable projector is exhaustive. The attempt source metadata
         // survives filtering, including when none of its scanned rows match.
         scan.records.extend(durable.records);
+        scan.records.extend(super::direct_dispatch::receipts(self)?);
+        scan.records.extend(dispatch_observations(self)?);
+        scan.records
+            .extend(scan_suppression_receipts(self)?.records);
         scan.records.retain(|receipt| query.matches(receipt));
         Ok(finalize_receipt_scan(scan, &query, None))
     }
@@ -229,12 +233,28 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     let mut records = Vec::new();
     if query.includes_kind(ReceiptKind::Outbound) {
         records.extend(
+            super::direct_dispatch::receipts(vault)?
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+        records.extend(
             durable_send_receipts(vault)?
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );
         records.extend(
+            scan_suppression_receipts(vault)?
+                .records
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+        records.extend(
             attempt_pack_receipts(vault)?
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+        records.extend(
+            dispatch_observations(vault)?
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );
@@ -293,9 +313,6 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     }
 
     let rtxn = vault.store.env.read_txn()?;
-    if query.includes_kind(ReceiptKind::IdentityLifecycle) {
-        records.extend(companion_lifecycle_receipts(vault, &rtxn, query)?);
-    }
     // ONE type-76 scan serves both kinds it projects; the projector-level
     // kind gate keeps a single-kind query from returning the other's rows.
     if query.includes_kind(ReceiptKind::IdentityLifecycle)
@@ -323,6 +340,9 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
         records.extend(brief_share_receipts(vault, &rtxn, query)?);
+        records.extend(crate::artifact_hosting::artifact_publish_receipts(
+            vault, &rtxn, query,
+        )?);
     }
     // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
     // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN
@@ -441,15 +461,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         let page_len = decisions.len();
         before = decisions.last().map(|decision| decision.decision_id);
         for decision in decisions {
-            let mut receipt = gate_decision_receipt(&decision);
-            if let Some(predicate) = decision
-                .receipt_reasons
-                .iter()
-                .find_map(|token| crate::self_heal::tripwires::normal_baseline_predicate(token))
-            {
-                receipt.fields.insert("predicate".into(), predicate.into());
-                receipt.fields.insert("criticality".into(), "normal".into());
-            }
+            let receipt = gate_decision_receipt_from_base(&decision);
             if query.matches(&receipt) {
                 if query.job_ref.is_none() {
                     // Decision ids define ledger traversal, but connector-key
@@ -470,6 +482,21 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         }
     }
     Ok(receipts)
+}
+
+/// Exact base-ledger Gate projection shared by receipt queries and the
+/// tier-1 producer witness, including the normal-baseline annotations.
+pub(crate) fn gate_decision_receipt_from_base(record: &GateDecisionRecord) -> ReceiptRecord {
+    let mut receipt = gate_decision_receipt(record);
+    if let Some(predicate) = record
+        .receipt_reasons
+        .iter()
+        .find_map(|token| crate::self_heal::tripwires::normal_baseline_predicate(token))
+    {
+        receipt.fields.insert("predicate".into(), predicate.into());
+        receipt.fields.insert("criticality".into(), "normal".into());
+    }
+    receipt
 }
 
 pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {

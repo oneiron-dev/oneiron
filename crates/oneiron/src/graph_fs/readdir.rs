@@ -26,6 +26,23 @@ use super::paging::{
     EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard, parse_edge_cursor,
 };
 
+/// File lookup and the receipt of the scoped read, if a stored row was read.
+/// Fixed files and unmatched paths have no scoped-read receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphFsFileRead {
+    pub value: Option<GraphFsFile>,
+    pub receipt: Option<ScopedReadReceipt>,
+}
+
+impl From<ScopedReadResult<Option<GraphFsFile>>> for GraphFsFileRead {
+    fn from(read: ScopedReadResult<Option<GraphFsFile>>) -> Self {
+        Self {
+            value: read.value,
+            receipt: Some(read.receipt),
+        }
+    }
+}
+
 impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     #[must_use]
     pub fn new(scoped_read: &'read ScopedRead<'vault>, options: GraphFsOptions) -> Self {
@@ -131,15 +148,15 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         Ok(self.readdir(path, cursor)?.render_bytes())
     }
 
-    /// A file and the receipt of the scoped read behind it. A path that names
-    /// no stored row still answers under this actor's resolved scope.
-    pub fn read_file(&self, path: &str) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
+    /// A file and any scoped-read receipt behind it. Fixed files and paths
+    /// that name no file make no scoped read and carry no receipt.
+    pub fn read_file(&self, path: &str) -> Result<GraphFsFileRead> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
         match components.as_slice() {
-            ["claims", claim] | ["claims", "by-id", claim] => {
-                self.read_claim_file(&normalized, &parse_entity_id(claim)?)
-            }
+            ["claims", claim] | ["claims", "by-id", claim] => Ok(self
+                .read_claim_file(&normalized, &parse_entity_id(claim)?)?
+                .into()),
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
                 let mount = self.options.mount;
@@ -153,7 +170,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                             mount,
                             bytes,
                         })
-                    }))
+                    })
+                    .into())
             }
             ["worlds", world, "scope"] => {
                 let bytes = if *world == "base" {
@@ -162,18 +180,18 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                     let id = parse_entity_id(world)?;
                     format!("world_ref:{}\n", id.to_hex()).into_bytes()
                 };
-                Ok(ScopedReadResult {
+                Ok(GraphFsFileRead {
                     value: Some(GraphFsFile {
                         path: normalized,
                         mount: self.options.mount,
                         bytes,
                     }),
-                    receipt: self.scoped_read.read_receipt(None, 0)?,
+                    receipt: None,
                 })
             }
-            _ => Ok(ScopedReadResult {
+            _ => Ok(GraphFsFileRead {
                 value: None,
-                receipt: self.scoped_read.read_receipt(None, 0)?,
+                receipt: None,
             }),
         }
     }
@@ -369,6 +387,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -473,6 +492,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -529,6 +549,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_cursor = after;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         for (scanned, entry) in self
@@ -571,6 +592,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut days = BTreeSet::new();
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -633,6 +655,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -675,6 +698,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     pub(super) fn policy(&self) -> Result<PolicyManifestResolution> {
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         resolve_policy_manifest(&self.scoped_read.vault().store, &rtxn)
     }

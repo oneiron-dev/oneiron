@@ -1,12 +1,18 @@
 //! Exact, inert PACK.md source catalogs. A source blob is never an install grant.
+mod agent_facets;
+mod builtin;
+pub(crate) use builtin::seed_builtin_packs;
 mod codec;
 mod doors;
 mod manifest;
 mod source;
 
+pub use crate::gate::PackInstallPolicyOverride;
+pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub use manifest::{PackAdapter, PackKind, PackManifest};
-pub use source::PackSource;
+pub use screening::PackInstallRules;
+pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(
     source: &PackSource,
@@ -27,13 +33,28 @@ fn invalid(reason: &'static str) -> crate::error::Error {
 mod admission;
 mod admission_types;
 mod bundled_skills;
+#[cfg(test)]
+pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 mod schema;
+mod screening;
+mod script_plan;
+mod script_policy;
+mod script_runtime;
+mod tool_schema;
 pub use admission_types::{
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier,
-    PackRuntimeRecipe,
+    BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
+    PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackObservedTool,
+    PackPermissions, PackQualification, PackQualifier, PackRuntimeRecipe,
 };
+#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+pub(crate) use script_plan::{ScriptExecutionPlan, script_output_bytes};
+#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
+pub(crate) use script_runtime::ScriptOutput;
+pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 #[cfg(test)]
 mod admission_tests;
+#[cfg(test)]
+mod screening_tests;
 
 mod transport;
 pub use transport::PackSourceAdapter;

@@ -163,11 +163,13 @@ impl Vault {
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
     ) -> Result<PairingLink> {
-        if slip_lifetime_secs == 0 || slip_lifetime_secs > 365 * 24 * 60 * 60 {
+        if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
         let mut txn = self.store.env.write_txn()?;
         require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
         self.validate_pairing_principal_in_txn(&txn, &principal, &scope)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let (code, row_key) = loop {
@@ -231,6 +233,10 @@ impl Vault {
             return Err(invalid_authority());
         }
         self.validate_pairing_principal_in_txn(&txn, &pending.principal, &pending.scope)?;
+        // Recheck in the actual mint transaction: policy may have narrowed
+        // after link issuance while the one-hour link was still outstanding.
+        let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
+        let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let claims = SlipClaims {
@@ -241,8 +247,8 @@ impl Vault {
             binding_key,
             scope: pending.scope,
             issued_at: now,
-            expires_at: now.saturating_add(pending.slip_lifetime_secs),
-            ttl_secs: pending.slip_lifetime_secs,
+            expires_at: now.saturating_add(slip_lifetime_secs),
+            ttl_secs: slip_lifetime_secs,
             single_use: false,
             records: Default::default(),
             channels: Default::default(),
@@ -291,7 +297,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let admin = holder.ok_or_else(invalid_authority)?;
-        if self.store.entities.get(txn, admin.as_bytes())?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &admin)?.is_none()
             || self.archive_tombstone_in_txn(txn, &admin)?.is_some()
         {
             return Err(invalid_authority());

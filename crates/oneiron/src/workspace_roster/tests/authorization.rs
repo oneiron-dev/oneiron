@@ -1,4 +1,5 @@
 use super::*;
+use crate::channel_identity::ChannelIdentityStep;
 use crate::error::{GateError, RecordError};
 use crate::subject_model::tests::authorization::root_owner;
 
@@ -31,6 +32,14 @@ fn durable_rows(vault: &Vault) -> Result<Vec<RawRows>> {
     Ok(result)
 }
 
+/// A grant authorization may durably advance the clock floor even when the
+/// requested workspace mutation is refused. It must not change any other row.
+fn durable_rows_without_authorization_clock(vault: &Vault) -> Result<Vec<RawRows>> {
+    let mut rows = durable_rows(vault)?;
+    rows[1].retain(|(key, _)| key.as_slice() != crate::ports::CLOCK_FLOOR);
+    Ok(rows)
+}
+
 #[test]
 fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Result<()> {
     let mutations: &[(&str, Mutation)] = &[
@@ -59,9 +68,6 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         }),
         ("work facet", |v, i, w| {
             ensure_work_facet_edge(v, i, birth(i).person_ref, birth(i).work_facet_ref, w)
-        }),
-        ("companion record", |v, i, w| {
-            ensure_companion_record(v, i, birth(i), w)
         }),
         ("profile grant", |v, i, w| {
             ensure_companion_profile_grant(v, i, birth(i), w)
@@ -108,14 +114,14 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
             "model substrate"
                 | "companion anchor"
                 | "work facet"
-                | "companion record"
+                | "persona baseline"
                 | "profile grant"
         ) {
             ensure_companion_person(&vault, &intent, &companion, &owner)?;
         }
         if matches!(
             name,
-            "companion anchor" | "companion record" | "profile grant"
+            "companion anchor" | "persona baseline" | "profile grant"
         ) {
             ensure_agent_definition(
                 &vault,
@@ -251,6 +257,88 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
 }
 
 #[test]
+fn admin_without_named_add_member_power_cannot_enter_workspace_write_door() {
+    let (_dir, vault, _intent) = fixture("Antevon");
+    let owner = writer(WRITER);
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(VAULT_ID),
+        owner.entity_ref(),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+    grant.authority_scope.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            "read".to_owned(),
+            "write".to_owned(),
+            "admin".to_owned(),
+        ]));
+    seed_federation_grant(&vault, ADMIN_GRANT, &grant);
+    assert_eq!(
+        require_workspace_authority(&vault, VAULT_ID, &owner)
+            .expect_err("the Admin role is not an implicit grant of AddMember")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert!(
+        vault
+            .authorize_shared_vault_write(
+                VAULT_ID,
+                &owner,
+                &crate::federation::SharedVaultWrite::RuleConflict,
+            )
+            .is_ok()
+    );
+}
+
+#[test]
+fn enrollment_only_admin_can_enroll_without_read_but_cannot_rename() -> Result<()> {
+    let (_dir, vault, intent) = fixture("Antevon");
+    let owner = writer(WRITER);
+    vault.onboard_workspace_member(intent.clone(), &owner, None)?;
+    let before = read_preset(&vault, &intent.workspace.workspace_ref)?.unwrap();
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(VAULT_ID),
+        owner.entity_ref(),
+        FederationGrantRole::Admin,
+        FederationGrantPreset::Admin,
+    );
+    grant.authority_scope.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            "org:add-member".to_owned()
+        ]));
+    seed_federation_grant(&vault, ADMIN_GRANT, &grant);
+    require_workspace_authority(&vault, VAULT_ID, &owner)?;
+    assert!(
+        vault
+            .set_workspace_house_display_name(
+                &intent.workspace.workspace_ref,
+                Some("not allowed".into()),
+                &owner,
+            )
+            .is_err()
+    );
+    assert_eq!(
+        read_preset(&vault, &intent.workspace.workspace_ref)?,
+        Some(before)
+    );
+    grant.authority_scope.verbs =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["write".to_owned()]));
+    seed_federation_grant(&vault, ADMIN_GRANT, &grant);
+    vault.set_workspace_house_display_name(
+        &intent.workspace.workspace_ref,
+        Some("allowed".into()),
+        &owner,
+    )?;
+    assert_eq!(
+        read_preset(&vault, &intent.workspace.workspace_ref)?
+            .unwrap()
+            .house_display_name,
+        Some("allowed".into()),
+    );
+    Ok(())
+}
+
+#[test]
 fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
     let owner = writer(WRITER);
@@ -325,7 +413,7 @@ fn mailbox_retry_rechecks_custody_and_never_completes_autonomy() -> Result<()> {
     let identity = vault
         .get_channel_identity(&requested.identity_ref)?
         .expect("Requested row");
-    assert_eq!(identity.state, ChannelIdentityState::Requested);
+    assert_eq!(identity.state(), ChannelIdentityState::Requested);
     assert!(!identity.may_send());
     // A successful first provisioning does not authorize a later retry.
     seed_federation_grant(
@@ -573,7 +661,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                 }
                 _ => unreachable!(),
             }
-            let before = durable_rows(&vault)?;
+            let before = durable_rows_without_authorization_clock(&vault)?;
             assert!(
                 vault
                     .verify_channel_identity_autonomy(&requested.autonomy, &owner)
@@ -600,7 +688,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                 .is_err()
             );
             assert_eq!(
-                durable_rows(&vault)?,
+                durable_rows_without_authorization_clock(&vault)?,
                 before,
                 "stage {stage}, revoke {revoke}"
             );
@@ -685,19 +773,17 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
             ))
         ));
         if future_lifecycle {
-            vault.transition_channel_identity(
+            vault.step_channel_identity(
                 &requested.identity_ref,
-                ChannelIdentityState::PendingFulfillment,
-                Some(crate::channel_identity::ChannelIdentityFulfillment::Manual),
+                ChannelIdentityStep::Bind(
+                    crate::channel_identity::ChannelIdentityFulfillment::Manual,
+                ),
                 AT + 1,
-                None,
             )?;
-            vault.transition_channel_identity(
+            vault.step_channel_identity(
                 &requested.identity_ref,
-                ChannelIdentityState::Active,
-                None,
+                ChannelIdentityStep::Fulfill,
                 crate::unix_seconds_now() + 3_600,
-                None,
             )?;
         } else {
             activate_mailbox(&vault, requested.identity_ref)?;
@@ -760,13 +846,13 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
             ))
         ));
         activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;
-        let before = durable_rows(&vault)?;
+        let before = durable_rows_without_authorization_clock(&vault)?;
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
             Err(Error::Gate(GateError::InvalidConsentBound(_)))
         ));
         assert_eq!(
-            durable_rows(&vault)?,
+            durable_rows_without_authorization_clock(&vault)?,
             before,
             "owner API apply rolls back every partial mint"
         );

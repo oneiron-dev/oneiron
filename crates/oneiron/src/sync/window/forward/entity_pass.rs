@@ -2,7 +2,7 @@
 //! ingest entry, one write transaction per entity.
 
 use super::super::bridge::{CompanionCrdtScrub, scrub_local_only_companions_from_crdt};
-use super::super::loro_support::map_for_each_value_bytes;
+use super::super::loro_support::map_for_each_value_bytes_deferring;
 #[cfg(any(test, feature = "test-hooks"))]
 use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
@@ -24,7 +24,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
     );
     let mut entity_error = None;
     let mut companion_scrubs = Vec::new();
-    map_for_each_value_bytes(&ctx.entities_map, |key, value| {
+    // Ask words and receipts verify against their group: visit them last.
+    let later = crate::task_verb::waits_for_ask_group;
+    map_for_each_value_bytes_deferring(&ctx.entities_map, later, |key, value| {
         if entity_error.is_some() {
             return;
         }

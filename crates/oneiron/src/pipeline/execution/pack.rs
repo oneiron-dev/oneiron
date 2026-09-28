@@ -245,6 +245,7 @@ impl PipelineBuilder<'_> {
         let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
+        let mut replay_inputs = attempt.replay_inputs;
 
         if !self
             .session
@@ -333,6 +334,7 @@ impl PipelineBuilder<'_> {
                 access_factors = retry.access_factors;
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
+                replay_inputs = retry.replay_inputs;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();
                 claims_suppressed = 0;
@@ -397,63 +399,73 @@ impl PipelineBuilder<'_> {
             telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
         }
         let retrieval_quality = classify_retrieval_quality(&diagnostics);
-        let run_id = RetrievalRunId::from_bytes(self.vault.store.clock.ulid()?);
-        let run_record = RetrievalRunRecord::new(
-            run_id,
-            telemetry_action,
-            started_at,
-            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            telemetry_signals.clone(),
-            score_breakdown,
-            total_in_scope,
-            claims_suppressed,
-            empty_reason.map(|reason| format!("{reason:?}")),
-        )
-        .with_context(self.retrieval_state.clone(), self.retrieval_turn)
-        .with_trace(retrieval_trace)
-        .with_quality(&retrieval_quality);
-        // ONE-1728 K10: a retrieval issued inside a room registers through the
-        // room's door, which writes under the route the run captured — into
-        // the room's overlay `VaultMeta` while it is off record (so the base
-        // telemetry ledger gains ZERO rows from an OffRecord session, and the
-        // row evaporates at close), and under that route's refusal once the
-        // room has flipped. Canonical entries carry `None` and take the
-        // unchanged base path.
-        let provisional = telemetry_action == RetrievalAction::ContextPack;
-        let write_result = match self.session {
-            Some(session) => session.register_run(&run_record, provisional),
-            None if provisional => self
-                .vault
-                .store
-                .record_context_pack_provisional_retrieval_run(&run_record),
-            None => self.vault.store.record_retrieval_run(&run_record),
-        };
-        let telemetry_run_id = match write_result {
-            Ok(())
-                if self
-                    .session
-                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes) =>
-            {
-                None
+        let capture = self.vault.store.retrieval_telemetry_capture_enabled();
+        let telemetry_run_id = if !capture {
+            if let Some(session) = self.session {
+                session.revalidate_without_capture()?;
             }
-            Ok(()) => Some(run_id),
-            // A retrieval the caller declared to be INSIDE a room owns its
-            // registration. Off record the run row is what close consumes, so
-            // swallowing the failure would return a successful retrieval whose
-            // durable run is absent from the session-local close set — the one
-            // outcome the settle contract forbids outright. On record the room
-            // is also the half that can refuse for a STALE ROUTE, and a K10
-            // refusal warned past is the same log-and-continue wearing a
-            // different hat. Only a CANONICAL entry — no room at all — keeps
-            // the best-effort posture: an ordinary retrieval that loses its
-            // telemetry row loses nothing its caller depends on.
-            Err(error) if self.session.is_some() => return Err(error),
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "retrieval telemetry run write failed; continuing retrieval"
-                );
-                None
+            None
+        } else {
+            let run_id = RetrievalRunId::from_bytes(self.vault.store.clock.ulid()?);
+            let run_record = RetrievalRunRecord::new(
+                run_id,
+                telemetry_action,
+                started_at,
+                started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                telemetry_signals.clone(),
+                score_breakdown,
+                total_in_scope,
+                claims_suppressed,
+                empty_reason.map(|reason| format!("{reason:?}")),
+            )
+            .with_context(self.retrieval_state.clone(), self.retrieval_turn)
+            .with_trace(retrieval_trace)
+            .with_quality(&retrieval_quality);
+            let mut run_record = run_record;
+            run_record.replay_inputs = replay_inputs;
+            // ONE-1728 K10: a retrieval issued inside a room registers through the
+            // room's door, which writes under the route the run captured — into
+            // the room's overlay `VaultMeta` while it is off record (so the base
+            // telemetry ledger gains ZERO rows from an OffRecord session, and the
+            // row evaporates at close), and under that route's refusal once the
+            // room has flipped. Canonical entries carry `None` and take the
+            // unchanged base path.
+            let provisional = telemetry_action == RetrievalAction::ContextPack;
+            let write_result = match self.session {
+                Some(session) => session.register_run(&run_record, provisional),
+                None if provisional => self
+                    .vault
+                    .store
+                    .record_context_pack_provisional_retrieval_run(&run_record),
+                None => self.vault.store.record_retrieval_run(&run_record),
+            };
+            match write_result {
+                Ok(())
+                    if self.session.is_some_and(
+                        crate::off_record::SessionRetrievalTelemetry::discards_writes,
+                    ) =>
+                {
+                    None
+                }
+                Ok(()) => Some(run_id),
+                // A retrieval the caller declared to be INSIDE a room owns its
+                // registration. Off record the run row is what close consumes, so
+                // swallowing the failure would return a successful retrieval whose
+                // durable run is absent from the session-local close set — the one
+                // outcome the settle contract forbids outright. On record the room
+                // is also the half that can refuse for a STALE ROUTE, and a K10
+                // refusal warned past is the same log-and-continue wearing a
+                // different hat. Only a CANONICAL entry — no room at all — keeps
+                // the best-effort posture: an ordinary retrieval that loses its
+                // telemetry row loses nothing its caller depends on.
+                Err(error) if self.session.is_some() => return Err(error),
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        "retrieval telemetry run write failed; continuing retrieval"
+                    );
+                    None
+                }
             }
         };
 

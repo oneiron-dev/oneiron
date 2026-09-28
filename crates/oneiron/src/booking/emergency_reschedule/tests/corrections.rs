@@ -405,7 +405,14 @@ fn verified_effect_chokepoint_rejects_deleted_owner_even_on_frozen_pick_retry() 
             checkpoint(&vault, &plan).unwrap()
         };
         let frozen = sink.calls.last().unwrap().1.clone();
-        assert!(vault.delete_entity(&id(OWNER)).unwrap());
+        assert!(
+            vault
+                .delete_entity_with_options(
+                    &id(OWNER),
+                    crate::deletion::DeleteEntityOptions { purge: true }
+                )
+                .unwrap()
+        );
         let txn = vault.store.env.read_txn().unwrap();
         let value: serde_json::Value = serde_json::from_slice(&frozen).unwrap();
         let attempt = crate::outbound::outbound_dispatch_attempt_id(

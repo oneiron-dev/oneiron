@@ -42,6 +42,8 @@ pub(crate) struct ClaimGateWrite<'a> {
     /// and every door that does not opt in is unchanged by construction.
     pub(crate) auto_checker: Option<&'a BoundedAutoChecker>,
     pub(crate) defer_metrics_until_commit: bool,
+    /// Sealed canonical transition. Presence alone never grants Gate authority.
+    pub(crate) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
 }
 
 impl<'a> ClaimGateWrite<'a> {
@@ -56,7 +58,16 @@ impl<'a> ClaimGateWrite<'a> {
             envelope,
             auto_checker: None,
             defer_metrics_until_commit: false,
+            transition: None,
         }
+    }
+
+    pub(crate) fn with_transition(
+        mut self,
+        transition: Option<&'a crate::batch::VerifiedClaimTransition>,
+    ) -> Self {
+        self.transition = transition;
+        self
     }
 }
 
@@ -232,6 +243,10 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             hash_str(&mut hasher, "brief_verb_class");
             hash_str(&mut hasher, brief_ref.trim());
             hash_str(&mut hasher, verb_class.trim());
+        }
+        GrantMintIntentScope::ArtifactPublish { artifact } => {
+            hash_str(&mut hasher, "artifact_publish");
+            hash_str(&mut hasher, artifact.trim());
         }
         GrantMintIntentScope::Calendar { .. } => {
             return Err(Error::Record(RecordError::InvalidOutboundGrantBody(

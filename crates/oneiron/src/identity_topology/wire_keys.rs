@@ -12,7 +12,7 @@
 /// type-0 write of this predicate — the op door's and an agent's alike —
 /// through `validate_distinct_from_claim_structure`. It is deliberately
 /// NOT a `CLAIM_PREDICATE_REGISTRY` entry: that list is the core/companion/
-/// eiri LAYER schema list (`registered_predicates_carry_layer_prefix` pins
+/// persona LAYER schema list (`registered_predicates_carry_layer_prefix` pins
 /// the prefix), and `entity.*` is a family namespace, not a layer — the
 /// same reason the fifteen other predicate families validate through their
 /// own dispatch arm without a registry row. The registry gates no write
@@ -50,6 +50,10 @@ pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_FACETS: usize =
 
 pub(super) const BODY_KEY_KIND: &str = "kind";
 pub(super) const BODY_KEY_SEQ: &str = "seq";
+/// Producer proof that every participant and the bound author passed admission.
+pub(super) const BODY_KEY_VERIFIED: &str = "verified";
+/// Non-personal invalidity discovered before erasing an author/participant.
+pub(super) const BODY_KEY_INVALIDATED: &str = "invalidated";
 pub(super) const BODY_KEY_AT: &str = "at";
 pub(super) const BODY_KEY_ACTOR: &str = "actor";
 pub(super) const BODY_KEY_ACTOR_CLASS: &str = "actor_class";
@@ -106,6 +110,8 @@ pub(super) const EVENT_KIND_UNDO: &str = "undo";
 /// resolution event IS the retirement of the park: the projector finds a
 /// proposal already resolved by this row, so a second ruling is refused.
 pub(super) const EVENT_KIND_PROPOSAL_RESOLUTION: &str = "proposal_resolution";
+/// Automatic retirement of a proposal whose participant was deleted.
+pub(super) const EVENT_KIND_PROPOSAL_CANCELLATION: &str = "proposal_cancellation";
 
 /// Ramp-scope actor stamped when the resolved proposal bound no deciding
 /// actor. The DEC-0006 tuple is total — an unattributed proposer is its own
@@ -117,3 +123,15 @@ pub(super) const PLAN_READ_THROUGH: &str = "read_through";
 
 pub(super) const EVIDENCE_KEY_REFS: &str = "refs";
 pub(super) const EVIDENCE_KEY_RATIONALE: &str = "rationale";
+
+/// Signed, append-only admission disposition for one immutable decision core.
+pub(super) const EVENT_KIND_ADMISSION_DISPOSITION: &str = "admission_disposition";
+pub(super) const BODY_KEY_CORE_DIGEST: &str = "core_digest";
+pub(super) const BODY_KEY_VERDICT: &str = "verdict";
+pub(super) const BODY_KEY_REASON: &str = "reason";
+pub(super) const BODY_KEY_SIGNER: &str = "signer_pk";
+pub(super) const BODY_KEY_SIGNATURE: &str = "signature";
+pub(super) const EVENT_KIND_AUTHOR_ATTRIBUTION: &str = "author_attribution";
+pub(super) const EVENT_KIND_AUTHOR_REDACTION: &str = "author_redaction";
+pub(super) const BODY_KEY_ATTR_ACTOR: &str = "at_actor";
+pub(super) const BODY_KEY_ATTR_CLASS: &str = "at_class";

@@ -1,17 +1,22 @@
-//! Generic Git/HTTP source fetch composes with inert pack staging, never install.
-use super::{PackSource, invalid};
+//! Generic Git/HTTP source fetch composes with the post-fit pack install door.
+use super::{PackFitPolicy, PackInstallDisposition, PackSource, invalid};
 use crate::{
     Vault,
     entity_id::EntityId,
     error::Result,
+    side_table::{self, LegacyJson, SideTable},
     skill_hub::{ForeignSkillPublisher, HubPin, HubRef, SkillHubAdapter},
     temporal::TimeRange,
 };
+/// A fetched pack's source and configured publisher, keyed by source id and hub-ref digest.
+pub(super) const SOURCE_HUB_ALIAS: SideTable<(EntityId, [u8; 32]), (String, String), LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_PACK_SOURCE_ALIAS);
+
 pub trait PackSourceAdapter: SkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<PackSource>;
 }
 impl Vault {
-    /// The returned byte-pinned reference is ready for the human install ask.
+    /// The returned byte-pinned reference is ready for the post-fit install.
     /// A fetch neither activates the adapter nor issues its requested grants.
     pub fn fetch_pack_from_adapter<A: PackSourceAdapter>(
         &self,
@@ -35,19 +40,67 @@ impl Vault {
                 "pack adapter does not match configured publisher source",
             ));
         }
+        reference.validate()?;
+        if matches!(reference.pin, HubPin::None) {
+            return Err(invalid("pack fetch requires a pinned hub reference"));
+        }
         let source = adapter.fetch_pack_source(reference)?;
-        let pinned = HubRef::new(
-            reference.hub_id,
-            reference.ref_string.clone(),
-            HubPin::ContentHash(source.content_hash().to_hex()),
-        )?;
+        if let HubPin::ContentHash(requested) = &reference.pin
+            && *requested != source.content_hash().to_hex()
+        {
+            return Err(invalid("requested pack content hash drift"));
+        }
+        let pinned = reference.clone();
         self.with_write_txn(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &reference.hub_id)? != configuration {
                 return Err(invalid("hub changed during pack fetch"));
             }
             let id = self.stage_pack_source_in_txn(txn, &source, occurred, learned_at)?;
+            self.record_pack_fetch_in_txn(txn, &id, &pinned, publisher)?;
             Ok((id, pinned))
         })
     }
+    /// Only this configured-adapter fetch door records a source/publisher alias.
+    pub(super) fn record_pack_fetch_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source_id: &EntityId,
+        pinned: &HubRef,
+        publisher: &ForeignSkillPublisher,
+    ) -> Result<()> {
+        let key = source_hub_alias_key(source_id, pinned)?;
+        let value = (
+            publisher.identity().to_owned(),
+            publisher.grant_ref().to_owned(),
+        );
+        SOURCE_HUB_ALIAS.put(&self.store, txn, &key, &value)?;
+        Ok(())
+    }
+    /// Fetch, pin, evaluate fit and install by the same immutable source hash.
+    /// Source staging may remain as inert evidence if the fit policy refuses.
+    pub fn install_pack_from_adapter<A: PackSourceAdapter>(
+        &self,
+        adapter: &A,
+        reference: &HubRef,
+        publisher: &ForeignSkillPublisher,
+        policy: &dyn PackFitPolicy,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<PackInstallDisposition> {
+        let (source_id, pinned) =
+            self.fetch_pack_from_adapter(adapter, reference, publisher, occurred, learned_at)?;
+        let ask = self.prepare_pack_install(source_id, &pinned, publisher, policy)?;
+        self.install_pack(&ask)
+    }
+}
+
+/// A source can carry multiple pinned hub aliases; no alias is minted by local staging.
+pub(super) fn source_hub_alias_key(
+    source_id: &EntityId,
+    pinned: &HubRef,
+) -> Result<(EntityId, [u8; 32])> {
+    let bytes =
+        serde_json::to_vec(&pinned.to_value()?).map_err(|_| invalid("pack hub source encoding"))?;
+    Ok((*source_id, *blake3::hash(&bytes).as_bytes()))
 }

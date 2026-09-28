@@ -7,6 +7,543 @@ use crate::test_util::entity as test_entity_id;
 use proptest::prelude::*;
 use serde_json::json;
 
+#[cfg(feature = "sync")]
+struct SpanFixture {
+    _tmp: tempfile::TempDir,
+    vault: crate::Vault,
+    target: crate::EntityId,
+    actor: crate::write_envelope::WriteActor,
+    owner: crate::consent::AuthenticatedOwner,
+    key: crate::claim::ScopedReadActorKey,
+    frame: LensRenderFrame,
+    render: GeneratedUiRender,
+}
+
+#[cfg(feature = "sync")]
+fn span_fixture() -> Result<SpanFixture> {
+    let (tmp, vault) = test_vault();
+    let target = test_entity_id(12);
+    let actor_id = test_entity_id(99);
+    put_person(&vault, &target)?;
+    put_person(&vault, &actor_id)?;
+    let actor =
+        crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
+    let owner = vault.authenticate_owner(
+        actor_id,
+        "principal:span-test",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        &target,
+        &crate::entity_doc::TextField::Utf8Body,
+        actor,
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+    )?;
+    install_viewer_base_grant(&vault)?;
+    let (key, mut frame) = viewer_frame("card-1")?;
+    let read = vault.scoped_read(key.clone());
+    frame.mint_backing_ref(
+        &read,
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let render = selectable_render(
+        "card-1",
+        "people",
+        vec![binding("visible-set", LensHandleRole::EntitySet)],
+    )?;
+    Ok(SpanFixture {
+        _tmp: tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    })
+}
+
+#[cfg(feature = "sync")]
+fn quote_fixture() -> Result<SpanFixture> {
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+
+    let tmp = tempfile::tempdir()?;
+    // The production witness door supplies a canonical MESSAGE envelope.
+    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    let actor_id = test_entity_id(99);
+    put_person(&vault, &actor_id)?;
+    let receipt = vault
+        .memory(actor_id, crate::edge::EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: test_entity_id(55).to_hex(),
+            turn_ref: None,
+            messages: vec![WitnessMessage {
+                id: None,
+                author: WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "A🦊日本B".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 500,
+        })
+        .expect("witness canonical MESSAGE");
+    let message = vault
+        .memory(actor_id, crate::edge::EdgeActorClass::Human)
+        .get_entity(&receipt.message_short_ids[0])
+        .expect("message read")
+        .value
+        .expect("message exists");
+    let target = crate::EntityId::from_hex(&message.id_hex)?;
+    let actor =
+        crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
+    let owner = vault.authenticate_owner(
+        actor_id,
+        "principal:quote-test",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        &target,
+        &crate::entity_doc::TextField::MapField("content".into()),
+        actor,
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+    )?;
+    install_viewer_base_grant(&vault)?;
+    let (key, mut frame) = viewer_frame("card-1")?;
+    let read = vault.scoped_read(key.clone());
+    frame.mint_backing_ref(
+        &read,
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let render = selectable_render(
+        "card-1",
+        "message",
+        vec![binding("visible-set", LensHandleRole::EntitySet)],
+    )?;
+    Ok(SpanFixture {
+        _tmp: tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    })
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn quote_triple_round_trips_from_message_span_without_copying_text() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        key,
+        frame,
+        render,
+        ..
+    } = quote_fixture()?;
+    let read = vault.scoped_read(key);
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("message"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    let quote = frame.select_quote(&read, &render, &request)?;
+    frame.prove_quote(&read, &render, &quote)?;
+    assert_eq!(quote.reply_to_message_id(), target);
+    assert_eq!(quote.reply_to_range(), LensQuoteRange { start: 1, end: 4 });
+    let wire = serde_json::to_value(&quote).expect("serialize pointer");
+    assert_eq!(wire.as_object().expect("object").len(), 3);
+    assert_eq!(wire["replyToMessageId"], json!(target));
+    assert_eq!(wire["replyToRange"], json!({ "start": 1, "end": 4 }));
+    assert_eq!(
+        wire["replyToRevisionId"],
+        json!(quote.reply_to_revision_id())
+    );
+    assert!(!wire.to_string().contains("🦊日本"), "no text copy");
+    let frontier = vault.entity_text_frontier(&target)?;
+    assert_eq!(
+        quote.reply_to_revision_id(),
+        frontier
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    assert!(!quote.reply_to_revision_id().is_empty());
+    let pinned = vault.entity_text_at(&target, &frontier)?;
+    assert_eq!(pinned.chars().skip(1).take(3).collect::<String>(), "🦊日本");
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn quote_refuses_copies_missing_revision_non_scalar_offsets_and_stale_selection() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    } = quote_fixture()?;
+    let read = vault.scoped_read(key);
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("message"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    let quote = frame.select_quote(&read, &render, &request)?;
+    // Only a selection request crosses the client boundary. It cannot smuggle
+    // text, a missing or chosen revision, or its own message/range pointer.
+    let honest = json!({
+        "cardId": "card-1", "atomId": "message", "handle": "visible-set",
+        "start": 1, "end": 4,
+    });
+    for (name, value) in [
+        ("text", json!("🦊日本")),
+        ("replyToText", json!("🦊日本")),
+        ("replyToMessageId", json!(target)),
+        ("replyToRevisionId", serde_json::Value::Null),
+        ("replyToRange", json!({ "start": 1, "end": 4 })),
+    ] {
+        let mut forged = honest.clone();
+        forged
+            .as_object_mut()
+            .expect("object")
+            .insert(name.into(), value);
+        assert!(
+            serde_json::from_value::<LensSpanSelectionRequest>(forged).is_err(),
+            "client cannot supply {name}"
+        );
+    }
+    // Offsets refer to scalar positions; UTF-8 byte or UTF-16 unit offsets
+    // beyond the scalar length cannot be smuggled into a selection.
+    assert!(
+        frame
+            .select_quote(
+                &read,
+                &render,
+                &LensSpanSelectionRequest {
+                    start: 1,
+                    end: 9,
+                    ..request.clone()
+                }
+            )
+            .is_err()
+    );
+    assert!(
+        frame
+            .select_quote(
+                &read,
+                &render,
+                &LensSpanSelectionRequest {
+                    start: 1,
+                    end: 1,
+                    ..request
+                }
+            )
+            .is_err()
+    );
+    let before = vault.entity_text_frontier(&target)?;
+    let append = vault.entity_text_anchor(&target, 5, 5)?;
+    vault.edit_entity_text(
+        &target,
+        &[crate::entity_doc::AnchoredEdit {
+            actor: Some(actor),
+            verb: crate::entity_doc::EditVerb::InsertAfterAnchor {
+                anchor: append,
+                text: "!".into(),
+            },
+        }],
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        510,
+    )?;
+    assert!(
+        frame.prove_quote(&read, &render, &quote).is_err(),
+        "old selection must not re-prove at new head"
+    );
+    assert_eq!(
+        vault.entity_text_at(&target, &before)?,
+        "A🦊日本B",
+        "the pinned revision stays readable"
+    );
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[test]
+fn span_handle_resolves_loro_cursors_at_its_version_and_rejects_stale_head() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+        ..
+    } = span_fixture()?;
+    let read = vault.scoped_read(key);
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("people"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    let selected = frame.select_span(&read, &render, &request)?;
+    let cursor = selected.span().expect("span cursor");
+    assert_eq!(cursor.range(), (1, 4));
+    assert_eq!(vault.entity_text_at(&target, cursor.frontier())?, "person");
+    let anchor = vault.entity_text_anchor(&target, 1, 4)?;
+    assert_eq!(cursor.cursors(), anchor.cursors());
+    assert_eq!(cursor.frontier(), anchor.frontier());
+    assert_eq!(
+        frame
+            .resolve_read_handle(&read, &render, &selected)?
+            .target()
+            .entity_id(),
+        &target
+    );
+    let wire = serde_json::to_string(&selected).expect("span serializes");
+    assert!(
+        !wire.contains("ers"),
+        "a selection must never serialize selected text"
+    );
+
+    let append = vault.entity_text_anchor(&target, 6, 6)?;
+    vault.edit_entity_text(
+        &target,
+        &[crate::entity_doc::AnchoredEdit {
+            actor: Some(actor),
+            verb: crate::entity_doc::EditVerb::InsertAfterAnchor {
+                anchor: append,
+                text: "!".into(),
+            },
+        }],
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        10,
+    )?;
+    assert!(
+        frame
+            .resolve_read_handle(&read, &render, &selected)
+            .is_err(),
+        "changed frontier must fail closed even when the old span still maps"
+    );
+    assert_eq!(vault.entity_text_at(&target, cursor.frontier())?, "person");
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn span_selection_refuses_offsets_from_a_stale_render() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    } = span_fixture()?;
+    let read = vault.scoped_read(key);
+    let at_start = vault.entity_text_anchor(&target, 0, 0)?;
+    vault.edit_entity_text(
+        &target,
+        &[crate::entity_doc::AnchoredEdit {
+            actor: Some(actor),
+            verb: crate::entity_doc::EditVerb::InsertAfterAnchor {
+                anchor: at_start,
+                text: "X".into(),
+            },
+        }],
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        10,
+    )?;
+    assert_eq!(vault.entity_text(&target)?, "Xperson");
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("people"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    assert!(
+        frame.select_span(&read, &render, &request).is_err(),
+        "stale offsets must not turn the rendered 'ers' into the current 'per'"
+    );
+
+    let (fresh_key, mut fresh_frame) = viewer_frame("card-1")?;
+    fresh_frame.mint_backing_ref(
+        &vault.scoped_read(fresh_key.clone()),
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let fresh_read = vault.scoped_read(fresh_key);
+    let selected = fresh_frame.select_span(&fresh_read, &render, &request)?;
+    assert_eq!(
+        selected.span().expect("fresh cursor").frontier(),
+        vault.entity_text_frontier(&target)?
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn rewrite_switch_keeps_scoped_span_reachable_but_refuses_old_handle() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    } = span_fixture()?;
+    let read = vault.scoped_read(key);
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("people"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    let old = frame.select_span(&read, &render, &request)?;
+    let proposal = crate::EntityId::now();
+    vault.open_text_proposal(
+        &proposal,
+        &[crate::entity_doc::ForkRequest {
+            entity: target,
+            base: vault.entity_text_frontier(&target)?,
+            actor,
+            edits: Vec::new(),
+            rewrite: Some("replacement".into()),
+        }],
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        11,
+    )?;
+    vault.settle_text_proposal(
+        &proposal,
+        crate::entity_doc::SettleVerb::Switch,
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        actor,
+        12,
+    )?;
+    assert_eq!(vault.entity_text(&target)?, "replacement");
+    assert!(frame.resolve_read_handle(&read, &render, &old).is_err());
+
+    let (fresh_key, mut fresh_frame) = viewer_frame("card-1")?;
+    fresh_frame.mint_backing_ref(
+        &vault.scoped_read(fresh_key.clone()),
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let fresh_read = vault.scoped_read(fresh_key);
+    let fresh = fresh_frame.select_span(&fresh_read, &render, &request)?;
+    assert_eq!(
+        fresh_frame
+            .resolve_read_handle(&fresh_read, &render, &fresh)?
+            .target()
+            .entity_id(),
+        &target
+    );
+    assert_ne!(
+        old.span().expect("old cursor").frontier(),
+        fresh.span().expect("new cursor").frontier()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn span_rejects_out_of_bounds_and_claim_backing() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        key,
+        frame,
+        render,
+        ..
+    } = span_fixture()?;
+    let read = vault.scoped_read(key);
+    for (start, end) in [(4, 3), (0, 7), (usize::MAX, usize::MAX)] {
+        assert!(
+            frame
+                .select_span(
+                    &read,
+                    &render,
+                    &LensSpanSelectionRequest {
+                        card_id: render_id("card-1"),
+                        atom_id: id("people"),
+                        handle: handle("visible-set"),
+                        start,
+                        end,
+                    }
+                )
+                .is_err()
+        );
+    }
+    let valid_span = frame.select_span(
+        &read,
+        &render,
+        &LensSpanSelectionRequest {
+            card_id: render_id("card-1"),
+            atom_id: id("people"),
+            handle: handle("visible-set"),
+            start: 1,
+            end: 4,
+        },
+    )?;
+    assert!(
+        frame.quote_from_span(&read, &render, &valid_span).is_err(),
+        "a non-MESSAGE span cannot become a quote pointer"
+    );
+    // A claim row is readable, but it is not an entity text document.
+    let (_other_tmp, other_vault) = test_vault();
+    let (claim_key, claim_frame, _) = result_set_fixture(&other_vault)?;
+    let claim_read = other_vault.scoped_read(claim_key);
+    let claim_render = selectable_render(
+        "card-1",
+        "people",
+        vec![binding("claim-a", LensHandleRole::ClaimSet)],
+    )?;
+    assert!(
+        claim_frame
+            .select_span(
+                &claim_read,
+                &claim_render,
+                &LensSpanSelectionRequest {
+                    card_id: render_id("card-1"),
+                    atom_id: id("people"),
+                    handle: handle("claim-a"),
+                    start: 0,
+                    end: 1,
+                }
+            )
+            .is_err()
+    );
+    Ok(())
+}
+
 #[test]
 fn selecting_a_bound_atom_returns_structured_read_reach() -> Result<()> {
     let (_tmp, vault) = test_vault();
@@ -832,5 +1369,37 @@ proptest! {
             serde_json::from_value::<LensAtomSelectionRequest>(request).is_err(),
             "an atom selection carries three names and nothing else"
         );
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn span_request_shape_rejects_forged_sources(
+        field in "[a-zA-Z][a-zA-Z0-9_]{0,16}",
+        value in "[a-zA-Z0-9 :/._-]{0,32}",
+        start in any::<u32>(), end in any::<u32>(),
+    ) {
+        prop_assume!(!["cardId", "atomId", "handle", "start", "end"].contains(&field.as_str()));
+        let mut request = json!({
+            "cardId": "card-1", "atomId": "people", "handle": "visible-set",
+            "start": start, "end": end,
+        });
+        prop_assert!(serde_json::from_value::<LensSpanSelectionRequest>(request.clone()).is_ok());
+        request.as_object_mut().expect("request object").insert(field, json!(value));
+        prop_assert!(serde_json::from_value::<LensSpanSelectionRequest>(request).is_err());
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn span_request_offsets_are_checked_against_document(start in any::<u16>(), end in any::<u16>()) {
+        let SpanFixture { _tmp, vault, key, frame, render, .. } = span_fixture().expect("fixture");
+        let read = vault.scoped_read(key);
+        let request = LensSpanSelectionRequest {
+            card_id: render_id("card-1"), atom_id: id("people"), handle: handle("visible-set"),
+            start: start as usize, end: end as usize,
+        };
+        let result = frame.select_span(&read, &render, &request);
+        prop_assert_eq!(result.is_ok(), start <= end && end <= 6);
     }
 }

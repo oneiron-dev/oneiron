@@ -76,9 +76,77 @@ pub(super) fn parse_search_limit(limit: u32) -> BoundaryResult<usize> {
     Ok(limit as usize)
 }
 
+/// Check the JS string's UTF-8 size before napi-rs allocates an owned Rust string.
+/// JS `.length` measures UTF-16 units and cannot enforce the shared byte cap.
+pub(super) fn read_query(query: napi::JsString<'_>) -> napi::Result<String> {
+    validate_query_len_bytes(query.utf8_len()?).map_err(napi::Error::from_reason)?;
+    query.into_utf8()?.into_owned()
+}
+
+/// Check the JS array length before reading any elements into a Rust Vec.
+pub(super) fn read_bounded_array<T: FromNapiValue>(
+    values: &Array<'_>,
+    validate: impl FnOnce(usize) -> BoundaryResult<()>,
+) -> napi::Result<Vec<T>> {
+    let len = values.len() as usize;
+    validate(len).map_err(napi::Error::from_reason)?;
+    (0..values.len())
+        .map(|index| {
+            values.get(index)?.ok_or_else(|| {
+                napi::Error::from_reason(format!("array element {index} is missing"))
+            })
+        })
+        .collect()
+}
+
+/// Preserve the JS Array ABI, but do not marshal even one element on a bad size.
+pub(super) fn read_vector(
+    values: &Array<'_>,
+    expected: usize,
+    label: &str,
+) -> napi::Result<Vec<f32>> {
+    validate_vector_len(values.len() as usize, expected, label)
+        .map_err(napi::Error::from_reason)?;
+    (0..values.len())
+        .map(|index| {
+            Ok(values.get::<f64>(index)?.ok_or_else(|| {
+                napi::Error::from_reason(format!("array element {index} is missing"))
+            })? as f32)
+        })
+        .collect()
+}
+
+/// Read the nested manifest only once. A JS getter could return a short array
+/// for a size check and a long one if we asked for `files` again during DTO
+/// conversion, so convert the checked array rather than re-reading the object.
+pub(super) fn read_codebase_snapshot(
+    snapshot: Object<'_>,
+) -> napi::Result<super::types::NapiCodebaseSnapshot> {
+    let files: Array<'_> = required_field(&snapshot, "files")?;
+    validate_codebase_file_count(files.len() as usize).map_err(napi::Error::from_reason)?;
+    let files = read_bounded_array(&files, validate_codebase_file_count)?;
+    Ok(super::types::NapiCodebaseSnapshot {
+        project_id: required_field(&snapshot, "projectId")?,
+        repo_ref: required_field(&snapshot, "repoRef")?,
+        commit_hash: snapshot.get::<Option<String>>("commitHash")?.flatten(),
+        fork_hash: snapshot.get::<Option<Buffer>>("forkHash")?.flatten(),
+        scope_key: snapshot.get::<Option<Buffer>>("scopeKey")?.flatten(),
+        files,
+    })
+}
+
+fn required_field<T: FromNapiValue>(object: &Object<'_>, name: &str) -> napi::Result<T> {
+    object
+        .get(name)?
+        .ok_or_else(|| napi::Error::from_reason(format!("codebase snapshot {name} is required")))
+}
+
 /// Validate text query size before it crosses into core search.
 pub(super) fn validate_query_len(query: &str) -> BoundaryResult<()> {
-    let len = query.len();
+    validate_query_len_bytes(query.len())
+}
+
+fn validate_query_len_bytes(len: usize) -> BoundaryResult<()> {
     if len > MAX_NAPI_QUERY_BYTES {
         return Err(format!(
             "query must be <= {MAX_NAPI_QUERY_BYTES} bytes, got {len}"

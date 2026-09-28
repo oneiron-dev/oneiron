@@ -11,7 +11,7 @@ const PREDICATE_INDEX: SideTable<([u8; 32], EntityId), String, Raw> =
 
 /// Posting-list row of one pending session-generated claim under its producing actor.
 /// Key: id16 (producer) + id16.
-const PENDING_PRODUCER: SideTable<(EntityId, EntityId), (), Raw> =
+pub(crate) const PENDING_PRODUCER: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::CLAIM_PENDING_PRODUCER);
 
 /// Catalog marker recording that at least one claim uses this predicate. Key: string.
@@ -118,27 +118,13 @@ fn predicate_ids_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     hash: [u8; 32],
+    limit: usize,
 ) -> Result<Vec<EntityId>> {
     let mut ids = Vec::new();
     for row in PREDICATE_INDEX.iter_from(store, txn, &hash)? {
         let (key, _) = row?;
         ids.push(key.1);
-        if ids.len() > 10_000 {
-            return Err(Error::IndexOverflow("claim projection query"));
-        }
-    }
-    Ok(ids)
-}
-fn producer_ids_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    producer: EntityId,
-) -> Result<Vec<EntityId>> {
-    let mut ids = Vec::new();
-    for row in PENDING_PRODUCER.iter_from(store, txn, producer.as_bytes())? {
-        let (key, _) = row?;
-        ids.push(key.1);
-        if ids.len() > 10_000 {
+        if ids.len() > limit {
             return Err(Error::IndexOverflow("claim projection query"));
         }
     }
@@ -149,16 +135,18 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
     txn: &heed::RoTxn<'_>,
     predicate: &str,
 ) -> Result<Vec<EntityId>> {
-    predicate_ids_in_txn(store, txn, predicate_hash(predicate))
+    predicate_ids_in_txn(store, txn, predicate_hash(predicate), 10_000)
 }
-pub(crate) fn pending_claim_ids_for_producer_in_txn(
+/// The same posting list under a caller-resolved ceiling (a policy row), for
+/// doors whose limit is authored data rather than this index's default.
+pub(crate) fn claim_ids_for_predicate_bounded_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    producer: EntityId,
+    predicate: &str,
+    limit: usize,
 ) -> Result<Vec<EntityId>> {
-    producer_ids_in_txn(store, txn, producer)
+    predicate_ids_in_txn(store, txn, predicate_hash(predicate), limit)
 }
-
 /// Classify distinct stored predicates under live policy before reading any
 /// claim bodies. The catalog and its posting lists co-commit with claim writes.
 pub(super) fn pinned_claim_ids_in_txn(

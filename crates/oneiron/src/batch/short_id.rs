@@ -5,9 +5,9 @@ use std::str;
 use heed::RwTxn;
 use xxhash_rust::xxh32::xxh32;
 
-use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EdgeStoreStaging};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -186,32 +186,20 @@ pub(super) fn delete_related_edges(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let mut outbound = Vec::new();
-    for entry in store.edges_out.prefix_iter(wtxn, id.as_bytes())? {
-        let (key, value) = entry?;
-        let edge = parse_strict_edge_record(&key, &value)?;
-        outbound.push((edge.kind, edge.target));
-    }
-
+    let outbound: Vec<_> = store
+        .port_edges(wtxn, id, EdgeDirection::Out, None, None)?
+        .map(|row| row.map(|edge| (edge.kind, edge.target)))
+        .collect::<Result<_>>()?;
     for (kind, target) in &outbound {
-        let out_key = Store::encode_edge_key(id, *kind, target);
-        let in_key = Store::encode_edge_key(target, *kind, id);
-        store.edges_out.delete(wtxn, &out_key)?;
-        store.edges_in.delete(wtxn, &in_key)?;
+        store.port_remove_edge_rows(wtxn, id, *kind, target)?;
     }
 
-    let mut inbound = Vec::new();
-    for entry in store.edges_in.prefix_iter(wtxn, id.as_bytes())? {
-        let (key, value) = entry?;
-        let edge = parse_strict_edge_record(&key, &value)?;
-        inbound.push((edge.kind, edge.target));
-    }
-
+    let inbound: Vec<_> = store
+        .port_edges(wtxn, id, EdgeDirection::In, None, None)?
+        .map(|row| row.map(|edge| (edge.kind, edge.target)))
+        .collect::<Result<_>>()?;
     for (kind, source) in &inbound {
-        let in_key = Store::encode_edge_key(id, *kind, source);
-        let out_key = Store::encode_edge_key(source, *kind, id);
-        store.edges_in.delete(wtxn, &in_key)?;
-        store.edges_out.delete(wtxn, &out_key)?;
+        store.port_remove_edge_rows(wtxn, source, *kind, id)?;
     }
 
     let mut neighbors: Vec<EntityId> = outbound

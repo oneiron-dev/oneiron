@@ -22,9 +22,14 @@ pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;
 mod hydration;
+mod self_brief;
 pub(crate) use history::validate_board_claim;
 pub use history::{
     BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
+};
+pub use self_brief::{
+    BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
+    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
 };
 mod memories;
 mod memories_frame;
@@ -73,19 +78,19 @@ pub use memories_projection::project_memories_section;
 pub use plugin::{
     AdmittedPluginSection, AuthorityLaneRef, BoardBlockKind, BoardBlockRecord, BoardBlockScope,
     BoardBlockWriteEnvelope, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
-    PLUGIN_PROPOSALS_SECTION_NAME, PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload,
-    PluginInstallExecutor, PluginInstallOrigin, PluginInstallSource, PluginInstallTarget,
-    PluginProposalRow, PluginResult, PluginSectionAdmission, PluginSectionError,
-    PluginSectionInstallProposal, PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot,
-    PluginSuggestionKey, SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId,
-    SectionManifest, SectionManifestEnvelope, SectionManifestProvenance, SectionVerbAllowlist,
-    SectionVerbRef, SkillLifecycleSource, StateFamilyRef, ValidatedSectionManifest,
-    decode_section_manifest, digest_to_hex, encode_section_manifest,
-    execute_approved_plugin_section_install, pending_plugin_proposal_rows,
+    PLUGIN_PROPOSALS_SECTION_NAME, PREDICATE_PLUGIN_SECTION_INSTALL, PackSectionRegistration,
+    PluginInstallClaimPayload, PluginInstallExecutor, PluginInstallOrigin, PluginInstallSource,
+    PluginInstallTarget, PluginProposalRow, PluginResult, PluginSectionAdmission,
+    PluginSectionError, PluginSectionInstallProposal, PluginSectionRegistry, PluginSectionRow,
+    PluginSectionSnapshot, PluginSuggestionKey, SECTION_MANIFEST_SCHEMA_VERSION,
+    SectionBindingResolver, SectionId, SectionManifest, SectionManifestEnvelope,
+    SectionManifestProvenance, SectionVerbAllowlist, SectionVerbRef, SkillLifecycleSource,
+    StateFamilyRef, ValidatedSectionManifest, decode_section_manifest, digest_to_hex,
+    encode_section_manifest, execute_approved_plugin_section_install, pending_plugin_proposal_rows,
     propose_plugin_section_install, propose_plugin_section_install_with_evidence, quoted_leaf,
-    render_plugin_proposal_row, render_plugin_proposal_section, render_plugin_row,
-    render_plugin_sections, section_manifest_digest, validate_manifest_for_admission,
-    validate_manifest_for_proposal,
+    render_pack_sections, render_plugin_proposal_row, render_plugin_proposal_section,
+    render_plugin_row, render_plugin_sections, section_manifest_digest,
+    validate_manifest_for_admission, validate_manifest_for_proposal,
 };
 pub use tasks::{
     CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow,

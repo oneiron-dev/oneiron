@@ -15,6 +15,12 @@ const MANIFEST: SideTable<(), ModelManifest, LegacyJson> =
 /// Per-vault narrow-only resident route overrides. Key: ().
 const RESIDENT_ROUTES: SideTable<(), BTreeMap<ModelSlot, ModelLocality>, LegacyJson> =
     SideTable::new(&side_table::LLM_RESIDENT_ROUTES);
+/// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
+const TEACHER_APPROVAL: SideTable<(), TeacherProbeApproval, LegacyJson> =
+    SideTable::new(&side_table::LLM_EXTRACTION_TEACHER_PROBE);
+mod teacher_probe;
+pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
+pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
@@ -128,6 +134,9 @@ pub struct ModelManifest {
     pub routes: BTreeMap<ModelSlot, ModelLocality>,
     #[serde(default)]
     pub verdict: Option<VerdictBinding>,
+    /// Owner-configured runtime seat policy. An absent row takes bundled data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_policy: Option<super::seat::SeatPolicy>,
 }
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
@@ -164,6 +173,10 @@ impl ModelManifest {
         Self::from_json(&std::fs::read(path)?)
     }
     pub fn validate(&self) -> Result<()> {
+        self.seat_policy.as_ref().map_or_else(
+            || super::seat::SeatPolicy::bundled().map(|_| ()),
+            super::seat::SeatPolicy::validate,
+        )?;
         if self.version != 2
             || MODEL_ROLES
                 .iter()
@@ -239,9 +252,37 @@ pub(crate) fn read_manifest(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Opti
     Ok(Some(manifest))
 }
 impl Vault {
+    /// Update a manifest without changing its approved extraction-teacher binding.
+    /// Initial teacher pins, and any teacher change, require a passing probe receipt.
     pub fn set_model_manifest(&self, manifest: &ModelManifest) -> Result<()> {
+        self.write_model_manifest(manifest, None)
+    }
+
+    /// Publish the bench-approved teacher binding and its receipt in one vault transaction.
+    pub fn set_model_manifest_with_teacher_approval(
+        &self,
+        manifest: &ModelManifest,
+        approval: &TeacherProbeApproval,
+    ) -> Result<()> {
+        self.write_model_manifest(manifest, Some(approval))
+    }
+
+    fn write_model_manifest(
+        &self,
+        manifest: &ModelManifest,
+        new_approval: Option<&TeacherProbeApproval>,
+    ) -> Result<()> {
         manifest.validate()?;
         let mut txn = self.store.env.write_txn()?;
+        let saved_approval = TEACHER_APPROVAL.get(&self.store, &txn, &())?;
+        let approval = new_approval
+            .or(saved_approval.as_ref())
+            .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
+        let policy = self.teacher_probe_policy_in_txn(&txn, approval.holder_ref.as_deref())?;
+        approval.verify(manifest, &policy)?;
+        if let Some(approval) = new_approval {
+            TEACHER_APPROVAL.put(&self.store, &mut txn, &(), approval)?;
+        }
         // A tighter owner pin clears stale resident routes atomically.
         RESIDENT_ROUTES.delete(&self.store, &mut txn, &())?;
         MANIFEST.put(&self.store, &mut txn, &(), manifest)?;
@@ -251,6 +292,21 @@ impl Vault {
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)
     }
+    /// Effective per-vault route, including a resident narrowing if present.
+    pub fn model_route(&self, slot: ModelSlot) -> Result<Option<ModelLocality>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(manifest) = read_manifest(&self.store, &txn)? else {
+            return Ok(None);
+        };
+        let route = read_routes(&self.store, &txn)?
+            .get(&slot)
+            .copied()
+            .unwrap_or(manifest.routes[&slot]);
+        if route_rank(route) > route_rank(manifest.routes[&slot]) {
+            return Err(invalid("resident route cannot widen manifest pin"));
+        }
+        Ok(Some(route))
+    }
     pub fn set_model_route(&self, slot: ModelSlot, route: ModelLocality) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
         let manifest =
@@ -258,12 +314,10 @@ impl Vault {
         if route_rank(route) > route_rank(manifest.routes[&slot]) {
             return Err(invalid("resident route cannot widen manifest pin"));
         }
-        for binding in manifest
-            .roles
-            .values()
-            .filter(|binding| binding.slot == slot)
-        {
-            model_for_route(binding, route, manifest.routes[&slot])?;
+        for (role, binding) in &manifest.roles {
+            if *role != ModelRole::ExtractionTeacher && binding.slot == slot {
+                model_for_route(binding, route, manifest.routes[&slot])?;
+            }
         }
         let mut routes = read_routes(&self.store, &txn)?;
         routes.insert(slot, route);
@@ -271,16 +325,11 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
-    /// Call-path binding: absent manifest preserves explicit host configuration.
-    pub fn bind_model_role(&self, role: ModelRole, request: &mut LlmRequest) -> Result<()> {
-        let txn = self.store.env.read_txn()?;
-        if let Some(manifest) = read_manifest(&self.store, &txn)? {
-            manifest.bind_request(role, &read_routes(&self.store, &txn)?, request)?;
-        }
-        Ok(())
-    }
 }
-fn read_routes(store: &Store, txn: &heed::RoTxn<'_>) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
+pub(super) fn read_routes(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
     Ok(RESIDENT_ROUTES.get(store, txn, &())?.unwrap_or_default())
 }
 

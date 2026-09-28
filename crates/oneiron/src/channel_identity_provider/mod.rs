@@ -6,8 +6,11 @@
 
 mod email_adapter;
 pub mod gmail;
+mod gmail_header;
 mod inbound_types;
 mod line_adapter;
+pub mod mail_placement;
+pub mod mailbox_cursor;
 mod shared_validate;
 mod slack_adapter;
 mod slack_validate;
@@ -53,10 +56,7 @@ use self::shared_validate::{
 // header items the tests name bare. After the directory split the seam
 // re-imports them so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
-    SelfHeldShape,
-};
+use crate::channel_identity::{ChannelIdentityFulfillment, ChannelIdentityShape};
 #[cfg(test)]
 use crate::channel_identity_lifecycle::{
     ChannelIdentityLifecycleActor, ChannelIdentityLifecycleVerb, ProvisionIntent,

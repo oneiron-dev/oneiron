@@ -24,7 +24,8 @@
 //!    failure mode, so it always runs.
 //! 2. **Targeted edit** — the agent's [`EditPlan`] is applied through the
 //!    [`EditSession`] seam via narrow verbs ([`EditOp`]). In production the
-//!    session library is Python openpyxl (`keep_vba=True, data_only=False`);
+//!    session library is Python openpyxl (`keep_vba=True, keep_links=True,
+//!    data_only=False`);
 //!    umya-spreadsheet (Rust) and protobi/exceljs (JS) are recorded alternates.
 //! 3. **Recalc** — when inputs/formulas changed, [`EditSession::recalc`]
 //!    refreshes cached formula values. In production this is LibreOffice
@@ -55,15 +56,25 @@
 //!   the manifest bytes to receipt.
 
 mod address;
+mod docx;
+mod formula;
 mod inspect;
+mod judgment;
+pub(crate) mod judgment_cells;
 mod manifest;
 mod opc;
 mod ops;
 mod pipeline;
+pub mod pptx;
 mod session_validate;
+pub mod slides_review;
+mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
+pub use self::docx::run_docx_revision;
+pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
+pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer};
 pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
 };
@@ -73,6 +84,8 @@ pub use self::session_validate::{
     AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport,
 };
 
+#[cfg(test)]
+mod docx_tests;
 #[cfg(test)]
 mod tests;
 

@@ -523,6 +523,13 @@ fn all_entity_type_prefixes() {
             TypeByteZone::System,
         ),
         (
+            "RECEIPT_RECORD",
+            crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteZone::System,
+        ),
+        (
             "REDACTION_AUDIT",
             72,
             None,

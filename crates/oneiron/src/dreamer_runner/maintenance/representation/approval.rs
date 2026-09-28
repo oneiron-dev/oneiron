@@ -13,6 +13,7 @@ use crate::outbound::{
 };
 use crate::run_tree::GateConsentBundleAction;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::GateDecisionRecord;
 use crate::{ClaimApprovalStatus, EdgeActorClass, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -214,30 +215,53 @@ fn require_owner(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> 
     )?;
     Ok(())
 }
+fn is_owner_bundle_receipt(receipt: &GateDecisionRecord, approval: &ApprovalRecord) -> bool {
+    let bundle_ref = format!(
+        "bundle:{}",
+        crate::entity_id::bytes_to_hex_lower(&approval.bundle_id)
+    );
+    receipt.outcome == "approved"
+        && receipt.grant_ref.as_deref() == Some(bundle_ref.as_str())
+        && receipt
+            .reason_codes
+            .iter()
+            .any(|s| s == crate::gate::GATE_BUNDLE_REASON_APPROVED)
+        && receipt.redacted_at.is_none()
+}
 fn require_owner_bundle_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     approval: &ApprovalRecord,
 ) -> Result<()> {
-    let bundle_ref = format!(
-        "bundle:{}",
-        crate::entity_id::bytes_to_hex_lower(&approval.bundle_id)
-    );
     let receipts = vault
         .store
         .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?;
-    if !receipts.iter().any(|r| {
-        r.outcome == "approved"
-            && r.grant_ref.as_deref() == Some(bundle_ref.as_str())
-            && r.reason_codes
-                .iter()
-                .any(|s| s == crate::gate::GATE_BUNDLE_REASON_APPROVED)
-            && r.redacted_at.is_none()
-    }) {
+    if !receipts
+        .iter()
+        .any(|r| is_owner_bundle_receipt(r, approval))
+    {
         return Err(invalid());
     }
     Ok(())
+}
+/// Loading and scheduling an approved proposal re-prove the owner's bundle
+/// receipt, so the retention sweep keeps it while the approval exists.
+pub(crate) fn representation_approval_is_live_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &GateDecisionRecord,
+) -> Result<bool> {
+    let Some(claim) = receipt.claim_id else {
+        return Ok(false);
+    };
+    if receipt.outcome != "approved" || receipt.redacted_at.is_some() {
+        return Ok(false);
+    }
+    let Some(approval) = APPROVAL.get(&vault.store, txn, &EntityId::from_bytes(claim)?)? else {
+        return Ok(false);
+    };
+    Ok(is_owner_bundle_receipt(receipt, &approval))
 }
 fn content_proposal_id(reference: &str) -> Result<EntityId> {
     let suffix = reference.strip_prefix(CONTENT_PREFIX).ok_or_else(invalid)?;

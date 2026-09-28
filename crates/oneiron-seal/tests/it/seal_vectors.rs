@@ -63,6 +63,248 @@ fn engine_with(
 }
 
 #[tokio::test]
+async fn native_trust_matrix_keeps_intact_bytes_indeterminate_without_relevant_roots() {
+    for target in [
+        PadesProfile::BaselineB,
+        PadesProfile::BaselineT,
+        PadesProfile::BaselineLta,
+    ] {
+        let signer = p256_identity(false);
+        let tsa = p256_identity(true);
+        let signer_root = signer.cert_der.clone();
+        let tsa_root = tsa.cert_der.clone();
+        let fetcher = Arc::new(FixtureFetcher::with_tsa(tsa));
+        let (sealer, _) = engine_with(
+            signer,
+            fetcher,
+            config_for(vec![signer_root.clone(), tsa_root.clone()], true),
+        );
+        let sealed = sealer
+            .seal_pdf(&fixture_pdf("classic_1page.pdf"), &request(target))
+            .await
+            .unwrap();
+        assert_eq!(sealed.achieved_profile, target);
+        let unrelated = p256_identity(false).cert_der;
+        for (roots, expect_pass) in [
+            (vec![signer_root.clone(), tsa_root.clone()], true),
+            (vec![], false),
+            (vec![unrelated], false),
+            (vec![signer_root.clone()], target == PadesProfile::BaselineB),
+        ] {
+            let (reader, _) = engine_with(
+                p256_identity(false),
+                Arc::new(OfflineFetcher),
+                config_for(roots, false),
+            );
+            let report = reader.verify_sealed_pdf(&sealed.bytes).unwrap();
+            assert_eq!(
+                report.verdict(),
+                if expect_pass {
+                    oneiron_seal::VerifyVerdict::Passed
+                } else {
+                    oneiron_seal::VerifyVerdict::Indeterminate
+                },
+                "{target:?} {report:?}"
+            );
+            assert!(
+                report
+                    .signatures
+                    .iter()
+                    .all(|s| s.integrity == oneiron_seal::VerifyVerdict::Passed),
+                "intact signed ranges must not become broken under missing roots: {report:?}"
+            );
+            if !expect_pass {
+                assert!(
+                    report
+                        .checks()
+                        .any(|c| c.status == oneiron_seal::VerifyCheckStatus::NotRun)
+                );
+                assert_eq!(
+                    report.modifications,
+                    oneiron_seal::Modifications::Clean(if target == PadesProfile::BaselineLta {
+                        oneiron_seal::ModificationLevel::LtaUpdates
+                    } else {
+                        oneiron_seal::ModificationLevel::None
+                    })
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn crlf_xref_stream_input_seals_and_self_verifies() {
+    let lf = fixture_pdf("stream_1page.pdf");
+    let mut crlf = lf.clone();
+    let stream = b"stream\n";
+    let at = crlf
+        .windows(stream.len())
+        .position(|w| w == stream)
+        .unwrap();
+    crlf.splice(at..at + stream.len(), b"stream\r\n".iter().copied());
+    let endstream = b"endstream\n";
+    let at = crlf
+        .windows(endstream.len())
+        .position(|w| w == endstream)
+        .unwrap();
+    crlf.splice(at..at + endstream.len(), b"endstream\r\n".iter().copied());
+    for input in [lf, crlf] {
+        let identity = p256_identity(false);
+        let anchors = vec![identity.cert_der.clone()];
+        let (engine, _) = engine_with(
+            identity,
+            Arc::new(OfflineFetcher),
+            config_for(anchors, false),
+        );
+        let sealed = engine
+            .seal_pdf(&input, &request(PadesProfile::BaselineB))
+            .await
+            .unwrap();
+        assert!(sealed.self_verify_report.passes_self_verify());
+        assert_eq!(sealed.self_verify_report.revisions.len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn literal_eof_in_content_stream_is_not_an_incremental_revision() {
+    let mut input = fixture_pdf("content_1page.pdf");
+    let old = b"(oneiron)";
+    let at = input.windows(old.len()).position(|w| w == old).unwrap();
+    input[at..at + old.len()].copy_from_slice(b"(%%EOF)  ");
+    let identity = p256_identity(false);
+    let anchors = vec![identity.cert_der.clone()];
+    let (engine, _) = engine_with(
+        identity,
+        Arc::new(OfflineFetcher),
+        config_for(anchors, false),
+    );
+    let sealed = engine
+        .seal_pdf(&input, &request(PadesProfile::BaselineB))
+        .await
+        .unwrap();
+    assert!(sealed.self_verify_report.passes_self_verify());
+    assert_eq!(
+        sealed.self_verify_report.revisions.len(),
+        2,
+        "the stream marker must not become a third revision"
+    );
+}
+
+#[tokio::test]
+async fn indirect_stream_length_is_bound_to_the_strict_original_snapshot() {
+    let original = fixture_pdf("content_1page.pdf");
+    let object4 = original
+        .windows(b"4 0 obj\n".len())
+        .position(|w| w == b"4 0 obj\n")
+        .unwrap();
+    let mut input = original[..object4].to_vec();
+    let offset4 = input.len();
+    let content = b"BT /F1 12 Tf 10 100 Td (oneiron) Tj ET";
+    input.extend_from_slice(b"4 0 obj\n<< /Length 5 0 R >>\nstream\n");
+    input.extend_from_slice(content);
+    input.extend_from_slice(b"\nendstream\nendobj\n");
+    let offset5 = input.len();
+    input.extend_from_slice(format!("5 0 obj\n{}\nendobj\n", content.len()).as_bytes());
+    let xref = input.len();
+    input.extend_from_slice(format!("xref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n{offset4:010} 00000 n \n{offset5:010} 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF").as_bytes());
+    let identity = p256_identity(false);
+    let roots = vec![identity.cert_der.clone()];
+    let (engine, _) = engine_with(identity, Arc::new(OfflineFetcher), config_for(roots, false));
+    let sealed = engine
+        .seal_pdf(&input, &request(PadesProfile::BaselineB))
+        .await
+        .unwrap();
+    assert!(sealed.self_verify_report.passes_self_verify());
+}
+
+#[tokio::test]
+async fn header_looking_bytes_in_length_delimited_content_are_not_definitions() {
+    let mut input = fixture_pdf("content_1page.pdf");
+    let old = b"(oneiron)";
+    let at = input.windows(old.len()).position(|w| w == old).unwrap();
+    input[at..at + old.len()].copy_from_slice(b"(1 0 obj)");
+    let identity = p256_identity(false);
+    let roots = vec![identity.cert_der.clone()];
+    let (engine, _) = engine_with(identity, Arc::new(OfflineFetcher), config_for(roots, false));
+    let sealed = engine
+        .seal_pdf(&input, &request(PadesProfile::BaselineB))
+        .await
+        .unwrap();
+    assert!(sealed.self_verify_report.passes_self_verify());
+    assert!(
+        !sealed
+            .self_verify_report
+            .anomalies
+            .contains(&oneiron_seal::Anomaly::DuplicateObjectNumber)
+    );
+}
+
+#[tokio::test]
+async fn xref_stream_lta_writer_revisions_share_complete_structural_facts() {
+    let signer = rsa_identity(false);
+    let tsa = p256_identity(true);
+    let roots = vec![signer.cert_der.clone(), tsa.cert_der.clone()];
+    let (engine, _) = engine_with(
+        signer,
+        Arc::new(FixtureFetcher::with_tsa(tsa)),
+        config_for(roots, true),
+    );
+    let sealed = engine
+        .seal_pdf(
+            &fixture_pdf("stream_1page.pdf"),
+            &request(PadesProfile::BaselineLta),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sealed.achieved_profile, PadesProfile::BaselineLta);
+    assert_eq!(
+        sealed.self_verify_report.modifications,
+        oneiron_seal::Modifications::Clean(oneiron_seal::ModificationLevel::LtaUpdates)
+    );
+    assert!(sealed.self_verify_report.passes_self_verify());
+}
+
+#[tokio::test]
+async fn xref_stream_original_comment_delimited_duplicate_is_warning_not_failure() {
+    let mut input = fixture_pdf("stream_1page.pdf");
+    let old = b"4 0 obj";
+    let at = input.windows(old.len()).position(|w| w == old).unwrap();
+    let extra = b"1% comment\n0% comment\nobj << /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+    input.splice(at..at, extra.iter().copied());
+    let new_xref = at + extra.len();
+    let entry = b"\x01\0\0\0\xba\0\0";
+    let offset = input
+        .windows(entry.len())
+        .rposition(|w| w == entry)
+        .unwrap()
+        + 1;
+    input[offset..offset + 4].copy_from_slice(&(new_xref as u32).to_be_bytes());
+    let marker = b"startxref\n186\n";
+    let at = input
+        .windows(marker.len())
+        .rposition(|w| w == marker)
+        .unwrap();
+    input.splice(
+        at..at + marker.len(),
+        format!("startxref\n{new_xref}\n").bytes(),
+    );
+    let signer = p256_identity(false);
+    let roots = vec![signer.cert_der.clone()];
+    let (engine, _) = engine_with(signer, Arc::new(OfflineFetcher), config_for(roots, false));
+    let sealed = engine
+        .seal_pdf(&input, &request(PadesProfile::BaselineB))
+        .await
+        .unwrap();
+    assert!(sealed.self_verify_report.passes_self_verify());
+    assert!(
+        sealed
+            .self_verify_report
+            .anomalies
+            .contains(&oneiron_seal::Anomaly::DuplicateObjectNumber)
+    );
+}
+
+#[tokio::test]
 async fn seal_output_exceeding_verify_cap_is_refused_at_seal_time() {
     // Self-consistency (bot-fix leg 5): verify_document rejects
     // len > max_input_bytes, so the sealer must REFUSE to emit a document
@@ -127,9 +369,9 @@ async fn seal_baseline_b_both_suites_and_fixtures() {
             assert!(out.bytes.ends_with(b"%%EOF"));
             // Independent verify entry point agrees.
             let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-            assert!(report.valid);
-            assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineB));
-            assert_eq!(report.evidence_sha256, out.evidence_sha256);
+            assert!(report.valid());
+            assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineB));
+            assert_eq!(report.artifact_sha256, out.evidence_sha256);
         }
     }
 }
@@ -149,8 +391,8 @@ async fn seal_baseline_t_with_fixture_tsa() {
     assert_eq!(out.achieved_profile, PadesProfile::BaselineT);
     assert!(out.warnings.is_empty());
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
 }
 
 /// Two functional TSAs: the first endpoint mints tokens dated past the
@@ -248,8 +490,8 @@ async fn seal_fails_over_past_over_skew_tsa_token() {
         "the over-skew token must be skipped and the next TSA tried"
     );
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
 }
 
 #[tokio::test]
@@ -282,8 +524,8 @@ async fn seal_baseline_lt_and_lta_full_assembly() {
         .unwrap();
     assert_eq!(out2.achieved_profile, PadesProfile::BaselineLta);
     let report2 = engine2.verify_sealed_pdf(&out2.bytes).unwrap();
-    assert!(report2.valid);
-    assert_eq!(report2.achieved_profile, Some(PadesProfile::BaselineLta));
+    assert!(report2.valid());
+    assert_eq!(report2.achieved_profile(), Some(PadesProfile::BaselineLta));
 }
 
 #[tokio::test]
@@ -341,8 +583,8 @@ async fn seal_degrades_to_b_t_when_available_crl_issuer_lacks_crl_sign() {
     );
     assert!(out.self_verify_report.passes_self_verify());
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
 }
 
 #[tokio::test]
@@ -385,8 +627,8 @@ async fn seal_achieves_b_lt_when_crl_issuer_asserts_crl_sign() {
     assert_eq!(out.achieved_profile, PadesProfile::BaselineLt);
     assert!(out.warnings.is_empty());
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid);
-    assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLt));
+    assert!(report.valid());
+    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineLt));
 }
 
 #[tokio::test]

@@ -31,7 +31,6 @@ use crate::outbound_chokepoint::{
     fanout_history_pathology,
 };
 use crate::task_verb::sdk::AgentVerb;
-use crate::unix_seconds_now;
 use rmpv::Value;
 
 struct CachedAuto(FanoutAutoDisposition);
@@ -58,8 +57,8 @@ impl Memory<'_> {
         classifier: Option<&dyn FanoutAskClassifier>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let now = input.now.unwrap_or_else(unix_seconds_now);
-        let correlation = EntityId::now();
+        let now = input.now.unwrap_or_else(|| self.vault().now_recorded_at());
+        let correlation = self.vault().new_entity_id()?;
         let validated = self.validate_fanout(input, correlation, now)?;
         let policy = {
             let txn = self
@@ -85,7 +84,7 @@ impl Memory<'_> {
             choice_receipt_ref: None,
         };
         let scope = run.scope();
-        let rate_now = unix_seconds_now();
+        let rate_now = self.vault().now_recorded_at();
         let has_pathology = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let (edges, rates) = self.fanout_history(&txn, &run, &policy, rate_now)?;

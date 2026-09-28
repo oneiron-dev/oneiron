@@ -89,6 +89,7 @@ impl AgentDispatcher<'_> {
             },
         )?
         .sibling_result_refs;
+        projection.workflow_output_refs = self.workflow_output_refs_for_attempt(attempt, parent)?;
         Ok(projection)
     }
 
@@ -171,7 +172,7 @@ impl AgentDispatcher<'_> {
             &mut wtxn,
             &GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::now(),
+                decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
                 created_at: input.now,
                 outcome: "pending".to_owned(),
                 reason_codes: vec!["gate.context.propose_widen".to_owned()],
@@ -469,11 +470,7 @@ impl AgentDispatcher<'_> {
         if standing.cancelled || standing.owner_ref != owner {
             return Err(invalid("authenticated actor does not own the board above"));
         }
-        let raw = self
-            .vault
-            .store
-            .entities
-            .get(txn, owner.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, txn, &owner)?
             .ok_or_else(|| invalid("board owner is no longer present"))?;
         if crate::batch::EntityMetadataHeader::parse(&raw)
             .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)

@@ -38,10 +38,7 @@ impl Vault {
         if let Some(task) = RECONCILIATION_TASKS.get(&self.store, txn, &conflict.claim_id)? {
             return Ok(task);
         }
-        if self
-            .store
-            .entities
-            .get(txn, conflict.claim_id.as_bytes())?
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &conflict.claim_id)?
             .is_none()
         {
             return Err(Error::EntityNotFound);
@@ -58,7 +55,7 @@ impl Vault {
             self,
             txn,
             owner,
-            crate::unix_seconds_now(),
+            self.now_recorded_at(),
             TaskCreateRateLimit::default(),
         )?;
         let spec = Value::Map(vec![

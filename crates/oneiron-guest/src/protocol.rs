@@ -1,19 +1,20 @@
 //! Strict, bounded host/guest JSON framing and admission state machine.
 
-use crate::{Error, Result, filesystem::virtual_relative};
+use crate::{Error, Result};
+use oneiron_sandbox_contract::{WorkspacePath, WorkspaceShape};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
 };
 
-pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
-pub(crate) const MAX_COMPONENT: usize = 64 * 1024 * 1024;
-pub(crate) const MAX_FILE: usize = 1024 * 1024;
-pub(crate) const MAX_TOTAL: usize = 16 * 1024 * 1024;
-pub(crate) const MAX_FILES: usize = 8192;
-pub(crate) const MAX_REQUESTS: usize = 16_384;
-pub(crate) const MAX_SOURCE: usize = 1024 * 1024;
+pub(crate) const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
+pub(crate) const MAX_COMPONENT: usize = oneiron_sandbox_contract::MAX_COMPONENT_BYTES;
+pub(crate) const MAX_FILE: usize = oneiron_sandbox_contract::MAX_FILE_BYTES;
+pub(crate) const MAX_TOTAL: usize = oneiron_sandbox_contract::MAX_WORKSPACE_BYTES;
+pub(crate) const MAX_FILES: usize = oneiron_sandbox_contract::MAX_WORKSPACE_FILES;
+pub(crate) const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
+pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;
 
 pub(crate) type Snapshot = BTreeMap<String, Vec<u8>>;
 
@@ -57,6 +58,13 @@ enum GuestFrame<'a> {
     Write {
         path: &'a str,
         bytes: &'a [u8],
+    },
+    Delete {
+        path: &'a str,
+    },
+    Rename {
+        from: &'a str,
+        to: &'a str,
     },
     Finish {
         status: i32,
@@ -114,7 +122,7 @@ impl<T: Read + Write> Session<T> {
         }
         let mut component = Vec::new();
         let mut files = BTreeMap::new();
-        let mut total = 0;
+        let mut shape = WorkspaceShape::new();
         for _ in 1..MAX_REQUESTS {
             match self.read()? {
                 HostFrame::Component { offset, bytes }
@@ -127,17 +135,11 @@ impl<T: Read + Write> Session<T> {
                     component.extend(bytes);
                 }
                 HostFrame::File { path, bytes } if component.len() == component_bytes => {
-                    virtual_relative(&path)?;
-                    if files.len() >= MAX_FILES
-                        || bytes.len() > MAX_FILE
-                        || files.contains_key(&path)
-                    {
-                        return Err(Error::Protocol("source file bounds or duplicate"));
-                    }
-                    total += bytes.len();
-                    if total > MAX_TOTAL {
-                        return Err(Error::Protocol("source aggregate bytes"));
-                    }
+                    let checked = WorkspacePath::parse(&path)
+                        .map_err(|error| Error::Protocol(error.reason()))?;
+                    shape
+                        .add_file(&checked, bytes.len())
+                        .map_err(|error| Error::Protocol(error.reason()))?;
                     files.insert(path, bytes);
                 }
                 HostFrame::Ready if component.len() == component_bytes => {
@@ -172,6 +174,20 @@ impl<T: Read + Write> Session<T> {
     pub(crate) fn write(&mut self, path: &str, bytes: &[u8]) -> Result<()> {
         if !self.request(&GuestFrame::Write { path, bytes })? {
             return Err(Error::Protocol("host refused proposal"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn delete(&mut self, path: &str) -> Result<()> {
+        if !self.request(&GuestFrame::Delete { path })? {
+            return Err(Error::Protocol("host refused deletion proposal"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn rename(&mut self, from: &str, to: &str) -> Result<()> {
+        if !self.request(&GuestFrame::Rename { from, to })? {
+            return Err(Error::Protocol("host refused rename proposal"));
         }
         Ok(())
     }

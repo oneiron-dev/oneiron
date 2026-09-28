@@ -561,9 +561,12 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
     let old_pin = vault.indexed_revision(&id)?.expect("indexed birth");
     body.world = Some(world_b);
     body.value = Value::from("world B content");
+    // A local edit retains its old indexed revision until idle publication.
+    // Replicated overwrites instead remove the losing posting immediately.
+
     vault
         .batch()
-        .put_replicated(
+        .put(
             &id,
             ENTITY_TYPE_CLAIM,
             range(2),

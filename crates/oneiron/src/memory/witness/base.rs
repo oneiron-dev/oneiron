@@ -7,12 +7,26 @@ use super::program::{AdmittedTurn, WitnessAdmission, WitnessDoor, WitnessPlan, W
 
 use std::sync::atomic::Ordering;
 
-use crate::batch::{BatchOp, apply_ops};
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError};
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
+
+/// What the base guards proved inside the write transaction.
+pub(super) enum BaseGuards {
+    /// An id this call creates carries a local hard-delete marker.
+    HardDeleted(EntityId),
+    Clear {
+        /// The conversation row is absent from this snapshot, so the landing
+        /// mints it.
+        mint_conversation: bool,
+        /// The actor, when it is stored as a PERSON: the TURN's byline.
+        person_author: Option<EntityId>,
+    },
+}
 
 /// A base landing's pre-write state.
 pub(super) struct BaseSink<'a> {
@@ -42,6 +56,7 @@ impl Memory<'_> {
             WitnessTarget::Base { route: None },
             WitnessDoor::Guest,
             || {},
+            |_| Ok(()),
             |_| Ok(()),
         )
     }
@@ -76,6 +91,7 @@ impl Memory<'_> {
             WitnessDoor::Guest,
             before_txn,
             |_| Ok(()),
+            |_| Ok(()),
         )
     }
 
@@ -91,6 +107,7 @@ impl Memory<'_> {
             },
             WitnessDoor::HostExecutor,
             || {},
+            |_| Ok(()),
             |_| Ok(()),
         )
     }
@@ -111,7 +128,26 @@ impl Memory<'_> {
             },
             WitnessDoor::Guest,
             before_txn,
+            |_| Ok(()),
             effect,
+        )
+    }
+
+    /// Assemble a room before the witness gate inside its own transaction.
+    /// This is used by project birth so the first witnessed trunk message,
+    /// room, project, skill forks and owner Grant all commit together.
+    pub(crate) fn witness_with_room_birth(
+        &self,
+        turn: &WitnessTurn,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness(
+            turn,
+            WitnessTarget::Base { route: None },
+            WitnessDoor::Guest,
+            || {},
+            prepare,
+            |_| Ok(()),
         )
     }
 
@@ -191,13 +227,15 @@ impl Memory<'_> {
 
     /// The base landing's guards, ahead of the shared door: ids this call
     /// creates must be marker-free (checked INSIDE the write transaction so a
-    /// concurrent hard delete cannot land between check and commit, A1), and a
-    /// project room admits the witness. `Some` names a hard-deleted id.
+    /// concurrent hard delete cannot land between check and commit, A1),
+    /// `prepare` runs, the conversation is re-read as a live room, an erased
+    /// PERSON is refused, and a project room admits the witness.
     pub(super) fn base_guards_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
         wtxn: &mut heed::RwTxn<'_>,
-    ) -> MemoryResult<Option<EntityId>> {
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<BaseGuards> {
         let message_ids = plan.message_ids();
         let created_ids = message_ids
             .iter()
@@ -209,9 +247,52 @@ impl Memory<'_> {
                 .vault
                 .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
             {
-                return Ok(Some(id));
+                return Ok(BaseGuards::HardDeleted(id));
             }
         }
+        prepare(wtxn)?;
+        // Container resolution before the writer was advisory. A concurrent
+        // writer may have claimed this ID, or a prepared project birth may
+        // have created its home room. Never attach a turn to a non-room or
+        // to an erased/hidden room just because an entity now exists here.
+        let current_conversation = self
+            .vault
+            .store
+            .port_entity_raw(wtxn, &plan.conversation_id)?;
+        match current_conversation.as_deref() {
+            Some(raw) => {
+                let header = EntityMetadataHeader::parse(raw)
+                    .ok_or(Error::CorruptedIndex("conversation header"))?;
+                if header.entity_type != ENTITY_TYPE_CONVERSATION {
+                    return Err(MemoryError::bad_request(
+                        "the witnessed conversation ref resolves to a non-CONVERSATION entity",
+                    ));
+                }
+                let visibility = self
+                    .vault
+                    .store
+                    .port_deletion_state(wtxn, &plan.conversation_id)?;
+                if raw.len() == ENTITY_METADATA_HEADER_LEN || visibility.deleted || visibility.stale
+                {
+                    return Err(MemoryError::not_found(
+                        "the witnessed conversation is no longer live",
+                    ));
+                }
+            }
+            None if !plan.conversation_is_new => {
+                return Err(MemoryError::not_found(
+                    "the witnessed conversation no longer exists",
+                ));
+            }
+            None => {}
+        }
+        let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
+        super::reject_erased_person_in_txn(
+            self.vault,
+            wtxn,
+            plan.conversation_id,
+            person_author,
+        )?;
         crate::workspace_roster::admit_room_witness(
             self.vault,
             wtxn,
@@ -222,7 +303,10 @@ impl Memory<'_> {
             plan.turn,
             &message_ids,
         )?;
-        Ok(None)
+        Ok(BaseGuards::Clear {
+            mint_conversation: current_conversation.is_none(),
+            person_author,
+        })
     }
 
     /// Stages the admitted turn into base: one batch, its text ops, the open
@@ -232,10 +316,11 @@ impl Memory<'_> {
         plan: &WitnessPlan<'_>,
         admission: &WitnessAdmission<'_>,
         sink: &BaseSink<'_>,
+        mint_conversation: bool,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> MemoryResult<()> {
         let mut batch = self.vault.batch_in();
-        if plan.conversation_is_new {
+        if mint_conversation {
             batch = batch.put(
                 &plan.conversation_id,
                 ENTITY_TYPE_CONVERSATION,

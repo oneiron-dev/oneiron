@@ -15,6 +15,7 @@ use crate::Vault;
 use crate::affect::Vad;
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::claim::encode_claim_body;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::COMM_PROJECTED_CLAIM;
@@ -320,7 +321,13 @@ pub(super) fn matching_claims_in_txn(
             | CommClaimValue::SendOverride {
                 channel_class: candidate,
                 ..
-            } => channel_class == candidate.as_deref(),
+            } => match (channel_class, candidate.as_deref()) {
+                (None, None) => true,
+                (Some(channel), Some(candidate)) => {
+                    normalize_channel_class(channel) == normalize_channel_class(candidate)
+                }
+                _ => false,
+            },
             CommClaimValue::LastTouch {
                 channel_class: candidate,
                 ..
@@ -328,7 +335,9 @@ pub(super) fn matching_claims_in_txn(
             | CommClaimValue::ReachableVia {
                 channel_class: candidate,
                 ..
-            } => channel_class == Some(candidate.as_str()),
+            } => channel_class.is_some_and(|channel| {
+                normalize_channel_class(channel) == normalize_channel_class(candidate)
+            }),
             CommClaimValue::ThreadMember {
                 thread_ref: candidate,
                 ..

@@ -73,10 +73,7 @@ fn claim(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<(ClaimBody, EntityMetadataHeader)> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         .ok_or(BoardHistoryError::MissingFrontier)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(BoardHistoryError::MissingFrontier)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {

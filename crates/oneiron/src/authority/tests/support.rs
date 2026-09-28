@@ -126,38 +126,6 @@ pub(super) fn cosign_ed(
     entry
 }
 
-pub(super) fn cosign_ed_two(
-    mut entry: AuthorityLogEntry,
-    signer: &SigningKey,
-    first_cosigner: &SigningKey,
-    second_cosigner: &SigningKey,
-) -> AuthorityLogEntry {
-    for cosigner in [first_cosigner, second_cosigner] {
-        let cosigner_key = authority_key_from_ed(cosigner);
-        entry.cosigns.push(AuthoritySignature {
-            suite: cosigner_key.suite(),
-            public_key: cosigner_key,
-            signature: vec![0; 64],
-        });
-    }
-    entry.cosigns.sort_by(|left, right| {
-        left.public_key
-            .cmp(&right.public_key)
-            .then_with(|| left.signature.cmp(&right.signature))
-    });
-    let transcript = authority_transcript(&entry).unwrap();
-    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
-    for cosigner in [first_cosigner, second_cosigner] {
-        let cosigner_key = authority_key_from_ed(cosigner);
-        for cosign in &mut entry.cosigns {
-            if cosign.public_key == cosigner_key {
-                cosign.signature = cosigner.sign(&transcript).to_bytes().to_vec();
-            }
-        }
-    }
-    entry
-}
-
 pub(super) fn genesis_entry(seed: u8, pending_widen_delay_secs: u64, ts: u64) -> AuthorityLogEntry {
     let signing = ed_key(seed);
     let key = authority_key_from_ed(&signing);
@@ -350,53 +318,6 @@ pub(super) fn rotate_entry(
     )
 }
 
-pub(super) fn re_root_entry(
-    vault_id: AuthorityVaultId,
-    parent: &AuthorityLogEntry,
-    signer: &SigningKey,
-    new_seed: u8,
-    seq: u64,
-) -> AuthorityLogEntry {
-    re_root_entry_at(vault_id, parent, signer, new_seed, seq, 890)
-}
-
-pub(super) fn re_root_entry_at(
-    vault_id: AuthorityVaultId,
-    parent: &AuthorityLogEntry,
-    signer: &SigningKey,
-    new_seed: u8,
-    seq: u64,
-    ts: u64,
-) -> AuthorityLogEntry {
-    let signer_key = authority_key_from_ed(signer);
-    let new = ed_key(new_seed);
-    sign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            seq,
-            vec![authority_entry_hash(parent).unwrap()],
-            AuthorityOp::ReRoot {
-                new_device: device(
-                    authority_key_from_ed(&new),
-                    ROLE_OWNER | ROLE_ADMIN,
-                    AuthorityTier::Software,
-                ),
-            },
-            signer_key,
-            ts,
-        ),
-        signer,
-    )
-}
-
-pub(super) fn sibling_fold_order_key(
-    parent_hash: AuthorityEntryHash,
-    entry: &AuthorityLogEntry,
-) -> (bool, AuthorityEntryHash) {
-    let hash = authority_entry_hash(entry).unwrap();
-    (hash < parent_hash, hash)
-}
-
 pub(super) fn veto_entry(
     vault_id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
@@ -418,8 +339,8 @@ pub(super) fn veto_entry(
     )
 }
 
-/// Owned backing store for a default LOCAL [`FoldContext`]: no forks, no
-/// equivocations, no seen-time delay, no admitted peers.
+/// Owned backing store for a default LOCAL [`FoldContext`]: no
+/// seen-time delay and no admitted peers.
 ///
 /// Tests that need one axis populated mutate that field and spread the rest
 /// with `..storage.context()`, so a new `FoldContext` field lands HERE once
@@ -428,10 +349,6 @@ pub(super) fn veto_entry(
 pub(super) struct LocalFoldContext {
     pub(super) first_seen_at_secs: BTreeMap<AuthorityEntryHash, u64>,
     pub(super) vetoed_widens: BTreeSet<AuthorityEntryHash>,
-    pub(super) authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
-    pub(super) authority_fork_vault_ids: BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
-    pub(super) equivocation_groups: BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>,
-    pub(super) unresolved_equivocation_groups: BTreeSet<(AuthorityKey, u64)>,
     pub(super) peer_consent_roots: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
 }
 
@@ -441,16 +358,13 @@ impl LocalFoldContext {
             first_seen_at_secs: &self.first_seen_at_secs,
             sequence_floors: None,
             now_secs: None,
+            deadline_observer: None,
             enforce_seen_time_delay: false,
             vetoed_widens: &self.vetoed_widens,
-            authority_forks: &self.authority_forks,
-            authority_fork_vault_ids: &self.authority_fork_vault_ids,
-            equivocation_groups: &self.equivocation_groups,
-            unresolved_equivocation_groups: &self.unresolved_equivocation_groups,
             entry_ancestors: None,
-            chain_validated_fork_candidates: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
+            pre_handoff_entries: None,
         }
     }
 }
@@ -484,7 +398,6 @@ pub(super) fn single_owner_state(
             },
         )]),
         tier_floor: AuthorityTier::Software,
-        migrated_roots: BTreeSet::new(),
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
@@ -492,8 +405,6 @@ pub(super) fn single_owner_state(
         pending_widens: BTreeMap::new(),
         vetoed_widens: BTreeSet::new(),
         delayed_rotation_veto_revocations: BTreeMap::new(),
-        fork_resolution_revocations: BTreeSet::new(),
-        authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
@@ -840,7 +751,6 @@ pub(super) fn fold_state_with_pact(
             },
         )]),
         tier_floor: AuthorityTier::Software,
-        migrated_roots: BTreeSet::new(),
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
@@ -848,8 +758,6 @@ pub(super) fn fold_state_with_pact(
         pending_widens: BTreeMap::new(),
         vetoed_widens: BTreeSet::new(),
         delayed_rotation_veto_revocations: BTreeMap::new(),
-        fork_resolution_revocations: BTreeSet::new(),
-        authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
@@ -1088,4 +996,31 @@ pub(super) fn open_vault_at(path: &std::path::Path, secs: u64) -> crate::Vault {
     let mut config = crate::VaultConfig::device();
     config.store_clock = crate::ports::ManualClock::new(secs).bundle();
     crate::Vault::open(path, config).unwrap()
+}
+
+/// Simulate a later local monotonic observation without changing a signed row
+/// or trusting its advisory timestamp. Used only after the row was observed.
+pub(super) fn mature_observed_widen(vault: &crate::Vault, entry: &AuthorityLogEntry) -> u64 {
+    let hash = authority_entry_hash(entry).unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let first_seen = vault
+        .store
+        .sync_state
+        .get(&txn, &authority_first_seen_sync_key(&hash))
+        .unwrap()
+        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        .unwrap();
+    drop(txn);
+    let now = first_seen + DEFAULT_PENDING_WIDEN_DELAY_SECS;
+    vault
+        .with_write_txn(|txn| {
+            vault.store.sync_state.put(
+                txn,
+                authority_first_seen_clock_sync_key(),
+                &encode_authority_first_seen_secs(now),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    now
 }

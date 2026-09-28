@@ -1,5 +1,7 @@
 //! Create-capable open door: `Store::open` and its helpers.
 
+#[cfg(unix)]
+use super::super::root_directory::{file_identity, named_directory_identity};
 use std::path::Path;
 
 use heed::EnvOpenOptions;
@@ -24,7 +26,9 @@ use super::manifest_storage_gates::{
 use super::open_version_keys::{
     DefaultPolicySeedMode, MAX_DBS, STORAGE_ABI_VERSION, VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE,
 };
-use super::vault_root_bind::{preflight_rejected_aliased_root, preflight_vault_root};
+use super::vault_root_bind::{
+    VaultRootPreflight, preflight_rejected_aliased_root, preflight_vault_root,
+};
 
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
@@ -82,7 +86,7 @@ impl Store {
     ) -> Result<Self> {
         // Declared before the environment so its Drop runs after the env has
         // closed, releasing LMDB's file handles before removing torn files.
-        let mut torn_creation_cleanup = TornCreationCleanup { root: None };
+        let mut torn_creation_cleanup = TornCreationCleanup::default();
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
@@ -91,16 +95,34 @@ impl Store {
             if let Some(lease) = lease {
                 lease.validate_directory(&canonical_path)?;
             }
+            #[cfg(unix)]
+            let bound_root_dir = match lease {
+                Some(lease) => lease.clone_directory()?,
+                None => crate::store::root_directory::open_root_directory(&canonical_path)?,
+            };
+            #[cfg(all(test, unix))]
+            test_hooks::run_after_create_root_bind(&canonical_path);
             #[cfg(target_os = "linux")]
-            let storage_path = lease.map_or_else(
-                || canonical_path.clone(),
-                VaultWriterLease::environment_path,
-            );
+            let storage_path = match lease {
+                Some(lease) => lease.environment_path(),
+                None => {
+                    use std::os::fd::AsRawFd;
+                    std::path::PathBuf::from(format!(
+                        "/proc/self/fd/{}",
+                        bound_root_dir.as_raw_fd()
+                    ))
+                }
+            };
             #[cfg(not(target_os = "linux"))]
             let storage_path = canonical_path.clone();
-            let root_preflight = preflight_vault_root(&storage_path)?;
+            let root_preflight = preflight_named_root(&storage_path, &canonical_path)?;
+            #[cfg(unix)]
+            let bound_root_identity = file_identity(&bound_root_dir.metadata()?);
             let is_new_vault = root_preflight.is_new_vault;
             if is_new_vault {
+                #[cfg(target_os = "linux")]
+                torn_creation_cleanup.arm_bound(&bound_root_dir)?;
+                #[cfg(not(target_os = "linux"))]
                 torn_creation_cleanup.arm(storage_path.clone());
             }
             let mut registered_path =
@@ -141,7 +163,12 @@ impl Store {
                         },
                     )?
                 } else {
-                    options.open(&canonical_path)?
+                    options.open_with_cache_identity(
+                        &storage_path,
+                        canonical_path.clone(),
+                        || {},
+                        || {},
+                    )?
                 };
                 #[cfg(not(target_os = "linux"))]
                 let opened = options.open(&canonical_path)?;
@@ -152,6 +179,9 @@ impl Store {
             // heed's process-global registry (ONE-1142).
             let env = OwnedEnv {
                 env,
+                #[cfg(unix)]
+                _bound_root_dir: Some(bound_root_dir),
+                #[cfg(not(unix))]
                 _bound_root_dir: None,
             };
             #[cfg(test)]
@@ -180,7 +210,7 @@ impl Store {
                 // `VaultRootPreflight(MultipleHardLinks)`, returns no handle,
                 // and releases its path reservation; only the destructive
                 // unlink is withheld. Every other failure keeps cleanup armed.
-                let refreshed = match preflight_vault_root(&storage_path) {
+                let refreshed = match preflight_named_root(&storage_path, &canonical_path) {
                     Ok(refreshed) => refreshed,
                     Err(error) => {
                         if preflight_rejected_aliased_root(&error) {
@@ -192,6 +222,12 @@ impl Store {
                 registered_path.refresh_identity(refreshed.identity)?;
             }
 
+            #[cfg(unix)]
+            if named_directory_identity(&canonical_path)? != Some(bound_root_identity) {
+                return Err(Error::InvalidConfig(
+                    "vault root changed during open".to_owned(),
+                ));
+            }
             (env, registered_path, is_new_vault)
         };
 
@@ -205,6 +241,15 @@ impl Store {
             is_new_vault,
             storage_abi_version,
         )?;
+        if is_new_vault {
+            // Pre-manifest bootstrap: the declared typed table owns these bytes,
+            // but the Store/ManifestDbs door does not exist yet.
+            vault_meta_view.put(
+                &mut wtxn,
+                crate::side_table::ORIGIN_LFS_CDC_SEED.prefix,
+                &crate::origin::lfs::random_lfs_chunk_seed(),
+            )?;
+        }
         if !is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }
@@ -306,7 +351,7 @@ impl Store {
         torn_creation_cleanup.disarm();
         drop(db_open_guard);
 
-        let store = Self::assemble(env, raw, registered_path, &config.store_clock)?;
+        let store = Self::assemble(env, raw, registered_path, config)?;
 
         // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
         // fails closed before the HNSW compat check below can compare it.
@@ -361,6 +406,22 @@ impl Store {
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             store.ensure_default_policy_manifest_on_open()?;
         }
+        store.reconcile_retrieval_telemetry_on_open()?;
         Ok(store)
     }
+}
+
+/// Reads the LMDB pair through the bound root (`/proc/self/fd/<n>` on Linux)
+/// but names the root the caller asked for in a refusal: the descriptor path
+/// means nothing outside this process.
+fn preflight_named_root(storage_path: &Path, canonical_path: &Path) -> Result<VaultRootPreflight> {
+    preflight_vault_root(storage_path).map_err(|error| match error {
+        Error::Store(crate::error::StoreError::VaultRootPreflight { problem, .. }) => {
+            Error::Store(crate::error::StoreError::VaultRootPreflight {
+                path: canonical_path.to_path_buf(),
+                problem,
+            })
+        }
+        other => other,
+    })
 }

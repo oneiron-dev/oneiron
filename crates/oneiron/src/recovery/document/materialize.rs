@@ -248,7 +248,7 @@ pub(crate) fn run_in_txn(
             .iter()
             .find(|entity| entity.id == head.entity_id)
             .ok_or(invalid("NOTE recovery owner absent"))?;
-        if vault.store.entities.get(txn, owner.as_bytes())?.as_deref()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &owner)?.as_deref()
             != Some(entity.blob.as_slice())
         {
             return Err(invalid("document core was not admitted"));
@@ -299,20 +299,31 @@ pub(crate) fn run_in_txn(
                     vault,
                     txn,
                     note,
-                    head,
-                    u64::try_from(seq).map_err(|_| invalid("NOTE head sequence"))?,
+                    (
+                        head,
+                        u64::try_from(seq).map_err(|_| invalid("NOTE head sequence"))?,
+                    ),
                     &row.text,
+                    row.title.as_deref(),
                     &row.authorship,
                 )?;
             } else {
-                crate::note::recovery::restore(vault, txn, note, &row.text, &row.authorship)?;
+                crate::note::recovery::restore(
+                    vault,
+                    txn,
+                    note,
+                    &row.text,
+                    row.title.as_deref(),
+                    &row.authorship,
+                )?;
             }
         } else {
             let key = DocKey(note, id(row.head)?);
             // Proposal equality is a text-value claim, never proof that a
             // nested Loro snapshot has no erased history. Rebuild even when
             // the current text matches; live value-equal docs remain untouched.
-            let doc = crate::note::documents::proposal_value(note, &row.text)?;
+            let doc =
+                crate::note::documents::proposal_value(note, &row.text, row.title.as_deref())?;
             NOTE_PROPOSAL_DOC.put(
                 &vault.store,
                 txn,
@@ -321,6 +332,9 @@ pub(crate) fn run_in_txn(
             )?;
         }
     }
+    // Install the NOTE-owned final title set even when every live document
+    // was value-equal and its history-free restore took the no-op path.
+    crate::note::replace_recovered_titles_in_txn(vault, txn, snapshot)?;
     for receipt in &snapshot.head_move_receipts {
         let value: crate::note::NoteLandingReceipt =
             rmp_serde::from_slice(&receipt.receipt).map_err(|_| invalid("head receipt"))?;
@@ -331,6 +345,9 @@ pub(crate) fn run_in_txn(
     }
     for bundle in &snapshot.note_proposals {
         NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &bundle.id, bundle)?;
+    }
+    for row in &snapshot.entity_documents {
+        crate::entity_doc::restore_canonical(vault, txn, row)?;
     }
     Ok(())
 }

@@ -192,11 +192,7 @@ mod credential_tests {
     #[tokio::test]
     async fn edge_transport_keeps_its_array_and_receipts_missing_and_live_sources() {
         let (_dir, server) = crate::api::tests::auth_test_server();
-        let mut owner = HeaderMap::new();
-        owner.insert(
-            axum::http::header::AUTHORIZATION,
-            crate::api::tests::owner_bearer().parse().unwrap(),
-        );
+        let (slip, key) = crate::test_credentials::credential(&server, "jti=edge-transport");
         let id = oneiron::EntityId::from_bytes([0x31; 16]).unwrap();
         for present in [false, true] {
             if present {
@@ -211,8 +207,16 @@ mod credential_tests {
                     )
                     .unwrap();
             }
+            let signed = crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
+                axum::http::Request::builder()
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            );
             let response = get_edges(
-                owner.clone(),
+                signed.headers().clone(),
                 State(server.clone()),
                 Path(id.to_hex()),
                 Ok(Query(ViewQuery {

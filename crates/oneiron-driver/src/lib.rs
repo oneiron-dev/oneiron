@@ -31,6 +31,8 @@
 mod session;
 mod supervisor;
 mod tick;
+mod wave;
+mod wave_dispatch;
 
 pub use session::{
     DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint,
@@ -39,10 +41,17 @@ pub use session::{
 pub use supervisor::{
     ConsolidationExecutorFactory, MAX_PASS_BUDGET_BASE_LEN, NowSeconds, PassExecutorFactory,
     RestartBackoffConfig, ShutdownHandle, WakeSupervisor, WakeSupervisorConfig,
-    WakeSupervisorReport,
+    WakeSupervisorReport, WaveReadyDispatcher,
 };
 pub use tick::{
     AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher,
-    HintSignal, HybridTick, NowMillis, PushTick, Tick, TickPushError, TickSource, TimerTick,
-    WakePusher, WakeSignal,
+    HintSignal, HybridTick, IdleSample, NowMillis, PushTick, Tick, TickPushError, TickSource,
+    TimerTick, WakePolicyTicks, WakePusher, WakeSignal,
+};
+
+pub use wave::WaveHost;
+
+pub use wave_dispatch::{
+    WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome,
+    WaveHandoffReceipt,
 };

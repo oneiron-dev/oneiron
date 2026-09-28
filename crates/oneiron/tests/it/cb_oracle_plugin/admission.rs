@@ -6,7 +6,9 @@ use oneiron::skill_hub::{
     ForeignSkillPublisher, HubAdmissionDisposition, HubPackage, HubPin, HubRef, HubSyncPolicy,
     SkillHubKind, SkillHubRecord, SkillHubTrustTier,
 };
-use oneiron::skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer};
+use oneiron::skill_optimize::{
+    BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse,
+};
 use oneiron::{EntityId, TimeRange, Vault};
 
 pub(super) struct Admission {
@@ -116,6 +118,9 @@ impl Admission {
 }
 struct Replay;
 impl HeldOutReplayScorer for Replay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> oneiron::error::Result<f32> {
         assert!(!case.held_out_receipts.is_empty());
         Ok(if case.instructions.contains("CRM contact") {
@@ -123,6 +128,32 @@ impl HeldOutReplayScorer for Replay {
         } else {
             0.2
         })
+    }
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> oneiron::error::Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(
+        &self,
+        _task: &str,
+        _receipts: &[String],
+    ) -> oneiron::error::Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "fixture-pair".to_owned(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> oneiron::error::Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(
+        &self,
+        case: &HeldOutReplayCase<'_>,
+    ) -> oneiron::error::Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
     }
 }
 fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
@@ -160,6 +191,14 @@ fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
         else {
             panic!("claimable attempt");
         };
+        queue
+            .set_executor_model(
+                attempt.id,
+                "fixture",
+                leased.attempt_count,
+                "fixture/model@1",
+            )
+            .expect("stamp executor");
         assert!(matches!(
             queue
                 .complete(CompleteAttempt {

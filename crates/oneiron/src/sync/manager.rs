@@ -209,6 +209,12 @@ impl WindowManager {
         let mut registry = self.lock_registry();
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
+            // A resident SKILL may have arrived before its actor. Observer B
+            // kept its entity-scoped replay marker; an already-loaded window
+            // must retry it too, not only the cold-open recovery path.
+            if !super::quarantine::pending_remat_entities(&self.vault, key.as_str())?.is_empty() {
+                forward_rematerialize(&self.vault, &existing.doc, &self.materializer, key)?;
+            }
             #[cfg(test)]
             self.maybe_pause_handle_issue();
             self.track_issued_handle(key, &existing);
@@ -748,14 +754,9 @@ mod slim_drop_tests {
             window: fail_key.as_str().to_owned(),
             seq: 0xffff_ffff,
         };
+        let corrupt = b"not a loro update".to_vec();
         manager.vault.with_write_txn(|txn| {
-            WINDOW_UPDATE.put(
-                &manager.vault.store,
-                txn,
-                &corrupt_key,
-                &b"not a loro update".to_vec(),
-            )?;
-            Ok(())
+            WINDOW_UPDATE.put(&manager.vault.store, txn, &corrupt_key, &corrupt)
         })?;
         let revision = manager.vault.store.env.info().last_txn_id;
         assert!(manager.drop_rebuildable_windows().is_err());
@@ -775,10 +776,9 @@ mod slim_drop_tests {
             receiver.try_recv().is_ok(),
             "Observer A and outbound sink survive failure"
         );
-        manager.vault.with_write_txn(|txn| {
-            WINDOW_UPDATE.delete(&manager.vault.store, txn, &corrupt_key)?;
-            Ok(())
-        })?;
+        manager
+            .vault
+            .with_write_txn(|txn| WINDOW_UPDATE.delete(&manager.vault.store, txn, &corrupt_key))?;
         assert_eq!(manager.drop_rebuildable_windows()?.sync_windows, 2);
         assert!(weak.iter().all(|window| window.upgrade().is_none()));
         let reopened = manager.open_window(&keys[0])?;

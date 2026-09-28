@@ -12,6 +12,7 @@ use super::super::tombstone::{
     ARCHIVE_MARKER, DecodedTombstoneValue, PENDING_TOMBSTONE, PendingTombstoneKey, TombstoneReason,
     TombstoneValueV2, decode_tombstone_value,
 };
+use super::super::topology_delete_intent::clear_own_topology_delete_in_txn;
 
 impl Vault {
     /// Archives a checked PERSON/SUMMARY in the cleanup decision transaction.
@@ -22,7 +23,8 @@ impl Vault {
         id: &EntityId,
         tombstone: &TombstoneValueV2,
     ) -> Result<bool> {
-        let Some(raw) = self.store.entities.get(wtxn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
+        else {
             return Ok(false);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
@@ -121,15 +123,27 @@ impl Vault {
         Ok(())
     }
 
-    /// Clears the pending-tombstone marker. Only called once the CRDT
-    /// commit + snapshot persistence have succeeded — never before.
-    pub(super) fn clear_pending_tombstone(&self, window_label: &str, id: &EntityId) -> Result<()> {
+    /// Retire this request's propagation marker and reservation together,
+    /// only after both CRDT publication and local deletion have committed.
+    /// Do not consume a later request's `pt:` row at the same window/entity.
+    pub(super) fn finish_published_topology_delete(
+        &self,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
         self.with_write_txn(|wtxn| {
             let key = PendingTombstoneKey {
                 window: window_label.to_owned(),
                 id: *id,
             };
-            PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
+            if PENDING_TOMBSTONE
+                .get_bytes(&self.store, wtxn, &key)?
+                .is_some_and(|raw| raw == value.encode())
+            {
+                PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
+            }
+            clear_own_topology_delete_in_txn(&self.store, wtxn, id, &value.request_id, false)?;
             Ok(())
         })
     }

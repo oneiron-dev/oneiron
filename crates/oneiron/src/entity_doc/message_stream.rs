@@ -20,10 +20,7 @@ pub(crate) fn birth_message_stream_in_txn(
     if ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
         return Err(invalid("stream birth cannot replace an existing document"));
     }
-    let raw = vault
-        .store
-        .entities
-        .get(txn, entity.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, entity)?
         .ok_or(Error::EntityNotFound)?
         .to_vec();
     let header =
@@ -93,10 +90,7 @@ pub(crate) fn append_message_stream_in_txn(
     crate::batch::secret_scan::scan_metadata_field(delta)?;
     if !ENTITY_DOC_HEAD.contains(&vault.store, txn, &HexId(*entity))? {
         // Atomic MESSAGEs move their original text into birth exactly once.
-        let raw = vault
-            .store
-            .entities
-            .get(txn, entity.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, entity)?
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("message header"))?;

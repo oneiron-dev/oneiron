@@ -80,7 +80,7 @@ const RETRIEVAL_TRACE_FORK_INDEX: SideTable<([u8; 32], RetrievalRunId), PresentM
 /// Reported retrieval run outcome. Key: id16 ":" string — a literal `:`
 /// separator, not the door's plain fixed-then-rest tuple, so it gets a
 /// hand-spelled key type.
-struct OutcomeKey(RetrievalRunId, String);
+pub(super) struct OutcomeKey(pub(super) RetrievalRunId, pub(super) String);
 
 impl SideKey for OutcomeKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
@@ -110,7 +110,7 @@ impl SideKey for OutcomeKey {
 /// Codec fixed `Raw` (see the decls.rs note): decode also enforces the
 /// version byte, so [`RawValue`] delegates to the module's own
 /// `encode_retrieval_outcome`/`decode_retrieval_outcome`.
-const RETRIEVAL_OUTCOME: SideTable<OutcomeKey, RetrievalOutcomeRecord, Raw> =
+pub(super) const RETRIEVAL_OUTCOME: SideTable<OutcomeKey, RetrievalOutcomeRecord, Raw> =
     SideTable::new(&side_table::RETRIEVAL_OUTCOME);
 
 impl RawValue for RetrievalOutcomeRecord {
@@ -197,6 +197,11 @@ impl SessionStoreView<'_> {
 }
 
 impl Store {
+    /// Runtime capture opt-in, separate from the write-failure fuse below.
+    pub(crate) fn retrieval_telemetry_capture_enabled(&self) -> bool {
+        self.core.retrieval_telemetry_capture
+    }
+
     pub fn retrieval_telemetry_writes_enabled(&self) -> bool {
         !self
             .retrieval_writes_disabled
@@ -243,7 +248,18 @@ impl Store {
 
         let result = (|| {
             let mut wtxn = self.env.write_txn()?;
+            if published {
+                super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
+            }
             stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
+            if published {
+                super::retention::put_retrieval_age(
+                    self,
+                    &mut wtxn,
+                    record.run_id,
+                    self.clock.now_recorded_at(),
+                )?;
+            }
             wtxn.commit()?;
             Ok(())
         })();
@@ -281,7 +297,19 @@ impl Store {
         }
 
         let mut wtxn = self.env.write_txn()?;
+        let run_id = finalize.run_id;
+        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &wtxn, &run_id)? {
+            super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
+        }
         stage_context_pack_retrieval_run_finalize(self, &mut wtxn, finalize)?;
+        if RETRIEVAL_RUN.contains(self, &wtxn, &run_id)? {
+            super::retention::put_retrieval_age(
+                self,
+                &mut wtxn,
+                run_id,
+                self.clock.now_recorded_at(),
+            )?;
+        }
         wtxn.commit()?;
         Ok(())
     }
@@ -307,6 +335,7 @@ impl Store {
             accepted: outcome.accepted,
             metadata: outcome.metadata,
             updated_at: self.clock.now_recorded_at(),
+            reward_evidence: None,
         };
         let mut wtxn = self.env.write_txn()?;
         if !RETRIEVAL_RUN.contains(self, &wtxn, &record.run_id)? {
@@ -320,7 +349,16 @@ impl Store {
             ));
         }
         let key = OutcomeKey(record.run_id, record.key.clone());
+        if RETRIEVAL_OUTCOME
+            .get(self, &wtxn, &key)?
+            .is_some_and(|existing| existing.reward_evidence.is_some())
+        {
+            return Err(Error::InvalidConfig(
+                "raw retrieval outcome cannot replace a gated end outcome".to_owned(),
+            ));
+        }
         RETRIEVAL_OUTCOME.put(self, &mut wtxn, &key, &record)?;
+
         wtxn.commit()?;
         Ok(())
     }
@@ -335,10 +373,19 @@ impl Store {
         run_id: RetrievalRunId,
     ) -> Result<Option<RetrievalRunRecord>> {
         let rtxn = self.env.read_txn()?;
-        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)? {
+        self.retrieval_run_in_txn(&rtxn, run_id)
+    }
+
+    /// Base-only published run lookup in a caller-held read snapshot.
+    pub(crate) fn retrieval_run_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run_id: RetrievalRunId,
+    ) -> Result<Option<RetrievalRunRecord>> {
+        if RETRIEVAL_RUN_PROVISIONAL.contains(self, rtxn, &run_id)? {
             return Ok(None);
         }
-        let Some(record) = RETRIEVAL_RUN.get(self, &rtxn, &run_id)? else {
+        let Some(record) = RETRIEVAL_RUN.get(self, rtxn, &run_id)? else {
             return Ok(None);
         };
         if record.run_id != run_id {
@@ -447,6 +494,7 @@ fn stage_retrieval_run_with_visibility(
     record.state.validate()?;
     if let Some(existing) = RETRIEVAL_RUN.get(target, &*wtxn, &record.run_id)? {
         super::turn_index::delete(target, wtxn, &existing)?;
+        delete_retrieval_trace_fork_indexes_for_run(target, wtxn, record.run_id)?;
     }
     RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
     if published {
@@ -463,7 +511,7 @@ fn stage_retrieval_run_with_visibility(
 
 /// Stages the deletion of one retrieval-run row, its provisional marker, its
 /// outcome rows, and its trace fork indexes into `target`'s `vault_meta`.
-fn stage_retrieval_run_delete(
+pub(super) fn stage_retrieval_run_delete(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
@@ -471,6 +519,7 @@ fn stage_retrieval_run_delete(
     super::turn_index::delete_for_run(target, wtxn, run_id)?;
     delete_retrieval_trace_fork_indexes_for_run(target, wtxn, run_id)?;
     RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
+    super::retention::delete_retrieval_age(target, wtxn, run_id)?;
     RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
     RETRIEVAL_RUN.delete(target, wtxn, &run_id)?;
     Ok(())
@@ -494,6 +543,8 @@ fn stage_context_pack_retrieval_run_finalize(
         claims_suppressed,
         surfaced_result_ids,
         empty_reason,
+        pack_output,
+        pack_config,
     } = finalize;
     let Some(mut record) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)? else {
         RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
@@ -534,6 +585,12 @@ fn stage_context_pack_retrieval_run_finalize(
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
     record.empty_reason = empty_reason;
+    record.pack_output = pack_output;
+    if let Some(pack_config) = pack_config
+        && let Some(inputs) = record.replay_inputs.as_mut()
+    {
+        inputs.config["pack"] = pack_config;
+    }
     super::turn_index::put(target, wtxn, &record)?;
     RETRIEVAL_RUN.put(target, wtxn, &run_id, &record)?;
     if let Some(trace) = &record.trace {
@@ -642,7 +699,7 @@ pub(in crate::store) fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunR
     Ok(record)
 }
 
-fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
+pub(super) fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("retrieval outcome telemetry encode failed"))
 }
@@ -677,7 +734,7 @@ pub(super) fn retrieval_outcomes_for_run_in_txn(
     Ok(records)
 }
 
-fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
+pub(super) fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
     if outcome.key.is_empty()
         || outcome.key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
         || !outcome
