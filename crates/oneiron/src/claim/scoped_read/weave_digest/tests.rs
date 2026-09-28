@@ -1201,3 +1201,217 @@ fn authored_holder_required_precedence_is_enforced_without_widening_vault_role()
     );
     Ok(())
 }
+
+#[test]
+fn saved_edge_claim_is_withheld_after_exact_pair_revocation_with_readable_endpoints() -> Result<()>
+{
+    use crate::edge::EdgeActorClass;
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let a = vault.ensure_embedded_owner_actor().unwrap();
+    let b = entity(0xE9);
+    person(&vault, b)?;
+    let am = vault.memory(a, EdgeActorClass::Human);
+    let bm = vault.memory(b, EdgeActorClass::Human);
+    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| -> Result<EntityId> {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: owner },
+                markdown: "weave digest notebook".into(),
+                source_revision_ref: [0xE2; 16],
+                mask: None,
+            })
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        EntityId::from_hex(&receipt.id_hex)
+    };
+    let a1 = diary(&am, a)?;
+    let a2 = diary(&am, a)?;
+    let b_note = diary(&bm, b)?;
+    // a1's pair stays authorized, so b_note stays readable after a2's pair is revoked.
+    am.link_diary_coreference(a1, b_note).unwrap();
+    am.grant_diary_coreference(a1, b_note).unwrap();
+    bm.grant_diary_coreference(a1, b_note).unwrap();
+    am.link_diary_coreference(a2, b_note).unwrap();
+    am.grant_diary_coreference(a2, b_note).unwrap();
+    let b_grant = bm.grant_diary_coreference(a2, b_note).unwrap();
+    let claim_id = entity(0xEA);
+    vault.put_claim(
+        &claim_id,
+        &ClaimBody::new(
+            "report.digest",
+            ClaimSubject::Edge {
+                source: a2,
+                kind: EdgeKind::SameAs,
+                target: b_note,
+            },
+            Value::from("pair digest"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&a.to_hex()]);
+    let owner =
+        vault.authenticate_owner(a, &a.to_hex(), true, crate::store::GateDecisionId::now())?;
+    let read =
+        vault.scoped_read(ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap());
+    // A predicate-only Links section: no edge_kinds, so only claim admission applies.
+    let recipe = recipe(WeaveSectionKind::Links);
+    vault.set_weave_digest_schedule(
+        &owner,
+        &WeaveDigestSchedule {
+            reader: WeaveDigestReader::Owner(a),
+            cadence: WeaveDigestCadence::Daily,
+            next_due_at: 1,
+            recipe: recipe.clone(),
+        },
+    )?;
+    let stored = read
+        .render_due_weave_digest(WeaveReader::Owner(&owner), 1)?
+        .unwrap();
+    let has_claim = |items: &[WeaveItem]| {
+        items
+            .iter()
+            .any(|item| matches!(item, WeaveItem::Claim { id, .. } if *id == claim_id))
+    };
+    assert!(has_claim(&stored.report.value.sections[0].items));
+    let saved = read
+        .read_weave_digest(WeaveReader::Owner(&owner), 1)?
+        .unwrap();
+    assert!(has_claim(&saved.report.value.sections[0].items));
+
+    bm.revoke_diary_coreference_grant(b_grant).unwrap();
+    let mut links = recipe.clone();
+    links[0].edge_kinds = vec![EdgeKind::SameAs];
+    let live = read.weave_report(WeaveReader::Owner(&owner), &links)?;
+    let items = &live.value.sections[0].items;
+    // Both endpoints stay readable: a2 by ownership, b_note through a1's pair.
+    assert!(items.contains(&WeaveItem::Link {
+        source: a1,
+        kind: EdgeKind::SameAs,
+        target: b_note,
+    }));
+    assert!(!items.contains(&WeaveItem::Link {
+        source: a2,
+        kind: EdgeKind::SameAs,
+        target: b_note,
+    }));
+    assert!(!has_claim(items));
+    // The saved digest yields no body, pair IDs or item count for the revoked pair.
+    assert!(
+        read.read_weave_digest(WeaveReader::Owner(&owner), 1)?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn authored_row_ceiling_governs_predicate_scan_past_index_default() -> Result<()> {
+    let mut config = embedding_test_config();
+    config.map_size = 256 * 1024 * 1024;
+    let (_tmp, vault) = open_test_vault_with(config);
+    let owner_id = entity(0xE4);
+    let agent = entity(0xE5);
+    for id in [owner_id, agent] {
+        person(&vault, id)?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    // One more relevant claim than the predicate index's default ceiling.
+    let claims = 10_001_u32;
+    let mut wtxn = vault.store.env.write_txn()?;
+    for n in 0..claims {
+        let mut bytes = [0xE6; 16];
+        bytes[12..].copy_from_slice(&n.to_be_bytes());
+        vault.put_claim_in_txn(
+            &mut wtxn,
+            &EntityId::from_bytes(bytes)?,
+            &ClaimBody::new(
+                "report.digest",
+                ClaimSubject::Entity(agent),
+                Value::from(n),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            ),
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?;
+    }
+    wtxn.commit()?;
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex()]);
+    let read = vault.scoped_read(ScopedReadActorKey::new(agent.to_hex()).unwrap());
+    let recipe = recipe(WeaveSectionKind::Digest);
+    let set_max_rows = |max_rows: u32| {
+        configure_weave_policy(&vault, |entries| {
+            let Value::Array(rows) = &mut entries
+                .iter_mut()
+                .find(|(k, _)| k.as_str() == Some(crate::gate::weave_policy::KEY))
+                .unwrap()
+                .1
+            else {
+                panic!("policy rows")
+            };
+            for row in rows {
+                let Value::Map(fields) = row else { continue };
+                if fields
+                    .iter()
+                    .any(|(k, v)| k.as_str() == Some("role") && v.as_str() == Some("agent"))
+                {
+                    fields
+                        .iter_mut()
+                        .find(|(k, _)| k.as_str() == Some("max_rows"))
+                        .unwrap()
+                        .1 = Value::from(max_rows);
+                }
+            }
+        })
+    };
+
+    // The shipped row (10,000) refuses rather than truncating.
+    assert!(matches!(
+        read.weave_report(WeaveReader::Agent(agent), &recipe),
+        Err(Error::IndexOverflow(_))
+    ));
+    set_max_rows(claims - 1)?;
+    assert!(matches!(
+        read.weave_report(WeaveReader::Agent(agent), &recipe),
+        Err(Error::IndexOverflow(_))
+    ));
+
+    // A larger authored row is the only limit: live and due renders both reach every claim.
+    set_max_rows(claims)?;
+    let live = read.weave_report(WeaveReader::Agent(agent), &recipe)?;
+    assert_eq!(live.value.sections[0].items.len(), claims as usize);
+    vault.set_weave_digest_schedule(
+        &owner,
+        &WeaveDigestSchedule {
+            reader: WeaveDigestReader::Agent(agent),
+            cadence: WeaveDigestCadence::Daily,
+            next_due_at: 1,
+            recipe: recipe.clone(),
+        },
+    )?;
+    let stored = read
+        .render_due_weave_digest(WeaveReader::Agent(agent), 1)?
+        .unwrap();
+    assert_eq!(stored.report, live);
+    assert_eq!(
+        read.read_weave_digest(WeaveReader::Agent(agent), 1)?
+            .unwrap()
+            .report
+            .value
+            .sections[0]
+            .items
+            .len(),
+        claims as usize
+    );
+    Ok(())
+}

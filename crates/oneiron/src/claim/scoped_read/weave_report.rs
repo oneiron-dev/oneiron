@@ -5,7 +5,7 @@ use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::error::{Error, Result};
-use crate::ports::{EdgeDirection, EntityStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::workspace_roster::ProjectRecord;
 use crate::{EdgeKind, EntityId};
@@ -254,22 +254,8 @@ impl ScopedRead<'_> {
                         }
                         // An edge claim must not launder an unreadable endpoint
                         // (or a deleted edge) into a report about the reader.
-                        if let ClaimSubject::Edge {
-                            source,
-                            kind,
-                            target,
-                        } = body.subject
-                        {
-                            let Some(edge) = self.live_weave_edge_in(txn, source, kind, target)?
-                            else {
-                                continue;
-                            };
-                            if !self
-                                .admit_stored_edge_in(txn, &policy, &filter, source, edge)?
-                                .visible()
-                            {
-                                continue;
-                            }
+                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, &body)? {
+                            continue;
                         }
                         items.push(WeaveItem::Claim {
                             id,
@@ -318,7 +304,12 @@ impl ScopedRead<'_> {
         max_rows: usize,
     ) -> Result<Vec<EntityId>> {
         let Some(view) = self.session_view else {
-            return crate::claim::claim_ids_for_predicate_in_txn(&self.vault.store, txn, predicate);
+            return crate::claim::claim_ids_for_predicate_bounded_in_txn(
+                &self.vault.store,
+                txn,
+                predicate,
+                max_rows,
+            );
         };
         let mut matches = Vec::new();
         let mut scanned = 0;
@@ -438,6 +429,34 @@ impl ScopedRead<'_> {
         Ok(links.into_values().collect())
     }
 
+    /// An edge-subject claim is admitted only while its exact edge is live and
+    /// passes the same pair admission as a Links row; endpoint readability
+    /// alone is not pair authority. Entity-subject claims pass through.
+    pub(super) fn weave_claim_edge_admitted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        let ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = body.subject
+        else {
+            return Ok(true);
+        };
+        let Some(edge) = self.live_weave_edge_in(txn, source, kind, target)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .admit_stored_edge_in(txn, policy, filter, source, edge)?
+            .visible())
+    }
+
+    /// Exact edge-key lookup: a known relation never scans its source's
+    /// adjacency, so no compiled scan ceiling stands in for policy.
     pub(super) fn live_weave_edge_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -445,18 +464,11 @@ impl ScopedRead<'_> {
         kind: crate::EdgeKind,
         target: EntityId,
     ) -> Result<Option<crate::EdgeInfo>> {
-        let mut count = 0;
-        for edge in self.out_edges_in(txn, &source, Some(kind))? {
-            count += 1;
-            if count > crate::vault::MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("weave link edges"));
-            }
-            let edge = edge?;
-            if edge.target == target {
-                return Ok(weave_edge_live(edge.provenance).then_some(edge));
-            }
-        }
-        Ok(None)
+        let edge = match self.session_view {
+            Some(view) => view.port_edge_get(txn, &source, kind, &target)?,
+            None => self.vault.port_edge_get(txn, &source, kind, &target)?,
+        };
+        Ok(edge.filter(|edge| weave_edge_live(edge.provenance)))
     }
 }
 

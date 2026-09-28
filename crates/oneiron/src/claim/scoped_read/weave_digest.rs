@@ -535,6 +535,11 @@ impl ScopedRead<'_> {
                         )? {
                             return Ok(None);
                         }
+                        // Readable endpoints are not pair authority: an edge
+                        // claim keeps the live lens's exact-relation admission.
+                        if !self.weave_claim_edge_admitted_in(&txn, &policy, &filter, body)? {
+                            return Ok(None);
+                        }
                     }
                     WeaveItem::Link {
                         source,

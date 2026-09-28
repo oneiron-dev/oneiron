@@ -38,8 +38,8 @@ mod room_thread;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;
-pub(crate) mod weave_policy;
 mod weave_correction_policy;
+pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
