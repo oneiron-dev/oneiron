@@ -9,7 +9,7 @@ use crate::error::{Error, Result, SyncError};
 use crate::identity_topology::IdentityTopologyRejection;
 use crate::store::Store;
 
-use super::tombstone::{TombstoneReason, TombstoneValueV2};
+use super::tombstone::{DecodedTombstoneValue, TombstoneReason, TombstoneValueV2};
 
 const PREFIX: &str = "topology-delete-intent:";
 
@@ -174,18 +174,52 @@ pub(super) fn settled_topology_delete_in_txn(
     )
 }
 
+/// A replay of a different request is refused while the reservation's own
+/// deletion is still in flight. Once that deletion has committed locally, a
+/// replay no stronger than it (soft over soft or hard, hard over hard) has
+/// nothing left to erase and is accepted as an idempotent repeat. The
+/// reservation stays, so topology stays fenced until its own request retires
+/// it. A non-sync build keeps it until a sync-enabled boot replays its `pt:`.
 pub(super) fn guard_topology_delete_request_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
-    request_id: Option<&[u8; 16]>,
+    value: &DecodedTombstoneValue,
 ) -> Result<()> {
-    if let Some(intent) = topology_delete_reservation_in_txn(store, txn, entity)?
-        && request_id.is_none_or(|id| *id != intent.request_id)
+    let Some(intent) = topology_delete_reservation_in_txn(store, txn, entity)? else {
+        return Ok(());
+    };
+    if value.request_id == Some(intent.request_id)
+        || ((!value.is_hard() || intent.reason.is_hard())
+            && local_topology_delete_complete_in_txn(store, txn, entity, &intent)?)
     {
-        return Err(conflict(entity));
+        return Ok(());
     }
-    Ok(())
+    Err(conflict(entity))
+}
+
+/// Whether the reservation's own local deletion has committed. A soft delete
+/// records Committed in the transaction that scrubs the shell; a hard one may
+/// record it before the purge, so only its own permanent `dt:` marker proves
+/// the purge.
+fn local_topology_delete_complete_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    intent: &TopologyDeleteIntent,
+) -> Result<bool> {
+    if intent.phase != TopologyDeletePhase::Committed {
+        return Ok(false);
+    }
+    if !intent.reason.is_hard() {
+        return Ok(true);
+    }
+    Ok(store
+        .sync_state
+        .get(txn, &super::tombstone::local_hard_delete_key(entity))?
+        .is_some_and(|marker| {
+            super::tombstone::decode_tombstone_value(&marker).request_id == Some(intent.request_id)
+        }))
 }
 
 /// Clear only THIS request and, optionally, only its still-uncommitted
@@ -488,6 +522,98 @@ mod tests {
             topology_delete_reservation_in_txn(&vault.store, &read, &entity).unwrap(),
             None
         );
+    }
+    #[test]
+    fn completed_local_delete_accepts_a_no_stronger_replay_of_another_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let entity = EntityId::from_hex("44444444444444444444444444444444").unwrap();
+        let own = [4; 16];
+        let other = [5; 16];
+        let replay = |reason| {
+            TombstoneValueV2 {
+                reason,
+                deleted_at: 1_772_000_001,
+                request_id: other,
+            }
+            .encode()
+        };
+        let soft = replay(TombstoneReason::UserDelete);
+        let hard = replay(TombstoneReason::UserHardDelete);
+        let accepts = |raw: &[u8]| {
+            let txn = vault.store.env.read_txn().unwrap();
+            let value = super::super::tombstone::decode_tombstone_value(raw);
+            guard_topology_delete_request_in_txn(&vault.store, &txn, &entity, &value).is_ok()
+        };
+        // An accepted replay runs to completion and leaves the fence as it was.
+        let replays_under_fence = |raw: &[u8]| {
+            vault.apply_replayed_tombstone(&entity, raw).unwrap();
+            let txn = vault.store.env.read_txn().unwrap();
+            topology_delete_reservation_in_txn(&vault.store, &txn, &entity)
+                .unwrap()
+                .is_some_and(|intent| {
+                    intent.request_id == own && intent.phase == TopologyDeletePhase::Committed
+                })
+        };
+        let reserve = |value: &TombstoneValueV2, phase| {
+            let mut txn = vault.store.env.write_txn().unwrap();
+            reserve_topology_delete_in_txn(
+                &vault.store,
+                &mut txn,
+                &entity,
+                value,
+                1_772_000_000,
+                phase,
+            )
+            .unwrap();
+            txn.commit().unwrap();
+        };
+        let mark_purged = |request_id| {
+            let mut txn = vault.store.env.write_txn().unwrap();
+            vault
+                .store
+                .sync_state
+                .put(
+                    &mut txn,
+                    &super::super::tombstone::local_hard_delete_key(&entity),
+                    &tombstone(request_id).encode(),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+        };
+
+        // Hard: published, then committed before its purge. Still in flight.
+        reserve(&tombstone(own), TopologyDeletePhase::Published);
+        assert!(!accepts(&soft) && !accepts(&hard));
+        reserve(&tombstone(own), TopologyDeletePhase::Committed);
+        assert!(!accepts(&soft) && !accepts(&hard));
+        // Another request's dt: marker does not prove this purge.
+        mark_purged(other);
+        assert!(!accepts(&soft) && !accepts(&hard));
+        mark_purged(own);
+        assert!(accepts(&soft) && accepts(&hard));
+        assert!(replays_under_fence(&hard) && replays_under_fence(&soft));
+
+        // Soft: published, then committed with its scrub. A hard replay of
+        // another request would erase more than the local delete did.
+        let own_soft = TombstoneValueV2 {
+            reason: TombstoneReason::UserDelete,
+            ..tombstone(own)
+        };
+        {
+            let mut txn = vault.store.env.write_txn().unwrap();
+            assert!(
+                clear_own_topology_delete_in_txn(&vault.store, &mut txn, &entity, &own, false)
+                    .unwrap()
+            );
+            txn.commit().unwrap();
+        }
+        reserve(&own_soft, TopologyDeletePhase::Published);
+        assert!(!accepts(&soft) && !accepts(&hard));
+        reserve(&own_soft, TopologyDeletePhase::Committed);
+        assert!(accepts(&soft) && !accepts(&hard));
+        assert!(replays_under_fence(&soft));
+        assert!(vault.apply_replayed_tombstone(&entity, &hard).is_err());
     }
     #[test]
     fn hard_request_takes_over_a_soft_reservation_only_once_published() {

@@ -67,7 +67,7 @@ impl Vault {
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let decoded = decode_tombstone_value(raw_value);
-        guard_topology_delete_request_in_txn(&self.store, wtxn, id, decoded.request_id.as_ref())?;
+        guard_topology_delete_request_in_txn(&self.store, wtxn, id, &decoded)?;
         let settled = match decoded.request_id.as_ref() {
             Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
             None => false,
