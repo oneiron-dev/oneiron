@@ -59,7 +59,7 @@ pub enum Axis {
 }
 
 /// A single cell address, 1-based on both axes (A1 == col 1, row 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CellRef {
     pub col: u32,
     pub row: u32,

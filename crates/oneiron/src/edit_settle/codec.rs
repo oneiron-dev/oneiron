@@ -8,8 +8,8 @@ use super::keys::{
     BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX, KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR,
     KEY_ANCHOR_THREAD_ID, KEY_ANCHORS, KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH,
     KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES,
-    KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_VERSION,
-    SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
+    KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_SHEET_ANSWERS,
+    KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
 };
 use super::records::{PptxReviewIdentity, SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::anchored_annotation::{decode_locator, encode_locator};
@@ -54,6 +54,16 @@ pub(super) fn settlement_key_artifact_id(key: &[u8]) -> Result<EntityId> {
 
 pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<u8>> {
     let anchors: Vec<Value> = record.anchors.iter().map(encode_settled_anchor).collect();
+    let sheet_answers = record
+        .sheet_answers
+        .as_ref()
+        .map(|bundle| {
+            rmp_serde::to_vec_named(bundle)
+                .map(Value::Binary)
+                .map_err(|_| Error::InvariantViolation("typed answer receipt encode failed"))
+        })
+        .transpose()?
+        .unwrap_or(Value::Nil);
     let value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -133,6 +143,7 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
             Value::from(KEY_REASON),
             option_str_value(record.reason.as_deref()),
         ),
+        (Value::from(KEY_SHEET_ANSWERS), sheet_answers),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -197,6 +208,16 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
         )?,
         anchors,
         reason: field_opt_str(&entries, KEY_REASON)?,
+        sheet_answers: match field(&entries, KEY_SHEET_ANSWERS) {
+            Some(Value::Nil) => None,
+            Some(Value::Binary(bytes)) => {
+                let bundle: crate::edit_roundtrip::SheetAnswerBundle =
+                    rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
+                bundle.ops().map_err(|_| corrupt())?;
+                Some(Box::new(bundle))
+            }
+            _ => return Err(corrupt()),
+        },
     })
 }
 

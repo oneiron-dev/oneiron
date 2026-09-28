@@ -8,7 +8,7 @@ use super::receipts::{
 };
 use super::records::{
     SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome,
-    SettlementRecord,
+    SettlementRecord, SheetAnswerReceipt,
 };
 use crate::Vault;
 use crate::anchored_annotation::{ReanchorOp, ReanchorSummary};
@@ -16,6 +16,7 @@ use crate::batch::secret_scan;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_RUN_REF_MAX_BYTES, read_blob_artifact_head_in_txn, require_entity_type,
 };
+use crate::edit_roundtrip::judgment_cells::verify_sheet_answer_bytes;
 use crate::edit_roundtrip::{EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -46,7 +47,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        self.ensure_selectable(proposal)?;
+        self.ensure_selectable(artifact_id, proposal)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key(artifact_id, proposal_ref);
@@ -68,6 +69,23 @@ impl Vault {
             // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
             // a revocation serialized before this commit makes it fail here.
             self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            if let Some(bundle) = &proposal.sheet_answers {
+                let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
+                let cap = policy
+                    .sheet_answer_limit(
+                        &artifact_id.to_hex(),
+                        &bundle.sheet,
+                        bundle.max_count_override,
+                    )
+                    .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "typed answer count policy unavailable",
+                    )))?;
+                if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "typed answer count exceeds policy",
+                    )));
+                }
+            }
             // Ledger acquisition BEFORE any side effect.
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
                 return Err(already_settled(&decode_settlement_record(&raw)?));
@@ -116,6 +134,7 @@ impl Vault {
                     pptx_review_identities: Vec::new(),
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
+                    sheet_answers: proposal.sheet_answers.clone(),
                 };
                 self.store
                     .vault_meta
@@ -241,6 +260,7 @@ impl Vault {
                     .collect(),
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
+                sheet_answers: proposal.sheet_answers.clone(),
             };
             self.store
                 .vault_meta
@@ -293,6 +313,7 @@ impl Vault {
             pptx_review_identities: Vec::new(),
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
+            sheet_answers: None,
         };
         let encoded = encode_settlement_record(&record)?;
 
@@ -356,6 +377,46 @@ impl Vault {
             version,
             anchors: record.anchors,
         }))
+    }
+
+    /// Reads per-cell typed answer receipts only after a successful Keep.
+    /// Discarded and stale proposals have no kept answers.
+    pub fn sheet_answer_receipts(
+        &self,
+        artifact_id: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<Vec<SheetAnswerReceipt>> {
+        let Some(record) = self.blob_artifact_settlement(artifact_id, proposal_ref)? else {
+            return Ok(Vec::new());
+        };
+        if record.outcome != SettleOutcomeKind::Selected {
+            return Ok(Vec::new());
+        }
+        let Some(bundle) = record.sheet_answers else {
+            return Ok(Vec::new());
+        };
+        let version = record
+            .version
+            .ok_or(Error::CorruptedIndex("selected sheet answer version"))?;
+        let kept_by = record
+            .actor_ref
+            .ok_or(Error::CorruptedIndex("selected sheet answer actor"))?;
+        Ok(bundle
+            .answers
+            .into_iter()
+            .map(|answer| SheetAnswerReceipt {
+                artifact_id: *artifact_id,
+                proposal_ref: record.proposal_ref.clone(),
+                version,
+                question: bundle.question.clone(),
+                question_version: bundle.question_version.clone(),
+                principal: bundle.principal.clone(),
+                sheet: bundle.sheet.clone(),
+                answer,
+                kept_by: kept_by.clone(),
+                kept_at: record.settled_at,
+            })
+            .collect())
     }
 
     /// Whether a live DEC-0006 standing ACTION grant authorizes `actor` to
@@ -442,7 +503,7 @@ impl Vault {
         }
     }
 
-    fn ensure_selectable(&self, proposal: &EditProposal) -> Result<()> {
+    fn ensure_selectable(&self, artifact_id: &EntityId, proposal: &EditProposal) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
@@ -462,6 +523,27 @@ impl Vault {
             return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "recalculated proposal must name its engine and version",
             )));
+        }
+        if let Some(bundle) = &proposal.sheet_answers {
+            if bundle.ops()? != proposal.manifest.ops {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "typed answers do not match the edit manifest",
+                )));
+            }
+            let version = proposal.base_version.ok_or(Error::Artifact(
+                ArtifactError::InvalidEditManifest(
+                    "typed answers require an artifact base version",
+                ),
+            ))?;
+            let source = self
+                .read_blob_artifact_version(artifact_id, version)?
+                .ok_or(Error::EntityNotFound)?;
+            if blake3::hash(&source).as_bytes() != &proposal.base_content_hash {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "typed answers have a mismatched source hash",
+                )));
+            }
+            verify_sheet_answer_bytes(bundle, Some(&source), Some(&proposal.new_bytes))?;
         }
         // The spreadsheet door cannot settle a disguised PowerPoint manifest.
         if proposal.format == OfficeFormat::Xlsx

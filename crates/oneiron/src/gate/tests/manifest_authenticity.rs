@@ -476,3 +476,56 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
     );
     Ok(())
 }
+
+#[test]
+fn replicated_sheet_answer_limit_cannot_raise_shipped_default_when_owner_omits_row() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let artifact = test_id(0xAB);
+    // This trusted replacement intentionally omits the optional count row.
+    put_policy_manifest_bytes(&vault, test_id(0xD1), &encode_policy_manifest(vec![]))?;
+    let initial = resolve(&vault)?;
+    assert_eq!(
+        initial.sheet_answer_limit(&artifact.to_hex(), "Private", None),
+        Some(4096)
+    );
+    let count_row = |limit| {
+        (
+            Value::from(crate::gate::constants::POLICY_SHEET_ANSWER_LIMITS_KEY),
+            Value::Array(vec![Value::Map(vec![(
+                Value::from("max_count"),
+                Value::from(limit),
+            )])]),
+        )
+    };
+    vault
+        .batch()
+        .put_replicated(
+            &test_id(0xD2),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &encode_policy_manifest(vec![count_row(8192u64)]),
+        )
+        .commit()?;
+    assert_eq!(
+        resolve(&vault)?.sheet_answer_limit(&artifact.to_hex(), "Private", None),
+        Some(4096),
+        "replicated policy cannot raise an implicit shipped cap"
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &test_id(0xD3),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &encode_policy_manifest(vec![count_row(2u64)]),
+        )
+        .commit()?;
+    assert_eq!(
+        resolve(&vault)?.sheet_answer_limit(&artifact.to_hex(), "Private", None),
+        Some(2),
+        "replicated policy may narrow"
+    );
+    Ok(())
+}

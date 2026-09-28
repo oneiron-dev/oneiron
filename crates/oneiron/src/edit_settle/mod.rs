@@ -93,7 +93,7 @@ pub use self::keys::{
 pub(crate) use self::receipts::settle_receipts;
 pub use self::records::{
     PptxReviewIdentity, SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor,
-    SettleSelectOutcome, SettledAnchor, SettlementRecord,
+    SettleSelectOutcome, SettledAnchor, SettlementRecord, SheetAnswerReceipt,
 };
 
 #[cfg(test)]

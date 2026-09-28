@@ -1,10 +1,10 @@
 //! Pinned ledger keys and receipt fields.
 
 /// Current settlement-record body schema version.
-pub const SETTLEMENT_SCHEMA_VERSION: u64 = 1;
+pub const SETTLEMENT_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned on-disk MessagePack key set for a [`SettlementRecord`](crate::edit_settle::SettlementRecord) body.
-pub const SETTLEMENT_RECORD_KEYS: [&str; 15] = [
+pub const SETTLEMENT_RECORD_KEYS: [&str; 16] = [
     "schema_version",
     "proposal_ref",
     "outcome",
@@ -20,6 +20,7 @@ pub const SETTLEMENT_RECORD_KEYS: [&str; 15] = [
     "reason",
     "pptx_slide_creation_id_mints",
     "pptx_review_identities",
+    "sheet_answers",
 ];
 
 /// Pinned on-disk MessagePack key set for one [`SettledAnchor`](crate::edit_settle::SettledAnchor) entry.
@@ -58,6 +59,8 @@ pub(super) const KEY_MANIFEST_OPS: &str = SETTLEMENT_RECORD_KEYS[10];
 pub(super) const KEY_ANCHORS: &str = SETTLEMENT_RECORD_KEYS[11];
 
 pub(super) const KEY_REASON: &str = SETTLEMENT_RECORD_KEYS[12];
+
+pub(super) const KEY_SHEET_ANSWERS: &str = SETTLEMENT_RECORD_KEYS[15];
 
 pub(super) const KEY_ANCHOR_THREAD_ID: &str = SETTLED_ANCHOR_KEYS[0];
 
@@ -101,3 +104,6 @@ pub(super) const FIELD_REASON: &str = "reason";
 pub(super) const KEY_PPTX_MINTS: &str = SETTLEMENT_RECORD_KEYS[13];
 
 pub(super) const KEY_PPTX_REVIEW_IDENTITIES: &str = SETTLEMENT_RECORD_KEYS[14];
+pub(super) const FIELD_SHEET_ANSWER_COUNT: &str = "sheet_answer_count";
+
+pub(super) const FIELD_QUESTION_VERSION: &str = "question_version";
