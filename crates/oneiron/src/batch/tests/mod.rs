@@ -313,7 +313,7 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
 /// A `sync` build also queues the claim's embed job in the same batch.
 #[cfg(feature = "sync")]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "d32289a1a7532fce8706b9ad5a50d263bca2b4bb44d7109c6e1e720e826e79f6";
+    "196e42a78fa56c89222f1c1d823c5e90e4c839b90760be2c7a1566dcea6378bb";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
     "dd443e808094d95f9b88abcdcb077e85cf5773694548ef3eac91d811f0c2ea98";
