@@ -178,7 +178,10 @@ impl SyncServer {
             .map(|k| k.as_str().to_string())
             .collect();
         let mut reconciled = false;
-        for key in server_state::persisted_window_keys(&vault)? {
+        for key in server_state::persisted_window_keys(&vault)?
+            .into_iter()
+            .chain(oneiron::sync::discover_local_window_keys(&vault)?)
+        {
             if !known.contains(key.as_str()) {
                 add_window_to_root(&root_doc, &key);
                 reconciled = true;

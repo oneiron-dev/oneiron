@@ -1,7 +1,8 @@
 //! SyncClient construction, window and ephemeral accessors, and root persistence.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
@@ -39,6 +40,11 @@ pub struct SyncClient {
     /// may only be cleared once the server's OWN vv proves it holds every op
     /// the local doc holds.
     pub(crate) server_vvs: HashMap<String, VersionVector>,
+    pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
+    pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
+    /// Unacknowledged cross-month deltas. Lost on process death, re-fetched by VV.
+    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>)>,
+    pub(crate) root_bootstrapped: bool,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -139,6 +145,10 @@ impl SyncClient {
             client_id,
             config,
             server_vvs: HashMap::new(),
+            requested_windows: Mutex::new(HashSet::new()),
+            pending_world_windows: Mutex::new(HashSet::new()),
+            staged_world_updates: Vec::new(),
+            root_bootstrapped: false,
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
@@ -237,6 +247,79 @@ impl SyncClient {
     pub fn remove_outdated_ephemeral(&self) {
         self.ephemeral_store.remove_outdated();
         self.vault.message_streams.presence.store.remove_outdated();
+    }
+
+    /// Follow another project. The next sync negotiation requests all its known
+    /// historical windows, so following late backfills rather than starting now.
+    pub fn follow_world(&mut self, world: crate::EntityId) {
+        if let Some(worlds) = &mut self.config.followed_worlds
+            && !worlds.contains(&world)
+        {
+            worlds.push(world);
+        }
+    }
+
+    /// Home-node / explicit sync-all mode.
+    pub fn follow_all_worlds(&mut self) {
+        self.config.followed_worlds = None;
+    }
+
+    /// Effective subscription = host request ∩ trusted manifest ceiling.
+    /// Fail closed when a loaded manifest is malformed; the caller request
+    /// is never rewritten, so `follow_all_worlds` cannot bypass the cap.
+    pub(crate) fn effective_worlds(
+        &self,
+    ) -> std::result::Result<Option<BTreeSet<crate::EntityId>>, TransportError> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let resolution = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let ceiling = resolution
+            .sync_world_ceiling()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let default_all = resolution
+            .sync_default_all_worlds()
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        // `Some([])` from a fresh SyncClientConfig means "use the manifest's
+        // shipped default". An explicit `None` from follow_all_worlds is a
+        // request for all, still capped by the trusted manifest ceiling.
+        let requested = if self
+            .config
+            .followed_worlds
+            .as_ref()
+            .is_some_and(Vec::is_empty)
+            && default_all
+        {
+            None
+        } else {
+            self.config.followed_worlds.as_ref()
+        };
+        Ok(match (requested, ceiling) {
+            (None, None) => None,
+            (None, Some(cap)) => Some(cap.clone()),
+            (Some(worlds), None) => Some(worlds.iter().copied().collect()),
+            (Some(worlds), Some(cap)) => Some(
+                worlds
+                    .iter()
+                    .filter(|world| cap.contains(world))
+                    .copied()
+                    .collect(),
+            ),
+        })
+    }
+
+    pub(crate) fn follows_window(
+        key: &WindowKey,
+        worlds: &Option<BTreeSet<crate::EntityId>>,
+    ) -> bool {
+        match (key.world(), worlds) {
+            (None, _) | (_, None) => true,
+            (Some(world), Some(worlds)) => worlds.contains(&world),
+        }
     }
 
     /// Returns the list of window keys from the root doc (set by server).

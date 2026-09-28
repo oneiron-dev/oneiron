@@ -71,13 +71,7 @@ pub(crate) fn trusted_soft_addressing_edge(
 }
 
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
-    let window = snapshot.window.as_bytes();
-    if window.len() != 7
-        || window[4] != b'-'
-        || !window[..4].iter().all(u8::is_ascii_digit)
-        || !window[5..].iter().all(u8::is_ascii_digit)
-        || !(1..=12).contains(&snapshot.window[5..].parse::<u8>().unwrap_or(0))
-    {
+    if crate::deletion::parse_window_label(&snapshot.window).is_none() {
         return Err(invalid("window key"));
     }
     if snapshot.schema_manifest.oneiron_schema_version != crate::store::STORAGE_ABI_VERSION
@@ -87,6 +81,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         return Err(invalid("unsupported schema manifest"));
     }
     strict(snapshot.entity_blobs.iter().map(|row| row.id))?;
+    strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
     strict(
         snapshot
             .base_edges
@@ -103,11 +98,53 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     if snapshot.container_manifests != snapshot.expected_containers() {
         return Err(invalid("container manifest coverage"));
     }
+    let world = snapshot
+        .window
+        .split_once('@')
+        .map(|(_, hex)| crate::EntityId::from_hex(hex))
+        .transpose()
+        .map_err(|_| invalid("window world"))?;
+    if world.is_some()
+        && (!snapshot.doc_snapshots.is_empty()
+            || !snapshot.document_heads.is_empty()
+            || !snapshot.head_move_receipts.is_empty()
+            || !snapshot.note_forks.is_empty()
+            || !snapshot.note_proposals.is_empty())
+    {
+        return Err(invalid("world window NOTE carrier"));
+    }
     let deleted: BTreeMap<_, _> = snapshot
         .tombstones
         .iter()
         .map(|row| (row.id, crate::deletion::decode_tombstone_value(&row.value)))
         .collect();
+    let shell_worlds: BTreeMap<_, _> = snapshot
+        .retained_claim_worlds
+        .iter()
+        .map(|row| (row.id, row.world))
+        .collect();
+    for row in &snapshot.retained_claim_worlds {
+        id(row.id)?;
+        let Some(world) = world else {
+            return Err(invalid("base shell world proof"));
+        };
+        if row.world != *world.as_bytes()
+            || !snapshot.entity_blobs.iter().any(|entity| {
+                entity.id == row.id
+                    && entity.blob.len() == ENTITY_METADATA_HEADER_LEN
+                    && EntityMetadataHeader::parse(&entity.blob).is_some_and(|header| {
+                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                            && crate::deletion::window_label_from_timestamp(header.learned_at)
+                                == snapshot.window[..7]
+                    })
+            })
+            || !deleted.get(&row.id).is_some_and(|value| {
+                value.reason == Some(crate::deletion::TombstoneReason::UserDelete)
+            })
+        {
+            return Err(invalid("retained claim world proof"));
+        }
+    }
     for entity in &snapshot.entity_blobs {
         id(entity.id)?;
         if let Some(tombstone) = deleted.get(&entity.id)
@@ -122,7 +159,25 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         }
         let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM && !body.is_empty() {
-            crate::claim::validate_claim_body_and_decode(body, true)?;
+            let claim = crate::claim::validate_claim_body_and_decode(body, true)?;
+            if claim.world != world
+                || (world.is_some()
+                    && crate::deletion::window_label_from_timestamp(header.learned_at)
+                        != snapshot.window[..7])
+            {
+                return Err(invalid("claim outside window residence"));
+            }
+        } else if world.is_some()
+            && (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || !body.is_empty()
+                || !deleted.contains_key(&entity.id)
+                || world.as_ref().is_some_and(|world_id| {
+                    shell_worlds.get(&entity.id) != Some(world_id.as_bytes())
+                }))
+        {
+            // A bodiless CLAIM is admissible only as a soft-deletion shell,
+            // bound by its tombstone and the canonical window address.
+            return Err(invalid("entity outside world window"));
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE && !body.is_empty() {
             crate::note::decode_note_body_using(body, crate::note::NoteKind::wire)?;

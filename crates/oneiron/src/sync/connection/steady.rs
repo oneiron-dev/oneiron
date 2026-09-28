@@ -65,6 +65,16 @@ impl SyncConnection {
                                 }
                                 Err(e) => {
                                     let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
+                                    if matches!(data.first(),
+                                        Some(&transport::TAG_WINDOW_SYNC)
+                                            | Some(&transport::TAG_BULK_TRANSFER)
+                                            | Some(&transport::TAG_BULK_TRANSFER_DONE)) {
+                                        // A missing causal prefix cannot be repaired by
+                                        // silently dropping one live delta. Reconnect repeats
+                                        // the VV handshake for every followed window.
+                                        flush_to_queue(&self.queue, &mut debounce_buffer);
+                                        return LoopExit::Disconnected(format!("Window sync error: {e}"));
+                                    }
                                 }
                             }
                         }

@@ -46,6 +46,7 @@ pub mod queue;
 pub mod quota;
 pub(crate) mod receipt_ingest;
 pub mod replay;
+pub mod residence;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
@@ -81,6 +82,7 @@ pub use quota::{
     MaintenanceIngestQuotaSnapshot, maintenance_ingest_quota_config,
     maintenance_ingest_quota_snapshots, set_maintenance_ingest_quota_config,
 };
+pub use residence::discover_local_window_keys;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{

@@ -426,3 +426,30 @@ fn decoders_reject_invalid_calendar_window_keys() {
         );
     }
 }
+
+#[test]
+fn world_month_keys_round_trip_through_all_window_frames() {
+    let world = crate::test_util::entity(0xab);
+    let key = crate::sync::WindowKey::for_world(1_771_027_200, world).to_string();
+    let vv = encode_window_sync(&key, window_sub_tags::VV_REQUEST, b"vv")
+        .into_result()
+        .unwrap();
+    let (decoded, tag, bytes) = decode_window_sync(&vv[1..]).unwrap();
+    assert_eq!(
+        (decoded, tag, bytes),
+        (key.as_str(), window_sub_tags::VV_REQUEST, b"vv".as_slice())
+    );
+    let bulk = encode_bulk_transfer(&key, b"data").into_result().unwrap();
+    assert_eq!(decode_bulk_transfer(&bulk[1..]).unwrap().0, key);
+    let done = encode_bulk_transfer_done(&key, b"state")
+        .into_result()
+        .unwrap();
+    assert_eq!(decode_bulk_transfer_done(&done[1..]).unwrap().0, key);
+    let uppercase = key.to_uppercase();
+    assert!(
+        encode_window_sync(&uppercase, window_sub_tags::VV_REQUEST, b"vv")
+            .into_result()
+            .is_err()
+    );
+    assert!(crate::sync::WindowKey::try_new(format!("{key}a")).is_none());
+}

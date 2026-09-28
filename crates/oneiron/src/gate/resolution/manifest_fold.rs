@@ -145,6 +145,17 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.credential_lifetimes = Some(lifetimes);
                     }
                 }
+                if let Some(default_all) = decoded.sync_world_default {
+                    resolution.sync_world_default =
+                        Some(resolution.sync_world_default.unwrap_or(true) && default_all);
+                }
+                if let Some(worlds) = decoded.sync_world_ceiling {
+                    resolution.sync_world_ceiling =
+                        Some(match resolution.sync_world_ceiling.take() {
+                            Some(existing) => existing.intersection(&worlds).copied().collect(),
+                            None => worlds,
+                        });
+                }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution
                     .experiment_selection
