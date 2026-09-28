@@ -167,6 +167,36 @@ fn assert_native_reimport(
         .expect("bundle fixture");
     assert!(agent_bundle.fork_hash.is_some());
     assert_eq!(agent_bundle.omission, None);
+    // A native export must enter the same hub pack consumer without a second schema.
+    let native_files = agent_bundle
+        .source_tree
+        .as_ref()
+        .expect("native agent source")
+        .import_files()?;
+    let source = crate::skill_hub::pack_catalog::PackSource::from_files(native_files.clone())?;
+    assert_eq!(
+        source.manifest().kind,
+        crate::skill_hub::pack_catalog::PackKind::Agent
+    );
+    assert_eq!(
+        source.content_hash(),
+        crate::skill::canonical_skill_tree_hash(
+            native_files
+                .iter()
+                .map(|file| (file.path.as_str(), file.content.as_slice()))
+        )?
+    );
+    let refs: Vec<serde_json::Value> = serde_json::from_slice(
+        &native_files
+            .iter()
+            .find(|file| file.path == "skills.json")
+            .expect("native skills facet")
+            .content,
+    )
+    .expect("native references");
+    assert_eq!(refs[0]["entity_id"], skill.to_hex());
+    assert_eq!(refs[0]["content_hash"], expected.content_hash()?.to_hex());
+    install_native_agent_pack(&target, source)?;
     assert!(
         agent_bundle
             .source_tree
@@ -243,6 +273,98 @@ fn assert_native_reimport(
         target
             .update_skill_record(&skill, &activation, time(), 131)
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    install(&vault)?;
+    let parent = EntityId::now();
+    vault.put_agent_definition(
+        &parent,
+        &agent("fixture.knowledge-parent", None),
+        time(),
+        130,
+    )?;
+    let claim = EntityId::now();
+    vault.put_claim(
+        &claim,
+        &ClaimBody::new(
+            "test.source_note",
+            ClaimSubject::Entity(parent),
+            Value::from("Selected parent knowledge"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        ),
+        time(),
+        130,
+    )?;
+    let before = vault.export_whole_vault(PackFormat::Json)?;
+    let before = vault.read_whole_vault_json(before.bytes())?;
+    let claim_row = before
+        .claims
+        .iter()
+        .find(|row| row.id == claim.to_hex())
+        .unwrap();
+    assert!(
+        claim_row.short_ref.is_some(),
+        "archive entity retains its hydratable short ref"
+    );
+    let parent_bundle = before
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == parent.to_hex())
+        .unwrap();
+    let tree = parent_bundle.source_tree.as_ref().unwrap();
+    let parent_hash = tree.content_hash.as_ref().unwrap();
+    let selected = tree
+        .files
+        .iter()
+        .find(|file| file.path == "knowledge/selected.json")
+        .unwrap();
+    let selected: Vec<ExportEntity> =
+        serde_json::from_str(selected.content.as_deref().unwrap()).unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].id, claim.to_hex());
+    assert_eq!(
+        selected[0].short_ref, None,
+        "portable facet has no source-vault refs"
+    );
+    let child = EntityId::now();
+    vault.put_agent_definition(
+        &child,
+        &agent("fixture.knowledge-child", Some(parent)),
+        time(),
+        131,
+    )?;
+    let after = vault.export_whole_vault(PackFormat::Json)?;
+    let after = vault.read_whole_vault_json(after.bytes())?;
+    let unchanged_parent = after
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == parent.to_hex())
+        .unwrap();
+    assert_eq!(
+        unchanged_parent
+            .source_tree
+            .as_ref()
+            .unwrap()
+            .content_hash
+            .as_ref(),
+        Some(parent_hash)
+    );
+    let fork = after
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == child.to_hex())
+        .unwrap();
+    assert_eq!(
+        fork.fork_hash.as_ref(),
+        Some(parent_hash),
+        "fork captures the exported parent's exact portable tree"
     );
     Ok(())
 }
@@ -495,5 +617,118 @@ fn missing_source_and_historic_fork_binding_are_explicit_not_invented() -> Resul
             .content_hash
             .is_some()
     );
+    Ok(())
+}
+
+fn install_native_agent_pack(
+    vault: &Vault,
+    source: crate::skill_hub::pack_catalog::PackSource,
+) -> Result<()> {
+    use crate::skill_hub::pack_catalog::{
+        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSourceAdapter,
+    };
+    use crate::skill_hub::{
+        HubSyncPolicy, SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier,
+    };
+    struct NativeAdapter {
+        hub: EntityId,
+        endpoint: String,
+        source: crate::skill_hub::pack_catalog::PackSource,
+    }
+    impl SkillHubAdapter for NativeAdapter {
+        fn hub_id(&self) -> EntityId {
+            self.hub
+        }
+        fn kind(&self) -> SkillHubKind {
+            SkillHubKind::Git
+        }
+        fn endpoint(&self) -> Option<&str> {
+            Some(&self.endpoint)
+        }
+        fn fetch_package(&self, _: &HubRef) -> Result<HubPackage> {
+            Err(crate::Error::EntityNotFound)
+        }
+    }
+    impl PackSourceAdapter for NativeAdapter {
+        fn fetch_pack_source(
+            &self,
+            _: &HubRef,
+        ) -> Result<crate::skill_hub::pack_catalog::PackSource> {
+            Ok(self.source.clone())
+        }
+    }
+    struct Fit;
+    impl PackFitPolicy for Fit {
+        fn evaluate(
+            &self,
+            _: &crate::skill_hub::pack_catalog::PackSource,
+            permissions: &PackPermissions,
+        ) -> Result<PackFitVerdict> {
+            assert!(permissions.bundled_skills.is_empty());
+            Ok(PackFitVerdict {
+                fits: true,
+                rules_hit: false,
+                code_auto_install: true,
+            })
+        }
+    }
+    let owner_id = EntityId::now();
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        time(),
+        131,
+        b"native owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:native-pack",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub = EntityId::now();
+    let endpoint = "https://example.invalid/native-hub";
+    vault.configure_skill_hub(
+        &owner,
+        &hub,
+        &SkillHubRecord::new(
+            SkillHubKind::Git,
+            endpoint,
+            SkillHubTrustTier::Verified,
+            HubSyncPolicy::PinnedCommit,
+        )?,
+        time(),
+        132,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:native-pack", hub)?;
+    let adapter = NativeAdapter {
+        hub,
+        endpoint: endpoint.to_owned(),
+        source: source.clone(),
+    };
+    let reference = HubRef::new(
+        hub,
+        "agents/fixture.agent",
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    // Install screening reads the seeded pack-install policy and fails closed
+    // without it (ONE-2019). Restore the shipped manifest this legacy fixture
+    // cleared for the install only; the reimport keeps its manifest-free Gate.
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        policy_id,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let installed =
+        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133);
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity_for_test(&vault.store, txn, &policy_id)
+    })?;
+    let PackInstallDisposition::Installed(receipt) = installed? else {
+        panic!("native pack install");
+    };
+    assert_eq!(receipt.content_hash, source.content_hash().to_hex());
+    assert_eq!(receipt.pin_value, source.content_hash().to_hex());
     Ok(())
 }

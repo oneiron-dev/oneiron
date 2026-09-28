@@ -26,7 +26,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/beam/chroma/tests/support.rs` | test | s | 3 crate-vis | — | — |
-| `src/beam/citations.rs` | src | s | 3 crate-vis | — | Evidence-backed per-number citations |
+| `src/beam/citations.rs` | src | m | 4 crate-vis | — | Evidence-backed per-number citations |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
 | `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
@@ -42,6 +42,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/mod.rs` | src | s | 7 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
 | `src/beam/model_scaffold.rs` | src | m | 12 crate-vis | — | Shared measured answerer scaffold |
+| `src/beam/model_scaffold/offline.rs` | src | s | 4 crate-vis | — | Stage-aware offline accounting for the measured scaffold |
 | `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
 | `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
 | `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |
@@ -62,6 +63,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
+| `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
 | `src/eval/tests.rs` | test | L | — | — | — |
 | `src/fleet/configuration.rs` | src | s | 3 crate-vis | — | Explicit fleet workload and host settings; smoke cannot masquerade as fleet scale |
 | `src/fleet/mod.rs` | src | s | 1 crate-vis | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
@@ -70,7 +72,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fleet/scaling.rs` | src | s | 3 crate-vis | — | Isolated persisted-residual miss cost as graph cardinality grows |
 | `src/fleet/tests.rs` | test | s | — | — | Small falsification fixtures; smoke is never accepted as a fleet baseline |
 | `src/fleet/wire.rs` | src | s | 7 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
-| `src/fleet/workload.rs` | src | s | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
+| `src/fleet/workload.rs` | src | m | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
 | `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
 | `src/interface_bench/eval_run.rs` | src | m | 13 crate-vis | — | Smoke, probe, and full execution plus resume validation |
@@ -81,6 +83,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/tests_b.rs` | src | m | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness skeleton |
+| `src/oneironer_shadow.rs` | src | m | 1 crate-vis | — | Checkpoint-backed NER shadow proof beside an indexed fixture turn |
 | `src/perf/acceptance.rs` | src | m | 14 crate-vis | — | ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact… |
 | `src/perf/acceptance/tests.rs` | test | m | — | — | Regressions for the ONE-1579 acceptance evidence |
 | `src/perf/axes.rs` | src | m | 27 crate-vis | — | ONE-1579 axis shapes and the floors they are held to |

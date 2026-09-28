@@ -589,7 +589,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let read_key = |slip: &crate::authority::CapabilitySlip| {
         let signature = issuer.binding_proof(slip, b"diary-read").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, slip, b"diary-read", &signature)
+            .verify_capability_slip(&issuer.public_key(), slip, b"diary-read", &signature)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
@@ -600,11 +600,14 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         vault.scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").unwrap());
     assert!(unproven.get(&id).unwrap().is_none());
     let mut narrowed = owner_slip;
-    narrowed
-        .attenuate(crate::authority::SlipCaveat {
-            records: Some(std::collections::BTreeSet::from([other.to_hex()])),
-            ..Default::default()
-        })
+    issuer
+        .attenuate(
+            &mut narrowed,
+            crate::authority::SlipCaveat {
+                records: Some(std::collections::BTreeSet::from([other.to_hex()])),
+                ..Default::default()
+            },
+        )
         .unwrap();
     let limited = vault.scoped_read(read_key(&narrowed));
     assert!(limited.get(&id).unwrap().is_none());
@@ -997,7 +1000,7 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let signature = issuer.binding_proof(&slip, b"diary-audience").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, &slip, b"diary-audience", &signature)
+            .verify_capability_slip(&issuer.public_key(), &slip, b"diary-audience", &signature)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
@@ -1012,7 +1015,18 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
         let read = vault.scoped_read(key.clone()).for_audience(&audience);
         let point = read.get(&id).unwrap();
         assert_eq!(point.value.is_some(), allowed);
-        assert_eq!(point.receipt.suppressed_count, usize::from(!allowed));
+        assert_eq!(point.receipt.suppressed_count, 0);
+        if !allowed {
+            let missing = EntityId::from_bytes([0x74; 16]).unwrap();
+            assert_eq!(point.receipt, read.get(&missing).unwrap().receipt);
+            assert!(
+                !point
+                    .receipt
+                    .narrowed_axes
+                    .iter()
+                    .any(|axis| axis == "row_authority")
+            );
+        }
         assert_eq!(read.is_entity_readable(&id).unwrap(), allowed);
         assert_eq!(
             read.hydrate_short_id(short, hash).unwrap().is_some(),
@@ -1068,7 +1082,7 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let signature = issuer.binding_proof(&slip, b"versioned-notes").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, &slip, b"versioned-notes", &signature)
+            .verify_capability_slip(&issuer.public_key(), &slip, b"versioned-notes", &signature)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
@@ -1084,6 +1098,7 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
     assert_eq!(crate::note::decode_note_body(&live).unwrap(), public_body);
     let owner_memory = facade_for(&vault, owner);
     let other_memory = facade_for(&vault, other);
+    let missing = EntityId::from_bytes([0x67; 16]).unwrap();
     for mode in [ReadMode::Indexed, ReadMode::Pinned(pin)] {
         assert!(
             other_memory
@@ -1101,16 +1116,30 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
             .get_entity_parts_with_mode_with_receipt(&id, mode, None)
             .unwrap();
         assert!(denied.value.is_none());
-        assert_eq!(denied.receipt.suppressed_count, 1);
+        assert_eq!(denied.receipt.suppressed_count, 0);
+        assert_eq!(
+            denied.receipt,
+            other_read
+                .get_entity_parts_with_mode_with_receipt(&missing, mode, None)
+                .unwrap()
+                .receipt
+        );
         let denied = other_read
             .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
             .unwrap();
         assert!(denied.value[0].is_none());
-        assert_eq!(denied.receipt.suppressed_count, 1);
+        assert_eq!(denied.receipt.suppressed_count, 0);
         assert!(
-            denied
+            !denied
                 .receipt
                 .narrowed_axes
+                .iter()
+                .any(|axis| axis == "row_authority")
+        );
+        assert!(
+            !denied
+                .receipt
+                .replan_hint
                 .iter()
                 .any(|axis| axis == "row_authority")
         );
@@ -1150,4 +1179,716 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
     assert_eq!(owner_pack.results.len(), 1);
     other_read.filter_context_pack(&mut pack).unwrap();
     assert!(pack.results.is_empty());
+}
+
+#[test]
+fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
+    use crate::claim::ScopedReadActorKey;
+    use crate::context_pack::ContextEntity;
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::test_util::embedding_test_config())
+        .expect("vault with vectors and default policy");
+    let a = put_person(&vault, 0x41);
+    let b = put_person(&vault, 0x42);
+    let author_a = facade_for(&vault, a);
+    let author_b = facade_for(&vault, b);
+    let make_diary = |memory: &Memory<'_>, author, text: &str| {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: author },
+                markdown: text.into(),
+                source_revision_ref: [0x7a; 16],
+                mask: None,
+            })
+            .unwrap();
+        EntityId::from_hex(&receipt.id_hex).unwrap()
+    };
+    let note_a = make_diary(&author_a, a, "diaryalpha private");
+    let note_b = make_diary(&author_b, b, "diarycounterpart private");
+    let (left, right) = if note_a < note_b {
+        (note_a, note_b)
+    } else {
+        (note_b, note_a)
+    };
+    let outsider = put_person(&vault, 0x43);
+    let wrong_kind = put_person(&vault, 0x44);
+    let absent = EntityId::from_bytes([0xe1; 16]).unwrap();
+    assert!(
+        facade_for(&vault, outsider)
+            .link_diary_coreference(note_a, note_b)
+            .is_err()
+    );
+    assert!(author_a.link_diary_coreference(note_a, note_a).is_err());
+    assert!(!vault.edge_exists(&left, EdgeKind::SameAs, &right).unwrap());
+    // Resident-facing submissions must not answer whether a guessed foreign
+    // diary exists, has the right kind, or is already linked.
+    assert!(author_a.link_diary_coreference(note_a, absent).is_ok());
+    assert!(author_a.link_diary_coreference(note_a, wrong_kind).is_ok());
+    let (missing_left, missing_right) = if note_a < absent {
+        (note_a, absent)
+    } else {
+        (absent, note_a)
+    };
+    assert!(
+        !vault
+            .edge_exists(&missing_left, EdgeKind::SameAs, &missing_right)
+            .unwrap()
+    );
+    assert!(author_a.link_diary_coreference(note_a, note_b).is_ok());
+    assert!(author_a.link_diary_coreference(note_a, note_b).is_ok());
+    assert!(vault.edge_exists(&left, EdgeKind::SameAs, &right).unwrap());
+    let actor = crate::WriteActor::new(a, EdgeActorClass::Human);
+    assert!(
+        crate::federation::coreference_share_consent(
+            &vault,
+            &actor,
+            left,
+            right,
+            &[0x88; crate::claim::COREFERENCE_PACT_ID_LEN],
+            test_time(2),
+            2,
+        )
+        .is_err(),
+        "diary links cannot become cross-vault PERSON shares"
+    );
+    assert!(
+        facade_for(&vault, outsider)
+            .grant_diary_coreference(note_a, note_b)
+            .is_err()
+    );
+    // Generic grant writes cannot impersonate either resident's consent.
+    let forged = crate::access_grant::AccessGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
+        principal_ref: b,
+        scope: crate::access_grant::AccessGrantScope::DiaryCoreference {
+            left_ref: left,
+            right_ref: right,
+        },
+        capability: crate::access_grant::AccessGrantCapability::DiaryCoreferenceRead,
+        status: crate::access_grant::AccessGrantStatus::Active,
+        created_at: 1,
+        revoked_at: None,
+        expires_at: None,
+    };
+    assert!(
+        vault
+            .create_access_grant(&EntityId::now(), &forged)
+            .is_err()
+    );
+    assert_eq!(note_body_of(&vault, &note_a).author_ref, a);
+    assert_eq!(note_body_of(&vault, &note_b).author_ref, b);
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary coreference read").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let read_key = |actor: EntityId| {
+        let mut claims = root.claims.clone();
+        claims.slip_id = *blake3::hash(actor.as_bytes()).as_bytes();
+        claims.holder_ref = actor.to_hex();
+        claims.actor_class = Some("human".into());
+        let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+        let sig = issuer.binding_proof(&slip, b"diary-coref").unwrap();
+        let proof = vault
+            .verify_capability_slip(&issuer.public_key(), &slip, b"diary-coref", &sig)
+            .unwrap();
+        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
+    };
+    let read_a = vault.scoped_read(read_key(a));
+    let read_b = vault.scoped_read(read_key(b));
+    vault
+        .batch()
+        .text(&note_a, &[("body", "diaryalpha private")])
+        .text(&note_b, &[("body", "diarycounterpart private")])
+        .commit()
+        .unwrap();
+    let private_rows = || {
+        let edge = vault
+            .edges_out(&left)
+            .unwrap()
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::SameAs)
+            .unwrap();
+        let entity = |id: EntityId| ContextEntity {
+            critical: false,
+            id,
+            short_id: id.to_hex(),
+            content_hash: 0,
+            source_revision_ref: None,
+            entity_type: ENTITY_TYPE_NOTE,
+            score: 1.0,
+            fields: None,
+            edges: (id == left).then_some(vec![edge.clone()]),
+            vector: None,
+        };
+        let mut pack = vault
+            .context_pack()
+            .search_text("unmatched-content", 5)
+            .run()
+            .unwrap();
+        pack.results = vec![entity(note_a), entity(note_b)];
+        pack
+    };
+    let absent_id = EntityId::from_bytes([0x99; 16]).unwrap();
+    let probe_record = |id| crate::deletion::MemoryTimelineRecord {
+        id,
+        state: crate::deletion::MemoryTimelineRecordState::Live,
+        entity_type: None,
+        occurred_start: None,
+        occurred_end: None,
+        learned_at: None,
+        body_bytes: None,
+        deletion: None,
+        supersedes: Vec::new(),
+        superseded_by: Vec::new(),
+    };
+    let assert_opaque = |hidden: EntityId| {
+        let absent = read_a.get(&absent_id).unwrap();
+        let denied = read_a.get(&hidden).unwrap();
+        assert!(absent.value.is_none() && denied.value.is_none());
+        assert_eq!(denied.receipt, absent.receipt);
+        assert_eq!(denied.receipt.suppressed_count, 0);
+        assert!(
+            !denied
+                .receipt
+                .narrowed_axes
+                .iter()
+                .any(|axis| axis == "row_authority")
+        );
+        assert!(
+            !denied
+                .receipt
+                .replan_hint
+                .iter()
+                .any(|axis| axis == "row_authority")
+        );
+        let batch = read_a
+            .get_entities_parts_with_receipt(&[absent_id, hidden], None)
+            .unwrap();
+        assert!(batch.value.iter().all(Option::is_none));
+        assert_eq!(batch.receipt.suppressed_count, 0);
+        let graph = read_a.edges_out(&hidden).unwrap();
+        assert!(graph.value.is_none());
+        assert_eq!(graph.receipt, read_a.edges_out(&absent_id).unwrap().receipt);
+        let timeline = read_a.memory_timeline(&hidden).unwrap();
+        assert!(timeline.value.records.is_empty());
+        assert_eq!(
+            timeline.receipt,
+            read_a.memory_timeline(&absent_id).unwrap().receipt
+        );
+        let absent_parts = read_a
+            .memory_timeline_parts_with_receipt(&[probe_record(absent_id)], None)
+            .unwrap();
+        let hidden_parts = read_a
+            .memory_timeline_parts_with_receipt(&[probe_record(hidden)], None)
+            .unwrap();
+        assert_eq!(hidden_parts.value, vec![None]);
+        assert_eq!(hidden_parts.receipt, absent_parts.receipt);
+        assert_eq!(hidden_parts.receipt.suppressed_count, 0);
+        let scored = read_a
+            .filter_scored_entities(vec![crate::ScoredEntity {
+                id: hidden,
+                score: 1.0,
+            }])
+            .unwrap();
+        assert!(scored.value.is_empty());
+        assert_eq!(scored.receipt.suppressed_count, 0);
+    };
+    let assert_hidden_short = || {
+        let reference = author_b.short_ref_or_hex(&note_b).unwrap();
+        let (short, hash) = crate::entity_id::parse_short_ref_syntax(&reference).unwrap();
+        let denied = read_a.hydrate_short_id(short, hash).unwrap();
+        let absent = read_a.hydrate_short_id("missing", 0).unwrap();
+        assert!(denied.value.is_none() && absent.value.is_none());
+        assert_eq!(denied.receipt, absent.receipt);
+    };
+    let type_filter = crate::gate::RetrievalFilter {
+        entity_types: Some(std::collections::BTreeSet::from([ENTITY_TYPE_NOTE])),
+        ..Default::default()
+    };
+    let ordinary_denial = read_a
+        .get_entity_parts_with_receipt(&a, Some(&type_filter))
+        .unwrap();
+    assert!(ordinary_denial.value.is_none());
+    assert_eq!(ordinary_denial.receipt.suppressed_count, 1);
+    let ordinary_timeline = read_a
+        .memory_timeline_parts_with_receipt(&[probe_record(a)], None)
+        .unwrap();
+    assert_eq!(ordinary_timeline.value, vec![None]);
+    assert_eq!(ordinary_timeline.receipt.suppressed_count, 1);
+
+    let check = |shared: bool| {
+        for (read, own, foreign, query) in [
+            (&read_a, note_a, note_b, "diarycounterpart"),
+            (&read_b, note_b, note_a, "diaryalpha"),
+        ] {
+            assert!(read.get(&own).unwrap().is_some());
+            assert_eq!(read.get(&foreign).unwrap().is_some(), shared);
+            let search = read.search_text(query, 10, None).unwrap();
+            assert_eq!(search.value.iter().any(|hit| hit.id == foreign), shared);
+            if !shared {
+                assert_eq!(search.receipt.suppressed_count, 0);
+            }
+            let graph = read.edges_out(&left).unwrap();
+            if !shared && own == left {
+                assert_eq!(graph.receipt.suppressed_count, 0);
+            }
+            let edges = graph.value;
+            assert_eq!(
+                edges.as_ref().is_some_and(|rows| rows
+                    .iter()
+                    .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == right)),
+                shared
+            );
+            let mut pack = private_rows();
+            read.filter_context_pack(&mut pack).unwrap();
+            assert_eq!(
+                pack.results.iter().any(|entity| entity.id == foreign),
+                shared
+            );
+            assert_eq!(
+                pack.results
+                    .iter()
+                    .flat_map(|entity| entity.edges.iter().flatten())
+                    .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == right),
+                shared
+            );
+        }
+        assert_eq!(
+            author_a.get_entity(&note_b.to_hex()).unwrap().is_some(),
+            shared
+        );
+        assert_eq!(
+            author_b.get_entity(&note_a.to_hex()).unwrap().is_some(),
+            shared
+        );
+    };
+    check(false); // Empty scope: no resident learns the other endpoint or link.
+    assert_opaque(note_b);
+    assert_hidden_short();
+    let absent_grant = author_a.grant_diary_coreference(note_a, absent).unwrap();
+    let wrong_kind_grant = author_a
+        .grant_diary_coreference(note_a, wrong_kind)
+        .unwrap();
+    let reciprocal_absent = author_b.grant_diary_coreference(note_b, absent).unwrap();
+    for id in [absent_grant, wrong_kind_grant, reciprocal_absent] {
+        assert_opaque(id);
+    }
+    author_a
+        .revoke_diary_coreference_grant(absent_grant)
+        .unwrap();
+    author_a
+        .revoke_diary_coreference_grant(wrong_kind_grant)
+        .unwrap();
+    author_b
+        .revoke_diary_coreference_grant(reciprocal_absent)
+        .unwrap();
+    let grant_a = author_a.grant_diary_coreference(note_a, note_b).unwrap();
+    let persisted = vault.get_access_grant(&grant_a).unwrap().unwrap();
+    assert_eq!(persisted.principal_ref, a);
+    assert_eq!(persisted.scope, forged.scope);
+    assert!(author_b.revoke_diary_coreference_grant(grant_a).is_err());
+    check(false); // One signature is insufficient.
+    assert_opaque(note_b);
+    assert_opaque(grant_a);
+    assert_hidden_short();
+    assert!(author_b.grant_diary_coreference(note_a, note_b).is_ok());
+    check(true); // Both authors now share exactly this pair.
+    assert_opaque(grant_a); // Consent is not a grant-row read capability.
+    let query = "diarycounterpart";
+    let indexed = vault
+        .indexed_revision(&note_b)
+        .unwrap()
+        .expect("birth frontier");
+    let depth = || {
+        read_a
+            .search_with_effort(&crate::retrieval_depth::DepthSearchRequest {
+                probe: crate::retrieval_depth::SearchProbe::Text {
+                    query: query.into(),
+                },
+                effort: Effort::Light,
+                limit: 10,
+                session_scope: None,
+                lease: None,
+                backend: None,
+                token_budget: None,
+                deadline: None,
+            })
+            .unwrap()
+    };
+    let first = depth();
+    assert!(first.hits.iter().any(|hit| hit.id == note_b));
+    assert_eq!(first.revisions.get(&note_b), Some(&indexed));
+    author_b
+        .edit_note(
+            &note_b.to_hex(),
+            &crate::note::NoteProgramEdit::WholeText {
+                text: "diarycounterpart edited in the live document".into(),
+                timeout_ms: 100,
+                base: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(vault.indexed_revision(&note_b).unwrap(), Some(indexed));
+    let during_debounce = depth();
+    assert!(during_debounce.hits.iter().any(|hit| hit.id == note_b));
+    assert_eq!(during_debounce.revisions.get(&note_b), Some(&indexed));
+
+    // Text and vector channels use one blend for public and shared-private
+    // NOTEs; a public-only query retains ordinary result ids and scores.
+    let public = author_a
+        .author_take(TakeTarget::Subject(a), "diarycounterpart public note")
+        .unwrap();
+    let public_id = EntityId::from_hex(&public.id_hex).unwrap();
+    let public_1 = author_a
+        .author_take(TakeTarget::Subject(a), "publiconlyneedle first")
+        .unwrap();
+    let public_2 = author_b
+        .author_take(TakeTarget::Subject(b), "publiconlyneedle second")
+        .unwrap();
+    let public_1_id = EntityId::from_hex(&public_1.id_hex).unwrap();
+    let public_2_id = EntityId::from_hex(&public_2.id_hex).unwrap();
+    vault
+        .batch()
+        .text(&public_id, &[("body", "diarycounterpart public note")])
+        .text(&public_1_id, &[("body", "publiconlyneedle first")])
+        .text(&public_2_id, &[("body", "publiconlyneedle second")])
+        .commit()
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn).unwrap();
+    let filter = crate::gate::narrow_retrieval_filter(
+        &policy.retrieval_floor_for_actor(Some(read_a.actor_key())),
+        None,
+    )
+    .unwrap();
+    drop(txn);
+    let ordinary = vault
+        .query()
+        .authority_filter(filter)
+        .search_text("publiconlyneedle", 10)
+        .limit(10)
+        .run_for_pack()
+        .unwrap()
+        .scores;
+    let scoped = read_a.search_text("publiconlyneedle", 10, None).unwrap();
+    assert_eq!(
+        scoped.value, ordinary,
+        "public-only ranking must not change"
+    );
+    let mixed = read_a.search_text(query, 10, None).unwrap();
+    assert!(mixed.value.iter().any(|hit| hit.id == note_b));
+    assert!(mixed.value.iter().any(|hit| hit.id == public_id));
+    let mut vector = vec![0.0; vault.config.dimensions];
+    vector[0] = 1.0;
+    let mut public_vector = vec![0.0; vault.config.dimensions];
+    public_vector[1] = 1.0;
+    vault.put_vector(&public_id, &public_vector).unwrap();
+    vault.put_vector(&note_b, &vector).unwrap();
+    let vector_only = read_a.search_vector(&vector, 1, None).unwrap();
+    assert_eq!(vector_only.value.first().map(|hit| hit.id), Some(note_b));
+    let bare = vault.search_vector(&vector, 1).unwrap();
+    assert!(!bare.iter().any(|hit| hit.id == note_b));
+    assert_eq!(bare.first().map(|hit| hit.id), Some(public_id));
+    let outsider_read = vault.scoped_read(read_key(outsider));
+    assert!(
+        !outsider_read
+            .search_vector(&vector, 10, None)
+            .unwrap()
+            .value
+            .iter()
+            .any(|hit| hit.id == note_b)
+    );
+    let vector_depth = || {
+        read_a
+            .search_with_effort(&crate::retrieval_depth::DepthSearchRequest {
+                probe: crate::retrieval_depth::SearchProbe::Vector {
+                    embedding: vector.clone(),
+                    query_text: None,
+                },
+                effort: Effort::Light,
+                limit: 10,
+                session_scope: None,
+                lease: None,
+                backend: None,
+                token_budget: None,
+                deadline: None,
+            })
+            .unwrap()
+    };
+    let dense = vector_depth();
+    assert!(dense.hits.iter().any(|hit| hit.id == note_b));
+    assert_eq!(
+        dense.revisions.get(&note_b),
+        vault.indexed_revision(&note_b).unwrap().as_ref()
+    );
+    let hybrid = read_a.search(query, &vector, 10, None).unwrap();
+    assert!(hybrid.value.iter().any(|hit| hit.id == note_b));
+    assert!(hybrid.value.iter().any(|hit| hit.id == public_id));
+
+    // A second NOTE by A is a DIFFERENT pair. Seeing B through a1-b must
+    // never make the ungranted a2-b edge visible to either resident.
+    let note_a2 = make_diary(&author_a, a, "other private thought");
+    author_b.link_diary_coreference(note_a2, note_b).unwrap();
+    let links = NeighborOpts {
+        edge_kind: Some("same_as".into()),
+        limit: 10,
+        ..Default::default()
+    };
+    assert!(
+        author_a
+            .neighbors(&note_a2.to_hex(), &links)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        author_a.neighbors(&note_a.to_hex(), &links).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        author_b.neighbors(&note_b.to_hex(), &links).unwrap().len(),
+        1
+    );
+    let grant_a2 = author_a.grant_diary_coreference(note_a2, note_b).unwrap();
+    assert!(
+        author_a
+            .neighbors(&note_a2.to_hex(), &links)
+            .unwrap()
+            .is_empty()
+    );
+    let _grant_b2 = author_b.grant_diary_coreference(note_a2, note_b).unwrap();
+    assert_eq!(
+        author_a.neighbors(&note_a2.to_hex(), &links).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        author_b.neighbors(&note_b.to_hex(), &links).unwrap().len(),
+        2
+    );
+    author_a.revoke_diary_coreference_grant(grant_a2).unwrap();
+    assert!(
+        author_a
+            .neighbors(&note_a2.to_hex(), &links)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        author_b.neighbors(&note_b.to_hex(), &links).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        author_a.neighbors(&note_a.to_hex(), &links).unwrap().len(),
+        1
+    );
+
+    author_a.revoke_diary_coreference_grant(grant_a).unwrap();
+    check(false); // Revocation takes effect at read time.
+    assert_opaque(note_b);
+    assert_opaque(grant_a);
+    assert_hidden_short();
+    assert!(
+        !read_a
+            .search_vector(&vector, 10, None)
+            .unwrap()
+            .value
+            .iter()
+            .any(|hit| hit.id == note_b)
+    );
+    assert!(!vector_depth().hits.iter().any(|hit| hit.id == note_b));
+}
+
+#[test]
+fn empty_or_revoked_diary_link_does_not_use_a_neighbor_slot() {
+    use crate::context_pack::ContextEntity;
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x51);
+    let b = put_person(&vault, 0x52);
+    let ma = facade_for(&vault, a);
+    let mb = facade_for(&vault, b);
+    let diary = |memory: &Memory<'_>, owner: EntityId, text: &str| {
+        EntityId::from_hex(
+            &memory
+                .author_note(&NoteWriteEnvelope {
+                    kind: NoteKind::Diary,
+                    scope: NoteScope::ActorPrivate { owner_ref: owner },
+                    markdown: text.into(),
+                    source_revision_ref: [0x71; 16],
+                    mask: None,
+                })
+                .unwrap()
+                .id_hex,
+        )
+        .unwrap()
+    };
+    let b_note = diary(&mb, b, "private b");
+    let a1 = diary(&ma, a, "private a one");
+    let a2 = diary(&ma, a, "private a two");
+    let (low, high) = if a1 < a2 { (a1, a2) } else { (a2, a1) };
+    // Scan order: outbound before inbound, then peer id. Put the Empty pair
+    // first in that order regardless of how the injected clock mints ids.
+    let (hidden, visible) = if b_note > low && b_note < high {
+        (high, low)
+    } else {
+        (low, high)
+    };
+    mb.link_diary_coreference(b_note, hidden).unwrap();
+    mb.link_diary_coreference(b_note, visible).unwrap();
+    let visible_grant_a = ma.grant_diary_coreference(b_note, visible).unwrap();
+    let visible_grant_b = mb.grant_diary_coreference(b_note, visible).unwrap();
+    assert!(
+        b_note < low,
+        "injected ID source orders b before both a notes"
+    );
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary graph-ask matrix").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(a.as_bytes()).as_bytes();
+    claims.holder_ref = a.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let sig = issuer
+        .binding_proof(&slip, b"diary graph-ask matrix")
+        .unwrap();
+    let proof = vault
+        .verify_capability_slip(&issuer.public_key(), &slip, b"diary graph-ask matrix", &sig)
+        .unwrap();
+    let read_a =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::from_verified_slip(&proof).unwrap());
+    let graph = || {
+        read_a
+            .graph_ask_neighbors(&b_note, 3, 3, 16_384)
+            .unwrap()
+            .unwrap()
+    };
+    let baseline_graph: Vec<_> = graph().into_iter().map(|row| row.0).collect();
+    assert_eq!(baseline_graph.len(), 3);
+    assert_eq!(baseline_graph.last(), Some(&visible));
+    assert!(!baseline_graph.contains(&hidden));
+    let outbound = read_a.edges_out(&b_note).unwrap().value.unwrap();
+    assert!(
+        outbound
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == visible)
+    );
+    assert!(
+        !outbound
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == hidden)
+    );
+    let pack_check = |shared_hidden: bool| {
+        let item = |id: EntityId, edges| ContextEntity {
+            critical: false,
+            id,
+            short_id: id.to_hex(),
+            content_hash: 0,
+            source_revision_ref: None,
+            entity_type: ENTITY_TYPE_NOTE,
+            score: 1.0,
+            fields: None,
+            edges,
+            vector: None,
+        };
+        let mut pack = vault
+            .context_pack()
+            .search_text("absent-pack-query", 4)
+            .run()
+            .unwrap();
+        pack.results = vec![item(b_note, Some(vault.edges_out(&b_note).unwrap()))];
+        pack.neighbors = vec![item(hidden, None), item(visible, None)];
+        let receipt = read_a.filter_context_pack(&mut pack).unwrap();
+        assert_eq!(
+            pack.neighbors
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            if shared_hidden {
+                vec![hidden, visible]
+            } else {
+                vec![visible]
+            }
+        );
+        let edges = pack.results[0].edges.as_ref().unwrap();
+        assert_eq!(
+            edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == hidden),
+            shared_hidden
+        );
+        assert!(
+            edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == visible)
+        );
+        if !shared_hidden {
+            assert_eq!(receipt.suppressed_count, 0);
+        }
+    };
+    pack_check(false);
+    let opts = NeighborOpts {
+        edge_kind: Some("same_as".into()),
+        limit: 1,
+        ..Default::default()
+    };
+    let only = mb.neighbors(&b_note.to_hex(), &opts).unwrap();
+    assert_eq!(only.len(), 1);
+    assert_eq!(only[0].short_id, ma.short_ref_or_hex(&visible).unwrap());
+    let hidden_grant = ma.grant_diary_coreference(b_note, hidden).unwrap();
+    mb.grant_diary_coreference(b_note, hidden).unwrap();
+    let first = mb.neighbors(&b_note.to_hex(), &opts).unwrap();
+    assert_eq!(first[0].short_id, ma.short_ref_or_hex(&hidden).unwrap());
+    let newly_shared: Vec<_> = graph().into_iter().map(|row| row.0).collect();
+    assert_eq!(newly_shared.len(), 3);
+    assert_eq!(newly_shared.last(), Some(&hidden));
+    pack_check(true);
+    ma.revoke_diary_coreference_grant(hidden_grant).unwrap();
+    pack_check(false);
+    assert_eq!(
+        graph().into_iter().map(|row| row.0).collect::<Vec<_>>(),
+        baseline_graph
+    );
+    let restored = mb.neighbors(&b_note.to_hex(), &opts).unwrap();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].short_id, ma.short_ref_or_hex(&visible).unwrap());
+
+    let wrong_scope_id = EntityId::now();
+    vault
+        .create_access_grant(
+            &wrong_scope_id,
+            &crate::access_grant::AccessGrant::companion_profile_read(a, a, visible, 1),
+        )
+        .unwrap();
+    let malformed_id = EntityId::now();
+    vault
+        .with_write_txn(|txn| {
+            let raw = vault
+                .store
+                .entities
+                .get(txn, visible_grant_a.as_bytes())?
+                .unwrap();
+            let mut malformed = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+            malformed.extend_from_slice(b"not a grant body");
+            vault
+                .store
+                .entities
+                .put(txn, malformed_id.as_bytes(), &malformed)?;
+            Ok(())
+        })
+        .unwrap();
+    let absent = EntityId::from_bytes([0xf5; 16]).unwrap();
+    let opaque = ma.revoke_diary_coreference_grant(absent).unwrap_err();
+    for id in [b_note, visible_grant_b, wrong_scope_id, malformed_id] {
+        assert_eq!(ma.revoke_diary_coreference_grant(id).unwrap_err(), opaque);
+    }
+    assert_eq!(
+        graph().into_iter().map(|row| row.0).collect::<Vec<_>>(),
+        baseline_graph
+    );
+    ma.revoke_diary_coreference_grant(visible_grant_a).unwrap();
+    assert!(
+        read_a
+            .graph_ask_neighbors(&b_note, 3, 3, 16_384)
+            .unwrap()
+            .is_none()
+    );
 }

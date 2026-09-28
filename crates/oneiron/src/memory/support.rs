@@ -80,7 +80,7 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> MemoryResult<Entity
 /// [`Memory::with_verified_actor_write_txn`] so the store-truth actor
 /// check and mutation share one LMDB write transaction. The enumerated verbs
 /// are witness, claim_retract, put_structural, put_habit_checkin,
-/// put_companion_record, put_blob_artifact, append_blob_version,
+/// put_blob_artifact, append_blob_version,
 /// enqueue_consolidation, and schedule_outbound's schedule-time Gate decision
 /// followed by its durable enqueue. The claim
 /// doors (commit, claim_upsert, admit_imported_claim, seed_claims) are skipped:
@@ -456,12 +456,59 @@ impl Memory<'_> {
         verify_owner_actor_binding_in_txn(self.vault, txn, self.actor)
     }
 
+    /// One actor-bound content writer. Its interface exposes read-only
+    /// observation and typed content programs; ordinary content cannot take
+    /// a raw mutable transaction from this entry.
+    pub(crate) fn with_actor_content_write_txn<T>(
+        &self,
+        write: impl FnOnce(&mut crate::federation::ActorContentTxn<'_, '_, '_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        self.with_actor_content_write_txn_as(
+            crate::WriteActor::new(self.actor, self.actor_class),
+            write,
+        )
+    }
+
+    /// Preserve the observed authority frontier when a typed Vault NOTE door
+    /// is called with an already-bound WriteActor rather than the facade's
+    /// ordinary actor pair.
+    pub(crate) fn with_actor_content_write_txn_as<T>(
+        &self,
+        actor: crate::WriteActor,
+        write: impl FnOnce(&mut crate::federation::ActorContentTxn<'_, '_, '_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        if actor.entity_ref() != self.actor || actor.actor_class() != self.actor_class {
+            return Err(
+                Error::InvalidClaimBody("content actor does not match bound facade").into(),
+            );
+        }
+        self.vault.try_with_write_txn(|wtxn| {
+            verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
+            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, actor)?;
+            let result = write(&mut content)?;
+            content.finish()?;
+            Ok(result)
+        })
+    }
+
+    /// Legacy domain-specific actor writes that do not yet expose a resolved
+    /// record position require a full content-write grant in a shared vault.
+    /// A scoped writer uses `with_actor_content_write_txn` and its typed
+    /// effects instead. No caller may use raw access to bypass membership.
     pub(crate) fn with_verified_actor_write_txn<T>(
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
         self.vault.try_with_write_txn(|wtxn| {
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+            if let Some(creation) = self.vault.shared_vault_creation_in_txn(wtxn)? {
+                self.vault.authorize_shared_vault_write_in_txn(
+                    wtxn,
+                    creation.vault_id,
+                    &crate::WriteActor::new(self.actor, self.actor_class),
+                    &crate::federation::SharedVaultWrite::Content(crate::federation::Scope::top()),
+                )?;
+            }
             write(wtxn)
         })
     }

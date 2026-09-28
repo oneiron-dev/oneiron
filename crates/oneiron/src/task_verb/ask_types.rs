@@ -33,6 +33,17 @@ pub enum TaskAskTarget {
     Authority(AskAuthorityScope),
     Responder(super::TaskAssignee),
     People(BTreeSet<EntityId>),
+    /// Foreign people enter through owner-confirmed disclosure bounds and
+    /// per-ask guest grants, not membership or a caller-picked authority list.
+    Guests(BTreeMap<EntityId, TaskAskGuest>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskGuest {
+    pub companion_ref: EntityId,
+    /// Reference to the person's live, owner-stamped standing disclosure grant.
+    pub disclosure_grant_ref: String,
 }
 
 /// Stable option identity. Display text is never a predicate.
@@ -71,6 +82,16 @@ impl From<TaskAskOptionId> for String {
     }
 }
 
+/// The lower rung's answer before a person is consulted. This is not an
+/// authorization and never substitutes for a person's word.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskLadderPrediction {
+    pub option: TaskAskOptionId,
+    pub rung: crate::llm::decision::DecisionRung,
+    pub probability: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskQuestion {
@@ -80,6 +101,16 @@ pub struct TaskAskQuestion {
     pub context_refs: Vec<ConsultPayloadRef>,
     pub label: Option<String>,
     pub outcome_binding: Option<crate::llm::decision::questions::OutcomeBinding>,
+    /// Snapshot of the lower rung before a person is asked; stable option identity.
+    #[serde(default)]
+    pub ladder_answer: Option<TaskAskLadderPrediction>,
+    /// The learning bucket. If omitted, a governed class supplies its key.
+    #[serde(default)]
+    pub class_key: Option<String>,
+    /// Whether an answer proposes a booking or other commitment. Companion
+    /// answers to these questions require a separate human soft-confirm notice.
+    #[serde(default)]
+    pub commitment: bool,
 }
 impl TaskAskQuestion {
     pub fn new(reference: ConsultPayloadRef) -> Self {
@@ -90,6 +121,9 @@ impl TaskAskQuestion {
             context_refs: Vec::new(),
             label: None,
             outcome_binding: None,
+            ladder_answer: None,
+            class_key: None,
+            commitment: false,
         }
     }
 }
@@ -215,6 +249,12 @@ pub struct TaskAskClass {
     pub decision: Option<TaskAskDecide>,
     pub disclosure: BTreeMap<EntityId, BTreeSet<ConsultPayloadRef>>,
     pub fallback: BTreeSet<TaskAskDefault>,
+    /// Owner-bound operational ceiling, strictly below the wire-safety maximum.
+    #[serde(default)]
+    pub guest_fact_limit: Option<u16>,
+    /// Policy-owned confirmation surface; absent reuses the ask's chosen surface.
+    #[serde(default)]
+    pub soft_confirm_surface: Option<TaskAskSurface>,
     pub remind: Vec<u64>,
 }
 
@@ -303,10 +343,44 @@ impl TaskAskSpec {
             }
             effective.class = Some(bound);
         }
+        if let Some(ladder) = &self.what.ladder_answer
+            && (!self.what.options.contains_key(&ladder.option)
+                || !matches!(
+                    ladder.rung,
+                    crate::llm::decision::DecisionRung::Rule
+                        | crate::llm::decision::DecisionRung::SystemOne
+                )
+                || ladder
+                    .probability
+                    .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
+                || (ladder.rung == crate::llm::decision::DecisionRung::SystemOne
+                    && ladder.probability.is_none()))
+        {
+            return Err(MemoryError::bad_request("invalid ask ladder prediction"));
+        }
+        if self
+            .what
+            .class_key
+            .as_ref()
+            .is_some_and(|key| key.is_empty() || key.len() > 256)
+        {
+            return Err(MemoryError::bad_request("invalid ask question class"));
+        }
         if let Some(binding) = &self.what.outcome_binding {
             binding.validate()?;
         }
         if let Some(class) = &effective.class {
+            if self
+                .what
+                .class_key
+                .as_deref()
+                .is_some_and(|key| key != class.key)
+            {
+                return Err(MemoryError::bad_request(
+                    "ask question class conflicts with task policy",
+                ));
+            }
+            effective.what.class_key = Some(class.key.clone());
             if class.key.is_empty()
                 || class.key.len() > 256
                 || class.version == 0
@@ -316,6 +390,11 @@ impl TaskAskSpec {
                 || usize::from(class.minimum_responses) > who.len()
             {
                 return Err(MemoryError::bad_request("impossible ask class obligations"));
+            }
+            if class.guest_fact_limit.is_some_and(|limit| {
+                limit == 0 || usize::from(limit) > crate::federation::MAX_GUEST_DISCLOSED_REFS
+            }) {
+                return Err(MemoryError::bad_request("invalid ask guest fact limit"));
             }
             if class.governance {
                 match effective.default {
@@ -380,6 +459,19 @@ impl TaskAskSpec {
                 effective.remind = Some(class.remind.clone());
             }
         }
+        if effective.what.ladder_answer.is_some() && effective.what.class_key.is_none() {
+            return Err(MemoryError::bad_request(
+                "comparable ask requires a question class",
+            ));
+        }
+        // Ungoverned short asks still need a finite cutoff. A bound class
+        // supplies its own deadline first; otherwise use the base one-day TTL.
+        if effective.until.is_none() {
+            effective.until = Some(
+                now.checked_add(24 * 60 * 60)
+                    .ok_or_else(|| MemoryError::bad_request("ask deadline overflow"))?,
+            );
+        }
         if effective.until.is_none_or(|until| until <= now) {
             return Err(MemoryError::bad_request(
                 "ask needs a future deadline or a class deadline policy",
@@ -432,6 +524,20 @@ impl TaskAskSpec {
     }
 }
 
+/// Live ask routing. `None` means no native channel, not a promise of delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskAskPreflightRecipient {
+    pub who: EntityId,
+    pub face: Option<String>,
+    pub channel: Option<String>,
+    pub word_required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskAskPreflight {
+    pub recipients: Vec<TaskAskPreflightRecipient>,
+}
+
 /// The group is an engine-authored TASK fact, not a local queue id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -470,6 +576,12 @@ pub struct TaskAskWord {
     pub result_ref: EntityId,
     pub option: Option<TaskAskOptionId>,
     pub inform_for: Option<EntityId>,
+    /// An attributed companion answer for this person, never a human word.
+    #[serde(default)]
+    pub companion_for: Option<EntityId>,
+    /// Typed approve/reject response bound to the companion answer and ask revision.
+    #[serde(default)]
+    pub confirmation: Option<super::TaskAskConfirmation>,
     #[serde(default)]
     pub provenance_refs: BTreeSet<ConsultPayloadRef>,
 }
@@ -479,6 +591,8 @@ impl TaskAskWord {
             result_ref,
             option: None,
             inform_for: None,
+            companion_for: None,
+            confirmation: None,
             provenance_refs: BTreeSet::new(),
         }
     }
@@ -488,6 +602,7 @@ impl TaskAskWord {
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskSource {
     Human,
+    Companion,
     Inform,
     Executor,
 }
@@ -495,6 +610,7 @@ pub enum TaskAskSource {
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskEvidenceReason {
     Counted,
+    CompanionHint,
     Inform,
     HumanDominates,
     Executor,
@@ -512,7 +628,38 @@ pub struct TaskAskEvidence {
     pub person_ref: EntityId,
     pub order: u64,
     pub reason: TaskAskEvidenceReason,
+    /// True only for an admitted human option that differs from the pinned ladder answer.
+    pub ladder_changed: Option<bool>,
+    /// A companion commitment never becomes a human authorization, even when
+    /// its answer class is delegated and its answer counts toward need.
+    #[serde(default)]
+    pub soft_confirm: bool,
+    /// The person's owner-stamped grant that delegated this answer class.
+    #[serde(default)]
+    pub delegation_grant_ref: Option<String>,
 }
+/// One person's attributed answer at this read. `Unknown` carries no answer;
+/// the agent's cutoff branch is never serialized as a person's default word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAskPersonKind {
+    Word,
+    Companion,
+    Default,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskPersonEvidence {
+    pub who: EntityId,
+    pub answer: Option<TaskAskWord>,
+    pub kind: TaskAskPersonKind,
+    pub at: u64,
+    /// Actual speaker. In particular, a companion hint is not a human word.
+    pub source: Option<EntityId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskCoverage {
@@ -535,6 +682,7 @@ pub enum TaskAskDecision {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskFallback {
+    /// The default or disagreement branch is the asking agent's act.
     pub branch: TaskAskDefault,
     pub surface: TaskAskSurface,
 }
@@ -562,10 +710,20 @@ pub struct TaskAskSettlement {
     pub question_digest: [u8; 32],
     pub unmet_sources: BTreeSet<ConsultPayloadRef>,
     pub outcome_answer_ref: Option<EntityId>,
+    pub policy_surface: TaskAskSurface,
 }
+/// Ask settlement cannot grant or deny an external effect. Only the separate
+/// effect gate evaluates that authority against its own live inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAskEffectAuthorization {
+    NotEvaluatedByAsk,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskResult {
+    pub effect_authorization: TaskAskEffectAuthorization,
     pub coverage: TaskAskCoverage,
     pub decision: TaskAskDecision,
     pub fallback: Option<TaskAskFallback>,

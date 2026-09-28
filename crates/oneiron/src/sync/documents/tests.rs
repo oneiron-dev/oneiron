@@ -245,6 +245,24 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
     let registry = DocumentRegistry::new(vault.clone());
     let doc = registry.open(id).unwrap();
     let update = peer_update("accepted");
+    let mut missing_write = grant.clone();
+    missing_write.authority_scope = crate::federation::scope_codec::read_preset();
+    document_grant(&vault, grant_id, missing_write);
+    assert_document_denied(
+        doc.import_from_peer(document_sub_tags::UPDATE, &update, scope, &selector)
+            .unwrap_err(),
+    );
+    let mut out_of_scope = grant.clone();
+    out_of_scope.authority_scope.audience =
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            crate::federation::ScopeId(EntityId::now()),
+        ]));
+    document_grant(&vault, grant_id, out_of_scope);
+    assert_document_denied(
+        doc.import_from_peer(document_sub_tags::UPDATE, &update, scope, &selector)
+            .unwrap_err(),
+    );
+    document_grant(&vault, grant_id, grant.clone());
     doc.import_from_peer(document_sub_tags::UPDATE, &update, scope, &selector)
         .unwrap();
     let before = doc.version_vector().unwrap();
@@ -315,7 +333,12 @@ fn peer_import_rechecks_role_selector_and_grant_in_the_committing_writer() {
         doc.import_from_peer(document_sub_tags::STATE, &next, scope, &selector)
             .unwrap_err(),
     );
-    vault.delete_entity(&grant_id).unwrap();
+    vault
+        .delete_entity_with_options(
+            &grant_id,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
     let error = doc
         .import_from_peer(document_sub_tags::UPDATE, &next, scope, &selector)
         .unwrap_err();

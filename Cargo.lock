@@ -1723,6 +1723,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
 dependencies = [
  "generic-array",
+ "rand_core 0.6.4",
  "typenum",
 ]
 
@@ -7163,6 +7164,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "oneiron"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "arc-swap",
  "async-trait",
  "blake3",
@@ -7194,12 +7196,15 @@ dependencies = [
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-guest",
+ "oneiron-sandbox-contract",
  "oneiron-seal",
  "oneiron-vault-contract",
  "p256",
  "postcard",
  "proptest",
  "qrcode",
+ "quick-xml",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rand_distr 0.4.3",
@@ -7224,12 +7229,14 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tracing",
  "tree-sitter",
+ "tree-sitter-python",
  "tree-sitter-rust",
  "trybuild",
  "unicode-script",
  "unicode-segmentation",
  "uuid",
  "wasmtime",
+ "wat",
  "whichlang",
  "windows-sys 0.61.2",
  "xxhash-rust",
@@ -7305,6 +7312,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "libc",
+ "oneiron-sandbox-contract",
  "serde",
  "serde_json",
  "tempfile",
@@ -7330,6 +7338,20 @@ dependencies = [
  "base64 0.22.1",
  "oneiron",
  "serde_json",
+]
+
+[[package]]
+name = "oneiron-linear"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "oneiron",
+ "reqwest 0.12.28",
+ "rmp-serde",
+ "rmpv",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -7369,6 +7391,7 @@ dependencies = [
 name = "oneiron-llm-openai"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-core",
  "oneiron",
  "serde",
@@ -7385,6 +7408,17 @@ dependencies = [
  "oneiron-remote",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-llm-systemone"
+version = "0.1.0"
+dependencies = [
+ "oneiron",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -7465,6 +7499,10 @@ dependencies = [
  "tempfile",
  "tokio",
 ]
+
+[[package]]
+name = "oneiron-sandbox-contract"
+version = "0.1.0"
 
 [[package]]
 name = "oneiron-seal"
@@ -7562,6 +7600,7 @@ name = "oneiron-vault-contract"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "serde",
  "serde_json",
  "subtle",
@@ -11284,6 +11323,16 @@ name = "tree-sitter-language"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
+
+[[package]]
+name = "tree-sitter-python"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bf85fd39652e740bf60f46f4cda9492c3a9ad75880575bf14960f775cb74a1c"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "tree-sitter-rust"

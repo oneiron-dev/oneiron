@@ -2,8 +2,12 @@
 
 use super::widen_record::{decode, invalid, json};
 use crate::agent_def::workflow::WorkflowDefinition;
-use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
+};
+use crate::compaction::output::OutputRef;
 use crate::context_projection::ContextSpec;
+use crate::context_projection::WorkflowOutputContextRef;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
@@ -90,6 +94,96 @@ pub(super) fn reject_wrapper_parent(row: &AttemptRecord) -> Result<()> {
 }
 
 impl super::AgentDispatcher<'_> {
+    /// Rebuild only the active workflow leaf's prior output handles from its
+    /// durable report and the actual completed producer attempts. Arbitrary
+    /// result refs are not output handles; a malformed output handle refuses.
+    /// This never alters the unrelated memory/ancestor projection.
+    pub(super) fn workflow_output_refs_for_attempt(
+        &self,
+        attempt: AttemptId,
+        parent: Option<AttemptId>,
+    ) -> Result<Vec<WorkflowOutputContextRef>> {
+        let Some(root) = parent else {
+            return Ok(Vec::new());
+        };
+        let queue = AttemptQueue::new(self.vault);
+        // Context resolution can run while a caller owns the writer (widen
+        // admission does). It must never acquire a nested write transaction.
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(wrapper) = queue.get_in_txn(&txn, root)? else {
+            return Err(invalid("workflow context parent is missing"));
+        };
+        if !is_wrapper(&wrapper) {
+            return Ok(Vec::new());
+        }
+        let record = self.read_workflow(&txn, &wrapper)?;
+        if record.results.len() >= record.steps.len() {
+            return Err(invalid("workflow context is not the active step"));
+        }
+        let current = queue
+            .get_in_txn(&txn, attempt)?
+            .ok_or_else(|| invalid("workflow context step is missing"))?;
+        // The cursor can lag a retry tip until the pump advances it. Prove
+        // the attempted leaf descends from that cursor without taking the
+        // queue's write-only retry-tip lock in a read-side context door.
+        let mut cursor = current.clone();
+        let mut hops = 0;
+        while cursor.id != record.active {
+            hops += 1;
+            if hops > 1024 {
+                return Err(invalid("workflow context retry bound"));
+            }
+            let previous = queue
+                .get_in_txn(
+                    &txn,
+                    cursor
+                        .retry_of
+                        .ok_or_else(|| invalid("workflow context retry lineage"))?,
+                )?
+                .ok_or_else(|| invalid("workflow context retry ancestor is missing"))?;
+            if previous.state != AttemptState::Failed
+                || previous.kind != cursor.kind
+                || previous.payload != cursor.payload
+                || previous.run_id != cursor.run_id
+            {
+                return Err(invalid("workflow context retry lineage differs"));
+            }
+            cursor = previous;
+        }
+        let payload = decode_dreamer_attempt_payload(&current.payload)?;
+        if payload.parent_attempt != Some(root) || current.run_id != record.intent.run_id {
+            return Err(invalid("workflow context step has foreign lineage"));
+        }
+        let mut refs = Vec::new();
+        for (ordinal, result) in record.results.iter().enumerate() {
+            if result.ordinal != ordinal {
+                return Err(invalid("workflow context result order is malformed"));
+            }
+            let producer = queue
+                .get_in_txn(&txn, result.attempt_id)?
+                .ok_or_else(|| invalid("workflow context producer is missing"))?;
+            let producer_payload = decode_dreamer_attempt_payload(&producer.payload)?;
+            if producer.state != AttemptState::Completed
+                || producer_payload.parent_attempt != Some(root)
+                || producer.run_id != record.intent.run_id
+                || producer.result_ref.as_ref().map(AttemptResultRef::as_str)
+                    != Some(result.result_ref.as_str())
+            {
+                return Err(invalid(
+                    "workflow context producer does not match its result",
+                ));
+            }
+            if result.result_ref.starts_with("output:blake3:") {
+                refs.push(WorkflowOutputContextRef {
+                    step_ordinal: ordinal,
+                    producing_attempt: producer.id,
+                    source: OutputRef::from_handle(&result.result_ref)?,
+                });
+            }
+        }
+        Ok(refs)
+    }
+
     pub(super) fn read_workflow(
         &self,
         txn: &heed::RoTxn<'_>,

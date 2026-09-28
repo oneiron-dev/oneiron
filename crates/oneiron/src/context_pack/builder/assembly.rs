@@ -18,7 +18,7 @@ use super::super::hydration::hydrate_entity;
 use super::super::psych_mirror::{PsychProfilePackSection, psych_profile_pack_section};
 use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
-    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
+    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry, raw_pack_output,
 };
 use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats};
 use super::super::validation::{
@@ -63,6 +63,21 @@ impl<'a> ContextPackBuilder<'a> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        let pack_output = match run
+            .capture_replay
+            .then(|| raw_pack_output(&run.pack))
+            .transpose()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                discard_failed_context_pack_telemetry(run.telemetry, run.telemetry_run_id);
+                return Err(error);
+            }
+        };
+        let mut replay_config = run.replay_config;
+        if let Some(config) = replay_config.as_mut() {
+            config["terminal_kind"] = "structured".into();
+        }
         let telemetry_run_id = finalize_context_pack_telemetry(
             run.telemetry,
             run.telemetry_run_id,
@@ -71,6 +86,8 @@ impl<'a> ContextPackBuilder<'a> {
             run.pack.stats.claims_suppressed,
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+            pack_output,
+            replay_config,
         )?;
         Ok((
             RetrievalWithTelemetry {
@@ -115,6 +132,8 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
             clamped_out: run.clamped_out,
+            capture_replay: run.capture_replay,
+            replay_config: run.replay_config,
         })
     }
 
@@ -135,6 +154,12 @@ impl<'a> ContextPackBuilder<'a> {
         // suppressing capture is the fail-closed form of scrubbing every
         // stage. OwnerAlone (and no-context) assemblies keep the caller's
         // trace setting unchanged.
+        let replay_config = (self.pipeline.captures_replay()
+            && self
+                .disclosure
+                .as_ref()
+                .is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone))
+        .then(|| self.pack_replay_config());
         let mut pipeline = self.pipeline;
         if self
             .disclosure
@@ -143,6 +168,7 @@ impl<'a> ContextPackBuilder<'a> {
         {
             pipeline = pipeline.capture_retrieval_trace(false);
         }
+        let capture_replay = pipeline.captures_replay();
         // Captured BEFORE the run, from the same door the pipeline registers
         // the provisional row through, and carried on every outcome — so the
         // finalize and the failure discard both reach the row that was
@@ -151,15 +177,31 @@ impl<'a> ContextPackBuilder<'a> {
             Some(session) => ContextPackTelemetry::Session(session),
             None => ContextPackTelemetry::Base(&self.vault.store),
         };
-        let mut l2_base = super::super::l2_base::produce_l2_base(
+        let implicit_l2 = self.l2_summary_subjects.is_empty();
+        let l2_subjects = if implicit_l2 {
+            super::super::l2_base::default_l2_subjects(self.vault, self.l2_summary_reader)?
+        } else {
+            self.l2_summary_subjects.clone()
+        };
+        let mut l2_base = match super::super::l2_base::produce_l2_base(
             self.vault,
             &pipeline,
-            &self.l2_summary_subjects,
+            &l2_subjects,
             self.disclosure.as_ref(),
             self.l2_summary_reader,
             self.session.is_none(),
-        )?;
+        ) {
+            // Only bounded-summary limits may omit an implicit optional
+            // prefix. Corruption, disclosure and explicit-request errors stay
+            // fail-closed; the normal retrieval still runs its own gates.
+            Err(Error::IndexOverflow(
+                "L2 subject adjacency" | "L2 evidence bytes" | "L2 evidence claims",
+            )) if implicit_l2 => None,
+            other => other?,
+        };
         let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
+        let neighbor_pipeline =
+            (self.edge_hop > 0 && selected_edge_budget > 0).then(|| pipeline.clone());
         let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
@@ -175,6 +217,9 @@ impl<'a> ContextPackBuilder<'a> {
             let mut claims_suppressed = pipeline_output.claims_suppressed;
             let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
 
+            if let Some(reader) = self.l2_summary_reader {
+                reader.persist_grant_clock()?;
+            }
             let rtxn = self.vault.store.env.read_txn()?;
             let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
             let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
@@ -320,7 +365,9 @@ impl<'a> ContextPackBuilder<'a> {
             let stale_neighbor_exclusion = (!stale_worlds.is_empty()
                 && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
             .then_some(&stale_worlds);
-            let edge_walk = if self.edge_hop > 0 && selected_edge_budget > 0 {
+            let edge_walk = if let Some(neighbor_pipeline) = neighbor_pipeline.as_ref() {
+                let (neighbor_filter, named_types) =
+                    neighbor_pipeline.neighbor_type_policy(&rtxn)?;
                 walk_edges(
                     &self.vault.store,
                     &rtxn,
@@ -331,6 +378,8 @@ impl<'a> ContextPackBuilder<'a> {
                         exclude: &result_ids,
                         clamp,
                         stale_worlds: stale_neighbor_exclusion,
+                        type_filter: &neighbor_filter,
+                        named_types,
                     },
                 )?
             } else {
@@ -416,17 +465,24 @@ impl<'a> ContextPackBuilder<'a> {
             if let Some(ctx) = clamp {
                 validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
             }
-            if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline)
-                && !super::super::l2_base::revalidate_l2_base(
+            if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline) {
+                let valid = match super::super::l2_base::revalidate_l2_base(
                     self.vault,
                     pipeline,
                     &rtxn,
                     summary,
                     clamp,
                     self.l2_summary_reader,
-                )?
-            {
-                l2_base = None;
+                ) {
+                    Ok(valid) => valid,
+                    Err(Error::IndexOverflow(
+                        "L2 subject adjacency" | "L2 evidence bytes" | "L2 evidence claims",
+                    )) if implicit_l2 => false,
+                    Err(error) => return Err(error),
+                };
+                if !valid {
+                    l2_base = None;
+                }
             }
             super::super::source_ranking::apply(
                 &mut results,
@@ -436,11 +492,6 @@ impl<'a> ContextPackBuilder<'a> {
             )?;
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
-            if let Some(summary) = &l2_base {
-                let ids = summary.evidence_ids();
-                results.retain(|entity| ids.binary_search(&entity.id).is_err());
-                neighbors.retain(|entity| ids.binary_search(&entity.id).is_err());
-            }
             let memory_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
             let pack_is_empty = memory_is_empty && capabilities.is_empty();
             // Discoveries keep the whole pack nonempty, but never decide the
@@ -491,6 +542,8 @@ impl<'a> ContextPackBuilder<'a> {
                 telemetry,
                 total_in_scope,
                 clamped_out,
+                capture_replay,
+                replay_config,
             })
         })();
 
@@ -528,6 +581,10 @@ impl<'a> ContextPackBuilder<'a> {
         };
         let run = self.run_unfinalized()?;
         let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
+        let mut replay_config = run.replay_config;
+        if let Some(value) = replay_config.as_mut() {
+            value["terminal_kind"] = "serialized".into();
+        }
         let telemetry_run_id = finalize_context_pack_telemetry(
             run.telemetry,
             run.telemetry_run_id,
@@ -536,6 +593,12 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
+            run.capture_replay
+                .then(|| crate::store::RetrievalPackOutput {
+                    format: format!("{:?}", config.format),
+                    bytes: bytes.clone(),
+                }),
+            replay_config,
         )?;
         Ok(RetrievalWithTelemetry {
             retrieval_quality: run.pack.retrieval_quality,

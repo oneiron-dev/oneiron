@@ -1,8 +1,10 @@
+mod connector_qualification;
 mod connector_schedule;
 mod dispatch_budget;
 #[path = "sender_selection/facet_selection.rs"]
 mod facet_selection;
 mod gate_window;
+mod linkedin_connect;
 mod linkedin_send;
 mod pipeline_contract;
 mod quiet_window;
@@ -271,7 +273,7 @@ fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
         .into_iter()
         .next()
         .expect("connector execution journals one intent");
-    // email/send is NonIdempotentInterrupt: the sink is not handed the ledger id
+    // Generic email/send has no provider key: the sink is not handed the ledger id
     // as a provider idempotency (dedup) token, even though the ledger row still
     // keys the intent internally.
     assert_eq!(executor.idempotency_keys, vec![None]);
@@ -669,9 +671,14 @@ fn email_send_dispatch_request(actor: OutboundDispatchActor, seq: u32) -> Outbou
     OutboundDispatchRequest::new(
         format!("outbound:intent:budget-{seq}"),
         format!("intent:budget-{seq}"),
-        dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
-            "session:budget-{seq}"
-        ))),
+        {
+            let mut intent = dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+                "session:budget-{seq}"
+            )));
+            // Separate budget/recovery fixture sends are distinct semantic acts.
+            intent.dedupe_key = Some(format!("dedupe:budget-{seq}"));
+            intent
+        },
         actor,
         OutboundDispatchGate::allow_when_policy_grants(),
         1_000 + u64::from(seq),

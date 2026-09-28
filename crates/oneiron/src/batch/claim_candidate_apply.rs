@@ -111,6 +111,7 @@ pub(super) fn apply_claim_candidate(
         false,
         false,
         None,
+        None,
         has_later_covering_text_op,
         write_policy,
         Some(envelope),
@@ -121,7 +122,6 @@ pub(super) fn apply_claim_candidate(
         include_source_in_gate_input,
         claim_gate_prechecked,
         preflight_gate_decision_id,
-        None,
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.
         BaseWriteOrigin::Ordinary,

@@ -26,7 +26,7 @@ const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
 
 const OUTBOUND_RECEIPT_SCHEMA: &str = "outbound_receipt.v1";
 const OUTBOUND_ENGINE_REGISTER: &str = "neutral";
-const OUTBOUND_CARE_REGISTER: &str = "eirispec_care_register";
+const OUTBOUND_CARE_REGISTER: &str = "care_register";
 const OUTBOUND_AUDIT_REGISTER: &str = "dashboard_atom_kit_audit";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,11 +92,16 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     record: &AttemptRecord,
     actor: &str,
 ) -> Result<()> {
-    if record.manifest().is_empty() {
+    let receipt_id = attempt_pack_receipt_id(&record.id);
+    // A resident's terminal attempt has an attributable outcome even when it
+    // loaded no skill. Unbound legacy attempts keep their manifest-only rule.
+    if record.manifest().is_empty()
+        && crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_none()
+    {
         return Ok(());
     }
     let mut receipt = ReceiptRecord {
-        receipt_id: attempt_pack_receipt_id(&record.id),
+        receipt_id,
         receipt_kind: ReceiptKind::Outbound,
         occurred_at: record.updated_at,
         actor: Some(actor.to_owned()),
@@ -107,7 +112,20 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         policy_trace: Vec::new(),
         fields: BTreeMap::new(),
     };
+    if record
+        .manifest()
+        .iter()
+        .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
+        && record.executor_model.is_none()
+    {
+        return Err(Error::InvalidClaimBody(
+            "skill-bearing attempt requires executor model",
+        ));
+    }
     append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    if let Some(model) = &record.executor_model {
+        receipt.fields.insert("model".to_owned(), model.clone());
+    }
     let encoded = rmp_serde::to_vec_named(&receipt)
         .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
     store.vault_meta.put(
@@ -354,7 +372,7 @@ pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
     durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
 }
 
-pub(super) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     vault
         .store
         .send_receipt_rows()?
@@ -452,4 +470,34 @@ pub(crate) fn attempt_pack_receipt_in_txn(
         return Err(Error::CorruptedIndex("attempt receipt key/body identity"));
     }
     Ok(Some(receipt))
+}
+
+/// Test fixture only: emulate a pack receipt imported from the pre-model wire.
+/// Production never removes the immutable executor stamp.
+#[cfg(test)]
+pub(crate) fn make_attempt_receipt_legacy_for_tests(vault: &Vault, receipt_id: &str) -> Result<()> {
+    let key = attempt_pack_receipt_key(receipt_id);
+    vault.with_write_txn(|txn| {
+        let raw = vault
+            .store
+            .vault_meta
+            .get(txn, &key)?
+            .ok_or(Error::InvalidClaimBody(
+                "legacy fixture needs an attempt receipt",
+            ))?;
+        let mut receipt: ReceiptRecord = rmp_serde::from_slice(&raw)
+            .map_err(|_| Error::CorruptedIndex("attempt pack receipt"))?;
+        if receipt.fields.remove("model").is_none() {
+            return Err(Error::InvalidClaimBody(
+                "legacy fixture needs a stamped model",
+            ));
+        }
+        vault.store.vault_meta.put(
+            txn,
+            &key,
+            &rmp_serde::to_vec_named(&receipt)
+                .map_err(|_| Error::InvariantViolation("legacy fixture encode"))?,
+        )?;
+        Ok(())
+    })
 }

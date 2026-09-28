@@ -17,6 +17,7 @@ pub mod host;
 pub mod host_adapters;
 mod ledger;
 mod limits;
+mod managed_holder;
 mod secrets;
 mod version;
 mod wake;
@@ -44,6 +45,7 @@ pub use self::limits::{
     CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
     READY_BYTE, TOKEN_LEN,
 };
+pub use self::managed_holder::ManagedWidenAction;
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,
 };

@@ -441,6 +441,114 @@ fn typed_host_executes_both_saved_steps_and_never_replays_completed_callbacks() 
 }
 
 #[test]
+fn workflow_agent_output_is_durable_and_only_a_handle_enters_results() -> Result<()> {
+    use crate::compaction::output::{OutputRef, restore_output};
+
+    let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let agent = fixture(&vault, AgentCeiling::Proposed, "raw-output")?;
+    let id = EntityId::now();
+    vault.save_workflow(&id, &WorkflowDefinition::new("raw", vec![agent])?, 2)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = workflow(dispatcher.dispatch(request(AgentDispatchTarget::Workflow(id), None))?)
+        .attempt
+        .id;
+    let raw = b"agent\0result\xff with exact bytes";
+    assert_eq!(
+        dispatcher.run_workflow_step_output(root, "host-a", 11, |_, _| Ok(raw.to_vec()))?,
+        WorkflowProgress::Completed
+    );
+    let report = dispatcher.workflow_status(root)?;
+    assert_eq!(report.results.len(), 1);
+    let handle = &report.results[0].result_ref;
+    assert!(handle.starts_with("output:blake3:"));
+    assert!(!handle.contains("agent"));
+    let source = OutputRef::from_handle(handle)?;
+    assert_eq!(restore_output(&vault, source)?, raw);
+    assert_eq!(
+        dispatcher.run_workflow_step_output(root, "host-a", 12, |_, _| panic!("replayed"))?,
+        WorkflowProgress::Completed
+    );
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    let handle = &AgentDispatcher::new(&reopened)
+        .workflow_status(root)?
+        .results[0]
+        .result_ref;
+    assert_eq!(
+        restore_output(&reopened, OutputRef::from_handle(handle)?)?,
+        raw
+    );
+    Ok(())
+}
+
+#[test]
+fn successor_receives_prior_raw_output_handle_after_reopen() -> Result<()> {
+    use crate::compaction::output::{OutputRef, restore_output};
+
+    let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let agent = fixture(&vault, AgentCeiling::Proposed, "handoff")?;
+    let workflow_id = EntityId::now();
+    vault.save_workflow(
+        &workflow_id,
+        &WorkflowDefinition::new("handoff", vec![agent, agent])?,
+        2,
+    )?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root =
+        workflow(dispatcher.dispatch(request(AgentDispatchTarget::Workflow(workflow_id), None))?)
+            .attempt
+            .id;
+    let raw = b"tool\0and agent\xff full output";
+    let mut initial = None;
+    assert!(matches!(
+        dispatcher.run_workflow_step_output(root, "host-a", 11, |_, context| {
+            assert!(context.workflow_output_refs.is_empty());
+            initial = Some(context);
+            Ok(raw.to_vec())
+        })?,
+        WorkflowProgress::Advanced(_)
+    ));
+    let report = dispatcher.workflow_status(root)?;
+    let source = OutputRef::from_handle(&report.results[0].result_ref)?;
+    let producer = report.results[0].attempt_id;
+    let next = report.active_step;
+    drop(vault);
+
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    let dispatcher = AgentDispatcher::new(&reopened);
+    // Context assembly must be read-only even when the owner is already
+    // composing another workflow write in this process.
+    let writer = reopened.store.env.write_txn()?;
+    let projected = dispatcher.resolve_attempt_context(next)?;
+    drop(writer);
+    assert_eq!(projected.workflow_output_refs.len(), 1);
+    let carried = projected.workflow_output_refs[0];
+    assert_eq!(carried.step_ordinal, 0);
+    assert_eq!(carried.producing_attempt, producer);
+    assert_eq!(carried.source, source);
+    assert_eq!(restore_output(&reopened, carried.source)?, raw);
+    let original = initial.expect("first callback context");
+    assert_eq!(projected.memory_sections, original.memory_sections);
+    assert_eq!(projected.chat_sections, original.chat_sections);
+    assert_eq!(projected.layers, original.layers);
+    assert_eq!(projected.sibling_result_refs, original.sibling_result_refs);
+    assert_eq!(projected.briefing, original.briefing);
+    assert_eq!(
+        dispatcher.run_workflow_step_output(root, "host-b", 12, |_, context| {
+            assert_eq!(context, projected);
+            assert_eq!(
+                restore_output(&reopened, context.workflow_output_refs[0].source)?,
+                raw
+            );
+            Ok(b"second result".to_vec())
+        })?,
+        WorkflowProgress::Completed
+    );
+    assert_eq!(dispatcher.workflow_status(root)?.results.len(), 2);
+    Ok(())
+}
+
+#[test]
 fn a_redirected_workflow_leaf_is_not_claimed_by_its_old_host() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let first = fixture(&vault, AgentCeiling::Proposed, "redirect-first")?;

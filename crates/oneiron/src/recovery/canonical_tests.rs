@@ -28,6 +28,10 @@ fn fixture() -> Result<Fixture> {
     let note = vault
         .create_note("research", "birth document", actor)
         .unwrap();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .set_note_title(note, "Recovered title")
+        .expect("title operation");
     let NoteEditOutcome::RewriteFork { fork } = vault
         .edit_note(
             note,
@@ -146,6 +150,256 @@ fn canonical_carry_list_round_trips_with_blake3_and_fresh_documents() -> Result<
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn canonical_snapshot_writer_persists_per_document_entries_and_head_receipts() -> Result<()> {
+    let fixture = fixture()?;
+    let owner = fixture.vault.ensure_embedded_owner_actor().unwrap();
+    let second = fixture
+        .vault
+        .create_note(
+            "research",
+            "another document",
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let window = note_window(&fixture.vault, &[owner, fixture.note, second])?;
+    let expected = capture_canonical_window(&fixture.vault, "2026-09", &window)?;
+    assert_eq!(expected.doc_snapshots.len(), 2);
+    assert_eq!(expected.document_heads.len(), 2);
+    assert_eq!(expected.head_move_receipts.len(), 1);
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("window.canonical");
+    let digest = write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &path)?;
+    let disk_bytes = fs::read(&path)?;
+    assert_eq!(digest, *blake3::hash(&disk_bytes).as_bytes());
+    let RecoveryArtifactLoad::Ready(artifact) =
+        load_recovery_artifact(&path, CANONICAL_SNAPSHOT_ARTIFACT_TYPE)?
+    else {
+        panic!("published artifact must validate");
+    };
+    assert_eq!(artifact.payload(), canonical::pack(&expected)?);
+    let read_back = CanonicalSnapshot::decode(&disk_bytes)?;
+    assert_eq!(read_back, expected);
+    assert_eq!(disk_bytes, read_back.encode()?);
+    assert_eq!(read_back.blake3()?, digest);
+    for doc in &read_back.doc_snapshots {
+        assert_eq!(doc.rebuild()?.get_text("body").to_string(), doc.text);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+    }
+    assert!(matches!(
+        write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &path),
+        Err(Error::ConcurrentWrite(_))
+    ));
+    assert_eq!(fs::read(&path)?, disk_bytes);
+    assert_eq!(fs::read_dir(dir.path())?.count(), 1);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_snapshot_writer_refuses_invalid_capture_without_publishing() -> Result<()> {
+    let fixture = fixture()?;
+    let window = LoroDoc::new();
+    window.get_text("entities").insert(0, "invalid").unwrap();
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("window.canonical");
+    assert!(write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &path).is_err());
+    assert!(!path.exists());
+    assert_eq!(fs::read_dir(dir.path())?.count(), 0);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_snapshot_writer_syncs_filename_only_destination_and_refuses_overwrite() -> Result<()> {
+    let fixture = fixture()?;
+    let window = rebuild_vault_window_from_canonical(&fixture.snapshot)?;
+    // Keep a cleanup guard, but publish through a filename-only path. Changing
+    // process CWD would race other tests in this shared-process test binary.
+    let guard = tempfile::NamedTempFile::new_in(".")?.into_temp_path();
+    let relative = std::path::PathBuf::from(guard.file_name().unwrap());
+    fs::remove_file(&guard)?;
+    let digest = write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &relative)?;
+    let bytes = fs::read(&relative)?;
+    assert_eq!(digest, *blake3::hash(&bytes).as_bytes());
+    assert_eq!(CanonicalSnapshot::decode(&bytes)?, fixture.snapshot);
+    assert!(matches!(
+        write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &relative),
+        Err(Error::ConcurrentWrite(_))
+    ));
+    assert_eq!(fs::read(&relative)?, bytes);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+#[test]
+fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifact() -> Result<()> {
+    let vault_dir = tempfile::tempdir()?;
+    let vault = Vault::open(vault_dir.path(), VaultConfig::default())?;
+    let output_dir = tempfile::tempdir()?;
+    let path = output_dir.path().join("window.canonical");
+    assert!(matches!(
+        write_canonical_window_snapshot(&vault, "2026-09", &LoroDoc::new(), &path),
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::Unsupported
+    ));
+    assert_eq!(fs::read_dir(output_dir.path())?.count(), 0);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_writer_refuses_pointer_only_entity_before_creating_artifact() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let entity = EntityId::now();
+    vault.put_entity(
+        &entity,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 7, end: 7 },
+        9,
+        b"seed",
+    )?;
+    let mut blob = vault.get_raw(&entity)?.unwrap();
+    blob.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    rmpv::encode::write_value(
+        &mut blob,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("entity_doc_ref"),
+            rmpv::Value::from(entity.to_hex()),
+        )]),
+    )
+    .unwrap();
+    let window = LoroDoc::new();
+    canonical::insert(&window, "entities", &entity.to_hex(), &blob)?;
+    let path = dir.path().join("incomplete.canonical");
+    assert!(write_canonical_window_snapshot(&vault, "2026-09", &window, &path).is_err());
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[cfg(all(unix, feature = "sync"))]
+#[test]
+fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() -> Result<()> {
+    use crate::consent::AuthenticatedOwner;
+    use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+    use crate::store::GateDecisionId;
+
+    let source_dir = tempfile::tempdir()?;
+    let source = Vault::open(source_dir.path(), VaultConfig::default())?;
+    let author = EntityId::now();
+    source.put_entity(
+        &author,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"author",
+    )?;
+    let actor = WriteActor::new(author, EdgeActorClass::Human);
+    let owner: AuthenticatedOwner = source.authenticate_owner(
+        author,
+        "principal:canonical-entity-doc",
+        true,
+        GateDecisionId::now(),
+    )?;
+    let asset = EntityId::now();
+    source.put_entity(
+        &asset,
+        ENTITY_TYPE_ASSET,
+        TimeRange { start: 7, end: 7 },
+        9,
+        b"initial text",
+    )?;
+    source.migrate_entity_text(
+        &asset,
+        &TextField::Utf8Body,
+        actor,
+        &DocAuthorization::Owner(&owner),
+    )?;
+    let pointer = source.get_raw(&asset)?.unwrap();
+    let anchor = source.entity_text_anchor(&asset, 12, 12)?;
+    source.edit_entity_text(
+        &asset,
+        &[AnchoredEdit {
+            actor: Some(actor),
+            verb: EditVerb::AppendToSection {
+                section: anchor,
+                text: " and later".into(),
+            },
+        }],
+        &DocAuthorization::Owner(&owner),
+        11,
+    )?;
+    assert_eq!(source.get_raw(&asset)?.unwrap(), pointer);
+    assert_eq!(source.entity_text(&asset)?, "initial text and later");
+    let window = LoroDoc::new();
+    for entity in [author, asset] {
+        canonical::insert(
+            &window,
+            "entities",
+            &entity.to_hex(),
+            &source.get_raw(&entity)?.unwrap(),
+        )?;
+    }
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("window.canonical");
+    let digest = write_canonical_window_snapshot(&source, "2026-09", &window, &path)?;
+    let bytes = fs::read(&path)?;
+    let snapshot = CanonicalSnapshot::decode(&bytes)?;
+    assert_eq!(digest, *blake3::hash(&bytes).as_bytes());
+    assert_eq!(snapshot.entity_documents.len(), 1);
+    assert_eq!(snapshot.entity_documents[0].text, "initial text and later");
+    let mut missing = snapshot.clone();
+    missing.entity_documents.clear();
+    missing.refresh_containers();
+    assert!(missing.encode().is_err());
+
+    let restored_dir = tempfile::tempdir()?;
+    let restored = Vault::open(restored_dir.path(), VaultConfig::default())?;
+    // A pointer-only source cannot publish a superficially checksummed artifact.
+    let missing_path = restored_dir.path().join("incomplete.canonical");
+    assert!(write_canonical_window_snapshot(&restored, "2026-09", &window, &missing_path).is_err());
+    assert!(!missing_path.exists());
+    let recovered = recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        restored_dir.path().join("manifest"),
+        &snapshot,
+        RecoveryBudget::default(),
+    )?;
+    assert_eq!(recovered.tier, RecoveryTier::FullRebuild);
+    assert_eq!(restored.get_raw(&asset)?, Some(pointer));
+    assert_eq!(restored.entity_text(&asset)?, "initial text and later");
+    assert_eq!(
+        restored.get(&asset)?,
+        Some(b"initial text and later".to_vec())
+    );
+
+    // A pending fork carries a causal merge base, not just current text.
+    // Refuse a value-only artifact rather than drop that workflow.
+    source.open_text_proposal(
+        &EntityId::now(),
+        &[crate::entity_doc::ForkRequest {
+            entity: asset,
+            base: source.entity_text_frontier(&asset)?,
+            actor,
+            edits: Vec::new(),
+            rewrite: Some("pending replacement".to_owned()),
+        }],
+        &DocAuthorization::ProposeOnly,
+        12,
+    )?;
+    let unsupported = dir.path().join("unsupported.canonical");
+    assert!(write_canonical_window_snapshot(&source, "2026-09", &window, &unsupported).is_err());
+    assert!(!unsupported.exists());
+    Ok(())
+}
+
 #[test]
 fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Result<()> {
     let fixture = fixture()?;
@@ -252,6 +506,64 @@ fn redaction_preserves_unrelated_canonical_bytes_and_refuses_unresolved_copies()
     Ok(())
 }
 
+#[cfg(feature = "sync")]
+#[test]
+fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Result<()> {
+    let fixture = fixture()?;
+    let head = EntityId::from_bytes(fixture.snapshot.document_heads[0].head)?;
+    let quote = *blake3::hash("🦀 secret".as_bytes()).as_bytes();
+    let mut copied = fixture.snapshot.clone();
+    let live = copied
+        .doc_snapshots
+        .iter_mut()
+        .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
+        .unwrap();
+    live.title = Some("🦀 secret".into());
+    assert!(copied.validate().is_ok());
+    assert!(
+        copied
+            .excluding_document_span(fixture.note, head, 7, 15, quote)
+            .is_err()
+    );
+    copied
+        .doc_snapshots
+        .iter_mut()
+        .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
+        .unwrap()
+        .title = Some("Safe title".into());
+    let redacted = copied.excluding_document_span(fixture.note, head, 7, 15, quote)?;
+    let encoded = redacted.encode()?;
+    assert!(
+        !encoded
+            .windows("🦀 secret".len())
+            .any(|part| part == "🦀 secret".as_bytes())
+    );
+    let decoded = CanonicalSnapshot::decode(&encoded)?;
+    assert_eq!(
+        decoded
+            .doc_snapshots
+            .iter()
+            .find(|row| row.head == *head.as_bytes())
+            .unwrap()
+            .title
+            .as_deref(),
+        Some("Safe title")
+    );
+    let target_dir = tempfile::tempdir()?;
+    let target = Vault::open(target_dir.path(), VaultConfig::default())?;
+    recover_vault_window(
+        &target,
+        &crate::sync::bridge::Materializer::new(),
+        target_dir.path().join("manifest"),
+        &decoded,
+        RecoveryBudget::default(),
+    )?;
+    let view = target.note_document(fixture.note)?;
+    assert_eq!(view.markdown, "before  after");
+    assert_eq!(view.title.as_deref(), Some("Safe title"));
+    Ok(())
+}
+
 #[test]
 fn malformed_head_binding_and_soft_payload_are_rejected_before_rebuild() -> Result<()> {
     let fixture = fixture()?;
@@ -292,6 +604,25 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
         fixture.vault.note_text(fixture.note)?
     );
     assert_eq!(
+        target.note_document(fixture.note)?.title.as_deref(),
+        Some("Recovered title")
+    );
+    // The recovered authority reserves the title in its own writer.
+    let owner = fixture.vault.read_note(&fixture.note)?.unwrap().author_ref;
+    let second = target
+        .create_note(
+            "research",
+            "another body",
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .expect("create second note");
+    assert!(
+        target
+            .memory(owner, EdgeActorClass::Human)
+            .set_note_title(second, "  recovered  TITLE  ")
+            .is_err()
+    );
+    assert_eq!(
         target.get_raw(&fixture.soft)?,
         fixture.vault.get_raw(&fixture.soft)?
     );
@@ -318,6 +649,15 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
         RecoveryBudget::default(),
     )?;
     assert_eq!(again.tier, RecoveryTier::Healthy);
+    drop(target);
+    let target = Vault::open(dir.path(), VaultConfig::default())?;
+    assert!(
+        target
+            .memory(owner, EdgeActorClass::Human)
+            .set_note_title(second, "recovered TITLE")
+            .is_err(),
+        "unchanged recovery and reopen must preserve the reservation"
+    );
     let head = target.note_program_document(fixture.note)?.unwrap().head();
     let redacted = fixture.snapshot.excluding_document_span(
         fixture.note,
@@ -344,6 +684,143 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
         target.get_raw(&fixture.note)?,
         fixture.vault.get_raw(&fixture.note)?
     );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn existing_vault_recovers_title_swap_in_both_orders_and_refuses_external_collision() -> Result<()>
+{
+    for reverse in [false, true] {
+        let source_dir = tempfile::tempdir()?;
+        let source = Vault::open(source_dir.path(), VaultConfig::default())?;
+        let owner = source.ensure_embedded_owner_actor().expect("fixture owner");
+        let actor = WriteActor::new(owner, EdgeActorClass::Human);
+        let a = source
+            .create_note("research", "body A", actor)
+            .expect("note A");
+        let b = source
+            .create_note("research", "body B", actor)
+            .expect("note B");
+        let (alpha, beta) = if reverse { (b, a) } else { (a, b) };
+        let set = |id, title| {
+            source
+                .memory(owner, EdgeActorClass::Human)
+                .set_note_title(id, title)
+                .expect("valid title")
+        };
+        let capture = || -> Result<CanonicalSnapshot> {
+            let window = LoroDoc::new();
+            for id in [owner, a, b] {
+                canonical::insert(
+                    &window,
+                    "entities",
+                    &id.to_hex(),
+                    &source.get_raw(&id)?.unwrap(),
+                )?;
+            }
+            let txn = source.store.env.read_txn()?;
+            for id in [a, b] {
+                for row in source.store.edges_out.prefix_iter(&txn, id.as_bytes())? {
+                    let (key, value) = row?;
+                    let target = EntityId::from_bytes(key[17..].try_into().unwrap())?;
+                    canonical::insert(
+                        &window,
+                        "edges",
+                        &format!("{}:{:02}:{}", id.to_hex(), key[16], target.to_hex()),
+                        &value,
+                    )?;
+                }
+            }
+            drop(txn); // Capture opens its own LMDB reader on this thread.
+            capture_canonical_window(&source, "2026-09", &window)
+        };
+        set(alpha, "alpha");
+        set(beta, "beta");
+        let initial = capture()?;
+        let target_dir = tempfile::tempdir()?;
+        let target = Vault::open(target_dir.path(), VaultConfig::default())?;
+        let path = target_dir.path().join("manifest");
+        let materializer = crate::sync::bridge::Materializer::new();
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &initial,
+            RecoveryBudget::default(),
+        )?;
+        // Only alpha changes; beta is an unchanged member of this recovery set.
+        set(alpha, "gamma");
+        let mixed = capture()?;
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &mixed,
+            RecoveryBudget::default(),
+        )?;
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &mixed,
+            RecoveryBudget::default(),
+        )?;
+        let outside = target
+            .create_note("research", "outside body", actor)
+            .expect("outside note");
+        let reader = target.memory(owner, EdgeActorClass::Human);
+        assert!(reader.set_note_title(outside, "GAMMA").is_err());
+        assert!(reader.set_note_title(outside, " BETA ").is_err());
+        set(alpha, "temporary");
+        set(beta, "alpha");
+        set(alpha, "beta");
+        let swapped = capture()?;
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &swapped,
+            RecoveryBudget::default(),
+        )?;
+        assert_eq!(target.note_document(alpha)?.title.as_deref(), Some("beta"));
+        assert_eq!(target.note_document(beta)?.title.as_deref(), Some("alpha"));
+        recover_vault_window(
+            &target,
+            &materializer,
+            &path,
+            &swapped,
+            RecoveryBudget::default(),
+        )?;
+        assert!(reader.set_note_title(outside, " BETA ").is_err());
+        assert!(reader.set_note_title(outside, "ALPHA").is_err());
+        target
+            .memory(owner, EdgeActorClass::Human)
+            .set_note_title(outside, "outside")
+            .expect("outside title");
+        set(alpha, "temporary");
+        set(beta, "beta");
+        set(alpha, "outside");
+        let conflict = capture()?;
+        assert!(
+            recover_vault_window(
+                &target,
+                &materializer,
+                &path,
+                &conflict,
+                RecoveryBudget::default()
+            )
+            .is_err()
+        );
+        assert_eq!(target.note_document(alpha)?.title.as_deref(), Some("beta"));
+        assert_eq!(target.note_document(beta)?.title.as_deref(), Some("alpha"));
+        assert_eq!(
+            target.note_document(outside)?.title.as_deref(),
+            Some("outside")
+        );
+        assert!(reader.set_note_title(outside, " BETA ").is_err());
+        assert!(reader.set_note_title(outside, "ALPHA").is_err());
+    }
     Ok(())
 }
 
@@ -844,5 +1321,204 @@ fn canonical_adapter_recovery_binds_merge_target_to_displayed_proposal() -> Resu
     let mut orphan = snapshot;
     orphan.note_forks.retain(|row| row.fork != fork);
     assert!(orphan.validate().is_err());
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_RECEIPT_RECORD};
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::map_insert_bytes;
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window::forward_rematerialize;
+    use std::collections::BTreeMap;
+
+    #[derive(serde::Serialize)]
+    struct Envelope<'a> {
+        intent_id: [u8; 32],
+        receipt: &'a ReceiptRecord,
+    }
+
+    let dir = tempfile::tempdir()?;
+    let source = Vault::open(dir.path(), VaultConfig::default())?;
+    let at = 1_788_220_800_u64; // 2026-09-01, within the canonical window.
+    let intent_id = [0x92_u8; 32];
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.outbound.receipt_record.v1\0");
+    hash.update(&intent_id);
+    let mut id_bytes = [0_u8; 16];
+    id_bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+    id_bytes[6] = (id_bytes[6] & 0x0f) | 0x70;
+    id_bytes[8] = (id_bytes[8] & 0x3f) | 0x80;
+    let receipt_id = EntityId::from_bytes(id_bytes)?;
+    let receipt = ReceiptRecord {
+        receipt_id: format!(
+            "outbound:suppression:{}",
+            crate::entity_id::bytes_to_hex_lower(&intent_id)
+        ),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: at,
+        actor: Some("agent".to_owned()),
+        on_behalf_of: None,
+        outcome: "suppressed".to_owned(),
+        job_ref: None,
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields: BTreeMap::from([
+            ("suppression".to_owned(), "dedupe".to_owned()),
+            ("dedupe_key".to_owned(), "one-followup".to_owned()),
+        ]),
+    };
+    let body = rmp_serde::to_vec_named(&Envelope {
+        intent_id,
+        receipt: &receipt,
+    })
+    .map_err(|_| Error::InvariantViolation("test receipt envelope"))?;
+    source.with_write_txn(|txn| {
+        source
+            .batch_in()
+            .put_replicated(
+                &receipt_id,
+                ENTITY_TYPE_RECEIPT_RECORD,
+                TimeRange { start: at, end: at },
+                at,
+                &body,
+            )
+            .apply(txn)
+    })?;
+    let sibling = EntityId::now();
+    source.put_entity(
+        &sibling,
+        ENTITY_TYPE_ASSET,
+        TimeRange { start: at, end: at },
+        at,
+        b"unrelated asset",
+    )?;
+
+    let window = WindowKey::new("2026-09");
+    let doc = create_window_doc("canonical-suppression", &window);
+    canonical::insert(
+        &doc,
+        "entities",
+        &receipt_id.to_hex(),
+        &source.get_raw(&receipt_id)?.ok_or(Error::EntityNotFound)?,
+    )?;
+    canonical::insert(
+        &doc,
+        "entities",
+        &sibling.to_hex(),
+        &source.get_raw(&sibling)?.ok_or(Error::EntityNotFound)?,
+    )?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: at,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    map_insert_bytes(&doc.get_map("tombstones"), &receipt_id.to_hex(), &tombstone)?;
+    doc.commit();
+    forward_rematerialize(&source, &doc, &Materializer::new(), &window)?;
+    assert!(
+        source
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|row| row.receipt_id == receipt.receipt_id)
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&source)?
+            .iter()
+            .any(
+                |(_, row)| row.container == crate::sync::QuarantineContainer::Tombstones
+                    && row.reason_code == "MaintenanceKindNotWritable"
+            )
+    );
+
+    let captured = capture_canonical_window(&source, "2026-09", &doc)?;
+    assert!(
+        captured
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *receipt_id.as_bytes())
+    );
+    assert!(
+        !captured
+            .tombstones
+            .iter()
+            .any(|row| row.id == *receipt_id.as_bytes())
+    );
+    let encoded = captured.encode()?;
+    let decoded = CanonicalSnapshot::decode(&encoded)?;
+    let restored_doc = rebuild_vault_window_from_canonical(&decoded)?;
+    let receiver_dir = tempfile::tempdir()?;
+    let receiver = Vault::open(receiver_dir.path(), VaultConfig::default())?;
+    forward_rematerialize(&receiver, &restored_doc, &Materializer::new(), &window)?;
+    assert_eq!(
+        receiver.get(&sibling)?.as_deref(),
+        Some(b"unrelated asset".as_slice())
+    );
+    assert!(
+        receiver
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|row| row.receipt_id == receipt.receipt_id)
+    );
+
+    // A hostile type-change remains in the CRDT map after the shared write
+    // door quarantines it. It must not become a successful canonical artifact.
+    crate::sync::loro_support::map_delete(&doc.get_map("tombstones"), &receipt_id.to_hex())?;
+    let original = source.get_raw(&receipt_id)?.ok_or(Error::EntityNotFound)?;
+    let mut rejected_asset = original.clone();
+    rejected_asset[0] = ENTITY_TYPE_ASSET;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &receipt_id.to_hex(),
+        &rejected_asset,
+    )?;
+    doc.commit();
+    forward_rematerialize(&source, &doc, &Materializer::new(), &window)?;
+    assert_eq!(source.get_raw(&receipt_id)?, Some(original.clone()));
+    assert!(
+        crate::sync::quarantine::quarantined_records(&source)?
+            .iter()
+            .any(
+                |(_, row)| row.container == crate::sync::QuarantineContainer::Entities
+                    && row.reason_code == "SuppressionReceiptDivergence"
+            )
+    );
+    assert!(
+        capture_canonical_window(&source, "2026-09", &doc).is_err(),
+        "a rejected ASSET at a receipt ID cannot become an audit-free snapshot"
+    );
+
+    // Removal without a tombstone also lacks delete authority. Capture names
+    // the source vault's validated receipt index, restores its absent CRDT
+    // carrier, then rebuilds that one event on a fresh vault.
+    crate::sync::loro_support::map_delete(&doc.get_map("entities"), &receipt_id.to_hex())?;
+    doc.commit();
+    let removed = capture_canonical_window(&source, "2026-09", &doc)?;
+    assert!(
+        removed
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *receipt_id.as_bytes() && row.blob == original)
+    );
+    let rebuilt =
+        rebuild_vault_window_from_canonical(&CanonicalSnapshot::decode(&removed.encode()?)?)?;
+    let missing_dir = tempfile::tempdir()?;
+    let fresh = Vault::open(missing_dir.path(), VaultConfig::default())?;
+    forward_rematerialize(&fresh, &rebuilt, &Materializer::new(), &window)?;
+    assert_eq!(
+        fresh.get(&sibling)?.as_deref(),
+        Some(b"unrelated asset".as_slice())
+    );
+    assert!(
+        fresh
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|row| row.receipt_id == receipt.receipt_id)
+    );
     Ok(())
 }

@@ -379,7 +379,7 @@ impl<'a> AgentDispatcher<'a> {
         self.dispatchable_definition_in_txn(&txn, target)
     }
 
-    pub(super) fn dispatchable_definition_in_txn(
+    pub(crate) fn dispatchable_definition_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         target: &AgentDispatchTarget,
@@ -506,7 +506,7 @@ impl<'a> AgentDispatcher<'a> {
             )));
         }
         if parent_attempt.is_some() {
-            if id != parent_project && project.parent.as_deref() != Some(&parent_project.to_hex()) {
+            if id != parent_project && !project.parents.contains(&parent_project.to_hex()) {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "project is not a child of the parent project",
                 )));

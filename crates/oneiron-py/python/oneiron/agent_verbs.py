@@ -6,8 +6,13 @@ class TasksVerbs:
         return self._call("tasks_create", spec)
     def update(self, spec):
         return self._call("tasks_update", spec)
-    def ask(self, spec):
-        return self._call("tasks_ask", spec)
+    def ask(self, spec_or_who, what=None, until=None, default="ask_me"):
+        if what is None:
+            input = spec_or_who
+        else:
+            who = {"people": [spec_or_who]} if isinstance(spec_or_who, str) else {"people": list(spec_or_who)} if isinstance(spec_or_who, (set, list, tuple)) else spec_or_who
+            input = {"who": who, "what": what, "until": until, "default": default}
+        return self._call("tasks_ask", input)
     def wait(self, handle, step_key="sdk.wait"):
         return self._call("tasks_wait", {"handle": handle, "step_key": step_key})
     def answer(self, handle, word):
@@ -21,6 +26,14 @@ class RoomsVerbs:
         return self._call("rooms_list", {})
     def messages(self, room_ref, after=None, limit=None):
         return self._call("rooms_messages", {"room_ref": room_ref, "after": after, "limit": limit})
+    def render(self, room_ref):
+        return self._call("rooms_render", {"room_ref": room_ref})
+    def find(self, room_ref, after=None, limit=None):
+        return self._call("rooms_find", {"room_ref": room_ref, "after": after, "limit": limit})
+    def get(self, room_ref, turn_ref):
+        return self._call("rooms_get", {"room_ref": room_ref, "turn_ref": turn_ref})
+    def trunk(self, room_ref, turn_ref):
+        return self._call("rooms_trunk", {"room_ref": room_ref, "turn_ref": turn_ref})
     def claim(self, room_ref, turn_ref):
         return self._call("rooms_claim", {"room_ref": room_ref, "turn_ref": turn_ref})
     def speak(self, spec):

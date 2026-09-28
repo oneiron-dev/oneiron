@@ -143,7 +143,7 @@
       "name": "tasks.create",
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
-      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(crate::unix_seconds_now())))?",
+      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
       "scope": "Write",
       "mcp": "tool-first",
       "mcp_fields": {
@@ -293,6 +293,34 @@
           "format": "Option<String>"
         },
         "output": "MemoryPack"
+      }
+    },
+    {
+      "name": "export",
+      "input": "crate::memory::ExportOptions",
+      "output": "crate::memory::MemoryExport",
+      "call": "memory.export(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "owner_grade": true
+      },
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "assemble": true,
+        "args": [
+          {
+            "name": "format",
+            "kind": "format"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Exports the full vault through the shared five-format serializer.\n",
+          "ts": "/** Exports the live vault as toon (default), md, json, yaml, or txt. */",
+          "py": "Exports the live vault through the five-format serializer."
+        }
       }
     },
     {
@@ -471,10 +499,56 @@
       }
     },
     {
+      "name": "can",
+      "input": "crate::task_verb::sdk::TaskCanAskRequest",
+      "output": "crate::task_verb::TaskAskPreflight",
+      "call": "memory.tasks_can_ask(&input.ask)?",
+      "scope": "Read",
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Read-only ask preflight or partial answer evidence.\n",
+          "ts": "/** Read-only ask routing or attributed partial answers. */",
+          "py": "Read-only ask routing or attributed partial answers."
+        }
+      }
+    },
+    {
+      "name": "peek",
+      "input": "crate::task_verb::TaskAskHandle",
+      "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
+      "call": "memory.tasks_ask_peek(input)?",
+      "scope": "Read",
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Read-only ask preflight or partial answer evidence.\n",
+          "ts": "/** Read-only ask routing or attributed partial answers. */",
+          "py": "Read-only ask routing or attributed partial answers."
+        }
+      }
+    },
+    {
       "name": "tasks.ask",
-      "input": "crate::task_verb::TaskAskSpec",
+      "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
-      "call": "memory.tasks_ask(&input)?",
+      "call": "memory.tasks_ask(&input.into_spec()?)?",
       "scope": "Write",
       "mcp_fields": {
         "spec": "$"
@@ -551,6 +625,56 @@
         "rows": "rows",
         "cursor": "next_after"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.render",
+      "input": "RoomRefRequest",
+      "output": "Vec<String>",
+      "call": "memory.rooms_render_threads(crate::EntityId::from_hex(&input.room_ref)?, crate::workspace_roster::RoomThreadPolicy::default())?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref"},
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.find",
+      "input": "RoomRequest",
+      "output": "crate::workspace_roster::RoomThreadPage",
+      "call": "memory.rooms_find_threads_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "after"},
+      "mcp_required_fields": ["room_ref"],
+      "mcp": "tool-first",
+      "page": {"rows": "rows", "cursor": "next_after"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.get",
+      "input": "RoomTurnRequest",
+      "output": "Option<crate::workspace_roster::RoomThread>",
+      "call": "memory.rooms_get_thread(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
+      "mcp": "tool-first",
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "rooms.trunk",
+      "input": "RoomTurnRequest",
+      "output": "crate::workspace_roster::RoomTrunk",
+      "call": "memory.rooms_trunk(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
+      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -720,16 +844,6 @@
       "uniffi": {
         "args": {
           "input": "HabitCheckinInput"
-        },
-        "output": "EntityRefReceipt"
-      },
-      "context": "definition"
-    },
-    {
-      "name": "put_companion_record",
-      "uniffi": {
-        "args": {
-          "input": "CompanionRecordInput"
         },
         "output": "EntityRefReceipt"
       },

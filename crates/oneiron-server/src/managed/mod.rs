@@ -35,8 +35,11 @@ mod host;
 mod isolation;
 mod ledger;
 mod listener;
+mod peer;
 mod shed;
+pub(crate) use self::peer::UnixPeer;
 mod state_serve;
+pub(crate) use state_serve::ManagedWidenHolder;
 mod vault_gates;
 
 pub use self::args::{ManagedArgs, ManagedError};

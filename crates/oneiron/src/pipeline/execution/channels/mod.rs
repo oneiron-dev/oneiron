@@ -24,7 +24,9 @@ use super::super::capabilities::{memory_candidate_count, partition_capabilities}
 use super::super::channels::execute_phonetic;
 use super::super::corpus_filter::CorpusFilter;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
-use super::super::trace::{record_ppr_cache_outcome, retrieval_trace_fused_scores};
+use super::super::trace::{
+    capture_replay_inputs, record_ppr_cache_outcome, retrieval_trace_fused_scores,
+};
 use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
@@ -46,6 +48,14 @@ struct SnapshotInputs<'a> {
     recency: Option<u64>,
     explicit_time_dependent_now: Option<u64>,
     overrides: HydeAttemptOverrides<'a>,
+}
+
+/// One snapshot's actor-bound NOTE admission and the gates that share it.
+struct ScopedChannelAdmission {
+    private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
+    accumulator: ChannelAccumulator,
+    claim_gate: ClaimStatusGateCache,
+    widening_probe: ClaimStatusGateCache,
 }
 
 impl PipelineBuilder<'_> {
@@ -82,6 +92,10 @@ impl PipelineBuilder<'_> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "replay inputs must be captured under the same retrieval read transaction as the trace"
+    )]
     fn run_retrieval_snapshot(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -112,25 +126,23 @@ impl PipelineBuilder<'_> {
         let mut diagnostics = self.retrieval_diagnostics();
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
+        let capture_replay_enabled = self.captures_replay();
         let trace_candidate_limit = self.result_limit;
         let mut telemetry_signals = self.telemetry_signals();
         if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
             telemetry_signals.push(RetrievalSignal::Temporal);
         }
         {
-            let mut acc = ChannelAccumulator::new(
-                capture_retrieval_trace,
-                trace_candidate_limit,
-                authority_filter.include_stale,
-            );
+            let ScopedChannelAdmission {
+                private_note_ids,
+                accumulator: mut acc,
+                mut claim_gate,
+                widening_probe: mut claim_gate_widening_probe,
+            } = self.scoped_channel_admission(rtxn, authority_filter)?;
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
-            let mut claim_gate = ClaimStatusGateCache {
-                include_stale: authority_filter.include_stale,
-                ..ClaimStatusGateCache::default()
-            };
             let mut deferred_ppr_cache_writes = Vec::new();
             let mut community_diversity = None;
             let mut community_trace_identity = None;
@@ -157,10 +169,6 @@ impl PipelineBuilder<'_> {
                 .map(|resolved| &resolved.active_set);
             // Ordinary text uses D19 widening; candidate-filtered text instead
             // applies D19 during bounded scoring and needs no corpus-sized probe.
-            let mut claim_gate_widening_probe = ClaimStatusGateCache {
-                include_stale: authority_filter.include_stale,
-                ..ClaimStatusGateCache::default()
-            };
             let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
                 rtxn,
                 bm25_config,
@@ -241,6 +249,7 @@ impl PipelineBuilder<'_> {
                     filter_config,
                     authority_filter,
                     text_scope_widening_active,
+                    private_note_ids: private_note_ids.as_deref(),
                     claim_gate_widening_probe,
                 },
                 &mut acc,
@@ -363,7 +372,8 @@ impl PipelineBuilder<'_> {
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
-                    read_suppressed: metadata_cache.read_suppressed.len(),
+                    read_suppressed: metadata_cache
+                        .countable_suppressed(&self.vault.store, rtxn)?,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
@@ -373,8 +383,24 @@ impl PipelineBuilder<'_> {
                     access_factors: HashMap::new(),
                     rerank_merged_components: None,
                     retrieval_trace: None,
+                    replay_inputs: capture_replay_enabled.then(|| {
+                        capture_replay_inputs(
+                            self,
+                            bm25_config,
+                            blend_weights,
+                            authority_filter,
+                            world_authority.as_ref(),
+                            hyde_expansion,
+                            overrides.extra_text_queries,
+                            overrides.widen_channel_limits,
+                            overrides.skip_ret01_abstain,
+                            occurred_range,
+                            temporal_now,
+                            rerank_query,
+                        )
+                    }),
                     ppr_expand_executed: false,
-                    early_empty_no_telemetry: true,
+                    early_empty_no_telemetry: !capture_replay_enabled,
                 });
             }
 
@@ -613,6 +639,22 @@ impl PipelineBuilder<'_> {
             } else {
                 None
             };
+            let replay_inputs = capture_replay_enabled.then(|| {
+                capture_replay_inputs(
+                    self,
+                    bm25_config,
+                    blend_weights,
+                    authority_filter,
+                    world_authority.as_ref(),
+                    hyde_expansion,
+                    overrides.extra_text_queries,
+                    overrides.widen_channel_limits,
+                    overrides.skip_ret01_abstain,
+                    occurred_range,
+                    temporal_now,
+                    rerank_query,
+                )
+            });
             let mut revisions = HashMap::new();
             for hit in &scores {
                 if let Some(revision) = self.vault.indexed_revision_in_txn(rtxn, &hit.id)? {
@@ -626,7 +668,7 @@ impl PipelineBuilder<'_> {
                 capabilities,
                 pending_vectors,
                 claim_gate,
-                read_suppressed: metadata_cache.read_suppressed.len(),
+                read_suppressed: metadata_cache.countable_suppressed(&self.vault.store, rtxn)?,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
                 total_in_scope,
@@ -636,10 +678,47 @@ impl PipelineBuilder<'_> {
                 access_factors: blend_access_factors,
                 rerank_merged_components,
                 retrieval_trace,
+                replay_inputs,
                 ppr_expand_executed,
                 early_empty_no_telemetry: false,
             })
         }
+    }
+
+    fn scoped_channel_admission(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+    ) -> Result<ScopedChannelAdmission> {
+        let private_note_ids = self
+            .scoped_note_reader
+            .as_ref()
+            .map(|key| {
+                self.vault
+                    .scoped_read(key.clone())
+                    .diary_candidates_in(rtxn, filter)
+                    .map(std::sync::Arc::new)
+            })
+            .transpose()?;
+        let mut accumulator = ChannelAccumulator::new(
+            self.capture_retrieval_trace,
+            self.result_limit,
+            filter.include_stale,
+        );
+        accumulator.trace_claim_gate.private_note_ids = private_note_ids.clone();
+        let new_gate = || ClaimStatusGateCache {
+            include_stale: filter.include_stale,
+            private_note_ids: private_note_ids.clone(),
+            ..ClaimStatusGateCache::default()
+        };
+        let claim_gate = new_gate();
+        let widening_probe = new_gate();
+        Ok(ScopedChannelAdmission {
+            private_note_ids,
+            accumulator,
+            claim_gate,
+            widening_probe,
+        })
     }
 
     fn prepare_pack_candidates(
@@ -651,7 +730,13 @@ impl PipelineBuilder<'_> {
         skip_ret01_abstain: bool,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
         let mut capabilities = if self.context_pack_budget.is_some() {
-            partition_capabilities(scores, &self.vault.store, rtxn)?
+            partition_capabilities(
+                scores,
+                self.vault,
+                rtxn,
+                signal_components,
+                self.skill_executor.as_deref(),
+            )?
         } else {
             Vec::new()
         };

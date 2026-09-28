@@ -1,8 +1,8 @@
 //! Reverse rematerialization plus skip/policy predicates and carrier removal.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
-use super::bridge::{self, BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
+use super::bridge::{self, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
     map_contains_binary, map_delete, map_for_each_tombstone_value, map_for_each_value_bytes,
     map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
@@ -14,7 +14,6 @@ use super::window_packing_excludes_entity;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
@@ -51,6 +50,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     let mut count = 0u32;
     let mut wrote_any = false;
+    let mut mirror_sources = BTreeMap::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
@@ -69,7 +69,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
     });
     for (id, key, tombstone) in entity_tombstones {
-        let Some(raw) = vault.get_raw_unsealed(&id)? else {
+        let Some((raw, source_revision)) = vault.get_raw_and_revision_unsealed(&id)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -94,6 +94,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let hex_id = id.to_hex();
         if !map_contains_binary(&entities_map, &hex_id) {
             map_insert_bytes(&entities_map, &hex_id, &raw)?;
+            if let Some(revision) = source_revision {
+                mirror_sources.insert(id, revision);
+            }
             wrote_any = true;
             count += 1;
         }
@@ -125,7 +128,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        let Some(raw) = vault.get_raw_unsealed(id)? else {
+        let Some((raw, source_revision)) = vault.get_raw_and_revision_unsealed(id)? else {
             continue;
         };
 
@@ -154,7 +157,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        if skip_companion_register_sync_mirror(&raw)? {
+        if skip_companion_register_sync_mirror(&raw) {
             let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
@@ -176,7 +179,14 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // construction when the key carries nothing (`map_get_bytes` →
             // `None`), so hoisting it past the short circuit is semantics-
             // preserving.
-            let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw);
+            let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw)
+                || crate::sync::receipt_ingest::local_receipt_dominates(
+                    vault,
+                    window_key,
+                    &entities_map,
+                    id,
+                    &raw,
+                )?;
             if !map_contains_binary(&entities_map, &hex_id) || dominates {
                 // Pack rows mirror the canonical wire header/body (origin
                 // handle/generation, exact identity/payload), not the
@@ -186,6 +196,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
                     map_insert_bytes(&entities_map, hex_id.as_str(), &canonical)?;
                 } else {
                     map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
+                }
+                if let Some(revision) = source_revision {
+                    mirror_sources.insert(*id, revision);
                 }
                 wrote_any = true;
                 count += 1;
@@ -276,25 +289,21 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     // Commit all bridge writes with origin tag
     if wrote_any {
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+        let origin = bridge::origin_for_mirrors(&mirror_sources)?;
+        doc.commit_with(CommitOptions::new().origin(&origin));
     }
     Ok(count)
 }
 
-pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
+pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return Ok(false);
+        return false;
     };
-    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
-        return Ok(true);
-    }
-    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
-        || !crate::companion::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-    {
-        return Ok(false);
-    }
-    decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-        .map(|record| record.sensitivity == crate::federation::Sensitivity::Restricted)
+    header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        || crate::companion::is_retired_identity_carrier(
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )
 }
 
 /// Local-only diagnostics and credentials refused by the same-vault locality predicate.
@@ -349,7 +358,7 @@ fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<
     let Some(raw) = vault.get_raw_unsealed(id)? else {
         return Ok(false);
     };
-    skip_companion_register_sync_mirror(&raw)
+    Ok(skip_companion_register_sync_mirror(&raw))
 }
 
 /// Removes an entity's already-present CRDT body and every incident edge.

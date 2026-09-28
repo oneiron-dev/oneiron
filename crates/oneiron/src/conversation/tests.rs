@@ -42,6 +42,8 @@ fn record(vault: &Vault, room: EntityId, actor: WriteActor, at: u64) -> AppendRe
         conversation: room,
         parent: vault.head(&room).unwrap(),
         reply_to: None,
+        address: crate::conversation_dag::AddressMode::Broadcast,
+        recipients: vec![],
         kind: crate::registry::ENTITY_TYPE_TURN,
         session: None,
         text: vec![],
@@ -170,6 +172,52 @@ fn a_conversation_cannot_be_created_over_a_deleted_shell() {
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ConversationState);
     assert!(err.to_string().contains("conversation already exists"));
+}
+
+#[test]
+fn direct_addressing_never_restricts_room_visibility() {
+    let (_dir, vault, actor, room, bob) = fixture();
+    let outsider = EntityId::now();
+    vault
+        .put_entity(
+            &outsider,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 0, end: 0 },
+            0,
+            &encode(&serde_json::json!({})).unwrap(),
+        )
+        .unwrap();
+    vault
+        .join_member(room, bob, actor, 3, HistoryChoice::None)
+        .unwrap();
+    let mut message = record(&vault, room, actor, 4);
+    message.address = crate::conversation_dag::AddressMode::Direct;
+    message.recipients = vec![outsider];
+    let id = vault.append_dag_record(&message).unwrap().id;
+    assert!(audience_admits(&vault, id, bob).unwrap());
+    assert_eq!(
+        vault.targets(&id, EdgeKind::AddressedTo, None).unwrap(),
+        [outsider]
+    );
+}
+
+#[test]
+fn hard_deleted_empty_room_id_cannot_be_recreated() {
+    let (_dir, vault, actor, room, _bob) = fixture();
+    vault
+        .delete_entity_with_options(&room, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
+    let err = vault
+        .create_conversation(room, &ConversationBody::default(), actor, 2)
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::ConversationState);
+    assert!(vault.get(&room).unwrap().is_none());
+    let txn = vault.store.env.read_txn().unwrap();
+    assert!(
+        membership::rows_in(&vault.store, &txn, room)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

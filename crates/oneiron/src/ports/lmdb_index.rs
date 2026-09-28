@@ -12,13 +12,16 @@ use crate::store::ShortIdAliasTarget;
 use crate::vault::require_key_len;
 use crate::{EntityId, HydratedShortId, Vault};
 use heed::{RoTxn, RwTxn};
-impl RetrievalIndex for Vault {
-    fn port_retrieval_vector_search_quality(
+impl Vault {
+    /// Actor-bound diary ids are evaluated by the scoped query in this read
+    /// transaction. The ownerless RetrievalIndex trait always passes None.
+    pub(crate) fn scoped_vector_search_quality_in_txn(
         &self,
         txn: &RoTxn<'_>,
         query: &[f32],
         limit: usize,
         skip_rescore: bool,
+        private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
     ) -> Result<Vec<ScoredEntity>> {
         let population = crate::hnsw::hnsw_entity_count(&self.store, txn)?;
         // A nonzero request still validates an apparently empty index.
@@ -32,13 +35,25 @@ impl RetrievalIndex for Vault {
                 requested,
                 skip_rescore,
             )?;
-            let mut visible = filter_results(self, txn, rows)?;
+            let mut visible = filter_results(self, txn, rows, private_note_ids)?;
             visible.truncate(limit);
             if visible.len() >= limit || requested >= population {
                 return Ok(visible);
             }
             requested = requested.saturating_mul(2).max(1).min(population);
         }
+    }
+}
+
+impl RetrievalIndex for Vault {
+    fn port_retrieval_vector_search_quality(
+        &self,
+        txn: &RoTxn<'_>,
+        query: &[f32],
+        limit: usize,
+        skip_rescore: bool,
+    ) -> Result<Vec<ScoredEntity>> {
+        self.scoped_vector_search_quality_in_txn(txn, query, limit, skip_rescore, None)
     }
 
     fn port_retrieval_phonetic_upsert(
@@ -106,19 +121,21 @@ impl RetrievalIndex for Vault {
         let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
         let rows =
             crate::bm25::search_text(&self.store, txn, &self.analyzer, &config, query, limit)?;
-        filter_results(self, txn, rows)
+        filter_results(self, txn, rows, None)
     }
 }
 fn filter_results(
     vault: &Vault,
     txn: &RoTxn<'_>,
     rows: Vec<ScoredEntity>,
+    private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
 ) -> Result<Vec<ScoredEntity>> {
     let mut result = Vec::new();
     for row in rows {
         if !vault.port_tombstone_is_deleted(txn, &row.id)?
             && !stale_in_txn(&vault.store, txn, &row.id)?
-            && crate::note::ordinary_entity_visible(&vault.store, txn, &row.id)?
+            && (private_note_ids.is_some_and(|ids| ids.contains(&row.id))
+                || crate::note::ordinary_entity_visible(&vault.store, txn, &row.id)?)
         {
             result.push(row);
         }
@@ -279,6 +296,47 @@ impl TombstoneStore for Vault {
 }
 
 impl super::RetrievalIndexMaintenance for Vault {
+    fn port_retrieval_clear_text_for_soft_erase(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::bm25::deindex_text(&self.store, txn, id)
+    }
+
+    fn port_retrieval_clear_phonetic_for_soft_erase(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::batch::delete_from_phonetic_postings(&self.store, txn, id)
+    }
+
+    fn port_retrieval_clear_vector_for_soft_erase(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let had_vector = self.store.vectors.delete(txn, id.as_bytes())?;
+        crate::hnsw::hnsw_deindex(&self.store, txn, id)?;
+        Ok(had_vector)
+    }
+
+    fn port_retrieval_delete_scope_exists(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        Ok(self.store.vectors.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
+            || self
+                .store
+                .text_doc_field_lengths
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self
+                .store
+                .phonetic_forward
+                .get(txn, id.as_bytes())?
+                .is_some())
+    }
     fn port_retrieval_validate_rebuild(&self, txn: &RoTxn<'_>) -> Result<()> {
         for row in self.store.vectors.iter(txn)? {
             let (id, value) = row?;

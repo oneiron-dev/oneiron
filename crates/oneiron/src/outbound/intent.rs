@@ -20,6 +20,8 @@ pub struct OutboundIntent {
     pub content_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// Vault-wide semantic identity. Producers include recipient/principal scope
+    /// in this key when the same topic may be delivered to different people.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dedupe_key: Option<String>,
     pub intent_source: String,
@@ -99,6 +101,8 @@ impl OutboundIntentDraft {
         self
     }
 
+    /// Use the same key for repeat attempts at one semantic action, across
+    /// channels; include any recipient scope needed to distinguish actions.
     #[must_use]
     pub fn dedupe_key(mut self, dedupe_key: impl Into<String>) -> Self {
         self.dedupe_key = Some(dedupe_key.into());
@@ -116,6 +120,8 @@ pub enum OutboundIntentSource {
     GapQueue,
     /// In-session agent action.
     AgentImmediate,
+    /// A durable record transition, such as an e-sign terminal notice.
+    RecordTransition,
 }
 
 impl OutboundIntentSource {
@@ -125,6 +131,7 @@ impl OutboundIntentSource {
             Self::Commitment => "commitment",
             Self::GapQueue => "gap_queue",
             Self::AgentImmediate => "agent_immediate",
+            Self::RecordTransition => "record_transition",
         }
     }
 
@@ -134,6 +141,7 @@ impl OutboundIntentSource {
             "commitment" | "commitment_timer_wake" => Some(Self::Commitment),
             "gap_queue" => Some(Self::GapQueue),
             "agent_immediate" => Some(Self::AgentImmediate),
+            "record_transition" => Some(Self::RecordTransition),
             _ => None,
         }
     }
@@ -170,6 +178,14 @@ impl OutboundIntentTrigger {
     pub fn agent_immediate(trigger_ref: impl Into<String>) -> Self {
         Self {
             source: OutboundIntentSource::AgentImmediate,
+            trigger_ref: trigger_ref.into(),
+            job_ref: None,
+        }
+    }
+    #[must_use]
+    pub fn record_transition(trigger_ref: impl Into<String>) -> Self {
+        Self {
+            source: OutboundIntentSource::RecordTransition,
             trigger_ref: trigger_ref.into(),
             job_ref: None,
         }
