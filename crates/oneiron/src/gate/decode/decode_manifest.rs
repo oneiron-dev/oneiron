@@ -8,6 +8,7 @@ use super::decode_docedit_resource::parse_docedit_resource_policy;
 use super::experiment_selection::parse_experiment_selection;
 use crate::autoreason_campaign::selection::SelectionPolicyRow;
 use crate::gate::PackInstallPolicy;
+use crate::gate::SkillEditGoalPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
     PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
@@ -28,8 +29,8 @@ use crate::gate::constants::{
     POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
     POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
     POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_TEACHER_PROBE_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_TEACHER_PROBE_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
@@ -72,6 +73,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) source_trust: SourceTrustCeiling,
     pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
+    pub(in crate::gate) skill_edit_goal: Option<SkillEditGoalPolicy>,
     pub(in crate::gate) federation_grant_rows: Vec<crate::federation::grant_policy::GrantPolicyRow>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
@@ -155,6 +157,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SOURCE_TRUST_KEY
                 | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
+                | POLICY_SKILL_EDIT_GOAL_KEY
                 | crate::federation::grant_policy::ROWS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_PRECEDENCE_KEY
@@ -241,6 +244,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => std::collections::BTreeSet::new(),
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_single_valued_predicates(value)?,
+    };
+    let skill_edit_goal = match single_map_value(&entries, POLICY_SKILL_EDIT_GOAL_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(SkillEditGoalPolicy::decode(value.clone())?),
     };
     let scoped_grants = match single_map_value(&entries, POLICY_SCOPED_GRANTS_KEY) {
         MapValue::Missing => Vec::new(),
@@ -584,6 +592,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         delegated_grants,
         source_trust,
         scoped_grants,
+        skill_edit_goal,
         federation_grant_rows,
         single_valued_predicates,
         owner_policy_rows,
