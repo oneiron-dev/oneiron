@@ -537,7 +537,6 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
             ),
         ]),
         tier_floor: AuthorityTier::Software,
-        migrated_roots: BTreeSet::new(),
         genesis_recovery_dismissed: false,
         recovery_redundancy_established: false,
         tier_floor_events: BTreeMap::new(),
