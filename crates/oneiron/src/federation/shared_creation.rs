@@ -49,7 +49,7 @@ fn role_preset(role: Role) -> Result<GrantPreset> {
         Role::Admin => GrantPreset::Admin,
         Role::Member => GrantPreset::Member,
         Role::Viewer => GrantPreset::ReadOnly,
-        Role::Auditor => GrantPreset::Audit,
+        Role::Auditor => GrantPreset::ReadOnly,
         Role::Delegate => {
             return Err(invalid(
                 "delegate needs a separately attenuated expiring grant",
@@ -128,12 +128,19 @@ impl Vault {
             if self.store.entities.get(&txn, member.as_bytes())?.is_none() {
                 return Err(Error::EntityNotFound);
             }
-            let grant = FederationGrant::new(
+            let role = if role == Role::Auditor {
+                Role::Viewer
+            } else {
+                role
+            };
+            let mut grant = FederationGrant::new(
                 FederationGrantScope::vault(vault_id),
                 member,
                 role,
                 role_preset(role)?,
             );
+            grant.authority_scope =
+                self.grant_default_scope_in_txn(&txn, role, vault_id, member)?;
             let id = EntityId::now();
             creation.grant_refs.push(id.to_hex());
             ops.push(BatchOp::Put {
@@ -152,33 +159,40 @@ impl Vault {
         }
         if preset.is_some() {
             let id = crate::gate::default_policy_manifest_id()?;
-            // Creation cannot overwrite policy the owner has already customized.
-            if self
-                .store
-                .entities
-                .get(&txn, id.as_bytes())?
-                .is_some_and(|raw| {
-                    raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                        != Some(crate::gate::default_policy_manifest().as_slice())
-                })
-            {
-                return Err(invalid("shared preset must precede customized policy"));
+            let default = crate::gate::default_policy_manifest();
+            match self.store.entities.get(&txn, id.as_bytes())? {
+                Some(raw)
+                    if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                        != Some(default.as_slice()) =>
+                {
+                    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("shared policy manifest header"))?;
+                    if header.entity_type != crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+                        return Err(invalid("shared policy id is not a policy manifest"));
+                    }
+                    // A customized vault policy remains authoritative; do not
+                    // overwrite its rows as a side effect of choosing a preset.
+                    creation.policy_ref = Some(id.to_hex());
+                }
+                _ => {
+                    // Defaults are ordinary editable stored policy, not a
+                    // second runtime policy engine.
+                    ops.push(BatchOp::Put {
+                        id,
+                        entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                        occurred: TimeRange {
+                            start: now,
+                            end: now,
+                        },
+                        learned_at: now,
+                        data: default,
+                        allow_maintenance: true,
+                        allow_reserved_predicate: false,
+                        hub_sync_imported: false,
+                    });
+                    creation.policy_ref = Some(id.to_hex());
+                }
             }
-            // Defaults are ordinary editable stored policy, not a second runtime policy engine.
-            ops.push(BatchOp::Put {
-                id,
-                entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                data: crate::gate::default_policy_manifest(),
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            });
-            creation.policy_ref = Some(id.to_hex());
         }
         apply_ops(
             &self.store,
@@ -196,12 +210,19 @@ impl Vault {
         txn.commit()?;
         Ok(creation)
     }
-    pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {
-        let txn = self.store.env.read_txn()?;
+    pub(crate) fn shared_vault_creation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<SharedVaultCreation>> {
         self.store
             .vault_meta
-            .get(&txn, CREATION_KEY)?
+            .get(txn, CREATION_KEY)?
             .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("shared creation decode")))
             .transpose()
+    }
+
+    pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {
+        let txn = self.store.env.read_txn()?;
+        self.shared_vault_creation_in_txn(&txn)
     }
 }

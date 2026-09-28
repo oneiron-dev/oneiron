@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
+use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };

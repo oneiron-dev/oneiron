@@ -967,3 +967,142 @@ fn exact_number_filters_preserve_representation_and_large_integer_precision() {
         );
     }
 }
+
+#[test]
+fn shared_keyed_writes_recheck_current_role_and_both_claim_positions() {
+    use crate::federation::{
+        FederationGrantPreset, FederationGrantRole, InitialSharedMember, ScopeAxis, ScopeId,
+        decode_federation_grant_body, encode_federation_grant_body,
+    };
+    use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+    use std::collections::BTreeSet;
+
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0xC1);
+    let member = put_person(&vault, 0xC2);
+    let viewer = put_person(&vault, 0xC3);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let created = vault
+        .initialize_shared_vault(
+            &authenticated,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: member,
+                    role: Some(FederationGrantRole::Member),
+                },
+                InitialSharedMember {
+                    member_ref: viewer,
+                    role: Some(FederationGrantRole::Viewer),
+                },
+            ],
+            1,
+        )
+        .unwrap();
+    let memory = vault.memory(member, EdgeActorClass::Human);
+    let key = address(&["shared"], "k");
+    let first = memory
+        .key_value_put(&input(&["shared"], "k", "one", 1))
+        .unwrap();
+    let second = memory
+        .key_value_put(&input(&["shared"], "k", "two", 2))
+        .unwrap();
+    let first_id = EntityId::from_hex(&first.item.revision).unwrap();
+    let current_id = EntityId::from_hex(&second.item.revision).unwrap();
+    assert_eq!(
+        vault.get_claim(&first_id).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    let (grant_id, mut grant) = created
+        .grant_refs
+        .iter()
+        .find_map(|hex| {
+            let id = EntityId::from_hex(hex).unwrap();
+            let raw = vault.get_raw(&id).unwrap().unwrap();
+            let grant =
+                decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                    .unwrap();
+            (grant.member_ref == member).then_some((id, grant))
+        })
+        .unwrap();
+    let set_grant = |grant: &crate::federation::FederationGrant| {
+        vault
+            .batch()
+            .put_replicated(
+                &grant_id,
+                ENTITY_TYPE_FEDERATION_GRANT,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                &encode_federation_grant_body(grant).unwrap(),
+            )
+            .commit()
+            .unwrap();
+    };
+    let current_raw = vault.get_raw(&current_id).unwrap();
+    let prior_raw = vault.get_raw(&first_id).unwrap();
+    let before_index = vault.claims_for_subject(&member).unwrap();
+    let before_receipts = memory.receipts(100).unwrap();
+    // A Viewer who originally wrote this key still cannot replace, replay or delete it.
+    grant.role = FederationGrantRole::Viewer;
+    grant.preset = FederationGrantPreset::ReadOnly;
+    grant.authority_scope = crate::federation::scope_codec::read_preset();
+    set_grant(&grant);
+    assert!(
+        memory
+            .key_value_put(&input(&["shared"], "k", "three", 3))
+            .is_err()
+    );
+    assert!(
+        memory
+            .key_value_put(&input(&["shared"], "k", "two", 2))
+            .is_err()
+    );
+    assert!(memory.key_value_delete(&key).is_err());
+    assert!(
+        vault
+            .memory(viewer, EdgeActorClass::Human)
+            .key_value_put(&input(&["shared"], "new", "viewer", 4))
+            .is_err()
+    );
+    assert_eq!(vault.get_raw(&current_id).unwrap(), current_raw);
+    assert_eq!(vault.get_raw(&first_id).unwrap(), prior_raw);
+    assert_eq!(vault.claims_for_subject(&member).unwrap(), before_index);
+    assert_eq!(memory.receipts(100).unwrap(), before_receipts);
+    assert_eq!(
+        memory.key_value_get(&key).unwrap().unwrap().value,
+        json!({"n": 2})
+    );
+    // A Member limited to another project cannot mutate the old default-project row
+    // or create a new default-project key through the same facade.
+    grant.role = FederationGrantRole::Member;
+    grant.preset = FederationGrantPreset::Member;
+    grant.authority_scope = crate::federation::grant_scope::membership_preset(grant.role);
+    grant.authority_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(EntityId::now())]));
+    set_grant(&grant);
+    assert!(memory.key_value_delete(&key).is_err());
+    assert!(
+        memory
+            .key_value_put(&input(&["shared"], "k", "four", 4))
+            .is_err()
+    );
+    assert!(
+        memory
+            .key_value_put(&input(&["shared"], "new", "member", 4))
+            .is_err()
+    );
+    assert_eq!(vault.get_raw(&current_id).unwrap(), current_raw);
+    assert_eq!(vault.claims_for_subject(&member).unwrap(), before_index);
+    assert_eq!(memory.receipts(100).unwrap(), before_receipts);
+}

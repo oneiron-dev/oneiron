@@ -194,7 +194,18 @@ impl Vault {
         let next = encode_value(&preset_value(&preset))?;
         let key = preset_key(workspace_ref);
         self.with_write_txn(|txn| {
-            require_workspace_authority_in_txn(self, txn, vault_id, authenticated_writer)?;
+            self.authorize_shared_vault_write_in_txn(
+                txn,
+                vault_id,
+                authenticated_writer,
+                &crate::federation::SharedVaultWrite::WorkspaceSettings,
+            )
+            .map_err(|error| match error {
+                Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+                    invalid("workspace settings require an admin write grant")
+                }
+                other => other,
+            })?;
             if self.store.vault_meta.get(txn, &key)?.as_deref() != Some(prior.as_slice()) {
                 return Err(invalid(
                     "workspace preset changed during rename; retry from current state",

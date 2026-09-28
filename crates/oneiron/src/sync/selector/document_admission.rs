@@ -52,7 +52,10 @@ pub(super) fn authorize_in_txn(
     if writer.is_some()
         && !matches!(
             grant.role,
-            FederationGrantRole::Owner | FederationGrantRole::Admin | FederationGrantRole::Member
+            FederationGrantRole::Owner
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Member
+                | FederationGrantRole::Delegate
         )
     {
         return Err(denied());
@@ -173,6 +176,12 @@ impl StoredSelection<'_, '_> {
         else {
             return Ok(None);
         };
+        // Role verbs gate peer writes on top of the stored authority scope.
+        if self.admission.verb == "write"
+            && !crate::federation::grant_allows_content_write(&self.admission.grant, &record)
+        {
+            return Ok(None);
+        }
         record.verbs = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([self
             .admission
             .verb
