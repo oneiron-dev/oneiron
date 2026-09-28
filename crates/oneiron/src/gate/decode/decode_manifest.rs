@@ -75,6 +75,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
+    pub(in crate::gate) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
@@ -143,6 +144,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | PACK_INSTALL_POLICY_KEY
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
+                | "booking_conversion"
                 | POLICY_HOSTED_TTS_KEY
 
                 | POLICY_SLIDE_REVIEW_KEY
@@ -310,6 +312,21 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(crate::gate::docx_budget::parse(value)?),
     };
+    let booking_conversion_rows = match single_map_value(&entries, "booking_conversion") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) if rows.len() <= 128 => rows
+            .iter()
+            .map(|row| {
+                let json: serde_json::Value = rmpv::ext::from_value(row.clone()).ok()?;
+                let parsed: crate::booking::BookingConversionPolicyRow =
+                    serde_json::from_value(json).ok()?;
+                parsed.validate().ok()?;
+                Some(parsed)
+            })
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
@@ -450,6 +467,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         pack_install_policy,
         room_thread,
         pptx_comment_limits,
+        booking_conversion_rows,
         hosted_tts,
         slide_review_policy,
         docedit_resource_policy,
