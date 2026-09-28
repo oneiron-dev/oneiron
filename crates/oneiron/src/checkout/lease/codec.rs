@@ -5,8 +5,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use super::types::{
-    CHECKOUT_LEASE_KEY_PREFIX, CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_RESULT_ID_DOMAIN,
-    CHECKOUT_SETTLEMENT_KEY_PREFIX, CHECKOUT_TOMBSTONE_KEY_PREFIX, CheckoutError, CheckoutId,
+    CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_RESULT_ID_DOMAIN, CheckoutError, CheckoutId,
     CheckoutLeaseAct, CheckoutLeaseState, CheckoutResult, CheckoutSettlementDisposition,
     CheckoutSettlementReceipt, CheckoutTaskClass,
 };
@@ -15,22 +14,109 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
 
-pub(crate) fn lease_key(id: CheckoutId) -> Vec<u8> {
-    format!(
-        "{}{}",
-        std::str::from_utf8(CHECKOUT_LEASE_KEY_PREFIX).expect("ASCII"),
-        id
-    )
-    .into_bytes()
+/// Checkout lease act. Key: hex32.
+pub(crate) const LEASE: SideTable<CheckoutId, CheckoutLeaseAct, Raw> =
+    SideTable::new(&side_table::CHECKOUT_LEASE);
+
+/// Retired checkout epoch high-water mark. Key: hex32.
+pub(in crate::checkout) const TOMBSTONE: SideTable<CheckoutId, TombstoneRow, Raw> =
+    SideTable::new(&side_table::CHECKOUT_TOMBSTONE);
+
+/// Checkout settlement receipt. Key: hex32 + decimal + hex64.
+pub(crate) const SETTLEMENT: SideTable<SettlementKey, CheckoutSettlementReceipt, Raw> =
+    SideTable::new(&side_table::CHECKOUT_SETTLEMENT);
+
+/// [`SETTLEMENT`]'s key: the checkout id's hex text, a literal `:`, the epoch as decimal text, a
+/// literal `:`, then the result identity's hex text — the byte layout the module has always
+/// spelled (never decoded back into fields: every reader already holds the exact key it wrote).
+pub(in crate::checkout) struct SettlementKey {
+    pub(in crate::checkout) checkout_id: CheckoutId,
+    pub(in crate::checkout) epoch: u64,
+    pub(in crate::checkout) identity: [u8; 32],
 }
+impl SideKey for SettlementKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.checkout_id.encode_into(out);
+        out.push(b':');
+        out.extend_from_slice(self.epoch.to_string().as_bytes());
+        out.push(b':');
+        for byte in self.identity {
+            out.extend_from_slice(format!("{byte:02x}").as_bytes());
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let text = std::str::from_utf8(bytes).ok()?;
+        let (id_part, rest) = text.split_at_checked(32)?;
+        let rest = rest.strip_prefix(':')?;
+        let separator = rest.find(':')?;
+        let (epoch_part, rest) = rest.split_at(separator);
+        let identity_part = rest.strip_prefix(':')?;
+        if identity_part.len() != 64 {
+            return None;
+        }
+        let checkout_id = CheckoutId::decode_key(id_part.as_bytes())?;
+        let epoch = epoch_part.parse::<u64>().ok()?;
+        let mut identity = [0_u8; 32];
+        for (index, byte) in identity.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&identity_part[index * 2..index * 2 + 2], 16).ok()?;
+        }
+        Some(Self {
+            checkout_id,
+            epoch,
+            identity,
+        })
+    }
+}
+
+/// [`TOMBSTONE`]'s row: the byte layout [`encode_tombstone`]/[`decode_tombstone`] have always
+/// spelled.
+pub(in crate::checkout) struct TombstoneRow(pub(in crate::checkout) u64);
+impl RawValue for TombstoneRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        encode_tombstone(self.0)
+            .map_err(|_| Error::InvariantViolation("checkout lease record").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        decode_tombstone(bytes)
+            .map(Self)
+            .map_err(|_| Error::CorruptedIndex("checkout lease record").into())
+    }
+}
+
+impl RawValue for CheckoutLeaseAct {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        encode_act(self).map_err(|_| Error::InvariantViolation("checkout lease record").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        decode_act(bytes).map_err(|_| Error::CorruptedIndex("checkout lease record").into())
+    }
+}
+
+impl RawValue for CheckoutSettlementReceipt {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        encode_receipt(self).map_err(|_| Error::InvariantViolation("checkout lease record").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        decode_receipt(bytes).map_err(|_| Error::CorruptedIndex("checkout lease record").into())
+    }
+}
+
+/// Test-only now: every non-test read/write of [`LEASE`] goes through the typed door directly.
+#[cfg(test)]
+pub(crate) fn lease_key(id: CheckoutId) -> Vec<u8> {
+    LEASE.key_bytes(&id)
+}
+/// Test-only now: every non-test read/write of [`TOMBSTONE`] goes through the typed door
+/// directly.
+#[cfg(test)]
 pub(in crate::checkout) fn tombstone_key(id: CheckoutId) -> Vec<u8> {
-    format!(
-        "{}{}",
-        std::str::from_utf8(CHECKOUT_TOMBSTONE_KEY_PREFIX).expect("ASCII"),
-        id
-    )
-    .into_bytes()
+    TOMBSTONE.key_bytes(&id)
 }
 /// Highest epoch ever retired for `id`, or `None` when no lifecycle of `id` has
 /// ever been torn down. A decode failure is fail-closed (`corrupt`), never a
@@ -40,30 +126,21 @@ pub(super) fn load_tombstone_in_txn(
     t: &mut heed::RwTxn<'_>,
     id: CheckoutId,
 ) -> CheckoutResult<Option<u64>> {
-    match vault.store.vault_meta.get(t, &tombstone_key(id))? {
-        Some(b) => Ok(Some(decode_tombstone(&b)?)),
-        None => Ok(None),
-    }
+    Ok(TOMBSTONE.get(&vault.store, t, &id)?.map(|row| row.0))
 }
 pub(crate) fn load_act_in_txn(
     vault: &Vault,
     t: &heed::RoTxn<'_>,
     id: CheckoutId,
 ) -> CheckoutResult<Option<CheckoutLeaseAct>> {
-    match vault.store.vault_meta.get(t, &lease_key(id))? {
-        Some(b) => Ok(Some(decode_act(&b)?)),
-        None => Ok(None),
-    }
+    Ok(LEASE.get(&vault.store, t, &id)?)
 }
 pub(super) fn store_act_in_txn(
     vault: &Vault,
     t: &mut heed::RwTxn<'_>,
     a: &CheckoutLeaseAct,
 ) -> CheckoutResult<()> {
-    vault
-        .store
-        .vault_meta
-        .put(t, &lease_key(a.checkout_id), &encode_act(a)?)?;
+    LEASE.put(&vault.store, t, &a.checkout_id, a)?;
     Ok(())
 }
 pub fn checkout_result_identity(
@@ -81,24 +158,15 @@ pub fn checkout_result_identity(
     h.update(result.as_bytes());
     *h.finalize().as_bytes()
 }
-fn settlement_prefix(id: CheckoutId, epoch: u64) -> Vec<u8> {
-    format!(
-        "{}{}:{epoch}:",
-        std::str::from_utf8(CHECKOUT_SETTLEMENT_KEY_PREFIX).expect("ASCII"),
-        id
-    )
-    .into_bytes()
-}
+/// Test-only now: every non-test read/write of [`SETTLEMENT`] goes through the typed door
+/// directly.
+#[cfg(test)]
 pub(crate) fn settlement_key(id: CheckoutId, epoch: u64, identity: [u8; 32]) -> Vec<u8> {
-    format!(
-        "{}{}",
-        String::from_utf8(settlement_prefix(id, epoch)).expect("ASCII"),
-        identity
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    )
-    .into_bytes()
+    SETTLEMENT.key_bytes(&SettlementKey {
+        checkout_id: id,
+        epoch,
+        identity,
+    })
 }
 const CHECKOUT_LEASE_BODY_KEYS: [&str; 11] = [
     "schema_version",

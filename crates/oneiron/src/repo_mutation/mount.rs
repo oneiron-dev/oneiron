@@ -4,7 +4,7 @@ use super::git::{
     validate_relative_repo_path,
 };
 use super::oplog::{repo_mutation_repo_key_hash, repo_mutation_snapshot_key};
-use super::snapshot::{StoredRepoSnapshotEntryKind, decode_snapshot, snapshot_recorded_for_repo};
+use super::snapshot::{StoredRepoSnapshotEntryKind, snapshot_recorded_for_repo};
 use super::types::RepoForkHash;
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -82,17 +82,16 @@ impl Vault {
                     )));
                 }
                 let txn = self.store.env.read_txn()?;
-                let raw = self
-                    .store
-                    .vault_meta
-                    .get(&txn, &repo_mutation_snapshot_key(hash))?
+                let snapshot = super::oplog::SNAPSHOT
+                    .get(&self.store, &txn, &repo_mutation_snapshot_key(hash))?
                     .ok_or(Error::EntityNotFound)?;
+                let raw = super::oplog::SNAPSHOT.encode_value(&snapshot)?;
                 if *blake3::hash(&raw).as_bytes() != hash
                     && super::support::sha256_bytes(&raw) != hash
                 {
                     return Err(Error::CorruptedIndex("fork hash mismatch"));
                 }
-                let snapshot = decode_snapshot(&raw)?;
+                let snapshot = super::snapshot::require_snapshot_schema(snapshot)?;
                 let mut files = BTreeMap::new();
                 for entry in snapshot.entries {
                     validate_relative_repo_path(&entry.path)?;

@@ -18,17 +18,20 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState, ManifestKind};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::skill::SkillRole;
 
-const INVOCATION_PREFIX: &[u8] = b"skill_reliability:call_invocation:v1:";
+/// One caller step's invocation witness: the MessagePack map [`encode_value`] spells. Key: the
+/// [`invocation_prefix`] bytes, then the step seq (u64be).
+const INVOCATIONS: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_CALL_INVOCATION);
 
 fn invocation_prefix(skill: &EntityId, receipt: &str) -> Result<Vec<u8>> {
     let length = u16::try_from(receipt.len())
         .ok()
         .filter(|length| *length > 0 && *length <= 1024)
         .ok_or(invalid("callable receipt must be a bounded identifier"))?;
-    let mut key = INVOCATION_PREFIX.to_vec();
-    key.extend_from_slice(skill.as_bytes());
+    let mut key = skill.as_bytes().to_vec();
     key.extend_from_slice(&length.to_be_bytes());
     key.extend_from_slice(receipt.as_bytes());
     Ok(key)
@@ -75,7 +78,7 @@ pub(crate) fn record_callable_invocation(
         if record.role != SkillRole::Callable || record.version != version {
             return Err(invalid("callable invocation revision moved"));
         }
-        if let Some(raw) = vault.store.vault_meta.get(txn, &binding)? {
+        if let Some(raw) = INVOCATIONS.get(&vault.store, txn, &binding)? {
             let prior = decode_value(&raw)?;
             if map_str(&prior, "executor") != Some(executor)
                 || map_str(&prior, "version") != Some(version)
@@ -101,7 +104,7 @@ pub(crate) fn record_callable_invocation(
                 }),
             ),
         ]))?;
-        vault.store.vault_meta.put(txn, &binding, &encoded)?;
+        INVOCATIONS.put(&vault.store, txn, &binding, &encoded)?;
         Ok(())
     })
 }
@@ -144,7 +147,7 @@ pub(crate) fn project_callable_receipt_outcome(
     let prefix = invocation_prefix(skill, receipt_ref)?;
     let credited = vault.with_write_txn(|txn| {
         let mut executors = BTreeMap::<String, bool>::new();
-        for row in vault.store.vault_meta.prefix_iter(txn, &prefix)? {
+        for row in INVOCATIONS.iter_from(&vault.store, txn, &prefix)? {
             let (_, raw) = row?;
             let witness = decode_value(&raw)?;
             if map_str(&witness, "version") != Some(record.version.as_str()) {

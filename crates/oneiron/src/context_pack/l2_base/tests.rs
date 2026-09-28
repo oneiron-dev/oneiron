@@ -419,6 +419,7 @@ fn implicit_person_subjects_follow_authenticated_scope_not_unrelated_people() ->
     use crate::claim::ScopedReadActorKey;
     let (_dir, vault, unrelated) = fixture();
     let person = crate::test_util::entity(0x64);
+
     vault.put_entity(
         &person,
         ENTITY_TYPE_PERSON,
@@ -431,6 +432,7 @@ fn implicit_person_subjects_follow_authenticated_scope_not_unrelated_people() ->
     let unrelated_claim = crate::test_util::entity(0x69);
     claim(&vault, user_claim, person, "user")?;
     claim(&vault, second_user_claim, person, "second user")?;
+
     claim(&vault, unrelated_claim, unrelated, "other user")?;
     crate::test_util::authorize_readers(&vault, &[&person.to_hex(), &unrelated.to_hex(), "reader"]);
     let reader = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
@@ -444,6 +446,7 @@ fn implicit_person_subjects_follow_authenticated_scope_not_unrelated_people() ->
         .run()?;
     let prefix = pack.l2_base.expect("implicit personal prefix");
     assert_eq!(prefix.evidence_ids(), &[user_claim, second_user_claim]);
+
     assert!(!prefix.evidence_ids().contains(&unrelated_claim));
     let delegated = vault.scoped_read(
         ScopedReadActorKey::new("reader")
@@ -460,6 +463,7 @@ fn implicit_person_subjects_follow_authenticated_scope_not_unrelated_people() ->
         pack.l2_base.unwrap().evidence_ids(),
         &[user_claim, second_user_claim]
     );
+
     let unbound = vault.scoped_read(
         ScopedReadActorKey::new("reader")
             .unwrap()
@@ -501,6 +505,7 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
         .map(|n| crate::test_util::entity(0x80 + n))
         .collect();
     claim(&vault, crate::test_util::entity(0xA0), first_person, "one")?;
+
     assert!(vault.context_pack().run()?.l2_base.is_none());
     assert!(
         vault
@@ -545,6 +550,7 @@ fn unscoped_owner_discovers_its_person_claims_not_a_strangers() -> Result<()> {
     claim(&vault, owner_claim, owner, "owner identity")?;
     claim(&vault, stranger_claim, stranger, "stranger identity")?;
     let base = vault.context_pack().run()?.l2_base.expect("owner identity");
+
     assert_eq!(base.evidence_ids(), &[owner_claim]);
     assert!(!base.evidence_ids().contains(&stranger_claim));
     Ok(())

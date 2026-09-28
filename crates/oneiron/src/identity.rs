@@ -27,14 +27,50 @@
 use ed25519_dalek::SigningKey;
 
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::vault::Vault;
 
 /// `m:client_id` sync_state row (u64 LE, 8 bytes).
-pub(crate) const KEY_CLIENT_ID: &str = "m:client_id";
+///
+/// This module's own accessors go through the typed [`CLIENT_ID`] table below;
+/// this raw string stays only for this module's own byte-layout-pinning tests,
+/// which deliberately seed malformed rows the typed encoder could never write.
+#[cfg(test)]
+const KEY_CLIENT_ID: &str = "m:client_id";
 /// `m:device_sk` sync_state row (32 B Ed25519 seed).
+///
+/// Kept as a plain string, like [`KEY_CLIENT_ID`] above: this module's own
+/// tests and `crate::authority`'s tests address this row directly through
+/// this constant (raw `sync_state` reads/writes) to seed malformed rows the
+/// typed [`DEVICE_SK`] encoder could never write.
+#[cfg(test)]
 pub(crate) const KEY_DEVICE_SK: &str = "m:device_sk";
-/// `m:device_pk` sync_state row (32 B Ed25519 verifying key).
+/// `m:device_pk` sync_state row (32 B Ed25519 verifying key). See [`KEY_DEVICE_SK`].
+#[cfg(test)]
 pub(crate) const KEY_DEVICE_PK: &str = "m:device_pk";
+
+/// This device's stable client id. Key: `()` (singleton).
+const CLIENT_ID: SideTable<(), ClientId, Raw> = SideTable::new(&side_table::IDENTITY_CLIENT_ID);
+/// This device's Ed25519 signing-key seed, stored plaintext. Key: `()`.
+const DEVICE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_SK);
+/// Cached Ed25519 verifying key derived from the seed. Key: `()`.
+const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
+
+/// [`CLIENT_ID`]'s value: u64 LE, nonzero (ONE-1155 — 0 collides with Loro's
+/// unset peer id). A wrong-length row and an 8-byte zero row are distinct
+/// corruption verdicts, both fail-closed rather than silently re-minted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClientId(u64);
+
+impl RawValue for ClientId {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_le_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self(decode_client_id_row(bytes)?))
+    }
+}
 
 /// This device's attestation identity: the stable client id plus the
 /// Ed25519 keypair that signs receipt attestations (OD-2).
@@ -52,16 +88,12 @@ pub(crate) fn load_or_mint_client_id_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
-    match vault.store.sync_state.get(wtxn, KEY_CLIENT_ID)? {
-        Some(raw) if raw.len() == 8 => decode_client_id_row(&raw),
-        Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
+    match CLIENT_ID.get(&vault.store, wtxn, &())? {
+        Some(ClientId(id)) => Ok(id),
         None => {
             let minted = mint_client_id(&vault.store.clock)?;
             crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-            vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_CLIENT_ID, &minted.to_le_bytes())?;
+            CLIENT_ID.put(&vault.store, wtxn, &(), &ClientId(minted))?;
             Ok(minted)
         }
     }
@@ -72,11 +104,9 @@ pub(crate) fn load_or_mint_client_id_in_txn(
 /// Missing rows return `Ok(None)` so callers can explicitly decide whether to
 /// mint in a write transaction.
 pub(crate) fn read_client_id_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Option<u64>> {
-    match vault.store.sync_state.get(rtxn, KEY_CLIENT_ID)? {
-        Some(raw) if raw.len() == 8 => decode_client_id_row(&raw).map(Some),
-        Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
-        None => Ok(None),
-    }
+    Ok(CLIENT_ID
+        .get(&vault.store, rtxn, &())?
+        .map(|ClientId(id)| id))
 }
 
 /// Read-mostly own-txn accessor for this device's stable client id.
@@ -107,27 +137,24 @@ pub(crate) fn ensure_device_identity_in_txn(
 ) -> Result<DeviceIdentity> {
     let client_id = load_or_mint_client_id_in_txn(vault, wtxn)?;
 
-    let signing_key = match vault.store.sync_state.get(wtxn, KEY_DEVICE_SK)? {
+    let signing_key = match DEVICE_SK.get(&vault.store, wtxn, &())? {
         Some(raw) => {
             let seed: [u8; 32] = raw
-                .as_ref()
+                .as_slice()
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("device signing key row"))?;
             SigningKey::from_bytes(&seed)
         }
         None => {
             let key = SigningKey::generate(&mut rand_core::OsRng);
-            vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_DEVICE_SK, key.as_bytes())?;
+            DEVICE_SK.put(&vault.store, wtxn, &(), &key.as_bytes().to_vec())?;
             key
         }
     };
 
     let derived_pk = signing_key.verifying_key().to_bytes();
-    match vault.store.sync_state.get(wtxn, KEY_DEVICE_PK)? {
-        Some(raw) if *raw == derived_pk => {}
+    match DEVICE_PK.get(&vault.store, wtxn, &())? {
+        Some(raw) if raw == derived_pk => {}
         Some(_) => {
             // A pk row that disagrees with the seed is corruption, not a
             // healable cache miss: receipts signed under EITHER key would
@@ -135,10 +162,7 @@ pub(crate) fn ensure_device_identity_in_txn(
             return Err(Error::CorruptedIndex("device public key row"));
         }
         None => {
-            vault
-                .store
-                .sync_state
-                .put(wtxn, KEY_DEVICE_PK, &derived_pk)?;
+            DEVICE_PK.put(&vault.store, wtxn, &(), &derived_pk.to_vec())?;
         }
     }
 
@@ -178,7 +202,10 @@ fn mint_client_id(clock: &crate::ports::StoreClock) -> Result<u64> {
 }
 
 fn decode_client_id_row(raw: &[u8]) -> Result<u64> {
-    let decoded = u64::from_le_bytes(raw.try_into().expect("length checked"));
+    let bytes: [u8; 8] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("sync client_id row"))?;
+    let decoded = u64::from_le_bytes(bytes);
     if decoded == 0 {
         return Err(Error::CorruptedIndex("sync client_id zero"));
     }

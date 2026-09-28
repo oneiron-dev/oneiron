@@ -6,10 +6,7 @@ use super::pattern::{
     PATTERN_WILDCARD, WILDCARD_PATTERN, axis_matches, exact_pattern, pattern_axes,
 };
 use super::posterior::posterior_lower_bound;
-use super::{
-    PATTERN_DIGEST_DOMAIN, ROW_VERSION, THRESHOLD_KEY_PREFIX, THRESHOLD_ROW_LABEL, decode_row,
-    encode_row, meta_key,
-};
+use super::{PATTERN_DIGEST_DOMAIN, ROW_VERSION, THRESHOLD, THRESHOLD_ROW_LABEL};
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, GateError, Result};
@@ -154,14 +151,13 @@ pub(super) struct StoredThresholdRow {
 }
 
 /// The 16-byte storage handle of a threshold pattern.
-pub(super) fn pattern_key(pattern: &str) -> Vec<u8> {
+pub(super) fn pattern_key(pattern: &str) -> [u8; ENTITY_ID_LEN] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(PATTERN_DIGEST_DOMAIN);
     hasher.update(pattern.as_bytes());
-    meta_key(
-        THRESHOLD_KEY_PREFIX,
-        &hasher.finalize().as_bytes()[..ENTITY_ID_LEN],
-    )
+    let mut key = [0_u8; ENTITY_ID_LEN];
+    key.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
+    key
 }
 
 fn threshold_row_parts(row: StoredThresholdRow) -> Result<ThresholdRow> {
@@ -270,12 +266,11 @@ fn consider(best: &mut Option<Ranked>, row: ThresholdRow, compiled: bool, scope:
 }
 
 fn stored_threshold_rows_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<ThresholdRow>> {
-    let mut rows = Vec::new();
-    for entry in store.vault_meta.prefix_iter(txn, THRESHOLD_KEY_PREFIX)? {
-        let (_, raw) = entry?;
-        rows.push(threshold_row_parts(decode_row(&raw, THRESHOLD_ROW_LABEL)?)?);
-    }
-    Ok(rows)
+    THRESHOLD
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(_, row)| threshold_row_parts(row))
+        .collect()
 }
 
 /// Every runtime threshold row, pattern-ordered — the editable half of the
@@ -320,12 +315,13 @@ pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
         required_streak: row.required_streak,
         posterior_guard: row.posterior_guard,
     };
-    let data = encode_row(&stored, THRESHOLD_ROW_LABEL)?;
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &pattern_key(&row.scope_pattern), &data)?;
+        THRESHOLD.put(
+            &vault.store,
+            wtxn,
+            &pattern_key(&row.scope_pattern),
+            &stored,
+        )?;
         Ok(())
     })
 }
@@ -338,5 +334,5 @@ pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
 ///
 /// Storage failures.
 pub fn clear_graduation_policy(vault: &Vault, pattern: &str) -> Result<bool> {
-    vault.with_write_txn(|wtxn| vault.store.vault_meta.delete(wtxn, &pattern_key(pattern)))
+    vault.with_write_txn(|wtxn| THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern)))
 }

@@ -3,7 +3,7 @@
 use super::widen::PreparedParentContext;
 use super::widen_record::{invalid, json};
 use super::workflow_record::{
-    WORKFLOW_ATTEMPT_TYPE, WorkflowIntent, WorkflowRecord, dedupe_key, record_key,
+    DEDUPE, RECORD, WORKFLOW_ATTEMPT_TYPE, WorkflowIntent, WorkflowRecord, dedupe_key_hash,
 };
 use super::{
     AgentDispatchInput, AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher,
@@ -26,8 +26,7 @@ impl AgentDispatcher<'_> {
         };
         if let Some(key) = input.dedupe_key.as_deref() {
             let txn = self.vault.store.env.read_txn()?;
-            if let Some(bytes) = self.vault.store.vault_meta.get(&txn, &dedupe_key(key))? {
-                let id = crate::attempt_queue::AttemptId::from_bytes(&bytes)?;
+            if let Some(id) = DEDUPE.get(&self.vault.store, &txn, &dedupe_key_hash(key))? {
                 let row = AttemptQueue::new(self.vault)
                     .get_in_txn(&txn, id)?
                     .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
@@ -127,9 +126,8 @@ impl AgentDispatcher<'_> {
             }
         }
         if let Some(key) = input.dedupe_key.as_deref()
-            && let Some(bytes) = self.vault.store.vault_meta.get(txn, &dedupe_key(key))?
+            && let Some(root) = DEDUPE.get(&self.vault.store, txn, &dedupe_key_hash(key))?
         {
-            let root = crate::attempt_queue::AttemptId::from_bytes(&bytes)?;
             let row = AttemptQueue::new(self.vault)
                 .get_in_write_txn(txn, root)?
                 .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
@@ -204,15 +202,9 @@ impl AgentDispatcher<'_> {
             first.ok_or_else(|| invalid("workflow has no first step"))?,
             input.now,
         )?;
-        self.vault
-            .store
-            .vault_meta
-            .put(txn, &record_key(root.id), &json(&record)?)?;
+        RECORD.put(&self.vault.store, txn, &root.id, &record)?;
         if let Some(key) = input.dedupe_key.as_deref() {
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &dedupe_key(key), root.id.as_bytes())?;
+            DEDUPE.put(&self.vault.store, txn, &dedupe_key_hash(key), &root.id)?;
         }
         let status = self.workflow_status_from(root, &record)?;
         Ok(AgentDispatchOutcome::WorkflowDispatched(Box::new(status)))

@@ -141,7 +141,7 @@ fn type_132_is_cache_not_truth() -> Result<()> {
     assert_eq!(heads, projected);
 
     let cached_bytes = encode_counterparty_contact_body(&cached)?;
-    let index_key = counterparty_contact_index_key(&identity, "kenji@example.com")?;
+    let index_key = storage::counterparty_contact_index_key_parts(&identity, "kenji@example.com")?;
 
     // Dropping the cache row takes the row and its index entries and NO claim.
     drop_contact_cache_row(&vault, &contact_id)?;
@@ -152,7 +152,7 @@ fn type_132_is_cache_not_truth() -> Result<()> {
     );
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.vault_meta.get(&rtxn, &index_key)?.is_none());
+        assert!(!storage::CONTACT_INDEX.contains(&vault.store, &rtxn, &index_key)?);
     }
     assert_eq!(live_claim_heads(&vault, &contact_id)?, heads);
 

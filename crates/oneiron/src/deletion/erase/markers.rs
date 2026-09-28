@@ -13,11 +13,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        Ok(self
-            .store
-            .sync_state
-            .get(txn, &local_hard_delete_key(id))?
-            .is_some())
+        HARD_DELETE_MARKER.contains(&self.store, txn, &HexId(*id))
     }
 
     /// Removes a headerless tombstone replay's stale `dt:` poison once a
@@ -36,9 +32,7 @@ impl Vault {
                 "dt: poison neutralization requires a delete-protected engine record",
             ));
         }
-        self.store
-            .sync_state
-            .delete(wtxn, &local_hard_delete_key(id))
+        HARD_DELETE_MARKER.delete(&self.store, wtxn, &HexId(*id))
     }
 
     pub(in crate::deletion) fn active_delete_scope_exists_in_txn(

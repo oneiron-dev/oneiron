@@ -48,12 +48,9 @@ fn canonical_adapter_program_edit_keeps_birth_and_receipts() {
         1
     );
     assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&txn, &documents::head_key(note))
+        !documents::NOTE_HEAD
+            .contains(&vault.store, &txn, &note)
             .unwrap()
-            .is_none()
     );
     assert_eq!(
         vault

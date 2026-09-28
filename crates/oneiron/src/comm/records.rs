@@ -13,10 +13,32 @@ use super::consent::{MAX_SEND_REF_BYTES, OPT_OUT_CLEAR_REASON};
 use super::note_comm_record_family_scan;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
+
+/// The event-sequence counter: a singleton row, little-endian (not the
+/// door's usual big-endian `u64`), so it keeps a custom `RawValue` rather
+/// than the built-in one.
+const EVENT_SEQUENCE: SideTable<(), EventSequence, Raw> =
+    SideTable::new(&side_table::COMM_EVENT_SEQUENCE);
+
+struct EventSequence(u64);
+
+impl RawValue for EventSequence {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_le_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let bytes: [u8; 8] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("comm event sequence"))?;
+        Ok(Self(u64::from_le_bytes(bytes)))
+    }
+}
 
 const COMM_RECORD_KEYS: [&str; 15] = [
     "schema_version",
@@ -47,8 +69,6 @@ const GATE_STATUS_PENDING: &str = "pending";
 const GATE_STATUS_CONSUMED: &str = "consumed";
 
 const MAX_KEY_BYTES: usize = 512;
-
-const EVENT_SEQUENCE_KEY: &[u8] = b"comm.event_sequence.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CommEventKind {
@@ -445,13 +465,6 @@ pub(super) fn validate_channel_class(value: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn decode_entity_id(raw: &[u8]) -> Result<EntityId> {
-    let bytes: [u8; ENTITY_ID_LEN] = raw
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("comm entity reference"))?;
-    EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex("comm entity reference"))
-}
-
 pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
@@ -538,24 +551,11 @@ pub(super) fn next_event_sequence_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> CommResult<u64> {
-    let current = vault
-        .store
-        .vault_meta
-        .get(&*wtxn, EVENT_SEQUENCE_KEY)?
-        .map(|raw| {
-            let bytes: [u8; 8] = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| CommError::InvalidRecord)?;
-            Ok::<u64, CommError>(u64::from_le_bytes(bytes))
-        })
-        .transpose()?
-        .unwrap_or(0);
+    let current = EVENT_SEQUENCE
+        .get(&vault.store, &*wtxn, &())?
+        .map_or(0, |sequence| sequence.0);
     let next = current.checked_add(1).ok_or(CommError::InvalidRecord)?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, EVENT_SEQUENCE_KEY, &next.to_le_bytes())?;
+    EVENT_SEQUENCE.put(&vault.store, wtxn, &(), &EventSequence(next))?;
     Ok(next)
 }
 

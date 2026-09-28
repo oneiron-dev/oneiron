@@ -54,6 +54,16 @@ impl EscalationTrigger {
             Self::Budget => 3,
         }
     }
+
+    /// Inverse of [`Self::key_byte`]; `None` for a byte this engine never wrote.
+    pub(super) const fn from_key_byte(byte: u8) -> Option<Self> {
+        match byte {
+            1 => Some(Self::Unsure),
+            2 => Some(Self::Policy),
+            3 => Some(Self::Budget),
+            _ => None,
+        }
+    }
 }
 
 /// What the human ruled.

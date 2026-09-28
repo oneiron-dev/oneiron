@@ -9,27 +9,51 @@ use super::{TaskAskAnswer, TaskAskHandle, TaskAskOptionId, TaskAskWord};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const TOKEN_PREFIX: &[u8] = b"tasks.ask.option_link.v1:";
-const SEAT_PREFIX: &[u8] = b"tasks.ask.option_seat.v1:";
-const VOID_PREFIX: &[u8] = b"tasks.ask.option_void.v1:";
-const VOID_GENERATION_PREFIX: &[u8] = b"tasks.ask.option_void_generation.v1:";
-const VOID_ACK_PREFIX: &[u8] = b"tasks.ask.option_void_ack.v1:";
+/// One bearer row. Key: blake3 hash32 of the token.
+const LINKS: SideTable<[u8; 32], LinkRow, Named> =
+    SideTable::new(&side_table::TASK_ASK_OPTION_LINK);
+/// A person's current bearer. Key: id16 (group) + id16 (person).
+const SEATS: SideTable<(EntityId, EntityId), SeatedLink, Raw> =
+    SideTable::new(&side_table::TASK_ASK_OPTION_SEAT);
+/// `b"1"` marker that a person voided their link. Key: id16 (group) + id16 (person).
+const VOIDS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
+    SideTable::new(&side_table::TASK_ASK_OPTION_VOID);
+/// An ask group's void generation. Key: id16 (group).
+const VOID_GENERATIONS: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::TASK_ASK_OPTION_VOID_GENERATION);
+/// The highest void generation a durable bridge receipt acknowledged. Key: id16 (group).
+const VOID_ACKS: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::TASK_ASK_OPTION_VOID_ACK);
 
-fn counter_key(prefix: &[u8], group: EntityId) -> Vec<u8> {
-    [prefix, group.as_bytes()].concat()
+/// A seat's value: the full stored key of the person's current bearer row.
+struct SeatedLink([u8; 32]);
+
+impl RawValue for SeatedLink {
+    fn to_raw(&self) -> Result<Vec<u8>, CodecError> {
+        Ok(LINKS.key_bytes(&self.0))
+    }
+
+    fn from_raw(bytes: &[u8]) -> Result<Self, CodecError> {
+        bytes
+            .strip_prefix(LINKS.decl().prefix)
+            .and_then(|digest| digest.try_into().ok())
+            .map(Self)
+            .ok_or_else(|| ask_record::invalid().into())
+    }
 }
 
-fn counter_in(vault: &Vault, txn: &heed::RoTxn<'_>, key: &[u8]) -> crate::Result<u64> {
-    match vault.store.vault_meta.get(txn, key)? {
-        Some(raw) => Ok(u64::from_be_bytes(
-            raw.as_ref().try_into().map_err(|_| ask_record::invalid())?,
-        )),
-        None => Ok(0),
-    }
+fn counter_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    table: SideTable<EntityId, u64, Raw>,
+    group: EntityId,
+) -> crate::Result<u64> {
+    Ok(table.get(&vault.store, txn, &group)?.unwrap_or(0))
 }
 
 /// A local, monotone change generation. It is not an answer or settlement.
@@ -38,7 +62,7 @@ pub(super) fn option_void_generation_in(
     txn: &heed::RoTxn<'_>,
     group: EntityId,
 ) -> crate::Result<u64> {
-    counter_in(vault, txn, &counter_key(VOID_GENERATION_PREFIX, group))
+    counter_in(vault, txn, VOID_GENERATIONS, group)
 }
 
 pub(crate) fn option_void_generation(vault: &Vault, group: EntityId) -> crate::Result<u64> {
@@ -48,10 +72,8 @@ pub(crate) fn option_void_generation(vault: &Vault, group: EntityId) -> crate::R
 
 pub(crate) fn has_option_link_void(vault: &Vault, group: EntityId) -> crate::Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(
-        counter_in(vault, &txn, &counter_key(VOID_GENERATION_PREFIX, group))?
-            > counter_in(vault, &txn, &counter_key(VOID_ACK_PREFIX, group))?,
-    )
+    Ok(counter_in(vault, &txn, VOID_GENERATIONS, group)?
+        > counter_in(vault, &txn, VOID_ACKS, group)?)
 }
 
 /// Only a prior DURABLE code-run bridge receipt can acknowledge a generation.
@@ -62,16 +84,12 @@ pub(crate) fn ack_option_void_generation(
     observed: u64,
 ) -> crate::Result<()> {
     let mut txn = vault.store.env.write_txn()?;
-    let generation = counter_in(vault, &txn, &counter_key(VOID_GENERATION_PREFIX, group))?;
+    let generation = counter_in(vault, &txn, VOID_GENERATIONS, group)?;
     if observed > generation {
         return Err(ask_record::invalid());
     }
-    let key = counter_key(VOID_ACK_PREFIX, group);
-    if observed > counter_in(vault, &txn, &key)? {
-        vault
-            .store
-            .vault_meta
-            .put(&mut txn, &key, &observed.to_be_bytes())?;
+    if observed > counter_in(vault, &txn, VOID_ACKS, group)? {
+        VOID_ACKS.put(&vault.store, &mut txn, &group, &observed)?;
     }
     txn.commit()?;
     Ok(())
@@ -115,50 +133,33 @@ enum LinkState {
     Voided,
 }
 
-fn token_key(token: &str) -> MemoryResult<Vec<u8>> {
+/// The stored digest of a bearer token; the token itself is never stored.
+fn token_digest(token: &str) -> MemoryResult<[u8; 32]> {
     if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(MemoryError::bad_request("invalid ask option link"));
     }
     let mut hash = blake3::Hasher::new();
     hash.update(b"oneiron.tasks.ask.option_link.v1\0");
     hash.update(token.as_bytes());
-    let mut key = TOKEN_PREFIX.to_vec();
-    key.extend_from_slice(hash.finalize().as_bytes());
-    Ok(key)
+    Ok(*hash.finalize().as_bytes())
 }
 
-fn seat_key(group: EntityId, friend: EntityId) -> Vec<u8> {
-    let mut key = SEAT_PREFIX.to_vec();
-    key.extend_from_slice(group.as_bytes());
-    key.extend_from_slice(friend.as_bytes());
-    key
-}
-
-fn void_key(group: EntityId, friend: EntityId) -> Vec<u8> {
-    let mut key = VOID_PREFIX.to_vec();
-    key.extend_from_slice(group.as_bytes());
-    key.extend_from_slice(friend.as_bytes());
-    key
-}
-
-fn read_row(vault: &Vault, txn: &heed::RoTxn<'_>, key: &[u8]) -> MemoryResult<LinkRow> {
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, key)?
+fn read_row(vault: &Vault, txn: &heed::RoTxn<'_>, digest: &[u8; 32]) -> MemoryResult<LinkRow> {
+    let raw = LINKS
+        .get_bytes(&vault.store, txn, digest)?
         .ok_or_else(|| MemoryError::bad_request("unknown ask option link"))?;
-    rmp_serde::from_slice(&raw).map_err(|_| MemoryError::bad_request("invalid ask option link row"))
+    LINKS
+        .decode_value(&raw)
+        .map_err(|_| MemoryError::bad_request("invalid ask option link row"))
 }
 
 fn put_row(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    key: &[u8],
+    digest: &[u8; 32],
     row: &LinkRow,
 ) -> MemoryResult<()> {
-    let bytes = rmp_serde::to_vec_named(row)
-        .map_err(|_| MemoryError::bad_request("invalid ask option link row"))?;
-    vault.store.vault_meta.put(txn, key, &bytes)?;
+    LINKS.put(&vault.store, txn, digest, row)?;
     Ok(())
 }
 
@@ -197,12 +198,7 @@ pub(super) fn voided_friends_in_txn(
     let mut voided = Vec::new();
     for member in &group.members {
         let friend = ask_record::entity(&member.actor)?;
-        if vault
-            .store
-            .vault_meta
-            .get(txn, &void_key(group_ref, friend))?
-            .is_some()
-        {
+        if VOIDS.contains(&vault.store, txn, &(group_ref, friend))? {
             voided.push(friend);
         }
     }
@@ -238,19 +234,13 @@ impl Memory<'_> {
             let mut secret = [0_u8; 32];
             OsRng.fill_bytes(&mut secret);
             let token: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
-            let key = token_key(&token)?;
-            let seat = seat_key(ask.group_ref, friend);
-            if let Some(previous) = self
-                .vault()
-                .store
-                .vault_meta
-                .get(txn, &seat)?
-                .map(std::borrow::Cow::into_owned)
-            {
-                self.vault().store.vault_meta.delete(txn, &previous)?;
+            let digest = token_digest(&token)?;
+            let seat = (ask.group_ref, friend);
+            if let Some(SeatedLink(previous)) = SEATS.get(&self.vault().store, txn, &seat)? {
+                LINKS.delete(&self.vault().store, txn, &previous)?;
             }
-            put_row(self.vault(), txn, &key, &row)?;
-            self.vault().store.vault_meta.put(txn, &seat, &key)?;
+            put_row(self.vault(), txn, &digest, &row)?;
+            SEATS.put(&self.vault().store, txn, &seat, &SeatedLink(digest))?;
             Ok(TaskAskOptionLink {
                 token,
                 intended_recipient: friend,
@@ -284,9 +274,9 @@ impl Memory<'_> {
 impl Vault {
     /// The bearer sees only the named recipient and the options of its pinned ask.
     pub fn ask_option_link_view(&self, token: &str) -> MemoryResult<TaskAskOptionLinkView> {
-        let key = token_key(token)?;
+        let digest = token_digest(token)?;
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-        let row = read_row(self, &txn, &key)?;
+        let row = read_row(self, &txn, &digest)?;
         if !matches!(row.state, LinkState::Open) {
             return Err(MemoryError::bad_request(
                 "ask option link is no longer open",
@@ -337,9 +327,9 @@ impl Vault {
         option: &TaskAskOptionId,
         source_refs: &BTreeSet<ConsultPayloadRef>,
     ) -> MemoryResult<TaskAskAnswer> {
-        let key = token_key(token)?;
+        let digest = token_digest(token)?;
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
-        let mut row = read_row(self, &txn, &key)?;
+        let mut row = read_row(self, &txn, &digest)?;
         if !matches!(row.state, LinkState::Open) {
             return Err(MemoryError::bad_request(
                 "ask option link is no longer open",
@@ -377,12 +367,7 @@ impl Vault {
             &mut txn,
             row.group,
             &group,
-            (
-                row.friend,
-                key[TOKEN_PREFIX.len()..]
-                    .try_into()
-                    .map_err(|_| MemoryError::bad_request("invalid ask option link digest"))?,
-            ),
+            (row.friend, digest),
             &word,
             now,
         )?;
@@ -391,7 +376,7 @@ impl Vault {
             option: option.clone(),
             answer,
         };
-        put_row(self, &mut txn, &key, &row)?;
+        put_row(self, &mut txn, &digest, &row)?;
         super::ask_settlement::settle_in(self, &mut txn, row.group, now)?;
         super::ask_facade::signal_waiters(self, &mut txn, row.group, now.saturating_mul(1000))?;
         txn.commit().map_err(crate::Error::from)?;
@@ -400,24 +385,19 @@ impl Vault {
 
     /// "Not you?" revokes this one bearer and wakes the asking agent.
     pub fn void_ask_option_link(&self, token: &str) -> MemoryResult<()> {
-        let key = token_key(token)?;
+        let digest = token_digest(token)?;
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
-        let mut row = read_row(self, &txn, &key)?;
+        let mut row = read_row(self, &txn, &digest)?;
         if !matches!(row.state, LinkState::Voided) {
             row.state = LinkState::Voided;
-            put_row(self, &mut txn, &key, &row)?;
-            let count_key = counter_key(VOID_GENERATION_PREFIX, row.group);
-            let next = counter_in(self, &txn, &count_key)?
+            put_row(self, &mut txn, &digest, &row)?;
+            let next = counter_in(self, &txn, VOID_GENERATIONS, row.group)?
                 .checked_add(1)
                 .ok_or_else(|| MemoryError::bad_request("ask void generation exhausted"))?;
-            self.store
-                .vault_meta
-                .put(&mut txn, &count_key, &next.to_be_bytes())?;
+            VOID_GENERATIONS.put(&self.store, &mut txn, &row.group, &next)?;
         }
         let group = row.group;
-        self.store
-            .vault_meta
-            .put(&mut txn, &void_key(group, row.friend), b"1")?;
+        VOIDS.put(&self.store, &mut txn, &(group, row.friend), b"1")?;
         super::ask_facade::signal_waiters(
             self,
             &mut txn,

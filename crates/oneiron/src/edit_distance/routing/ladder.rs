@@ -1,9 +1,6 @@
 //! Rollout ladder promotion.
 
-use super::keys::{
-    ROW_VERSION, RUNG_KEY_PREFIX, RUNG_ROW_LABEL, StoredRung, decode_row, encode_row, meta_key,
-    normalized_task_class,
-};
+use super::keys::{ROW_VERSION, RUNG, RUNG_ROW_LABEL, StoredRung, normalized_task_class};
 use super::scope::RolloutRung;
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -20,10 +17,7 @@ use crate::error::{Error, Result};
 /// [`Error::InvalidClaimBody`] on an unusable task class; storage errors;
 /// [`Error::CorruptedIndex`] on an undecodable row.
 pub fn rollout_rung(vault: &Vault, task_class: &str) -> Result<RolloutRung> {
-    let key = meta_key(
-        RUNG_KEY_PREFIX,
-        normalized_task_class(task_class)?.as_bytes(),
-    );
+    let key = normalized_task_class(task_class)?.to_owned();
     let rtxn = vault.store.env.read_txn()?;
     rung_in_txn(vault, &rtxn, &key)
 }
@@ -37,34 +31,21 @@ pub fn rollout_rung(vault: &Vault, task_class: &str) -> Result<RolloutRung> {
 ///
 /// [`Error::InvalidClaimBody`] on an unusable task class; storage errors.
 pub fn set_rollout_rung(vault: &Vault, task_class: &str, rung: RolloutRung) -> Result<()> {
-    let key = meta_key(
-        RUNG_KEY_PREFIX,
-        normalized_task_class(task_class)?.as_bytes(),
-    );
-    let encoded = encode_row(
-        &StoredRung {
-            v: ROW_VERSION,
-            rung: rung.as_str().to_owned(),
-        },
-        RUNG_ROW_LABEL,
-    )?;
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
-        Ok(())
-    })
+    let key = normalized_task_class(task_class)?.to_owned();
+    let row = StoredRung {
+        v: ROW_VERSION,
+        rung: rung.as_str().to_owned(),
+    };
+    vault.with_write_txn(|wtxn| RUNG.put(&vault.store, wtxn, &key, &row))
 }
 
 pub(super) fn rung_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
-    key: &[u8],
+    key: &String,
 ) -> Result<RolloutRung> {
-    let Some(raw) = vault.store.vault_meta.get(rtxn, key)? else {
+    let Some(row) = RUNG.get(&vault.store, rtxn, key)? else {
         return Ok(RolloutRung::Shadow);
     };
-    let row: StoredRung = decode_row(&raw, RUNG_ROW_LABEL)?;
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(RUNG_ROW_LABEL));
-    }
     RolloutRung::parse(&row.rung).ok_or(Error::CorruptedIndex(RUNG_ROW_LABEL))
 }

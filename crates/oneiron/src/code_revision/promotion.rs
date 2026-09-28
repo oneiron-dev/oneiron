@@ -2,8 +2,14 @@
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SESSION;
+use crate::side_table::{self, LegacyCompact, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
+
+/// Immutable receipt of the file-mode-review proposal ids that promoted a revision, as their
+/// sorted hex spellings. Key: revision id.
+const PROMOTIONS: SideTable<EntityId, Vec<String>, LegacyCompact> =
+    SideTable::new(&side_table::CODE_REVISION_PROMOTION);
 
 /// Host-recorded inputs for a code-touching session. No prompt payload is put in Git.
 pub struct CodeSessionRun {
@@ -149,7 +155,8 @@ impl Vault {
         let revisions = super::storage::collect_code_revisions_by_index_prefix(
             &self.store,
             &txn,
-            &super::keys::code_revision_session_index_prefix(&revision.session_id),
+            super::keys::SESSION_INDEX,
+            &revision.session_id,
         )?;
         super::frontier::verify_code_revision_session_trace_in_txn(
             &self.store,
@@ -201,19 +208,12 @@ impl Vault {
         }
         let mut ids: Vec<_> = proposal_ids.iter().map(EntityId::to_hex).collect();
         ids.sort();
-        let encoded =
-            rmp_serde::to_vec(&ids).map_err(|_| Error::CorruptedIndex("promotion encode"))?;
-        let key = [
-            b"code_revision:promotion:v1:".as_slice(),
-            revision_id.as_bytes(),
-        ]
-        .concat();
-        if let Some(old) = self.store.vault_meta.get(&txn, &key)? {
-            if old.as_ref() != encoded {
+        if let Some(old) = PROMOTIONS.get(&self.store, &txn, &revision_id)? {
+            if old != ids {
                 return Err(Error::ConcurrentWrite("revision promotion is immutable"));
             }
         } else if persist {
-            self.store.vault_meta.put(&mut txn, &key, &encoded)?;
+            PROMOTIONS.put(&self.store, &mut txn, &revision_id, &ids)?;
         } else {
             return Err(Error::InvalidClaimBody(
                 "revision promotion receipt missing",
@@ -253,19 +253,9 @@ impl Vault {
     }
     pub fn code_revision_promotions(&self, revision: EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(
-            &txn,
-            &[
-                b"code_revision:promotion:v1:".as_slice(),
-                revision.as_bytes(),
-            ]
-            .concat(),
-        )?
-        else {
+        let Some(ids) = PROMOTIONS.get(&self.store, &txn, &revision)? else {
             return Ok(Vec::new());
         };
-        let ids: Vec<String> =
-            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("promotion decode"))?;
         ids.iter().map(|id| EntityId::from_hex(id)).collect()
     }
 }

@@ -440,11 +440,7 @@ fn corrupted_cycle_cardinality_and_canonical_marks_fail_closed() {
         .id;
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::CANONICAL, &child),
-                root.as_bytes(),
-            )?;
+            super::graph::CANONICAL.put(&vault.store, txn, &child, &root)?;
             Ok(())
         })
         .unwrap();
@@ -545,11 +541,7 @@ fn migration_backfills_forward_only_session_membership_and_rejects_bad_marker() 
     assert_eq!(vault.head(&conv).unwrap(), Some(asking));
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::MIGRATED, &conv),
-                &[2],
-            )?;
+            super::graph::MIGRATED.put(&vault.store, txn, &conv, &[2])?;
             Ok(())
         })
         .unwrap();
@@ -1384,11 +1376,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                actor.entity_ref().as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &actor.entity_ref())?;
             Ok(())
         })
         .unwrap();
@@ -1401,11 +1389,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                child.as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &child)?;
             Ok(())
         })
         .unwrap();
@@ -1425,11 +1409,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
         .id;
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                other_root.as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &other_root)?;
             Ok(())
         })
         .unwrap();
@@ -1442,16 +1422,8 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::HEAD, &conversation),
-                child.as_bytes(),
-            )?;
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::CANONICAL, &root),
-                root.as_bytes(),
-            )?;
+            super::graph::HEAD.put(&vault.store, txn, &conversation, &child)?;
+            super::graph::CANONICAL.put(&vault.store, txn, &root, &root)?;
             Ok(())
         })
         .unwrap();
@@ -1464,11 +1436,7 @@ fn retained_preview_refuses_wrong_type_owner_cycle_and_canonical_mark() {
     );
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::CANONICAL, &root),
-                child.as_bytes(),
-            )?;
+            super::graph::CANONICAL.put(&vault.store, txn, &root, &child)?;
             Ok(())
         })
         .unwrap();

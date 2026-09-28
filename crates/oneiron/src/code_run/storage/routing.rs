@@ -6,21 +6,19 @@ use crate::session_overlay::RouteTarget;
 use crate::store::Store;
 use crate::{EntityId, ModelId, Result, ScoredEntity, Vault, WriteActor};
 
-use super::super::codec::{
-    decode_code_run_replay_record, encode_code_run_replay_record, validate_raw_output,
-};
+use super::super::codec::validate_raw_output;
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    code_run_model_heal_count_key, code_run_raw_output_key, code_run_replay_record_key,
-    next_additive_heal_count, replay_generation_matches,
+    MODEL_HEAL_COUNTS, RAW_OUTPUTS, REPLAY_RECORDS, next_additive_heal_count,
+    replay_generation_matches,
 };
 use super::speech_identity::{
     canonical_witness_executor_turn, executor_speech_message_id_for_run, executor_speech_turn_id,
 };
 
 #[cfg(test)]
-use super::records::{CodeRunModelHealCount, decode_code_run_model_heal_count};
+use super::records::CodeRunModelHealCount;
 #[cfg(test)]
 use crate::Error;
 
@@ -82,10 +80,7 @@ impl SessionBinding<'_> {
     }
 
     fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
-        self.session
-            .vault_meta_get(&code_run_replay_record_key(run_id))?
-            .map(|raw| decode_code_run_replay_record(&raw))
-            .transpose()
+        self.session.side_table_get(&REPLAY_RECORDS, run_id)
     }
 
     /// Compare-and-set against the SAME composed view it will update, in the
@@ -115,25 +110,26 @@ impl SessionBinding<'_> {
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
     ) -> Result<CodeRunReplayGeneration> {
-        let encoded = encode_code_run_replay_record(record)?;
+        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        let replay_key = code_run_replay_record_key(&record.run_id);
         if let Some(model) = healed_model {
-            let counter_key = code_run_model_heal_count_key(model);
             self.session
-                .vault_meta_compare_and_put_with_counter_routed(
+                .side_table_compare_and_put_with_counter_routed(
                     &self.route,
-                    &replay_key,
-                    &encoded,
+                    &REPLAY_RECORDS,
+                    &record.run_id,
+                    record,
                     |current| replay_generation_matches(current, expected),
-                    &counter_key,
+                    &MODEL_HEAL_COUNTS,
+                    &model.as_str().to_owned(),
                     next_additive_heal_count,
                 )?;
         } else {
-            self.session.vault_meta_compare_and_put_routed(
+            self.session.side_table_compare_and_put_routed(
                 &self.route,
-                &replay_key,
-                &encoded,
+                &REPLAY_RECORDS,
+                &record.run_id,
+                record,
                 |current| replay_generation_matches(current, expected),
             )?;
         }
@@ -142,10 +138,11 @@ impl SessionBinding<'_> {
 
     #[cfg(test)]
     fn model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
-        let key = code_run_model_heal_count_key(model);
-        let (base, overlay) = self.session.vault_meta_counter_components(&key)?;
-        let base = decode_code_run_model_heal_count(base.as_deref())?;
-        let overlay = decode_code_run_model_heal_count(overlay.as_deref())?;
+        let (base, overlay) = self
+            .session
+            .side_table_counter_components(&MODEL_HEAL_COUNTS, &model.as_str().to_owned())?;
+        let base = base.map_or(0, |count| count.0);
+        let overlay = overlay.map_or(0, |count| count.0);
         let healed_turns = base
             .checked_add(overlay)
             .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
@@ -162,15 +159,12 @@ impl SessionBinding<'_> {
             ));
         }
         self.session
-            .vault_meta_put_routed(&self.route, &code_run_raw_output_key(output), raw)
+            .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &raw.to_vec())
     }
 
     fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
-        let Some(raw) = self
-            .session
-            .vault_meta_get(&code_run_raw_output_key(output))?
-        else {
+        let Some(raw) = self.session.side_table_get(&RAW_OUTPUTS, &output.handle)? else {
             return Ok(None);
         };
         if CodeRunRawOutput::from_bytes(output.path.clone(), &raw)? != *output {

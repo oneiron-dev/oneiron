@@ -5,6 +5,7 @@ use super::codec::{decode_update_key, decode_update_value_parts};
 use super::seq::delete_bearing_seqs_in_txn;
 use crate::Vault;
 use crate::error::Result;
+use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
 #[cfg(test)]
 use super::INJECT_RECEIVER_SCRUB_FAILURES;
@@ -73,8 +74,7 @@ pub(in crate::sync) fn scrub_receiver_outbox_on_remote_hard_delete_in_txn(
     maybe_inject_receiver_scrub_failure()?;
 
     let dropped = scrub_window_updates_in_txn(vault, wtxn, window_key)?;
-    let fr_key = format!("fr:w:{window_key}");
-    vault.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+    WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window_key.to_owned(), &[1_u8])?;
     Ok(dropped)
 }
 

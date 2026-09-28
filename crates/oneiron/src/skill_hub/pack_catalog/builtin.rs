@@ -2,10 +2,12 @@
 //! A bootstrap receipt describes requested powers; it never mints a grant or a wake.
 
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackKind, PackSource, admission};
+use crate::side_table::{self, Raw, SideTable};
 use crate::skill_hub::HubFile;
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
-const SEED_KEY: &[u8] = b"pack.builtin.seeded.v1";
+/// Marker (engine version string) that the built-in connector packs have been seeded.
+const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
 const PACKS: [(&str, &str); 4] = [
     (
         "slack",
@@ -36,7 +38,7 @@ fn engine_hub_id() -> Result<EntityId> {
 
 pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
-    if vault.store.vault_meta.get(&rtxn, SEED_KEY)?.is_some() {
+    if SEEDED.contains(&vault.store, &rtxn, &())? {
         return Ok(());
     }
     drop(rtxn);
@@ -48,7 +50,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     let mut txn = vault.store.env.write_txn()?;
-    if vault.store.vault_meta.get(&txn, SEED_KEY)?.is_some() {
+    if SEEDED.contains(&vault.store, &txn, &())? {
         return Ok(());
     }
     for (name, markdown) in PACKS {
@@ -63,12 +65,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         }
         // A prior locally installed pack owns its name. Never overwrite an owner's
         // installation (including one imported before this bootstrap pass).
-        if vault
-            .store
-            .vault_meta
-            .get(&txn, &admission::install_key(&source.manifest.name))?
-            .is_some()
-        {
+        if admission::PACK_INSTALL.contains(&vault.store, &txn, &source.manifest.name)? {
             continue;
         }
         // A prior source or tombstone at the deterministic hash owns this ID.
@@ -110,18 +107,14 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             skills: Vec::new(),
             installed_at: 0,
         };
-        let bytes = serde_json::to_vec(&receipt)
-            .map_err(|_| super::invalid("built-in receipt encoding"))?;
-        vault.store.vault_meta.put(
-            &mut txn,
-            &admission::install_key(&receipt.pack_name),
-            &bytes,
-        )?;
+        admission::PACK_INSTALL.put(&vault.store, &mut txn, &receipt.pack_name, &receipt)?;
     }
-    vault
-        .store
-        .vault_meta
-        .put(&mut txn, SEED_KEY, env!("CARGO_PKG_VERSION").as_bytes())?;
+    SEEDED.put(
+        &vault.store,
+        &mut txn,
+        &(),
+        &env!("CARGO_PKG_VERSION").to_owned(),
+    )?;
     txn.commit()?;
     Ok(())
 }

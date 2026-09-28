@@ -6,12 +6,19 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
+use crate::side_table::{self, Named, Raw, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-const PREFIX: &[u8] = b"origin:authority:v1:";
-const PERMIT: &[u8] = b"origin:authority_permit:v1:";
+/// Owner-controlled origin residence/epoch/writer authority for one repository. Key: repo id.
+const AUTHORITY: SideTable<EntityId, OriginAuthority, Named> =
+    SideTable::new(&side_table::ORIGIN_AUTHORITY);
+
+/// Epoch-bound publication permit stamp (u64be epoch), authorizing one publication under the
+/// current authority epoch. Key: publication id.
+const AUTHORITY_PERMIT: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::ORIGIN_AUTHORITY_PERMIT);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OriginResidence {
@@ -89,15 +96,6 @@ impl OriginAuthorityStamp {
         }))
     }
 }
-fn key(repo: EntityId) -> Vec<u8> {
-    [PREFIX, repo.as_bytes()].concat()
-}
-fn permit(id: EntityId) -> Vec<u8> {
-    [PERMIT, id.as_bytes()].concat()
-}
-fn decode(raw: &[u8]) -> Result<OriginAuthority> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("origin authority row"))
-}
 impl Vault {
     pub fn origin_authority(&self, repo: &GitWireRepo) -> Result<Option<OriginAuthority>> {
         let id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
@@ -105,11 +103,7 @@ impl Vault {
     }
     fn origin_authority_by_id(&self, id: EntityId) -> Result<Option<OriginAuthority>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(id))?
-            .map(|raw| decode(&raw))
-            .transpose()
+        AUTHORITY.get(&self.store, &txn, &id)
     }
     /// Trusted owner administration. This explicit CAS is the only epoch cutover.
     /// The caller must finish the census before handing authority to another host.
@@ -132,12 +126,7 @@ impl Vault {
             ));
         }
         let mut txn = self.store.env.write_txn()?;
-        let current = self
-            .store
-            .vault_meta
-            .get(&txn, &key(id))?
-            .map(|raw| decode(&raw))
-            .transpose()?;
+        let current = AUTHORITY.get(&self.store, &txn, &id)?;
         if current.as_ref().map(|row| row.epoch) != expected_epoch {
             return Err(Error::ConcurrentWrite("origin authority epoch moved"));
         }
@@ -150,9 +139,7 @@ impl Vault {
             writer: writer.to_hex(),
             mirror,
         };
-        let bytes = rmp_serde::to_vec_named(&row)
-            .map_err(|_| Error::InvariantViolation("origin authority encoding"))?;
-        self.store.vault_meta.put(&mut txn, &key(id), &bytes)?;
+        AUTHORITY.put(&self.store, &mut txn, &id, &row)?;
         txn.commit()?;
         Ok(row)
     }
@@ -194,16 +181,14 @@ impl Vault {
         let id = origin_publication_id(&request)?;
         self.with_write_txn(|txn| {
             // A publication decided in an earlier epoch cannot be reauthorized.
-            if let Some(raw) = self.store.vault_meta.get(txn, &permit(id))? {
-                if raw.as_ref() != lease.epoch.to_be_bytes() {
+            if let Some(epoch) = AUTHORITY_PERMIT.get(&self.store, txn, &id)? {
+                if epoch != lease.epoch {
                     return Err(Error::ConcurrentWrite(
                         "publication belongs to a previous authority epoch",
                     ));
                 }
             } else {
-                self.store
-                    .vault_meta
-                    .put(txn, &permit(id), &lease.epoch.to_be_bytes())?;
+                AUTHORITY_PERMIT.put(&self.store, txn, &id, &lease.epoch)?;
             }
             Ok(())
         })?;
@@ -223,11 +208,9 @@ impl Vault {
             ));
         }
         let txn = self.store.env.read_txn()?;
-        if self
-            .store
-            .vault_meta
-            .get(&txn, &permit(publication))?
-            .is_none_or(|raw| raw.as_ref() != row.epoch.to_be_bytes())
+        if AUTHORITY_PERMIT
+            .get(&self.store, &txn, &publication)?
+            .is_none_or(|epoch| epoch != row.epoch)
         {
             return Err(Error::ConcurrentWrite(
                 "origin publication requires the current authority epoch",
@@ -262,12 +245,7 @@ impl Vault {
         repo_id: EntityId,
         authority: Option<&OriginAuthorityStamp>,
     ) -> Result<()> {
-        let row = self
-            .store
-            .vault_meta
-            .get(txn, &key(repo_id))?
-            .map(|raw| decode(&raw))
-            .transpose()?;
+        let row = AUTHORITY.get(&self.store, txn, &repo_id)?;
         match (row, authority) {
             (None, None) => Ok(()),
             (Some(row), Some(stamp))

@@ -534,7 +534,13 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
             .expect("reader")
             .require_access_grants(Some(principal)),
     );
-    assert!(scoped.get(&message)?.value.is_none());
+    assert!(
+        scoped
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single()
+            .value
+            .is_none()
+    );
     let record = create_question(&vault, principal, definition(message), 2)?;
     let question = record.definition.question.id;
     let actor = WriteActor::new(principal, EdgeActorClass::Human);
@@ -567,7 +573,13 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
         authority_scope: crate::federation::scope_codec::read_preset(),
     };
     vault.create_access_grant(&grant_id, &grant)?;
-    assert!(scoped.get(&message)?.value.is_some());
+    assert!(
+        scoped
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single()
+            .value
+            .is_some()
+    );
     let allowed = refresh_question(
         &vault,
         actor,
@@ -599,7 +611,13 @@ fn relationship_message_requires_principal_grant_before_provider_and_at_settle()
     );
     assert!(matches!(stale, Err(Error::ConcurrentWrite(_))));
     assert_eq!(called, 2);
-    assert!(scoped.get(&message)?.value.is_none());
+    assert!(
+        scoped
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single()
+            .value
+            .is_none()
+    );
     assert_eq!(answer_records(&vault, principal, question)?, allowed);
     Ok(())
 }

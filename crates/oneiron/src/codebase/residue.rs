@@ -4,14 +4,17 @@ use std::collections::BTreeSet;
 
 use heed::RwTxn;
 
-use super::snapshot::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot, decode_codebase_snapshot};
+use super::snapshot::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot};
+use crate::EntityId;
 use crate::Vault;
 use crate::error::Result;
 use crate::secret_snapshot::{SnapshotCustodyReport, SnapshotExclusionSet, snapshot_root};
-
-pub(super) const CODEBASE_SNAPSHOT_KEY_PREFIX: &[u8] = b"codebase:snapshot:v1:";
+use crate::side_table::{self, Raw, SideTable};
 
 type ContentHash = [u8; CODEBASE_CONTENT_HASH_LEN];
+
+const SNAPSHOTS: SideTable<EntityId, CodebaseSnapshot, Raw> =
+    SideTable::new(&side_table::CODEBASE_SNAPSHOT);
 
 /// Discover older versions of paths excluded by the final writer's custody
 /// view, then protect every hash still used at a retained path or in another
@@ -26,13 +29,10 @@ pub(super) fn reclaimable_asset_hashes(
 ) -> Result<BTreeSet<ContentHash>> {
     let exclusions = SnapshotExclusionSet::for_project(vault, wtxn, &current.project_id)?;
     let mut candidates = current_excluded_hashes.clone();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(wtxn, CODEBASE_SNAPSHOT_KEY_PREFIX)?
-    {
+    for row in SNAPSHOTS.iter_raw_from(&vault.store, wtxn, &[])? {
+        // The old prefix scan ignored row keys; keep that behavior for malformed keys.
         let (_, raw) = row?;
-        let prior = decode_codebase_snapshot(&raw)?;
+        let prior = SNAPSHOTS.decode_value(&raw)?;
         if prior.project_id != current.project_id
             || !prior.repo_ref.same_repository(&current.repo_ref)
         {
@@ -68,13 +68,10 @@ pub(super) fn reclaimable_asset_hashes(
         .map(|file| (file.path.as_str(), file.content_hash))
         .collect::<BTreeSet<_>>();
     let mut protected = BTreeSet::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(wtxn, CODEBASE_SNAPSHOT_KEY_PREFIX)?
-    {
+    for row in SNAPSHOTS.iter_raw_from(&vault.store, wtxn, &[])? {
+        // The old prefix scan ignored row keys; keep that behavior for malformed keys.
         let (_, raw) = row?;
-        let prior = decode_codebase_snapshot(&raw)?;
+        let prior = SNAPSHOTS.decode_value(&raw)?;
         for file in &prior.files {
             if candidates.contains(&file.content_hash)
                 && (prior.project_id != current.project_id

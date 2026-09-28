@@ -130,14 +130,19 @@ impl Vault {
         artifact: &str,
         channel: ArtifactPointerChannel,
     ) -> Result<Option<ResolvedArtifactTarget>> {
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(txn, &artifact_pointer_key(artifact, channel)?)?
+        validate_artifact_id(artifact)?;
+        let key = ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.to_owned(),
+        };
+        let Some(ArtifactPointerRow {
+            export,
+            stale_taint_override,
+            serve_tier,
+        }) = ARTIFACT_POINTERS.get(&self.store, txn, &key)?
         else {
             return Ok(None);
         };
-        let (export, stale_taint_override, serve_tier) = decode_artifact_pointer_row(&raw)?;
         let (owner, snapshot) = match export {
             ArtifactExportRef::ForkHash(hash) => {
                 let mut match_owner = None;

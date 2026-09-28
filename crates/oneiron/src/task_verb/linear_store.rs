@@ -5,27 +5,20 @@ use super::wire_encode::encode_task_verb_body;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::linear_sync::*;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-const REVISION: &[u8] = b"linear.task_revision.v1/";
-const DIRTY: &[u8] = b"linear.task_dirty.v1/";
-const WRITER: &[u8] = b"linear.task_writer.v1/";
-const ISSUE: &[u8] = b"linear.issue.v1/";
-fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
+const REVISIONS: SideTable<EntityId, u64, Raw> = SideTable::new(&side_table::LINEAR_TASK_REVISION);
+const DIRTY: SideTable<EntityId, u64, Raw> = SideTable::new(&side_table::LINEAR_TASK_DIRTY);
+/// Value: the task revision it stamps (u64be), the writer id16 and its actor class byte.
+const WRITER: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::LINEAR_TASK_WRITER);
+const ISSUE_REVERSE: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::LINEAR_ISSUE_REVERSE);
+const PULL_CURSOR: SideTable<(), String, Raw> = SideTable::new(&side_table::LINEAR_PULL_CURSOR);
+
 fn revision(store: &Store, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<u64> {
-    store
-        .vault_meta
-        .get(txn, &key(REVISION, id))?
-        .map_or(Ok(0), |raw| {
-            Ok(u64::from_be_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("task revision"))?,
-            ))
-        })
+    Ok(REVISIONS.get(store, txn, &id)?.unwrap_or(0))
 }
 pub(crate) fn task_revision_in_txn(
     store: &Store,
@@ -49,7 +42,7 @@ pub(crate) fn note_task_writer_in_txn(
     value.extend_from_slice(&rev.to_be_bytes());
     value.extend_from_slice(actor.as_bytes());
     value.push(class as u8);
-    store.vault_meta.put(txn, &key(WRITER, task), &value)?;
+    WRITER.put(store, txn, &task, &value)?;
     Ok(())
 }
 
@@ -58,7 +51,7 @@ fn writer_in_txn(
     txn: &heed::RoTxn<'_>,
     task: EntityId,
 ) -> Result<Option<LinearWriteActor>> {
-    let Some(raw) = store.vault_meta.get(txn, &key(WRITER, task))? else {
+    let Some(raw) = WRITER.get(store, txn, &task)? else {
         return Ok(None);
     };
     if raw.len() != 25 {
@@ -97,30 +90,21 @@ pub(crate) fn note_task_write(
     let revision = revision(store, txn, id)?
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("task revision"))?;
-    store
-        .vault_meta
-        .put(txn, &key(REVISION, id), &revision.to_be_bytes())?;
-    store
-        .vault_meta
-        .put(txn, &key(DIRTY, id), &revision.to_be_bytes())?;
-    store.vault_meta.delete(txn, &key(WRITER, id))?;
+    REVISIONS.put(store, txn, &id, &revision)?;
+    DIRTY.put(store, txn, &id, &revision)?;
+    WRITER.delete(store, txn, &id)?;
     Ok(())
 }
-fn issue_key(issue: &LinearIssueRef) -> Vec<u8> {
+fn issue_key(issue: &LinearIssueRef) -> String {
     // issue ids are globally scoped; identifiers and teams may change.
-    [ISSUE, issue.issue_id.as_bytes()].concat()
+    issue.issue_id.clone()
 }
 fn read_link(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task: EntityId,
 ) -> Result<Option<TaskIssueLink>> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, &linear_sync_link_key(task))?
-        .map(|raw| serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("linear link")))
-        .transpose()
+    LINEAR_LINKS.get(&vault.store, txn, &task)
 }
 
 /// One locked view for the external Linear effect door. No provider bytes.
@@ -138,17 +122,7 @@ pub(crate) fn linear_effect_state_in_txn(
     txn: &heed::RoTxn<'_>,
     task: EntityId,
 ) -> LinearSyncResult<LinearEffectState> {
-    let dirty_revision = vault
-        .store
-        .vault_meta
-        .get(txn, &key(DIRTY, task))?
-        .map(|raw| {
-            raw.as_ref()
-                .try_into()
-                .map(u64::from_be_bytes)
-                .map_err(|_| Error::CorruptedIndex("linear dirty revision"))
-        })
-        .transpose()?;
+    let dirty_revision = DIRTY.get(&vault.store, txn, &task)?;
     Ok(LinearEffectState {
         revision: revision(&vault.store, txn, task)?,
         dirty_revision,
@@ -218,38 +192,12 @@ impl<'v> VaultLinearTaskStore<'v> {
     /// exact revision. Newer writes cannot be lost under an old acknowledgement.
     pub fn dirty_tasks(&self) -> Result<Vec<(EntityId, u64)>> {
         let txn = self.vault.store.env.read_txn()?;
-        self.vault
-            .store
-            .vault_meta
-            .prefix_iter(&txn, DIRTY)?
-            .map(|row| {
-                let (key, raw) = row?;
-                Ok((
-                    EntityId::from_bytes(
-                        key[DIRTY.len()..]
-                            .try_into()
-                            .map_err(|_| Error::CorruptedIndex("linear outbox id"))?,
-                    )?,
-                    u64::from_be_bytes(
-                        raw.as_ref()
-                            .try_into()
-                            .map_err(|_| Error::CorruptedIndex("linear outbox revision"))?,
-                    ),
-                ))
-            })
-            .collect()
+        DIRTY.scan(&self.vault.store, &txn)
     }
     pub fn acknowledge_push(&self, task: EntityId, expected_revision: u64) -> Result<bool> {
         self.vault.with_write_txn(|txn| {
-            let key = key(DIRTY, task);
-            if self
-                .vault
-                .store
-                .vault_meta
-                .get(txn, &key)?
-                .is_some_and(|raw| raw.as_ref() == expected_revision.to_be_bytes())
-            {
-                return self.vault.store.vault_meta.delete(txn, &key);
+            if DIRTY.get(&self.vault.store, txn, &task)? == Some(expected_revision) {
+                return DIRTY.delete(&self.vault.store, txn, &task);
             }
             Ok(false)
         })
@@ -315,14 +263,9 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
     }
     fn link_for_issue(&self, issue: &LinearIssueRef) -> LinearSyncResult<Option<TaskIssueLink>> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        let Some(raw) = self.vault.store.vault_meta.get(&txn, &issue_key(issue))? else {
+        let Some(task) = ISSUE_REVERSE.get(&self.vault.store, &txn, &issue_key(issue))? else {
             return Ok(None);
         };
-        let task = EntityId::from_bytes(
-            raw.as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("linear reverse link"))?,
-        )?;
         Ok(read_link(self.vault, &txn, task)?)
     }
     fn put_link(&mut self, expected: Option<u64>, link: &TaskIssueLink) -> LinearSyncResult<()> {
@@ -344,39 +287,24 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
                 .into());
             }
             let reverse = issue_key(&link.issue);
-            if self
-                .vault
-                .store
-                .vault_meta
-                .get(txn, &reverse)?
-                .is_some_and(|raw| raw.as_ref() != link.task_ref.as_bytes())
+            if ISSUE_REVERSE
+                .get(&self.vault.store, txn, &reverse)?
+                .is_some_and(|task| task != link.task_ref)
             {
                 return Err(LinearSyncError::LinkConflict { expected, found });
             }
             if let Some(old) = old
                 && old.issue.issue_id != link.issue.issue_id
             {
-                self.vault
-                    .store
-                    .vault_meta
-                    .delete(txn, &issue_key(&old.issue))?;
+                ISSUE_REVERSE.delete(&self.vault.store, txn, &issue_key(&old.issue))?;
             }
-            let raw = serde_json::to_vec(link)
-                .map_err(|_| Error::InvariantViolation("linear link encoding"))?;
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &linear_sync_link_key(link.task_ref), &raw)?;
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &reverse, link.task_ref.as_bytes())?;
+            LINEAR_LINKS.put(&self.vault.store, txn, &link.task_ref, link)?;
+            ISSUE_REVERSE.put(&self.vault.store, txn, &reverse, &link.task_ref)?;
             Ok(())
         })
     }
 }
 
-const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
     /// Scheduled host entry: reconcile every available inbound page BEFORE
     /// publishing any dirty TASK snapshot. A rejected outbound item retains
@@ -399,16 +327,7 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                 .env
                 .read_txn()
                 .map_err(Error::from)?;
-            self.tasks()
-                .vault
-                .store
-                .vault_meta
-                .get(&txn, PULL_CURSOR)?
-                .map(|raw| {
-                    String::from_utf8(raw.to_vec())
-                        .map_err(|_| Error::CorruptedIndex("linear pull cursor"))
-                })
-                .transpose()?
+            PULL_CURSOR.get(&self.tasks().vault.store, &txn, &())?
         };
         let mut pulled = LinearPullReceipt {
             applied: 0,
@@ -437,11 +356,7 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                 );
             }
             self.tasks().vault.with_write_txn(|txn| {
-                self.tasks()
-                    .vault
-                    .store
-                    .vault_meta
-                    .put(txn, PULL_CURSOR, next.as_bytes())?;
+                PULL_CURSOR.put(&self.tasks().vault.store, txn, &(), &next)?;
                 Ok(())
             })?;
             cursor = Some(next);
@@ -480,14 +395,11 @@ pub(crate) fn forget_task_mirror(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
-    store.vault_meta.delete(txn, &key(DIRTY, id))?;
-    store.vault_meta.delete(txn, &key(WRITER, id))?;
-    let link_key = linear_sync_link_key(id);
-    if let Some(raw) = store.vault_meta.get(txn, &link_key)? {
-        let link: TaskIssueLink =
-            serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("linear link"))?;
-        store.vault_meta.delete(txn, &issue_key(&link.issue))?;
-        store.vault_meta.delete(txn, &link_key)?;
+    DIRTY.delete(store, txn, &id)?;
+    WRITER.delete(store, txn, &id)?;
+    if let Some(link) = LINEAR_LINKS.get(store, txn, &id)? {
+        ISSUE_REVERSE.delete(store, txn, &issue_key(&link.issue))?;
+        LINEAR_LINKS.delete(store, txn, &id)?;
     }
     Ok(())
 }

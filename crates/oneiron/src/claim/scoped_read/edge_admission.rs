@@ -1,5 +1,5 @@
 //! The one scoped graph projection: exact relation + both endpoints, then limits.
-use super::{ScopedRead, admission::ReadAdmission};
+use super::{ScopedRead, ScopedReadResult, admission::ReadAdmission};
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -146,4 +146,84 @@ impl ScopedRead<'_> {
         }
         Ok(result)
     }
+
+    /// An anchor's weighted neighborhood from ONE snapshot under one receipt:
+    /// out-edges, then in-edges, each admitted with its exact relation and
+    /// its peer. A withheld pair or an edge under `min_weight` never spends
+    /// one of the `limit` slots. The value is `None` when the anchor itself is
+    /// withheld or missing. `project` labels the rows in the same snapshot.
+    pub(crate) fn neighborhood_projected<T, E: From<Error>>(
+        &self,
+        center: &EntityId,
+        kind: Option<EdgeKind>,
+        min_weight: Option<f32>,
+        limit: usize,
+        project: impl FnOnce(
+            &heed::RoTxn<'_>,
+            Option<Vec<AdmittedNeighbor>>,
+        ) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let txn = self.grant_read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        let anchor = self.admit_entity_in(&txn, &policy, &filter, center)?;
+        let mut suppressed = anchor.suppression();
+        let mut neighbors = Vec::new();
+        if anchor.visible() && limit > 0 {
+            'scan: for direction in [EdgeDirection::Out, EdgeDirection::In] {
+                let rows = match self.session_view {
+                    Some(view) => view.port_edges(&txn, center, direction, kind, None)?,
+                    None => self.vault.port_edges(&txn, center, direction, kind, None)?,
+                };
+                for row in rows {
+                    let edge = row?;
+                    if min_weight.is_some_and(|min| edge.weight < min) {
+                        continue;
+                    }
+                    let peer = edge.target;
+                    let outbound = direction == EdgeDirection::Out;
+                    let (src, tgt) = if outbound {
+                        (*center, peer)
+                    } else {
+                        (peer, *center)
+                    };
+                    let admitted = admit_stored_edge_in(
+                        self.vault,
+                        &txn,
+                        src,
+                        tgt,
+                        edge,
+                        || Ok(ReadAdmission::Visible(())),
+                        || self.admit_entity_in(&txn, &policy, &filter, &peer),
+                    )?;
+                    suppressed += admitted.suppression();
+                    let Some(edge) = admitted.into_option() else {
+                        continue;
+                    };
+                    neighbors.push(AdmittedNeighbor {
+                        outbound,
+                        edge: edge.info(),
+                        peer_type: self
+                            .entity_record_in(&txn, &peer)?
+                            .map(|row| row.entity_type),
+                    });
+                    if neighbors.len() >= limit {
+                        break 'scan;
+                    }
+                }
+            }
+        }
+        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
+        Ok(ScopedReadResult {
+            value: project(&txn, anchor.visible().then_some(neighbors))?,
+            receipt,
+        })
+    }
+}
+
+/// One admitted neighbor of an anchor: the stored edge as the anchor sees it
+/// (`edge.target` is the peer in either direction) and the peer's stored type.
+pub(crate) struct AdmittedNeighbor {
+    pub(crate) outbound: bool,
+    pub(crate) edge: EdgeInfo,
+    pub(crate) peer_type: Option<u8>,
 }

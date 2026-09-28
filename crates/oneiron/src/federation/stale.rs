@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::authority::FederationPactStatus;
 use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower, is_foreign_world_id_range};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SideTableRowProblem, StoreError};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -109,6 +110,60 @@ const WORLD_STALE_STAMP_VERSION: u8 = 1;
 /// The entire value of a `fedworld:` row: presence IS the registration.
 const FEDERATION_WORLD_ROW_VALUE: &[u8] = &[0x01];
 
+/// One stamp per world, never per pact. Key: [`ForeignWorldKey`].
+const FEDERATION_STALE: SideTable<ForeignWorldKey, WorldStaleStamp, Raw> =
+    SideTable::new(&side_table::FEDERATION_STALE);
+
+/// Pact-to-world registrations. Key: `{pact_id_hex}:{world_id_hex}` (the bytes after the
+/// `fedworld:` table prefix); the value is the presence-only [`WorldRegistrationMarker`].
+const FEDERATION_WORLD: SideTable<String, WorldRegistrationMarker, Raw> =
+    SideTable::new(&side_table::FEDERATION_WORLD_REGISTRATION);
+
+/// A foreign-range world id in its canonical lowercase 32-hex spelling — every key `fedstale:`
+/// rows are written under. A local-range id or a non-canonical hex spelling decodes as `None`
+/// (corruption, never an alternative encoding to tolerate — see [`canonical_foreign_world_id`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ForeignWorldKey(EntityId);
+
+impl SideKey for ForeignWorldKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.0.to_hex().as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        canonical_foreign_world_id(std::str::from_utf8(bytes).ok()?).map(Self)
+    }
+}
+
+impl RawValue for WorldStaleStamp {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_world_stale_stamp(*self).to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_world_stale_stamp(bytes)?)
+    }
+}
+
+/// The entire value of a `fedworld:` row: presence IS the registration, so ANY other byte
+/// content is corruption, never a default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WorldRegistrationMarker;
+
+impl RawValue for WorldRegistrationMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(FEDERATION_WORLD_ROW_VALUE.to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if bytes == FEDERATION_WORLD_ROW_VALUE {
+            Ok(Self)
+        } else {
+            Err(corrupt_world_registration().into())
+        }
+    }
+}
+
 /// Encodes a stale stamp as `[version][reason][epoch LE][stamped_at LE]`.
 #[must_use]
 pub fn encode_world_stale_stamp(stamp: WorldStaleStamp) -> [u8; WORLD_STALE_STAMP_LEN] {
@@ -175,10 +230,7 @@ pub(super) fn register_foreign_world_for_pact(
 ) -> Result<()> {
     let key = federation_world_key(pact_id, world.entity_id());
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &key, FEDERATION_WORLD_ROW_VALUE)?;
+        FEDERATION_WORLD.put(&vault.store, wtxn, &key, &WorldRegistrationMarker)?;
         Ok(())
     })
 }
@@ -218,32 +270,28 @@ pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
         let mut stamped = 0usize;
         for (pact_id, reason, disconnect_epoch) in &terminal {
             let prefix = federation_world_prefix(pact_id);
-            let mut worlds = Vec::new();
-            for row in vault.store.sync_state.prefix_iter(wtxn, &prefix)? {
-                let (key, value) = row?;
-                if value.as_ref() != FEDERATION_WORLD_ROW_VALUE {
-                    return Err(corrupt_world_registration());
-                }
-                worlds.push(registered_world_from_key(&key, &prefix)?);
-            }
+            let worlds = FEDERATION_WORLD
+                .scan_from(&vault.store, wtxn, prefix.as_bytes())?
+                .into_iter()
+                .map(|(key, _marker)| registered_world_from_key(&key, &prefix))
+                .collect::<Result<Vec<_>>>()?;
             for world in worlds {
-                let key = federation_stale_key(world);
+                let key = ForeignWorldKey(world);
                 // FIRST STAMP WINS. An existing row is never compared or
                 // overwritten — not even by a strictly later terminal epoch.
                 // It must still DECODE: existence alone would let a malformed
                 // row pose as the immutable winner forever, leaving a provably
                 // dead world with no valid stamp, which is exactly the
                 // un-staling a write-capable attacker wants.
-                if let Some(existing) = vault.store.sync_state.get(wtxn, &key)? {
-                    decode_world_stale_stamp(&existing)?;
+                if FEDERATION_STALE.get(&vault.store, wtxn, &key)?.is_some() {
                     continue;
                 }
-                let encoded = encode_world_stale_stamp(WorldStaleStamp {
+                let stamp = WorldStaleStamp {
                     reason: *reason,
                     disconnect_epoch: *disconnect_epoch,
                     stamped_at_secs,
-                });
-                vault.store.sync_state.put(wtxn, &key, &encoded)?;
+                };
+                FEDERATION_STALE.put(&vault.store, wtxn, &key, &stamp)?;
                 stamped += 1;
             }
         }
@@ -257,14 +305,7 @@ pub fn foreign_world_stale_stamp(
     world: EntityId,
 ) -> Result<Option<WorldStaleStamp>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .sync_state
-        .get(&rtxn, &federation_stale_key(world))?
-    else {
-        return Ok(None);
-    };
-    decode_world_stale_stamp(&raw).map(Some)
+    FEDERATION_STALE.get(&vault.store, &rtxn, &ForeignWorldKey(world))
 }
 
 /// Every stale-stamped world, for ONE read of the retrieval path.
@@ -275,25 +316,37 @@ pub(crate) fn stale_stamped_worlds(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, WorldStaleStamp>> {
-    let mut stamped = BTreeMap::new();
-    for row in store
-        .sync_state
-        .prefix_iter(rtxn, FEDERATION_STALE_KEY_PREFIX)?
-    {
-        let (key, raw) = row?;
-        let world = key
-            .strip_prefix(FEDERATION_STALE_KEY_PREFIX)
-            .and_then(canonical_foreign_world_id)
-            .ok_or_else(corrupt_stale_stamp)?;
-        stamped.insert(world, decode_world_stale_stamp(&raw)?);
-    }
-    Ok(stamped)
+    // `FEDERATION_STALE`'s generic key-shape refusal is remapped to this
+    // family's own pinned corruption verdict, matching the bulk read's
+    // pre-typed-table error (a malformed key is exactly as fatal as a
+    // malformed value here: both are LOCAL writes, so both are corruption).
+    let rows = FEDERATION_STALE.scan(store, rtxn).map_err(|err| {
+        if matches!(
+            &err,
+            Error::Store(StoreError::SideTableRow {
+                problem: SideTableRowProblem::KeyShape,
+                ..
+            })
+        ) {
+            corrupt_stale_stamp()
+        } else {
+            err
+        }
+    })?;
+    Ok(rows
+        .into_iter()
+        .map(|(ForeignWorldKey(world), stamp)| (world, stamp))
+        .collect())
 }
 
 /// `fedstale:{world_id_hex}` — one stamp per world, never per pact.
 ///
 /// Crate-visible so every in-crate reader addresses the row through this one
-/// spelling instead of re-deriving the key format at each site.
+/// spelling instead of re-deriving the key format at each site. Production
+/// reads/writes now go through [`FEDERATION_STALE`]'s typed door; this raw
+/// builder is reached only by test fixtures that plant or inspect rows
+/// directly.
+#[cfg(test)]
 pub(crate) fn federation_stale_key(world: EntityId) -> String {
     let mut key = String::with_capacity(FEDERATION_STALE_KEY_PREFIX.len() + 32);
     key.push_str(FEDERATION_STALE_KEY_PREFIX);
@@ -301,16 +354,16 @@ pub(crate) fn federation_stale_key(world: EntityId) -> String {
     key
 }
 
-/// `fedworld:{pact_id_hex}:` — the scan prefix for ONE pact's worlds.
+/// `{pact_id_hex}:` — [`FEDERATION_WORLD`]'s scan prefix for ONE pact's worlds (the bytes after
+/// the `fedworld:` table prefix).
 fn federation_world_prefix(pact_id: &[u8; 32]) -> String {
-    let mut prefix = String::with_capacity(FEDERATION_WORLD_KEY_PREFIX.len() + 65);
-    prefix.push_str(FEDERATION_WORLD_KEY_PREFIX);
+    let mut prefix = String::with_capacity(65);
     prefix.push_str(&bytes_to_hex_lower(pact_id));
     prefix.push(':');
     prefix
 }
 
-/// `fedworld:{pact_id_hex}:{world_id_hex}`.
+/// `{pact_id_hex}:{world_id_hex}` — [`FEDERATION_WORLD`]'s key for one registration.
 fn federation_world_key(pact_id: &[u8; 32], world: EntityId) -> String {
     let mut key = federation_world_prefix(pact_id);
     key.push_str(&world.to_hex());

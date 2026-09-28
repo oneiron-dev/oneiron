@@ -1,20 +1,24 @@
 //! Publisher share dial: explicit, install-profile, and compiled-default resolution.
 
-use super::{PublisherResult, put_meta};
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::Error;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-/// The publisher share dial, over `vault_meta` — house pattern is a per-feature
-/// byte-key const in the owning module (`INBOX_REVIEW_DIAL_KEY`, `inbox.rs:73`).
-/// `settings.rs` is UI-customization only and is not touched.
-pub const PUBLISHER_ENABLED_KEY: &[u8] = b"settings:publisher:v1:enabled";
+use super::PublisherResult;
 
-/// The install profile's default for [`PUBLISHER_ENABLED_KEY`], written at
-/// provisioning. This is where the cloud posture's default-ON (ARCH-0056 §9
-/// rung 1, owner ruling r6) lands; a self-host install writes its own answer,
-/// and a build that never provisioned falls through to
+/// The publisher share dial. House pattern is a per-feature table in the
+/// owning module (`INBOX_REVIEW_DIAL_KEY`, `inbox.rs:73`). `settings.rs` is
+/// UI-customization only and is not touched.
+const ENABLED: SideTable<(), DialToken, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_PUBLISHER_ENABLED);
+
+/// The install profile's default for [`ENABLED`], written at provisioning.
+/// This is where the cloud posture's default-ON (ARCH-0056 §9 rung 1, owner
+/// ruling r6) lands; a self-host install writes its own answer, and a build
+/// that never provisioned falls through to
 /// [`PUBLISHER_ENABLED_COMPILED_DEFAULT`].
-pub const PUBLISHER_INSTALL_DEFAULT_KEY: &[u8] = b"settings:publisher:v1:install_default";
+const INSTALL_DEFAULT: SideTable<(), DialToken, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT);
 
 /// The compiled fallback: disabled.
 ///
@@ -28,21 +32,23 @@ const DIAL_ENABLED: &str = "enabled";
 
 const DIAL_DISABLED: &str = "disabled";
 
-fn read_dial_key(vault: &Vault, key: &[u8]) -> Result<Option<bool>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, key)? else {
-        return Ok(None);
-    };
-    match std::str::from_utf8(&raw) {
-        Ok(DIAL_ENABLED) => Ok(Some(true)),
-        Ok(DIAL_DISABLED) => Ok(Some(false)),
-        _ => Err(Error::CorruptedIndex("publisher dial")),
-    }
-}
+/// The dial's on-disk token, one leading-byte-free `enabled`/`disabled`
+/// string.
+struct DialToken(bool);
 
-fn write_dial_key(vault: &Vault, key: &[u8], enabled: bool) -> Result<()> {
-    let token = if enabled { DIAL_ENABLED } else { DIAL_DISABLED };
-    put_meta(vault, key, token.as_bytes())
+impl RawValue for DialToken {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let token = if self.0 { DIAL_ENABLED } else { DIAL_DISABLED };
+        Ok(token.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        match std::str::from_utf8(bytes) {
+            Ok(DIAL_ENABLED) => Ok(Self(true)),
+            Ok(DIAL_DISABLED) => Ok(Self(false)),
+            _ => Err(CodecError::Value(Error::CorruptedIndex("publisher dial"))),
+        }
+    }
 }
 
 /// Resolves the effective publisher dial.
@@ -57,11 +63,12 @@ fn write_dial_key(vault: &Vault, key: &[u8], enabled: bool) -> Result<()> {
 /// Storage errors, and [`Error::CorruptedIndex`] on a dial token this engine
 /// never wrote.
 pub fn publisher_enabled(vault: &Vault) -> PublisherResult<bool> {
-    if let Some(explicit) = read_dial_key(vault, PUBLISHER_ENABLED_KEY)? {
-        return Ok(explicit);
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    if let Some(explicit) = ENABLED.get(&vault.store, &rtxn, &())? {
+        return Ok(explicit.0);
     }
-    if let Some(profile) = read_dial_key(vault, PUBLISHER_INSTALL_DEFAULT_KEY)? {
-        return Ok(profile);
+    if let Some(profile) = INSTALL_DEFAULT.get(&vault.store, &rtxn, &())? {
+        return Ok(profile.0);
     }
     Ok(PUBLISHER_ENABLED_COMPILED_DEFAULT)
 }
@@ -72,7 +79,7 @@ pub fn publisher_enabled(vault: &Vault) -> PublisherResult<bool> {
 ///
 /// Storage errors.
 pub fn set_publisher_enabled(vault: &Vault, enabled: bool) -> PublisherResult<()> {
-    write_dial_key(vault, PUBLISHER_ENABLED_KEY, enabled)?;
+    vault.with_write_txn(|wtxn| ENABLED.put(&vault.store, wtxn, &(), &DialToken(enabled)))?;
     Ok(())
 }
 
@@ -83,6 +90,7 @@ pub fn set_publisher_enabled(vault: &Vault, enabled: bool) -> PublisherResult<()
 ///
 /// Storage errors.
 pub fn set_publisher_install_default(vault: &Vault, enabled: bool) -> PublisherResult<()> {
-    write_dial_key(vault, PUBLISHER_INSTALL_DEFAULT_KEY, enabled)?;
+    vault
+        .with_write_txn(|wtxn| INSTALL_DEFAULT.put(&vault.store, wtxn, &(), &DialToken(enabled)))?;
     Ok(())
 }

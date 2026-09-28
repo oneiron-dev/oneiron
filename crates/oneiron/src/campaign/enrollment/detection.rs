@@ -3,10 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::storage::{
-    CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, ENROLLMENT_EVENT_PREFIX, baseline_key, from_row,
-    hash_from_hex, id_from_hex, keyed, pin_schema, put_meta, read_meta, to_row,
-};
+use super::storage::{CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, hash_from_hex, id_from_hex, pin_schema};
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -15,6 +12,16 @@ use crate::saved_query::{
     MembershipTransition, QueryScope, SavedQueryEvaluator, membership_events,
     next_membership_epoch, read_saved_query,
 };
+use crate::side_table::{self, LegacyJson, SideTable};
+
+/// One persisted campaign membership-transition detection event awaiting its
+/// consequence. Key: the event id.
+const EVENT: SideTable<EntityId, EventRow, LegacyJson> =
+    SideTable::new(&side_table::CAMPAIGN_ENROLLMENT_EVENT);
+/// Per-saved-query baseline (definition version + scope digest) a campaign
+/// enrollment detection re-derives against. Key: the query id.
+const BASELINE: SideTable<EntityId, BaselineRow, LegacyJson> =
+    SideTable::new(&side_table::CAMPAIGN_ENROLLMENT_BASELINE);
 
 // ---------------------------------------------------------------------------
 // The persisted enrollment (membership) event
@@ -90,12 +97,11 @@ pub fn campaign_enrollment_event(
     vault: &Vault,
     event_ref: EntityId,
 ) -> Result<Option<CampaignEnrollmentEvent>> {
-    read_meta(
-        vault,
-        &keyed(ENROLLMENT_EVENT_PREFIX, &[event_ref.as_bytes()]),
-    )?
-    .map(|raw| decode_event(event_ref, &raw))
-    .transpose()
+    let rtxn = vault.store.env.read_txn()?;
+    EVENT
+        .get(&vault.store, &rtxn, &event_ref)?
+        .map(|row| decode_event(event_ref, row))
+        .transpose()
 }
 
 /// What a detection pass concluded.
@@ -313,7 +319,7 @@ struct EnrollmentBaseline {
 }
 
 pub(super) fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Result<()> {
-    let bytes = to_row(&EventRow {
+    let row = EventRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         query_ref: event.query_ref.to_hex(),
         campaign_ref: event.campaign_ref.to_hex(),
@@ -327,17 +333,15 @@ pub(super) fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Resul
         evidence_hash: bytes_to_hex_lower(&event.evidence_hash),
         definition_version: event.definition_version,
         scope_digest: bytes_to_hex_lower(&event.scope_digest),
-    })?;
-    put_meta(
-        vault,
-        &keyed(ENROLLMENT_EVENT_PREFIX, &[event.event_ref.as_bytes()]),
-        &bytes,
-    )
+    };
+    vault.with_write_txn(|wtxn| {
+        EVENT.put(&vault.store, wtxn, &event.event_ref, &row)?;
+        Ok(())
+    })
 }
 
-fn decode_event(event_ref: EntityId, raw: &[u8]) -> Result<CampaignEnrollmentEvent> {
+fn decode_event(event_ref: EntityId, row: EventRow) -> Result<CampaignEnrollmentEvent> {
     const CONTEXT: &str = "campaign enrollment event";
-    let row: EventRow = from_row(raw, CONTEXT)?;
     pin_schema(row.schema_version, CONTEXT)?;
     Ok(CampaignEnrollmentEvent {
         event_ref,
@@ -359,10 +363,10 @@ fn decode_event(event_ref: EntityId, raw: &[u8]) -> Result<CampaignEnrollmentEve
 
 fn read_baseline(vault: &Vault, query_ref: EntityId) -> Result<Option<EnrollmentBaseline>> {
     const CONTEXT: &str = "campaign enrollment baseline";
-    let Some(raw) = read_meta(vault, &baseline_key(query_ref))? else {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(row) = BASELINE.get(&vault.store, &rtxn, &query_ref)? else {
         return Ok(None);
     };
-    let row: BaselineRow = from_row(&raw, CONTEXT)?;
     pin_schema(row.schema_version, CONTEXT)?;
     Ok(Some(EnrollmentBaseline {
         definition_version: row.definition_version,
@@ -376,10 +380,13 @@ fn put_baseline(
     definition_version: u64,
     scope_digest: &[u8; 32],
 ) -> Result<()> {
-    let bytes = to_row(&BaselineRow {
+    let row = BaselineRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         definition_version,
         scope_digest: bytes_to_hex_lower(scope_digest),
-    })?;
-    put_meta(vault, &baseline_key(query_ref), &bytes)
+    };
+    vault.with_write_txn(|wtxn| {
+        BASELINE.put(&vault.store, wtxn, &query_ref, &row)?;
+        Ok(())
+    })
 }

@@ -25,7 +25,7 @@ fn corrupted_activity_cannot_emit_or_accept_review() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let case = "11111111111111111111111111111111";
-    let key = activity_key(case)?;
+    let key = ACTIVITY.key_bytes(&case.to_owned());
     vault.with_write_txn(|txn| {
         vault
             .store

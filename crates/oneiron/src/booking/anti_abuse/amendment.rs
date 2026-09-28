@@ -5,11 +5,11 @@ use super::rules::{
     validate_rule_row,
 };
 use super::storage::{
-    ROW_VERSION_HASH_DOMAIN, decode_row, encode_row, engine_failure, notice_key,
-    notice_scan_prefix, refused, rule_row_key, rule_scan_prefix,
+    NOTICE, NOTICE_KEY_TAG, ROW_VERSION_HASH_DOMAIN, RULE, RULE_KEY_TAG, encode_row,
+    engine_failure, notice_digest, refused, rule_digest,
 };
 use crate::booking::config::{BOOKING_EVENT_TYPE_PREDICATE, decode_event_type_claim_value};
-use crate::booking::lifecycle::{booking_writer, digest_with, put_meta, read_meta_bytes};
+use crate::booking::lifecycle::{booking_writer, digest_with};
 use crate::booking::{BookingError, EventTypeKey};
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::{EntityId, Vault};
@@ -265,10 +265,8 @@ fn read_rule_row_in_txn(
     rtxn: &heed::RoTxn<'_>,
     row_id: &str,
 ) -> Result<Option<BookingAntiAbuseRuleRow>, BookingError> {
-    let Some(raw) = read_meta_bytes(vault, rtxn, &rule_row_key(row_id))? else {
-        return Ok(None);
-    };
-    decode_row(&raw).map(Some)
+    RULE.get(&vault.store, rtxn, &(*RULE_KEY_TAG, rule_digest(row_id)))
+        .map_err(|error| engine_failure("rule read", error))
 }
 
 fn put_rule_row_in_txn(
@@ -276,8 +274,13 @@ fn put_rule_row_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     row: &BookingAntiAbuseRuleRow,
 ) -> Result<(), BookingError> {
-    let encoded = encode_row(row)?;
-    put_meta(vault, wtxn, &rule_row_key(&row.row_id), &encoded)
+    RULE.put(
+        &vault.store,
+        wtxn,
+        &(*RULE_KEY_TAG, rule_digest(&row.row_id)),
+        row,
+    )
+    .map_err(|error| engine_failure("rule write", error))
 }
 
 /// The private write surface. [`apply_rule_amendment`] is the only caller;
@@ -308,8 +311,14 @@ fn write_notice_in_txn(
         token,
         row.amended_by.to_hex()
     );
-    let key = notice_key(&row.row_id, row.version);
-    put_meta(vault, wtxn, &key, notice.as_bytes())
+    NOTICE
+        .put(
+            &vault.store,
+            wtxn,
+            &(*NOTICE_KEY_TAG, notice_digest(&row.row_id, row.version)),
+            &notice,
+        )
+        .map_err(|error| engine_failure("notice write", error))
 }
 
 /// Validates the scope against the same live configuration truth the solver
@@ -485,18 +494,12 @@ fn all_rule_rows(vault: &Vault) -> Result<Vec<BookingAntiAbuseRuleRow>, BookingE
         .env
         .read_txn()
         .map_err(|error| engine_failure("read transaction", error))?;
-    let mut rows = Vec::new();
-    let prefix = rule_scan_prefix();
-    let iter = vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, &prefix)
-        .map_err(|error| engine_failure("rule scan", error))?;
-    for entry in iter {
-        let (_, raw) = entry.map_err(|error| engine_failure("rule scan", error))?;
-        rows.push(decode_row(&raw)?);
-    }
-    Ok(rows)
+    Ok(RULE
+        .scan_from(&vault.store, &rtxn, RULE_KEY_TAG)
+        .map_err(|error| engine_failure("rule scan", error))?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect())
 }
 
 /// Lists the stored rule rows for one exact scope, ordered by row id — the
@@ -554,19 +557,12 @@ pub fn booking_anti_abuse_notices(vault: &Vault) -> Result<Vec<String>, BookingE
         .env
         .read_txn()
         .map_err(|error| engine_failure("read transaction", error))?;
-    let mut notices = Vec::new();
-    let prefix = notice_scan_prefix();
-    let iter = vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, &prefix)
-        .map_err(|error| engine_failure("notice scan", error))?;
-    for entry in iter {
-        let (_, raw) = entry.map_err(|error| engine_failure("notice scan", error))?;
-        let notice = std::str::from_utf8(&raw)
-            .map_err(|_| refused("booking anti-abuse notice is not utf-8"))?;
-        notices.push(notice.to_owned());
-    }
+    let mut notices: Vec<String> = NOTICE
+        .scan_from(&vault.store, &rtxn, NOTICE_KEY_TAG)
+        .map_err(|error| engine_failure("notice scan", error))?
+        .into_iter()
+        .map(|(_, notice)| notice)
+        .collect();
     notices.sort();
     Ok(notices)
 }

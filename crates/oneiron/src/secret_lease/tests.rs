@@ -18,6 +18,7 @@ use crate::secret_custody::{
     SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyRecord, TierBand,
     decode_secret_custody_admission_body, encode_secret_custody_body, read_secret_custody_in_txn,
 };
+use crate::side_table::HexId;
 use crate::temporal::TimeRange;
 
 // Benign test values: no detector-shaped credential material (the gate
@@ -106,7 +107,10 @@ fn read_receipt_row(vault: &Vault, receipt_id: &EntityId) -> Vec<u8> {
     vault
         .store
         .vault_meta
-        .get(&rtxn, &receipt_key(receipt_id))
+        .get(
+            &rtxn,
+            &SECRET_MATERIALIZATION_RECEIPT.key_bytes(&HexId(*receipt_id)),
+        )
         .expect("read receipt row")
         .expect("receipt row present")
         .to_vec()

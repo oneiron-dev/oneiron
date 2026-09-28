@@ -13,14 +13,18 @@ pub(crate) fn execute_mcp_calendar(
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
     let op = args.operation.op();
-    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let facade = mcp_memory(&server.vault, actor);
 
     let mut structured = match args.operation {
         crate::mcp::McpCalendarOperation::Read { event_ref } => {
-            let item = facade
+            let read = facade
                 .calendar_read(&oneiron::CalendarReadRequest { event_ref })
                 .map_err(mcp_facade_error)?;
-            json!({ "found": item.is_some(), "item": item })
+            json!({
+                "found": read.value.is_some(),
+                "item": read.value,
+                "narrowing": read.receipt,
+            })
         }
         crate::mcp::McpCalendarOperation::Search {
             calendars,
@@ -28,7 +32,7 @@ pub(crate) fn execute_mcp_calendar(
             text,
             limit,
         } => {
-            let items = facade
+            let search = facade
                 .calendar_search(&oneiron::CalendarSearchRequest {
                     calendars: calendar_selectors(calendars),
                     range: range.map(|range| oneiron::CalendarRangeDto {
@@ -39,10 +43,14 @@ pub(crate) fn execute_mcp_calendar(
                     limit: limit.unwrap_or(CORE_MAX_LIST_LIMIT as u32),
                 })
                 .map_err(mcp_facade_error)?;
-            json!({ "count": items.len(), "items": items })
+            json!({
+                "count": search.value.len(),
+                "items": search.value,
+                "narrowing": search.receipt,
+            })
         }
         crate::mcp::McpCalendarOperation::Freebusy { calendars, range } => {
-            let intervals = facade
+            let busy = facade
                 .calendar_freebusy(
                     &calendar_selectors(calendars),
                     oneiron::TimeRange {
@@ -51,7 +59,11 @@ pub(crate) fn execute_mcp_calendar(
                     },
                 )
                 .map_err(mcp_facade_error)?;
-            json!({ "count": intervals.len(), "intervals": intervals })
+            json!({
+                "count": busy.value.len(),
+                "intervals": busy.value,
+                "narrowing": busy.receipt,
+            })
         }
         crate::mcp::McpCalendarOperation::Invite {
             method,

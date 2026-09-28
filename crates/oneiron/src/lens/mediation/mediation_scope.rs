@@ -1,7 +1,7 @@
 //! Ordinary world-id and repository membership clamps on every frame-bound read.
 
 use super::LensRenderFrame;
-use crate::claim::ScopedRead;
+use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadResult};
 use crate::pipeline::{WorldAuthoritySet, WorldScope};
 use crate::{EntityId, Error, Result};
 
@@ -23,14 +23,27 @@ impl LensRenderFrame {
         &self.world_scope
     }
 
-    pub fn scoped_body(&self, read: &ScopedRead<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
+    /// The body the acting principal may read inside this frame's world
+    /// scope. A readable row outside the frame's worlds is counted on the
+    /// receipt as withheld, the same as a row the principal cannot read.
+    pub fn scoped_body(
+        &self,
+        read: &ScopedRead<'_>,
+        id: &EntityId,
+    ) -> Result<ScopedReadResult<Option<Vec<u8>>>> {
         self.ensure_scoped_read_actor(read)?;
-        let crate::claim::ScopedReadResult {
-            value,
-            receipt: _receipt,
-        } = read.get_entity_parts_with_receipt(id, None)?;
-        let Some((kind, _, body)) = value else {
-            return Ok(None);
+        let ScopedReadResult { value, mut receipt } =
+            read.read(&[PointRead::id(*id)], None)?.single();
+        let Some(ReadRow {
+            entity_type: kind,
+            body: Some(body),
+            ..
+        }) = value
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
         };
         // Check the exact body admitted by ScopedRead, not a second raw read
         // that could observe a changed world after disclosure was authorized.
@@ -55,6 +68,12 @@ impl LensRenderFrame {
             WorldScope::Base => world.is_none(),
             WorldScope::World(selected) => world.is_none() || world == Some(*selected),
         };
-        Ok(admitted.then_some(body))
+        if !admitted {
+            receipt.add_suppressed(1);
+        }
+        Ok(ScopedReadResult {
+            value: admitted.then_some(body),
+            receipt,
+        })
     }
 }

@@ -4,9 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::inbound::read_event_name;
 use super::outbound::{
-    CALENDAR_WRITE_OUTBOX_PREFIX, CalendarRemoteObjectRow, CalendarWriteOutboxRow,
-    LOCAL_UID_DOMAIN, OUTBOX_ROW_TAG, StoredOutboxRow, ingest_error, read_outbox_row,
-    read_remote_object,
+    CalendarRemoteObjectRow, CalendarWriteOutboxRow, LOCAL_UID_DOMAIN, OUTBOX, OUTBOX_ROW_TAG,
+    ingest_error, read_outbox_row, read_remote_object,
 };
 use super::seat::CalendarConnectorError;
 
@@ -457,13 +456,8 @@ pub fn calendar_write_outbox_rows(
     vault: &Vault,
 ) -> Result<Vec<CalendarWriteOutboxRow>, CalendarConnectorError> {
     let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let mut prefix = CALENDAR_WRITE_OUTBOX_PREFIX.to_vec();
-    prefix.extend_from_slice(OUTBOX_ROW_TAG);
     let mut rows = Vec::new();
-    for entry in vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-        let (_, raw) = entry?;
-        let stored: StoredOutboxRow = serde_json::from_slice(raw.as_ref())
-            .map_err(|_| ingest_error("connector outbox row did not decode"))?;
+    for (_, stored) in OUTBOX.scan_from(&vault.store, &rtxn, OUTBOX_ROW_TAG)? {
         rows.push(stored.into_row()?);
     }
     Ok(rows)

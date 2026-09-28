@@ -99,9 +99,6 @@ fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<EntityId> {
         .chain(bundle.landed.iter().map(|row| row.note))
         .collect()
 }
-fn metadata_key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
 fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId) -> Result<bool> {
     if crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), note)
         || vault.local_hard_delete_marker_exists_in_txn(txn, note)?

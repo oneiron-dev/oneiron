@@ -3,6 +3,13 @@
 use super::*;
 use crate::vault::ReadMode;
 
+/// One admitted revision: the served bytes (the live projection on a live
+/// read) and the content hash of the stored revision they came from.
+pub(super) struct AdmittedRevision {
+    pub(super) raw: Vec<u8>,
+    pub(super) content_hash: u8,
+}
+
 pub(crate) struct RevisionedHits {
     pub(crate) hits: Vec<ScoredEntity>,
     pub(crate) receipt: ScopedReadReceipt,
@@ -106,7 +113,9 @@ impl ScopedRead<'_> {
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)
+        Ok(self
+            .entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+            .map(|revision| revision.raw))
     }
 
     /// Historical bytes never inherit a later live body's authority, or vice versa.
@@ -117,7 +126,7 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         mode: ReadMode,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<Option<AdmittedRevision>> {
         if !self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)? {
             return Ok(None);
         }
@@ -146,6 +155,10 @@ impl ScopedRead<'_> {
         {
             return Ok(None);
         }
+        // The short-reference hash names the stored revision, so it is taken
+        // before any live projection replaces the body.
+        let content_hash =
+            (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
         if mode == ReadMode::Live {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -171,7 +184,7 @@ impl ScopedRead<'_> {
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend_from_slice(&body);
         }
-        Ok(Some(raw))
+        Ok(Some(AdmittedRevision { raw, content_hash }))
     }
 
     pub(super) fn context_entity_revision_is_readable_in(
@@ -186,9 +199,15 @@ impl ScopedRead<'_> {
             .map_or(ReadMode::Live, |revision| {
                 ReadMode::Pinned(crate::vault::RevisionRef(revision))
             });
-        let Some(raw) = self.entity_raw_with_mode_in(txn, policy, filter, &entity.id, mode)? else {
+        let Some(revision) = self.entity_raw_with_mode_in(txn, policy, filter, &entity.id, mode)?
+        else {
             return Ok(false);
         };
-        crate::context_pack::context_entity_matches_read_snapshot(self.vault, txn, entity, &raw)
+        crate::context_pack::context_entity_matches_read_snapshot(
+            self.vault,
+            txn,
+            entity,
+            &revision.raw,
+        )
     }
 }

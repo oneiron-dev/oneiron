@@ -392,6 +392,9 @@ pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
+    /// The verified credential this actor presented, when a host bound one:
+    /// every read verb then reads under the key that proof builds.
+    pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
 }
 
 impl Vault {
@@ -409,6 +412,7 @@ impl Vault {
             vault: self,
             actor,
             actor_class,
+            read_proof: None,
         }
     }
 }
@@ -416,6 +420,17 @@ impl Vault {
 impl Memory<'_> {
     pub(crate) fn vault(&self) -> &Vault {
         self.vault
+    }
+
+    /// Binds this surface's reads to the verified credential the actor
+    /// presented (ONE-1187-D6: a render read runs under the principal's
+    /// already-held key). Every read verb then reads under the key that proof
+    /// builds, never a broader one — not even the owner's. The proof's holder
+    /// must be the bound actor; a read refuses otherwise.
+    #[must_use]
+    pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
+        self.read_proof = Some(proof.clone());
+        self
     }
 
     /// The bound actor entity id.

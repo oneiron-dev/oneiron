@@ -5,6 +5,7 @@
 //! requires a new record, never a restamp of the same id.
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -39,13 +40,18 @@ struct Stamp {
     birth_facet: [u8; 16],
     scope: Scope,
 }
-const RECORD_SCOPE_REVISION_KEY: &[u8] = b"scope:record:revision:v1";
+/// One entity's birth-position stamp, keyed by entity id.
+const SCOPE_RECORD: SideTable<EntityId, Stamp, LegacyJson> =
+    SideTable::new(&side_table::SCOPE_RECORD);
+/// The vault's record-scope revision, bumped on every stamp change.
+const SCOPE_RECORD_REVISION: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::SCOPE_RECORD_REVISION);
 
 pub(crate) fn read_scope_revision(store: &impl ManifestDbs, txn: &heed::RoTxn<'_>) -> Result<u64> {
-    match store.vault_meta().get(txn, RECORD_SCOPE_REVISION_KEY)? {
+    match SCOPE_RECORD_REVISION.get(store, txn, &())? {
         None => Ok(0),
         Some(bytes) => {
-            Ok(u64::from_le_bytes(bytes.as_ref().try_into().map_err(
+            Ok(u64::from_le_bytes(bytes.as_slice().try_into().map_err(
                 |_| Error::CorruptedIndex("record scope revision"),
             )?))
         }
@@ -56,21 +62,14 @@ fn bump_scope_revision(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
     let next = read_scope_revision(store, txn)?
         .checked_add(1)
         .ok_or(Error::IndexOverflow("record scope revision"))?;
-    store
-        .vault_meta
-        .put(txn, RECORD_SCOPE_REVISION_KEY, &next.to_le_bytes())?;
+    SCOPE_RECORD_REVISION.put(store, txn, &(), &next.to_le_bytes().to_vec())?;
     Ok(())
 }
 
-fn key(id: EntityId) -> Vec<u8> {
-    let mut key = b"scope:record:v2:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
 /// Retire an id's scope sidecar in the same transaction that erases its body.
 /// A later same-id write never inherits the deleted record's birth position.
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
-    store.vault_meta.delete(txn, &key(id))?;
+    SCOPE_RECORD.delete(store, txn, &id)?;
     bump_scope_revision(store, txn)
 }
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
@@ -123,14 +122,7 @@ pub(crate) fn stamp_put(
     replicated: bool,
 ) -> Result<()> {
     bump_scope_revision(store, txn)?;
-    let prior = store
-        .vault_meta
-        .get(txn, &key(id))?
-        .map(|bytes| {
-            serde_json::from_slice::<Stamp>(&bytes)
-                .map_err(|_| Error::CorruptedIndex("record scope stamp"))
-        })
-        .transpose()?;
+    let prior = SCOPE_RECORD.get(store, txn, &id)?;
     let (mut scope, facet) = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
         (body.record_scope("read"), body.scope_facet)
@@ -202,14 +194,13 @@ pub(crate) fn stamp_put(
         // picking its ID and bytes. Only an existing stamped row inherits.
         return Ok(());
     }
-    let bytes = serde_json::to_vec(&Stamp {
+    let stamp = Stamp {
         version: 2,
         kind,
         birth_facet: *facet.as_bytes(),
         scope,
-    })
-    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    };
+    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
     Ok(())
 }
 /// A TURN/MESSAGE body never proposes an audience: only
@@ -237,9 +228,7 @@ pub(crate) fn stamp_leader_project(
     id: EntityId,
     project: EntityId,
 ) -> Result<()> {
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("leader chat scope header"))?;
@@ -254,9 +243,7 @@ pub(crate) fn stamp_leader_project(
     let birth = default_stamp(kind, facet);
     let mut scope = birth.clone();
     scope.audience = singleton(ScopeId(project));
-    if let Some(bytes) = store.vault_meta.get(txn, &key(id))? {
-        let prior: Stamp = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
+    if let Some(prior) = SCOPE_RECORD.get(store, txn, &id)? {
         if prior.version != 2
             || prior.kind != kind
             || prior.birth_facet != *facet.as_bytes()
@@ -269,14 +256,17 @@ pub(crate) fn stamp_leader_project(
         }
     }
     bump_scope_revision(store, txn)?;
-    let bytes = serde_json::to_vec(&Stamp {
-        version: 2,
-        kind,
-        birth_facet: *facet.as_bytes(),
-        scope,
-    })
-    .map_err(|_| Error::InvariantViolation("leader chat scope stamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )?;
     Ok(())
 }
 fn stored_scope(
@@ -285,11 +275,9 @@ fn stored_scope(
     id: EntityId,
     kind: u8,
 ) -> Result<Option<Scope>> {
-    let Some(bytes) = store.vault_meta().get(txn, &key(id))? else {
+    let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
         return Ok(None);
     };
-    let stamp: Stamp =
-        serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
     if stamp.version != 2 || stamp.kind != kind {
         return Ok(None);
     }
@@ -319,12 +307,9 @@ pub(crate) fn validate_edit_birth_scope(
     kind: u8,
     data: &[u8],
 ) -> Result<()> {
-    let raw = store
-        .vault_meta
-        .get(txn, &key(id))?
+    let stamp = SCOPE_RECORD
+        .get(store, txn, &id)?
         .ok_or(Error::InvalidClaimBody("unstamped promoted edit"))?;
-    let stamp: Stamp =
-        serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
     if stamp.version != 2 || stamp.kind != kind || stored_scope(store, txn, id, kind)?.is_none() {
         return Err(Error::InvalidClaimBody("record scope restamp refused"));
     }

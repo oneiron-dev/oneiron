@@ -803,13 +803,13 @@ fn rebuilding_the_index_is_an_identity_and_drops_stale_rows() -> Result<()> {
         "the index holds exactly the candidates"
     );
     assert!(
-        first.contains_key(&candidate_key(prose.entity_id())),
+        first.contains_key(&CANDIDATE.key_bytes(&prose.entity_id())),
         "the amended artifact is indexed"
     );
 
     // A row the index remembers but the projection no longer produces is
     // deleted, not carried.
-    let ghost = candidate_key(EntityId::now());
+    let ghost = CANDIDATE.key_bytes(&EntityId::now());
     vault.with_write_txn(|wtxn| {
         vault.store.vault_meta.put(wtxn, &ghost, b"{}")?;
         Ok(())
@@ -843,7 +843,7 @@ fn index_rows(vault: &Vault) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
     vault
         .store
         .vault_meta
-        .prefix_iter(&rtxn, CANDIDATE_KEY_PREFIX)?
+        .prefix_iter(&rtxn, side_table::EDIT_DISTANCE_RESERVOIR_CANDIDATE.prefix)?
         .map(|entry| {
             let (key, value) = entry?;
             Ok((key.to_vec(), value.to_vec()))

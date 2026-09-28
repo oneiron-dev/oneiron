@@ -1,7 +1,5 @@
 //! First-provider backfill, distinct from embedding-space migration.
 use super::EMBED_PRIORITY_BACKFILL;
-#[cfg(feature = "sync")]
-use super::pending_embedding_lease_key;
 use crate::ports::EntityStoreRead;
 use crate::{Error, Result};
 
@@ -75,10 +73,7 @@ fn remark_claims_pending_in_txn(
                 crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, id)?;
             }
             crate::sync::queue::push_embed_job_in_txn(&vault.store, wtxn, id, priority)?;
-            vault
-                .store
-                .sync_state
-                .delete(wtxn, pending_embedding_lease_key(id).as_str())?;
+            super::clear_pending_embedding_lease_if_any(vault, wtxn, id)?;
         }
     }
     Ok(claims.len())

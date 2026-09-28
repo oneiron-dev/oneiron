@@ -1,30 +1,37 @@
 //! Close the legacy ChildOf-only append door after DAG adoption.
-use super::graph::{MIGRATED, invalid, key};
+use super::graph::{MIGRATED, invalid};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::ports::{EdgeStoreRead, TombstoneStoreRead};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{
     EntityId,
     registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN},
 };
-fn permit_key(record: &EntityId) -> Vec<u8> {
-    key(b"conversation_dag:append_in_txn:v1:", record)
-}
+
+/// Transient in-txn permit binding a legacy ChildOf-append record id to the
+/// conversation it may write.
+const APPEND_PERMITS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_APPEND_PERMIT);
+/// Content pin of one immutable DAG record body, by record id.
+const BODY_PINS: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_BODY_PIN);
+/// Durable room owner of a TURN. The pin survives deleted/missing ChildOf rows.
+const ROOM_OWNERS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_ROOM_OWNER);
+
 pub(super) fn permit(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     record: &EntityId,
     conversation: &EntityId,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &permit_key(record), conversation.as_bytes())?;
-    Ok(())
+    APPEND_PERMITS.put(store, txn, record, conversation)
 }
 pub(super) fn finish(store: &Store, txn: &mut heed::RwTxn<'_>, record: &EntityId) -> Result<()> {
-    store.vault_meta.delete(txn, &permit_key(record))?;
+    APPEND_PERMITS.delete(store, txn, record)?;
     Ok(())
 }
 /// Reached by both public edge put flavors. Received edge materialization is
@@ -50,7 +57,7 @@ pub(crate) fn validate_local_membership(
     }
     // A leader chat is protected before DAG adoption as well. A generic raw
     // TURN + ChildOf pair has no authenticated speaker/project permit.
-    if let Some(raw) = store.entities.get(txn, conversation.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &conversation)? {
         let body = crate::conversation::ConversationBody::from_bytes(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )?;
@@ -67,11 +74,11 @@ pub(crate) fn validate_local_membership(
             return Err(crate::error::RecordError::ConversationDenied.into());
         }
     }
-    let marker = store.vault_meta.get(txn, &key(MIGRATED, &conversation))?;
+    let marker = MIGRATED.get(store, txn, &conversation)?;
     let Some(marker) = marker else {
         return Ok(());
     };
-    if marker.as_ref() != [1] {
+    if marker != [1] {
         return Err(Error::CorruptedIndex("conversation migration marker"));
     }
     if store
@@ -80,20 +87,15 @@ pub(crate) fn validate_local_membership(
     {
         return Ok(());
     }
-    if store
-        .vault_meta
-        .get(txn, &permit_key(&record))?
-        .is_some_and(|bytes| bytes.as_ref() == conversation.as_bytes())
+    if APPEND_PERMITS
+        .get(store, txn, &record)?
+        .is_some_and(|bound| bound == conversation)
     {
         return Ok(());
     }
     Err(invalid(
         "conversation adopted DAG; append through append_dag_record",
     ))
-}
-
-fn pin_key(id: &EntityId) -> Vec<u8> {
-    key(b"conversation_dag:body_pin:", id)
 }
 
 fn body_pin(kind: u8, occurred: crate::TimeRange, learned_at: u64, body: &[u8]) -> [u8; 32] {
@@ -148,7 +150,7 @@ pub(crate) fn guard_record_put(
     {
         return Err(invalid("room TURN author is immutable"));
     }
-    let stored_pin = store.vault_meta.get(txn, &pin_key(id))?;
+    let stored_pin = BODY_PINS.get(store, txn, id)?;
     let inferred_pin = if stored_pin.is_none() {
         if let Some(row) = prior
             .as_ref()
@@ -160,7 +162,7 @@ pub(crate) fn guard_record_put(
                 owned |= store
                     .port_entity_record(txn, &owner)?
                     .is_some_and(|row| row.entity_type == ENTITY_TYPE_CONVERSATION)
-                    && store.vault_meta.get(txn, &key(MIGRATED, &owner))?.is_some();
+                    && MIGRATED.get(store, txn, &owner)?.is_some();
             }
             (owned || record_kind(&row.body)?.is_some())
                 .then(|| body_pin(row.entity_type, row.occurred, row.learned_at, &row.body))
@@ -170,18 +172,13 @@ pub(crate) fn guard_record_put(
     } else {
         None
     };
-    let pin = stored_pin
-        .as_deref()
-        .or(inferred_pin.as_ref().map(<[u8; 32]>::as_slice));
+    let pin = stored_pin.or(inferred_pin);
     let Some(pin) = pin else {
         if kind == ENTITY_TYPE_TURN {
             record_kind(body)?;
         }
         return Ok(());
     };
-    if pin.len() != 32 {
-        return Err(Error::CorruptedIndex("DAG body pin"));
-    }
     if !replicated || prior.is_none() || pin != body_pin(kind, occurred, learned_at, body) {
         return Err(invalid("DAG records are append-only"));
     }
@@ -224,13 +221,12 @@ pub(crate) fn pin_record(
     let Some(pin) = stored_record_pin(store, txn, id)? else {
         return Ok(());
     };
-    let key = pin_key(id);
-    if let Some(prior) = store.vault_meta().get(txn, &key)? {
-        if prior.as_ref() != pin {
+    if let Some(prior) = BODY_PINS.get(store, txn, id)? {
+        if prior != pin {
             return Err(invalid("DAG records are append-only"));
         }
     } else {
-        store.vault_meta().put(txn, &key, &pin)?;
+        BODY_PINS.put(store, txn, id, &pin)?;
     }
     Ok(())
 }
@@ -242,10 +238,7 @@ fn is_dag_membership(
     conversation: &EntityId,
 ) -> Result<bool> {
     Ok(kind == EdgeKind::ChildOf
-        && store
-            .vault_meta()
-            .get(txn, &key(MIGRATED, conversation))?
-            .is_some()
+        && MIGRATED.get(store, txn, conversation)?.is_some()
         && crate::ports::EntityStoreRead::port_entity_raw(store, txn, conversation)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
 }
@@ -316,24 +309,13 @@ fn guard_erased_author_body(
     Ok(())
 }
 
-/// Durable room owner of a TURN. The pin survives deleted/missing ChildOf rows.
-fn room_owner_key(id: &EntityId) -> Vec<u8> {
-    key(b"conversation_dag:room_owner:v1:", id)
-}
-
 pub(crate) fn room_turn_owner(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<EntityId>> {
-    if let Some(raw) = store.vault_meta().get(txn, &room_owner_key(record))? {
-        let bytes: [u8; 16] = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("room TURN owner pin"))?;
-        return EntityId::from_bytes(bytes)
-            .map(Some)
-            .map_err(|_| Error::CorruptedIndex("room TURN owner pin"));
+    if let Some(owner) = ROOM_OWNERS.get(store, txn, record)? {
+        return Ok(Some(owner));
     }
     let mut owner = None;
     for row in crate::ports::EdgeStoreRead::port_edges(
@@ -426,9 +408,7 @@ pub(crate) fn pin_membership(
         if room_turn_owner(store, txn, record)?.is_some_and(|owner| owner != *conversation) {
             return Err(invalid("room TURN cannot change owner"));
         }
-        store
-            .vault_meta()
-            .put(txn, &room_owner_key(record), conversation.as_bytes())?;
+        ROOM_OWNERS.put(store, txn, record, conversation)?;
     }
     if is_dag_membership(store, txn, kind, conversation)? {
         pin_record(store, txn, record)?;
@@ -458,25 +438,21 @@ pub(crate) fn keep_membership_pin(
             .get(txn, conversation.as_bytes())?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
-        let owner_key = room_owner_key(record);
-        if let Some(owner) = store.vault_meta().get(txn, &owner_key)? {
-            if owner.as_ref() != conversation.as_bytes() {
+        if let Some(owner) = ROOM_OWNERS.get(store, txn, record)? {
+            if owner != *conversation {
                 return Err(invalid("room TURN cannot change owner"));
             }
         } else {
-            store
-                .vault_meta()
-                .put(txn, &owner_key, conversation.as_bytes())?;
+            ROOM_OWNERS.put(store, txn, record, conversation)?;
         }
     }
     if !is_dag_membership(store, txn, kind, conversation)? {
         return Ok(());
     }
-    let key = pin_key(record);
-    if store.vault_meta().get(txn, &key)?.is_none()
+    if BODY_PINS.get(store, txn, record)?.is_none()
         && let Some(pin) = stored_record_pin(store, txn, record)?
     {
-        store.vault_meta().put(txn, &key, &pin)?;
+        BODY_PINS.put(store, txn, record, &pin)?;
     }
     Ok(())
 }
