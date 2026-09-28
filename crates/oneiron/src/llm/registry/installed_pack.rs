@@ -19,7 +19,7 @@ impl CatalogSeed {
             .ok_or_else(|| invalid("model catalog pack is not installed"))?;
         let hub = default_skill_hub_id()?;
         if receipt.hub_id != hub.to_hex()
-            || receipt.ref_string != MODEL_PACK_SUBTREE
+            || receipt.hub_ref != MODEL_PACK_SUBTREE
             || receipt.content_hash != MODEL_PACK_HASH
             || vault.skill_hub_record(&hub)?.sync_policy != HubSyncPolicy::PinnedCommit
         {

@@ -5,12 +5,12 @@ use super::graph::{
     require_type,
 };
 use super::migration::migrate_in_txn;
-use super::{AppendRecord, AppendedRecord, DagPage, DagPageRequest};
+use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use rmpv::Value;
@@ -63,7 +63,7 @@ fn stamp_body(
     }
     entries.push((
         Value::from("dag_kind"),
-        Value::from(if thread { "thread" } else { "record" }),
+        Value::from(super::topology::RecordKind::from_thread(thread).as_str()),
     ));
     entries.push((
         Value::from("actor"),
@@ -114,19 +114,18 @@ pub(crate) fn append_in_txn(
     if input.advance && input.parent != old_head {
         return Err(RecordError::HeadAdvanceOffTrunk.into());
     }
-    let spawning_turn = if let Some(session) = input.session {
-        require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
-        let parents = edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
-        if parents.len() > 1 {
-            return Err(invalid("session has multiple SpawnedBy edges"));
+    let placement = if let Some(session) = input.session {
+        match super::topology::classify_session(&vault.store, txn, session, input.conversation)? {
+            super::topology::Fact::Known(placement) => Some(placement),
+            super::topology::Fact::Wait(_) => {
+                return Err(invalid("session anchor has not been reconciled"));
+            }
+            super::topology::Fact::Reject(reason) => return Err(reason.into_error()),
         }
-        if let Some(turn) = parents.first() {
-            require_member(&vault.store, txn, &input.conversation, turn)?;
-        }
-        parents.first().copied()
     } else {
         None
     };
+    let spawning_turn = placement.and_then(super::topology::SessionPlacement::anchor);
     if spawning_turn.is_some() && input.advance {
         return Err(RecordError::HeadAdvanceOffTrunk.into());
     }
@@ -140,22 +139,30 @@ pub(crate) fn append_in_txn(
         if path.len() >= crate::limits::MAX_ANCESTOR_DEPTH {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
-        let parent_session =
-            crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &parent)?;
-        if spawning_turn.is_some()
-            && spawning_turn != Some(parent)
-            && parent_session != input.session
-        {
-            return Err(invalid(
-                "sub-session parent must be its spawning turn or its own record",
-            ));
-        }
-        if graph::is_sub_session_record(&vault.store, txn, &parent)?
-            && parent_session != input.session
-            && spawning_turn != Some(parent)
-        {
-            return Err(invalid("cannot append across sub-session boundaries"));
-        }
+        let target_placement = if Some(parent) == spawning_turn {
+            None
+        } else {
+            crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &parent)?
+                .map(|session| {
+                    super::topology::classify_session(
+                        &vault.store,
+                        txn,
+                        session,
+                        input.conversation,
+                    )
+                })
+                .transpose()?
+                .map(|fact| match fact {
+                    super::topology::Fact::Known(placement) => Ok(placement),
+                    super::topology::Fact::Wait(_) => {
+                        Err(invalid("session anchor has not been reconciled"))
+                    }
+                    super::topology::Fact::Reject(reason) => Err(reason.into_error()),
+                })
+                .transpose()?
+        };
+        super::topology::parent_boundary(placement, target_placement, parent)
+            .map_err(super::topology::DagRejection::into_error)?;
     } else {
         if spawning_turn.is_some() {
             return Err(invalid("sub-session root must continue its spawning turn"));
@@ -173,16 +180,44 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
+    // Validate all recipients before minting the record. Addressing is never a
+    // room-membership or audience test: a non-member may be mentioned.
+    let mut seen = std::collections::HashSet::new();
+    if input.reply_to.is_some() {
+        if input.address != AddressMode::Broadcast {
+            return Err(invalid("reply cannot also use direct addressing"));
+        }
+    } else {
+        match input.address {
+            AddressMode::Broadcast if !input.recipients.is_empty() => {
+                return Err(invalid("broadcast cannot name recipients"));
+            }
+            AddressMode::Direct if input.recipients.is_empty() => {
+                return Err(invalid("direct addressing requires recipients"));
+            }
+            _ => {}
+        }
+    }
+    for recipient in &input.recipients {
+        if !seen.insert(*recipient) {
+            return Err(invalid("duplicate recipient"));
+        }
+        require_type(
+            &vault.store,
+            txn,
+            recipient,
+            crate::registry::ENTITY_TYPE_PERSON,
+        )?;
+    }
     let mut body = stamp_body(&input.body, input.actor, input.session, thread)?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut body.as_slice())
+        .map_err(|_| invalid("record decode failed"))?
+    else {
+        return Err(invalid("record body must be a map"));
+    };
     if let Some(asking) = input.reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
-        let mut entries = match rmpv::decode::read_value(&mut body.as_slice())
-            .map_err(|_| invalid("record decode failed"))?
-        {
-            Value::Map(entries) => entries,
-            _ => return Err(invalid("record body must be a map")),
-        };
         entries.extend([
             (Value::from("addr"), Value::from("reply")),
             (
@@ -199,10 +234,29 @@ pub(crate) fn append_in_txn(
         if let Some(summary) = summary {
             entries.push((Value::from("summary"), Value::from(summary.to_hex())));
         }
-        body.clear();
-        rmpv::encode::write_value(&mut body, &Value::Map(entries))
-            .map_err(|_| invalid("record encode failed"))?;
+    } else {
+        entries.push((
+            Value::from("addr"),
+            Value::from(match input.address {
+                AddressMode::Broadcast => "broadcast",
+                AddressMode::Direct => "direct",
+            }),
+        ));
     }
+    // Addressing never limits audience, including on reply records.
+    entries.push((
+        Value::from("to"),
+        Value::Array(
+            input
+                .recipients
+                .iter()
+                .map(|id| Value::from(id.to_hex()))
+                .collect(),
+        ),
+    ));
+    body.clear();
+    rmpv::encode::write_value(&mut body, &Value::Map(entries))
+        .map_err(|_| invalid("record encode failed"))?;
     let id = vault.store.clock.entity_id()?;
     super::policy::check_append_policy(vault, txn, &id, input, &body)?;
     let fields: Vec<_> = input
@@ -220,6 +274,14 @@ pub(crate) fn append_in_txn(
     if let Some(parent) = input.parent {
         batch =
             batch.edge_with_value_fields(&id, EdgeKind::Parent, &parent, value(input.learned_at));
+    }
+    for recipient in &input.recipients {
+        batch = batch.edge_with_value_fields(
+            &id,
+            EdgeKind::AddressedTo,
+            recipient,
+            value(input.learned_at),
+        );
     }
     if let Some(asking) = input.reply_to {
         batch = batch.edge_with_value_fields(

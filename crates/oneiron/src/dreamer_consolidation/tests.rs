@@ -24,6 +24,7 @@ use crate::{
 use super::*;
 
 mod contradictions;
+mod failure_rules;
 mod late_budget;
 mod persistent_conflicts;
 mod person_extraction;
@@ -44,8 +45,34 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    authorize_test_inference(&vault).expect("owner-pinned test egress");
     grant_fixture_reads(&vault).expect("explicit consolidation read grant");
     (dir, vault)
+}
+
+fn authorize_test_inference(vault: &Vault) -> Result<()> {
+    let mut policy = vault.purpose_default_table()?;
+    policy.extraction_max_locality = crate::ModelLocality::OwnServer;
+    policy
+        .purposes
+        .get_mut(&crate::CallPurpose::Extraction)
+        .ok_or_else(|| crate::Error::InvalidConfig("missing extraction row".into()))?
+        .locality = crate::ModelLocality::OwnServer;
+    vault.set_purpose_default_table(&policy)?;
+    Ok(())
+}
+
+fn allow_fixture_extraction(_: &crate::LlmRequest) -> bool {
+    true
+}
+fn test_inference_host() -> crate::llm::HostInferenceContext<'static> {
+    crate::llm::HostInferenceContext {
+        binding: crate::llm::HostInferenceBinding::Advertised {
+            model: crate::ModelId::new("test/model@r1").expect("test backend model"),
+            locality: crate::ModelLocality::OwnServer,
+        },
+        extraction_egress: Some(&allow_fixture_extraction),
+    }
 }
 
 fn grant_fixture_reads(vault: &Vault) -> Result<()> {
@@ -1356,35 +1383,83 @@ fn reducer_consumes_only_consolidatable() -> Result<()> {
 }
 
 #[test]
-fn sibling_evidence_collapses() -> Result<()> {
-    let source = EntityId::from_bytes([0x34; 16]).expect("source");
-    let other = EntityId::from_bytes([0x35; 16]).expect("other");
-    let shared = SwarmEvidenceRef {
-        source_id: source,
-        content_hash: [0x51; 32],
-        trust_class: ClaimSource::UserStated,
-    };
-    let distinct = SwarmEvidenceRef {
-        source_id: other,
-        content_hash: [0x52; 32],
-        trust_class: ClaimSource::UserStated,
-    };
-
-    let child = |refs: Vec<SwarmEvidenceRef>| SwarmChildReturn {
-        evidence: refs.into_iter().collect(),
+fn sibling_evidence_collapses_at_one_parent_pin() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x34, 1);
+    let source = seed_turn(&vault, &conversation, "user", "source", 10);
+    let other = seed_turn(&vault, &conversation, "assistant", "other", 11);
+    let resources = super::resources::BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        ConsolidationPartitionKey {
+            conversation_ref: conversation,
+            world_ref: None,
+            facet_ref: None,
+        },
+        &[source, other],
+        crate::attempt_queue::AttemptId::now(),
+        None,
+    )?;
+    let child = |refs: &[EntityId]| SwarmChildReturn {
+        evidence: refs
+            .iter()
+            .copied()
+            .map(SwarmEvidenceRef::whole_turn)
+            .collect(),
         candidates: Vec::new(),
-        read_pin: 7,
     };
-
-    // Two children citing the SAME source hash: one independent signal.
-    let collapsed = collapse_sibling_evidence(&[child(vec![shared]), child(vec![shared])])?;
-    assert_eq!(collapsed.independent.len(), 1);
-    assert_eq!(collapsed.duplicates_collapsed, 1);
-
-    // A genuinely distinct source adds a second signal.
-    let collapsed =
-        collapse_sibling_evidence(&[child(vec![shared]), child(vec![shared, distinct])])?;
-    assert_eq!(collapsed.independent.len(), 2);
+    let collapsed = collapse_sibling_evidence(
+        &resources,
+        &[child(&[source]), child(&[source]), child(&[source])],
+    )?;
+    assert_eq!(corroboration_count(&collapsed, &[]), 1);
+    assert_eq!(collapsed.duplicates_collapsed, 2);
+    assert_eq!(collapsed.independent[0].source_id, source);
+    assert_eq!(
+        collapsed.independent[0].trust_class,
+        ClaimSource::UserStated
+    );
+    let raw = vault.get_raw(&source)?.expect("source");
+    assert_eq!(
+        collapsed.independent[0].content_hash,
+        swarm_evidence_content_hash(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+    );
+    let mixed = collapse_sibling_evidence(&resources, &[child(&[source, other])])?;
+    assert_eq!(corroboration_count(&mixed, &[]), 2);
+    assert_eq!(
+        evidence_trust_meet(mixed.independent.iter()),
+        ClaimSource::Generated
+    );
+    let ranges = collapse_sibling_evidence(
+        &resources,
+        &[SwarmChildReturn {
+            evidence: vec![
+                SwarmEvidenceRef {
+                    source_id: source,
+                    claim_id: None,
+                    byte_range: Some((0, 1)),
+                },
+                SwarmEvidenceRef {
+                    source_id: source,
+                    claim_id: None,
+                    byte_range: Some((1, 2)),
+                },
+            ],
+            candidates: Vec::new(),
+        }],
+    )?;
+    assert_eq!(
+        ranges.independent.len(),
+        2,
+        "different stored byte ranges remain distinct"
+    );
+    assert!(
+        resources
+            .verify_evidence_refs(&[SwarmEvidenceRef::whole_turn(
+                EntityId::from_bytes([0x79; 16]).expect("id")
+            )])
+            .is_err()
+    );
     Ok(())
 }
 
@@ -1441,7 +1516,7 @@ impl LlmBackend for ScriptedBackend {
 fn extraction_response(subject: &EntityId, turn: &EntityId) -> crate::LlmResponse {
     let json = format!(
         "{{\"candidates\": [{{\"subject\": \"{}\", \"predicate\": \"profile.name\", \
-         \"value\": \"Oleksii\", \"confidence\": 0.8, \"evidence_turn_refs\": [\"{}\"]}}]}}",
+         \"value\": \"Oleksii\", \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{}\",\"byte_range\":[0,1]}}]}}]}}",
         bytes_to_hex_lower(subject.as_bytes()),
         bytes_to_hex_lower(turn.as_bytes()),
     );
@@ -1485,6 +1560,63 @@ impl ConsolidationSink for CapturingSink {
         self.accepted.extend(candidates);
         Ok(())
     }
+}
+
+#[test]
+fn authorized_extraction_egress_reaches_executor_only_after_host_verdict() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0x71, &[("user", "call me Casey")])?;
+    let subject = EntityId::now();
+    let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        inference: crate::llm::HostInferenceContext {
+            binding: crate::llm::HostInferenceBinding::Advertised {
+                model: crate::ModelId::new("test/model@r1").expect("host model"),
+                locality: crate::ModelLocality::OwnServer,
+            },
+            extraction_egress: None,
+        },
+        sink: &mut sink,
+        scope: None,
+    };
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&admitted, &mut ctx)),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 0);
+    executor.inference.extraction_egress = Some(&allow_fixture_extraction);
+    assert!(matches!(
+        block_on_ready(executor.execute(&admitted, &mut ctx))?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
 }
 
 #[test]
@@ -1538,6 +1670,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -1545,6 +1678,8 @@ fn no_fabricated_belief_writes() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(matches!(
@@ -1587,6 +1722,8 @@ fn gap_dedupe_and_decay() -> Result<()> {
         kind: ReflectionGapKind::UnresolvedThread,
         subject: conversation,
         evidence_turn_refs: vec![turn],
+        evidence_refs: Vec::new(),
+        verified_evidence: None,
         first_seen: 0,
         last_seen: 0,
         escalations: 0,
@@ -1721,9 +1858,9 @@ fn two_candidate_extraction(
     let json = format!(
         "{{\"candidates\": [\
          {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Oleksii\", \
-          \"confidence\": 0.8, \"evidence_turn_refs\": [\"{a}\"]}},\
+          \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{a}\",\"byte_range\":[0,1]}}]}},\
          {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Alex\", \
-          \"confidence\": 0.6, \"evidence_turn_refs\": [\"{b}\"]}}]}}",
+          \"confidence\": 0.6, \"evidence_refs\": [{{\"source_id\":\"{b}\",\"byte_range\":[0,1]}}]}}]}}",
         s = bytes_to_hex_lower(subject.as_bytes()),
         a = bytes_to_hex_lower(turn_a.as_bytes()),
         b = bytes_to_hex_lower(turn_b.as_bytes()),
@@ -1852,6 +1989,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -1859,6 +1997,8 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let expected_spend = if expire_on_call == 1 { 120 } else { 100 };
         assert!(matches!(
@@ -1890,6 +2030,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         assert!(matches!(
@@ -1937,6 +2078,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -1944,6 +2086,8 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     block_on_ready(executor.execute(&admitted, &mut ctx))?;
 
@@ -1992,6 +2136,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -1999,6 +2144,8 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
         let expected_spend = if fatal_merge { 50 } else { 100 };
@@ -2044,6 +2191,8 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             kind: ReflectionGapKind::ContradictionLeftStanding,
             subject,
             evidence_turn_refs: turns,
+            evidence_refs: Vec::new(),
+            verified_evidence: None,
             first_seen: 0,
             last_seen: 0,
             escalations: 0,
@@ -2066,137 +2215,168 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
 }
 
 #[test]
-fn child_returns_hash_only() -> Result<()> {
+fn child_returns_refs_only_and_ranges_are_parent_checked() -> Result<()> {
     let (_dir, vault) = open_vault();
     let conversation = seed_session(&vault, 0x2C, 1);
     let secret_text = "SECRET-SOURCE-CONTENT-the-user-is-afraid-of-clowns".repeat(50);
     let turn = seed_turn(&vault, &conversation, "user", &secret_text, 10);
-
-    // The child that "read" this large source returns hashes only.
-    let raw = vault.get_raw(&turn)?.expect("turn raw");
-    let content_hash =
-        swarm_evidence_content_hash(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+    let resources = super::resources::BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        ConsolidationPartitionKey {
+            conversation_ref: conversation,
+            world_ref: None,
+            facet_ref: None,
+        },
+        &[turn],
+        crate::attempt_queue::AttemptId::now(),
+        None,
+    )?;
     let child = SwarmChildReturn {
-        evidence: [SwarmEvidenceRef {
-            source_id: turn,
-            content_hash,
-            trust_class: ClaimSource::UserStated,
-        }]
-        .into_iter()
-        .collect(),
+        evidence: vec![SwarmEvidenceRef::whole_turn(turn)],
         candidates: Vec::new(),
-        read_pin: 10,
     };
-
-    // Type-level: no field can carry source bytes; and the serialized
-    // return of a child that read a large source contains none of it.
-    let serialized = format!("{child:?}");
+    assert!(!format!("{child:?}").contains("SECRET-SOURCE-CONTENT"));
+    let collapsed = collapse_sibling_evidence(&resources, &[child])?;
+    assert_eq!(collapsed.independent.len(), 1);
     assert!(
-        !serialized.contains("SECRET-SOURCE-CONTENT"),
-        "no source body bytes may appear in a child return"
+        resources
+            .verify_evidence_refs(&[SwarmEvidenceRef {
+                source_id: turn,
+                claim_id: None,
+                byte_range: Some((usize::MAX, usize::MAX)),
+            }])
+            .is_err()
     );
     assert!(
-        !serialized.contains("clowns"),
-        "no source body bytes may appear in a child return"
+        resources
+            .verify_evidence_refs(&[SwarmEvidenceRef {
+                source_id: turn,
+                claim_id: None,
+                byte_range: Some((0, 0)),
+            }])
+            .is_err(),
+        "empty in-bounds text ranges are invalid"
     );
     Ok(())
-}
-
-#[test]
-fn sibling_collapse_on_shared_hash() -> Result<()> {
-    let source = EntityId::from_bytes([0x3A; 16]).expect("source");
-    let make = |trust_class| SwarmEvidenceRef {
-        source_id: source,
-        content_hash: [0x61; 32],
-        trust_class,
-    };
-    let child = |entry: SwarmEvidenceRef| SwarmChildReturn {
-        evidence: [entry].into_iter().collect(),
-        candidates: Vec::new(),
-        read_pin: 1,
-    };
-
-    let collapsed = collapse_sibling_evidence(&[
-        child(make(ClaimSource::UserStated)),
-        child(make(ClaimSource::Imported)),
-    ])?;
-    assert_eq!(collapsed.independent.len(), 1);
-    assert_eq!(collapsed.duplicates_collapsed, 1);
-    // Trust ties on one identity resolve to the MOST restrictive class.
-    assert_eq!(collapsed.independent[0].trust_class, ClaimSource::Imported);
-    Ok(())
-}
-
-#[test]
-fn intra_child_trust_tie_resolves_to_most_restrictive() {
-    // A SINGLE child listing the same (source_id, content_hash) at two
-    // different trust classes must not silently drop the stricter one: the
-    // evidence container is a Vec precisely so BOTH refs reach the collapse
-    // meet. A BTreeSet keyed on identity would keep only the first-inserted
-    // entry, letting a child inflate trust by listing the higher class first.
-    let source = EntityId::from_bytes([0x3C; 16]).expect("source");
-    let make = |trust_class| SwarmEvidenceRef {
-        source_id: source,
-        content_hash: [0x63; 32],
-        trust_class,
-    };
-    // Higher trust listed FIRST — the drop-the-stricter bug would keep it.
-    let child = SwarmChildReturn {
-        evidence: vec![make(ClaimSource::UserStated), make(ClaimSource::Imported)],
-        candidates: Vec::new(),
-        read_pin: 1,
-    };
-    let collapsed = collapse_sibling_evidence(&[child]).expect("collapse");
-    assert_eq!(collapsed.independent.len(), 1);
-    assert_eq!(collapsed.duplicates_collapsed, 1);
-    assert_eq!(
-        collapsed.independent[0].trust_class,
-        ClaimSource::Imported,
-        "intra-child trust tie must resolve to the most restrictive class"
-    );
 }
 
 #[test]
 fn most_restrictive_trust() {
-    let entry = |trust_class| SwarmEvidenceRef {
+    let entry = |trust_class| VerifiedSwarmEvidence {
         source_id: EntityId::from_bytes([0x3B; 16]).expect("id"),
         content_hash: [0x62; 32],
         trust_class,
     };
-
-    let set = [entry(ClaimSource::UserStated), entry(ClaimSource::Imported)];
-    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Imported);
-
-    let set = [entry(ClaimSource::Observed), entry(ClaimSource::Generated)];
-    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Generated);
-
-    // Empty iterator: the Dreamer's own floor.
+    assert_eq!(
+        evidence_trust_meet([entry(ClaimSource::UserStated), entry(ClaimSource::Imported)].iter()),
+        ClaimSource::Imported
+    );
+    assert_eq!(
+        evidence_trust_meet([entry(ClaimSource::Observed), entry(ClaimSource::Generated)].iter()),
+        ClaimSource::Generated
+    );
     assert_eq!(evidence_trust_meet([].iter()), ClaimSource::Generated);
-
-    // Inferred and Generated share one rank: their meet stays at that
-    // rank (the fold seeds at the Generated floor, so equal-rank inputs
-    // resolve to Generated).
-    let set = [entry(ClaimSource::Inferred), entry(ClaimSource::Generated)];
-    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Generated);
-
-    // A strictly higher class alone still cannot rise above the floor.
-    let set = [entry(ClaimSource::UserStated)];
-    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Generated);
+    assert_eq!(
+        evidence_trust_meet([entry(ClaimSource::Inferred), entry(ClaimSource::Generated)].iter()),
+        ClaimSource::Generated,
+        "equal-rank inferred evidence cannot raise the Dreamer floor"
+    );
+    assert_eq!(
+        evidence_trust_meet([entry(ClaimSource::UserStated)].iter()),
+        ClaimSource::Generated
+    );
 }
 
 #[test]
-fn ledger_revision_pin() {
-    let child = SwarmChildReturn {
-        evidence: Vec::new(),
-        candidates: Vec::new(),
-        read_pin: 41,
-    };
-    assert!(validate_child_read_pin(42, &child).is_err());
-    let child = SwarmChildReturn {
-        read_pin: 42,
-        ..child
-    };
-    assert!(validate_child_read_pin(42, &child).is_ok());
+fn wake_prepared_wake_rereads_original_bytes_and_refuses_write_drift() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, conversation) =
+        admitted_attempt_fixture(&vault, &store, 0x2E, &[("assistant", "original")])?;
+    let turn = turns[0];
+    let pin = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let resources = super::resources::BranchResources::open_at_pin(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        admitted.status.attempt.id,
+        None,
+        Some(&pin),
+    )?;
+    let citation = SwarmEvidenceRef::whole_turn(turn);
+    let original = resources.verify_evidence_refs(&[citation])?;
+    assert_eq!(original[0].trust_class, ClaimSource::Generated);
+    let mut candidate = candidate(conversation, "profile.name", "A", None);
+    candidate.evidence_turn_refs = vec![turn];
+    candidate.evidence_meet = ClaimSource::UserStated;
+    assert!(
+        resources.write_fence().evidence_source(&candidate).is_err(),
+        "a child cannot promote an assistant TURN to user trust"
+    );
+    candidate.evidence_meet = ClaimSource::Generated;
+    assert_eq!(
+        resources.write_fence().evidence_source(&candidate)?,
+        ClaimSource::Generated
+    );
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        occurred(10),
+        10,
+        &turn_body("assistant", "edited after wake pin", None),
+    )?;
+    assert_eq!(
+        resources.verify_evidence_refs(&[citation])?,
+        original,
+        "same pinned ledger revision across a later write"
+    );
+    assert!(
+        resources.turn(resources.scope(), &turn).is_err(),
+        "the live write fence must refuse source drift"
+    );
+    Ok(())
+}
+
+#[test]
+fn disagreed_child_hash_is_integrity_only() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x2D, 1);
+    let turn = seed_turn(&vault, &conversation, "user", "a stored statement", 10);
+    let resources = super::resources::BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        ConsolidationPartitionKey {
+            conversation_ref: conversation,
+            world_ref: None,
+            facet_ref: None,
+        },
+        &[turn],
+        crate::attempt_queue::AttemptId::now(),
+        None,
+    )?;
+    let fake = serde_json::json!({
+        "evidence_refs":[{"source_id":turn.to_hex(),"byte_range":[0,1]}],
+        "evidence_hashes": {turn.to_hex(): "00".repeat(32)}
+    });
+    let markers = super::executor::extraction::disagreeing_child_hashes(&resources, &[fake]);
+    assert_eq!(markers, vec![turn]);
+    // Even a deliberately wrong report cannot change the parent hash/trust.
+    let collapsed = collapse_sibling_evidence(
+        &resources,
+        &[SwarmChildReturn {
+            evidence: vec![SwarmEvidenceRef::whole_turn(turn)],
+            candidates: Vec::new(),
+        }],
+    )?;
+    assert_ne!(collapsed.independent[0].content_hash, [0; 32]);
+    assert_eq!(
+        collapsed.independent[0].trust_class,
+        ClaimSource::UserStated
+    );
+    Ok(())
 }
 
 #[test]
@@ -2312,7 +2492,7 @@ fn turn_trust_class_meet_space() {
     ];
     for left in reachable {
         for right in reachable {
-            let entry = |trust_class| SwarmEvidenceRef {
+            let entry = |trust_class| VerifiedSwarmEvidence {
                 source_id: EntityId::from_bytes([0x3D; 16]).expect("id"),
                 content_hash: [0x63; 32],
                 trust_class,
@@ -2352,6 +2532,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -2359,6 +2540,8 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
 
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
@@ -2415,6 +2598,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -2422,6 +2606,8 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
 
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
@@ -2451,6 +2637,8 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject,
         evidence_turn_refs: turns,
+        evidence_refs: Vec::new(),
+        verified_evidence: None,
         first_seen: 0,
         last_seen: 0,
         escalations: 0,
@@ -2487,6 +2675,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -2494,6 +2683,8 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         Ok(sink
@@ -2557,6 +2748,7 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -2564,6 +2756,8 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         Ok(sink
@@ -2675,6 +2869,7 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -2682,6 +2877,8 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let seeded = claim_predicates_in_store(&vault)?;
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;

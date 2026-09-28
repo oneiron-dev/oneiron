@@ -1,0 +1,1 @@
+{"event_id":"message-1","channel":"email","receiving_address_or_handle":"agent@example.com","counterparty":{"state":"unknown","counterparty_key":"sender"},"source":{"app":"email","user_ref":"sender"},"action":{"kind":"message"},"correlation_id":"message-1","received_at":1,"foreign_inbound":true}

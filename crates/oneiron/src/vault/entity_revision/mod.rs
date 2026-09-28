@@ -19,8 +19,8 @@ pub(crate) use storage::{
     revision_for_mode_in_txn, storage_manages_text,
 };
 pub use types::{
-    IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
-    ResolvedCitation, RevisionRef,
+    EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,
+    IndexedRevisionInput, PinnedCitation, ReadMode, ResolvedCitation, RevisionRef,
 };
 
 #[cfg(test)]

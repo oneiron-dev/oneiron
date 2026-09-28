@@ -5,6 +5,8 @@ use super::{
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfFailedResult,
 };
 use crate::agent_def::AgentCeiling;
+use crate::consent::AuthenticatedOwner;
+use crate::error::GateError;
 use crate::lens::{
     FiniteF64, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedActionArg,
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
@@ -92,6 +94,19 @@ pub struct ActionRegistry {
     verbs: BTreeMap<String, RegisteredVerb>,
 }
 impl ActionRegistry {
+    /// Registers the host-governed v1 policy action. Registration offers the
+    /// verb to agents; execution still requires an independent owner proof.
+    pub fn register_dreamer_wake_policy(&mut self) -> Result<()> {
+        self.register(
+            ActionVerbDefinition {
+                id: SelfUiActionId::new("dreamer.wake_policy.set")?,
+                args_schema: vec![ActionArgKind::Text],
+                required_ceiling: AgentCeiling::Proposed,
+            },
+            build_wake_policy_action,
+        )
+    }
+
     pub fn register(
         &mut self,
         definition: ActionVerbDefinition,
@@ -108,6 +123,26 @@ impl ActionRegistry {
             },
         );
         Ok(())
+    }
+    /// Install the resident's two governed inference-policy actions. Hosts opt
+    /// in by registering them for an agent whose Auto ceiling was approved.
+    pub fn register_inference_defaults(&mut self) -> Result<()> {
+        self.register(
+            ActionVerbDefinition {
+                id: SelfUiActionId::new("inference.defaults.read")?,
+                args_schema: vec![],
+                required_ceiling: AgentCeiling::Auto,
+            },
+            build_inference_defaults_read,
+        )?;
+        self.register(
+            ActionVerbDefinition {
+                id: SelfUiActionId::new("inference.defaults.replace")?,
+                args_schema: vec![ActionArgKind::Text],
+                required_ceiling: AgentCeiling::Auto,
+            },
+            build_inference_defaults_replace,
+        )
     }
     pub fn definitions(&self) -> impl Iterator<Item = &ActionVerbDefinition> {
         self.verbs.values().map(|v| &v.definition)
@@ -141,7 +176,7 @@ impl ActionRegistry {
             args: action.args().iter().map(ActionArgument::from_ui).collect(),
             idempotency_key: idempotency_key.to_owned(),
         };
-        self.execute(vault, actor, emitter, &call)
+        self.execute(vault, actor, emitter, &call, None)
     }
     pub fn execute_agent(
         &self,
@@ -153,14 +188,30 @@ impl ActionRegistry {
         if principal.kind() != LensActingPrincipalKind::AgentTask {
             return Err(invalid("agent action requires an agent principal"));
         }
-        self.execute(vault, actor, principal, call)
+        self.execute(vault, actor, principal, call, None)
     }
-    fn execute(
+    /// Executes an agent chat action under an INDEPENDENT authenticated-owner
+    /// witness bound by the host, never by a transcript or action argument.
+    pub fn execute_agent_with_owner(
         &self,
         vault: &Vault,
         actor: WriteActor,
         principal: &LensPrincipalBinding,
+        call: &AgentActionCall,
+        owner: &AuthenticatedOwner,
+    ) -> Result<SelfDispatchOutcome> {
+        if principal.kind() != LensActingPrincipalKind::AgentTask {
+            return Err(invalid("agent action requires an agent principal"));
+        }
+        self.execute(vault, actor, principal, call, Some(owner))
+    }
+    fn execute<'a>(
+        &self,
+        vault: &'a Vault,
+        actor: WriteActor,
+        principal: &LensPrincipalBinding,
         request: &AgentActionCall,
+        owner: Option<&'a AuthenticatedOwner>,
     ) -> Result<SelfDispatchOutcome> {
         let registered = self.registered(request.verb_id.as_str())?;
         let expected_kind = if actor.actor_class() == EdgeActorClass::Agent {
@@ -228,6 +279,13 @@ impl ActionRegistry {
             &request.args,
         )?
         .with_bridge_stamp(0, frozen);
+        if matches!(call, SelfCall::WakePolicyWrite(_)) {
+            let proof = owner.ok_or(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "wake policy action needs host owner proof",
+            )))?;
+            let txn = vault.store.env.read_txn()?;
+            crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &txn, proof)?;
+        }
         if let Some(record) = previous {
             if record.determinism.rng_seed != seed {
                 return Err(invalid("idempotency key reused with changed action"));
@@ -244,6 +302,10 @@ impl ActionRegistry {
         let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(frozen, seed));
         let generation = vault.put_code_run_replay_record_if_generation(&record, None)?;
         let dispatcher = GatedActorWrite::new(vault, actor, run_id.to_hex())?;
+        let dispatcher = match owner {
+            Some(proof) => dispatcher.with_authenticated_owner(proof),
+            None => dispatcher,
+        };
         let result = dispatcher.dispatch_for_executor_run(run_id, call.clone());
         let recorded = match &result {
             Ok(outcome) => outcome.clone(),
@@ -267,10 +329,46 @@ impl ActionRegistry {
         result
     }
 }
+fn build_inference_defaults_read(
+    _: ActionBuildContext,
+    args: &[ActionArgument],
+) -> Result<SelfCall> {
+    if !args.is_empty() {
+        return Err(invalid("inference defaults read takes no arguments"));
+    }
+    Ok(SelfCall::InferenceDefaultsRead)
+}
+fn build_inference_defaults_replace(
+    _: ActionBuildContext,
+    args: &[ActionArgument],
+) -> Result<SelfCall> {
+    let [ActionArgument::Text(value)] = args else {
+        return Err(invalid("inference defaults replace requires JSON text"));
+    };
+    crate::llm::PurposeDefaultTable::from_json(value.as_str().as_bytes())?;
+    Ok(SelfCall::InferenceDefaultsReplace(
+        value.as_str().to_owned(),
+    ))
+}
+fn build_wake_policy_action(_ctx: ActionBuildContext, args: &[ActionArgument]) -> Result<SelfCall> {
+    let [ActionArgument::Text(value)] = args else {
+        return Err(invalid("wake policy action needs one row"));
+    };
+    let policy: crate::dreamer_wake::DreamerWakePolicy = serde_json::from_str(value.as_str())
+        .map_err(|_| invalid("wake policy action row does not decode"))?;
+    Ok(SelfCall::WakePolicyWrite(
+        crate::code_run::SelfWakePolicyWriteCall::new(policy.validate()?),
+    ))
+}
+
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
-fn check_ceiling(vault: &Vault, actor: WriteActor, required: AgentCeiling) -> Result<()> {
+pub(super) fn check_ceiling(
+    vault: &Vault,
+    actor: WriteActor,
+    required: AgentCeiling,
+) -> Result<()> {
     if required == AgentCeiling::Proposed {
         return Ok(());
     }

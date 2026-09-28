@@ -6,7 +6,9 @@ use loro::CommitOptions;
 
 use super::super::bridge::{self, BRIDGE_ORIGIN};
 use super::super::egress::push_terminal_quarantine_marker;
-use super::super::loro_support::{map_delete, map_for_each_value_bytes, tombstone_map_contains_id};
+use super::super::loro_support::{
+    map_delete, map_for_each_value_bytes_deferring, tombstone_map_contains_id,
+};
 use super::super::pack_sync;
 use super::super::quarantine::{self, QuarantineContainer};
 use super::super::quota;
@@ -16,7 +18,6 @@ use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::decode_companion_record_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -47,7 +48,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         let mut entity_error = None;
         let mut local_only_companion_entity_keys = Vec::<String>::new();
         let mut local_only_companion_entity_ids = HashSet::<EntityId>::new();
-        map_for_each_value_bytes(entities_map, |key, blob| {
+        // Ask words and receipts verify against their group: visit them last.
+        let later = crate::task_verb::waits_for_ask_group;
+        map_for_each_value_bytes_deferring(entities_map, later, |key, blob| {
             if entity_error.is_some() {
                 return;
             }
@@ -206,6 +209,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
                     | crate::registry::ENTITY_TYPE_DIAGNOSTIC
                     | ENTITY_TYPE_AUTHORITY_LOG
+                    | crate::registry::ENTITY_TYPE_RECEIPT_RECORD
             );
             if !byte_compare_in_door {
                 if let Some(latest) = materialized_blobs.get(&id) {
@@ -261,24 +265,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             } else {
                 &[]
             };
-            if header.entity_type == crate::registry::ENTITY_TYPE_FACET
-                && crate::companion::is_identity_facet_body(data)
-            {
-                match decode_companion_record_body(data) {
-                    Ok(record)
-                        if record.sensitivity == crate::federation::Sensitivity::Restricted =>
-                    {
-                        local_only_companion_entity_keys.push(key.to_owned());
-                        local_only_companion_entity_ids.insert(id);
-                        return;
-                    }
-                    Ok(_) | Err(_) => {
-                        if let Err(err) = vault.ensure_companion_register_kind() {
-                            entity_error = Some(err);
-                            return;
-                        }
-                    }
-                }
+            if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
+                local_only_companion_entity_keys.push(key.to_owned());
+                local_only_companion_entity_ids.insert(id);
+                return;
             }
             // ONE-1134 + ONE-1140: the REDACTION_AUDIT replay door
             // #2. Receipts are immutable audit records (contracts.ts
@@ -344,7 +334,18 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // engine-authored bands while still running full structural
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
-            let result = if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+            let result = if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+                vault.with_write_txn(|wtxn| {
+                    crate::sync::receipt_ingest::ingest_in_txn(
+                        vault,
+                        wtxn,
+                        tombstones_map,
+                        window_key.as_str(),
+                        &id,
+                        blob,
+                    )
+                })
+            } else if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
                 // Replay may not revive a remote detector's local observations.
                 Ok(false)
             } else if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
@@ -534,7 +535,12 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                     let dependency_pending =
                         crate::subject_model::subject_model_dependency_pending(&err)
-                            || err.kind() == crate::error::ErrorKind::ProjectDependencyPending;
+                            || matches!(
+                                err.kind(),
+                                crate::error::ErrorKind::ProjectDependencyPending
+                                    | crate::error::ErrorKind::ResidentOwnerDependencyPending
+                                    | crate::error::ErrorKind::AskDependencyPending
+                            );
                     if dependency_pending {
                         pending_entity_dependencies.insert(id);
                     }

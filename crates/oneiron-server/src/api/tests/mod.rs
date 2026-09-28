@@ -36,6 +36,7 @@ mod mcp_scoping;
 mod mcp_tool_endpoints;
 mod mcp_write_guards;
 mod reactive;
+mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_tree;
@@ -69,6 +70,9 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
     ("/v1/core/run-tree", "get"),
     ("/v1/core/run-tree/observe", "get"),
     ("/v1/core/run-tree/intervene", "post"),
+    ("/v1/core/memory/{id}/watch", "get"),
+    ("/v1/core/memory/{id}/watch", "put"),
+    ("/v1/core/memory/{id}/watch", "delete"),
     ("/v1/core/conversations", "get"),
     ("/v1/core/conversations", "post"),
     ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -146,6 +150,8 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreHydrateResponse",
     "CoreHydrateStatus",
     "CoreListQuery",
+    "CoreMemoryChange",
+    "CoreMemoryWatchResponse",
     "CoreMemoryOperationKind",
     "CoreMemoryTimelineRecord",
     "CoreMemoryTimelineRecordState",

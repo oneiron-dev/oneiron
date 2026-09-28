@@ -3,6 +3,7 @@ mod emission;
 mod envelope;
 mod human_speech;
 mod memory_verbs;
+mod wake_policy;
 
 use std::cell::Cell;
 
@@ -40,6 +41,9 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) human_wait_target: Option<HumanWaitDispatchTarget>,
     pub(super) code_emission:
         Option<(consent::CodeEmissionContext, Option<consent::ReviewContext>)>,
+    /// Host-authenticated owner for a single governed agent action. No guest
+    /// call, transcript, or replay row can mint or carry this proof.
+    pub(super) owner_proof: Option<&'a crate::consent::AuthenticatedOwner>,
     /// ONE-1314. Whether this run's effect history is already known to carry
     /// an EXTERNAL effect, so the memory writes it seals afterwards must be
     /// stamped with tool-output lineage rather than bare `Generated`.
@@ -86,7 +90,7 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// Creates the canonical dispatcher for a workflow step waiting on a real,
     /// human-assigned TASK. The task body remains authoritative for responder
-    /// identity; dispatch resolves it when `self.ask_human` mints the wait.
+    /// identity; dispatch resolves it when `ask` mints the wait.
     ///
     /// # Errors
     ///
@@ -145,8 +149,19 @@ impl<'a> HostSelfDispatcher<'a> {
             run_ref,
             human_wait_target: None,
             code_emission: None,
+            owner_proof: None,
             external_effect_seen: Cell::new(false),
         })
+    }
+
+    /// Binds a host-authenticated owner proof to one agent action dispatch.
+    /// The guest payload has no field from which it could construct this.
+    pub(crate) fn with_authenticated_owner(
+        mut self,
+        owner: &'a crate::consent::AuthenticatedOwner,
+    ) -> Self {
+        self.owner_proof = Some(owner);
+        self
     }
 
     /// Records what this run's effect history already contains.
@@ -234,13 +249,13 @@ impl<'a> HostSelfDispatcher<'a> {
         match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
-            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call),
+            SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
             SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
-            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
+            SelfCall::Ask(call) => self.dispatch_ask(call),
             SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
                 SelfEffect::DestructiveFixture,
                 SelfDurableWaitReason::DestructiveEffect,
@@ -256,7 +271,42 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
             SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
+            SelfCall::InferenceDefaultsRead => self.dispatch_inference_defaults(None),
+            SelfCall::InferenceDefaultsReplace(json) => {
+                self.dispatch_inference_defaults(Some(&json))
+            }
+            SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
         }
+    }
+}
+
+impl HostSelfDispatcher<'_> {
+    fn dispatch_inference_defaults(
+        &self,
+        replacement: Option<&str>,
+    ) -> Result<SelfDispatchOutcome> {
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(crate::Error::InvalidConfig(
+                "inference defaults require canonical vault".into(),
+            ));
+        };
+        // The shared action registry is not the only caller of SelfDispatcher.
+        // Re-check the host-bound actor here so a raw SelfCall cannot bypass
+        // the owner's Auto ceiling or a narrowed agent definition.
+        crate::code_run::actions::check_ceiling(
+            vault,
+            self.actor,
+            crate::agent_def::AgentCeiling::Auto,
+        )?;
+        if let Some(json) = replacement {
+            let next = crate::llm::PurposeDefaultTable::from_json(json.as_bytes())?;
+            vault.set_resident_purpose_default_table(&next)?;
+        }
+        let active = vault.purpose_default_table()?;
+        Ok(SelfDispatchOutcome::InferenceDefaults(
+            serde_json::to_string(&active)
+                .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
+        ))
     }
 }
 

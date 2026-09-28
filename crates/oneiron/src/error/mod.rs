@@ -93,6 +93,7 @@ pub enum ErrorKind {
     ConsentGrantRevoked,
     ConsentApproveOnceSpent,
     InvalidTaskBody,
+    AskDependencyPending,
     CorruptedIndex,
     ContextPackValidation,
     IndexOverflow,
@@ -296,7 +297,11 @@ pub enum ErrorKind {
     PackKindNameCollision,
     PackKindNotInstalled,
     InvalidPackByteMap,
+    InvalidSuppressionReceiptBody,
+    SuppressionReceiptDivergence,
     PackPredicateNameCollision,
+    PackInstallRuleBlocked,
+    ResidentOwnerDependencyPending,
 }
 
 /// Crate error type.

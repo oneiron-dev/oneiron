@@ -266,11 +266,11 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "person_ref",
-                "Optional person entity id for companion-aware assembly metadata.",
+                "Optional PERSON identity for companion-aware assembly metadata.",
             ),
             (
                 "persona_ref",
-                "Optional persona entity id for companion-aware assembly metadata.",
+                "Optional other relationship endpoint for companion-aware assembly metadata.",
             ),
         ],
     ),
@@ -460,11 +460,11 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             (
                 "person_ref",
-                "Optional person entity id (32 hex) or opaque person label.",
+                "Optional PERSON identity (32 hex) or opaque person label.",
             ),
             (
                 "persona_ref",
-                "Optional persona entity id (32 hex) or opaque persona label.",
+                "Optional other relationship endpoint (32 hex) or opaque label.",
             ),
             (
                 "expression",
@@ -516,45 +516,6 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
             ("rank", "Rank within the signal."),
             ("score", "Raw signal score."),
         ],
-    ),
-    (
-        "CompanionRegisterSubjectPayload",
-        &[(
-            "relationship_ref",
-            "Source and target entity pair for relationship records.",
-        )],
-    ),
-    (
-        "CompanionRegisterRecordPayload",
-        &[
-            (
-                "scope",
-                "Visibility and privacy scope for this register record.",
-            ),
-            (
-                "subject",
-                "Persona or relationship subject for this register record.",
-            ),
-            ("provenance", "Provenance stamp for this register record."),
-        ],
-    ),
-    (
-        "CompanionRegisterCreateRecordRequest",
-        &[(
-            "record",
-            "Typed companion register record envelope to create.",
-        )],
-    ),
-    (
-        "CompanionRegisterUpdateRecordRequest",
-        &[(
-            "record",
-            "Replacement record envelope; scope and subject must match the existing record.",
-        )],
-    ),
-    (
-        "CompanionRegisterRecordResponse",
-        &[("record", "Typed companion register record envelope.")],
     ),
 ];
 

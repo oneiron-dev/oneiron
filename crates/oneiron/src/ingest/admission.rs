@@ -177,35 +177,35 @@ fn admit_imported_evidence_claim_typed_guarded(
     let (candidate, envelope) = imported_candidate(predicate, value, source_record_id, admission)?;
 
     if let Some(guard) = guard {
-        return vault.with_write_txn(|txn| {
+        // The memory facade is an actor-bound import, not the trusted ingest
+        // projector. This writer binds the actor and derives old/new claim
+        // effects from the candidate batch before any Proposed row can land.
+        return vault.try_with_actor_content_write_txn(admission.actor, |content| {
             // Keyed ownership refuses before authorship, as the generic claim
             // doors order it: no actor imports into or over a keyed revision.
             if predicate == crate::claim::KEY_VALUE_PREDICATE
                 || vault
-                    .get_claim_in_txn(txn, &admission.claim_id)?
+                    .get_claim_in_txn(content.read(), &admission.claim_id)?
                     .is_some_and(|body| !crate::claim::claim_generic_readable(&body))
             {
                 return Err(crate::error::Error::Claim(
                     crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor,
                 ));
             }
-            guard(vault, txn, admission.actor, admission.claim_id)?;
-            if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
+            guard(vault, content.read(), admission.actor, admission.claim_id)?;
+            if vault.local_hard_delete_marker_exists_in_txn(content.read(), &admission.claim_id)? {
                 return Err(crate::error::ClaimError::ActorLacksClaimAuthority {
                     reason: "hard-deleted claim cannot be recreated",
                 }
                 .into());
             }
-            vault
-                .batch_in()
-                .claim_candidate(
-                    &admission.claim_id,
-                    candidate,
-                    &envelope,
-                    admission.occurred,
-                    admission.learned_at,
-                )
-                .apply(txn)
+            content.apply_batch(vault.batch_in().claim_candidate(
+                &admission.claim_id,
+                candidate,
+                &envelope,
+                admission.occurred,
+                admission.learned_at,
+            ))
         });
     }
     vault
@@ -280,7 +280,7 @@ pub fn admit_imported_entity(
     )
 }
 
-fn imported_evidence_value(source_id: &str, source_record_id: &str) -> MsgpackValue {
+pub(super) fn imported_evidence_value(source_id: &str, source_record_id: &str) -> MsgpackValue {
     MsgpackValue::Map(vec![
         (
             MsgpackValue::from("kind"),

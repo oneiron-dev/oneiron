@@ -310,7 +310,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),
         "self.memory.supersede_claim" => Ok(SelfEffect::MemorySupersedeClaim),
         "self.memory.put_edge" => Ok(SelfEffect::MemoryPutEdge),
-        "self.ask_human" => Ok(SelfEffect::AskHuman),
+        "ask" => Ok(SelfEffect::Ask),
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "agents.spawn" => Ok(SelfEffect::AgentsSpawn),
@@ -321,6 +321,8 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
+        "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),
+        "self.inference_defaults.replace" => Ok(SelfEffect::InferenceDefaultsReplace),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }

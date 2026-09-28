@@ -150,9 +150,13 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody
         | ErrorKind::InvalidTaskBody
+        // An ask word or receipt that arrived before its group or person is
+        // remote data waiting on a dependency; forward remat keeps its retry.
+        | ErrorKind::AskDependencyPending
         | ErrorKind::InvalidProjectBody
         | ErrorKind::InvalidProjectRoomBody
         | ErrorKind::ProjectDependencyPending
+        | ErrorKind::ResidentOwnerDependencyPending
         | ErrorKind::InvalidPredicate
         | ErrorKind::InvalidEdgeWeight
         | ErrorKind::InvalidVad
@@ -284,6 +288,11 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // reads as `CorruptedIndex`), so this arm cannot swallow local
         // corruption.
         | ErrorKind::InvalidDiagnosticBody
+        // Incoming suppression observations are validated before any index or
+        // entity write. A bad body or divergent immutable carrier is remote
+        // input; stored-row decode/index failures remain CorruptedIndex (local).
+        | ErrorKind::InvalidSuppressionReceiptBody
+        | ErrorKind::SuppressionReceiptDivergence
         // PackByteMap sync rejections: a forged source/schema identity
         // (`PackKindNameCollision`) is a rejection of that remote row, never
         // a local failure — quarantine and continue, so one forged pack row

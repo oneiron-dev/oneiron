@@ -50,6 +50,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "export",
+                crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
+            ),
+            (
                 "receipts",
                 crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
             ),
@@ -72,6 +76,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "key_value_namespaces",
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
+            ),
+            (
+                "can",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskCanAskRequest,
+                >(),
+            ),
+            (
+                "peek",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>(),
             ),
             (
                 "tasks.ask",
@@ -100,6 +114,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "rooms.messages",
                 crate::code_run::vault_read::request_schema::<RoomRequest>(),
+            ),
+            (
+                "rooms.render",
+                crate::code_run::vault_read::request_schema::<RoomRefRequest>(),
+            ),
+            (
+                "rooms.find",
+                crate::code_run::vault_read::request_schema::<RoomRequest>(),
+            ),
+            (
+                "rooms.get",
+                crate::code_run::vault_read::request_schema::<RoomTurnRequest>(),
+            ),
+            (
+                "rooms.trunk",
+                crate::code_run::vault_read::request_schema::<RoomTurnRequest>(),
             ),
             (
                 "rooms.claim",
@@ -223,6 +253,46 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["room_ref"]
         }
+        "rooms.render" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            &["room_ref"]
+        }
+        "rooms.find" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/after")?.clone(),
+            );
+            &["room_ref"]
+        }
+        "rooms.get" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/turn_ref")?.clone(),
+            );
+            &["room_ref", "turn_ref"]
+        }
+        "rooms.trunk" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            properties.insert(
+                "turn_ref".to_owned(),
+                schema.pointer("/properties/turn_ref")?.clone(),
+            );
+            &["room_ref", "turn_ref"]
+        }
         "rooms.claim" => {
             properties.insert(
                 "room_ref".to_owned(),
@@ -290,6 +360,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_query(&input.query)?;
             crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
         }
+        "export" => {
+            let _input: crate::memory::ExportOptions = decode(value.clone())?;
+        }
         "receipts" => {
             let input: ReceiptsRequest = decode(value.clone())?;
             crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;
@@ -309,6 +382,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "key_value_namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "can" => {
+            let _input: crate::task_verb::sdk::TaskCanAskRequest = decode(value.clone())?;
+        }
+        "peek" => {
+            let _input: crate::task_verb::TaskAskHandle = decode(value.clone())?;
+        }
         "tasks.ask" => {
             let _input: crate::task_verb::sdk::TaskAskRequest = decode(value.clone())?;
         }
@@ -326,6 +405,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "rooms.messages" => {
             let _input: RoomRequest = decode(value.clone())?;
+        }
+        "rooms.render" => {
+            let _input: RoomRefRequest = decode(value.clone())?;
+        }
+        "rooms.find" => {
+            let _input: RoomRequest = decode(value.clone())?;
+        }
+        "rooms.get" => {
+            let _input: RoomTurnRequest = decode(value.clone())?;
+        }
+        "rooms.trunk" => {
+            let _input: RoomTurnRequest = decode(value.clone())?;
         }
         "rooms.claim" => {
             let _input: RoomClaimRequest = decode(value.clone())?;
@@ -350,18 +441,25 @@ pub fn invoke(
         "witness" => encode(witness(memory, decode(value)?)?),
         "claim_upsert" => encode(claim_upsert(memory, decode(value)?)?),
         "recall" => encode(recall(memory, decode(value)?)?),
+        "export" => encode(export(memory, decode(value)?)?),
         "receipts" => encode(receipts(memory, decode(value)?)?),
         "key_value_get" => encode(key_value_get(memory, decode(value)?)?),
         "key_value_put" => encode(key_value_put(memory, decode(value)?)?),
         "key_value_delete" => encode(key_value_delete(memory, decode(value)?)?),
         "key_value_search" => encode(key_value_search(memory, decode(value)?)?),
         "key_value_namespaces" => encode(key_value_namespaces(memory, decode(value)?)?),
+        "can" => encode(can(memory, decode(value)?)?),
+        "peek" => encode(peek(memory, decode(value)?)?),
         "tasks.ask" => encode(tasks_ask(memory, decode(value)?)?),
         "tasks.wait" => encode(tasks_wait(memory, decode(value)?)?),
         "tasks.answer" => encode(tasks_answer(memory, decode(value)?)?),
         "tasks.outcomes" => encode(tasks_outcomes(memory, decode(value)?)?),
         "rooms.list" => encode(rooms_list(memory, decode(value)?)?),
         "rooms.messages" => encode(rooms_messages(memory, decode(value)?)?),
+        "rooms.render" => encode(rooms_render(memory, decode(value)?)?),
+        "rooms.find" => encode(rooms_find(memory, decode(value)?)?),
+        "rooms.get" => encode(rooms_get(memory, decode(value)?)?),
+        "rooms.trunk" => encode(rooms_trunk(memory, decode(value)?)?),
         "rooms.claim" => encode(rooms_claim(memory, decode(value)?)?),
         "rooms.speak" => encode(rooms_speak(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
@@ -440,7 +538,7 @@ pub fn tasks_create(
         crate::companion_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
-        Some(crate::unix_seconds_now()),
+        Some(memory.vault().now_recorded_at()),
     ))
 }
 pub fn tasks_update(
@@ -478,6 +576,12 @@ pub fn recall(
         None,
     )
 }
+pub fn export(
+    memory: &Memory<'_>,
+    input: crate::memory::ExportOptions,
+) -> MemoryResult<crate::memory::MemoryExport> {
+    memory.export(&input)
+}
 pub fn receipts(
     memory: &Memory<'_>,
     input: ReceiptsRequest,
@@ -514,6 +618,18 @@ pub fn key_value_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn can(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskCanAskRequest,
+) -> MemoryResult<crate::task_verb::TaskAskPreflight> {
+    memory.tasks_can_ask(&input.ask)
+}
+pub fn peek(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAskHandle,
+) -> MemoryResult<Vec<crate::task_verb::TaskAskPersonEvidence>> {
+    memory.tasks_ask_peek(input)
 }
 pub fn tasks_ask(
     memory: &Memory<'_>,
@@ -564,6 +680,44 @@ pub fn rooms_messages(
             .map(crate::EntityId::from_hex)
             .transpose()?,
         input.limit.unwrap_or(256),
+    )
+}
+pub fn rooms_render(memory: &Memory<'_>, input: RoomRefRequest) -> MemoryResult<Vec<String>> {
+    memory.rooms_render_threads(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        crate::workspace_roster::RoomThreadPolicy::default(),
+    )
+}
+pub fn rooms_find(
+    memory: &Memory<'_>,
+    input: RoomRequest,
+) -> MemoryResult<crate::workspace_roster::RoomThreadPage> {
+    memory.rooms_find_threads_page(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        input
+            .after
+            .as_deref()
+            .map(crate::EntityId::from_hex)
+            .transpose()?,
+        input.limit.unwrap_or(256),
+    )
+}
+pub fn rooms_get(
+    memory: &Memory<'_>,
+    input: RoomTurnRequest,
+) -> MemoryResult<Option<crate::workspace_roster::RoomThread>> {
+    memory.rooms_get_thread(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        crate::EntityId::from_hex(&input.turn_ref)?,
+    )
+}
+pub fn rooms_trunk(
+    memory: &Memory<'_>,
+    input: RoomTurnRequest,
+) -> MemoryResult<crate::workspace_roster::RoomTrunk> {
+    memory.rooms_trunk(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        crate::EntityId::from_hex(&input.turn_ref)?,
     )
 }
 pub fn rooms_claim(

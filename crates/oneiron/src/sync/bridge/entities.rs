@@ -5,8 +5,7 @@ use std::collections::HashSet;
 use loro::{LoroDoc, LoroMap};
 
 use super::companion_identity::{
-    CompanionCrdtScrub, companion_register_blob_is_local_only, companion_register_sync_admitted,
-    ensure_companion_register_kind_for_entity_delta,
+    CompanionCrdtScrub, companion_register_blob_is_local_only,
     ingest_replicated_identity_topology_event_in_txn, scrub_local_only_companions_from_crdt,
 };
 use super::tombstones::quarantine_and_neutralize_protected_tombstone_in_txn;
@@ -43,16 +42,38 @@ pub(super) fn materialize_entities_from_delta(
     window_key: &str,
     lease_vault_id: u64,
 ) -> bool {
+    materialize_entities_with_changes(doc, delta, vault, window_key, lease_vault_id).0
+}
+
+/// Revision receipts are retained only after the nested savepoint and outer
+/// materialization transaction have both committed.
+pub(super) fn materialize_entities_with_changes(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+    lease_vault_id: u64,
+) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
     let tombstones_map = doc.get_map("tombstones");
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
     // point (unlike the tombstone path), so the swallow site below needs
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
+    let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
-    let result = ensure_companion_register_kind_for_entity_delta(vault, delta).and_then(|()| {
-        vault.with_write_txn(|wtxn| {
-        for (key, new_val) in &delta.updated {
+    let result = vault.with_write_txn(|wtxn| {
+        // One delta has no row order: an ask word or receipt must not reach
+        // its group check before a group or person carried by the same delta.
+        let mut updates: Vec<_> = delta.updated.iter().collect();
+        updates.sort_by_key(|(_, value)| {
+            matches!(
+                value,
+                Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
+                    if crate::task_verb::waits_for_ask_group(blob)
+            )
+        });
+        for (key, new_val) in updates {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
                     // Pre-validate the REMOTE bytes structurally BEFORE any
@@ -164,6 +185,9 @@ pub(super) fn materialize_entities_from_delta(
                     // partial writes with its quarantine record or siblings.
                     let materialize_result = {
                         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+                        let previous_revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+                            &vault.store, &savepoint, &id, crate::vault::ReadMode::Live,
+                        )?;
                         match materialize_entity_blob_in_txn(
                             vault,
                             &mut savepoint,
@@ -174,15 +198,34 @@ pub(super) fn materialize_entities_from_delta(
                             lease_vault_id,
                         ) {
                             Ok(applied) => {
+                                let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+                                    &vault.store, &savepoint, &id, crate::vault::ReadMode::Live,
+                                )?;
+                                let indexed_revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+                                    &vault.store, &savepoint, &id, crate::vault::ReadMode::Indexed,
+                                )?;
                                 savepoint.commit()?;
-                                Ok(applied)
+                                // The savepoint has no postcommit owner. Carry
+                                // its claim change to the outer transaction's
+                                // watch, which fires only after THAT commit.
+                                if applied && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                                    crate::batch::queue_proactivity_change(vault, wtxn);
+                                }
+                                Ok((applied, previous_revision, revision, indexed_revision))
                             }
                             Err(error) => Err(error),
                         }
                     };
                     match materialize_result {
-                        Ok(true) => applied_ops.push((id, blob.to_vec())),
-                        Ok(false) => {}
+                        Ok((true, previous_revision, revision, indexed_revision)) => {
+                            applied_ops.push((id, blob.to_vec()));
+                            if previous_revision != revision {
+                                revision_changes.push(crate::vault::EntityRevisionChange {
+                                    entity: id, previous_revision, revision, indexed_revision,
+                                });
+                            }
+                        }
+                        Ok((false, _, _, _)) => {}
                         Err(e) => {
                             if remote_rejection_reason(&e).is_some() {
                                 quarantine_rejected_op_in_txn(
@@ -219,6 +262,10 @@ pub(super) fn materialize_entities_from_delta(
                 }
             }
         }
+        let facts: Vec<_> = applied_ops.iter().map(|(id, _)| {
+            crate::conversation_dag::topology::Dependency::Entity(*id)
+        }).collect();
+        super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
@@ -226,7 +273,6 @@ pub(super) fn materialize_entities_from_delta(
             )));
         }
         Ok(())
-        })
     });
 
     if result.is_ok()
@@ -237,6 +283,45 @@ pub(super) fn materialize_entities_from_delta(
             window = %window_key,
             "observer-b: local-only companion CRDT scrub failed after entity batch commit"
         );
+    }
+
+    // An earlier ChildOf or SpawnedBy can have arrived before this body's
+    // endpoint and been deferred by the edge observer. Re-present only the
+    // now-reachable structural keys through that SAME edge gauntlet; no raw
+    // LMDB write or peer-controlled edge bypasses its validators. A pending
+    // Parent then wakes from the accepted membership/anchor fact.
+    if result.is_ok() && !applied_ops.is_empty() {
+        let arrived: HashSet<_> = applied_ops.iter().map(|(id, _)| *id).collect();
+        let edges = doc.get_map("edges");
+        let mut retry = loro::event::MapDelta {
+            updated: Default::default(),
+        };
+        edges.for_each(|key, value| {
+            if let Some((src, kind, tgt)) = super::parse_edge_key(key)
+                && matches!(
+                    kind,
+                    crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::SpawnedBy
+                )
+                && (arrived.contains(&src) || arrived.contains(&tgt))
+                && matches!(
+                    value,
+                    loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))
+                )
+            {
+                retry
+                    .updated
+                    .insert(std::borrow::Cow::Owned(key.to_string()), Some(value));
+            }
+        });
+        if !retry.updated.is_empty() {
+            super::edges::materialize_edges_from_delta(
+                doc,
+                &retry,
+                vault,
+                window_key,
+                lease_vault_id,
+            );
+        }
     }
 
     let committed = result.is_ok();
@@ -275,7 +360,14 @@ pub(super) fn materialize_entities_from_delta(
             "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
-    committed
+    (
+        committed,
+        if committed {
+            revision_changes
+        } else {
+            Vec::new()
+        },
+    )
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed
@@ -366,6 +458,16 @@ pub(super) fn materialize_entity_blob_in_txn(
     {
         return Ok(false);
     }
+    if header.entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD {
+        return crate::sync::receipt_ingest::ingest_in_txn(
+            vault,
+            wtxn,
+            tombstones_map,
+            window_key,
+            &id,
+            blob,
+        );
+    }
     let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
@@ -405,10 +507,7 @@ pub(super) fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(data)
-        && !companion_register_sync_admitted(data)?
-    {
+    if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
         tracing::warn!(
             entity = %key,
             "observer-b: refused local-only companion register materialization"

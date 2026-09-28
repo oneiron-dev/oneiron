@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 mod hybrid;
 mod model;
+mod policy;
 mod push;
 mod timer;
 
@@ -32,6 +33,7 @@ pub use self::model::{
     CommitmentDeadline, DeadlineSource, HintSignal, Tick, TickSource, WakeSignal,
 };
 pub(crate) use self::model::{SessionHintCarrier, SessionHintStamp};
+pub use self::policy::{IdleSample, WakePolicyTicks};
 pub use self::push::{HintPusher, PushTick, TickPushError, WakePusher};
 pub(crate) use self::timer::sleep_until_due;
 pub use self::timer::{AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick};

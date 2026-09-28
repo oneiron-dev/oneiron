@@ -1,5 +1,6 @@
 use super::*;
 
+mod atom_fuzz;
 mod genui_render;
 mod genui_validation;
 mod instrument;
@@ -11,5 +12,6 @@ mod selfui_actions;
 mod support;
 mod surface_dispatch;
 mod versioning;
+mod weave_report;
 
 use support::*;

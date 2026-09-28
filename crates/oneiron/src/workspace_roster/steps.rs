@@ -28,30 +28,21 @@ pub(super) fn require_workspace_authority_in_txn(
     vault_id: u64,
     writer: &WriteActor,
 ) -> Result<()> {
-    let member_ref = writer.entity_ref();
-    let scope = FederationGrantScope::vault(vault_id);
-    let fold = vault.verify_write_actor_in_txn(txn, writer)?;
-    for entry in vault
-        .store
-        .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
-    {
-        let id = entry?;
-        let Some(grant) = read_federation_grant_in_txn(vault, txn, &id)? else {
-            continue;
-        };
-        if grant.scope == scope
-            && grant.member_ref == member_ref
-            && grant.role.is_admin()
-            && fold
-                .pact_for_grant(&id)
-                .is_none_or(|pact| pact.status == crate::authority::FederationPactStatus::Active)
-        {
-            return Ok(());
-        }
-    }
-    Err(invalid(
-        "workspace onboarding requires an admin federation grant over the target vault",
-    ))
+    vault
+        .authorize_shared_vault_write_in_txn(
+            txn,
+            vault_id,
+            writer,
+            &crate::federation::SharedVaultWrite::Admin(
+                crate::federation::OrgAdminPower::AddMember,
+            ),
+        )
+        .map_err(|error| match error {
+            crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+                invalid("workspace onboarding requires a named admin power over the target vault")
+            }
+            other => other,
+        })
 }
 
 /// No read-time authorization result crosses the LMDB writer boundary.
@@ -138,7 +129,6 @@ pub(super) fn validate_workspace_references(
         minted.extend([
             (companion.person_ref, ENTITY_TYPE_PERSON),
             (companion.actor_ref, ENTITY_TYPE_AGENT_DEF),
-            (companion.companion_record_ref, ENTITY_TYPE_FACET),
             (
                 companion.profile_grant_ref,
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT,
@@ -209,7 +199,7 @@ pub(super) fn grant_member_bundle(
     writer: &WriteActor,
 ) -> Result<()> {
     let id = intent.grant_bundle.federation_grant_ref;
-    let expected = FederationGrant::new(
+    let mut expected = FederationGrant::new(
         FederationGrantScope::vault(intent.workspace.workspace_vault_id),
         intent.person_ref,
         intent.grant_bundle.role,
@@ -224,12 +214,18 @@ pub(super) fn grant_member_bundle(
     // them on the way in. Moving this behind a future public
     // `Vault::create_federation_grant` is a pure refactor: the bytes do not
     // change.
-    let data = encode_federation_grant_body(&expected)?;
     let occurred = TimeRange {
         start: intent.occurred_at,
         end: intent.occurred_at,
     };
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
+        expected.authority_scope = vault.grant_default_scope_in_txn(
+            wtxn,
+            expected.role,
+            intent.workspace.workspace_vault_id,
+            expected.member_ref,
+        )?;
+        let data = encode_federation_grant_body(&expected)?;
         if let Some(existing) = read_federation_grant_in_txn(vault, wtxn, &id)? {
             if existing != expected {
                 return Err(invalid(
@@ -264,7 +260,7 @@ pub(super) fn grant_member_bundle(
 
 /// Step 4: a companion is a full someone, not a mode of the member.
 ///
-/// PERSON, substrate, actor, anchor, work facet, register record, and exactly
+/// PERSON, substrate, actor, anchor, work facet, and exactly
 /// the one companion-profile read grant the intent named — nothing wider.
 pub(super) fn birth_companion(
     vault: &Vault,
@@ -300,7 +296,6 @@ pub(super) fn birth_companion(
         companion.work_facet_ref,
         writer,
     )?;
-    ensure_companion_record(vault, intent, companion, writer)?;
     ensure_companion_profile_grant(vault, intent, companion, writer)
 }
 
@@ -537,7 +532,18 @@ pub(super) fn ensure_companion_person(
             if header.entity_type != ENTITY_TYPE_PERSON {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            if &raw[ENTITY_METADATA_HEADER_LEN..] != body.as_slice() {
+            let stored = &raw[ENTITY_METADATA_HEADER_LEN..];
+            crate::companion::validated_persona_baseline(stored)?;
+            let fields = crate::companion::persona_body_fields(stored)?;
+            let field = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(key, _)| key.as_str() == Some(name))
+                    .map(|(_, value)| value)
+            };
+            if field("schema_version") != Some(&Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION))
+                || field("display_name") != Some(&Value::from(companion.display_name.as_str()))
+            {
                 return Err(invalid(
                     "companion person_ref is already bound to a different person",
                 ));
@@ -550,6 +556,12 @@ pub(super) fn ensure_companion_person(
             companion.person_ref,
             ENTITY_TYPE_PERSON,
             body,
+            at,
+        )?;
+        vault.put_persona_baseline_in_txn(
+            txn,
+            &companion.person_ref,
+            &serde_json::json!({"display_name": companion.display_name}),
             at,
         )
     })
@@ -596,79 +608,6 @@ pub(super) fn ensure_work_facet_edge(
             .batch_in()
             .edge(&person_ref, EdgeKind::HasFacet, &facet_ref, 1.0)
             .apply(txn)
-    })
-}
-
-/// Writes the companion-register persona record if it is absent.
-pub(super) fn ensure_companion_record(
-    vault: &Vault,
-    intent: &MemberOnboardingIntent,
-    companion: &CompanionBirthIntent,
-    writer: &WriteActor,
-) -> Result<()> {
-    let provenance = CompanionProvenance::new(
-        writer.entity_ref(),
-        writer.actor_class(),
-        ClaimSource::Observed,
-        ClaimApprovalStatus::Auto,
-        Value::Map(vec![
-            (
-                Value::from("workspace_ref"),
-                Value::from(intent.workspace.workspace_ref.as_str()),
-            ),
-            (
-                Value::from("onboarding_id"),
-                Value::from(intent.onboarding_id.as_str()),
-            ),
-        ]),
-    );
-    let record = CompanionRecord::persona(
-        CompanionScope::personal(intent.person_ref),
-        companion.person_ref,
-        Value::Map(vec![
-            (
-                Value::from("schema_version"),
-                Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
-            ),
-            (
-                Value::from("display_name"),
-                Value::from(companion.display_name.as_str()),
-            ),
-            (
-                Value::from("work_facet_ref"),
-                Value::from(companion.work_facet_ref.to_hex()),
-            ),
-        ]),
-        provenance,
-        crate::federation::Sensitivity::Restricted,
-    );
-    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
-        if let Some(raw) = vault
-            .store
-            .port_entity_record(txn, &companion.companion_record_ref)?
-        {
-            if raw.entity_type != ENTITY_TYPE_FACET {
-                return Err(Error::InvalidEntityType(raw.entity_type));
-            }
-            let existing = crate::companion::decode_companion_record_body(&raw.body)?;
-            if existing.scope != record.scope
-                || existing.subject != record.subject
-                || existing.value != record.value
-                || existing.lifecycle != record.lifecycle
-                || existing.sensitivity != record.sensitivity
-            {
-                return Err(invalid(
-                    "companion_record_ref is already bound to a different companion",
-                ));
-            }
-            return Ok(());
-        }
-        vault.create_companion_record_in_txn(
-            txn,
-            &companion.companion_record_ref,
-            &record,
-            intent.occurred_at,
-        )
     })
 }
 

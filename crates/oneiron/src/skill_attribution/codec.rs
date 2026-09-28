@@ -8,11 +8,12 @@ use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::skill::SkillRecord;
 
 use super::audit::AttributionAuditReport;
 use super::types::{
-    AttemptOutcome, AttributionJudgment, AttributionVerdict, OutcomeEvidence,
-    SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
+    AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
+    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
 };
 
 pub(super) const EVIDENCE_PREFIX: &[u8] = b"skill_attribution:evidence:v1:"; // + sequence(8 BE)
@@ -45,6 +46,12 @@ const KEY_SKILL: &str = "skill";
 const KEY_OUTCOME: &str = "outcome";
 
 const KEY_FOLLOWED_SKILL: &str = "followed_skill";
+
+const KEY_FOLLOWED_STATE: &str = "followed_state";
+
+const KEY_REASON: &str = "reason";
+
+const KEY_CAUSE: &str = "cause";
 
 const KEY_SKILL_COVERED_STEP: &str = "skill_covered_step";
 
@@ -79,6 +86,24 @@ const fn invalid(reason: &'static str) -> Error {
 /// rows) would inherit it as fact. Every reference is resolved here, at the
 /// door, so the projector downstream can trust what it reads.
 pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<()> {
+    if evidence.followed_state.is_some() && evidence.followed_skill.is_some() {
+        return Err(invalid("attribution followed states conflict"));
+    }
+    if let Some(FollowedState::DeviatedWithReason { reason, .. }) = &evidence.followed_state {
+        if reason.trim().is_empty() {
+            return Err(invalid("attribution deviation needs a stated reason"));
+        }
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let limits = policy
+            .attribution_limits()
+            .ok_or(invalid("attribution deviation policy is malformed"))?;
+        if (reason.len() as u64) > limits.reason_bytes_for(&evidence.actor) {
+            return Err(invalid(
+                "attribution deviation exceeds policy reason budget",
+            ));
+        }
+    }
     if evidence.receipt_ref.is_empty() {
         return Err(invalid("attribution evidence must cite a receipt"));
     }
@@ -88,12 +113,44 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     if vault.get_raw(&evidence.actor)?.is_none() {
         return Err(invalid("attribution evidence names an unknown actor"));
     }
+    // A caller-chosen actor ID cannot assign an unbound receipt to a
+    // resident. This check precedes the optional skill: shared-skill and
+    // skillless outcomes need the same executor proof as fork outcomes.
+    if crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?
+        != Some(evidence.actor)
+    {
+        return Err(invalid("attribution receipt is not bound to its actor"));
+    }
     let Some(skill) = evidence.skill else {
         return Ok(());
     };
     let Some(record) = vault.get_skill_record(&skill)? else {
         return Err(invalid("attribution evidence names an unknown skill"));
     };
+    if let Some(resident) = crate::skill::resident_of(&record)? {
+        if resident != evidence.actor
+            || crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?
+                != Some(resident)
+            || !crate::skill::resident::receipt_loaded_skill(vault, &evidence.receipt_ref, &skill)?
+        {
+            return Err(invalid(
+                "resident skill evidence belongs to another actor or attempt",
+            ));
+        }
+        // A resident fork never borrows its shared parent's outcome or an
+        // earlier version's receipt, even if both share the skill family.
+        let Some(manifest) = receipt.pack_manifest_skills() else {
+            return Err(invalid(
+                "resident skill evidence needs a versioned manifest",
+            ));
+        };
+        if !manifest.iter().any(|entry| {
+            ManifestEntry::parse_wire_form(entry)
+                .is_some_and(|(name, version)| name == record.skill_id && version == record.version)
+        }) {
+            return Err(invalid("resident skill evidence needs its exact revision"));
+        }
+    }
     // The receipt's manifest is what the pack ACTUALLY loaded. A skill the
     // attempt never loaded cannot have caused its outcome, so admitting the
     // pair would be attribution by assertion. A receipt stamped before the
@@ -104,7 +161,7 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     };
     if !manifest
         .iter()
-        .any(|entry| manifest_entry_names_skill(entry, &record.skill_id))
+        .any(|entry| manifest_entry_names_skill(entry, &record))
     {
         return Err(invalid(
             "attribution evidence names a skill absent from the receipt manifest",
@@ -113,10 +170,13 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
     Ok(())
 }
 
-/// A manifest wire form is `reference@version` and the reference of a SKILL
-/// row is its `skill_id`. [`ManifestEntry::parse_wire_form`] owns the split.
-fn manifest_entry_names_skill(wire_form: &str, skill_id: &str) -> bool {
-    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, _)| reference == skill_id)
+/// The one exact-revision check shared by evidence admission, sweep capture
+/// and the downstream reliability doors. Empty versions on historical receipt
+/// fixtures carry no revision fact; the attempt write door now refuses them.
+pub(crate) fn manifest_entry_names_skill(wire_form: &str, record: &SkillRecord) -> bool {
+    ManifestEntry::parse_wire_form(wire_form).is_some_and(|(reference, version)| {
+        reference == record.skill_id && (version.is_empty() || version == record.version)
+    })
 }
 
 pub(super) fn sequenced_key(prefix: &[u8], sequence: u64) -> Vec<u8> {
@@ -186,6 +246,69 @@ fn optional_bool(flag: Option<bool>) -> Value {
     flag.map_or(Value::Nil, Value::Boolean)
 }
 
+fn encode_followed_state(state: Option<&FollowedState>) -> Value {
+    match state {
+        None => Value::Nil,
+        Some(FollowedState::Followed) => Value::from("followed"),
+        Some(FollowedState::Partly) => Value::from("partly"),
+        Some(FollowedState::Ignored) => Value::from("ignored"),
+        Some(FollowedState::DeviatedWithReason { reason, cause }) => Value::Map(vec![
+            (Value::from(KEY_REASON), Value::from(reason.as_str())),
+            (
+                Value::from(KEY_CAUSE),
+                cause.map_or(Value::Nil, |cause| {
+                    Value::from(match cause {
+                        DeviationCause::IncorrectInstruction => "incorrect_instruction",
+                        DeviationCause::MissingInstruction => "missing_instruction",
+                        DeviationCause::ExecutorError => "executor_error",
+                    })
+                }),
+            ),
+        ]),
+    }
+}
+
+fn decode_followed_state(value: &Value) -> Result<Option<FollowedState>> {
+    match value {
+        Value::Nil => Ok(None),
+        Value::String(_) => match value.as_str() {
+            Some("followed") => Ok(Some(FollowedState::Followed)),
+            Some("partly") => Ok(Some(FollowedState::Partly)),
+            Some("ignored") => Ok(Some(FollowedState::Ignored)),
+            _ => Err(invalid("unknown attribution followed state")),
+        },
+        Value::Map(entries) => {
+            let mut reason = None;
+            let mut cause = None;
+            for (key, value) in entries {
+                match expect_key(key)? {
+                    KEY_REASON => reason = value.as_str().map(str::to_owned),
+                    KEY_CAUSE => {
+                        cause = match value {
+                            Value::Nil => None,
+                            _ => Some(match value.as_str() {
+                                Some("incorrect_instruction") => {
+                                    DeviationCause::IncorrectInstruction
+                                }
+                                Some("missing_instruction") => DeviationCause::MissingInstruction,
+                                Some("executor_error") => DeviationCause::ExecutorError,
+                                _ => return Err(invalid("unknown attribution deviation cause")),
+                            }),
+                        };
+                    }
+                    _ => return Err(invalid("unknown attribution followed state key")),
+                }
+            }
+            let reason = reason.ok_or(invalid("attribution deviation missing reason"))?;
+            if reason.trim().is_empty() {
+                return Err(invalid("attribution deviation needs a stated reason"));
+            }
+            Ok(Some(FollowedState::DeviatedWithReason { reason, cause }))
+        }
+        _ => Err(invalid("invalid attribution followed state")),
+    }
+}
+
 pub(super) fn encode_evidence(evidence: &OutcomeEvidence, sequence: u64) -> Value {
     Value::Map(vec![
         (
@@ -211,6 +334,10 @@ pub(super) fn encode_evidence(evidence: &OutcomeEvidence, sequence: u64) -> Valu
             optional_bool(evidence.followed_skill),
         ),
         (
+            Value::from(KEY_FOLLOWED_STATE),
+            encode_followed_state(evidence.followed_state.as_ref()),
+        ),
+        (
             Value::from(KEY_SKILL_COVERED_STEP),
             optional_bool(evidence.skill_covered_step),
         ),
@@ -226,6 +353,7 @@ fn decode_evidence(raw: &[u8]) -> Result<OutcomeEvidence> {
     let mut skill = None;
     let mut outcome = None;
     let mut followed_skill = None;
+    let mut followed_state = None;
     let mut skill_covered_step = None;
     let mut at = None;
     for (key, value) in entries {
@@ -237,6 +365,7 @@ fn decode_evidence(raw: &[u8]) -> Result<OutcomeEvidence> {
             KEY_SKILL => skill = decode_optional_entity(value)?,
             KEY_OUTCOME => outcome = value.as_str().and_then(AttemptOutcome::parse),
             KEY_FOLLOWED_SKILL => followed_skill = value.as_bool(),
+            KEY_FOLLOWED_STATE => followed_state = decode_followed_state(value)?,
             KEY_SKILL_COVERED_STEP => skill_covered_step = value.as_bool(),
             KEY_AT => at = value.as_u64(),
             _ => return Err(invalid("attribution evidence key is not pinned")),
@@ -248,6 +377,7 @@ fn decode_evidence(raw: &[u8]) -> Result<OutcomeEvidence> {
         skill,
         outcome: outcome.ok_or(invalid("attribution evidence missing outcome"))?,
         followed_skill,
+        followed_state,
         skill_covered_step,
         at: at.ok_or(invalid("attribution evidence missing timestamp"))?,
     })

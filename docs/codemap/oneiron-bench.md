@@ -26,7 +26,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/beam/chroma/tests/support.rs` | test | s | 3 crate-vis | — | — |
-| `src/beam/citations.rs` | src | m | 3 crate-vis | — | Evidence-backed per-number citations |
+| `src/beam/citations.rs` | src | m | 4 crate-vis | — | Evidence-backed per-number citations |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
 | `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
@@ -63,6 +63,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
+| `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
 | `src/eval/tests.rs` | test | L | — | — | — |
 | `src/fleet/configuration.rs` | src | s | 3 crate-vis | — | Explicit fleet workload and host settings; smoke cannot masquerade as fleet scale |
 | `src/fleet/mod.rs` | src | s | 1 crate-vis | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
@@ -71,7 +72,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fleet/scaling.rs` | src | s | 3 crate-vis | — | Isolated persisted-residual miss cost as graph cardinality grows |
 | `src/fleet/tests.rs` | test | s | — | — | Small falsification fixtures; smoke is never accepted as a fleet baseline |
 | `src/fleet/wire.rs` | src | s | 7 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
-| `src/fleet/workload.rs` | src | s | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
+| `src/fleet/workload.rs` | src | m | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
 | `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
 | `src/interface_bench/eval_run.rs` | src | m | 13 crate-vis | — | Smoke, probe, and full execution plus resume validation |
@@ -82,6 +83,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/tests_b.rs` | src | m | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness skeleton |
+| `src/oneironer_shadow.rs` | src | m | 1 crate-vis | — | Checkpoint-backed NER shadow proof beside an indexed fixture turn |
 | `src/perf/acceptance.rs` | src | m | 14 crate-vis | — | ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact… |
 | `src/perf/acceptance/tests.rs` | test | m | — | — | Regressions for the ONE-1579 acceptance evidence |
 | `src/perf/axes.rs` | src | m | 27 crate-vis | — | ONE-1579 axis shapes and the floors they are held to |
@@ -122,8 +124,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retrieval_trace_export.rs` | src | m | 4 crate-vis | — | — |
 | `src/retrieval_turn_corpus.rs` | src | m | 1 crate-vis | — | Offline replay of finalized, turn-indexed retrieval runs |
 | `src/swarm.rs` | src | m | 1 crate-vis | — | Seeded single-vault, in-process agent-swarm baseline |
+| `src/teacher_probe.rs` | src | s | 1 crate-vis | — | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
+| `src/teacher_probe_tests.rs` | test | s | — | — | — |
 | `src/vector/mod.rs` | src | s | 4 crate-vis | — | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
 | `src/vector/vector_config.rs` | src | s | 17 crate-vis | — | Vector bench targets, settings, and CLI flag parsing |
 | `src/vector/vector_report.rs` | src | s | 1 crate-vis | — | Vector bench text report rendering |
 | `src/vector/vector_run.rs` | src | m | 15 crate-vis | — | Vector bench execution, measurement, and gate evaluation |
 | `src/vector/vector_tests.rs` | test | s | — | — | Vector bench contract and end-to-end tests |
+| `tests/teacher_probe_cli.rs` | test | s | — | — | Run the shipped binary, not only its Rust scoring function, against CI fixtures |

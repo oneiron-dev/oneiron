@@ -259,6 +259,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode_recall(&output)
     }
+    fn export(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "export")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     #[pyo3(signature = (limit=None))]
     fn receipts(&self, py: Python<'_>, limit: Option<usize>) -> PyResult<String> {
         let limit = limit.unwrap_or(100);
@@ -297,6 +304,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(request_json, "key_value_namespaces")?;
         let output = py
             .detach(|| self.inner.agent_verb("key_value_namespaces", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn can(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "can")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("can", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn peek(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "peek")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("peek", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -339,6 +360,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "rooms.messages")?;
         let output = py
             .detach(|| self.inner.agent_verb("rooms.messages", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_render(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.render")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.render", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_find(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.find")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.find", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_trunk(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.trunk")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.trunk", input))
             .map_err(raise)?;
         encode(&output)
     }

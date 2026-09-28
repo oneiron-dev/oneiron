@@ -67,21 +67,22 @@ impl CountMode {
 }
 
 /// Metadata block shared by paginated list/search responses.
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 pub(crate) struct ResponseMeta {
     /// Total result count, or an estimate when `countMode` is `estimate`.
     pub total: u64,
     /// Precision used for the reported `total` value.
     #[serde(rename = "countMode")]
     pub count_mode: CountMode,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
     pub quality: Option<RetrievalQuality>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Vec<String>>)]
     pub degradation: Option<Vec<RetrievalDegradation>>,
     #[serde(
         rename = "confidenceAdjustment",
+        default,
         skip_serializing_if = "Option::is_none"
     )]
     #[schema(value_type = Option<f32>, example = -0.15)]
@@ -117,7 +118,7 @@ impl ResponseMeta {
 
 /// Standard paginated response envelope: primary data plus metadata, with the
 /// cursor slot omitted for non-cursor search endpoints.
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 pub(crate) struct PaginatedResponse<T> {
     /// Items returned for the current page or search request.
     pub items: Vec<T>,

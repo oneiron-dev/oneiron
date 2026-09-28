@@ -154,6 +154,19 @@ impl CatalogSeed {
         Ok(seed)
     }
 }
+/// Read the registry in the caller's snapshot. Binding may already hold a
+/// read transaction; opening another LMDB reader on the same thread fails.
+pub(super) fn read_model_registry_row(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    model: &ModelId,
+) -> Result<Option<ModelRegistryRow>> {
+    store
+        .vault_meta
+        .get(txn, &row_key(model))?
+        .map(|bytes| decode(&bytes))
+        .transpose()
+}
 impl Vault {
     pub fn put_model_registry_row(&self, row: &ModelRegistryRow) -> Result<()> {
         row.validate()?;
@@ -178,11 +191,7 @@ impl Vault {
     pub fn model_registry_row(&self, model: &ModelId) -> Result<Option<ModelRegistryRow>> {
         let stored = {
             let txn = self.store.env.read_txn()?;
-            self.store
-                .vault_meta
-                .get(&txn, &row_key(model))?
-                .map(|bytes| decode(&bytes))
-                .transpose()?
+            read_model_registry_row(&self.store, &txn, model)?
         };
         if stored.is_some() {
             return Ok(stored);

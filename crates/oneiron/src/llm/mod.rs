@@ -11,14 +11,22 @@ mod backend;
 mod bus;
 mod subscribers;
 pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
-pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunker};
+pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker};
 mod budget;
 mod burst_inputs;
 mod call;
 mod defaults;
+mod inference_admission;
 #[cfg(test)]
 mod streaming_tests;
-pub use defaults::PurposeDefault;
+pub use defaults::{
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
+    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
+};
+pub use inference_admission::{
+    AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
+    InferencePolicySnapshot,
+};
 pub mod scope;
 pub use self::scope::{Scope, ScopeResource};
 mod catalog;
@@ -31,6 +39,7 @@ pub mod manifest;
 mod model_id;
 mod protocol;
 pub mod registry;
+pub mod routing;
 mod safeguard;
 pub mod score_scraper;
 mod step;

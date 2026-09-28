@@ -26,16 +26,7 @@ impl Memory<'_> {
                 return replay_receipt(group_ref, group, self.actor(), &digest);
             }
             // Revocation and admission observe the SAME snapshot.
-            let holders = match &input.who {
-                Some(TaskAskTarget::Authority(scope)) => self
-                    .vault()
-                    .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?,
-                Some(TaskAskTarget::Responder(assignee)) => {
-                    vec![assignee.entity_ref().unwrap_or(self.actor())]
-                }
-                Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
-                None => vec![self.short_ask_principal_in_txn(txn)?],
-            };
+            let holders = self.ask_holders_in_txn(txn, input)?;
             let context_class = self.ask_class_in_txn(txn, input.task_ref)?;
             let effective = input.effective(
                 &holders.iter().copied().collect(),
@@ -69,21 +60,16 @@ impl Memory<'_> {
                 ) {
                     return Err(MemoryError::bad_request("ask recipient is not an actor"));
                 }
-                let assignee = match &effective.who {
-                    Some(TaskAskTarget::Responder(assignee)) => *assignee,
-                    _ if kind == Some(crate::registry::ENTITY_TYPE_PERSON) => {
-                        TaskAssignee::Human { actor_ref: *actor }
-                    }
-                    _ => TaskAssignee::Peer { actor_ref: *actor },
-                };
+                let assignee = ask_assignee(&effective.who, *actor, kind);
                 // No contact route is required to QUEUE a question. Human followup
                 // is registered only where the native route actually resolves.
                 let reachable = match assignee {
                     TaskAssignee::Human { actor_ref } => {
-                        crate::human_task::resolve_native_human_route_in(
+                        crate::human_task::resolve_native_human_route_for_actor_in(
                             self.vault(),
                             txn,
                             actor_ref,
+                            self.actor(),
                         )
                         .is_ok()
                     }
@@ -127,6 +113,14 @@ impl Memory<'_> {
             let question_digest =
                 super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
                     .ok_or(crate::Error::EntityNotFound)?;
+            let guest_grants = super::ask_guest::mint_guest_grants(
+                self.vault(),
+                txn,
+                group_ref,
+                self.actor(),
+                &effective,
+                now,
+            )?;
             let mut members = Vec::with_capacity(holders.len());
             for (actor, (entry, reachable)) in holders.iter().zip(&validated) {
                 let task_ref = self.mint_task_at_in_txn(
@@ -148,6 +142,8 @@ impl Memory<'_> {
                     actor: actor.to_hex(),
                 });
             }
+            let policy_surface =
+                super::ask_policy::confirmation_surface(self.vault(), txn, &effective, &holders)?;
             let group = AskGroup {
                 base_policy_version: 1,
                 owner: self.actor().to_hex(),
@@ -156,9 +152,12 @@ impl Memory<'_> {
                 effective,
                 context_class,
                 question_digest,
+                link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
                 members,
                 no_live_route,
                 created_at: now,
+                guest_grants,
+                policy_surface,
             };
             ask_record::put_group(self.vault(), txn, group_ref, &group)?;
             for (member, (entry, _)) in group.members.iter().zip(&validated) {
@@ -175,6 +174,25 @@ impl Memory<'_> {
             let mut receipt = replay_receipt(group_ref, group, self.actor(), &digest)?;
             receipt.idempotent_replay = false;
             Ok(receipt)
+        })
+    }
+
+    pub(super) fn ask_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+    ) -> MemoryResult<Vec<EntityId>> {
+        Ok(match &input.who {
+            Some(TaskAskTarget::Authority(scope)) => {
+                self.vault()
+                    .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?
+            }
+            Some(TaskAskTarget::Responder(assignee)) => {
+                vec![assignee.entity_ref().unwrap_or(self.actor())]
+            }
+            Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
+            Some(TaskAskTarget::Guests(guests)) => guests.keys().copied().collect(),
+            None => vec![self.short_ask_principal_in_txn(txn)?],
         })
     }
 
@@ -258,7 +276,7 @@ impl Memory<'_> {
         principal.ok_or_else(|| MemoryError::bad_request("agent has no verified human principal"))
     }
 
-    fn ask_class_in_txn(
+    pub(super) fn ask_class_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task: Option<EntityId>,
@@ -464,6 +482,17 @@ impl Memory<'_> {
         handle: TaskAskHandle,
         step_key: Option<&str>,
     ) -> MemoryResult<TaskAskWait> {
+        self.tasks_wait_observing(handle, step_key, 0)
+    }
+
+    /// Code mode supplies only a generation proved by its durable bridge
+    /// replay. An unrecorded Changed result cannot suppress a future wake.
+    pub(crate) fn tasks_wait_observing(
+        &self,
+        handle: TaskAskHandle,
+        step_key: Option<&str>,
+        observed_generation: u64,
+    ) -> MemoryResult<TaskAskWait> {
         if step_key.is_some_and(|key| key.is_empty() || key.len() > 256) {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
@@ -483,11 +512,29 @@ impl Memory<'_> {
             let Some(step_key) = step_key else {
                 return Ok(match status {
                     TaskAskStatus::Pending { .. } => {
-                        let mut wait = peer_result_wait(handle.group_ref);
-                        wait.effect = crate::code_run::SelfEffect::TasksWait;
-                        TaskAskWait::Park(wait)
+                        let voided = super::ask_option_link::voided_friends_in_txn(
+                            self.vault(),
+                            txn,
+                            handle.group_ref,
+                            &group,
+                        )?;
+                        let generation = super::ask_option_link::option_void_generation_in(
+                            self.vault(),
+                            txn,
+                            handle.group_ref,
+                        )?;
+                        if generation > observed_generation && !voided.is_empty() {
+                            TaskAskWait::Changed { voided, generation }
+                        } else {
+                            let mut wait = peer_result_wait(handle.group_ref);
+                            wait.effect = crate::code_run::SelfEffect::TasksWait;
+                            TaskAskWait::Park(wait)
+                        }
                     }
                     TaskAskStatus::Settled(result) => TaskAskWait::Ready(result),
+                    TaskAskStatus::Changed { voided, generation } => {
+                        TaskAskWait::Changed { voided, generation }
+                    }
                 });
             };
             self.bind_external_wait(txn, handle, step_key, status)
@@ -680,6 +727,9 @@ impl Memory<'_> {
                     .ok_or_else(|| MemoryError::bad_request("pending wait has no trap"))?
                     .to_hex(),
             },
+            TaskAskStatus::Changed { voided, generation } => {
+                TaskAskWait::Changed { voided, generation }
+            }
             TaskAskStatus::Settled(result) => {
                 if let Some(trap_claim_id) = row.trap_ref
                     && !row.consumed
@@ -709,6 +759,42 @@ impl Memory<'_> {
 }
 
 impl Memory<'_> {
+    /// `peek(ask)`: attributed partial words, then explicit unknowns at cutoff.
+    /// Reading this view never mints a TASK or settles an ask.
+    pub fn tasks_ask_peek(
+        &self,
+        handle: TaskAskHandle,
+    ) -> MemoryResult<Vec<TaskAskPersonEvidence>> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        let group = ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        if group.owner != self.actor().to_hex()
+            && !group
+                .members
+                .iter()
+                .any(|member| member.actor == self.actor().to_hex())
+        {
+            return Err(consult_refusal(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "ask handle is not addressed to this actor",
+                "Read an ask you own or answer.",
+            ));
+        }
+        Ok(ask_record::person_evidence_in(
+            self.vault(),
+            &txn,
+            handle.group_ref,
+            &group,
+            self.vault().store.clock.now_recorded_at(),
+        )?)
+    }
+
     /// Live evidence includes late words, without rewriting the cutoff receipt.
     pub fn tasks_ask_evidence(&self, handle: TaskAskHandle) -> MemoryResult<Vec<TaskAskEvidence>> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -758,5 +844,22 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
     for group in groups {
         super::ask_settlement::settle_ask_if_due(vault, group)?;
     }
+    vault.retry_pending_ask_soft_confirms(usize::MAX)?;
     Ok(())
+}
+
+/// Both `tasks_ask` and `can(ask)` preserve an explicitly addressed
+/// non-human responder, even when that actor is stored as a PERSON.
+pub(super) fn ask_assignee(
+    who: &Option<TaskAskTarget>,
+    actor: EntityId,
+    kind: Option<u8>,
+) -> TaskAssignee {
+    match who {
+        Some(TaskAskTarget::Responder(assignee)) => *assignee,
+        _ if kind == Some(crate::registry::ENTITY_TYPE_PERSON) => {
+            TaskAssignee::Human { actor_ref: actor }
+        }
+        _ => TaskAssignee::Peer { actor_ref: actor },
+    }
 }

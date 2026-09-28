@@ -5,8 +5,16 @@
 
 mod ask_band;
 mod ask_facade;
+mod ask_guest;
+mod ask_option_link;
+mod ask_policy;
+mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
+mod ask_soft_confirm;
+pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_dispatch;
+mod ask_soft_confirm_delivery;
+mod ask_soft_confirm_types;
 mod ask_types;
 mod consts;
 mod consult_fanout_admission;
@@ -31,6 +39,7 @@ mod presence_scan;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+mod room_thread;
 mod route_receipts;
 mod scheduling;
 mod symbol_lease;
@@ -64,6 +73,7 @@ pub use dormant_magistrate::{
     record_magistrate_overturn,
 };
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
+pub(crate) use room_thread::thread_tasks as room_thread_tasks;
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
     TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
@@ -89,6 +99,8 @@ mod owner_index_tests;
 pub use symbol_lease::{SymbolLease, SymbolLeaseOutcome};
 pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
 
+#[cfg(test)]
+pub(crate) use scheduling::terminal_success_from_body;
 pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_success_in_store};
 
 #[cfg(test)]
@@ -112,15 +124,26 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
-pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
+pub(crate) use ask_option_link::{
+    ack_option_void_generation, has_option_link_void, option_void_generation,
+};
+pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put, waits_for_ask_group};
 pub(crate) use ask_settlement::settle_ask_if_due;
+
+pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
+
+pub use ask_soft_confirm_types::{
+    TaskAskConfirmation, TaskAskConfirmationDecision, TaskAskSoftConfirmDelivery,
+    TaskAskSoftConfirmNotice,
+};
 
 pub use ask_types::{
     AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
-    TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskHandle,
-    TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId, TaskAskProvisional,
-    TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement, TaskAskSettlementReason,
-    TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait,
-    TaskAskWord,
+    TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
+    TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId,
+    TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight, TaskAskPreflightRecipient,
+    TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement,
+    TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskSurface,
+    TaskAskTarget, TaskAskWait, TaskAskWord,
 };

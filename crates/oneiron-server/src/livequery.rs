@@ -141,6 +141,8 @@ pub(crate) enum Channel {
     View,
     Receipts,
     PendingConsent,
+    /// Human owner feed of durable per-entry SAVED_QUERY watches.
+    OwnerFeed,
     // Reserved, explicitly rejected rather than aliasing a different stream.
     MemoryBoard,
     Gap,
@@ -195,6 +197,7 @@ impl SubRequest {
 
 pub(crate) mod connection;
 mod membership;
+mod publication;
 mod source;
 
 /// Opaque Loro cursor plus a container-batch ordinal. A single Loro commit

@@ -59,19 +59,52 @@ fn pack_fixture() -> Result<crate::skill_hub::pack_catalog::PackSource> {
     ])
 }
 
-struct FixtureQualification;
-impl crate::skill_hub::pack_catalog::PackQualifier for FixtureQualification {
-    fn qualify(
+// Model the pinned Git transport's successful fetch of the fixture tree.
+struct CatalogAdapter {
+    hub: crate::EntityId,
+    endpoint: String,
+    source: crate::skill_hub::pack_catalog::PackSource,
+}
+impl crate::skill_hub::SkillHubAdapter for CatalogAdapter {
+    fn hub_id(&self) -> crate::EntityId {
+        self.hub
+    }
+    fn kind(&self) -> crate::skill_hub::SkillHubKind {
+        crate::skill_hub::SkillHubKind::Git
+    }
+    fn endpoint(&self) -> Option<&str> {
+        Some(&self.endpoint)
+    }
+    fn fetch_package(
+        &self,
+        _: &crate::skill_hub::HubRef,
+    ) -> Result<crate::skill_hub::HubPackage> {
+        Err(crate::Error::EntityNotFound)
+    }
+}
+impl crate::skill_hub::pack_catalog::PackSourceAdapter for CatalogAdapter {
+    fn fetch_pack_source(
+        &self,
+        _: &crate::skill_hub::HubRef,
+    ) -> Result<crate::skill_hub::pack_catalog::PackSource> {
+        Ok(self.source.clone())
+    }
+}
+
+struct DataOnlyFit;
+impl crate::skill_hub::pack_catalog::PackFitPolicy for DataOnlyFit {
+    fn evaluate(
         &self,
         _: &crate::skill_hub::pack_catalog::PackSource,
-    ) -> Result<crate::skill_hub::pack_catalog::PackQualification> {
-        Ok(crate::skill_hub::pack_catalog::PackQualification {
-            suite: "catalog-data-fixture".into(),
-            report_hash: "12".repeat(32),
-            passed: true,
-            advisory_accepted: true,
-            advisory: "Data-only fixture; no execution rights".into(),
-            runtime: None,
+        permissions: &crate::skill_hub::pack_catalog::PackPermissions,
+    ) -> Result<crate::skill_hub::pack_catalog::PackFitVerdict> {
+        assert!(permissions.grants.is_empty());
+        assert!(permissions.wakes.is_empty());
+        assert!(permissions.bundled_skills.is_empty());
+        Ok(crate::skill_hub::pack_catalog::PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: false,
         })
     }
 }
@@ -87,11 +120,13 @@ fn installed_hub_catalog_parity_and_capability_admission() -> Result<()> {
         source.content_hash().to_hex(),
         crate::skill_hub::MODEL_PACK_HASH
     );
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    // Install admission resolves the seeded policy manifest.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
     let at = TimeRange { start: 1, end: 1 };
-    // A staged source without an owner-approved installation is not a catalog.
+    // A staged source without an installation is not a catalog.
     assert!(CatalogSeed::from_installed_pack(&vault).is_err());
-    let source_id = vault.stage_pack_source(&source, at, 1)?;
+    vault.stage_pack_source(&source, at, 1)?;
     assert!(CatalogSeed::from_installed_pack(&vault).is_err());
     let owner_id = crate::EntityId::now();
     vault.put_entity(
@@ -114,18 +149,20 @@ fn installed_hub_catalog_parity_and_capability_admission() -> Result<()> {
         crate::skill_hub::MODEL_PACK_SUBTREE,
         HubPin::ContentHash(source.content_hash().to_hex()),
     )?;
-    let ask =
-        vault.prepare_pack_install(source_id, &reference, &publisher, &FixtureQualification)?;
-    assert_eq!(
-        vault.install_pack(&ask)?,
-        PackInstallDisposition::PendingConsent
-    );
-    vault.approve_pack_install(&ask, &owner)?;
-    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
-        panic!("owner-approved data pack must install");
+    let adapter = CatalogAdapter {
+        hub: hub_id,
+        endpoint: vault.skill_hub_record(&hub_id)?.endpoint,
+        source: source.clone(),
     };
-    assert!(receipt.requested_grants.is_empty());
-    assert!(receipt.wake_subscriptions.is_empty());
+    let (source_id, pinned) =
+        vault.fetch_pack_from_adapter(&adapter, &reference, &publisher, at, 1)?;
+    let ask = vault.prepare_pack_install(source_id, &pinned, &publisher, &DataOnlyFit)?;
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+        panic!("post-fit data pack must install");
+    };
+    assert!(receipt.permissions.grants.is_empty());
+    assert!(receipt.permissions.wakes.is_empty());
+    assert!(receipt.skills.is_empty());
     assert!(vault.model_manifest()?.is_none());
     let loaded = CatalogSeed::from_installed_pack(&vault)?;
     assert_eq!(

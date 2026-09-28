@@ -1,27 +1,36 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
+use super::record::completed_step_count;
+use super::store::{
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, decode_text_output, observation_output_path,
+    recoverable_output_path,
+};
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
 };
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, GatedActorWrite, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
+    GatedActorWrite, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect,
+    SelfFailedResult,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
     SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestTier,
 };
+use crate::compaction::output::OutputRef;
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::entity_id::EntityId;
 use crate::error::GateError;
 use crate::{Error, Result};
 
-pub(super) struct RecordingJsHost<'a> {
+pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
     run_id: EntityId,
     next_seq: u64,
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
+    storage: Option<&'s ExecutorStorage<'a>>,
+    recoverable: Vec<(u64, CodeRunRawOutput)>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
@@ -31,7 +40,7 @@ pub(super) struct RecordingJsHost<'a> {
     pub(super) hard_failure: Option<Error>,
 }
 
-impl<'a> RecordingJsHost<'a> {
+impl<'a, 's> RecordingJsHost<'a, 's> {
     pub(super) fn new(
         gated_write: &'a GatedActorWrite<'a>,
         run_id: EntityId,
@@ -45,10 +54,35 @@ impl<'a> RecordingJsHost<'a> {
             next_seq,
             determinism,
             legibility,
+            storage: None,
+            recoverable: Vec::new(),
             bridge_calls: Vec::new(),
             durable_wait: None,
             hard_failure: None,
         }
+    }
+
+    /// Bind only committed observations from the current run to the linked
+    /// file-read import. A guest cannot turn a hash into another run's output.
+    pub(super) fn with_recoverable_outputs(
+        mut self,
+        storage: &'s ExecutorStorage<'a>,
+        record: &CodeRunReplayRecord,
+    ) -> EngineExecutorResult<Self> {
+        if record.run_id != self.run_id {
+            return Err(Error::InvalidConfig("executor output run mismatch".into()).into());
+        }
+        for seq in 0..completed_step_count(record)? {
+            let path = observation_output_path(seq);
+            let output = record
+                .outputs
+                .iter()
+                .find(|entry| entry.path == path)
+                .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+            self.recoverable.push((seq, output.clone()));
+        }
+        self.storage = Some(storage);
+        Ok(self)
     }
 
     fn budget(&self) -> Option<BudgetLegibilityEnvelope> {
@@ -66,7 +100,48 @@ impl<'a> RecordingJsHost<'a> {
     }
 }
 
-impl JsCodeModeHost for RecordingJsHost<'_> {
+impl JsCodeModeHost for RecordingJsHost<'_, '_> {
+    fn read_recoverable_output(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor recoverable output storage unavailable".into(),
+        ))?;
+        for (seq, output) in &self.recoverable {
+            if !path.starts_with(&format!("/mnt/outputs/.oneiron-context-ref/{seq}/")) {
+                continue;
+            }
+            let raw = storage
+                .get_code_run_raw_output(output)?
+                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            let text = decode_text_output(&output.path, raw)?;
+            let source = OutputRef::from_bytes(text.as_bytes());
+            let base = recoverable_output_path(*seq, source);
+            let offset = path
+                .strip_prefix(&format!("{base}/chunk/"))
+                .and_then(|value| {
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|offset| value == offset.to_string())
+                })
+                .ok_or(Error::InvalidConfig(
+                    "invalid recoverable output reference".into(),
+                ))?;
+            let bytes = text.as_bytes();
+            if offset > bytes.len() {
+                return Err(Error::InvalidConfig(
+                    "recoverable output offset exceeds source".into(),
+                ));
+            }
+            let end = offset
+                .saturating_add(RECOVERABLE_OUTPUT_CHUNK_BYTES)
+                .min(bytes.len());
+            return Ok(Some(bytes[offset..end].to_vec()));
+        }
+        Err(Error::InvalidConfig(
+            "recoverable output is outside this run".into(),
+        ))
+    }
+
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
         let seq = self.next_seq;
         self.next_seq += 1;
@@ -175,6 +250,7 @@ fn records_failed_effect(effect: SelfEffect) -> bool {
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::ReportBlocked
+            | SelfEffect::InferenceDefaultsReplace
     ) || effect.is_speech()
 }
 
@@ -184,8 +260,7 @@ pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.memory.supersede_claim",
     "self.memory.put_edge",
     "self.report_blocked",
-    "self.ask_human",
-    "self.askHuman",
+    "ask",
     "self.speak",
     "self.think",
     "self.express",

@@ -22,6 +22,25 @@ class AgentSdkProjectionTests(unittest.TestCase):
         # describe uses facade_input instead of invoke; it still needs admission.
         self.assertIn('sdk::validate_input("describe", &value)?;', server)
 
+    def test_export_owner_admission_is_generated_from_the_verb_row(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        row = next(row for row in generator.ROWS if row["name"] == "export")
+        self.assertTrue(row["admission"]["owner_grade"])
+        server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
+        handler = server.split("async fn export(", 1)[1].split("async fn ", 1)[0]
+        self.assertIn("auth.is_owner_grade()", handler)
+        self.assertIn("auth.verified_slip()", handler)
+        self.assertIn("export_with_verified_owner", handler)
+        self.assertIn("export_with_verified_host_owner", handler)
+        self.assertNotIn('sdk::invoke(', handler)
+        row["admission"].pop("owner_grade")
+        server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
+        handler = server.split("async fn export(", 1)[1].split("async fn ", 1)[0]
+        self.assertIn('sdk::invoke(', handler)
+        self.assertNotIn('auth.is_owner_grade()', handler)
+
     def test_manifest_removal_suppresses_facade_bindings(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)
@@ -109,6 +128,27 @@ class AgentSdkProjectionTests(unittest.TestCase):
         create = {"spec": {"goal": "review"}, "label": "review"}
         tasks.create(create)
         self.assertEqual(calls, [("tasks_update", request), ("tasks_create", create)])
+
+    def test_room_thread_verbs_forward_callable_scoped_handles(self):
+        spec = importlib.util.spec_from_file_location("room_agent_verbs", ROOT / "crates/oneiron-py/python/oneiron/agent_verbs.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        calls = []
+        rooms = module.RoomsVerbs(lambda name, value: calls.append((name, value)))
+        rooms.render("room")
+        rooms.find("room", "cursor", 1)
+        rooms.get("room", "thread")
+        rooms.trunk("room", "trunk")
+        self.assertEqual(calls, [
+            ("rooms_render", {"room_ref": "room"}),
+            ("rooms_find", {"room_ref": "room", "after": "cursor", "limit": 1}),
+            ("rooms_get", {"room_ref": "room", "turn_ref": "thread"}),
+            ("rooms_trunk", {"room_ref": "room", "turn_ref": "trunk"}),
+        ])
+        ts = (ROOT / "packages/oneiron/src/agent-verbs.ts").read_text()
+        self.assertIn('find(roomRef: string, after?: string, limit?: number)', ts)
+        self.assertIn('get(roomRef: string, turnRef: string)', ts)
+        self.assertIn('trunk(roomRef: string, turnRef: string)', ts)
 
     def test_retired_task_names_leave_every_generated_output(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
