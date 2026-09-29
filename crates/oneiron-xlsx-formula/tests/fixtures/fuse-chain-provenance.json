@@ -1,0 +1,12 @@
+{
+  "source": "FUSE / DOI 10.5281/zenodo.581678",
+  "license": "CC BY 4.0",
+  "source_workbooks_sha256": [
+    "82db7502fa68bc2a62ccd746e843fe09025c607f095c5ebc58e59ba0b49a3ae2",
+    "975856ae65002826fb6bc56612683f2ae16c03d3aaa29ff66802a664afaa5f1c"
+  ],
+  "cell": "B1111",
+  "formula_sha256": "070b2399da2599a41f4c46cce2b09a0bbff249b1fa9da771c963c003bb56a349",
+  "observed_failure": "native-v1 worker stack overflow",
+  "fixture_scope": "formula text only; cached results are not copied or claimed as fresh truth"
+}

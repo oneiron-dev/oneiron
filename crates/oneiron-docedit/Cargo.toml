@@ -12,11 +12,14 @@ homepage.workspace = true
 flate2 = "1"
 expat-sys = "2.1.6"
 crc32fast = "1"
+# Same pin as the core crate: one quick-xml in the graph.
+quick-xml = "=0.42.0"
 thiserror.workspace = true
 stemma = { path = "vendor/stemma-engine", version = "0.6.0" }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+proptest = "1"
 sha2 = "0.10"
 roxmltree = "0.21"
 zip = "0.6.6"

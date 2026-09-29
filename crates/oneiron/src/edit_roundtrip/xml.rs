@@ -142,6 +142,29 @@ pub(super) fn external_relationships(
         .collect()
 }
 
+/// `(Target, TargetMode)` of every package relationship in a `.rels` part.
+pub(super) fn relationship_targets(
+    xml: &[u8],
+) -> std::result::Result<Vec<(String, Option<String>)>, &'static str> {
+    Ok(elements(xml)?
+        .into_iter()
+        .filter(|e| e.is("Relationship", PACKAGE_REL_NS))
+        .filter_map(|e| {
+            let target = e.attribute("Target")?.to_owned();
+            Some((target, e.attribute("TargetMode").map(str::to_owned)))
+        })
+        .collect())
+}
+
+/// Every `Override` PartName in `[Content_Types].xml`.
+pub(super) fn override_part_names(xml: &[u8]) -> std::result::Result<Vec<String>, &'static str> {
+    Ok(elements(xml)?
+        .into_iter()
+        .filter(|e| e.is("Override", CONTENT_NS))
+        .filter_map(|e| e.attribute("PartName").map(str::to_owned))
+        .collect())
+}
+
 pub(super) fn content_type(
     xml: &[u8],
     part: &str,

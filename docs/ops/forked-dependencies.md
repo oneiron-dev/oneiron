@@ -44,10 +44,10 @@ it did when main pinned upstream `v0.6.11` by tag.
 
 ## formualizer
 
-Not a dependency on main yet. The Office-documents lane (ONE-2698, `crates/oneiron-xlsx-formula`)
-replaces its vendored copy with these five root `Cargo.toml` lines; its manifest keeps the exact
-`=0.9.3` and `=3.1.2` requirements, and `deny.toml` then allows
-`https://github.com/oneiron-dev/formualizer`:
+A dependency on main since ONE-2608: `crates/oneiron-xlsx-formula` links the five crates, and
+nothing of formualizer is vendored (the W7 copy under `crates/oneiron-xlsx-formula/vendor/`
+never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; the root
+`Cargo.toml` patches all five to the fork by rev:
 
 ```toml
 [patch.crates-io]
@@ -62,14 +62,13 @@ Fork commit on `oneiron/0.9.3`, over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1": `formualizer-eval/src/interpreter.rs`
   propagates a typed error on either side of `&`, in both the AST and the arena paths, before
-  text coercion. Literal text `"#N/A"` stays text.
+  text coercion. Literal text `"#N/A"` stays text. `crates/oneiron-xlsx-formula/tests/error_concat.rs`
+  pins it.
 
-Proved against the W7 branch `w7/W7-C14` (`1e76293d`) with the five lines above in place of its vendor paths: the
-lockfile changes only the five `source` entries, and `tests/error_concat.rs` passes on the fork
-rev. With the fork in `allow-git`, `cargo-deny` passes `sources` but `licenses` rejects
-`tiny-keccak` 2.0.2 (CC0-1.0), which `formualizer-eval` pulls in through `arrow` → `ahash` →
-`const-random`. The vendored graph on that branch has the same edge, so landing formualizer needs a
-`deny.toml` decision on CC0-1.0 as well.
+`deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
+(owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
+time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.1`.
 
 ## Licences and attribution
 

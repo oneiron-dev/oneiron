@@ -32,6 +32,8 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    # CC0-1.0 (owner ruling 2026-09-26, "CC0 allow"): public-domain dedication, no attribution or copyleft duty; tiny-keccak (build-time proc-macro const-random-macro under formualizer-eval -> arrow -> ahash) and constant_time_eq 0.1 (zip 0.6 test fixtures)
+    "CC0-1.0",
     # CDLA-Permissive-2.0: webpki-roots root-store data (rustls ecosystem standard), via reqwest rustls-tls-webpki-roots (ONE-1837 network-fetch)
     "CDLA-Permissive-2.0",
     "ISC",
@@ -59,4 +61,6 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Sudachi (Apache-2.0) comes from the org fork: upstream v0.6.11 plus the Android
 # loader branch, pinned by rev. See docs/ops/forked-dependencies.md.
 # Iroh is the pinned oneiron-dev fork for the opt-in mesh transport crate.
-allow-git = ["https://github.com/oneiron-dev/sudachi.rs", "https://github.com/oneiron-dev/iroh"]
+# formualizer (MIT OR Apache-2.0) comes from the org fork: upstream 0.9.3 plus
+# the owned error-concatenation patch, pinned by rev (ONE-2608).
+allow-git = ["https://github.com/oneiron-dev/sudachi.rs", "https://github.com/oneiron-dev/iroh", "https://github.com/oneiron-dev/formualizer"]

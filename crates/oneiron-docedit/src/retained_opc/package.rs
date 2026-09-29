@@ -317,6 +317,12 @@ impl Package {
         self.editability
     }
 
+    /// The limits this package was opened under; derived readers of its
+    /// parts use the same XML ceilings.
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
     /// Names in central-directory order, including unreachable entries.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.entries.iter().map(|entry| entry.name.as_str())
@@ -341,17 +347,7 @@ impl Package {
         expected: &str,
         value: &str,
     ) -> Result<()> {
-        if self.editability != Editability::Unsigned {
-            return Err(Error::Edit("signed or unsupported metadata is read-only"));
-        }
-        if !name.ends_with(".xml") {
-            return Err(Error::Edit("not an XML part"));
-        }
-        let index = self
-            .entries
-            .iter()
-            .position(|entry| entry.name == name)
-            .ok_or(Error::Edit("part missing"))?;
+        let index = self.editable_xml_part(name)?;
         let old = self.expanded(&self.entries[index])?;
         let other_size =
             self.entries
@@ -377,6 +373,43 @@ impl Package {
         );
         let part = xml::ValidatedXmlPart::parse(&old, self.limits.xml)?;
         let new = part.replace_text(path, expected, value, budget)?.0;
+        self.commit_replacement(index, old, new)
+    }
+
+    /// Replace one whole XML part with bytes the caller derived from it, for a
+    /// writer that patches byte spans of the part it read (recalculated formula
+    /// caches, for one). The bytes must pass the same XML validation and
+    /// limits as a leaf edit; signed or uninspectable packages stay read-only,
+    /// and every part, expansion and archive budget still holds.
+    pub fn replace_xml_part(&mut self, name: &str, value: Vec<u8>) -> Result<()> {
+        if name == "[Content_Types].xml" {
+            return Err(Error::Edit("package metadata is not a document part"));
+        }
+        let index = self.editable_xml_part(name)?;
+        let old = self.expanded(&self.entries[index])?;
+        if value.len() > self.limits.part_bytes {
+            return Err(Error::Edit("edited part size limit"));
+        }
+        xml::ValidatedXmlPart::parse(&value, self.limits.xml)?;
+        self.commit_replacement(index, old, value)
+    }
+
+    fn editable_xml_part(&self, name: &str) -> Result<usize> {
+        if self.editability != Editability::Unsigned {
+            return Err(Error::Edit("signed or unsupported metadata is read-only"));
+        }
+        if !name.ends_with(".xml") {
+            return Err(Error::Edit("not an XML part"));
+        }
+        self.entries
+            .iter()
+            .position(|entry| entry.name == name)
+            .ok_or(Error::Edit("part missing"))
+    }
+
+    /// Record `new` as the part's payload after the expansion and archive
+    /// budgets pass. `old` is the part's current expanded bytes.
+    fn commit_replacement(&mut self, index: usize, old: Vec<u8>, new: Vec<u8>) -> Result<()> {
         if new.len() > self.limits.part_bytes {
             return Err(Error::Edit("edited part size limit"));
         }
@@ -674,5 +707,92 @@ mod tests {
             assert_eq!(original_cd, edited_cd, "central metadata: {}", before.name);
         }
         assert!(edited.ends_with(b"archive-comment"));
+    }
+
+    #[test]
+    fn whole_xml_part_replacement_is_validated_and_retains_other_records() {
+        let original = include_bytes!("../../tests/fixtures/retained.xlsx");
+        let limits = Limits {
+            archive_bytes: 1024 * 1024,
+            entries: 100,
+            part_bytes: 64 * 1024,
+            expanded_bytes: 1024 * 1024,
+            xml: XmlLimits {
+                max_depth: 64,
+                max_nodes: 10_000,
+            },
+        };
+        let sheet = "xl/worksheets/sheet1.xml";
+        let mut package = Package::open(original, limits).expect("fixture opens");
+        for (name, bytes, reason) in [
+            (sheet, &b"<root><unclosed></root>"[..], "malformed XML"),
+            ("[Content_Types].xml", b"<Types/>", "package metadata"),
+            ("_rels/.rels", b"<Relationships/>", "not XML"),
+            ("customXml/unreachable.bin", b"<a/>", "binary part"),
+            ("xl/missing.xml", b"<a/>", "missing part"),
+        ] {
+            assert!(
+                package.replace_xml_part(name, bytes.to_vec()).is_err(),
+                "{reason}"
+            );
+        }
+        assert_eq!(package.export().expect("no-op export"), original);
+        let edited = br#"<root xmlns:x="urn:ext"><item note="keep">new</item></root>"#;
+        package
+            .replace_xml_part(sheet, edited.to_vec())
+            .expect("valid replacement");
+        let output = package.export().expect("edited export");
+        let reopened = Package::open(&output, limits).expect("output opens");
+        assert_eq!(reopened.part(sheet).expect("sheet"), Some(edited.to_vec()));
+        for name in [
+            "[Content_Types].xml",
+            "_rels/.rels",
+            "customXml/unreachable.bin",
+        ] {
+            assert_eq!(
+                reopened.part(name).expect("part"),
+                package.part(name).expect("part"),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_zip_reader_serves_parts_and_retained_ranges() {
+        let original = include_bytes!("../../tests/fixtures/retained.xlsx");
+        let limits = Limits {
+            archive_bytes: 1024 * 1024,
+            entries: 100,
+            part_bytes: 64 * 1024,
+            expanded_bytes: 1024 * 1024,
+            xml: XmlLimits {
+                max_depth: 64,
+                max_nodes: 10_000,
+            },
+        };
+        let package = Package::open(original, limits).expect("fixture opens");
+        assert_eq!(package.names().count(), package.entries.len());
+        let mut locals: Vec<_> = package.entries.iter().map(|e| e.local.clone()).collect();
+        locals.sort_by_key(|range| range.start);
+        assert!(locals.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        for entry in &package.entries {
+            // The central record, its local record and the payload the part
+            // is read from all come from the same walk of the directory.
+            assert!(package.cd_offset <= entry.central.start && entry.central.end <= package.eocd);
+            assert!(entry.local.start <= entry.data.start && entry.data.end <= entry.local.end);
+            let raw = &original[entry.data.clone()];
+            let expanded = match entry.method {
+                0 => raw.to_vec(),
+                8 => {
+                    let mut out = Vec::new();
+                    DeflateDecoder::new(raw)
+                        .read_to_end(&mut out)
+                        .expect("fixture payload inflates");
+                    out
+                }
+                method => panic!("unexpected fixture method {method}"),
+            };
+            assert_eq!(package.part(&entry.name).expect("part"), Some(expanded));
+        }
     }
 }
