@@ -9,6 +9,7 @@
 //!        │              │  RETURNED, not re-scored (retries are free)
 //!        │              ├─ judged replay: score both bodies on each goal axis
 //!        │              ├─ vector dominance (ties and floor regressions reject; tradeoffs await a decision)
+//!        │              ├─ tradeoff ladder: preference rule, then bound Jev band, then A/B ask
 //!        │              ├─ commit-time: held-out set recomputed and compared
 //!        │              ├─ accept-time governance_tier recheck
 //!        │              └─ per-cycle ACCEPT cap, counted in PROPOSALS
@@ -41,9 +42,11 @@
 //! ruling that ANSWERS a proposal — a rejection, a tie, any refusal — moves it
 //! to `approval: rejected` in the same transaction as the verdict row. A cap
 //! deferral leaves the proposal open for a later cycle; a mixed non-floor
-//! tradeoff leaves it open for an external preference decision. The gate never
-//! auto-admits that tradeoff or pretends it is a terminal rejection. A terminal
-//! answer left open would wedge the skill on one tie.
+//! tradeoff leaves it open for a preference decision. The gate never admits
+//! that tradeoff by dominance or pretends it is a terminal rejection: a stored
+//! preference rule or a confident bound Jev verdict settles it as a distinct
+//! tradeoff ruling, and anything less waits for the responsible person
+//! ([`tradeoff`]). A terminal answer left open would wedge the skill on one tie.
 //!
 //! When the WORLD moves under an in-flight call instead — the reserved
 //! evidence changes while the scorer is thinking, or a terminal reason read
@@ -140,6 +143,7 @@ mod decision;
 mod goal_axis;
 mod ledger;
 mod measurement;
+mod tradeoff;
 mod verdict;
 
 pub use admission::{
@@ -163,7 +167,14 @@ pub use ledger::{
 pub use measurement::{
     AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
 };
-pub use verdict::{HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution};
+pub use tradeoff::{
+    JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,
+    TradeoffRule, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, skill_tradeoff_ask,
+    skill_tradeoff_preferences,
+};
+pub use verdict::{
+    HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,
+};
 
 pub(in crate::skill_optimize) use admission::retained_optimizer_parent_goal_in_txn;
 
@@ -185,7 +196,9 @@ pub(super) use decision::{clear_pre_score_race_hook, set_pre_score_race_hook};
 // The seam between the children: a helper one child hands another is
 // re-imported here, so every mover resolves it exactly as it did inline.
 use admission::{
-    bounded_receipts, provenance_str, require_open_optimizer_proposal, target_is_current, target_of,
+    bounded_receipts, open_pending_tradeoff_in_txn, provenance_str,
+    record_tradeoff_resolution_in_txn, require_open_optimizer_proposal, target_is_current,
+    target_of,
 };
 use basis::{
     ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
@@ -256,8 +269,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 pub(super) const VERDICTS: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SKILL_EDIT_VERDICT);
 
-/// Bumped by ONE-2114 (v5 → v6: goal vectors, dominance and the portable
-/// goal identity). ONE-2014 introduced v5 judge revisions.
+/// Bumped by ONE-2115 (v6 → v7: the tradeoff ladder rung on a resolution and
+/// the bound Jev verdict). ONE-2114 introduced v6 goal vectors, dominance and
+/// the portable goal identity; ONE-2014 introduced v5 judge revisions.
 /// OF-214 introduced v4 audited measurements and bound world labels.
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance
@@ -267,9 +281,9 @@ pub(super) const VERDICTS: SideTable<EntityId, Vec<u8>, Raw> =
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1 through v5 row decodes as
+/// rather than to grow a second code path for it: every v1 through v6 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 6;
+const VERDICT_SCHEMA_VERSION: u64 = 7;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -293,6 +307,8 @@ const KEY_GOAL_REVISION: &str = "goal_revision";
 const KEY_GOAL_ID: &str = "goal_id";
 const KEY_TRADEOFF_RESOLUTION: &str = "tradeoff_resolution";
 const KEY_JUDGE_REVISION: &str = "judge_revision";
+const KEY_TRADEOFF_JEV: &str = "tradeoff_jev";
+const FIELD_SKILL_EDIT_TRADEOFF_JEV: &str = "skill_edit_tradeoff_jev";
 const FIELD_SKILL_EDIT_JUDGE_REVISION: &str = "skill_edit_judge_revision";
 const FIELD_SKILL_EDIT_JUDGE_DISPLACED_BY: &str = "skill_edit_judge_displaced_by";
 

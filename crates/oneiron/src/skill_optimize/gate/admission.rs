@@ -66,6 +66,8 @@ pub fn admit_optimized_skill_revision(
 /// The host supplies its decision evidence reference; this door checks the
 /// owner handle, current scored basis and every admission clamp. An approval
 /// writes a distinct accepted-tradeoff permission, not automatic dominance.
+/// It learns no preference; an A/B pick through
+/// [`super::settle_skill_tradeoff_ask`] does.
 /// # Errors
 /// Invalid input, changed goal/evidence/body/tier, exhausted cycle cap, or
 /// storage failures. A stale decision writes no permission or closure.
@@ -141,6 +143,7 @@ fn resolve_skill_edit_tradeoff_with_cycle(
             owner: owner.actor(),
             authentication: format!("{:?}", owner.decision_id()),
             evidence: evidence.to_owned(),
+            rung: TradeoffRung::Person,
         };
         let latest = standing_verdict_in_txn(vault, txn, proposal)?.ok_or(invalid(
             "no scored tradeoff verdict stands for this proposal",
@@ -154,44 +157,7 @@ fn resolve_skill_edit_tradeoff_with_cycle(
         {
             return Ok(latest); // exact redelivery, even after activation
         }
-        if latest.id != pending_id
-            || latest.disposition != SkillEditDisposition::NeedsTradeoffDecision
-        {
-            return Err(invalid(
-                "tradeoff decision is not for the standing pending verdict",
-            ));
-        }
-        // The resolved row copies the pending judge revision, but not the
-        // per-row displacement marker, so a retired judge's vector must not
-        // become a fresh permission here.
-        if latest.displaced_by_revision.is_some() {
-            return Err(invalid(
-                "tradeoff decision is for a displaced candidate judge",
-            ));
-        }
-        let staged = vault.read_skill_record_in_txn(txn, proposal)?;
-        require_open_optimizer_proposal(&staged)?;
-        let target = target_of(&staged)?;
-        let current = readable_target(vault.read_skill_record_in_txn(txn, &target).map(Some))?;
-        if admission_refusal_in_txn(
-            vault,
-            txn,
-            proposal,
-            &staged,
-            current.as_ref(),
-            &target,
-            &latest,
-            at,
-        )?
-        .is_some()
-        {
-            return Err(invalid(
-                "tradeoff decision is stale against the goal, tier, body or evidence",
-            ));
-        }
-        if floor_regressed(&latest.goal_axes) || !is_tradeoff(&latest.goal_axes) {
-            return Err(invalid("only a non-floor tradeoff may be resolved"));
-        }
+        let latest = open_pending_tradeoff_in_txn(vault, txn, proposal, pending_id, latest, at)?;
         let granting_cycle = match &cycle {
             Some(cycle) => cycle.clone(),
             None => SkillEditCycle::new(latest.cycle.clone())?,
@@ -202,25 +168,96 @@ fn resolve_skill_edit_tradeoff_with_cycle(
         {
             return Err(invalid("tradeoff approval exceeds the cycle admission cap"));
         }
-        let disposition = match choice {
-            TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
-            TradeoffChoice::Reject => SkillEditDisposition::RejectedTradeoff,
-        };
-        let resolved = HeldOutVerdict {
-            id: vault.store.clock.entity_id()?,
-            disposition,
-            accepted: disposition.admits(),
-            tradeoff_resolution: Some(decision),
-            cycle: granting_cycle.as_str().to_owned(),
-            at,
-            ..latest
-        };
-        record_verdict_in_txn(vault, txn, &resolved)?;
-        if disposition.closes_proposal() {
-            close_answered_proposal_in_txn(vault, txn, proposal, at)?;
-        }
-        Ok(resolved)
+        record_tradeoff_resolution_in_txn(vault, txn, latest, decision, choice, &granting_cycle, at)
     })
+}
+
+/// The still-open pending tradeoff `pending_id` names, checked against the
+/// current goal, tier, bodies and evidence exactly as admission would check
+/// it. Every rung that settles a tradeoff outside the gate's own ruling
+/// transaction passes through here first.
+pub(super) fn open_pending_tradeoff_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    latest: HeldOutVerdict,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    if latest.id != pending_id || latest.disposition != SkillEditDisposition::NeedsTradeoffDecision
+    {
+        return Err(invalid(
+            "tradeoff decision is not for the standing pending verdict",
+        ));
+    }
+    // The resolved row copies the pending judge revision, but not the
+    // per-row displacement marker, so a retired judge's vector must not
+    // become a fresh permission here.
+    if latest.displaced_by_revision.is_some() {
+        return Err(invalid(
+            "tradeoff decision is for a displaced candidate judge",
+        ));
+    }
+    let staged = vault.read_skill_record_in_txn(txn, proposal)?;
+    require_open_optimizer_proposal(&staged)?;
+    let target = target_of(&staged)?;
+    let current = readable_target(vault.read_skill_record_in_txn(txn, &target).map(Some))?;
+    if admission_refusal_in_txn(
+        vault,
+        txn,
+        proposal,
+        &staged,
+        current.as_ref(),
+        &target,
+        &latest,
+        at,
+    )?
+    .is_some()
+    {
+        return Err(invalid(
+            "tradeoff decision is stale against the goal, tier, body or evidence",
+        ));
+    }
+    if floor_regressed(&latest.goal_axes) || !is_tradeoff(&latest.goal_axes) {
+        return Err(invalid("only a non-floor tradeoff may be resolved"));
+    }
+    Ok(latest)
+}
+
+/// The decision door's write: one resolution row that answers the pending
+/// row, charged to `cycle`. The caller has checked the cycle cap. The goal
+/// revision is re-read because an A/B pick learns a preference, and so moves
+/// the goal revision, in the same transaction. Any A/B ask about the proposal
+/// is answered by this row and is removed with it.
+pub(super) fn record_tradeoff_resolution_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pending: HeldOutVerdict,
+    resolution: TradeoffResolution,
+    choice: TradeoffChoice,
+    cycle: &SkillEditCycle,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    let disposition = match choice {
+        TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
+        TradeoffChoice::Reject => SkillEditDisposition::RejectedTradeoff,
+    };
+    let resolved = HeldOutVerdict {
+        id: vault.store.clock.entity_id()?,
+        disposition,
+        accepted: disposition.admits(),
+        tradeoff_resolution: Some(resolution),
+        goal_revision: goal_definition_in_txn(vault, txn, &pending.skill)?.revision,
+        cycle: cycle.as_str().to_owned(),
+        at,
+        ..pending
+    };
+    record_verdict_in_txn(vault, txn, &resolved)?;
+    if disposition.closes_proposal() {
+        close_answered_proposal_in_txn(vault, txn, &resolved.proposal, at)?;
+    }
+    tradeoff::clear_ask_in_txn(vault, txn, &resolved.proposal)?;
+    Ok(resolved)
 }
 
 pub(crate) fn with_optimized_skill_admission(

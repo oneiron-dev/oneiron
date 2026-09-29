@@ -156,6 +156,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) linear_sync: Option<LinearSyncBudget>,
     pub(in crate::gate) wave_handoff: Option<WaveHandoffPolicy>,
     pub(in crate::gate) operational_precedence: Option<PolicyPrecedence>,
+    pub(in crate::gate) skill_tradeoff_rows:
+        Vec<crate::gate::skill_tradeoff_policy::SkillTradeoffPolicyRow>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(in crate::gate) attribution_limits: Option<AttributionLimits>,
     pub(in crate::gate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
@@ -286,6 +288,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | LINEAR_SYNC_KEY
                 | WAVE_HANDOFF_KEY
                 | PRECEDENCE_KEY
+                | crate::gate::skill_tradeoff_policy::KEY
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
                 | POLICY_ATTRIBUTION_LIMITS_KEY
                 | POLICY_ASK_POLICY_KEY
@@ -657,6 +660,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => parse_policy_values(value)?,
     };
 
+    let skill_tradeoff_rows =
+        match single_map_value(&entries, crate::gate::skill_tradeoff_policy::KEY) {
+            MapValue::Missing => Vec::new(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => crate::gate::skill_tradeoff_policy::parse_rows(value)?,
+        };
     let weave_report_precedence =
         match single_map_value(&entries, crate::gate::weave_policy::PRECEDENCE_KEY) {
             MapValue::Missing => crate::gate::weave_policy::Precedence::default(),
@@ -898,6 +907,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         linear_sync,
         wave_handoff,
         operational_precedence,
+        skill_tradeoff_rows,
         weave_correction_policy,
         attribution_limits,
         ask_policy,

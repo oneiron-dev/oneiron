@@ -263,6 +263,9 @@ fn rule_on_proposal(
         .expect("validated primary axis");
     let before = headline.before;
     let after = headline.after;
+    // A pending tradeoff climbs the preference ladder here, outside any write
+    // transaction, because its Jev rung is a model call.
+    let ladder = tradeoff::plan(vault, proposal, &inputs.basis, &goal_axes, scorer)?;
 
     // The scored set has done its work; what the row keeps of it is the bounded
     // display list, and the basis keeps the rest.
@@ -299,6 +302,7 @@ fn rule_on_proposal(
             goal_revision: basis.goal_revision.clone(),
             goal_id: Some(basis.goal_id),
             tradeoff_resolution: None,
+            tradeoff_jev: None,
             measurements: Some(measurements),
             accepted: false,
             judge_revision: Some(judge_revision.to_owned()),
@@ -329,10 +333,18 @@ fn rule_on_proposal(
             &basis,
             &goal_axes,
         )?;
+        let settled = tradeoff::apply_in_txn(vault, wtxn, cycle, &mut verdict, &ladder)?;
         verdict.accepted = verdict.disposition.admits();
         record_verdict_in_txn(vault, wtxn, &verdict)?;
         if verdict.disposition.closes_proposal() {
             close_answered_proposal_in_txn(vault, wtxn, proposal, at)?;
+        }
+        // A rule or confident Jev answered the pending row just written: the
+        // decision door records the transition out of it.
+        if let Some((choice, resolution)) = settled {
+            return record_tradeoff_resolution_in_txn(
+                vault, wtxn, verdict, resolution, choice, cycle, at,
+            );
         }
         Ok(verdict)
     })?;
@@ -629,8 +641,9 @@ pub(super) fn accepted_in_cycle_in_txn(
 /// - a standing ACCEPTANCE over exactly this basis, whatever cycle it was ruled
 ///   in — an acceptance keeps the cycle it was ruled in, and a duplicate
 ///   arriving under another label must not revoke it;
-/// - a tradeoff needing a decision, on the same basis in any cycle: asking the
-///   judge again cannot replace the pending preference with another score;
+/// - a tradeoff needing a decision, on the same basis in any cycle, while it
+///   still waits on its own terms ([`tradeoff::pending_waits_in_txn`]): asking
+///   the judge again cannot replace the pending preference with another score;
 /// - a standing CAP DEFERRAL over exactly this basis AND this same cycle. The
 ///   cycle equality is load-bearing in the other direction: a deferral from
 ///   wake X says nothing about wake Y, so a genuine later-cycle pickup still
@@ -647,17 +660,24 @@ fn standing_ruling_in_txn(
     cycle: &SkillEditCycle,
     judge_revision: &str,
 ) -> Result<Option<HeldOutVerdict>> {
-    Ok(
-        standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
-            basis.matches(verdict)
-                && verdict.displaced_by_revision.is_none()
-                && verdict.judge_revision.as_deref() == Some(judge_revision)
-                && (verdict.disposition.admits()
-                    || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                    || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
-                        && verdict.cycle == cycle.as_str()))
-        }),
-    )
+    let standing = standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
+        basis.matches(verdict)
+            && verdict.displaced_by_revision.is_none()
+            && verdict.judge_revision.as_deref() == Some(judge_revision)
+            && (verdict.disposition.admits()
+                || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
+                || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
+                    && verdict.cycle == cycle.as_str()))
+    });
+    match standing {
+        Some(pending)
+            if pending.disposition == SkillEditDisposition::NeedsTradeoffDecision
+                && !tradeoff::pending_waits_in_txn(vault, rtxn, &pending)? =>
+        {
+            Ok(None)
+        }
+        standing => Ok(standing),
+    }
 }
 
 /// The most recent ruling on one proposal, whatever it said.
@@ -697,6 +717,7 @@ fn refusal(
         goal_revision: String::new(),
         goal_id: None,
         tradeoff_resolution: None,
+        tradeoff_jev: None,
         measurements: None,
         accepted: false,
         judge_revision: None,

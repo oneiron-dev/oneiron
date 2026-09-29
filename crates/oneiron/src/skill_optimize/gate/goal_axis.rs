@@ -159,6 +159,12 @@ pub(super) fn goal_definition_in_txn(
     if let Some(row) = override_row {
         hash.update(row.revision.as_bytes());
     }
+    // The goal record holds its learned preferences (ARCH-0053 §10a): a new
+    // rule, band or pick is a new goal revision.
+    if let Some(preferences) = super::tradeoff::preferences_bytes_in_txn(vault, txn, &goal_id)? {
+        hash.update(b"\0tradeoff_preferences\0");
+        hash.update(preferences);
+    }
     Ok(GoalDefinition {
         goal_id,
         revision: bytes_to_hex_lower(&hash.finalize()),

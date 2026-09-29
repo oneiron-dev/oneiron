@@ -15,16 +15,17 @@ use super::*;
 pub enum SkillEditDisposition {
     /// Strict improvement, unprotected tier, within cap.
     Accepted,
-    /// A non-floor tradeoff approved by an authenticated owner decision.
+    /// A non-floor tradeoff approved on a rung of the preference ladder.
     AcceptedTradeoff,
     /// A floor regression, a dominated vector or a full tie; no epsilon.
     Rejected,
-    /// A tradeoff rejected by the authenticated decision door.
+    /// A tradeoff rejected on a rung of the preference ladder.
     RejectedTradeoff,
-    /// Non-floor gain and loss on different axes. No automatic decision is
-    /// authorized; a host can route this typed, vector-bearing receipt through
-    /// the preference / decision / responsible-person ladder. The proposal
-    /// remains open until that decision is made outside this gate.
+    /// Non-floor gain and loss on different axes. The proposal stays open.
+    /// When the goal holds tradeoff preferences, a stored rule or a confident
+    /// bound Jev verdict settles it in the same transaction; otherwise a
+    /// durable A/B ask waits for the responsible person. Without preferences
+    /// it waits for the owner decision door.
     NeedsTradeoffDecision,
     /// Improving, but this cycle already spent its accepts. The proposal stays
     /// OPEN — a later cycle may score it under a fresh cap.
@@ -106,7 +107,7 @@ impl SkillEditDisposition {
     /// Whether the proposal remains an open question a later cycle may answer.
     ///
     /// A cap deferral says only that this wake's budget was spent; a tradeoff
-    /// waits for an external preference decision. Neither is a final answer.
+    /// waits for its A/B pick or an owner decision. Neither is a final answer.
     /// A rejection or refusal closes the proposal so the loop may try another
     /// draft rather than nag on the same rejected edit.
     ///
@@ -169,8 +170,15 @@ impl SkillEditDisposition {
     }
 }
 
-/// Owner-authenticated resolution of one exact pending vector. The evidence is
-/// an opaque host decision reference, not an unverified permission by itself.
+/// Resolution of one exact pending vector, and the ladder rung that made it
+/// (ARCH-0053 §10a: preference rule, then Jev, then the responsible person).
+///
+/// `owner` is the person the ladder answers to. On the [`TradeoffRung::Person`]
+/// rung `authentication` is that person's authenticated decision and
+/// `evidence` an opaque host reference, or the digest of the A/B question the
+/// pick answered. On the [`TradeoffRung::Preference`] rung `authentication`
+/// names the stored rule and on [`TradeoffRung::Jev`] the pinned model; both
+/// carry the digest of the bound question as `evidence`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TradeoffResolution {
@@ -178,10 +186,25 @@ pub struct TradeoffResolution {
     pub owner: EntityId,
     pub authentication: String,
     pub evidence: String,
+    pub rung: TradeoffRung,
 }
 
-/// The owner decision on a mixed (non-floor) goal vector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The rung of the preference ladder that settled a pending tradeoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeoffRung {
+    /// An authored or learned preference rule matched the axis signature.
+    Preference,
+    /// A Jev verdict bound to the exact question, at or above the high band.
+    Jev,
+    /// The authenticated person: the owner door or an A/B pick.
+    Person,
+}
+
+/// The decision on a mixed (non-floor) goal vector: approve the candidate or
+/// keep the incumbent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TradeoffChoice {
     Approve,
     Reject,
@@ -205,8 +228,11 @@ pub struct HeldOutVerdict {
     pub goal_revision: String,
     /// Portable goal identity; absent only on an unscored refusal.
     pub goal_id: Option<EntityId>,
-    /// Decision evidence only on an owner-resolved tradeoff.
+    /// Decision evidence only on a resolved tradeoff.
     pub tradeoff_resolution: Option<TradeoffResolution>,
+    /// Bound Jev result when no preference rule matched; retained on the
+    /// pending row and on its resolution, even after an A/B pick.
+    pub tradeoff_jev: Option<JevTradeoffVerdict>,
     /// Both receipt-only audits and judge agreement with available world labels.
     /// None only when a terminal refusal happened before any judging.
     pub measurements: Option<JudgeMeasurements>,

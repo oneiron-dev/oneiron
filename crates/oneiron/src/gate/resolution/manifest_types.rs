@@ -389,6 +389,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) linear_sync: Option<LinearSyncBudget>,
     pub(super) wave_handoff: Option<WaveHandoffPolicy>,
     pub(super) operational_precedence: Option<PolicyPrecedence>,
+    pub(crate) skill_tradeoff_rows: Vec<crate::gate::skill_tradeoff_policy::SkillTradeoffPolicyRow>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(crate) attribution_limits: AttributionLimits,
     /// The shipped defaults apply only until a trusted policy row supplies

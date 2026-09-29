@@ -310,6 +310,16 @@ pub trait HeldOutReplayScorer {
         Err(invalid("no goal-axis scorer is registered for this axis"))
     }
 
+    /// Jev answers a pending tradeoff no preference rule matched, outside any
+    /// write transaction. `None` gives no model verdict, and the responsible
+    /// person is asked.
+    fn jev_tradeoff(
+        &self,
+        _question: &SkillTradeoffQuestion,
+    ) -> Result<Option<JevTradeoffVerdict>> {
+        Ok(None)
+    }
+
     /// Score requirement coverage using only the task identity and rubric text.
     /// An unimplemented auditor fails closed rather than fabricating a result.
     fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {

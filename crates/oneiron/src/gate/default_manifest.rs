@@ -601,6 +601,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 ),
             ]),
         ),
+        skill_tradeoff_limits_entry(),
         (Value::from(PRECEDENCE_KEY), Value::from("nested_narrowing")),
         (
             Value::from(LINEAR_MIRROR_KEY),
@@ -940,6 +941,24 @@ fn skill_edit_goal_entry() -> (Value, Value) {
     )
     .expect("shipped skill edit goal policy encodes");
     (Value::from(POLICY_SKILL_EDIT_GOAL_KEY), policy)
+}
+
+/// Shipped vault limits for the skill tradeoff ladder, not compiled admission
+/// logic. A trusted manifest may replace or narrow these values; holders stay
+/// capped by the resolved vault row. No lifetime cap on human learning.
+fn skill_tradeoff_limits_entry() -> (Value, Value) {
+    (
+        Value::from(super::skill_tradeoff_policy::KEY),
+        Value::Array(vec![Value::Map(vec![
+            (Value::from("holder"), Value::from("vault")),
+            (Value::from("max_authored_rules"), Value::from(128_u64)),
+            (Value::from("max_learned_rules"), Value::Nil),
+            (
+                Value::from("precedence"),
+                Value::from("nested_narrowing_holder_override_capped_vault"),
+            ),
+        ])]),
+    )
 }
 
 /// The shipped attribution limits: precedence and the two byte/count caps.

@@ -259,6 +259,11 @@ side_tables! {
     SKILL_OPTIMIZE_GOAL: VaultMeta b"skill_optimize/goal/v1\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
+    /// One pending skill-edit tradeoff ask (MessagePack named map: pending proposal, question, bound
+    /// Jev verdict). Key: id16 (proposal).
+    SKILL_OPTIMIZE_TRADEOFF_ASK: VaultMeta b"skill_optimize/tradeoff_ask/v1\0" Raw;
+    /// Learned owner tradeoff preferences of one goal (MessagePack named map). Key: id16 (goal).
+    SKILL_OPTIMIZE_TRADEOFF_PREFERENCES: VaultMeta b"skill_optimize/tradeoff_preferences/v1\0" Raw;
     /// Skill-edit gate verdict ledger row. Key: id16.
     SKILL_EDIT_VERDICT: VaultMeta b"skill_optimize/verdict/v1\0" Raw;
     /// Replacement judge revision (UTF-8) marking one skill-edit verdict as displaced. Key: id16
