@@ -44,7 +44,7 @@ it did when main pinned upstream `v0.6.11` by tag.
 
 ## formualizer
 
-Not a dependency on main yet. The Office-documents lane (PR #947, `crates/oneiron-xlsx-formula`)
+Not a dependency on main yet. The Office-documents lane (ONE-2698, `crates/oneiron-xlsx-formula`)
 replaces its vendored copy with these five root `Cargo.toml` lines; its manifest keeps the exact
 `=0.9.3` and `=3.1.2` requirements, and `deny.toml` then allows
 `https://github.com/oneiron-dev/formualizer`:
@@ -64,11 +64,11 @@ Fork commit on `oneiron/0.9.3`, over `362becff`:
   propagates a typed error on either side of `&`, in both the AST and the arena paths, before
   text coercion. Literal text `"#N/A"` stays text.
 
-Proved against #947 (`1e76293d`) with the five lines above in place of its vendor paths: the
+Proved against the W7 branch `w7/W7-C14` (`1e76293d`) with the five lines above in place of its vendor paths: the
 lockfile changes only the five `source` entries, and `tests/error_concat.rs` passes on the fork
 rev. With the fork in `allow-git`, `cargo-deny` passes `sources` but `licenses` rejects
 `tiny-keccak` 2.0.2 (CC0-1.0), which `formualizer-eval` pulls in through `arrow` → `ahash` →
-`const-random`. The vendored graph on #947 has the same edge, so landing formualizer needs a
+`const-random`. The vendored graph on that branch has the same edge, so landing formualizer needs a
 `deny.toml` decision on CC0-1.0 as well.
 
 ## Licences and attribution
