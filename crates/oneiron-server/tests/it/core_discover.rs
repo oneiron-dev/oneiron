@@ -636,8 +636,9 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
         (ENTITY_TYPE_PERSON, 1),
         (oneiron::registry::ENTITY_TYPE_FACET, 1),
         // Every open seeds the Dreamer principal (ONE-2545), and a rooted host
-        // enrolls it with the engine's other four MACHINE writers (ONE-1634).
-        (oneiron::registry::ENTITY_TYPE_MACHINE, 5),
+        // enrolls it with the engine's other five MACHINE writers (ONE-1634,
+        // the conversation mirror since ONE-1991).
+        (oneiron::registry::ENTITY_TYPE_MACHINE, 6),
     ];
     let (addr, handle, root_auth) =
         spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;

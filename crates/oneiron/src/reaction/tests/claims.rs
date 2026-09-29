@@ -329,7 +329,7 @@ fn generic_claim_door_cannot_forge_another_persons_reaction() {
     assert!(
         ReactionValue {
             glyph: "x".repeat(65),
-            ..value.clone()
+            ..value
         }
         .validate()
         .is_err()
