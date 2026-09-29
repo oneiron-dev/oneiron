@@ -690,6 +690,18 @@ fn a_losing_skill_drafts_one_gated_proposal_citing_its_defect_evidence() -> Resu
     assert_eq!(proposal.lifecycle_status, SkillLifecycle::Candidate);
     assert_eq!(proposal.skill_id, before.skill_id);
     assert_eq!(proposal.desc, DRAFTED_DESC);
+    let Value::Map(ref provenance) = proposal.provenance else {
+        panic!("proposal provenance is a map");
+    };
+    let authority = vault.dreamer_authority()?;
+    assert!(provenance.iter().any(|(key, value)| {
+        key.as_str() == Some("actor_entity_ref")
+            && value.as_slice() == Some(authority.entity_ref().as_bytes().as_slice())
+    }));
+    assert!(provenance.iter().any(|(key, value)| {
+        key.as_str() == Some("actor_class")
+            && value.as_u64() == Some(u64::from(crate::EdgeActorClass::System as u8))
+    }));
     assert_ne!(proposal.version, before.version);
     assert_eq!(
         proposal.dependencies, before.dependencies,

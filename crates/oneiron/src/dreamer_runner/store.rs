@@ -17,6 +17,7 @@ use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
     DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -300,7 +301,7 @@ impl<'a> DreamerRunnerStore<'a> {
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
     /// take the advisory dedupe floor, and co-commit the private run-tree row
     /// whichever way the queue answered.
-    pub(super) fn enqueue_kind_in_txn(
+    pub(crate) fn enqueue_kind_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
@@ -668,6 +669,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+        || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
 }
 

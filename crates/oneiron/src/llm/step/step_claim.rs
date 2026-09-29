@@ -165,6 +165,13 @@ pub(super) fn log_terminal_step(
                 value,
                 1.0,
             );
+            let mut envelope = envelope.clone();
+            ctx.vault.sign_retained_machine_claim_in_txn(
+                &*wtxn,
+                &claim_id,
+                &candidate,
+                &mut envelope,
+            )?;
             ctx.vault
                 .batch_in()
                 .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)

@@ -15,11 +15,13 @@ use crate::{EntityId, Vault};
 use super::*;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(VaultConfig::device())
+    let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    crate::test_util::provision_engine_machines(&vault);
+    (dir, vault)
 }
 
 /// A vault whose policy manifest GRANTS the Dreamer's Auto request: an
-/// `agent` actor ceiling, an explicit auto permit for every provenance
+/// `system` actor ceiling, an explicit auto permit for every provenance
 /// source, and a manifest signature (the Dreamer auto-grant requires one).
 ///
 /// ONE-1710 made `Auto` the universal promotion request — there is no
@@ -69,7 +71,7 @@ fn auto_permitting_manifest() -> Vec<u8> {
                 // `first_party` carries the envelope-less supersede/retract
                 // lifecycle Puts; `human` carries the owner-authored heads
                 // the supersession tests seed.
-                ["agent", "human", "first_party"]
+                ["system", "human", "first_party"]
                     .into_iter()
                     .map(|actor_class| {
                         Mp::Map(vec![
@@ -143,7 +145,6 @@ struct PromotionFixture {
 }
 
 fn fixture(vault: &Vault) -> Result<PromotionFixture> {
-    let actor = vault.dreamer_authority()?.entity_ref();
     let subject = EntityId::now();
     let conversation = EntityId::now();
     let turn = EntityId::now();
@@ -187,7 +188,7 @@ fn fixture(vault: &Vault) -> Result<PromotionFixture> {
         run: DreamerRunContext {
             run_id: "run-promo".to_owned(),
             attempt_id: status.attempt.id,
-            agent_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            agent_actor: vault.dreamer_authority()?,
             now_ms: 10_000,
         },
         subject,
@@ -297,6 +298,15 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     assert!(keys.contains(&"actor_class"));
     assert!(keys.contains(&"provenance"));
     assert!(keys.contains(&"candidate_evidence"));
+    let stamped = vault.dreamer_authority()?;
+    assert!(evidence.iter().any(|(key, value)| {
+        key.as_str() == Some("actor_entity_ref")
+            && value.as_slice() == Some(stamped.entity_ref().as_bytes().as_slice())
+    }));
+    assert!(evidence.iter().any(|(key, value)| {
+        key.as_str() == Some("actor_class")
+            && value.as_u64() == Some(u64::from(EdgeActorClass::System as u8))
+    }));
     let envelope = consolidation_evidence(&body);
     assert_eq!(
         envelope.refs,
@@ -320,6 +330,7 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
         1,
         "one promotion must append exactly one gate decision"
     );
+    assert_eq!(claim_decisions[0].actor_class, "system");
     assert_eq!(
         claim_decisions[0].outcome,
         GateOutcome::Allow.as_str(),
@@ -621,7 +632,9 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
         assert!(refs.iter().any(|(name, value)| name.as_str() == Some(key)
             && *value == rmpv::Value::Binary(expected.as_bytes().to_vec())));
     }
-    let (_replica_dir, replica) = open_auto_vault();
+    // The companion is the Dreamer's signed MACHINE write. A relay stores its
+    // exact bytes and withholds it until the vault's signed history arrives.
+    let (_replica_dir, replica) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let bytes = crate::claim::encode_claim_body(companion)?;
     replica
         .batch()
@@ -633,7 +646,17 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
             &bytes,
         )
         .commit()?;
-    assert_eq!(replica.get_claim(companion_id)?.as_ref(), Some(companion));
+    let stored = replica.get_raw(companion_id)?.expect("relayed companion");
+    assert_eq!(
+        &stored[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        bytes.as_slice()
+    );
+    assert!(matches!(
+        replica.get_claim(companion_id),
+        Err(crate::Error::Claim(
+            crate::error::ClaimError::MachineClaimHistoryIncomplete
+        ))
+    ));
     let mut forged = companion.clone();
     forged.scope = None;
     assert!(
@@ -795,7 +818,9 @@ fn replay_path_still_skips_source_trust_gate() -> Result<()> {
     let raw = vault.get_raw(&claim_id)?.expect("stored claim");
     let body_bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
 
-    let (_dir_b, vault_b) = open_vault();
+    // An unrooted relay stores the signed row provisionally: the other
+    // vault's key cannot verify it, and replay still never re-gates.
+    let (_dir_b, vault_b) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let decisions_before = gate_decision_count(&vault_b);
     vault_b
         .batch()
@@ -1400,7 +1425,7 @@ fn assert_checker_rejection_receipt(
         .map(String::as_str)
         .collect();
     assert_eq!(checker_reasons, receipt_reasons);
-    assert_eq!(record.actor_class, "agent");
+    assert_eq!(record.actor_class, "system");
     assert!(vault.get_claim(claim_id)?.is_none());
     assert!(vault.pending_gate_consents(10)?.is_empty());
     Ok(record)
@@ -2013,18 +2038,26 @@ mod vad_deferral_tests {
     fn promotion_deferred_approved_fixture_populates_full_vad_non_vacuously() -> Result<()> {
         let (_dir, vault) = open_auto_vault();
         let fixture = annotated_fixture(&vault)?;
-        let promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);
+        // The Dreamer's MACHINE claim reaches Approved only from a proposal:
+        // this one defers on the head it supersedes, and the owner approves
+        // it through its signed history.
+        let head = candidate(&fixture, "profile.name", "prior head", vec![fixture.turn]);
+        let head_id = head.claim_id;
+        promote_consolidated_claims(&vault, &fixture.run, vec![head])?;
+        let mut promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);
+        promoted.supersedes = Some(head_id);
         let claim = promoted.claim_id;
         let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
-        assert_eq!(outcome.landed, vec![claim]);
+        assert_eq!(outcome.pended, vec![claim]);
         assert!(active_states(&vault, claim)?.is_empty());
         vault.put_edge(&claim, EdgeKind::Mentions, &fixture.subject, 0.6)?;
         vault.put_edge(&claim, EdgeKind::BelongsTo, &fixture.subject, 1.0)?;
-        // Fixture-only overwrite: ordinary Auto promotions have no pending
-        // consent. This is not a new production approval door.
-        let mut body = vault.get_claim(&claim)?.expect("landed claim");
-        body.approval = ClaimApprovalStatus::Approved;
-        vault.put_claim(&claim, &body, occurred(9_000), 9_000)?;
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        crate::test_util::bind_test_owner(&vault, owner);
+        vault.approve_machine_claim_as(
+            claim,
+            crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
+        )?;
         let populated = vault.consolidate_claim_vad_now(&claim, 11_000)?;
         assert_eq!(populated.vad, Some(FULL_VAD));
         assert_eq!(populated.evidence_turns.len(), 1);

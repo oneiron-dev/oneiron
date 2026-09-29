@@ -78,6 +78,7 @@ pub(in crate::batch) fn apply_put(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
+    crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact

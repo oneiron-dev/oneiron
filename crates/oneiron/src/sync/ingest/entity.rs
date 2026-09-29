@@ -299,7 +299,8 @@ fn admit(
         )?;
         return Ok(EntityStep::Protected { id, wrote });
     }
-    let delete_protected = crate::registry::is_delete_protected_engine_record(header.entity_type);
+    let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
+        || crate::registry::is_delete_protected_engine_record(header.entity_type);
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
         return Ok(EntityStep::Skip);
     }

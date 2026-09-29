@@ -2,6 +2,7 @@
 use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
+use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{
@@ -95,6 +96,7 @@ pub struct ConsolidationExecutorFactory {
     /// handler only when a planner is configured" is the one wiring this
     /// factory must not offer.
     commitment_wake_planner: Option<Box<dyn CommitmentWakeProposalPlanner>>,
+    weave_recipe_runtime: Option<Box<dyn WeaveRecipeRuntime>>,
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
     #[cfg(all(unix, feature = "voice"))]
@@ -122,6 +124,7 @@ impl ConsolidationExecutorFactory {
             extraction_egress,
             sink,
             commitment_wake_planner: None,
+            weave_recipe_runtime: None,
             wave_planner: None,
             wave_dispatch: None,
             #[cfg(all(unix, feature = "voice"))]
@@ -141,26 +144,38 @@ impl ConsolidationExecutorFactory {
     /// Opt-in CMT-3 (ONE-1540) proposal planner.
     ///
     /// FALLIBLE on purpose: a planner authors a gated `commitment.wake_proposal`
-    /// claim, which requires an Agent-class actor. Refusing here means the host
+    /// claim, which requires an Agent or the vault Dreamer's System actor.
+    /// Refusing here means the host
     /// fails at CONFIGURATION time rather than spinning permanently inside
     /// [`PassExecutorFactory::executor`], which is where the same refusal would
     /// otherwise surface once per pass forever.
     ///
     /// # Errors
     ///
-    /// [`oneiron::Error::InvalidClaimBody`] when this factory's actor is not
-    /// Agent-class.
+    /// [`oneiron::Error::InvalidClaimBody`] when this factory's actor is
+    /// neither Agent nor System.
     pub fn with_commitment_wake_planner(
         mut self,
         planner: Box<dyn CommitmentWakeProposalPlanner>,
     ) -> Result<Self> {
-        if self.actor.actor_class() != EdgeActorClass::Agent {
+        if !matches!(
+            self.actor.actor_class(),
+            EdgeActorClass::Agent | EdgeActorClass::System
+        ) {
             return Err(oneiron::Error::InvalidClaimBody(
-                "commitment wake planner requires agent actor",
+                "commitment wake planner requires agent or Dreamer system actor",
             ));
         }
         self.commitment_wake_planner = Some(planner);
         Ok(self)
+    }
+
+    /// Enables the per-vault owner-admitted weave recipe executor. Without a
+    /// host interpreter recipe attempts park; no model or prompt is implicit.
+    #[must_use]
+    pub fn with_weave_recipe_runtime(mut self, runtime: Box<dyn WeaveRecipeRuntime>) -> Self {
+        self.weave_recipe_runtime = Some(runtime);
+        self
     }
 
     /// Register the host's agent-side planner AND TASK dispatcher together.
@@ -208,7 +223,10 @@ impl ConsolidationExecutorFactory {
 }
 
 impl PassExecutorFactory for ConsolidationExecutorFactory {
-    type Exec<'p> = CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>;
+    type Exec<'p> = WeaveRecipeExecutor<
+        CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>,
+        Option<&'p mut dyn WeaveRecipeRuntime>,
+    >;
 
     fn executor<'p>(&'p mut self, guard: &'p BudgetGuard) -> Result<Self::Exec<'p>> {
         let inner = ConsolidationExecutor {
@@ -239,7 +257,12 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
         // this stays infallible for every legal existing host — including a
         // System-class one — and a tagged event completes as a typed no-planner
         // skip instead of reaching the partition decoder.
-        CommitmentWakeExecutor::new(inner, planner, self.actor)
+        let inner = CommitmentWakeExecutor::new(inner, planner, self.actor)?;
+        let runtime = self.weave_recipe_runtime.as_mut().map(|runtime| {
+            let runtime: &mut dyn WeaveRecipeRuntime = runtime.as_mut();
+            runtime
+        });
+        Ok(WeaveRecipeExecutor { inner, runtime })
     }
 
     fn actor(&self) -> Option<WriteActor> {
