@@ -20,6 +20,10 @@ ignore = [
     { id = "RUSTSEC-2026-0215", reason = "smallstr@0.3.1 unmaintained (not a vulnerability); oneiron dev-dep yrs@0.25.0 -> smallstr; no patched release, remove when yrs migrates; ONE-1923; review by 2026-11-07" },
     # ONE-1837 GATE-1 amendment A1 (card crypto:gseal): the rsa 0.9 line has no
     # patched release; oneiron-seal's exposure is signing-only.
+    # quick-xml 0.37.5 is reached only through the vendored stemma-engine fork
+    # (ONE-2522), which pins the 0.37 API; the engine's own readers use 0.42.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml@0.37.5 quadratic duplicate-attribute check; oneiron-docedit -> vendored stemma@0.6.0 -> quick-xml 0.37; patched in 0.41, needs a stemma-engine port off the 0.37 API; docx input is bounded by the docx_archive_limits preflight first; ONE-2608; review by 2026-10-13" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml@0.37.5 unbounded NsReader namespace declarations; oneiron-docedit -> vendored stemma@0.6.0 -> quick-xml 0.37, which reads with Reader, not NsReader; patched in 0.41, needs a stemma-engine port off the 0.37 API; ONE-2608; review by 2026-10-13" },
     { id = "RUSTSEC-2023-0071", reason = "rsa@0.9.10 Marvin oracle; oneiron-seal@0.1.0 / pkix-path@0.3.2 -> rsa; signing-only in oneiron-seal, no decryption path; no patched release; ONE-1837 A1; review by 2026-11-07" },
 ]
 
