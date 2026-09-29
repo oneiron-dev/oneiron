@@ -7,7 +7,7 @@ pub use package::{Editability, Limits, Package};
 pub use xml::XmlLimits;
 
 /// An archive or edit that cannot be proven safe to retain.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// Malformed, unsupported, or over-limit archive.
     #[error("invalid OPC package: {0}")]

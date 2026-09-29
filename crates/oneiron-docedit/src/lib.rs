@@ -6,7 +6,9 @@
 //! a typed transaction and refuses bytes that fail the Word package linker.
 //! `PROVENANCE.md` records the fork, licenses and local changes.
 
+pub mod ooxml;
 pub mod retained_opc;
+pub mod xlfn;
 
 pub use stemma::api::{Document, validate};
 pub use stemma::docx::ArchiveLimits;

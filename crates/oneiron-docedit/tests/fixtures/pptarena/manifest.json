@@ -1,0 +1,507 @@
+{
+  "dataset": "https://huggingface.co/datasets/mofengenden/PPTArena",
+  "revision": "20fb8902",
+  "license_metadata": "MIT claimed in upstream metadata; no LICENSE text distributed. Downloaded for local conformance only; no deck files redistributed.",
+  "files": [
+    {
+      "path": "Original/ HighlightImportantWords_GroundTestA.pptx",
+      "size": 847478,
+      "sha256": "7e2c0d854df9e57a0a054c6ce4684cedb2087a79b0978ee38864c5675a6b68a7"
+    },
+    {
+      "path": "Original/1ea18Lamda_TestA.pptx",
+      "size": 7245477,
+      "sha256": "9776f091155a23d27bc4f8e8b83502da1a39ce1dff033159ff2c312edd4bea55"
+    },
+    {
+      "path": "Original/1ea18StructuralFix_TestA copy.pptx",
+      "size": 7245477,
+      "sha256": "9776f091155a23d27bc4f8e8b83502da1a39ce1dff033159ff2c312edd4bea55"
+    },
+    {
+      "path": "Original/AccessibilityMasterCleanup_TestA.pptx",
+      "size": 814760,
+      "sha256": "8e3ecec6a46f3ef3a41d764d4853359d919c840baaf5834a15e2c0814dc7e35b"
+    },
+    {
+      "path": "Original/AddAgendaSlide_TestA.pptx",
+      "size": 591862,
+      "sha256": "5f45a8cbc594d747c1053a1dbda0ff9553166a473a4553b9a4a3e4898c05411b"
+    },
+    {
+      "path": "Original/AddBibliography_TestA.pptx",
+      "size": 1361519,
+      "sha256": "17e05107cdcf497fe70bc857d7285515b1775aed43a63b32ec13458796b5670d"
+    },
+    {
+      "path": "Original/AddCompanyLogoTestA_MonthlyScoreboardInfographic.pptx",
+      "size": 1659976,
+      "sha256": "7c987d1c0c4fe1aedfa6bf33a02ba511ad297158128d10be3c26feae9d0c811d"
+    },
+    {
+      "path": "Original/AddFooterSourceTestA_Q1-2025-Earnings-Call-update.pptx",
+      "size": 471140,
+      "sha256": "01238cae60124a40312629aa2f8ec5c6735ef4e38bc56f0f85691336cf1fe400"
+    },
+    {
+      "path": "Original/AddPictureBorders_TestA.pptx",
+      "size": 22028433,
+      "sha256": "21138064d9036a4165d87e4d5f224d0a9c79f8a7b033be2989edc9e4e20c6793"
+    },
+    {
+      "path": "Original/AddPictures_Test.pptx",
+      "size": 36877,
+      "git_blob_sha1": "388fab290efbf99e27b83da85274e2556e2557d4"
+    },
+    {
+      "path": "Original/AddProgressBarTestC_ProjectManagementWorkflowInfographic.pptx",
+      "size": 748871,
+      "sha256": "7e24df1c7187d84904c735c27d6f26125f2dcd7d07a51fbcc8b2b685fbf068e5"
+    },
+    {
+      "path": "Original/AddQRCode_TestA.pptx",
+      "size": 12664261,
+      "sha256": "9e0945ede9946d3401380bb07f9eb33de387dda381a069e5e0d7516fb10bb23a"
+    },
+    {
+      "path": "Original/AddSlideBorderTestB_AccountantCVResume.pptx",
+      "size": 964243,
+      "sha256": "bff930968572cce3f83f3bbb3eb26889090edfb7aceb681b109958ea78216ff2"
+    },
+    {
+      "path": "Original/AddSlideNumber_TestB.pptx",
+      "size": 60863,
+      "git_blob_sha1": "1963cb49f68d20ba3c26d63865f307790743803c"
+    },
+    {
+      "path": "Original/AddSource_TestA.pptx",
+      "size": 436760,
+      "sha256": "5e5d9b9726cc95bfa14856bd44f7f8412775cce010dc3017bc4fa6b44064a3f5"
+    },
+    {
+      "path": "Original/AddSpeakerNotes_TestA.pptx",
+      "size": 948105,
+      "sha256": "a81cd08f0bdd05079ba350c1fa32b95db8111e504ae657613707e69abf8fd201"
+    },
+    {
+      "path": "Original/AddThankYouSlide_TestA.pptx",
+      "size": 1103953,
+      "sha256": "cd6c301ffa1fe987814217e02220e63404c9481e20aebc9d2fb3c3394727ebbc"
+    },
+    {
+      "path": "Original/AddTransitions_TestA.pptx",
+      "size": 945680,
+      "sha256": "a5557a252a8b8668a916a106b54c9935dd5d1eef2eb76d5f2fa4efa5bd4529b4"
+    },
+    {
+      "path": "Original/AddWaterMark_Test.pptx",
+      "size": 4847131,
+      "sha256": "bf45dac0fa1d87e0e49cd84d99c4c571258ab70bea1803eb738384ef3ac70896"
+    },
+    {
+      "path": "Original/AestheticMakeover_TestA.pptx",
+      "size": 8027261,
+      "sha256": "654b76f93aaf238c4c68803afd0e9f3ddbaff0b20e6c7283ceec7a8df37b3769"
+    },
+    {
+      "path": "Original/AnimalResearchPoster.pptx",
+      "size": 1564057,
+      "sha256": "85c7d22456447f64cc7201a9647c35988cac3a6c04aa4e1d08f6298676e71f12"
+    },
+    {
+      "path": "Original/AnimationCanonicalization_Bullets_TestA.pptx",
+      "size": 110600,
+      "sha256": "b11d1282533116e234138fa4eb6035816b8f5c66f68a23165756485d0fd5cd2c"
+    },
+    {
+      "path": "Original/AvatarCircleCrop_TestA.pptx",
+      "size": 10039347,
+      "sha256": "5eb9dcd58ee3a0a02f1f421a60c2ca410745faaf180d2cc4ce14262652e8d215"
+    },
+    {
+      "path": "Original/BoldTitleTestA_Game_theory_4.pptx",
+      "size": 1144147,
+      "sha256": "a8f00f2d2c814e5ef9c81a7757a72588ee911af67c7d120c5ca078d3a29395c1"
+    },
+    {
+      "path": "Original/BoldTitleTestB_cse1300-ai.pptx",
+      "size": 166581,
+      "sha256": "02687b50c86639c32501eefdf04cfb45e1687f45f9502c7896f4bf46f9e892b0"
+    },
+    {
+      "path": "Original/BulletsNormalizeLevels_Test.pptx",
+      "size": 37362,
+      "git_blob_sha1": "af50d11314db8633e7fd84c142460b7d4b2525e8"
+    },
+    {
+      "path": "Original/CalibriToTimesTestA.pptx",
+      "size": 1511752,
+      "sha256": "c967bc446a09125ebcbe76b2347380fb659a5d9b3651e463460d562aa6a37c54"
+    },
+    {
+      "path": "Original/CenterAlignTitles_TestA.pptx",
+      "size": 1640984,
+      "sha256": "9a542fa9c7a732edf9d414fd024d6bf4807aae67c724d44a7664ac24700690ed"
+    },
+    {
+      "path": "Original/ChangeLineGraphtoBar_TestA.pptx",
+      "size": 58165,
+      "git_blob_sha1": "f4c0b50a7c1494c2c70526b1c96706227919562a"
+    },
+    {
+      "path": "Original/ChartThemeColor_TestA.pptx",
+      "size": 1437854,
+      "sha256": "95532c530697838e51403d43066cf690c6422fb893db69d462d7fe3dd1e7f82a"
+    },
+    {
+      "path": "Original/ColorblindPalette_TestA.pptx",
+      "size": 46185,
+      "git_blob_sha1": "2e721997a48b843cfe78d4c2304022e55b530956"
+    },
+    {
+      "path": "Original/ConditionalTableFormatting_Negatives_TestA.pptx",
+      "size": 36847,
+      "git_blob_sha1": "0bcd5b1eb443ec19d7ef54eb376507b2fbd0383b"
+    },
+    {
+      "path": "Original/ConvertHyperLink_Test.pptx",
+      "size": 456747,
+      "sha256": "33132900f1422268aec0a20ba9e6ba0c2be1e6b9a4baeb9f0887c371506792f5"
+    },
+    {
+      "path": "Original/ConvertText&Arrows2SmartArt_TestA.pptx",
+      "size": 92618,
+      "git_blob_sha1": "c18cfddd75e2a1ac5d3037a3a8efe2a82626e2ec"
+    },
+    {
+      "path": "Original/CrossSlideDataConsolidation_TestA.pptx",
+      "size": 6425544,
+      "sha256": "76214e891a723b38a67f17012099427b66c201b066150a76e0de5ed7befe3c07"
+    },
+    {
+      "path": "Original/CrossSlideStatusToTimeline_TestA.pptx",
+      "size": 18791,
+      "git_blob_sha1": "302b56e3199ac0fec62e5ddde7da1954c0fcff53"
+    },
+    {
+      "path": "Original/CurrencySwap_Test.pptx",
+      "size": 87425,
+      "git_blob_sha1": "7bc01d87a4e27092e1560dfc7ad4df7209fc81df"
+    },
+    {
+      "path": "Original/DashMinusNormalization_TestEasy.pptx",
+      "size": 36781,
+      "git_blob_sha1": "7a0150f1d074b567b3f04b30b454ccc76b592e27"
+    },
+    {
+      "path": "Original/DeleteDuplicate_TestA.pptx",
+      "size": 9833359,
+      "sha256": "e4d83a79bf2565e931a7167b2f087b9b6d018e6b0453f7af2d3b5fb1a82ffb65"
+    },
+    {
+      "path": "Original/DynamicDataLabelPlacement_TestA.pptx",
+      "size": 35726,
+      "git_blob_sha1": "b61463114729cd87739bd4a79666bf1b0e53c321"
+    },
+    {
+      "path": "Original/DynamicSmartArtTimeline_TestA.pptx",
+      "size": 34029,
+      "git_blob_sha1": "34e30852fadfeaa5681c419fc58697350f1df40c"
+    },
+    {
+      "path": "Original/EducationalMakeoverSolarSystem_TestA.pptx",
+      "size": 721242,
+      "sha256": "6f19789728666c36a4c9c4ec9137efa17dbd16b8f21bece709f44346c9ae429f"
+    },
+    {
+      "path": "Original/EducationalRockRecognition_TestA.pptx",
+      "size": 583655,
+      "sha256": "aac72f769b292baf704ea7d9ab7a98caf67f3116d3673fcef939aad90e458440"
+    },
+    {
+      "path": "Original/EmbedVideoPlayback_TestA.pptx",
+      "size": 21144,
+      "git_blob_sha1": "78c02ff6c31b45fd82767ab20b32748ed736fb21"
+    },
+    {
+      "path": "Original/EnsembleCategoryTest.pptx",
+      "size": 26525049,
+      "sha256": "5110cec13fc276f1f801520944a390caaef747a6cadfc6ab7c0e087c688b0dd4"
+    },
+    {
+      "path": "Original/FillTablefromData_TestA.pptx",
+      "size": 82715,
+      "git_blob_sha1": "61f728c6e2f9df8ed30bbe72b0164b1cfbd3907f"
+    },
+    {
+      "path": "Original/FixAgendaAndOrder_TestA.pptx",
+      "size": 7640124,
+      "sha256": "bcbdf13b305029f1fca7c33d0b6b0020f84acf963bf066471d4be00971c2175b"
+    },
+    {
+      "path": "Original/FixImage&TextOverFlow_TestB.pptx",
+      "size": 392455,
+      "sha256": "208ddc48591845ae015635168c8434044cda86c098a923a9c3ee0ef2b48f8a07"
+    },
+    {
+      "path": "Original/FixImagePorportions_TestA.pptx",
+      "size": 4373662,
+      "sha256": "026285dad008ed551128b04548909d8e4377324b67f8428cb6a68d2c87d9555f"
+    },
+    {
+      "path": "Original/FixMisspellingsTestA_activities_ss_week_presentation.pptx",
+      "size": 334145,
+      "sha256": "d7bafc1afc1ab5486e3d8019d087f690c19b5594c1ece7827a129d14e572d5db"
+    },
+    {
+      "path": "Original/FixSlideColorScheme_TestA.pptx",
+      "size": 7297877,
+      "sha256": "c30b345bd69d97b4796c54ea2e90e10b177f455cc3a15df2afe95ead01ad9554"
+    },
+    {
+      "path": "Original/FixTableThemeColor_TestA.pptx",
+      "size": 558750,
+      "sha256": "d0b3c9d5b9988a375252315d3300b3237f25684af23ed77a4330aa8021d10c30"
+    },
+    {
+      "path": "Original/FixTextOverFlow_TestA.pptx",
+      "size": 8132227,
+      "sha256": "183e662d0738577cee4c177dfcefc8620c664538e239b818aab47ee319b9a46e"
+    },
+    {
+      "path": "Original/FixTextPlacement_Test.pptx",
+      "size": 739545,
+      "sha256": "31013e63d3de8cdf5f7a078355ce96b7730d8538a5474cf7b8b01e5f3c27e206"
+    },
+    {
+      "path": "Original/FixThemeScheme_TestA.pptx",
+      "size": 8040088,
+      "sha256": "5f779773768e51530fda065b710a096686b7b2190c4d07da232510c66a8fecdd"
+    },
+    {
+      "path": "Original/FixTitleCase_TestA.pptx",
+      "size": 1052351,
+      "sha256": "5462ea413b6ecdf5ee13b0893c360e744886283949fed7a8b44fd78ed01e727f"
+    },
+    {
+      "path": "Original/FontSizePlus2Slide8TestA.pptx",
+      "size": 1012979,
+      "sha256": "6beba374b051d77ba11636d826535fc3e391f245daf14d7547383a02798affd6"
+    },
+    {
+      "path": "Original/FormatPythonCodeBlock_DarkMulti_TestA.pptx",
+      "size": 36255,
+      "git_blob_sha1": "be50ef814839451da84ed65751774927ee0d9ad2"
+    },
+    {
+      "path": "Original/GenerateCompConclusion_TestA.pptx",
+      "size": 666922,
+      "sha256": "22e8036273ec11797223f430136ece7ebf8adcfe3cf5c79752bec3d8055e9260"
+    },
+    {
+      "path": "Original/GridBaselineReasoning_TestA.pptx",
+      "size": 1364608,
+      "sha256": "109deea671c0185352b48203120f4600272ccba8b184c120890e332ebd406af2"
+    },
+    {
+      "path": "Original/HinduCenterTitles_TestA.pptx",
+      "size": 5632062,
+      "sha256": "54f1ac027a562918dd92fd3983b9eb3828be5c77a3cf55cf8cd01fa605392438"
+    },
+    {
+      "path": "Original/ImageTextCorrelation_TestA.pptx",
+      "size": 118053,
+      "sha256": "54c018aabce999ee1ac916208862be81e7f93dde6be522c1373413bd0d83ea6e"
+    },
+    {
+      "path": "Original/ItalicizeSubheadingsTestA_Career_Banding_Job_Description_Training.pptx",
+      "size": 781641,
+      "sha256": "53b505433a922afb40316a2cae2e6abc4b72b92cf10e88ea1494d8e9667558e7"
+    },
+    {
+      "path": "Original/ItalicizeSubheadingsTestB_COVID19-Healthcare-Tabletop-Facilitator-PPT.pptx",
+      "size": 1677937,
+      "sha256": "07f90ef2f3dd19ad52c0fa89ecf8826b1e85448e6075de5fc881885999220492"
+    },
+    {
+      "path": "Original/ItalicizeSubheadingsTestD_teachout.pptx",
+      "size": 268204,
+      "sha256": "228745f5e0604d89681f553f917506bb5204659adeb7d2bf7685240ae30936e4"
+    },
+    {
+      "path": "Original/LaTeXtoOMML_TestA.pptx",
+      "size": 46083,
+      "git_blob_sha1": "34073570d4c8915e14fea7dd1979f5e0a758e811"
+    },
+    {
+      "path": "Original/LegendBottomMultiTypes_TestA.pptx",
+      "size": 79573,
+      "git_blob_sha1": "b5ef4af2ad7fff25811a237925995f8e770080a2"
+    },
+    {
+      "path": "Original/LighterColors_TestA.pptx",
+      "size": 499116,
+      "sha256": "58c381286c5a0fe49a705e08c4c8537bea2763484f2b5b5f3dbf1a390e3db7ed"
+    },
+    {
+      "path": "Original/LineGraph_TestA.pptx",
+      "size": 314437,
+      "sha256": "72fb98cc839fc54dc4b07dcdb4bf7eb8c6552ac6549d00c0010e3ab021c1f3e6"
+    },
+    {
+      "path": "Original/MasterRebind_TestA.pptx",
+      "size": 1595389,
+      "sha256": "97b8fedee259207179f2deab21576748793988e2dff7bff4270d1c9fa6e6e972"
+    },
+    {
+      "path": "Original/MatchBackgroundtoPicture_TestA.pptx",
+      "size": 149374,
+      "sha256": "8c789d83d7063549ab3a198a7363e7e6d9feda84ea20865ae00a6307d3be52cd"
+    },
+    {
+      "path": "Original/MatchFlagtoText_TestA.pptx",
+      "size": 180299,
+      "sha256": "8c2c6f409684507f2d56cc205c8a6b17d69e65d5036748dbe6d2098e24f325e2"
+    },
+    {
+      "path": "Original/MatchSlideDeck_TestA.pptx",
+      "size": 1357616,
+      "sha256": "c7e1d25f6713145eb44fea0cd48e1c8924b663d12c466128c54b52dbc78e4c6f"
+    },
+    {
+      "path": "Original/MatchStockPhotos_Test.pptx",
+      "size": 10508498,
+      "sha256": "7d90466e94ed72b8edb15c3389197c22bc93658ba9c0baebbad957f50b935948"
+    },
+    {
+      "path": "Original/NormalizeDate_Test.pptx",
+      "size": 573498,
+      "sha256": "3f7fecef5d4f4c23b882124ef9d0fb79faa56d7fce53979e18ce5909f65c46f0"
+    },
+    {
+      "path": "Original/NormalizeThousandSeperators_Test.pptx",
+      "size": 704270,
+      "sha256": "88a820907abc9105ace8d26fbb5de8c8495ecbdb429d90b644a58440cd366a44"
+    },
+    {
+      "path": "Original/ObjectDistance_TestA.pptx",
+      "size": 31755615,
+      "sha256": "d98fe76ddfadb6e470c6b2cbb6782b9b6beaae3471e50deee838460012414594"
+    },
+    {
+      "path": "Original/OrderPhotosTest.pptx",
+      "size": 5676140,
+      "sha256": "c17f8b37992c462006bf62a151b3f346df2dade7253f97027f69d715ab7f657c"
+    },
+    {
+      "path": "Original/OrganizeResearchPoster_TestA.pptx",
+      "size": 88076,
+      "git_blob_sha1": "1f0a4f98f0350f863a195849541ecaad829ad97f"
+    },
+    {
+      "path": "Original/PieChart_TestA.pptx",
+      "size": 322109,
+      "sha256": "07911f768a13823f9e8a4a426a7d2667a16f8283a4237f2883abe8b24527415e"
+    },
+    {
+      "path": "Original/QuarterTwoTestA___2302222_Presentation_Stats_SA_Q1_Q2_Q3_of_202223.pptx",
+      "size": 1716368,
+      "sha256": "d838a1479d592eff762744e8a824f5327c12ba78e600d3cc3fcd057de800d375"
+    },
+    {
+      "path": "Original/QuarterTwoTestB_7302020.pptx",
+      "size": 906689,
+      "sha256": "9122d0f503b33e2df83acd175a8282b41bb4a7c752f6dca484f72b05a352eab0"
+    },
+    {
+      "path": "Original/ReadingOrderComplex_TestA.pptx",
+      "size": 472147,
+      "sha256": "18ed5ab16c440bb36a609697d58a99126abf03c1cc0b1a27d6656a2d418f23f7"
+    },
+    {
+      "path": "Original/RemoveFillerWords_TestA.pptx",
+      "size": 28529544,
+      "sha256": "728b48eac2f7f910cdb758fbcc25be7eeb04efd223b1a711deb745f91f13cd80"
+    },
+    {
+      "path": "Original/ShortenBulletPointsTestB_Opioid-Addiction-Response-in-VA.pptx",
+      "size": 214307,
+      "sha256": "ac583734aabf163922ae56450f5f49e029a5e772f43762acefe55da7786fc58e"
+    },
+    {
+      "path": "Original/ShortenTextOnSlides_TestA.pptx",
+      "size": 166654,
+      "sha256": "e5c7c5e2081d4f05a15c320b6cc53dedfb05fa4dcb308d37f83a03ae8dd78310"
+    },
+    {
+      "path": "Original/Size43to169_DifferentContent_TestA.pptx",
+      "size": 211490,
+      "sha256": "aafdb523698a7e996e519c668c312c6d955505bd4bd4887c7b7aa8da291e4e9f"
+    },
+    {
+      "path": "Original/SortByScoreAndCropImage169_Test.pptx",
+      "size": 94508,
+      "git_blob_sha1": "5c522fadcf4977709dede4064bd2e6d34ae275d5"
+    },
+    {
+      "path": "Original/SpatialLogicLayout_TestA.pptx",
+      "size": 35676,
+      "git_blob_sha1": "35c0210a350709127fef204b691a619579b869f2"
+    },
+    {
+      "path": "Original/SummarizeParagraphsTestA_.pptx",
+      "size": 140269,
+      "sha256": "ad3b2cd926ddc7928f564579f4aa4c8cbcf6767f99639300d571fb7f8f887182"
+    },
+    {
+      "path": "Original/SwimlaneFlowCanonicalization_TestA.pptx",
+      "size": 33869,
+      "git_blob_sha1": "861738b21135b5b423a8813d362c0093643da648"
+    },
+    {
+      "path": "Original/TransitionarySlides_TestA.pptx",
+      "size": 1470258,
+      "sha256": "723b73947e48916389b9482b9c01cf215c0cb51c0c9b781c482bd54ba287854c"
+    },
+    {
+      "path": "Original/TranslateArabicLTR_TestB.pptx",
+      "size": 1321607,
+      "sha256": "871e2808ffc966cb396b2bd0c8eefd8afcde19e4924471109b2f8a5283f4d175"
+    },
+    {
+      "path": "Original/TranslateChineseTestA.pptx",
+      "size": 1650184,
+      "sha256": "598b2efd8ad89bd14fc25cf65797aeeea18dc35d1a05b488a0e00a75b4c9acf6"
+    },
+    {
+      "path": "Original/TranslateToEnglishButKeepallFrenchTestA_Bonjour mes amis!.pptx",
+      "size": 3873562,
+      "sha256": "166e95dcf7883aa0ed60768e184c225851161a908f82223a7f8443f45cdd32dd"
+    },
+    {
+      "path": "Original/UB_Title_Screenshot_TestA.pptx",
+      "size": 2190599,
+      "sha256": "22ad5a23a84352431f9c780f82edf49b9c01717485633f27a983fac4655cf66c"
+    },
+    {
+      "path": "Original/UnitConversionTemps_TestA.pptx",
+      "size": 35157,
+      "git_blob_sha1": "2aa39d44323778d99ca466757fe71dfb3ea4ff5a"
+    },
+    {
+      "path": "Original/ZOrder_Test.pptx",
+      "size": 89068,
+      "git_blob_sha1": "f4e058b31201a1a143c73ac1fffbb75ca4c41a3f"
+    },
+    {
+      "path": "Original/climate_original.pptx",
+      "size": 991223,
+      "sha256": "14660dfd35f3ddb9aafe873159ca3871ecd2250d3e8f08db4e36cb61ca094fc7"
+    },
+    {
+      "path": "Original/updatetheme_TestA.pptx",
+      "size": 1297227,
+      "sha256": "d0b332612b46b151889c55dd247ef450742a498ac9bc846c6d345a85748722fa"
+    }
+  ]
+}
