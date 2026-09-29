@@ -4986,6 +4986,8 @@ fn observer_b_emits_committed_revision_and_reverse_mirror_names_its_source() {
 fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commit() -> Result<()> {
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
     let origin = test_vault();
+    // The Dreamer is a MACHINE writer: its origin is rooted and holds its key.
+    crate::test_util::provision_engine_machines(&origin);
     let receiver = test_vault();
     let actor = origin.dreamer_authority()?;
     assert_eq!(
@@ -5002,16 +5004,19 @@ fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commi
         )]))?,
         ClaimApprovalStatus::Proposed,
     );
+    let candidate = crate::ClaimCandidate::new(
+        "dreamer.proactivity.follow_up",
+        crate::ClaimSubject::Entity(actor.entity_ref()),
+        Value::from("pending"),
+        0.7,
+    );
+    let envelope =
+        crate::test_util::sign_machine_candidate(&origin, &claim_id, &candidate, &envelope);
     origin
         .batch()
         .claim_candidate(
             &claim_id,
-            crate::ClaimCandidate::new(
-                "dreamer.proactivity.follow_up",
-                crate::ClaimSubject::Entity(actor.entity_ref()),
-                Value::from("pending"),
-                0.7,
-            ),
+            candidate,
             &envelope,
             TimeRange { start: 1, end: 1 },
             1,
@@ -5036,6 +5041,8 @@ fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commi
 fn edge_only_claim_hydration_signals_after_outer_commit_not_rollback() -> Result<()> {
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
     let origin = test_vault();
+    // The Dreamer is a MACHINE writer: its origin is rooted and holds its key.
+    crate::test_util::provision_engine_machines(&origin);
     let receiver = test_vault();
     let actor = origin.dreamer_authority()?;
     assert_eq!(
@@ -5053,16 +5060,19 @@ fn edge_only_claim_hydration_signals_after_outer_commit_not_rollback() -> Result
         )]))?,
         ClaimApprovalStatus::Proposed,
     );
+    let candidate = crate::ClaimCandidate::new(
+        "dreamer.proactivity.follow_up",
+        crate::ClaimSubject::Entity(actor.entity_ref()),
+        Value::from("pending"),
+        0.7,
+    );
+    let envelope =
+        crate::test_util::sign_machine_candidate(&origin, &claim_id, &candidate, &envelope);
     origin
         .batch()
         .claim_candidate(
             &claim_id,
-            crate::ClaimCandidate::new(
-                "dreamer.proactivity.follow_up",
-                crate::ClaimSubject::Entity(actor.entity_ref()),
-                Value::from("pending"),
-                0.7,
-            ),
+            candidate,
             &envelope,
             TimeRange { start: 1, end: 1 },
             1,
@@ -5104,7 +5114,9 @@ fn edge_only_claim_hydration_signals_after_outer_commit_not_rollback() -> Result
     )
     .unwrap();
     doc.commit();
-    assert!(receiver.get_claim(&claim_id)?.is_none());
+    // A peer holds the signed Dreamer row and withholds the claim until it
+    // adopts the vault's signed history.
+    assert!(receiver.get_raw(&claim_id)?.is_none());
     assert!(
         !changes.has_changed().expect("vault open"),
         "rolled-back edge hydration cannot signal"
@@ -5122,7 +5134,7 @@ fn edge_only_claim_hydration_signals_after_outer_commit_not_rollback() -> Result
     )
     .unwrap();
     doc.commit();
-    assert!(receiver.get_claim(&claim_id)?.is_some());
+    assert!(receiver.get_raw(&claim_id)?.is_some());
     assert_eq!(receiver.next_proactivity_digest_at()?, Some(0));
     assert!(
         changes.has_changed().expect("vault open"),

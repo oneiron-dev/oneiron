@@ -100,6 +100,23 @@ impl Vault {
         Ok(())
     }
 
+    /// TEST-SUPPORT ONLY: signs a candidate with the signer the host retained
+    /// for the envelope's MACHINE actor, as the engine's writers do, so a
+    /// dependent crate's fixture can write an engine writer's claim.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn sign_retained_machine_claim_for_test(
+        &self,
+        id: &EntityId,
+        candidate: &crate::ClaimCandidate,
+        envelope: &crate::WriteEnvelope,
+    ) -> Result<crate::WriteEnvelope> {
+        let mut envelope = envelope.clone();
+        let txn = self.store.env.read_txn()?;
+        self.sign_retained_machine_claim_in_txn(&txn, id, candidate, &mut envelope)?;
+        Ok(envelope)
+    }
+
     fn ensure_commitment_projection_machine(&self, now: u64) -> Result<EntityId> {
         let machine = crate::commitment_schedule::commitment_projection_actor()?.entity_ref();
         match self.get_entity_type(&machine)? {

@@ -56,6 +56,7 @@ fn fixture() -> (
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+    crate::provision_test_engine_machines(&vault);
     let mut policy = vault.purpose_default_table().expect("owner policy");
     policy.extraction_max_locality = oneiron::ModelLocality::OwnServer;
     policy
