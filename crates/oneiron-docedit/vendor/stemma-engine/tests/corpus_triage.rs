@@ -502,8 +502,8 @@ fn extract_content_types(xml: &str) -> Vec<String> {
         match reader.read_event() {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
                 for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"ContentType" {
-                        let val = String::from_utf8_lossy(&attr.value).to_string();
+                    if attr.key.as_ref() == "ContentType" {
+                        let val = attr.value.to_string();
                         if !types.contains(&val) {
                             types.push(val);
                         }
@@ -527,8 +527,8 @@ fn extract_relationship_types(xml: &str) -> Vec<String> {
         match reader.read_event() {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
                 for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"Type" {
-                        let val = String::from_utf8_lossy(&attr.value).to_string();
+                    if attr.key.as_ref() == "Type" {
+                        let val = attr.value.to_string();
                         if !types.contains(&val) {
                             types.push(val);
                         }
