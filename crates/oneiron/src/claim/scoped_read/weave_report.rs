@@ -7,7 +7,6 @@ use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::workspace_roster::ProjectRecord;
 use crate::{EdgeKind, EntityId};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -139,6 +138,11 @@ impl ScopedRead<'_> {
             && let Ok(kind) = self.vault.project_type_byte()
         {
             let mut scanned = 0;
+            let project_fold = crate::workspace_roster::ProjectReader::new(
+                &self.vault.store,
+                txn,
+                self.vault.privacy_posture(),
+            )?;
             let project_rows = match self.session_view {
                 Some(view) => view.port_entity_ids_by_type(txn, kind, None)?,
                 None => self.vault.port_entity_ids_by_type(txn, kind, None)?,
@@ -163,9 +167,15 @@ impl ScopedRead<'_> {
                 if header.entity_type != kind {
                     return Err(Error::CorruptedIndex("weave project kind"));
                 }
-                let record: ProjectRecord =
-                    rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-                        .map_err(|_| Error::CorruptedIndex("weave project body"))?;
+                // A row the project read fold hides never reaches a report.
+                let Some(record) = project_fold
+                    .as_ref()
+                    .map(|fold| fold.visible_body(id, &raw[ENTITY_METADATA_HEADER_LEN..]))
+                    .transpose()?
+                    .flatten()
+                else {
+                    continue;
+                };
                 if subject.is_none_or(|id| {
                     let who = id.to_hex();
                     record.leader == who

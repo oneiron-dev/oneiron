@@ -17,7 +17,7 @@ fn invalid() -> Error {
 fn invalid_room() -> Error {
     RecordError::InvalidProjectRoomBody("invalid derived home room").into()
 }
-fn dependency(
+pub(super) fn dependency(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -55,11 +55,13 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         || usize::from(body.depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
         || body.home_room != home_room_id(id)?.to_hex()
         || body.roster.is_empty()
+        || body.depth_remaining > body.depth_limit
     {
         return Err(invalid());
     }
     let mut refs = vec![&body.claims_scope_ref, &body.leader, &body.home_room];
     if body.parents.len() > 256
+        || body.parents.contains(&id.to_hex())
         || body.parents.iter().collect::<BTreeSet<_>>().len() != body.parents.len()
     {
         return Err(invalid());
@@ -119,7 +121,81 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     }) {
         return Err(invalid());
     }
+    slice_refs(&body.slice, &mut ids);
+    let mut proof = body.write_proof.as_ref();
+    let mut anchors = 0;
+    while let Some(signed) = proof {
+        anchors += 1;
+        if anchors > MAX_PROJECT_ANCHORS {
+            return Err(invalid());
+        }
+        let slip = crate::authority::CapabilitySlip::from_token(&signed.slip_wire)
+            .map_err(|_| invalid())?;
+        if let Some(org) = &slip.claims.org_ref {
+            ids.push(EntityId::from_hex(org).map_err(|_| invalid())?);
+        }
+        slip_scope_refs(&slip.claims.scope, &mut ids);
+        for block in &slip.caveats {
+            if let Some(scope) = &block.caveat.scope {
+                slip_scope_refs(scope, &mut ids);
+            }
+            if let Some((grant, bound)) = &block.caveat.pact {
+                ids.push(*grant);
+                // The pact bound names worlds and facets too (ARCH-0052 D2).
+                for axis in [&bound.worlds, &bound.facets] {
+                    if let crate::federation::ScopeAxis::Some(values) = axis {
+                        ids.extend(values.iter().map(|id| id.0));
+                    }
+                }
+            }
+        }
+        // An earlier authority state is a carrier too: its parents, leader,
+        // board and slice may not name a live off-record id either.
+        let Some(anchor) = signed.anchor.as_deref() else {
+            break;
+        };
+        authority_refs(&anchor.authority, &mut ids)?;
+        proof = anchor.proof.as_ref();
+    }
     Ok(ids)
+}
+
+fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Result<()> {
+    for value in authority
+        .parents
+        .iter()
+        .chain(&authority.board)
+        .chain([&authority.leader, &authority.claims_scope_ref])
+    {
+        let id = EntityId::from_hex(value).map_err(|_| invalid())?;
+        if id.to_hex() != *value {
+            return Err(invalid());
+        }
+        ids.push(id);
+    }
+    slice_refs(&authority.slice, ids);
+    Ok(())
+}
+
+fn slice_refs(slice: &crate::llm::Scope, ids: &mut Vec<EntityId>) {
+    ids.extend(
+        [slice.world, slice.facet, slice.relationship, slice.project]
+            .into_iter()
+            .flatten(),
+    );
+    for resource in slice.readable.iter().chain(&slice.writable) {
+        if let crate::llm::ScopeResource::DocumentVersion { document, .. } = resource {
+            ids.push(*document);
+        }
+    }
+}
+
+fn slip_scope_refs(scope: &crate::federation::Scope, ids: &mut Vec<EntityId>) {
+    for axis in [&scope.worlds, &scope.facets, &scope.audience] {
+        if let crate::federation::ScopeAxis::Some(values) = axis {
+            ids.extend(values.iter().map(|id| id.0));
+        }
+    }
 }
 
 /// Project membership carries a birth-depth cache, not authority. Replacing
@@ -139,6 +215,12 @@ pub(crate) fn normalize_project_body(
     body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
         Some((_, birth)) => birth.depth,
         None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {
+            crate::gate::project_depth::canonical_birth(id)?.depth
+        }
+        // A leader's slip-signed spawn needs no owner birth: its own proof is
+        // its authority, which the live door and the read fold verify. It
+        // starts from the seeded default row like any implicit birth.
+        None if body.write_proof.is_some() => {
             crate::gate::project_depth::canonical_birth(id)?.depth
         }
         None => return Err(RecordError::ProjectDependencyPending.into()),

@@ -234,13 +234,9 @@ impl Vault {
             return Err(invalid());
         }
         let root_id = ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?;
-        let root: ProjectRecord = record(
-            &self.store,
-            txn,
-            root_id,
-            project_type(&self.store).ok_or_else(invalid)?,
-        )?
-        .ok_or_else(invalid)?;
+        let root = self
+            .visible_project_in_txn(txn, root_id)?
+            .ok_or_else(invalid)?;
         let leader = checked_ref(
             self,
             txn,

@@ -183,7 +183,7 @@ pub(super) fn project_in(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<ProjectRecord> {
-    record(&vault.store, txn, id, vault.project_type_byte()?)?.ok_or_else(denied)
+    vault.visible_project_in_txn(txn, id)?.ok_or_else(denied)
 }
 pub(super) fn lineage(
     vault: &Vault,

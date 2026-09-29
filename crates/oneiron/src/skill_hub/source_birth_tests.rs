@@ -355,12 +355,12 @@ fn fork_reidentifies_exact_source_and_supported_json_reimports_only_candidates()
     let local_policy = target
         .get(&policies[0])?
         .expect("target has its own default policy");
-    // The parent + fork pair plus their two source carrier rows insert; the
-    // source vault's root project row is skipped (owning-adapter refusal)
-    // while the target keeps its own root, and identical seed rows count as
-    // unchanged rather than inserted.
+    // The parent + fork pair insert. The source vault's root project and its
+    // home room map onto the target's own root (ARCH-0067: the vault itself
+    // is the root project), and identical seed rows count as unchanged
+    // rather than inserted.
     let receipt = target.import_whole_vault_json(export.bytes())?;
-    assert_eq!(receipt.inserted_entities, 4);
+    assert_eq!(receipt.inserted_entities, 2);
     assert_eq!(target.get(&policies[0])?, Some(local_policy));
     for id in [parent, fork_id] {
         let imported = target.get_skill_record(&id)?.expect("imported skill");

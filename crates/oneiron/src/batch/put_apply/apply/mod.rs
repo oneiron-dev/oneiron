@@ -87,7 +87,14 @@ pub(in crate::batch) fn apply_put(
     let data = normalized_policy.as_deref().unwrap_or(data);
     let project = stage_project_put(store, wtxn, id, entity_type, data, replicated, posture)?;
     let data = project.as_deref().unwrap_or(data);
-    let carriers = PutCarrierContext::new(entity_type, occurred, learned_at, replicated, origin);
+    let carriers = PutCarrierContext::new(
+        entity_type,
+        occurred,
+        learned_at,
+        replicated,
+        origin,
+        posture,
+    );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     super::put_staging::validate_source_carriers(

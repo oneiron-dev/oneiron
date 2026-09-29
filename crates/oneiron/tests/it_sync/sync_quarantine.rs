@@ -1962,6 +1962,29 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
     }
 }
 
+/// Signs a project revision as the vault host over its current authority.
+fn sign_as_host(vault: &Vault, id: EntityId, body: &mut oneiron::workspace_roster::ProjectRecord) {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"sync project fixture").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = "host".into();
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let anchor = vault.project(id).unwrap().unwrap().anchor();
+    let signed_at = slip.claims.issued_at;
+    let challenge = body
+        .authority()
+        .write_challenge(id, signed_at, Some(&anchor))
+        .unwrap();
+    body.write_proof = Some(oneiron::workspace_roster::ProjectWriteProof {
+        slip_wire: slip.to_token().unwrap(),
+        holder_signature: issuer.binding_proof(&slip, &challenge).unwrap(),
+        signed_at,
+        anchor: Some(Box::new(anchor)),
+    });
+}
+
 #[test]
 fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
     use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -1988,6 +2011,8 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
         .unwrap();
     let mut body = vault.project(child).unwrap().unwrap();
     body.parents = vec![other.to_hex()];
+    // Moving a project in the tree is a board act: the host signs it for the owner.
+    sign_as_host(&vault, child, &mut body);
     vault.put_project(child, &body, 3).unwrap();
     let person = EntityId::now();
     vault
