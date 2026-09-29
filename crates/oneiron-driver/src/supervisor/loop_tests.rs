@@ -556,20 +556,19 @@ async fn digest_cadence_deadline_runs_without_caller_invoking_digest() {
     );
     for seed in [0x41, 0x42, 0x43] {
         let id = EntityId::from_bytes([seed; 16]).unwrap();
+        let candidate = ClaimCandidate::new(
+            "dreamer.proactivity.follow_up",
+            ClaimSubject::Entity(actor.entity_ref()),
+            Value::from("pending"),
+            0.7,
+        );
+        // The Dreamer signs its proposal with the key the host retained.
+        let signed = vault
+            .sign_retained_machine_claim_for_test(&id, &candidate, &envelope)
+            .unwrap();
         vault
             .batch()
-            .claim_candidate(
-                &id,
-                ClaimCandidate::new(
-                    "dreamer.proactivity.follow_up",
-                    ClaimSubject::Entity(actor.entity_ref()),
-                    Value::from("pending"),
-                    0.7,
-                ),
-                &envelope,
-                TimeRange { start: 1, end: 1 },
-                1,
-            )
+            .claim_candidate(&id, candidate, &signed, TimeRange { start: 1, end: 1 }, 1)
             .commit()
             .unwrap();
     }
@@ -705,16 +704,21 @@ async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_pu
         ClaimApprovalStatus::Proposed,
     );
     let claim_id = EntityId::from_bytes([0x67; 16]).unwrap();
+    let candidate = ClaimCandidate::new(
+        "dreamer.proactivity.follow_up",
+        ClaimSubject::Entity(actor.entity_ref()),
+        Value::from("pending"),
+        0.7,
+    );
+    // The Dreamer signs its proposal with the key the host retained.
+    let envelope = vault
+        .sign_retained_machine_claim_for_test(&claim_id, &candidate, &envelope)
+        .unwrap();
     vault
         .batch()
         .claim_candidate(
             &claim_id,
-            ClaimCandidate::new(
-                "dreamer.proactivity.follow_up",
-                ClaimSubject::Entity(actor.entity_ref()),
-                Value::from("pending"),
-                0.7,
-            ),
+            candidate,
             &envelope,
             TimeRange { start: 1, end: 1 },
             1,

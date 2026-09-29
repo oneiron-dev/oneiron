@@ -50,6 +50,7 @@ fn run_case(case: LateCall) -> Result<()> {
     let mut config = VaultConfig::device();
     config.store_clock = store_clock.bundle();
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault)?;
     grant_fixture_reads(&vault)?;
     let store = DreamerRunnerStore::new(&vault);

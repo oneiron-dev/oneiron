@@ -81,6 +81,8 @@ fn open_vault() -> (tempfile::TempDir, TimedVault) {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("vault");
+    // The Dreamer is a MACHINE writer: the host roots the vault and holds its key.
+    crate::provision_test_engine_machines(&vault);
     (dir, TimedVault { vault, clock })
 }
 

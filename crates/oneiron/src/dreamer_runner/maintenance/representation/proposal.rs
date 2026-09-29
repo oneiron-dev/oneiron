@@ -150,6 +150,8 @@ pub(in crate::dreamer_runner::maintenance) fn run(
         if vault.get_claim_in_txn(&*txn, &id)?.is_some() {
             return Err(invalid());
         }
+        let mut envelope = envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
         vault
             .batch_in()
             .claim_candidate(

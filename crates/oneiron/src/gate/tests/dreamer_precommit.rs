@@ -890,7 +890,7 @@ fn dreamer_detector_envelope(
     ))
 }
 
-/// GATE-12 candidacy is exactly `Agent` class + the Dreamer run surface + a
+/// GATE-12 candidacy is `Agent` or `System` class + the Dreamer run surface + a
 /// non-empty run id, and NOTHING else.
 ///
 /// Pinned on the detector itself, because the two ways to get this wrong are
@@ -908,20 +908,22 @@ fn dreamer_detector_is_source_agnostic_provenance() -> Result<()> {
         // on-disk source string cannot drift past this pin either.
         let label = claim_source_pin_label(source);
         assert_eq!(label, source.as_str());
-        for run_key in [DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY] {
-            let envelope = dreamer_detector_envelope(
-                EdgeActorClass::Agent,
-                source,
-                dreamer_surface_provenance(
-                    DREAMER_RUNNER_ATTEMPT_KIND,
-                    Some((run_key, PRECOMMIT_RUN_ID)),
-                ),
-            )?;
-            assert_eq!(
-                dreamer_run_id_from_write_envelope(&envelope).as_deref(),
-                Some(PRECOMMIT_RUN_ID),
-                "a {label} meet under `{run_key}` is still Dreamer-authored"
-            );
+        for actor_class in [EdgeActorClass::Agent, EdgeActorClass::System] {
+            for run_key in [DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY] {
+                let envelope = dreamer_detector_envelope(
+                    actor_class,
+                    source,
+                    dreamer_surface_provenance(
+                        DREAMER_RUNNER_ATTEMPT_KIND,
+                        Some((run_key, PRECOMMIT_RUN_ID)),
+                    ),
+                )?;
+                assert_eq!(
+                    dreamer_run_id_from_write_envelope(&envelope).as_deref(),
+                    Some(PRECOMMIT_RUN_ID),
+                    "a {label} meet under `{run_key}` is still Dreamer-authored"
+                );
+            }
         }
     }
 
@@ -960,26 +962,23 @@ fn dreamer_detector_is_source_agnostic_provenance() -> Result<()> {
         "only the Dreamer run surface carries Dreamer authorship"
     );
 
-    // 4. The `Agent` class requirement holds: owner writes and the
-    //    System-actor projection shape stay outside GATE-12 on a fully valid
-    //    Dreamer provenance map, whatever their meet.
-    for actor_class in [EdgeActorClass::Human, EdgeActorClass::System] {
-        for source in ALL_CLAIM_SOURCES {
-            let envelope = dreamer_detector_envelope(
-                actor_class,
-                source,
-                dreamer_surface_provenance(
-                    DREAMER_RUNNER_ATTEMPT_KIND,
-                    Some((DREAMER_PROVENANCE_RUN_ID_KEY, PRECOMMIT_RUN_ID)),
-                ),
-            )?;
-            assert_eq!(
-                dreamer_run_id_from_write_envelope(&envelope),
-                None,
-                "{actor_class:?} is not the Dreamer, whatever the {} meet",
-                claim_source_pin_label(source)
-            );
-        }
+    // 4. Owner writes stay outside GATE-12 on a fully valid Dreamer
+    //    provenance map, whatever their meet.
+    for source in ALL_CLAIM_SOURCES {
+        let envelope = dreamer_detector_envelope(
+            EdgeActorClass::Human,
+            source,
+            dreamer_surface_provenance(
+                DREAMER_RUNNER_ATTEMPT_KIND,
+                Some((DREAMER_PROVENANCE_RUN_ID_KEY, PRECOMMIT_RUN_ID)),
+            ),
+        )?;
+        assert_eq!(
+            dreamer_run_id_from_write_envelope(&envelope),
+            None,
+            "human authorship cannot become Dreamer through a {} meet",
+            claim_source_pin_label(source)
+        );
     }
     Ok(())
 }

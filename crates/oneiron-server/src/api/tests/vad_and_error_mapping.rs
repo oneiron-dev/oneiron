@@ -464,3 +464,13 @@ fn core_engine_error_maps_invalid_task_body_to_bad_request() {
         "message should expose the specific TASK validation detail"
     );
 }
+
+#[test]
+fn immutable_dreamer_actor_maps_to_client_error() {
+    let error = core_engine_error(
+        "core batch commit failed",
+        oneiron::Error::Registry(oneiron::error::RegistryError::DreamerActorImmutable),
+    );
+    assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+}

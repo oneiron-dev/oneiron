@@ -635,9 +635,9 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
         // owner's substrate FACET.
         (ENTITY_TYPE_PERSON, 1),
         (oneiron::registry::ENTITY_TYPE_FACET, 1),
-        // A rooted host enrolls the engine's four MACHINE writers at open
-        // (ONE-1634).
-        (oneiron::registry::ENTITY_TYPE_MACHINE, 4),
+        // Every open seeds the Dreamer principal (ONE-2545), and a rooted host
+        // enrolls it with the engine's other four MACHINE writers (ONE-1634).
+        (oneiron::registry::ENTITY_TYPE_MACHINE, 5),
     ];
     let (addr, handle, root_auth) =
         spawn_server(Arc::clone(&vault), config_with_secret("secret")).await;

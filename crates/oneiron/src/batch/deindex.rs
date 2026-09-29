@@ -26,6 +26,7 @@ pub(super) fn reject_engine_authored_delete(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    crate::dreamer_runner::authority::guard_actor_delete(id)?;
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
@@ -51,7 +52,7 @@ pub(super) fn reject_engine_authored_delete(
 /// [`deindex_entity`] for a local delete. A MACHINE claim's signed history
 /// controls embed its born content, so they are erased with it
 /// (`retire_machine_history_for_delete`).
-pub(super) fn deindex_entity_with_machine_history(
+pub(crate) fn deindex_entity_with_machine_history(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -74,6 +75,7 @@ pub(crate) fn deindex_entity(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::dreamer_runner::authority::guard_actor_delete(id)?;
     crate::config::failure_signals::purge_tier2_for_source_in_txn(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
@@ -128,6 +130,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::dreamer_runner::authority::guard_actor_delete(id)?;
     crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
     crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
@@ -276,6 +279,29 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.sort_unstable();
     neighbors.dedup();
     Ok((true, had_vector, had_graph_mutation, neighbors))
+}
+
+/// Drops one seeded actor's row and the rows its put derived from it, so the
+/// put door can re-birth the same id under its current type. Edges, facets and
+/// claims that name the id stay: the actor keeps its identity, only its row is
+/// replaced, and the caller puts the new row in the same transaction.
+pub(crate) fn drop_seeded_actor_row(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
+        return Ok(());
+    };
+    let (entity_type, occurred, learned_at) = parse_entity_metadata(&record)?;
+    delete_entity_index_rows(store, wtxn, id, entity_type, occurred, learned_at)?;
+    crate::vault::entity_revision::remove_entity_revisions(store, wtxn, id)?;
+    delete_short_id_rows_for_id(store, wtxn, id)?;
+    crate::federation::record_scope::retire_stamp(store, wtxn, *id)?;
+    crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
+    crate::ports::reindex_named_entities(store, wtxn, id, None)?;
+    store.port_remove_entity_row(wtxn, id)?;
+    Ok(())
 }
 
 #[cfg(test)]

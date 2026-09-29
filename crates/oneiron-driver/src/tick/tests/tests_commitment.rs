@@ -417,15 +417,20 @@ fn large_pending_digest_index_keeps_independent_attempt_deadline() {
                 let mut bytes = [0x88; 16];
                 bytes[..8].copy_from_slice(&index.to_be_bytes());
                 let id = EntityId::from_bytes(bytes).unwrap();
+                let candidate = ClaimCandidate::new(
+                    "dreamer.proactivity.follow_up",
+                    ClaimSubject::Entity(actor.entity_ref()),
+                    rmpv::Value::from("pending"),
+                    0.7,
+                );
+                // The Dreamer signs its proposal with the key the host retained.
+                let signed = vault
+                    .sign_retained_machine_claim_for_test(&id, &candidate, &envelope)
+                    .unwrap();
                 batch = batch.claim_candidate(
                     &id,
-                    ClaimCandidate::new(
-                        "dreamer.proactivity.follow_up",
-                        ClaimSubject::Entity(actor.entity_ref()),
-                        rmpv::Value::from("pending"),
-                        0.7,
-                    ),
-                    &envelope,
+                    candidate,
+                    &signed,
                     TimeRange { start: 1, end: 1 },
                     1,
                 );

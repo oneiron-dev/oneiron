@@ -40,6 +40,11 @@ pub(in crate::sync) fn classify_tombstone(
             err: Error::InvalidKey,
         };
     };
+    // The seeded Dreamer principal is never deletable, whether or not its
+    // row has reached LMDB yet.
+    if let Err(err) = crate::dreamer_runner::authority::guard_actor_delete(&id) {
+        return TombstoneStep::Refuse { id: Some(id), err };
+    }
     if matches!(vault.read_entity_header(&id), Ok(None))
         && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
         && let Some(header) = admitted_concurrent_delete_protected_header(&id, &entity_blob)

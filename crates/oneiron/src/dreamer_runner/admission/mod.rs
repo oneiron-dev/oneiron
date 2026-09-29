@@ -24,7 +24,7 @@ use super::codec::{
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
     DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -166,6 +166,15 @@ impl DreamerRunnerStore<'_> {
     /// attempt queued and the budget row unchanged.
     pub fn admit_next(&self, input: AdmitDreamerAttempt) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(DREAMER_RUNNER_ATTEMPT_KIND, input)
+    }
+
+    /// Admits only owner-authorized per-vault weave recipes. Never drains the
+    /// generic `dreamer` queue, which also holds resident agent dispatch.
+    pub fn admit_next_weave_recipe(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, input)
     }
 
     /// Atomically admits the next queued SKILL-OPT attempt (ONE-1448).

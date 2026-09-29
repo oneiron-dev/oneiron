@@ -329,16 +329,15 @@ fn default_factory_installs_commitment_wrapper_without_planner() {
 /// commitment event to the planner and still hands an ordinary partition
 /// attempt to the inner consolidation executor.
 #[tokio::test]
-async fn factory_planner_routes_tagged_attempt_and_delegates_partition() {
+async fn factory_planner_routes_tagged_attempt_and_delegates_partition() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let agent = seed_actor(&vault, 0x5D, oneiron::registry::ENTITY_TYPE_PERSON);
     let plans = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let factory = consolidation_factory(WriteActor::new(agent, oneiron::EdgeActorClass::Agent));
+    let factory = consolidation_factory(vault.dreamer_authority().expect("system Dreamer"));
     let mut factory = factory
         .with_commitment_wake_planner(Box::new(CountingPlanner {
             plans: Arc::clone(&plans),
         }))
-        .expect("an agent actor may install a planner");
+        .expect("the vault Dreamer may install a planner");
     let guard = BudgetGuard::new("wake".to_owned(), 10_000, BudgetExhaustionPolicy::Suspend);
     let mut executor = factory.executor(&guard).expect("wrapped executor");
 
@@ -375,28 +374,356 @@ async fn factory_planner_routes_tagged_attempt_and_delegates_partition() {
         "an unresolvable instance is skipped before the planner is asked"
     );
 
-    // An ordinary payload IS delegated: the failure that surfaces is the
-    // inner partition decoder's, which is exactly what delegation means.
-    let _ordinary = enqueue_input(&vault, rmpv::Value::from("not-a-partition"), "ord", 12);
-    let admitted = admit(&vault, 13);
-    assert!(
-        executor.execute(&admitted, &mut ctx).await.is_err(),
-        "an ordinary payload reaches the inner consolidation executor"
+    // A real SessionEnd queues the deterministic substitution-miner MESO job.
+    // The same factory delegates that ordinary consolidation attempt to its
+    // inner executor under the very System actor that planned above.
+    let session = match vault.mint_session(20)? {
+        oneiron::SessionMintOutcome::Minted(id) => id,
+        other => panic!("expected new session: {other:?}"),
+    };
+    vault.end_session_with_wake(
+        &session,
+        oneiron::SessionClosePredicate::Explicit,
+        21,
+        &oneiron::SessionEndWake::none(0),
+    )?;
+    let store = DreamerRunnerStore::new(&vault);
+    let outcome = store.admit_next_consolidation(
+        oneiron::dreamer_runner::AdmitDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Meso,
+            local_node_id: 1,
+            claim_authoring_tier: oneiron::dreamer_runner::DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: oneiron::dreamer_runner::DreamerClaimAuthoringAdmission::single_pass(),
+            admission: oneiron::dreamer_runner::AdmitDreamerAttempt {
+                lease_owner: "factory-miner".into(),
+                now: 22,
+                budget_id: "wake".into(),
+                budget_total_units: 10_000,
+                reserve_units: 100,
+                started_milestone: None,
+            },
+        },
+    )?;
+    let oneiron::dreamer_runner::DreamerConsolidationAdmissionOutcome::Admission(
+        oneiron::dreamer_runner::DreamerAdmissionOutcome::Admitted(admitted),
+    ) = outcome
+    else {
+        panic!("session end must admit a MESO miner: {outcome:?}");
+    };
+    assert_eq!(
+        executor.execute(&admitted, &mut ctx).await?,
+        DreamerAttemptExecution::Completed { completed_units: 0 }
     );
+    Ok(())
 }
 
 /// Installing a planner is FALLIBLE and rejects a non-Agent actor at
 /// configuration time, rather than once per pass inside `executor()`.
 #[test]
-fn planner_builder_rejects_non_agent_actor() {
+fn planner_builder_accepts_system_actor_but_refuses_human() {
     let (_dir, vault) = open_vault();
-    let system = seed_actor(&vault, 0x5F, oneiron::registry::ENTITY_TYPE_MACHINE);
     let plans = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let error = consolidation_factory(WriteActor::new(system, oneiron::EdgeActorClass::System))
+    assert!(
+        consolidation_factory(vault.dreamer_authority().expect("Dreamer"))
+            .with_commitment_wake_planner(Box::new(CountingPlanner {
+                plans: Arc::clone(&plans)
+            }))
+            .is_ok()
+    );
+    let human = seed_actor(&vault, 0x5F, oneiron::registry::ENTITY_TYPE_PERSON);
+    let error = consolidation_factory(WriteActor::new(human, oneiron::EdgeActorClass::Human))
         .with_commitment_wake_planner(Box::new(CountingPlanner { plans }))
         .err()
-        .expect("a System actor may not author gated proposals");
+        .expect("a Human actor may not author Dreamer proposals");
     assert!(matches!(error, oneiron::Error::InvalidClaimBody(_)));
+}
+
+#[tokio::test]
+async fn production_factory_system_dreamer_plans_live_commitment() -> Result<()> {
+    use oneiron::commitment::{
+        CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
+        CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
+    };
+    use oneiron::commitment_schedule::{CommitmentSchedulePayload, Schedule};
+    use oneiron::write_envelope::WriteProvenance;
+    use oneiron::{
+        ClaimApprovalStatus, ClaimSource, CommitmentWakeDue, CommitmentWakeFireOutcome,
+        EdgeActorClass, EntityId, TimeRange, WriteEnvelope,
+    };
+    let (_dir, vault) = open_vault();
+    let owner = EntityId::from_bytes([0x61; 16])?;
+    let beneficiary = EntityId::from_bytes([0x62; 16])?;
+    let series = EntityId::from_bytes([0x63; 16])?;
+    let at = TimeRange { start: 1, end: 1 };
+    for id in [owner, beneficiary] {
+        vault.put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            at,
+            1,
+            b"fixture person",
+        )?;
+    }
+    let projector = oneiron::commitment_schedule::commitment_projection_actor()?;
+    vault.put_entity(
+        &projector.entity_ref(),
+        oneiron::registry::ENTITY_TYPE_MACHINE,
+        at,
+        1,
+        b"commitment projector",
+    )?;
+    let record = CommitmentRecord::new(
+        CommitmentObligor::new(CommitmentObligorKind::Owner, owner),
+        beneficiary,
+        CommitmentContent::new("ring the beneficiary", None)?,
+        CommitmentSchedulePayload::series(Schedule::Once { due: 1_000 }, Some(100)).encode()?,
+        CommitmentStrength::Commitment,
+        CommitmentStatus::Open,
+        CommitmentBirthProvenance::new(CommitmentBirthKind::RunTreeNode, "run:factory")?,
+    )?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(owner, EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new(rmpv::Value::from("factory fixture"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    vault.put_commitment_series(
+        &series,
+        &record,
+        &envelope,
+        TimeRange {
+            start: 1,
+            end: 11_000,
+        },
+        1,
+    )?;
+    vault.reconcile_commitment_schedule(900)?;
+    let due = CommitmentWakeDue::from_due_entry(
+        &vault
+            .next_actionable_wake_phase()?
+            .expect("projected lead phase"),
+    )?
+    .expect("actionable phase");
+    assert!(matches!(
+        oneiron::fire_due_commitment_wake(&vault, due, 900)?,
+        CommitmentWakeFireOutcome::Enqueued { .. }
+    ));
+    let admitted = admit(&vault, 901);
+    let plans = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let actor = vault.dreamer_authority()?;
+    let mut factory =
+        consolidation_factory(actor).with_commitment_wake_planner(Box::new(CountingPlanner {
+            plans: Arc::clone(&plans),
+        }))?;
+    let guard = BudgetGuard::new("wake", 10_000, BudgetExhaustionPolicy::Suspend);
+    let mut executor = factory.executor(&guard)?;
+    let deadline = WakePassDeadline::new(180_000);
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 901_000,
+        prepared_wake: None,
+        prepared_attempt: None,
+    };
+    assert_eq!(
+        executor.execute(&admitted, &mut ctx).await?,
+        DreamerAttemptExecution::Completed { completed_units: 0 }
+    );
+    assert_eq!(plans.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let proposal = oneiron::commitment_wake_proposal_claim_id(admitted.status.attempt.id);
+    let body = vault
+        .get_claim(&proposal)?
+        .expect("the planner wrote a proposal");
+    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+    let rmpv::Value::Map(entries) = body.evidence.expect("stamped evidence") else {
+        panic!("evidence map");
+    };
+    assert!(
+        entries
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("actor_class")
+                && value.as_u64() == Some(u64::from(EdgeActorClass::System as u8)))
+    );
+    Ok(())
+}
+
+struct TestWeaveRuntime;
+impl oneiron::dreamer_wake::WeaveRecipeRuntime for TestWeaveRuntime {
+    fn executor(&self) -> Result<&str> {
+        Ok("test-weave-runtime@1")
+    }
+    fn draft(
+        &mut self,
+        markdown: &str,
+        evidence: &[u8],
+    ) -> Result<oneiron::dreamer_wake::WeaveRecipeDraft> {
+        let predicate = markdown
+            .lines()
+            .find_map(|line| line.strip_prefix("PREDICATE: "))
+            .ok_or(oneiron::Error::InvalidClaimBody("no recipe predicate"))?;
+        Ok(oneiron::dreamer_wake::WeaveRecipeDraft {
+            predicate: predicate.into(),
+            value: rmpv::decode::read_value(&mut &evidence[..])
+                .map_err(|_| oneiron::Error::InvalidClaimBody("invalid TURN"))?
+                .as_map()
+                .and_then(|fields| {
+                    fields.iter().find_map(|(key, value)| {
+                        (key.as_str() == Some("txt"))
+                            .then(|| value.as_str())
+                            .flatten()
+                    })
+                })
+                .ok_or(oneiron::Error::InvalidClaimBody("TURN text missing"))?
+                .into(),
+            confidence: 0.8,
+        })
+    }
+}
+
+#[tokio::test]
+async fn production_factory_executes_owner_admitted_agent_authored_recipe() -> Result<()> {
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
+    use oneiron::dreamer_wake::{
+        DreamerWakeDriver, RunWakePass, WakeCancellation, WakePassDeadline, WakeTrigger,
+    };
+    use oneiron::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
+    use oneiron::skill_hub::HubFile;
+    use oneiron::store::GateDecisionId;
+    use oneiron::{EdgeActorClass, EntityId, TimeRange};
+
+    let (_dir, vault) = open_vault();
+    let agent = EntityId::from_bytes([0x64; 16])?;
+    let owner = EntityId::from_bytes([0x65; 16])?;
+    let subject = EntityId::from_bytes([0x66; 16])?;
+    let evidence = EntityId::from_bytes([0x67; 16])?;
+    for (id, body) in [
+        (agent, b"agent".as_slice()),
+        (owner, b"owner".as_slice()),
+        (subject, b"subject".as_slice()),
+    ] {
+        vault.put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            body,
+        )?;
+    }
+    let mut turn = Vec::new();
+    rmpv::encode::write_value(
+        &mut turn,
+        &rmpv::Value::Map(vec![
+            ("txt".into(), "evidence".into()),
+            ("spkr".into(), "user".into()),
+        ]),
+    )
+    .map_err(|_| oneiron::Error::InvalidClaimBody("TURN fixture encode"))?;
+    vault.put_entity(
+        &evidence,
+        oneiron::registry::ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &turn,
+    )?;
+    vault.install_read_permit_for_test(vault.dreamer_authority()?)?;
+    let skill = EntityId::from_bytes([0x68; 16])?;
+    let proposed = SkillRecord::new(
+        "weave.recipe",
+        "host-supplied per-vault workflow",
+        "v1",
+        ClaimApprovalStatus::Proposed,
+        SkillLifecycle::Candidate,
+        ClaimSource::Generated,
+        0.5,
+        true,
+        false,
+        Vec::new(),
+        rmpv::Value::Map(vec![("ask".into(), "weave the evidence".into())]),
+    )
+    .with_governance_tier(SkillGovernanceTier::Standard);
+    vault
+        .memory(agent, EdgeActorClass::Agent)
+        .skill_save_with_source(
+            skill,
+            &proposed,
+            vec![HubFile::new(
+                "SKILL.md",
+                b"---\nname: weave.recipe\n---\nPREDICATE: profile.weave_note\n",
+            )],
+            None,
+            2,
+        )
+        .expect("agent authors the candidate with source custody");
+    let owner = vault.authenticate_owner(
+        owner,
+        "principal:factory-recipe",
+        true,
+        GateDecisionId::now(),
+    )?;
+    let status = vault.admit_and_enqueue_weave_recipe(&owner, skill, subject, evidence, 3)?;
+    let (oneiron::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status)
+    | oneiron::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status)) = status
+    else {
+        panic!("unexpected recipe enqueue outcome")
+    };
+    let factory = consolidation_factory(vault.dreamer_authority()?)
+        .with_weave_recipe_runtime(Box::new(TestWeaveRuntime));
+    let mut factory = factory;
+    let guard = BudgetGuard::new("weave", 10_000, BudgetExhaustionPolicy::Suspend);
+    let mut exec = factory.executor(&guard)?;
+    let mut driver = DreamerWakeDriver::new(&vault, "weave", WakePassDeadline::new(180_000));
+    let report = driver
+        .run_wake_pass(
+            RunWakePass {
+                trigger: WakeTrigger::Event,
+                scope: DreamerConsolidationScope::Micro,
+                local_node_id: 1,
+                lease_owner: "factory".into(),
+                budget_total_units: 10_000,
+                reserve_units: 100,
+                now: 4,
+                host_scope: None,
+            },
+            &mut exec,
+            &WakeCancellation::new(),
+        )
+        .await?;
+    assert_eq!(report.completed, 1);
+    assert_eq!(
+        DreamerRunnerStore::new(&vault)
+            .status(status.attempt.id)?
+            .unwrap()
+            .attempt
+            .state,
+        AttemptState::Completed
+    );
+    let claim = vault
+        .claims_for_subject(&subject)?
+        .into_iter()
+        .find(|id| {
+            vault
+                .get_claim(id)
+                .ok()
+                .flatten()
+                .is_some_and(|body| body.predicate == "profile.weave_note")
+        })
+        .expect("host interpreter's output must pass the engine Gate");
+    let receipt = vault.receipts(
+        oneiron::receipt::ReceiptQuery::new(100).with_kind(oneiron::receipt::ReceiptKind::Gate),
+    )?;
+    let actor_hex = vault.dreamer_authority()?.entity_ref().to_hex();
+    assert!(
+        receipt
+            .iter()
+            .any(|row| row.actor.as_deref() == Some(actor_hex.as_str())
+                && row.fields.get("predicate").map(String::as_str) == Some("profile.weave_note"))
+    );
+    assert_eq!(
+        vault.get_claim(&claim)?.unwrap().value.as_str(),
+        Some("evidence")
+    );
+    Ok(())
 }
 
 #[derive(Clone, Default)]

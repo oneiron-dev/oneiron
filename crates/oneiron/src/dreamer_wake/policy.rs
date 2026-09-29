@@ -41,6 +41,17 @@ pub struct DreamerWakePolicy {
     pub idle_secs: u64,
     /// Independent quiet-window trigger for Weave, even below accumulation.
     pub quiet_weave_secs: u64,
+    /// Where the per-vault workflow skill competes with connector events.
+    /// Cleanup and maintenance retain their protected priority; consolidation
+    /// stays after these two lanes so its home-node stop cannot starve them.
+    pub weave_recipe_priority: WeaveRecipePriority,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeaveRecipePriority {
+    BeforeConnectorEvent,
+    AfterConnectorEvent,
 }
 /// Which role a definition without an explicit cadence dial receives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

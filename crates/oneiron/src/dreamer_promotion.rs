@@ -300,6 +300,23 @@ fn promote_one(
             .expect("consolidation envelope must stamp a source"),
         computed_meet
     ));
+    // The Dreamer is a MACHINE writer: its host-held key signs the exact
+    // candidate the write door below admits.
+    {
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| error.to_string())?;
+        vault
+            .sign_retained_machine_claim_in_txn(
+                &txn,
+                &candidate.claim_id,
+                &claim_candidate,
+                &mut envelope,
+            )
+            .map_err(|error| error.to_string())?;
+    }
 
     // 4. ONE wtxn: the proposed claim and its deferred closure binding
     // commit or roll back together; the prior stays active until later grant.

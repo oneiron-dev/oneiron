@@ -298,6 +298,22 @@ pub(crate) fn provision_engine_machines(vault: &Vault) -> crate::authority::Host
     issuer
 }
 
+/// Signs a MACHINE writer's candidate with the signer the host retained for
+/// the envelope's actor, as an engine writer does before its write door.
+pub(crate) fn sign_machine_candidate(
+    vault: &Vault,
+    id: &EntityId,
+    candidate: &crate::ClaimCandidate,
+    envelope: &crate::WriteEnvelope,
+) -> crate::WriteEnvelope {
+    let mut envelope = envelope.clone();
+    let txn = vault.store.env.read_txn().expect("read txn");
+    vault
+        .sign_retained_machine_claim_in_txn(&txn, id, candidate, &mut envelope)
+        .expect("machine claim signature");
+    envelope
+}
+
 /// Binds `owner` as the rooted test vault's human owner, so owner verbs keep
 /// working after a fixture roots its vault.
 pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {

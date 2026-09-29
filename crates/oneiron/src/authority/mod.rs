@@ -118,8 +118,8 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 use ancestor_index::*;
 use entry_transition::*;
 pub(crate) use machine_write::{
-    machine_claim_needs_history, machine_claim_read_admitted, machine_history_authority_descends,
-    machine_history_host_context, verify_machine_claim_in_txn,
+    evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
+    machine_history_authority_descends, machine_history_host_context, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

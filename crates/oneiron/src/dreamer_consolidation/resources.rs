@@ -61,6 +61,7 @@ impl FallbackOutputPin {
 }
 
 pub(super) struct BranchResources<'a> {
+    actor: WriteActor,
     read: ScopedRead<'a>,
     prepared_wake: Option<&'a PreparedWake>,
     partition: ConsolidationPartitionKey,
@@ -223,6 +224,7 @@ impl<'a> BranchResources<'a> {
         // A supplied scope is authority, not a request to infer more authority.
         let scope = requested.cloned().unwrap_or(granted);
         let mut resources = Self {
+            actor,
             read,
             prepared_wake,
             partition,

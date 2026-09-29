@@ -140,8 +140,11 @@ impl VerifiedClaimTransition {
             crate::claim::ClaimApprovalStatus::Approved => expected.approval = next.approval,
             crate::claim::ClaimApprovalStatus::Rejected => {
                 expected.approval = next.approval;
-                expected.lifecycle = crate::claim::ClaimLifecycleStatus::Retracted;
-                expected.valid_to = next.valid_to;
+                // A MACHINE claim's signed fold rejects without retracting.
+                if !crate::authority::machine_claim_needs_history(store, txn, &expected)? {
+                    expected.lifecycle = crate::claim::ClaimLifecycleStatus::Retracted;
+                    expected.valid_to = next.valid_to;
+                }
             }
             _ => {
                 return Err(Error::InvalidClaimBody(

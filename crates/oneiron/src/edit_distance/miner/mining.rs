@@ -119,13 +119,16 @@ pub fn run_substitution_miner_at(
     now: u64,
 ) -> Result<Vec<MinedOutcome>> {
     // Checked HERE, before any evidence is read, because the consequence is
-    // invisible at the write: a mined preference under the wrong actor class or
+    // invisible at the write: a mined preference under a wrong actor or
     // with no run id lands Proposed in a tray that has no group, so no surface
     // can ever show it and no decider can ever answer it. Refusing the pass is
     // the only outcome a caller can notice.
-    if run.agent.actor_class() != EdgeActorClass::Agent || run.run_id.trim().is_empty() {
+    if run.run_id.trim().is_empty()
+        || (run.agent.actor_class() != EdgeActorClass::Agent
+            && run.agent != vault.dreamer_authority()?)
+    {
         return Err(invalid(
-            "a miner pass needs an Agent-class actor and a run id, or its proposals are unreviewable",
+            "a miner pass needs a valid agent or Dreamer actor and a run id, or its proposals are unreviewable",
         ));
     }
     let judgments = amendment_judgments(vault)?;
@@ -190,6 +193,9 @@ pub fn miner_session_from_input(input: &Value) -> Result<EntityId> {
     let Value::Map(entries) = input else {
         return Err(malformed_payload());
     };
+    if entries.len() != 1 {
+        return Err(malformed_payload());
+    }
     let Some((_, Value::Binary(bytes))) = entries
         .iter()
         .find(|(entry, _)| entry.as_str() == Some(PAYLOAD_KEY_SESSION))

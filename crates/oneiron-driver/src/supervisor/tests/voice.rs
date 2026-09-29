@@ -56,6 +56,7 @@ fn fixture() -> (
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+    crate::provision_test_engine_machines(&vault);
     let mut policy = vault.purpose_default_table().expect("owner policy");
     policy.extraction_max_locality = oneiron::ModelLocality::OwnServer;
     policy
@@ -148,12 +149,12 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
             .single()
             .is_none()
     );
-    let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::System);
+    let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::Agent);
     assert!(vault.install_read_permit_for_test(wrong).is_err());
     vault.install_read_permit_for_test(actor).unwrap();
     assert!(
         vault
-            .scoped_read(reader("agent"))
+            .scoped_read(reader("system"))
             .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
             .single()

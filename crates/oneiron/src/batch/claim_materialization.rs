@@ -266,6 +266,7 @@ impl ClaimMaterialization {
             approval: false,
         };
         binding.validate_actor(&vault.store, txn)?;
+        let machine = crate::authority::machine_claim_needs_history(&vault.store, txn, &next)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
         let mut decision = None;
         crate::gate::check_claim_policy_for_write_with_record(
@@ -295,6 +296,22 @@ impl ClaimMaterialization {
                 .as_ref()
                 .map(crate::gate::RecordedClaimGateDecision::decision_id)]),
         )]);
+        if machine {
+            // A MACHINE claim's grant is its author's signed Approve event,
+            // which the fold records as this Auto grant.
+            let granted = crate::claim::transition::stage_machine_transition_as(
+                vault,
+                txn,
+                *id,
+                crate::claim::transition::ClaimTransitionKind::Approve,
+                crate::claim::transition::TransitionDelta::None,
+                binding.envelope.actor(),
+                vault.store.clock.now_recorded_at(),
+            )?;
+            if encode_claim_body(&granted)? != data {
+                return Err(binding_error());
+            }
+        }
         super::apply_ops_with_gate_mode(
             &vault.store,
             &vault.config,

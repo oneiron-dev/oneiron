@@ -269,14 +269,16 @@ fn batch_fixtures() -> Vec<BatchFixture> {
 /// where the derived ids those rows carry moved onto `EntityId::derive` (T50),
 /// and re-pinned when #1224 moved every put's record-scope stamp to its v2
 /// birth position with a revision counter.
+// Every open seeds the Dreamer MACHINE row (ONE-2545), so a batch that
+// stamps or retires an entity's record scope bumps a revision one higher.
 const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     (
         "put",
-        "6cb17777852134748ad5f30a7f50e019805654f2083b4c29180409da6c8acf39",
+        "576c068dd18176a850a891d7134449360b9e963b3c4ecb3de050878394dd4b2a",
     ),
     (
         "put_habit_checkin",
-        "3ce5069cb0a4c97dc90b7ef4b0bdcbcf137fc75db78697dda46ea8d69e37e762",
+        "459b0b433ee5010024d75669bb8ed413d6bf0d7971f30e683145a1aeba27cc5f",
     ),
     (
         "edges",
@@ -296,30 +298,30 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "delete",
-        "50e831530cbbc7ab2a9e1d2a4fb7d99133ee69d9ee2f617b05767f860f993b53",
+        "d24efc78843623e75f06a0019f940e3096594d7e2d597a036e54cfccfd6b5cb5",
     ),
     ("claim_candidate", CLAIM_CANDIDATE_DIGEST),
     (
         "put_internal",
-        "548aa0e92566967fa3fb1590755f8f5e884071372fd00c49f0d14421ab98c823",
+        "359f199f676dd5b2f9235efe2462195baa7eb0423bb7a449f3bbb5c3c65c1328",
     ),
     (
         "put_task_fact",
-        "ef6f9e1dfd5fc4281333346d2aa98f40f114e2794d0716ad230f79974c1105dc",
+        "f53139f595707eef346b8203cc68167cc1934a81ed2cefb9c1a69d662471a792",
     ),
     (
         "put_authored_note",
-        "cf906d63603dbebfa5e0b333caa0c18f9c0cc753160439c566d59ecb9a368609",
+        "b6cb7bd7dc9c2b1e4cfa6424ae0cf712d9fe5c4b1b55dce3a20cf4b3982b765e",
     ),
 ];
 
 /// A `sync` build also queues the claim's embed job in the same batch.
 #[cfg(feature = "sync")]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "6bbf6c09a591620b703eef2f01fedd333661047ef94ae7d0db49a76e4cd7988e";
+    "361f4125109e320c7085d75c37f9da62e194dcd9f795f462a073621125328b97";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "db000976563ce04e672d24bd074be3cc9d3269b3243535017a844912718ec887";
+    "be966e43710cbe5e49ae745ef15d843182a391d52174ef4592a5f01861959538";
 
 #[test]
 fn one_builder_writes_what_both_builders_wrote() -> Result<()> {

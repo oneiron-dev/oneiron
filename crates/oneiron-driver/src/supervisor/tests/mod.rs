@@ -58,6 +58,8 @@ pub(super) fn seed_budget_row(vault: &Vault, budget_id: &str) {
 pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+    // The Dreamer is a MACHINE writer: the host roots the vault and holds its key.
+    crate::provision_test_engine_machines(&vault);
     (dir, vault)
 }
 

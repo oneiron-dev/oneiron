@@ -11,6 +11,7 @@ mod constants;
 mod milestone;
 #[cfg(feature = "sync")]
 mod progress;
+mod recipe;
 mod store;
 mod types;
 
@@ -37,6 +38,7 @@ pub use self::constants::*;
 pub use self::milestone::*;
 #[cfg(feature = "sync")]
 pub use self::progress::*;
+pub use self::recipe::*;
 pub use self::store::*;
 pub use self::types::*;
 

@@ -182,6 +182,7 @@ impl Vault {
         gate: Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
     ) -> Result<DeleteEntityOutcome> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         {
             let rtxn = self.store.env.read_txn()?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;

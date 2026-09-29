@@ -259,6 +259,7 @@ impl<'a> DreamerWakeDriver<'a> {
         crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
 
+        let admission_policy = self.vault.dreamer_wake_policy()?;
         let mut report = WakePassReport {
             admitted: 0,
             completed: 0,
@@ -339,20 +340,33 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 outcome => outcome,
             };
-            let priority = match priority {
-                DreamerAdmissionOutcome::Empty => {
-                    self.store.admit_next_connector_event(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
-                }
-                outcome => outcome,
+            // Only the NEW recipe-vs-connector choice is policy data. Cleanup
+            // and maintenance remain first; consolidation's home-node stop
+            // remains last. Read the owner row once per pass below.
+            let order = match admission_policy.weave_recipe_priority {
+                super::policy::WeaveRecipePriority::BeforeConnectorEvent => [true, false],
+                super::policy::WeaveRecipePriority::AfterConnectorEvent => [false, true],
             };
+            let mut priority = priority;
+            for recipe in order {
+                if !matches!(&priority, DreamerAdmissionOutcome::Empty) {
+                    break;
+                }
+                let request = AdmitDreamerAttempt {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now,
+                    budget_id: self.budget_id.clone(),
+                    budget_total_units: input.budget_total_units,
+                    reserve_units: input.reserve_units,
+                    started_milestone: self
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                };
+                priority = if recipe {
+                    self.store.admit_next_weave_recipe(request)?
+                } else {
+                    self.store.admit_next_connector_event(request)?
+                };
+            }
             let mut admitted =
                 match priority {
                     DreamerAdmissionOutcome::Admitted(attempt) => *attempt,

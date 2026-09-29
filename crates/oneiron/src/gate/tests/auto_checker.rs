@@ -1609,6 +1609,69 @@ fn rate_and_streak_are_soft_inputs_to_the_existing_verdict() -> Result<()> {
 }
 
 #[test]
+fn system_dreamer_checker_observes_own_streak_and_retains_normal_baseline() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let dreamer = vault.dreamer_authority()?;
+    let mut manifest = checker_manifest(vec![checker_entry(CHECKER_REF)]);
+    append_actor_ceiling(
+        &mut manifest,
+        actor_ceiling_row_for_ref("system", &dreamer.entity_ref().to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, test_id(0x22), &manifest)?;
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    let (candidate, agent_envelope) = dreamer_parts(&vault, &body)?;
+    let envelope = WriteEnvelope::new(
+        dreamer,
+        ClaimSource::Generated,
+        agent_envelope.provenance().clone(),
+        ClaimApprovalStatus::Auto,
+    );
+    let body = candidate.into_claim_body(&envelope, vault.default_facet()?)?;
+    let mut malformed = body.clone();
+    malformed.evidence = None;
+    let err = gate_claim_write(&vault, &test_id(0x63), &malformed, &envelope, None, false)
+        .expect_err("bad evidence is a structural refusal");
+    assert_gate_rejected(err, "deny", &["gate.deny.dreamer_precommit.no_evidence"]);
+    // An Agent-class receipt naming the same id must not be counted as System history.
+    let checker = Arc::new(RecordingAutoChecker::allow());
+    let bounded = BoundedAutoChecker::new(checker.clone());
+    gate_claim_write(
+        &vault,
+        &test_id(0x64),
+        &body,
+        &envelope,
+        Some(&bounded),
+        false,
+    )?;
+    let seen = checker.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].actor_class, "system");
+    assert_eq!(seen[0].burst.expect("native System history").streak, 1);
+    let receipt = vault
+        .store
+        .gate_decisions(100)?
+        .into_iter()
+        .find(|row| row.claim_id == Some(*test_id(0x64).as_bytes()))
+        .expect("gated System claim decision");
+    assert_eq!(
+        receipt.actor_ref.as_deref(),
+        Some(dreamer.entity_ref().to_hex().as_str())
+    );
+    assert!(receipt.receipt_reasons.iter().any(|token| {
+        crate::self_heal::tripwires::normal_baseline_predicate(token)
+            == Some(body.predicate.as_str())
+    }));
+    let projected = vault.receipts(
+        crate::receipt::ReceiptQuery::new(100).with_kind(crate::receipt::ReceiptKind::Gate),
+    )?;
+    assert!(projected.iter().any(|row| row.actor.as_deref()
+        == Some(dreamer.entity_ref().to_hex().as_str())
+        && row.fields.get("predicate") == Some(&body.predicate)
+        && row.fields.get("criticality").map(String::as_str) == Some("normal")));
+    Ok(())
+}
+
+#[test]
 fn authored_weave_policy_and_precedence_move_gate_frontier() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let id = test_id(0x22);

@@ -315,6 +315,20 @@ no longer refuses a pre-migration log. A sidecar missing after the backfill
 marker is still corruption. **Discarded population:** development logs that
 carry a veto entry.
 
+### ONE-2545: the Dreamer principal becomes an engine MACHINE writer
+
+**Ruling: open-time row migration, no storage-format change.** The Dreamer
+principal keeps its derived id, but its row is the seeded System MACHINE
+(ARCH-0034: MACHINE admits only actor class system). Vault open re-births a row
+that earlier builds minted as an Agent PERSON as that MACHINE row, in place,
+before any caller gets the handle; the edges, facets and claims that name the
+id stay. The host then enrolls the Dreamer's key with the other engine writers
+(`provision_engine_machine_identities`), so its first signed write follows the
+migration. Like every engine writer it signs every claim write and has no
+unsigned or unrooted exemption. **Discarded population:** unsigned claims the
+Dreamer wrote as a PERSON under earlier builds; reads withhold them once their
+author is a MACHINE.
+
 ### ONE-1634: engine MACHINE writers enrolled at host open
 
 **Ruling: open-time enrollment, no storage-format change.** MACHINE claims must

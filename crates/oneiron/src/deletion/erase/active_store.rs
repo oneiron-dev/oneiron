@@ -37,6 +37,7 @@ impl Vault {
         id: &EntityId,
         request_id: Option<&[u8; 16]>,
     ) -> Result<(bool, Vec<EntityId>)> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         let settled = match request_id {
             Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
@@ -65,8 +66,9 @@ impl Vault {
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
+        // A MACHINE claim's signed history controls go with it.
         let (existed, had_vector, had_graph_mutation, neighbors) =
-            deindex_entity(&self.store, wtxn, id)?;
+            crate::batch::deindex_entity_with_machine_history(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
         let note_removed = crate::note::erase::purge(self, wtxn, id)?;
@@ -88,6 +90,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool, bool)> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;

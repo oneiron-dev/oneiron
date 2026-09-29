@@ -137,6 +137,10 @@ pub enum RegistryError {
         existing: u8,
         attempted: u8,
     },
+    /// The one vault Dreamer principal is a fixed system entity. No ordinary
+    /// local or replicated operation may replace or erase it.
+    #[error("vault Dreamer actor is immutable")]
+    DreamerActorImmutable,
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -202,6 +206,7 @@ impl RegistryError {
             Self::InvalidFacetOfEdge { .. } => ErrorKind::InvalidFacetOfEdge,
             Self::FacetStampImmutable { .. } => ErrorKind::FacetStampImmutable,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
+            Self::DreamerActorImmutable => ErrorKind::DreamerActorImmutable,
             Self::StructuralKindZoneViolation { .. } => ErrorKind::StructuralKindZoneViolation,
             Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {
                 ErrorKind::StructuralKindCollision
