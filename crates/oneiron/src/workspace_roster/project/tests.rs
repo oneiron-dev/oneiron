@@ -1,3 +1,4 @@
+mod authority;
 mod support;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;
@@ -1379,6 +1380,8 @@ fn project_dag_accepts_two_parents_and_diamond_but_rejects_secondary_cycles() ->
         );
     }
     child.parents.retain(|parent| parent != &right.to_hex());
+    // Moving a project in the tree is a board act: re-sign the fixture.
+    authority::sign_project(&vault, shared, &mut child, leader)?;
     vault.put_project(shared, &child, 4)?;
     assert_eq!(
         vault.targets(&shared, crate::edge::EdgeKind::BelongsTo, None)?,
@@ -1457,6 +1460,8 @@ fn generic_edges_cannot_invent_or_retire_project_parents() -> Result<()> {
     )?;
     let mut new_body = vault.project(child)?.unwrap();
     new_body.parents = vec![other.to_hex()];
+    // Moving a project in the tree is a board act: re-sign the fixture.
+    authority::sign_project(&vault, child, &mut new_body, leader)?;
     vault.put_project(child, &new_body, 3)?;
     assert!(!vault.edge_exists(&child, EdgeKind::BelongsTo, &root)?);
     assert_eq!(
@@ -1703,6 +1708,8 @@ fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_pa
         .commit()?;
     check(&vault, root)?;
     edited.parents = vec![second_parent.to_hex()];
+    // Moving a project in the tree is a board act: re-sign the fixture.
+    authority::sign_project(&vault, venture, &mut edited, leader)?;
     vault.put_project(venture, &edited, 7)?;
     check(&vault, second_parent)?;
     assert!(!vault.edge_exists(&venture, EdgeKind::BelongsTo, &root)?);
@@ -1755,7 +1762,13 @@ fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
     let (_destination_dir, destination) =
         crate::test_util::open_test_vault_with(Default::default());
     destination.import_whole_vault_json(artifact.bytes())?;
-    assert_eq!(destination.project(child_id)?, Some(child.clone()));
+    // The vault is its own root project (ARCH-0067): the source root maps
+    // onto the destination root instead of landing as a second root.
+    let destination_root = destination.root_project()?;
+    assert!(destination.project(root_id)?.is_none());
+    let mut expected = child.clone();
+    expected.parents = vec![destination_root.to_hex()];
+    assert_eq!(destination.project(child_id)?, Some(expected));
     let room_id = EntityId::from_hex(&child.home_room)?;
     assert_eq!(
         destination.project_room(room_id)?.expect("room").project_id,

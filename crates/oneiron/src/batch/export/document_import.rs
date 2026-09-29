@@ -89,6 +89,7 @@ impl Vault {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
         }
         withhold_unborn_projects(self, &wtxn, &document, &mut omitted)?;
+        map_project_root(self, &wtxn, &mut document, &mut omitted)?;
         for row in &mut document.evidence_ledger.entities {
             if let ExportBody::Pack(value) = &row.body {
                 let (handle, envelope) = self
@@ -415,6 +416,93 @@ fn withhold_unborn_projects(
         {
             omitted.insert(parse_id(&row.id)?);
         }
+    }
+    Ok(())
+}
+
+/// This vault is its own root project: the source root maps onto it instead
+/// of landing as a second parentless root. A signed project's slip authority
+/// lives in the source vault's log, which never becomes local rights here,
+/// so signed rows and their descendants stay archive data in the document.
+fn map_project_root(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: &mut WholeVaultDocument,
+    omitted: &mut BTreeSet<EntityId>,
+) -> Result<()> {
+    let Ok(kind) = vault.project_type_byte() else {
+        return Ok(());
+    };
+    let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
+        return Ok(());
+    };
+    let mut projects = BTreeMap::new();
+    for row in document.entities() {
+        let id = parse_id(&row.id)?;
+        if row.entity_type == kind && !omitted.contains(&id) {
+            let body: crate::workspace_roster::ProjectRecord =
+                rmp_serde::from_slice(&row.body.to_bytes()?)
+                    .map_err(|_| invalid("project row body"))?;
+            projects.insert(id, body);
+        }
+    }
+    let Some(source) = projects
+        .iter()
+        .find(|(_, body)| body.parents.is_empty())
+        .map(|(id, _)| *id)
+    else {
+        return Ok(());
+    };
+    if source == target {
+        return Ok(());
+    }
+    let mut archived = BTreeSet::from([source.to_hex()]);
+    archived.extend(
+        projects
+            .iter()
+            .filter(|(_, body)| body.write_proof.is_some())
+            .map(|(id, _)| id.to_hex()),
+    );
+    // Descendants of a signed row keep it as their parent: archive them too.
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for (id, body) in &projects {
+            if !archived.contains(&id.to_hex())
+                && body
+                    .parents
+                    .iter()
+                    .any(|parent| *parent != source.to_hex() && archived.contains(parent))
+            {
+                archived.insert(id.to_hex());
+                grew = true;
+            }
+        }
+    }
+    for (id, body) in &projects {
+        if archived.contains(&id.to_hex()) {
+            omitted.insert(*id);
+            omitted.insert(parse_id(&body.home_room)?);
+        }
+    }
+    let (source, target) = (source.to_hex(), target.to_hex());
+    for row in &mut document.evidence_ledger.entities {
+        let id = parse_id(&row.id)?;
+        let Some(body) = projects.get(&id) else {
+            continue;
+        };
+        if omitted.contains(&id) {
+            continue;
+        }
+        let mut body = body.clone();
+        // Only the tree position moves; the claims scope id stays a label.
+        for parent in &mut body.parents {
+            if *parent == source {
+                parent.clone_from(&target);
+            }
+        }
+        let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
+        row.body = ExportBody::from_bytes(&bytes, row.entity_type);
     }
     Ok(())
 }

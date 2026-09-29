@@ -1,5 +1,5 @@
 //! Human-authenticated project goal intake; proposals never write this record.
-use super::{ProjectRecord, encode, invalid};
+use super::{encode, invalid};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -201,9 +201,9 @@ impl Vault {
             ClaimApprovalStatus::Approved,
         );
 
-        let mut project: ProjectRecord =
-            super::record(&self.store, txn, project_id, self.project_type_byte()?)?
-                .ok_or_else(invalid)?;
+        let mut project = self
+            .visible_project_in_txn(txn, project_id)?
+            .ok_or_else(invalid)?;
         let previous = project
             .goal
             .as_deref()
@@ -257,9 +257,7 @@ impl Vault {
     /// Read the project's current goal, never the leader's instructions.
     pub fn project_intake_goal(&self, project_id: EntityId) -> Result<Option<GoalRecord>> {
         let txn = self.store.env.read_txn()?;
-        let Some(project): Option<ProjectRecord> =
-            super::record(&self.store, &txn, project_id, self.project_type_byte()?)?
-        else {
+        let Some(project) = self.visible_project_in_txn(&txn, project_id)? else {
             return Ok(None);
         };
         let Some(id) = project.goal else {

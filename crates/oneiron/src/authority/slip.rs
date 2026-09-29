@@ -287,11 +287,7 @@ impl CapabilitySlip {
         holder_signature: &[u8],
     ) -> Result<VerifiedSlip> {
         let verified = self.verify_authority(host_public_key, fold, now)?;
-        let key = VerifyingKey::from_bytes(&self.current_binding_key())
-            .map_err(|_| invalid_authority())?;
-        let signature = Signature::from_slice(holder_signature).map_err(|_| invalid_authority())?;
-        key.verify_strict(&self.binding_transcript(challenge)?, &signature)
-            .map_err(|_| invalid_authority())?;
+        self.verify_holder(challenge, holder_signature)?;
         Ok(verified)
     }
     /// Verify with the minting host public key, including signed narrowing blocks.
@@ -316,11 +312,42 @@ impl CapabilitySlip {
         transcript.extend_from_slice(challenge);
         Ok(transcript)
     }
+    /// Checks a proof the holder made at `signed_at`, as a read-time fold does
+    /// for stored history: expiry is judged at that time, not the reader's
+    /// clock, and a revoke of the slip or its minting host still refuses it.
+    pub fn verify_history(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        signed_at: u64,
+        challenge: &[u8],
+        holder_signature: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let verified = self.verify_authority_with(host_public_key, fold, signed_at, true)?;
+        self.verify_holder(challenge, holder_signature)?;
+        Ok(verified)
+    }
+    fn verify_holder(&self, challenge: &[u8], holder_signature: &[u8]) -> Result<()> {
+        let key = VerifyingKey::from_bytes(&self.current_binding_key())
+            .map_err(|_| invalid_authority())?;
+        let signature = Signature::from_slice(holder_signature).map_err(|_| invalid_authority())?;
+        key.verify_strict(&self.binding_transcript(challenge)?, &signature)
+            .map_err(|_| invalid_authority())
+    }
     pub(super) fn verify_authority(
         &self,
         host_public_key: &super::AuthorityKey,
         fold: &AuthorityFold,
         now: u64,
+    ) -> Result<VerifiedSlip> {
+        self.verify_authority_with(host_public_key, fold, now, false)
+    }
+    fn verify_authority_with(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+        history: bool,
     ) -> Result<VerifiedSlip> {
         self.claims.validate()?;
         if self.version != 2
@@ -337,7 +364,11 @@ impl CapabilitySlip {
             .ok_or_else(invalid_authority)?;
         if mint.action.claims != self.claims
             || &mint.signer != host_public_key
-            || !fold.slip_is_live(&self.claims.slip_id)
+            || !(if history {
+                fold.slip_authorized_history(&self.claims.slip_id)
+            } else {
+                fold.slip_is_live(&self.claims.slip_id)
+            })
         {
             return Err(invalid_authority());
         }

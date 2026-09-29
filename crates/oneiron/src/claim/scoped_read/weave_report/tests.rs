@@ -1,6 +1,7 @@
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ScopedReadActorKey};
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+use crate::workspace_roster::ProjectRecord;
 use crate::{EdgeKind, TimeRange, Vault};
 use rmpv::Value;
 
