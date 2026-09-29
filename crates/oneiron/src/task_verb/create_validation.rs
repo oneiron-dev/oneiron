@@ -343,6 +343,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         successor_short_id: None,
         gate_denial: None,
         read_receipt: None,
+        policy_denial: None,
     }
 }
 

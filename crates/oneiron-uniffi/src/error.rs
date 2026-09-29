@@ -46,6 +46,7 @@ mod tests {
             // fixture is not a gate refusal, so it carries none.
             gate_denial: None,
             read_receipt: None,
+            policy_denial: None,
         };
         let expected = source.clone();
 
@@ -69,6 +70,7 @@ mod tests {
             successor_short_id: None,
             gate_denial: None,
             read_receipt: None,
+            policy_denial: None,
         });
 
         assert!(suggestions.is_empty());

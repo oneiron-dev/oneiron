@@ -1,5 +1,6 @@
 //! Public fan-out governance inputs and observable outcomes.
 
+use super::TaskCreateRateLimit;
 use crate::context_board::AgentRow;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -13,15 +14,13 @@ pub struct ConsultFanOutPolicy {
     pub mode: ConsultFanOutMode,
     /// Optional anomaly detector, not a spend cap. Crossings pause visibly.
     pub peer_rate: Option<ConsultFanOutRate>,
+    /// The owner-authored actor request quota. One admitted fan-out uses one slot.
+    pub create_rate: TaskCreateRateLimit,
 }
 
 impl Default for ConsultFanOutPolicy {
     fn default() -> Self {
-        Self {
-            approval_threshold: crate::gate::default_consult_fanout_approval_threshold(),
-            mode: ConsultFanOutMode::Auto,
-            peer_rate: None,
-        }
+        crate::gate::default_consult_fanout_policy()
     }
 }
 
@@ -62,4 +61,13 @@ pub struct ConsultFanOutMeter {
 pub struct ConsultFanOutEstimate {
     pub total_count: u32,
     pub per_peer: BTreeMap<String, u32>,
+}
+
+/// Policy path supplied by an authenticated host for a frozen consult plan.
+/// The vault level is implicit; each additional level names its parent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsultFanOutScope {
+    pub project_ref: Option<String>,
+    pub subproject_ref: Option<String>,
+    pub thread_ref: Option<String>,
 }

@@ -402,6 +402,10 @@ mod seam {
         peers: Vec<(String, oneiron::EntityId)>,
         receipt: Option<ConsultFanOutReceipt>,
         surfaced: bool,
+        /// Snapshot before admission, after any real history fixture was added.
+        owned_tasks_before: usize,
+        /// Catches even an incorrectly owned TASK during estimate-only calls.
+        all_tasks_before: u64,
     }
     thread_local! {
         static FAN_OUT_PLANS: RefCell<Vec<OraclePlan>> = const { RefCell::new(Vec::new()) };
@@ -485,6 +489,25 @@ mod seam {
             _ => panic!("unknown oracle peer: {peer}"),
         }
     }
+    fn owned_task_count(vault: &Vault) -> usize {
+        let mut count = 0;
+        let mut after = None;
+        loop {
+            let page = vault
+                .tasks_by_owner(actor(), after, 256)
+                .expect("query TASK owner index");
+            count += page.len();
+            after = page.last().copied();
+            if page.len() < 256 {
+                return count;
+            }
+        }
+    }
+    fn all_task_count(vault: &Vault) -> u64 {
+        vault
+            .count_entities_by_type(oneiron::registry::ENTITY_TYPE_TASK)
+            .expect("count actual TASK entities")
+    }
     fn plan(handle: u64) -> OraclePlan {
         FAN_OUT_PLANS.with(|plans| plans.borrow()[handle as usize].clone())
     }
@@ -558,6 +581,8 @@ mod seam {
                 peers: peers.into_iter().map(|(name, id, _)| (name, id)).collect(),
                 receipt: None,
                 surfaced: false,
+                owned_tasks_before: owned_task_count(vault),
+                all_tasks_before: all_task_count(vault),
             });
             handle
         })
@@ -588,31 +613,65 @@ mod seam {
     }
     pub(crate) fn run_fan_out_gate(vault: &Vault, handle: u64) {
         let staged = plan(handle);
+        let owned_before = owned_task_count(vault);
+        let all_before = all_task_count(vault);
         let receipt = vault
             .memory(actor(), oneiron::EdgeActorClass::Human)
             .fan_out_counted_consults(&staged.input, &staged.preset)
             .expect("admit fan-out");
         FAN_OUT_PLANS.with(|plans| {
             let mut plans = plans.borrow_mut();
+            plans[handle as usize].owned_tasks_before = owned_before;
+            plans[handle as usize].all_tasks_before = all_before;
             plans[handle as usize].surfaced = receipt.paused.is_some();
             plans[handle as usize].receipt = Some(receipt);
         });
     }
     pub(crate) fn tick_fan_out_executor(vault: &Vault, handle: u64) {
-        // A paused or denied plan has no peer TASK for an executor to claim.
+        // Peer consults become TASKs, not connector-send ATTEMPTs. Claim the
+        // real node-local executor door anyway, then check the authoritative
+        // TASK owner index: no paused/denied plan can materialize work later.
+        let staged = plan(handle);
         let status = recorded(vault, handle);
         if status.paused.is_some() {
+            let claim = oneiron::AttemptQueue::new(vault)
+                .claim(oneiron::attempt_queue::ClaimAttempt {
+                    lease_owner: "es06-executor-tick".to_owned(),
+                    now: u64::MAX / 2,
+                })
+                .expect("claim runnable work");
+            assert_eq!(claim, oneiron::attempt_queue::ClaimOutcome::Empty);
             assert!(status.task_refs.is_empty());
+            assert_eq!(owned_task_count(vault), staged.owned_tasks_before);
+            assert_eq!(all_task_count(vault), staged.all_tasks_before);
         }
-        let _ = oneiron::AttemptQueue::new(vault)
-            .list()
-            .expect("inspect runnable attempts");
     }
     pub(crate) fn count_dispatched_consults(vault: &Vault, handle: u64) -> u64 {
-        if plan(handle).receipt.is_none() {
-            return 0;
+        let staged = plan(handle);
+        if staged.receipt.is_none() {
+            // This is not a fixture flag standing in for dispatch: an
+            // estimate-only call can still be caught if it mints an unreceipted
+            // TASK, even if it misattributes that TASK to a different actor.
+            return all_task_count(vault)
+                .checked_sub(staged.all_tasks_before)
+                .expect("TASK count cannot fall during estimate");
         }
-        recorded(vault, handle).task_refs.len() as u64
+        let status = recorded(vault, handle);
+        let actual = owned_task_count(vault)
+            .checked_sub(staged.owned_tasks_before)
+            .expect("TASK count cannot fall during admission");
+        for id in &status.task_refs {
+            assert_eq!(
+                vault.get_entity_type(id).expect("read peer TASK"),
+                Some(oneiron::registry::ENTITY_TYPE_TASK)
+            );
+        }
+        assert_eq!(
+            actual,
+            status.task_refs.len(),
+            "stored receipt must name every created peer TASK"
+        );
+        actual as u64
     }
     pub(crate) fn count_needs_input_rows(vault: &Vault) -> usize {
         all_recorded(vault)
@@ -716,7 +775,15 @@ mod seam {
                 standing_policy_for(vault, &scope(plan), EscalationTrigger::Budget)
                     .expect("read standing policy")
             })
-            .map(|row| row.cited_receipts.len())
+            .map(|row| {
+                let receipts = vault
+                    .receipts(ReceiptQuery::new(1000).with_kind(ReceiptKind::Gate))
+                    .expect("read gate receipts");
+                row.cited_receipts
+                    .iter()
+                    .filter(|cited| receipts.iter().any(|receipt| &receipt.receipt_id == *cited))
+                    .count()
+            })
             .sum()
     }
     pub(crate) fn deny_fan_out(vault: &Vault, handle: u64) {
@@ -779,7 +846,10 @@ mod seam {
     pub(crate) fn count_consults_dispatched_while_paused(vault: &Vault, handle: u64) -> u64 {
         let status = recorded(vault, handle);
         if status.paused.is_some() {
-            status.task_refs.len() as u64
+            let staged = plan(handle);
+            owned_task_count(vault)
+                .checked_sub(staged.owned_tasks_before)
+                .expect("paused run cannot remove TASKs") as u64
         } else {
             0
         }

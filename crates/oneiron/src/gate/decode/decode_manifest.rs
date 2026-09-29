@@ -21,11 +21,12 @@ use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_ASK_POLICY_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
     POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_CONNECTOR_ADMISSION_KEY,
     POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY,
-    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_CONNECTOR_CLASS_ROLE_KEY, POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
+    POLICY_CONSULT_FANOUT_CONTROLS_KEY, POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
+    POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY, POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY,
     POLICY_DELEGATED_GRANTS_KEY, POLICY_DOCEDIT_RESOURCE_KEY, POLICY_DOCX_ARCHIVE_LIMITS_KEY,
     POLICY_DREAMER_FAILURE_PRECEDENCE_KEY, POLICY_DREAMER_FAILURE_RULES_KEY,
     POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
-    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
@@ -40,6 +41,10 @@ use crate::gate::constants::{
     POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
+use crate::gate::fanout_policy::{
+    FanoutControls, FanoutPrecedence, FanoutScopedRow, parse_controls, parse_precedence,
+    parse_scoped_rows,
+};
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::operational_policy::{
@@ -175,6 +180,9 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(in crate::gate) sync_world_default: Option<bool>,
     pub(in crate::gate) consult_fanout_approval_threshold: Option<u32>,
+    pub(in crate::gate) consult_fanout_controls: Option<FanoutControls>,
+    pub(in crate::gate) consult_fanout_precedence: Option<FanoutPrecedence>,
+    pub(in crate::gate) consult_fanout_scope_rows: Vec<FanoutScopedRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -250,6 +258,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::gate::mail_policy::MANIFEST_KEY
                 | POLICY_PROJECT_COLLABORATION_KEY
                 | POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY
+                | POLICY_CONSULT_FANOUT_CONTROLS_KEY
+                | POLICY_CONSULT_FANOUT_PRECEDENCE_KEY
+                | POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | POLICY_CONNECTOR_ADMISSION_KEY
@@ -845,6 +856,25 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             MapValue::Present(value) => Some(u32::try_from(value.as_u64()?).ok()?),
         };
 
+    let consult_fanout_controls =
+        match single_map_value(&entries, POLICY_CONSULT_FANOUT_CONTROLS_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(parse_controls(value)?),
+        };
+    let consult_fanout_precedence =
+        match single_map_value(&entries, POLICY_CONSULT_FANOUT_PRECEDENCE_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(parse_precedence(value)?),
+        };
+    let consult_fanout_scope_rows =
+        match single_map_value(&entries, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY) {
+            MapValue::Missing => Vec::new(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => parse_scoped_rows(value)?,
+        };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -931,6 +961,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         sync_world_ceiling,
         sync_world_default,
         consult_fanout_approval_threshold,
+        consult_fanout_controls,
+        consult_fanout_precedence,
+        consult_fanout_scope_rows,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

@@ -1,4 +1,5 @@
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
 
@@ -69,7 +70,7 @@ impl TaskCreateSpec {
 }
 
 /// Per-actor create quota within one node-local time window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskCreateRateLimit {
     pub limit: usize,
     pub window_seconds: u64,

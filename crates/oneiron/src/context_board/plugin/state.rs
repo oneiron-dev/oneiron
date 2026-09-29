@@ -101,6 +101,7 @@ fn refused_block() -> MemoryError {
         successor_short_id: None,
         gate_denial: None,
         read_receipt: None,
+        policy_denial: None,
     }
 }
 

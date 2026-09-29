@@ -2,7 +2,7 @@
 
 use super::{
     ConsultFanOutMeter, ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutReceipt,
-    ConsultFanOutSpec, ConsultPayloadRef,
+    ConsultFanOutScope, ConsultFanOutSpec, ConsultPayloadRef,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -19,9 +19,6 @@ use serde::{Deserialize, Serialize};
 /// One fan-out run's frozen plan and progress, keyed by its correlation id.
 pub(super) const FANOUT_RUNS: SideTable<HexId, StoredFanout, Named> =
     SideTable::new(&side_table::TASK_FANOUT_RUN);
-/// The vault-owned fan-out approval policy knobs. Key: `()`.
-pub(super) const FANOUT_POLICY: SideTable<(), ConsultFanOutPolicy, Named> =
-    SideTable::new(&side_table::TASK_FANOUT_POLICY);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct FrozenInput {
@@ -33,10 +30,16 @@ pub(super) struct FrozenInput {
     pub(super) now: u64,
     /// An explicit preset scopes a counted fan-out standing ruling.
     pub(super) preset: Option<String>,
+    pub(super) policy_scope: ConsultFanOutScope,
 }
 
 impl FrozenInput {
-    pub(super) fn new(input: &ConsultFanOutSpec, now: u64, preset: Option<&str>) -> Self {
+    pub(super) fn new(
+        input: &ConsultFanOutSpec,
+        now: u64,
+        preset: Option<&str>,
+        policy_scope: ConsultFanOutScope,
+    ) -> Self {
         let mut assignees: Vec<_> = input.assignees.iter().map(EntityId::to_hex).collect();
         assignees.sort_unstable();
         Self {
@@ -51,6 +54,7 @@ impl FrozenInput {
             label: input.label.clone(),
             now,
             preset: preset.map(str::to_owned),
+            policy_scope,
         }
     }
 
@@ -190,14 +194,12 @@ pub(super) fn runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Stored
         .collect())
 }
 
-pub(super) fn policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ConsultFanOutPolicy> {
-    let threshold = crate::gate::resolve_policy_manifest(&vault.store, txn)?
-        .consult_fanout_approval_threshold()?;
-    let mut policy = FANOUT_POLICY
-        .get(&vault.store, txn, &())?
-        .unwrap_or_default();
-    policy.approval_threshold = threshold;
-    Ok(policy)
+pub(super) fn policy_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &ConsultFanOutScope,
+) -> Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
+    crate::gate::resolve_policy_manifest(&vault.store, txn)?.consult_fanout_policy_for(scope)
 }
 
 /// The caller commits this transaction before returning any durable ref.

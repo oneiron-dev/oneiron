@@ -21,9 +21,10 @@ use super::constants::{
     POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
     POLICY_CONNECTOR_ADMISSION_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
     POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
+    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
+    POLICY_CONSULT_FANOUT_PRECEDENCE_KEY, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
     POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY,
     POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
-    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
     POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
@@ -837,6 +838,30 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY),
             Value::from(25_u64),
         ),
+        (
+            Value::from(POLICY_CONSULT_FANOUT_CONTROLS_KEY),
+            Value::Map(vec![
+                (Value::from("mode"), Value::from("auto")),
+                (Value::from("peer_rate"), Value::Nil),
+                (
+                    Value::from("create_rate"),
+                    Value::Map(vec![
+                        (Value::from("limit"), Value::from(10_u64)),
+                        (Value::from("window_seconds"), Value::from(60_u64)),
+                    ]),
+                ),
+            ]),
+        ),
+        // Default precedence is nested narrowing; a holder-authored row can
+        // override its parent upward, but never past the vault's own row.
+        (
+            Value::from(POLICY_CONSULT_FANOUT_PRECEDENCE_KEY),
+            Value::from("nested_narrowing"),
+        ),
+        (
+            Value::from(POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY),
+            Value::Array(Vec::new()),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
@@ -1190,9 +1215,28 @@ fn default_experiment_selection_rows() -> Value {
 
 /// Default for caller-side policy builders, read from the shipped manifest
 /// rather than duplicated as executable behavior.
+#[cfg(test)]
 pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
     let bytes = default_policy_manifest().expect("the shipped policy manifest must encode");
     super::decode::decode_policy_manifest(&bytes)
         .and_then(|manifest| manifest.consult_fanout_approval_threshold)
         .expect("the shipped fan-out threshold row must decode")
+}
+
+/// Caller-side builder values come from the same shipped data the vault seeds.
+pub(crate) fn default_consult_fanout_policy() -> crate::task_verb::ConsultFanOutPolicy {
+    let bytes = default_policy_manifest().expect("the shipped policy manifest must encode");
+    let decoded = super::decode::decode_policy_manifest(&bytes)
+        .expect("the shipped fan-out manifest must decode");
+    let controls = decoded
+        .consult_fanout_controls
+        .expect("the shipped fan-out controls row must decode");
+    crate::task_verb::ConsultFanOutPolicy {
+        approval_threshold: decoded
+            .consult_fanout_approval_threshold
+            .expect("the shipped fan-out threshold row must decode"),
+        mode: controls.mode,
+        peer_rate: controls.peer_rate,
+        create_rate: controls.create_rate,
+    }
 }

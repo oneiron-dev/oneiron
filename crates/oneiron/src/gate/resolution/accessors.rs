@@ -72,6 +72,26 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    pub(crate) fn consult_fanout_policy_for(
+        &self,
+        scope: &crate::task_verb::ConsultFanOutScope,
+    ) -> crate::error::Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
+        let threshold = self.consult_fanout_approval_threshold()?;
+        let controls = self.consult_fanout_controls.as_ref().ok_or_else(|| {
+            crate::error::Error::InvalidConfig("fan-out controls row missing".into())
+        })?;
+        let precedence = self.consult_fanout_precedence.ok_or_else(|| {
+            crate::error::Error::InvalidConfig("fan-out precedence row missing".into())
+        })?;
+        crate::gate::fanout_policy::resolve(
+            threshold,
+            controls,
+            precedence,
+            &self.consult_fanout_scope_rows,
+            scope,
+        )
+    }
+
     /// No runtime default: missing or malformed owner policy must not allow a
     /// fan-out to pass silently under an invented threshold.
     pub(crate) fn consult_fanout_approval_threshold(&self) -> crate::error::Result<u32> {

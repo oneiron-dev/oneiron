@@ -351,6 +351,33 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.actor_writes);
     }
 
+    if let Some(controls) = &resolution.consult_fanout_controls {
+        hash_str(hasher, "consult_fanout_controls");
+        hash_bytes(
+            hasher,
+            &rmp_serde::to_vec_named(controls)
+                .map_err(|_| Error::InvariantViolation("fan-out policy frontier"))?,
+        );
+    }
+    if let Some(precedence) = resolution.consult_fanout_precedence {
+        hash_str(hasher, "consult_fanout_precedence");
+        hash_bytes(
+            hasher,
+            &rmp_serde::to_vec_named(&precedence)
+                .map_err(|_| Error::InvariantViolation("fan-out precedence frontier"))?,
+        );
+    }
+    // Absent scoped rows keep the frontier bytes of a vault-only fan-out policy.
+    if !resolution.consult_fanout_scope_rows.is_empty() {
+        hash_str(hasher, "consult_fanout_scope_rows");
+    }
+    for row in &resolution.consult_fanout_scope_rows {
+        hash_bytes(
+            hasher,
+            &rmp_serde::to_vec_named(row)
+                .map_err(|_| Error::InvariantViolation("fan-out scoped policy frontier"))?,
+        );
+    }
     if let Some(threshold) = resolution.consult_fanout_approval_threshold {
         hash_str(hasher, "consult_fanout_approval_threshold");
         hash_u64(hasher, u64::from(threshold));

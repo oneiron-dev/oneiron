@@ -1,14 +1,14 @@
 //! Meter and admit consult fan-outs before any TASK exists.
 
 use super::consult_fanout_store::{
-    FANOUT_POLICY, FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
+    FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
 };
 use super::create_validation::{ValidatedTaskCreate, consult_refusal, validate_task_create};
 use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling};
 use super::wire_decode::task_verb_body_in;
 use super::{
-    ConsultFanOutPolicy, ConsultFanOutReceipt, ConsultFanOutSpec, ConsultPayload, TaskAssignee,
-    TaskCreateRateLimit, TaskCreateSpec, TaskKind, TaskTtl,
+    ConsultFanOutPolicy, ConsultFanOutReceipt, ConsultFanOutScope, ConsultFanOutSpec,
+    ConsultPayload, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::{
@@ -20,10 +20,14 @@ use crate::error::{Error, Result};
 use crate::fanout_auto::{
     FanoutAskClassifier, FanoutAskContext, FanoutAskTrigger, LearningFanoutAutoDecider,
 };
-use crate::gate::{POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, PolicyApprovalCeiling};
+use crate::gate::fanout_policy::{FanoutControls, FanoutScopedRow, valid_rates};
+use crate::gate::{
+    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
+    POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY, PolicyApprovalCeiling,
+};
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
-    facade_provenance, verify_actor_binding,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryPolicyDenial,
+    MemoryPolicyExceptionProposal, MemoryResult, facade_provenance, verify_actor_binding,
 };
 use crate::outbound_chokepoint::{
     FanoutAdmission, FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutHistory,
@@ -59,10 +63,49 @@ impl Memory<'_> {
         input: &ConsultFanOutSpec,
         preset: &str,
     ) -> MemoryResult<ConsultFanOutReceipt> {
+        self.fan_out_counted_consults_with_classifier(input, preset, None)
+    }
+
+    /// Admit a counted preset plan with the host's existing AUTO classifier.
+    /// An absent or failing classifier still pauses rather than allowing work.
+    pub fn fan_out_counted_consults_with_classifier(
+        &self,
+        input: &ConsultFanOutSpec,
+        preset: &str,
+        classifier: Option<&dyn FanoutAskClassifier>,
+    ) -> MemoryResult<ConsultFanOutReceipt> {
         if preset.is_empty() || preset.trim() != preset {
             return Err(MemoryError::bad_request("fan-out preset must be canonical"));
         }
-        self.fan_out_consults_impl(input, None, true, Some(preset))
+        self.fan_out_consults_impl(
+            input,
+            classifier,
+            true,
+            Some(preset),
+            ConsultFanOutScope::default(),
+        )
+    }
+
+    /// Submit counted peer consults under a frozen policy scope. Each supplied
+    /// level names its parent, and every policy lookup uses the same snapshot
+    /// and authenticated manifest resolution as the vault-wide door.
+    pub fn fan_out_counted_consults_in_scope(
+        &self,
+        input: &ConsultFanOutSpec,
+        preset: &str,
+        scope: &ConsultFanOutScope,
+        owner: &AuthenticatedOwner,
+        classifier: Option<&dyn FanoutAskClassifier>,
+    ) -> MemoryResult<ConsultFanOutReceipt> {
+        // A non-vault scope can carry a holder override. The caller cannot
+        // select such a scope as an unauthenticated widening selector.
+        self.reauthenticate_fanout_owner(owner)?;
+        if preset.is_empty() || preset.trim() != preset || !scope.is_valid() {
+            return Err(MemoryError::bad_request(
+                "fan-out preset or policy scope must be canonical",
+            ));
+        }
+        self.fan_out_consults_impl(input, classifier, true, Some(preset), scope.clone())
     }
 
     /// Meter a counted plan before admission. This does not write a TASK,
@@ -80,9 +123,13 @@ impl Memory<'_> {
         let correlation = self.vault().new_entity_id()?;
         self.validate_fanout(input, correlation, now, true)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        let policy = policy_in(self.vault(), &txn)?;
-        let plan =
-            FrozenInput::new(input, now, Some(preset)).plan(self.actor(), correlation, &policy)?;
+        let scope = ConsultFanOutScope::default();
+        let policy = policy_in(self.vault(), &txn, &scope)?.policy;
+        let plan = FrozenInput::new(input, now, Some(preset), scope).plan(
+            self.actor(),
+            correlation,
+            &policy,
+        )?;
         let estimate = fanout_estimate(&plan)?;
         Ok(super::ConsultFanOutEstimate {
             total_count: estimate.total_count,
@@ -96,7 +143,13 @@ impl Memory<'_> {
         input: &ConsultFanOutSpec,
         classifier: Option<&dyn FanoutAskClassifier>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
-        self.fan_out_consults_impl(input, classifier, false, None)
+        self.fan_out_consults_impl(
+            input,
+            classifier,
+            false,
+            None,
+            ConsultFanOutScope::default(),
+        )
     }
 
     fn fan_out_consults_impl(
@@ -105,6 +158,7 @@ impl Memory<'_> {
         classifier: Option<&dyn FanoutAskClassifier>,
         allow_repeated_peers: bool,
         preset: Option<&str>,
+        policy_scope: ConsultFanOutScope,
     ) -> MemoryResult<ConsultFanOutReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = input.now.unwrap_or_else(|| self.vault().now_recorded_at());
@@ -117,9 +171,9 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::error::Error::from)?;
-            policy_in(self.vault(), &txn)?
+            policy_in(self.vault(), &txn, &policy_scope)?.policy
         };
-        let frozen = FrozenInput::new(input, now, preset);
+        let frozen = FrozenInput::new(input, now, preset, policy_scope);
         let plan = frozen.plan(self.actor(), correlation, &policy)?;
         let estimate = fanout_estimate(&plan)?;
         let mut run = StoredFanout {
@@ -173,7 +227,7 @@ impl Memory<'_> {
         };
         self.with_verified_actor_write_txn(|txn| {
             self.require_fanout_ceiling(txn)?;
-            if policy_in(self.vault(), txn)? != policy
+            if policy_in(self.vault(), txn, &run.input.policy_scope)?.policy != policy
                 || standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget)? != standing
             {
                 return Err(consult_refusal(
@@ -221,88 +275,110 @@ impl Memory<'_> {
         })
     }
 
-    /// Sets vault-owned approval knobs, never a caller-provided widening selector.
+    /// Owner-authenticated vault row: threshold, mode, detector and request
+    /// quota all live in the same manifest transaction.
     pub fn set_consult_fanout_policy(
         &self,
         owner: &AuthenticatedOwner,
         policy: &ConsultFanOutPolicy,
     ) -> MemoryResult<()> {
         self.reauthenticate_fanout_owner(owner)?;
-        if policy
-            .peer_rate
-            .as_ref()
-            .is_some_and(|rate| rate.window_secs == 0 || rate.spike_at == 0)
-        {
+        if !valid_rates(policy.create_rate, policy.peer_rate.as_ref()) {
             return Err(MemoryError::bad_request(
-                "fan-out rate window and threshold must be nonzero",
+                "fan-out policy rate and quota must be nonzero",
             ));
         }
         self.vault()
             .memory(owner.actor(), crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
-                let id = crate::gate::default_policy_manifest_id()?;
-                let row = self
-                    .vault()
-                    .store
-                    .port_entity_record(txn, &id)?
-                    .ok_or_else(|| MemoryError::bad_request("default policy manifest missing"))?;
-                if row.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
-                    return Err(MemoryError::bad_request("default policy manifest mistyped"));
-                }
-                let mut cursor = std::io::Cursor::new(row.body.as_slice());
-                let mut manifest = rmpv::decode::read_value(&mut cursor)
-                    .map_err(|_| MemoryError::bad_request("default policy manifest malformed"))?;
-                if cursor.position() != row.body.len() as u64 {
-                    return Err(MemoryError::bad_request(
-                        "default policy manifest trailing data",
-                    ));
-                }
-                let Value::Map(ref mut entries) = manifest else {
-                    return Err(MemoryError::bad_request(
-                        "default policy manifest malformed",
-                    ));
-                };
-                let positions: Vec<_> = entries
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, (key, _))| {
-                        (key.as_str() == Some(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY))
-                            .then_some(index)
-                    })
-                    .collect();
-                let [index] = positions.as_slice() else {
-                    return Err(MemoryError::bad_request(
-                        "fan-out approval threshold row missing or duplicated",
-                    ));
-                };
-                if entries[*index].1.as_u64().is_none() {
-                    return Err(MemoryError::bad_request(
-                        "fan-out approval threshold row malformed",
-                    ));
-                }
-                entries[*index].1 = Value::from(u64::from(policy.approval_threshold));
-                let mut bytes = Vec::new();
-                rmpv::encode::write_value(&mut bytes, &manifest)
-                    .map_err(|_| MemoryError::bad_request("cannot encode policy manifest"))?;
-                self.vault().write_owner_policy_manifest_in_txn(
-                    owner,
-                    txn,
-                    id,
-                    bytes,
-                    self.vault().now_recorded_at(),
-                )?;
-                FANOUT_POLICY.put(&self.vault().store, txn, &(), policy)?;
-                Ok(())
+                rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
+                    replace_manifest_row(
+                        entries,
+                        POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
+                        Value::from(u64::from(policy.approval_threshold)),
+                    )?;
+                    let controls = FanoutControls {
+                        mode: policy.mode,
+                        peer_rate: policy.peer_rate.clone(),
+                        create_rate: policy.create_rate,
+                    };
+                    replace_manifest_row(
+                        entries,
+                        POLICY_CONSULT_FANOUT_CONTROLS_KEY,
+                        manifest_value(&controls)?,
+                    )
+                })
             })
     }
 
-    /// Reads the effective owner-authored vault policy, including the resolved
-    /// manifest threshold rather than a caller or code-level fallback.
+    /// A scoped holder may author one upward override, bounded by the vault
+    /// row. Other scoped rows narrow their parent as the precedence row says.
+    pub fn set_consult_fanout_scope_policy(
+        &self,
+        owner: &AuthenticatedOwner,
+        scope: &ConsultFanOutScope,
+        policy: &ConsultFanOutPolicy,
+        holder_override: bool,
+    ) -> MemoryResult<()> {
+        self.reauthenticate_fanout_owner(owner)?;
+        if !scope.is_valid()
+            || scope.level() == 0
+            || !valid_rates(policy.create_rate, policy.peer_rate.as_ref())
+        {
+            return Err(MemoryError::bad_request(
+                "scoped fan-out policy shape invalid",
+            ));
+        }
+        let row_ref = format!(
+            "fanout.scope.{}.{}.{}.{}",
+            scope.level(),
+            scope.project_ref.as_deref().unwrap_or("_"),
+            scope.subproject_ref.as_deref().unwrap_or("_"),
+            scope.thread_ref.as_deref().unwrap_or("_")
+        );
+        let row = FanoutScopedRow {
+            row_ref: row_ref.clone(),
+            scope: scope.clone(),
+            policy: policy.clone(),
+            holder_ref: holder_override.then(|| owner.actor().to_hex()),
+        };
+        self.vault()
+            .memory(owner.actor(), crate::EdgeActorClass::Human)
+            .with_verified_actor_write_txn(|txn| {
+                self.reauthenticate_fanout_owner(owner)?;
+                rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
+                    let position =
+                        manifest_row_position(entries, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY)?;
+                    let Value::Array(ref mut rows) = entries[position].1 else {
+                        return Err(MemoryError::bad_request("fan-out scope rows malformed"));
+                    };
+                    rows.retain(|value| {
+                        value.as_map().is_none_or(|fields| {
+                            !fields.iter().any(|(key, val)| {
+                                key.as_str() == Some("row_ref") && val.as_str() == Some(&row_ref)
+                            })
+                        })
+                    });
+                    rows.push(manifest_value(&row)?);
+                    Ok(())
+                })
+            })
+    }
+
+    /// Effective manifest row at the vault level.
     pub fn get_consult_fanout_policy(&self) -> MemoryResult<ConsultFanOutPolicy> {
+        self.get_consult_fanout_policy_for(&ConsultFanOutScope::default())
+    }
+
+    /// Effective manifest policy for a validated nested request scope.
+    pub fn get_consult_fanout_policy_for(
+        &self,
+        scope: &ConsultFanOutScope,
+    ) -> MemoryResult<ConsultFanOutPolicy> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        Ok(policy_in(self.vault(), &txn)?)
+        Ok(policy_in(self.vault(), &txn, scope)?.policy)
     }
 
     /// Rebuilds this actor's AGENTS counts from the durable metering rows.
@@ -406,18 +482,37 @@ impl Memory<'_> {
         // The generic create quota meters requests, not the number of peers
         // in an admitted request. Charging N slots made the default 10-slot
         // quota an accidental fan-out cap below the 25-peer approval threshold.
+        let governed = policy_in(self.vault(), txn, &run.input.policy_scope)?;
         if !consume_create_rate_slot(
             self.vault(),
             txn,
             self.actor(),
             rate_now,
-            TaskCreateRateLimit::default(),
+            governed.policy.create_rate,
         )? {
-            return Err(consult_refusal(
+            let trace = governed.quota_trace;
+            let mut refusal = consult_refusal(
                 MEMORY_CODE_INVALID_STATE,
-                "fan-out exceeds the actor's create quota",
-                "Retry the whole fan-out in the next window.",
-            ));
+                &format!(
+                    "fan-out create quota refused at level={} row={} role={}",
+                    trace.level, trace.row_ref, trace.role
+                ),
+                &format!(
+                    "ask_for_exception:fanout.create_rate:level={}:row={}:role={}",
+                    trace.level, trace.row_ref, trace.role
+                ),
+            );
+            refusal.policy_denial = Some(Box::new(MemoryPolicyDenial {
+                level: trace.level.to_owned(),
+                row_ref: trace.row_ref.clone(),
+                role: trace.role.to_owned(),
+                exception_proposal: MemoryPolicyExceptionProposal {
+                    action: "ask_for_exception:fanout.create_rate".to_owned(),
+                    row_ref: trace.row_ref,
+                    required_role: "holder".to_owned(),
+                },
+            }));
+            return Err(refusal);
         }
         let provenance = facade_provenance(AgentVerb::TasksCreate.as_str());
         for entry in entries {
@@ -504,4 +599,70 @@ impl Memory<'_> {
         });
         Ok((edges, rates))
     }
+}
+
+fn manifest_row_position(entries: &[(Value, Value)], key: &str) -> MemoryResult<usize> {
+    let positions: Vec<_> = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (name, _))| (name.as_str() == Some(key)).then_some(index))
+        .collect();
+    let [position] = positions.as_slice() else {
+        return Err(MemoryError::bad_request(
+            "fan-out manifest row missing or duplicated",
+        ));
+    };
+    Ok(*position)
+}
+
+fn replace_manifest_row(
+    entries: &mut [(Value, Value)],
+    key: &str,
+    value: Value,
+) -> MemoryResult<()> {
+    let position = manifest_row_position(entries, key)?;
+    entries[position].1 = value;
+    Ok(())
+}
+
+fn rewrite_fanout_manifest(
+    vault: &crate::Vault,
+    owner: &AuthenticatedOwner,
+    txn: &mut heed::RwTxn<'_>,
+    edit: impl FnOnce(&mut Vec<(Value, Value)>) -> MemoryResult<()>,
+) -> MemoryResult<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let row = vault
+        .store
+        .port_entity_record(txn, &id)?
+        .ok_or_else(|| MemoryError::bad_request("default policy manifest missing"))?;
+    if row.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
+        return Err(MemoryError::bad_request("default policy manifest mistyped"));
+    }
+    let mut cursor = std::io::Cursor::new(row.body.as_slice());
+    let mut manifest = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| MemoryError::bad_request("default policy manifest malformed"))?;
+    if cursor.position() != row.body.len() as u64 {
+        return Err(MemoryError::bad_request(
+            "default policy manifest trailing data",
+        ));
+    }
+    let Value::Map(ref mut entries) = manifest else {
+        return Err(MemoryError::bad_request(
+            "default policy manifest malformed",
+        ));
+    };
+    edit(entries)?;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest)
+        .map_err(|_| MemoryError::bad_request("cannot encode policy manifest"))?;
+    vault.write_owner_policy_manifest_in_txn(owner, txn, id, bytes, vault.now_recorded_at())?;
+    Ok(())
+}
+
+fn manifest_value(value: &impl serde::Serialize) -> MemoryResult<Value> {
+    let bytes = rmp_serde::to_vec_named(value)
+        .map_err(|_| MemoryError::bad_request("fan-out manifest row encode"))?;
+    rmpv::decode::read_value(&mut bytes.as_slice())
+        .map_err(|_| MemoryError::bad_request("fan-out manifest row decode"))
 }
