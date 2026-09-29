@@ -74,6 +74,7 @@ impl Memory<'_> {
                 world: body.world.map(|world| world.to_hex()),
                 facet,
                 salience: body.salience,
+                reactions: Vec::new(),
             }))
         } else {
             let value_text = view
@@ -90,6 +91,11 @@ impl Memory<'_> {
                     },
                     str::to_owned,
                 );
+            let reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
+                lane.reaction_lines(id)?
+            } else {
+                Vec::new()
+            };
             let evidence_turn_ids = if entity_type == ENTITY_TYPE_MESSAGE {
                 edges
                     .iter()
@@ -114,6 +120,7 @@ impl Memory<'_> {
                 world: None,
                 facet,
                 salience: None,
+                reactions,
             }))
         }
     }

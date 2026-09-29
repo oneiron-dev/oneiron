@@ -70,6 +70,10 @@ pub(crate) const CALENDAR_ICS_FEED_EXCEPTION: &[u8] = b"oneiron:calendar-ics-fee
 /// The ICS import write actor (`calendar::ics_import_actor_id`). No parts.
 pub(crate) const CALENDAR_ICS_IMPORT_ACTOR: &[u8] = b"oneiron:calendar-ics-import-actor:v1";
 
+/// The conversation-mirror write actor (`reaction::conversation_mirror_actor_id`).
+/// No parts.
+pub(crate) const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor:v1";
+
 /// The raw-feed BLOB artifact of one ICS feed (`calendar::ingest::fetch`). Parts:
 /// feed dedupe key.
 pub(crate) const CALENDAR_ICS_FEED_BLOB: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
@@ -115,7 +119,7 @@ pub(crate) const BUILTIN_CONNECTOR_PACK_HUB: &[u8] = b"oneiron/built-in-connecto
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 29] = [
+pub(crate) const ALL: [&[u8]; 30] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -133,6 +137,7 @@ pub(crate) const ALL: [&[u8]; 29] = [
     CALENDAR_SERIES_EXCEPTION,
     CALENDAR_ICS_FEED_EXCEPTION,
     CALENDAR_ICS_IMPORT_ACTOR,
+    CONVERSATION_MIRROR_ACTOR,
     CALENDAR_ICS_FEED_BLOB,
     TASK_ASK_ORIGIN,
     TASK_ASK_INTENT,

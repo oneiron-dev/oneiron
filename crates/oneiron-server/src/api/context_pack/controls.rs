@@ -240,6 +240,21 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional actor-bound read-session id; omission uses the active session.
     #[serde(default)]
     pub(super) session_id: Option<String>,
+    /// Reaction signals recorded at or after this time (the reader's last
+    /// turn); a separate feed, not a retrieval filter.
+    #[serde(default)]
+    pub(super) signals_since: Option<u64>,
+    /// Exclusive continuation from a prior signal page.
+    #[serde(default)]
+    pub(super) signals_after: Option<String>,
+    /// Signals per page, 1..=1000.
+    #[serde(default)]
+    pub(super) signals_limit: Option<usize>,
+    /// The PERSON whose messages' signals are read. Required for an owner
+    /// credential without a bound person; a delegated credential may only
+    /// name its own bound person.
+    #[serde(default)]
+    pub(super) signals_person: Option<String>,
     /// Executor model@revision for pair-specific skill reliability ranking.
     #[serde(default)]
     pub(super) executor_model: Option<String>,

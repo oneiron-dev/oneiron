@@ -24,6 +24,7 @@ mod graph_reads;
 mod note_visibility;
 mod pinned_reads;
 mod point_reads;
+mod reactions;
 mod receipt;
 mod retrieval_visibility;
 mod versions;
