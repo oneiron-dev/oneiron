@@ -42173,6 +42173,14 @@
      "path": "tests/revisions.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/stemma_reader.rs",
+     "purpose": "The stemma fork reads untrusted DOCX parts with quick-xml",
+     "surface": {}
     }
    ],
    "modules": {
@@ -42201,7 +42209,7 @@
    "over_bar": 0,
    "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
    "source_files": 11,
-   "test_files": 4
+   "test_files": 5
   },
   "oneiron-driver": {
    "files": [
