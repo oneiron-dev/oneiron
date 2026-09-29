@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2410 | 839 | 20 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 101 | 20 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned… | 9 | 4 | 0 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned… | 11 | 4 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 17 | 11 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
@@ -39,6 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 239 | 104 | 2 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 1 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 12 | 3 | 0 |
+| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | Opt-in in-process XLSX formula recalculation for the edit round trip | 14 | 3 | 0 |
 
 ## oneiron
 
@@ -262,7 +263,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
+| `ooxml` | file | 1 | m | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `retained_opc` | dir | 6 | m | Bounded, retained OPC archives |
+| `xlfn` | file | 1 | m | Excel's storage qualifiers for post-2007 worksheet functions |
 
 ## oneiron-driver
 
@@ -449,3 +452,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `lib` | dir | 15 | s | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+
+## oneiron-xlsx-formula
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `cache` | file | 1 | s | Typed formula caches as checked byte patches, preserving unmodelled XML |
+| `calc` | file | 1 | s | Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock |
+| `context` | file | 1 | s | Bound formula AST evaluation and keep ambient context out of native recalc |
+| `engine` | file | 1 | m | The owned formualizer engine behind the [`RecalcEngine`] seam |
+| `error` | file | 1 | s | Typed failures for the formula crate |
+| `mac_parity` | file | 1 | s | Workbook-local Excel-for-Mac function availability, never global overrides |
+| `measure` | file | 1 | m | Step-19 corpus runner: honest per-case results over the pinned 834 cases |
+| `routing` | file | 1 | s | External-link routing (step 25): linked workbooks stay off this engine |
+| `session` | file | 1 | s | Explicit opt-in recalc adapter for the core's edit round-trip seam |
+| `workbook` | file | 1 | m | Load a bounded XLSX graph and update only formula XML and cached values |
+| `xml` | file | 1 | s | The document organ's namespace-aware reader, with this crate's errors |

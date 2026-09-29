@@ -1317,8 +1317,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/address.rs` | src | s | 2 struct · 2 enum · 8 fn · 2 crate-vis | Axis, CellRef, OfficeFormat, RangeRef | Cell addressing, ranges and op validation |
 | `src/edit_roundtrip/docx.rs` | src | s | 3 fn · 4 crate-vis | — | Native DOCX edit entry |
 | `src/edit_roundtrip/docx_tests.rs` | test | s | — | — | Native DOCX proposal proofs at the public edit door |
-| `src/edit_roundtrip/formula.rs` | src | m | 2 crate-vis | — | Serialize post-2007 spreadsheet functions with Excel's OOXML prefix |
-| `src/edit_roundtrip/inspect.rs` | src | s | 3 struct · 5 crate-vis | CrossSheetDep, SheetSummary, StructureSummary | Workbook inspect scanners |
+| `src/edit_roundtrip/formula.rs` | src | s | 1 crate-vis | — | Serialize post-2007 spreadsheet functions with Excel's OOXML prefix |
+| `src/edit_roundtrip/inspect.rs` | src | s | 3 struct · 3 crate-vis | CrossSheetDep, SheetSummary, StructureSummary | Workbook inspect scanners |
 | `src/edit_roundtrip/judgment.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | SheetAnswerBundle, SheetCellAnswer | Typed sheet answers: one ask over a bounded range becomes one retained edit |
 | `src/edit_roundtrip/judgment_cells.rs` | src | m | 1 crate-vis | — | Independent OOXML reads for typed sheet answers |
 | `src/edit_roundtrip/manifest.rs` | src | s | 2 struct · 2 enum · 5 fn · 1 const | EditManifest, EditWarning, MutationMode, WarningCode | Edit manifest and warnings |
@@ -1342,7 +1342,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/slides_review.rs` | src | m | 5 struct · 1 enum · 1 trait · 2 fn · 3 crate-vis | SlideJudgment, SlideReviewError, SlideReviewLabels, SlideReviewProvider, SlideReviewRequest, SlideReviewRun, SlideReviewUnit | Bounded typed review of slide/shape units into one retained comment proposal |
 | `src/edit_roundtrip/slides_review/tests.rs` | test | L | — | — | — |
 | `src/edit_roundtrip/tests.rs` | test | XL | — | — | ARTL-3 pipeline tests |
-| `src/edit_roundtrip/xml.rs` | src | s | 10 crate-vis | — | Namespace-aware OPC and worksheet XML reads for the edit gate |
+| `src/edit_roundtrip/xml.rs` | src | s | 12 crate-vis | — | Namespace-aware OPC and worksheet XML reads for the edit gate |
 | `src/edit_settle/codec.rs` | src | m | 6 crate-vis | — | Row and anchor codec |
 | `src/edit_settle/keys.rs` | src | s | 4 const · 38 crate-vis | — | Pinned ledger keys and receipt fields |
 | `src/edit_settle/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
