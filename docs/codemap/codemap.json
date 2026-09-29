@@ -1857,7 +1857,7 @@
      "path": "src/authority/engine_machine.rs",
      "purpose": "Host-provisioned software identities for the engine's own MACHINE writers",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -1985,7 +1985,7 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE software-key enrollment and origin signatures for claim writes",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5
      }
     },
@@ -2875,13 +2875,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/deindex.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -8464,7 +8464,7 @@
      "path": "src/claim/transition/mod.rs",
      "purpose": "Signed, causally ordered claim state transitions",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -14313,7 +14313,7 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 7,
       "struct": 5,
@@ -14729,7 +14729,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 14
+      "fn": 15
      }
     },
     {
@@ -14761,7 +14761,7 @@
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "One vault-owned Dreamer principal; job kinds are facets, not new authorities",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 3,
       "re-export": 1,
       "struct": 1
@@ -14781,7 +14781,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/authority/tests.rs",
@@ -14846,7 +14846,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 16,
+      "const": 17,
       "crate-vis": 34
      }
     },
@@ -15037,7 +15037,7 @@
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
       "mod": 3,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -15058,6 +15058,20 @@
       "enum": 1,
       "fn": 12,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveRecipePin"
+     ],
+     "path": "src/dreamer_runner/recipe.rs",
+     "purpose": "Per-vault, owner-admitted workflow skill binding for the Dreamer weave",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -15291,7 +15305,7 @@
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -15309,13 +15323,14 @@
       "WakePolicyOutcome",
       "WakePolicyTimerLease",
       "WakePolicyTrigger",
-      "WakeRecipe"
+      "WakeRecipe",
+      "WeaveRecipePriority"
      ],
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
       "crate-vis": 3,
-      "enum": 4,
+      "enum": 5,
       "fn": 8,
       "struct": 8
      }
@@ -15326,6 +15341,29 @@
      "notable": [],
      "path": "src/dreamer_wake/policy/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveRecipeDraft",
+      "WeaveRecipeExecutor",
+      "WeaveRecipeRuntime"
+     ],
+     "path": "src/dreamer_wake/recipe.rs",
+     "purpose": "Host-interpreted workflow skill at the Dreamer wake boundary",
+     "surface": {
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/recipe/tests.rs",
+     "purpose": "Recipe read, trust and commit-to-settlement recovery regressions",
      "surface": {}
     },
     {
@@ -18676,7 +18714,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 49,
       "re-export": 7
      }
     },
@@ -18992,6 +19030,16 @@
      "purpose": "Typed optimizer goal rows authored by trusted policy manifests",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/skill_tradeoff_policy.rs",
+     "purpose": "Vault-resident policy rows for the skill tradeoff ladder",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -23044,7 +23092,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CatalogSeed",
@@ -23060,7 +23108,35 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 10,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DescriptionClass",
+      "DescriptionContribution",
+      "ModelDescription"
+     ],
+     "path": "src/llm/registry/description.rs",
+     "purpose": "Ranked, source-attributed model descriptions; absent evidence stays absent",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/registry/installed_pack.rs",
+     "purpose": "The shipped catalog is read from an installed, pinned first-party hub pack",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -32055,8 +32131,8 @@
      "path": "src/skill_hub/default_hub.rs",
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5
+      "crate-vis": 4,
+      "fn": 6
      }
     },
     {
@@ -32709,9 +32785,9 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -32771,17 +32847,17 @@
      "surface": {
       "const": 5,
       "crate-vis": 8,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/gate/admission.rs",
      "purpose": "Admission, its pinned keys, and the record-shape questions both doors ask",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -32861,19 +32937,38 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JevTradeoffVerdict",
+      "SkillTradeoffAsk",
+      "SkillTradeoffPreferences",
+      "SkillTradeoffQuestion",
+      "TradeoffRule"
+     ],
+     "path": "src/skill_optimize/gate/tradeoff.rs",
+     "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HeldOutVerdict",
       "SkillEditDisposition",
       "TradeoffChoice",
-      "TradeoffResolution"
+      "TradeoffResolution",
+      "TradeoffRung"
      ],
      "path": "src/skill_optimize/gate/verdict.rs",
      "purpose": "What the gate ruled, and the durable row that says so",
      "surface": {
       "crate-vis": 4,
-      "enum": 2,
+      "enum": 3,
       "fn": 5,
       "struct": 2
      }
@@ -33164,7 +33259,7 @@
      "purpose": "Deterministic static skill scanning and the activation risk consult",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 5
      }
@@ -36388,7 +36483,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -39589,7 +39684,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39603,7 +39698,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 13,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39722,7 +39817,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39855,7 +39950,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 91,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40219,7 +40314,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40415,10 +40510,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 19,
+   "over_bar": 20,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2403,
-   "test_files": 838
+   "source_files": 2409,
+   "test_files": 839
   },
   "oneiron-android": {
    "files": [
@@ -41948,14 +42043,14 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1,
       "trait": 1,
       "type": 1
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/supervisor/factory_tests.rs",
