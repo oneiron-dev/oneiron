@@ -530,7 +530,9 @@ pub fn parse_document_background_element(bytes: &[u8]) -> Result<Option<Element>
 //   * attributes preserve insertion order (IndexMap via `attribute-order`),
 //     with `local_name` / `prefix` / `namespace` matching the xml-rs `OwnedName`.
 //   * text / attribute values are EXPLICITLY unescaped (quick-xml hands back the
-//     raw, still-escaped bytes); comments are decoded but NOT unescaped.
+//     raw, still-escaped text); comments are kept verbatim, NOT unescaped. Each
+//     reference in text arrives as its own `GeneralRef` event and is folded into
+//     the surrounding text node, so a run of character data stays one node.
 //   * whitespace-only text is preserved (equivalent to the previous
 //     `whitespace_to_characters(true)`), so `xml:space="preserve"` survives.
 //   * comments are preserved (equivalent to `ignore_comments(false)`).
@@ -567,28 +569,14 @@ fn resolve_uri<'a>(scope: &'a [NsFrame], prefix: &str) -> Option<&'a str> {
     None
 }
 
-/// Split a `QName` into `(prefix, local)` as owned strings via lossless UTF-8.
-/// OOXML names are always ASCII, but we decode defensively rather than assume.
-fn split_qname(qname: QName<'_>) -> Result<(Option<String>, String), WordXmlError> {
+/// Split a `QName` into `(prefix, local)` as owned strings. quick-xml has
+/// already validated the input as UTF-8, so no decoding step can fail here.
+fn split_qname(qname: QName<'_>) -> (Option<String>, String) {
     let (local, prefix) = qname.decompose();
-    let local = std::str::from_utf8(local.into_inner())
-        .map_err(|e| WordXmlError::QuickXml {
-            position: 0,
-            reason: format!("non-UTF-8 element/attribute local name: {e}"),
-        })?
-        .to_string();
-    let prefix = match prefix {
-        Some(p) => Some(
-            std::str::from_utf8(p.into_inner())
-                .map_err(|e| WordXmlError::QuickXml {
-                    position: 0,
-                    reason: format!("non-UTF-8 namespace prefix: {e}"),
-                })?
-                .to_string(),
-        ),
-        None => None,
-    };
-    Ok((prefix, local))
+    (
+        prefix.map(|p| p.into_inner().to_string()),
+        local.into_inner().to_string(),
+    )
 }
 
 /// Build an `Element` from a quick-xml start tag's bytes: split the name,
@@ -603,8 +591,7 @@ fn element_from_start(
     reader: &Reader<&[u8]>,
     scope: &[NsFrame],
 ) -> Result<(Element, NsFrame), WordXmlError> {
-    let decoder = reader.decoder();
-    let (prefix, name) = split_qname(start.name())?;
+    let (prefix, name) = split_qname(start.name());
 
     // First pass over attributes: harvest xmlns declarations so we can resolve
     // this element's own prefix against them (xmlns on an element is in scope
@@ -618,15 +605,17 @@ fn element_from_start(
             reason: format!("malformed attribute: {e}"),
         })?;
         let key = attr.key;
-        let value = attr
-            .unescape_value()
+        // Unescape only. `normalized_value()` would also fold tab/CR/LF to
+        // spaces, which the reader never did and a byte-identical round trip
+        // must not start doing.
+        let value = quick_xml::escape::unescape(&attr.value)
             .map_err(|e| WordXmlError::QuickXml {
                 position: reader.buffer_position(),
                 reason: format!("attribute value unescape failed: {e}"),
             })?
             .into_owned();
 
-        if key.as_ref() == b"xmlns" {
+        if key.as_ref() == "xmlns" {
             // Default namespace declaration.
             ns_decls.push((
                 String::new(),
@@ -634,7 +623,7 @@ fn element_from_start(
             ));
             continue;
         }
-        let (akey_prefix, akey_local) = split_qname(key)?;
+        let (akey_prefix, akey_local) = split_qname(key);
         if akey_prefix.as_deref() == Some("xmlns") {
             // `xmlns:foo` -> declares prefix `foo`.
             ns_decls.push((
@@ -723,8 +712,6 @@ fn element_from_start(
         Some(ns)
     };
 
-    let _ = decoder; // decoder reserved for future encodings; names are UTF-8.
-
     let element = Element {
         prefix,
         namespace: namespace.map(str::to_string),
@@ -811,52 +798,37 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
                 push_child(&mut stack, &mut root, finished)?;
             }
             Event::Text(t) => {
-                // Unescape entities (&amp; &lt; ...) — the xmltree writer will
-                // re-escape on output, so the stored value must be decoded.
-                let text = t.unescape().map_err(|e| WordXmlError::QuickXml {
-                    position: reader.buffer_position(),
-                    reason: format!("text unescape failed: {e}"),
-                })?;
-                if let Some(parent) = stack.last_mut() {
-                    parent.children.push(XMLNode::Text(text.into_owned()));
-                }
+                // Raw text, EOLs untouched. It holds no references: quick-xml
+                // reports each one as a `GeneralRef` event.
                 // Top-level text (outside the root) is whitespace between the
                 // XML declaration and the root; xml-rs dropped it, so do we.
+                push_text(&mut stack, &t);
+            }
+            Event::GeneralRef(r) => {
+                // Decode the reference (&amp; &#x41; ...) — the xmltree writer
+                // will re-escape on output, so the stored value must be decoded.
+                let text = resolve_general_ref(&r, &reader)?;
+                push_text(&mut stack, &text);
             }
             Event::CData(c) => {
-                let decoded = c.decode().map_err(|e| WordXmlError::QuickXml {
-                    position: reader.buffer_position(),
-                    reason: format!("CDATA decode failed: {e}"),
-                })?;
                 if let Some(parent) = stack.last_mut() {
-                    parent.children.push(XMLNode::CData(decoded.into_owned()));
+                    parent
+                        .children
+                        .push(XMLNode::CData(c.into_inner().into_owned()));
                 }
             }
             Event::Comment(c) => {
-                // Comment content is literal: decode bytes, do NOT unescape.
-                let decoded =
-                    reader
-                        .decoder()
-                        .decode(c.as_ref())
-                        .map_err(|e| WordXmlError::QuickXml {
-                            position: reader.buffer_position(),
-                            reason: format!("comment decode failed: {e}"),
-                        })?;
+                // Comment content is literal: do NOT unescape.
                 if let Some(parent) = stack.last_mut() {
-                    parent.children.push(XMLNode::Comment(decoded.into_owned()));
+                    parent
+                        .children
+                        .push(XMLNode::Comment(c.into_inner().into_owned()));
                 }
             }
             Event::PI(pi) => {
                 // Processing instruction: split into (target, data). xmltree
                 // stores them as (name, Option<data>).
-                let raw =
-                    reader
-                        .decoder()
-                        .decode(pi.as_ref())
-                        .map_err(|e| WordXmlError::QuickXml {
-                            position: reader.buffer_position(),
-                            reason: format!("processing-instruction decode failed: {e}"),
-                        })?;
+                let raw = pi.into_inner();
                 let (target, data) = match raw.split_once(char::is_whitespace) {
                     Some((t, d)) => (t.to_string(), Some(d.trim_start().to_string())),
                     None => (raw.into_owned(), None),
@@ -909,6 +881,36 @@ fn push_child(
             reason: "document has more than one root element".to_string(),
         })
     }
+}
+
+/// Append character data to the open element. quick-xml splits a run of text
+/// at every reference (`Text`, `GeneralRef`, `Text`, ...), so a piece that
+/// follows another piece joins its text node: one node per run, as before the
+/// split. Text outside the root has no parent and is dropped.
+fn push_text(stack: &mut [Element], text: &str) {
+    let Some(parent) = stack.last_mut() else {
+        return;
+    };
+    match parent.children.last_mut() {
+        Some(XMLNode::Text(run)) => run.push_str(text),
+        _ => parent.children.push(XMLNode::Text(text.to_string())),
+    }
+}
+
+/// Decode a `GeneralRef` event the way `unescape` decodes a reference inside a
+/// text run: the predefined entities and character references resolve, and
+/// anything else (a DTD-declared entity) is an error.
+fn resolve_general_ref(
+    reference: &quick_xml::events::BytesRef<'_>,
+    reader: &Reader<&[u8]>,
+) -> Result<String, WordXmlError> {
+    let name: &str = reference;
+    quick_xml::escape::unescape(&format!("&{name};"))
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|e| WordXmlError::QuickXml {
+            position: reader.buffer_position(),
+            reason: format!("text unescape failed: {e}"),
+        })
 }
 
 /// Error returned by `for_each_body_child`: either a structural/XML failure from
@@ -970,6 +972,10 @@ pub fn for_each_body_child<E>(
     // advance `child_index` on EVERY direct child node of body, matching the
     // tree's `children` vector exactly.
     let mut child_index: usize = 0;
+    // Whether the previous event was a text piece. A text run arrives split at
+    // each reference but is one node of the full tree, so it advances the
+    // child index once.
+    let mut in_text_run = false;
 
     let mut buf = Vec::new();
     loop {
@@ -979,6 +985,9 @@ pub fn for_each_body_child<E>(
                 reason: format!("{e}"),
             })
         })?;
+        let is_text = matches!(event, Event::Text(_) | Event::GeneralRef(_));
+        let continues_text_run = is_text && in_text_run;
+        in_text_run = is_text;
 
         match event {
             Event::Start(ref start) => {
@@ -1054,8 +1063,12 @@ pub fn for_each_body_child<E>(
             // of `<w:body>`: the old path skipped processing them but they still
             // occupy a slot in `body.children`, so they advance the child index.
             // (Decl never appears inside the body.)
-            Event::Text(_) | Event::CData(_) | Event::Comment(_) | Event::PI(_)
-                if in_body && depth == 2 =>
+            Event::Text(_)
+            | Event::GeneralRef(_)
+            | Event::CData(_)
+            | Event::Comment(_)
+            | Event::PI(_)
+                if in_body && depth == 2 && !continues_text_run =>
             {
                 child_index += 1;
             }
@@ -1126,46 +1139,27 @@ fn build_subtree_from_open(
                     return Ok(finished);
                 }
             }
-            Event::Text(t) => {
-                let text = t.unescape().map_err(|e| WordXmlError::QuickXml {
-                    position: reader.buffer_position(),
-                    reason: format!("text unescape failed: {e}"),
-                })?;
-                if let Some(parent) = stack.last_mut() {
-                    parent.children.push(XMLNode::Text(text.into_owned()));
-                }
+            Event::Text(t) => push_text(&mut stack, &t),
+            Event::GeneralRef(r) => {
+                let text = resolve_general_ref(&r, reader)?;
+                push_text(&mut stack, &text);
             }
             Event::CData(c) => {
-                let decoded = c.decode().map_err(|e| WordXmlError::QuickXml {
-                    position: reader.buffer_position(),
-                    reason: format!("CDATA decode failed: {e}"),
-                })?;
                 if let Some(parent) = stack.last_mut() {
-                    parent.children.push(XMLNode::CData(decoded.into_owned()));
+                    parent
+                        .children
+                        .push(XMLNode::CData(c.into_inner().into_owned()));
                 }
             }
             Event::Comment(c) => {
-                let decoded =
-                    reader
-                        .decoder()
-                        .decode(c.as_ref())
-                        .map_err(|e| WordXmlError::QuickXml {
-                            position: reader.buffer_position(),
-                            reason: format!("comment decode failed: {e}"),
-                        })?;
                 if let Some(parent) = stack.last_mut() {
-                    parent.children.push(XMLNode::Comment(decoded.into_owned()));
+                    parent
+                        .children
+                        .push(XMLNode::Comment(c.into_inner().into_owned()));
                 }
             }
             Event::PI(pi) => {
-                let raw =
-                    reader
-                        .decoder()
-                        .decode(pi.as_ref())
-                        .map_err(|e| WordXmlError::QuickXml {
-                            position: reader.buffer_position(),
-                            reason: format!("processing-instruction decode failed: {e}"),
-                        })?;
+                let raw = pi.into_inner();
                 let (target, data) = match raw.split_once(char::is_whitespace) {
                     Some((t, d)) => (t.to_string(), Some(d.trim_start().to_string())),
                     None => (raw.into_owned(), None),
@@ -1190,6 +1184,9 @@ fn build_subtree_from_open(
 
 fn ensure_xml_depth_within_limit(bytes: &[u8], limit: usize) -> Result<(), WordXmlError> {
     let mut reader = Reader::from_reader(Cursor::new(bytes));
+    // This scan reads no text. Tolerate a lone `&` so it still measures the
+    // depth of the whole document; the builders reject the `&` themselves.
+    reader.config_mut().allow_dangling_amp = true;
     let mut buf = Vec::new();
     let mut depth = 0usize;
 
@@ -2379,5 +2376,43 @@ mod tests {
     fn quick_builder_matches_xml_rs_cdata() {
         let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t><![CDATA[raw < & > text]]></w:t></w:r></w:p></w:body></w:document>"#;
         assert_roundtrip_matches(xml);
+    }
+
+    #[test]
+    fn quick_builder_keeps_references_in_one_raw_text_node() {
+        // quick-xml reports every reference as its own event; the tree must
+        // still hold one text node per run, with CR/LF/tab left as written in
+        // both text and attribute values.
+        let xml = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t xml:space=\"preserve\">&#x41;&amp;&#66;\r\n\tc&lt;</w:t></w:r><w:bookmarkStart w:id=\"1\" w:name=\"a\tb\r\nc&amp;\"/></w:p></w:body></w:document>";
+        let root = parse_document_xml_quick(xml.as_bytes()).unwrap();
+        let body = find_w_child(&root, "body").unwrap();
+        let p = find_w_child(body, "p").unwrap();
+        let t = find_w_child(find_w_child(p, "r").unwrap(), "t").unwrap();
+        assert!(matches!(t.children.as_slice(), [XMLNode::Text(text)] if text == "A&B\r\n\tc<"));
+        let bookmark = find_w_child(p, "bookmarkStart").unwrap();
+        assert_eq!(
+            bookmark.attributes.values().nth(1).map(String::as_str),
+            Some("a\tb\r\nc&")
+        );
+
+        let unknown = xml.replace("&#66;", "&unknown;");
+        assert!(parse_document_xml_quick(unknown.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn body_stream_counts_a_split_text_run_as_one_child() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p/>x &amp; y<w:p/></w:body></w:document>"#;
+        let body_len = find_w_child(&parse_document_xml_quick(xml.as_bytes()).unwrap(), "body")
+            .unwrap()
+            .children
+            .len();
+        assert_eq!(body_len, 3);
+        let mut indices = Vec::new();
+        let streamed = for_each_body_child(xml.as_bytes(), |index, _| {
+            indices.push(index);
+            Ok::<(), ()>(())
+        });
+        assert!(streamed.is_ok());
+        assert_eq!(indices, vec![0, 2]);
     }
 }

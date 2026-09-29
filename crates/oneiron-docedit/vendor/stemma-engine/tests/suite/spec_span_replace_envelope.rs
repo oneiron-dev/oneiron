@@ -123,6 +123,8 @@ fn collect_envelope_membership(xml: &str) -> EnvelopeReport {
     let mut envelope_depth: i32 = 0;
     let mut in_t = false;
     let mut t_in_envelope = false;
+    // Escaped text of the open `<w:t>`: quick-xml splits it at each reference.
+    let mut t_raw: Option<String> = None;
     let mut report = EnvelopeReport::default();
     loop {
         match reader.read_event() {
@@ -130,11 +132,11 @@ fn collect_envelope_membership(xml: &str) -> EnvelopeReport {
                 let name = e.name();
                 let local = local_name(name.as_ref());
                 match local {
-                    b"ins" | b"del" => envelope_depth += 1,
-                    b"fldSimple" => {
+                    "ins" | "del" => envelope_depth += 1,
+                    "fldSimple" => {
                         report.fields.push(envelope_depth > 0);
                     }
-                    b"t" | b"delText" => {
+                    "t" | "delText" => {
                         in_t = true;
                         t_in_envelope = envelope_depth > 0;
                     }
@@ -143,21 +145,34 @@ fn collect_envelope_membership(xml: &str) -> EnvelopeReport {
             }
             Ok(Event::Empty(e)) => {
                 let name = e.name();
-                if local_name(name.as_ref()) == b"fldSimple" {
+                if local_name(name.as_ref()) == "fldSimple" {
                     report.fields.push(envelope_depth > 0);
                 }
             }
             Ok(Event::Text(t)) => {
                 if in_t {
-                    let txt = t.unescape().unwrap_or_default().into_owned();
-                    report.texts.push((txt, t_in_envelope));
+                    t_raw.get_or_insert_default().push_str(&t);
+                }
+            }
+            Ok(Event::GeneralRef(r)) => {
+                if in_t {
+                    let name: &str = &r;
+                    t_raw.get_or_insert_default().push_str(&format!("&{name};"));
                 }
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
                 match local_name(name.as_ref()) {
-                    b"ins" | b"del" => envelope_depth -= 1,
-                    b"t" | b"delText" => in_t = false,
+                    "ins" | "del" => envelope_depth -= 1,
+                    "t" | "delText" => {
+                        in_t = false;
+                        if let Some(raw) = t_raw.take() {
+                            let txt = quick_xml::escape::unescape(&raw)
+                                .unwrap_or_default()
+                                .into_owned();
+                            report.texts.push((txt, t_in_envelope));
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -169,9 +184,9 @@ fn collect_envelope_membership(xml: &str) -> EnvelopeReport {
     report
 }
 
-fn local_name(qname: &[u8]) -> &[u8] {
-    match qname.iter().position(|&b| b == b':') {
-        Some(i) => &qname[i + 1..],
+fn local_name(qname: &str) -> &str {
+    match qname.split_once(':') {
+        Some((_, local)) => local,
         None => qname,
     }
 }

@@ -25,3 +25,5 @@ entry and blocking export-linker check. The upstream engine's `runtime.rs`
 remains because its stateless serialization helpers and error types back the
 pure `api::Document` facade; the wrapper does not expose a session store.
 Upstream packages are not separately published by this workspace.
+ONE-2701 ported the fork's quick-xml readers (`src/word_xml.rs`, `src/normalize.rs`, three test
+files) from 0.37 to the workspace's `=0.42.0` pin, clearing RUSTSEC-2026-0194 and -0195.
