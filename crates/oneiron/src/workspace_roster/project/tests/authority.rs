@@ -741,6 +741,7 @@ fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
             anchor: Some(Box::new(before.anchor())),
         });
         let bytes = encode(&changed)?;
+        #[cfg_attr(not(feature = "sync"), allow(unused_mut))]
         let mut doors: Vec<Result<()>> = vec![
             vault.put_project(id, &changed, 1),
             vault
