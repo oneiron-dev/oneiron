@@ -109,6 +109,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             )],
             successor_short_id: None,
             gate_denial: None,
+            read_receipt: None,
         })
     })
 }
@@ -121,6 +122,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         suggestions: vec!["This is an Oneiron SDK bug; please report it.".to_owned()],
         successor_short_id: None,
         gate_denial: None,
+        read_receipt: None,
     })
 }
 
@@ -360,6 +362,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "rooms.messages")?;
         let output = py
             .detach(|| self.inner.agent_verb("rooms.messages", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_render(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.render")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.render", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_find(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.find")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.find", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn rooms_trunk(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "rooms.trunk")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("rooms.trunk", input))
             .map_err(raise)?;
         encode(&output)
     }

@@ -7,11 +7,10 @@ use loro::LoroMap;
 use super::edges::{EdgeOpMeta, quarantine_edge_apply_failure};
 use super::{format_edge_key, parse_edge_key};
 
-use crate::batch::{self, BatchOp, child_of_prefix};
-use crate::edge::{
-    EdgeKind, decode_edge_value_for_kind, parse_strict_edge_record, parse_strict_edge_record_key,
-};
+use crate::batch::{self, BatchOp};
+use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::sync::loro_support::map_for_each_bytes;
 use crate::sync::quarantine::remote_rejection_reason;
@@ -112,13 +111,14 @@ pub(super) fn replayed_child_of_candidates(
     for (child, named_parents) in &named {
         let mut stored = HashSet::<EntityId>::new();
         let mut unseated = false;
-        for entry in vault
-            .store
-            .edges_out
-            .prefix_iter(rtxn, &child_of_prefix(child))?
-        {
-            let (row_key, row_value) = entry?;
-            let (_, _, parent) = parse_strict_edge_record_key(&row_key)?;
+        for entry in crate::ports::EdgeStoreRead::port_edge_peers(
+            &vault.store,
+            rtxn,
+            child,
+            crate::ports::EdgeDirection::Out,
+            EdgeKind::ChildOf,
+        )? {
+            let parent = entry?;
             stored.insert(parent);
             if removed
                 .get(child)
@@ -134,10 +134,16 @@ pub(super) fn replayed_child_of_candidates(
             // only there is the row's VALUE decoded — and there the resolver is
             // about to decode the very same row, fail-closed, for the very same
             // reason. The removal path keeps its key-only read.
+            let raw = crate::ports::EdgeStoreStaging::port_edge_encoded(
+                &vault.store,
+                rtxn,
+                child,
+                EdgeKind::ChildOf,
+                &parent,
+            )?
+            .ok_or(crate::Error::CorruptedIndex("child_of edge missing"))?;
             if *restamped_at
-                < parse_strict_edge_record(&row_key, &row_value)?
-                    .decoded
-                    .created_at
+                < crate::edge::decode_edge_value_for_kind(EdgeKind::ChildOf, &raw)?.created_at
             {
                 displaced.push(format_edge_key(child, EdgeKind::ChildOf, &parent));
                 unseated = true;
@@ -450,6 +456,10 @@ fn child_of_component_sort_key(component: &[PendingEdgeOp]) -> [u8; 33] {
 // through the ordinary ChildOf winner arbitration, not a raw LMDB insert.
 const PENDING_CHILD_OF: &str = "dc:w:";
 const CHILD_OF_ENDPOINT: &str = "de:";
+const PENDING_CHILD_OF_ROW: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DEFERRED_CHILD_OF);
+const CHILD_OF_ENDPOINT_ROW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::DEFERRED_CHILD_OF_ENDPOINT);
 
 fn pending_child_of_key(window: &str, src: &EntityId, tgt: &EntityId) -> String {
     format!(
@@ -506,12 +516,20 @@ pub(in crate::sync) fn defer_child_of(
     decode_edge_value_for_kind(EdgeKind::ChildOf, value)
         .map_err(|_| crate::Error::CorruptedIndex("deferred ChildOf obligation"))?;
     let row = pending_child_of_key(window, src, tgt);
-    vault.store.sync_state.put(txn, &row, value)?;
+    PENDING_CHILD_OF_ROW.put(
+        &vault.store,
+        txn,
+        &row[PENDING_CHILD_OF.len()..].to_string(),
+        &value.to_vec(),
+    )?;
     for id in [src, tgt] {
-        vault
-            .store
-            .sync_state
-            .put(txn, &child_of_endpoint_key(id, &row), &[1])?;
+        let index = child_of_endpoint_key(id, &row);
+        CHILD_OF_ENDPOINT_ROW.put(
+            &vault.store,
+            txn,
+            &index[CHILD_OF_ENDPOINT.len()..].to_string(),
+            &[1],
+        )?;
     }
     crate::sync::quarantine::set_replay_remat_marker_in_txn(vault, txn, window, src)
 }
@@ -527,12 +545,18 @@ pub(in crate::sync) fn settle_child_of(
     if vault.store.sync_state.get(txn, &row)?.is_none() {
         return Ok(());
     }
-    vault.store.sync_state.delete(txn, &row)?;
+    PENDING_CHILD_OF_ROW.delete(
+        &vault.store,
+        txn,
+        &row[PENDING_CHILD_OF.len()..].to_string(),
+    )?;
     for id in [src, tgt] {
-        vault
-            .store
-            .sync_state
-            .delete(txn, &child_of_endpoint_key(id, &row))?;
+        let index = child_of_endpoint_key(id, &row);
+        CHILD_OF_ENDPOINT_ROW.delete(
+            &vault.store,
+            txn,
+            &index[CHILD_OF_ENDPOINT.len()..].to_string(),
+        )?;
     }
     if !super::parent_retry::has_pending_source_in_txn(vault, txn, window, src)? {
         crate::sync::quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, src)?;
@@ -598,14 +622,14 @@ fn retry_child_of_row(
     match applied {
         Ok(()) => {
             settle_child_of(vault, txn, window, &src, &tgt)?;
-            let stored = vault
-                .store
-                .edges_out
-                .get(
-                    &*txn,
-                    &Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt),
-                )?
-                .is_some();
+            let stored = crate::ports::EdgeStoreRead::port_edge_get(
+                &vault.store,
+                &*txn,
+                &src,
+                EdgeKind::ChildOf,
+                &tgt,
+            )?
+            .is_some();
             Ok(stored.then_some(
                 crate::conversation_dag::topology::Dependency::ConversationMembership(src),
             ))

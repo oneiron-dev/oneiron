@@ -126,6 +126,16 @@ impl Vault {
         publisher: &ForeignSkillPublisher,
         evidence_skill: EntityId,
     ) -> Result<AdmissionSnapshot> {
+        // A shared delta retains its birth identity even if later imports add
+        // hub aliases for the same bytes. Marketplace consent and replay are
+        // not substitutes for its typed useful-upstream decision.
+        if self.delta_in_txn(txn, &candidate)?.is_some()
+            || super::skill_refinement_origin_in_txn(&self.store, txn, &candidate)?
+        {
+            return Err(invalid(
+                "shared delta must use the merge-back admission door",
+            ));
+        }
         self.check_publisher_in_txn(txn, publisher)?;
         if publisher.hub != source.hub_id || candidate == evidence_skill {
             return Err(invalid("invalid publisher or evidence baseline"));
@@ -162,7 +172,11 @@ impl Vault {
         {
             return Err(invalid("stored package and candidate disagree"));
         }
-        self.check_hub_source_alias(txn, &candidate, source, package.content_hash()?)?;
+        let content_hash = package.content_hash()?;
+        if super::import_receipt::marketplace_hash_blocked_in_txn(&self.store, txn, content_hash)? {
+            return Err(invalid("marketplace hash rule blocks activation"));
+        }
+        self.check_hub_source_alias(txn, &candidate, source, content_hash)?;
         let baseline = read_skill(self, txn, &evidence_skill)?;
         if baseline.lifecycle_status != SkillLifecycle::Active {
             return Err(invalid("held-out baseline is not active"));
@@ -210,7 +224,7 @@ impl Vault {
             surface,
         })
     }
-    fn check_hub_source_alias(
+    pub(super) fn check_hub_source_alias(
         &self,
         txn: &heed::RoTxn<'_>,
         candidate: &EntityId,
@@ -295,10 +309,7 @@ pub(super) fn read_skill(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<SkillRecord> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != crate::registry::ENTITY_TYPE_SKILL {

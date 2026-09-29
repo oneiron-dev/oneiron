@@ -3,10 +3,19 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use crate::side_table::{self, Named, SideTable};
+use serde::{Deserialize, Serialize};
 
-pub(super) const ACTIVE: &[u8] = b"message_stream:v1:";
-const RECEIPT: &[u8] = b"message_stream_receipt:v1:";
+/// In-flight streamed message recovery seed. Key: id16 (message id).
+pub(super) const ACTIVE: SideTable<EntityId, Seed, Named> =
+    SideTable::new(&side_table::MESSAGE_STREAM_ACTIVE);
+/// Latest terminal stream receipt of a message. Key: id16 (message id).
+const RECEIPT: SideTable<EntityId, MessageStreamReceipt, Named> =
+    SideTable::new(&side_table::MESSAGE_STREAM_RECEIPT);
+/// Per-generation stream receipt keyed by its receipt ref. Key: string
+/// (hex32(message id) ":" hex32(generation)).
+const RECEIPT_BY_REF: SideTable<String, MessageStreamReceipt, Named> =
+    SideTable::new(&side_table::MESSAGE_STREAM_RECEIPT_BY_REF);
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Seed {
     pub message_id: EntityId,
@@ -51,26 +60,12 @@ impl Seed {
         }
     }
 }
-pub(super) fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
-pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(value).map_err(|_| Error::CorruptedIndex("stream metadata encode"))
-}
-pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("stream metadata decode"))
-}
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<MessageStreamReceipt>> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, &key(RECEIPT, id))?
-        .map(|bytes| decode(&bytes))
-        .transpose()
+    RECEIPT.get(&vault.store, txn, &id)
 }
 pub(super) fn finish(
     vault: &Vault,
@@ -78,28 +73,17 @@ pub(super) fn finish(
     seed: &Seed,
     receipt: &MessageStreamReceipt,
 ) -> Result<()> {
-    let active_key = key(ACTIVE, seed.message_id);
-    let stored: Seed = decode(
-        &vault
-            .store
-            .vault_meta
-            .get(txn, &active_key)?
-            .ok_or(Error::CorruptedIndex("stream recovery metadata missing"))?,
-    )?;
+    let stored = ACTIVE
+        .get(&vault.store, txn, &seed.message_id)?
+        .ok_or(Error::CorruptedIndex("stream recovery metadata missing"))?;
     if stored.generation != seed.generation {
         return Err(Error::ConcurrentWrite("message stream generation changed"));
     }
     // Per-generation receipt is immutable; the message key is the latest join.
-    let bytes = encode(receipt)?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key(RECEIPT, seed.message_id), &bytes)?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, receipt.receipt_ref.as_bytes(), &bytes)?;
-    vault.store.vault_meta.delete(txn, &active_key)?;
+    RECEIPT.put(&vault.store, txn, &seed.message_id, receipt)?;
+    let by_ref = format!("{}:{}", seed.message_id.to_hex(), seed.generation.to_hex());
+    RECEIPT_BY_REF.put(&vault.store, txn, &by_ref, receipt)?;
+    ACTIVE.delete(&vault.store, txn, &seed.message_id)?;
     Ok(())
 }
 impl Vault {
@@ -122,11 +106,7 @@ impl Vault {
             ));
         }
         let txn = self.store.env.read_txn()?;
-        Ok(self
-            .store
-            .vault_meta
-            .get(&txn, reference.as_bytes())?
-            .map(|b| decode(&b))
-            .transpose()?)
+        let suffix = reference[10..].to_owned();
+        Ok(RECEIPT_BY_REF.get(&self.store, &txn, &suffix)?)
     }
 }

@@ -334,7 +334,7 @@ async fn an_expired_link_is_unauthorized_at_pair() {
     let (link, expires_at) = fixture.link(READ_WRITE, &fixture.person, Some("human"));
     fixture
         .vault
-        .sync_state_put("authlog:first_seen:clock_floor", &expires_at.to_be_bytes())
+        .advance_authority_clock_for_test(expires_at.saturating_add(1))
         .unwrap();
     let refused = blocking(move || code(OneironClient::pair(&link))).await;
     assert_eq!(refused, "UNAUTHORIZED");
@@ -385,7 +385,7 @@ async fn a_revoked_slip_is_unauthorized_on_its_next_call() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_host_secret_crosses_with_no_proof_and_is_authenticated() {
+async fn host_secret_without_a_holder_proof_is_not_a_credential() {
     let fixture = Fixture::serve().await;
     let origin = fixture.origin.clone();
     let refused = blocking(move || {
@@ -393,6 +393,6 @@ async fn the_host_secret_crosses_with_no_proof_and_is_authenticated() {
         code(client.receipts(10))
     })
     .await;
-    // Authenticated, then refused at the facade: a secret names no principal.
-    assert_eq!(refused, "FORBIDDEN");
+    // An issuer secret is key material, not an owner-grade bearer.
+    assert_eq!(refused, "UNAUTHORIZED");
 }

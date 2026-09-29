@@ -69,10 +69,6 @@ use self::proposal::{CompanionProposalRow, PARTICIPANT_TOKEN_HEX_LEN};
 #[cfg(test)]
 use self::render::validate_participant_token;
 #[cfg(test)]
-use self::storage::{decode_row, proposal_meta_key};
-#[cfg(test)]
-use crate::booking::lifecycle::read_meta_bytes;
-#[cfg(test)]
 use crate::booking::{BookingError, EventTypeConfig, EventTypeKey, RankedSlot, SlotOracle};
 #[cfg(test)]
 use crate::lens::LensAtom;

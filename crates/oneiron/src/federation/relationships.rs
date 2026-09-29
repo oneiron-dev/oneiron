@@ -313,7 +313,7 @@ fn put_relationship_claim(
             1.0,
             claim.approval,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
         occurred,
         learned_at,
     )?;

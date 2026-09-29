@@ -2,6 +2,7 @@
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
 use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -27,14 +28,8 @@ pub fn default_project_id() -> EntityId {
         .expect("project scope id")
 }
 /// Stable substrate mask identity. Replaying PERSON creation mints the same mask.
-pub fn substrate_facet_id(person: EntityId) -> EntityId {
-    let mut h = blake3::Hasher::new_derive_key("oneiron/person-substrate-facet/v1");
-    h.update(person.as_bytes());
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&h.finalize().as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 15) | 0x80;
-    bytes[8] = (bytes[8] & 63) | 0x80;
-    EntityId::from_bytes(bytes).expect("derived UUID")
+pub fn substrate_facet_id(person: EntityId) -> Result<EntityId> {
+    EntityId::derive(PERSON_SUBSTRATE_FACET, &[person.as_bytes()])
 }
 /// Engine-internal predicate of the vault default facet: subject the owner
 /// PERSON, value the FACET id as 16 binary bytes. A later set supersedes the
@@ -55,7 +50,7 @@ pub(crate) fn default_facet_in(store: &Store, txn: &heed::RoTxn<'_>) -> Result<E
         None,
     )? {
         let claim = edge?.target;
-        let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
             continue;
         };
         let header =
@@ -77,7 +72,7 @@ pub(crate) fn default_facet_in(store: &Store, txn: &heed::RoTxn<'_>) -> Result<E
     }
     match newest {
         Some((_, value)) => scope_id(&value),
-        None => Ok(substrate_facet_id(owner)),
+        None => substrate_facet_id(owner),
     }
 }
 
@@ -129,7 +124,7 @@ impl crate::Vault {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.source = Some(ClaimSource::UserStated);
             self.put_reserved_claim_in_txn(
                 wtxn,
@@ -149,7 +144,7 @@ impl crate::Vault {
     }
 }
 
-pub(super) fn subject_facet(subject: ClaimSubject) -> EntityId {
+pub(super) fn subject_facet(subject: ClaimSubject) -> Result<EntityId> {
     substrate_facet_id(match subject {
         ClaimSubject::Entity(id) => id,
         ClaimSubject::Edge { source, .. } => source,
@@ -236,7 +231,7 @@ pub(crate) fn upgrade_pre_scope_body(data: &[u8]) -> Result<Vec<u8>> {
     let Value::Binary(bytes) = &subject.1 else {
         return Err(Error::InvalidClaimBody("invalid subject"));
     };
-    let facet = subject_facet(ClaimSubject::decode(bytes)?);
+    let facet = subject_facet(ClaimSubject::decode(bytes)?)?;
     let take = |entries: &mut Vec<(Value, Value)>, name: &str| {
         entries
             .iter()
@@ -264,7 +259,22 @@ pub(crate) fn upgrade_pre_scope_body(data: &[u8]) -> Result<Vec<u8>> {
             _ => v.as_str().and_then(|s| EntityId::from_hex(s).ok()),
         })
         .unwrap_or(facet);
-    let project = match field(&["corpus_id"]) {
+    // Only the legacy restamp reads the retired nested entry. Ambiguous
+    // legacy audiences must not be assigned by MessagePack map order.
+    let legacy_corpus = match legacy_scope {
+        Some(Value::Map(map)) => {
+            let mut matches = map
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some("corpus_id"));
+            let value = matches.next().map(|(_, value)| value.clone());
+            if matches.next().is_some() {
+                return Err(Error::InvalidClaimBody("duplicate legacy corpus id"));
+            }
+            value
+        }
+        _ => None,
+    };
+    let project = match legacy_corpus {
         None => id_value(default_project_id()),
         Some(Value::String(text)) => id_value(
             EntityId::from_hex(

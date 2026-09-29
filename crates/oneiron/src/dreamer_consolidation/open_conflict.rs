@@ -1,8 +1,9 @@
 //! A judge outage is an open question, persisted through the shared write gate.
-use super::{ConflictSet, PromotionCandidate, conflict_open_marker_id};
+use super::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
+use super::{ConflictSet, conflict_open_marker_id};
 use crate::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result, TimeRange,
-    Vault, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result,
+    SourceLineage, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
 
@@ -11,26 +12,25 @@ pub(super) fn park_open_conflict(
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
     conflict: &ConflictSet,
-    members: &[&PromotionCandidate],
+    members: &[&VerifiedCandidate],
     fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
-    let id = conflict_open_marker_id(conflict, attempt);
-    let refs: std::collections::BTreeSet<_> = members
-        .iter()
-        .flat_map(|c| c.evidence_turn_refs.iter().copied())
-        .collect();
+    let id = conflict_open_marker_id(conflict, attempt)?;
+    let mut verified: Option<VerifiedEvidenceSet> = None;
     for member in members {
-        fence.evidence_source(member)?;
+        verified = Some(verified.map_or_else(
+            || member.evidence.clone(),
+            |old| old.union(&member.evidence),
+        ));
     }
-    let evidence = super::encode_consolidation_evidence(&super::ConsolidationEvidenceEnvelope {
-        refs: refs.into_iter().collect(),
-        chain: Vec::new(),
-        source_meet: ClaimSource::Generated,
-    });
-    let envelope = WriteEnvelope::new(
+    let verified = verified
+        .ok_or_else(|| super::support::invalid_consolidation("open conflict has no evidence"))?;
+    let meet = verified.meet();
+    let evidence = verified.envelope(Vec::new());
+    let envelope = WriteEnvelope::with_lineage(
         actor,
-        ClaimSource::Generated,
+        meet,
         WriteProvenance::new(Value::Map(vec![
             (Value::from("surface"), Value::from("dreamer")),
             (
@@ -39,6 +39,7 @@ pub(super) fn park_open_conflict(
             ),
         ]))?,
         ClaimApprovalStatus::Proposed,
+        SourceLineage::of(ClaimSource::Generated).with(meet),
     );
     let mut candidate = ClaimCandidate::new(
         crate::claim::PREDICATE_CONFLICT_OPEN,
@@ -102,9 +103,13 @@ pub(super) fn park_open_conflict(
     if let Some(rel) = conflict.identity.rel {
         candidate = candidate.with_relationship(rel);
     }
-    candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
+    candidate = candidate
+        .with_scope(super::persistence::identity_scope(&conflict.identity)?)
+        .with_evidence_taint(meet)?;
     vault.with_write_txn(|txn| {
         fence.validate_in_txn(vault, txn)?;
+        let mut envelope = envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
         vault
             .batch_in()
             .claim_candidate(

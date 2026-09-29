@@ -46,10 +46,7 @@ impl Vault {
         if sources.is_empty() {
             return Ok(0);
         }
-        let raw = self
-            .store
-            .entities
-            .get(txn, holder.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, holder)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("receipt source import holder"))?;
@@ -76,7 +73,9 @@ impl Vault {
             let archive = ReceiptArchive::new(holder, body, source.clone())?;
             let bytes = archive.bytes()?;
             let id = archive.id()?;
-            if let Some(raw) = self.store.entities.get(txn, id.as_bytes())? {
+            if let Some(raw) =
+                crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+            {
                 let head = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("receipt source existing header"))?;
                 if head.entity_type != ENTITY_TYPE_ASSET

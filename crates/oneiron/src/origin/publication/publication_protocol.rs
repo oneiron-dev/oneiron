@@ -6,8 +6,7 @@ use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
 
 use super::publication_codec::{
-    decode_publication_row, keep_owner_key, origin_keep_ref_name, origin_publication_id,
-    publication_key,
+    KEEP_OWNER, PUBLICATIONS, keep_owner_key, origin_keep_ref_name, origin_publication_id,
 };
 use super::publication_journal::{origin_receipt, validate_origin_publication_request};
 use super::publication_types::{
@@ -53,9 +52,7 @@ impl Vault {
         let repo_id = self.origin_repo_id_for(repo)?;
         let key = keep_owner_key(&repo_id, oid, kind, owner_key);
         self.with_write_txn(|wtxn| {
-            self.store
-                .vault_meta
-                .put(wtxn, &key, &learned_at.to_le_bytes())?;
+            KEEP_OWNER.put(&self.store, wtxn, &key, &learned_at.to_le_bytes())?;
             Ok(())
         })?;
         Ok(name)
@@ -83,7 +80,7 @@ impl Vault {
         let repo_id = self.origin_repo_id_for(repo)?;
         let key = keep_owner_key(&repo_id, oid, kind, owner_key);
         self.with_write_txn(|wtxn| {
-            self.store.vault_meta.delete(wtxn, &key)?;
+            KEEP_OWNER.delete(&self.store, wtxn, &key)?;
             Ok(())
         })?;
         if self.origin_keep_owner_count(&repo_id, oid)? == 0
@@ -194,14 +191,10 @@ impl Vault {
         publication_id: EntityId,
     ) -> Result<Option<OriginPublicationRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &publication_key(&publication_id))?
-        else {
+        let Some(row) = PUBLICATIONS.get(&self.store, &rtxn, &publication_id)? else {
             return Ok(None);
         };
-        decode_publication_row(&raw).map(Some)
+        row.into_record().map(Some)
     }
 
     /// Lists durable publication ids for read-only diagnostics, in every status.

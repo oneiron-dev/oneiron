@@ -204,6 +204,191 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
 }
 
 #[test]
+fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
+    let clock = crate::ports::ManualClock::new(100);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(
+        dir.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let mut input = plan(&vault, 26);
+    input.now = Some(100);
+    input.deadline_at = 300;
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let paused = facade.fan_out_consults(&input).expect("paused plan");
+    assert!(paused.paused.is_some());
+    let denied = facade
+        .resume_fan_out_consults(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::Deny,
+            &human,
+        )
+        .expect("denied ruling");
+    let denied_ref = denied.choice_receipt_ref.as_deref().expect("deny receipt");
+    let denied_id = EntityId::from_hex(denied_ref.strip_prefix("gate:").expect("typed gate ref"))
+        .expect("valid receipt id");
+    assert_eq!(denied_id.as_bytes()[0], 0x71);
+    let approved = facade
+        .resume_fan_out_consults(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::ApproveAndRemember,
+            &human,
+        )
+        .expect("approval ruling");
+    let approved_ref = approved
+        .choice_receipt_ref
+        .as_deref()
+        .expect("approve receipt");
+    let approved_id =
+        EntityId::from_hex(approved_ref.strip_prefix("gate:").expect("typed gate ref"))
+            .expect("valid receipt id");
+    assert_eq!(approved_id.as_bytes()[0], 0x71);
+    assert_ne!(denied_id, approved_id);
+    let before_replay = vault
+        .store
+        .gate_decisions(100)
+        .expect("durable gate decisions")
+        .into_iter()
+        .filter(|row| row.content_kind == "consult_fanout")
+        .collect::<Vec<_>>();
+    assert_eq!(before_replay.len(), 2);
+    assert!(
+        before_replay
+            .iter()
+            .any(|row| row.decision_id.as_bytes() == *denied_id.as_bytes()
+                && row.outcome == "kept_paused")
+    );
+    assert!(
+        before_replay
+            .iter()
+            .any(|row| row.decision_id.as_bytes() == *approved_id.as_bytes())
+    );
+    // The same operation writes two escalation rulings and a remembered cap.
+    // They are public Gate receipts and must follow this vault's ID source too.
+    let standing = standing_policy_for(&vault, &scope(actor, &input), EscalationTrigger::Budget)
+        .expect("standing policy read")
+        .expect("remembered cap");
+    assert_eq!(standing.row_ref.as_bytes()[0], 0x71);
+    let projected = vault
+        .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))
+        .expect("projected receipts");
+    let escalation_receipts: Vec<_> = projected
+        .iter()
+        .filter(|row| {
+            crate::edit_distance::escalation::is_escalation_receipt(row)
+                && row.fields.get(crate::receipt::FIELD_TASK_REF)
+                    == Some(&paused.correlation_ref.to_hex())
+        })
+        .collect();
+    assert_eq!(escalation_receipts.len(), 2);
+    let escalation_ids: Vec<_> = escalation_receipts
+        .iter()
+        .map(|row| {
+            EntityId::from_hex(
+                row.receipt_id
+                    .strip_prefix("escalation:")
+                    .expect("escalation ref"),
+            )
+            .expect("valid escalation ID")
+        })
+        .collect();
+    assert!(escalation_ids.iter().all(|id| id.as_bytes()[0] == 0x71));
+    assert_ne!(escalation_ids[0], escalation_ids[1]);
+    assert!(escalation_receipts.iter().any(|row| row.outcome == "deny"));
+    assert!(
+        escalation_receipts
+            .iter()
+            .any(|row| row.outcome == "approve")
+    );
+    let cited = standing.cited_receipts.clone();
+    assert_eq!(cited.len(), 1);
+    assert!(
+        escalation_receipts
+            .iter()
+            .any(|row| row.receipt_id == cited[0])
+    );
+    let standing_receipts: Vec<_> = projected
+        .iter()
+        .filter(|row| {
+            crate::edit_distance::escalation::is_standing_policy_receipt(row)
+                && row
+                    .receipt_id
+                    .starts_with(&format!("escalation_policy:{}.", standing.row_ref.to_hex()))
+        })
+        .collect();
+    assert_eq!(standing_receipts.len(), 2); // proposal and acceptance
+    assert!(
+        standing_receipts
+            .iter()
+            .all(|row| row.fields[crate::receipt::FIELD_ESCALATION_CITED_RECEIPTS] == cited[0])
+    );
+    let floor = {
+        let txn = vault.store.env.read_txn().expect("floor snapshot");
+        let bytes = vault
+            .store
+            .vault_meta
+            .get(&txn, crate::ports::ID_FLOOR)
+            .expect("floor read")
+            .expect("persisted ID floor");
+        u128::from_be_bytes(bytes.as_ref().try_into().expect("floor bytes"))
+    };
+    assert!(floor >= u128::from_be_bytes(*standing.row_ref.as_bytes()));
+    let repeated = facade
+        .resume_fan_out_consults(
+            paused.correlation_ref,
+            paused.meter.plan_digest,
+            ConsultFanOutChoice::ApproveAndRemember,
+            &human,
+        )
+        .expect("idempotent replay");
+    assert_eq!(repeated.choice_receipt_ref, approved.choice_receipt_ref);
+    assert_eq!(
+        vault
+            .store
+            .gate_decisions(100)
+            .expect("persisted decisions")
+            .into_iter()
+            .filter(|row| row.content_kind == "consult_fanout")
+            .count(),
+        2
+    );
+    let after = vault
+        .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))
+        .expect("replayed receipt projection");
+    assert_eq!(
+        after
+            .iter()
+            .filter(|row| escalation_receipts
+                .iter()
+                .any(|prior| prior.receipt_id == row.receipt_id))
+            .count(),
+        2
+    );
+    assert_eq!(
+        after
+            .iter()
+            .filter(|row| standing_receipts
+                .iter()
+                .any(|prior| prior.receipt_id == row.receipt_id))
+            .count(),
+        2
+    );
+    assert_eq!(
+        standing_policy_for(&vault, &scope(actor, &input), EscalationTrigger::Budget)
+            .expect("replayed policy"),
+        Some(standing)
+    );
+}
+
+#[test]
 fn fanout_pathologies_park_with_count_fan_out_board_rows_and_evidence() {
     let (_dir, vault) = open_vault();
     let actor = own_agent(&vault);
@@ -212,7 +397,7 @@ fn fanout_pathologies_park_with_count_fan_out_board_rows_and_evidence() {
     let peer = input.assignees[0];
     // The reverse leg is a real peer actor, not the first-party actor preset.
     // Give that peer an explicit Auto ceiling before testing cycle admission.
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let Value::Map(mut manifest) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
         panic!("manifest");
     };
@@ -602,7 +787,7 @@ fn fanout_missing_manifest_threshold_refuses_instead_of_falling_back() {
     let actor = own_agent(&vault);
     let peer = consult_peer(&vault, 0xE2);
     let Value::Map(mut rows) =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap()
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice()).unwrap()
     else {
         panic!("default manifest must be a map")
     };

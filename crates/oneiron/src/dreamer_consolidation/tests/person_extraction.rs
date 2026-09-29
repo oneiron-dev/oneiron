@@ -55,6 +55,7 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("regression fixture"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -62,6 +63,8 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&admitted, &mut ctx))?,
@@ -107,6 +110,7 @@ fn expired_mint_transaction_does_not_publish_extracted_people() -> Result<()> {
             &[turn],
             &source_scope(&vault, &[turn])?,
             20,
+            None,
             Some(&deadline),
         )
         .is_err()
@@ -148,6 +152,7 @@ fn extraction_provenance_rechecks_role_and_liveness_even_for_working_set_ids() -
         &[user, tool, deleted],
         &source_scope(&vault, &[user, tool, deleted])?,
         20,
+        None,
         None,
     )?;
     assert_eq!(
@@ -205,6 +210,7 @@ fn extraction_requires_a_normalized_name_span_not_an_embedded_word() -> Result<(
         &working_set,
         &source_scope(&vault, &working_set)?,
         20,
+        None,
         None,
     )?;
     for (person, name, text, should_mint) in expected {

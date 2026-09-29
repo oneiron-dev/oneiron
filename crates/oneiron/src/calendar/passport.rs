@@ -30,11 +30,13 @@ use super::claims::{
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
-/// `vault_meta` key prefix for the UID → EVENT index. Node-local cache; the
-/// live passport claims are the synced truth.
-pub const CALENDAR_PASSPORT_INDEX_PREFIX: &[u8] = b"calendar.passport.v1:";
+/// UID-to-EVENT lookup cache. Key: `sha256(uid)`. Node-local cache; the live
+/// passport claims are the synced truth.
+const PASSPORT_INDEX: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::CALENDAR_PASSPORT_UID_INDEX);
 
 pub(crate) fn live_passports_for_event_in_txn(
     vault: &Vault,
@@ -112,28 +114,17 @@ pub enum PassportDecision {
 ///
 /// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
 pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>, CalendarError> {
-    let key = passport_index_key(uid);
+    let digest = passport_digest(uid);
     let indexed = {
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &key)?
-            .map(|raw| raw.to_vec())
+        PASSPORT_INDEX.get(&vault.store, &rtxn, &digest)?
     };
-    if let Some(raw) = indexed {
-        let bytes: [u8; 16] = raw
-            .as_slice()
-            .try_into()
-            .map_err(|_| ingest("passport index row is not an entity id"))?;
-        let id = EntityId::from_bytes(bytes)
-            .map_err(|_| ingest("passport index row is not an entity id"))?;
-        if vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
-            && !is_series_exception(vault, &id)?
-            && live_passport_for_uid(vault, &id, uid)?.is_some()
-        {
-            return Ok(Some(id));
-        }
+    if let Some(id) = indexed
+        && vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
+        && !is_series_exception(vault, &id)?
+        && live_passport_for_uid(vault, &id, uid)?.is_some()
+    {
+        return Ok(Some(id));
     }
 
     // Miss or stale shortcut: synced truth is the set of live passport claims.
@@ -250,12 +241,9 @@ pub fn index_passport_uid(
     uid: &str,
     event_ref: &EntityId,
 ) -> Result<(), CalendarError> {
-    let key = passport_index_key(uid);
+    let digest = passport_digest(uid);
     vault.try_with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, &key, event_ref.as_bytes())?;
+        PASSPORT_INDEX.put(&vault.store, wtxn, &digest, event_ref)?;
         Ok::<_, crate::Error>(())
     })?;
     Ok(())
@@ -279,24 +267,13 @@ pub(super) fn event_ref_for_indexed_uid(
     vault: &Vault,
     uid: &str,
 ) -> Result<Option<EntityId>, CalendarError> {
-    let key = passport_index_key(uid);
-    let indexed = {
+    let digest = passport_digest(uid);
+    let Some(id) = ({
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &key)?
-            .map(|raw| raw.to_vec())
-    };
-    let Some(raw) = indexed else {
+        PASSPORT_INDEX.get(&vault.store, &rtxn, &digest)?
+    }) else {
         return Ok(None);
     };
-    let bytes: [u8; 16] = raw
-        .as_slice()
-        .try_into()
-        .map_err(|_| ingest("passport index row is not an entity id"))?;
-    let id = EntityId::from_bytes(bytes)
-        .map_err(|_| ingest("passport index row is not an entity id"))?;
     if vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT) {
         return Ok(Some(id));
     }
@@ -389,13 +366,9 @@ fn live_passport_for_uid(
     Ok(None)
 }
 
-/// Index key: prefix + SHA-256 of the UID, mirroring `comm.rs::party_index_key`.
-fn passport_index_key(uid: &str) -> Vec<u8> {
-    let digest = Sha256::digest(uid.as_bytes());
-    let mut key = Vec::with_capacity(CALENDAR_PASSPORT_INDEX_PREFIX.len() + digest.len());
-    key.extend_from_slice(CALENDAR_PASSPORT_INDEX_PREFIX);
-    key.extend_from_slice(&digest);
-    key
+/// Index key digest: SHA-256 of the UID, mirroring `comm.rs::party_index_key`.
+fn passport_digest(uid: &str) -> [u8; 32] {
+    Sha256::digest(uid.as_bytes()).into()
 }
 
 /// The `calendar.passport` wire map, keyed exactly as
@@ -471,11 +444,15 @@ mod tests {
 
     #[test]
     fn index_key_is_prefixed_sha256_of_the_uid() {
-        let key = passport_index_key("uid-1@example.com");
-        assert!(key.starts_with(CALENDAR_PASSPORT_INDEX_PREFIX));
-        assert_eq!(key.len(), CALENDAR_PASSPORT_INDEX_PREFIX.len() + 32);
-        assert_ne!(key, passport_index_key("uid-2@example.com"));
-        assert_eq!(key, passport_index_key("uid-1@example.com"));
+        let digest = passport_digest("uid-1@example.com");
+        let key = PASSPORT_INDEX.key_bytes(&digest);
+        assert!(key.starts_with(side_table::CALENDAR_PASSPORT_UID_INDEX.prefix));
+        assert_eq!(
+            key.len(),
+            side_table::CALENDAR_PASSPORT_UID_INDEX.prefix.len() + 32
+        );
+        assert_ne!(digest, passport_digest("uid-2@example.com"));
+        assert_eq!(digest, passport_digest("uid-1@example.com"));
     }
 
     #[test]
@@ -509,7 +486,8 @@ mod tests {
                     1.0,
                     crate::claim::ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 crate::temporal::TimeRange { start: 1, end: 1 },
                 1,
             )

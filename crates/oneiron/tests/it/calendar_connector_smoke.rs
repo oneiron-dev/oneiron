@@ -224,6 +224,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open_unseeded_for_test(dir.path(), cfg).expect("open vault");
+    crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
 
@@ -235,6 +236,7 @@ fn temp_vault_seeded() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
+    crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
 
@@ -521,7 +523,10 @@ impl CalendarRemoteTransport for DeleteEventAfterUpsert<'_> {
         if *delete {
             *delete = false;
             self.vault
-                .delete_entity(&self.event_ref)
+                .delete_entity_with_options(
+                    &self.event_ref,
+                    oneiron::deletion::DeleteEntityOptions { purge: true },
+                )
                 .expect("remove event after provider success");
         }
         let mut receipt =

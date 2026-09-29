@@ -7,6 +7,7 @@ use crate::campaign::CRM_PACK_ID;
 use crate::campaign::claims::{CampaignMemberValue, encode_campaign_member_value};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideKey, SideTable};
 use crate::temporal::TimeRange;
 
 use super::definition::{
@@ -15,106 +16,144 @@ use super::definition::{
 use super::evidence::{EVIDENCE_HASH_LEN, MatchVerdict, VerdictMemoKey, VerdictMemoRow};
 use super::filter::{FilterAst, MatcherSpec, parse_filter_ast};
 use super::membership::{MembershipCause, MembershipEvent, MembershipTransition};
+use super::pack_drift::{PackDrift, PackMigrationMap};
 use super::support::{canonical_json_bytes, hex_lower, invalid, parse_entity_ref};
 
-/// Versioned `vault_meta` key builders owned by this module.
-///
-/// Every prefix carries its own `v1` so a later shape change is a new keyspace
-/// rather than a reinterpretation of rows already on disk.
-pub(super) mod keys {
-    use crate::entity_id::EntityId;
-    use crate::saved_query::{EVIDENCE_HASH_LEN, PackDrift, VerdictMemoKey};
+/// Node-local fast-path watermark for one `(query, entity)` pair's last-applied epoch.
+pub(super) const WATERMARK: SideTable<(EntityId, EntityId), Watermark, Raw> =
+    SideTable::new(&side_table::SAVED_QUERY_WATERMARK);
 
-    const MEMO: &[u8] = b"saved_query.memo.v1:";
-    const WATERMARK: &[u8] = b"saved_query.epoch.v1:";
-    const EVENT: &[u8] = b"saved_query.event.v1:";
-    const REPAIR: &[u8] = b"saved_query.repair.v1:";
-    const MIGRATION_MAP: &[u8] = b"saved_query.packmap.v1:";
-
-    fn keyed(prefix: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-        let mut key =
-            Vec::with_capacity(prefix.len() + parts.iter().map(|p| p.len()).sum::<usize>());
-        key.extend_from_slice(prefix);
-        for part in parts {
-            key.extend_from_slice(part);
-        }
-        key
-    }
-
-    pub(in crate::saved_query) fn memo(key: &VerdictMemoKey) -> Vec<u8> {
-        keyed(
-            MEMO,
-            &[
-                key.query_ref.as_bytes(),
-                key.entity_ref.as_bytes(),
-                &key.evidence_hash,
-            ],
-        )
-    }
-
-    pub(in crate::saved_query) fn watermark(
-        query_ref: &EntityId,
-        entity_ref: &EntityId,
-    ) -> Vec<u8> {
-        keyed(WATERMARK, &[query_ref.as_bytes(), entity_ref.as_bytes()])
-    }
-
-    pub(in crate::saved_query) fn event_prefix(
-        query_ref: &EntityId,
-        entity_ref: &EntityId,
-    ) -> Vec<u8> {
-        keyed(EVENT, &[query_ref.as_bytes(), entity_ref.as_bytes()])
-    }
-
-    /// Big-endian epoch suffix so a prefix scan returns history in epoch order.
-    pub(in crate::saved_query) fn event(
-        query_ref: &EntityId,
-        entity_ref: &EntityId,
-        epoch: u64,
-    ) -> Vec<u8> {
-        let mut key = event_prefix(query_ref, entity_ref);
-        key.extend_from_slice(&epoch.to_be_bytes());
-        key
-    }
-
-    pub(in crate::saved_query) fn repair(repair_ref: &EntityId) -> Vec<u8> {
-        keyed(REPAIR, &[repair_ref.as_bytes()])
-    }
-
-    pub(in crate::saved_query) fn migration_map(drift: &PackDrift) -> Vec<u8> {
-        keyed(
-            MIGRATION_MAP,
-            &[
-                drift.from_pack_id.as_bytes(),
-                b"@",
-                drift.from_version.as_bytes(),
-                b"->",
-                drift.to_pack_id.as_bytes(),
-                b"@",
-                drift.to_version.as_bytes(),
-            ],
-        )
-    }
-
-    /// Watermark rows are `epoch || content digest`.
-    pub(in crate::saved_query) const WATERMARK_ROW_LEN: usize = 8 + EVIDENCE_HASH_LEN;
+pub(super) struct Watermark {
+    pub(super) epoch: u64,
+    pub(super) content: [u8; EVIDENCE_HASH_LEN],
 }
 
-/// Reads one `vault_meta` row into an owned buffer, opening its own read txn.
-pub(super) fn meta_row(vault: &Vault, key: &[u8]) -> Result<Option<Vec<u8>>> {
-    let rtxn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&rtxn, key)?
-        .map(|bytes| bytes.to_vec()))
+impl RawValue for Watermark {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_watermark(self.epoch, &self.content))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (epoch, content) = decode_watermark(bytes)?;
+        Ok(Self { epoch, content })
+    }
 }
 
-/// Writes one `vault_meta` row in its own write txn. Multi-row writes
-/// (the membership commit) keep their own transaction instead.
-pub(super) fn put_meta_row(vault: &Vault, key: &[u8], value: &[u8]) -> Result<()> {
-    vault.with_write_txn(|wtxn| vault.store.vault_meta.put(wtxn, key, value))
+/// Durable append-only membership-transition event history, keyed by
+/// `(query, entity, epoch)` so a prefix scan over `(query, entity)` returns
+/// history in epoch order.
+pub(super) const MEMBERSHIP_EVENTS: SideTable<(EntityId, EntityId, u64), MembershipEvent, Raw> =
+    SideTable::new(&side_table::SAVED_QUERY_MEMBERSHIP_EVENT);
+
+impl RawValue for MembershipEvent {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_event(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_event(bytes)?)
+    }
 }
+
+/// The `(query, entity)` key prefix selecting one pair's whole event history.
+pub(super) fn event_pair_prefix(query_ref: &EntityId, entity_ref: &EntityId) -> Vec<u8> {
+    let mut prefix = query_ref.as_bytes().to_vec();
+    prefix.extend_from_slice(entity_ref.as_bytes());
+    prefix
+}
+
+/// Cached match-evaluator verdict for one `(query, entity, evidence)` triple.
+pub(super) const MEMOS: SideTable<VerdictMemoKey, VerdictMemoRow, Raw> =
+    SideTable::new(&side_table::SAVED_QUERY_MEMO);
+
+impl SideKey for VerdictMemoKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.query_ref.as_bytes());
+        out.extend_from_slice(self.entity_ref.as_bytes());
+        out.extend_from_slice(&self.evidence_hash);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (query_ref, rest) = bytes.split_at_checked(16)?;
+        let (entity_ref, evidence_hash) = rest.split_at_checked(16)?;
+        Some(Self {
+            query_ref: EntityId::from_bytes(query_ref.try_into().ok()?).ok()?,
+            entity_ref: EntityId::from_bytes(entity_ref.try_into().ok()?).ok()?,
+            evidence_hash: evidence_hash.try_into().ok()?,
+        })
+    }
+}
+
+impl RawValue for VerdictMemoRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_memo_row(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_memo_row(bytes)?)
+    }
+}
+
+/// Operator-supplied predicate rewrite map for one pack move, keyed by
+/// `{from_pack_id}@{from_version}->{to_pack_id}@{to_version}`.
+pub(super) const PACK_MIGRATION_MAPS: SideTable<String, PackMigrationMap, LegacyJson> =
+    SideTable::new(&side_table::SAVED_QUERY_PACK_MIGRATION_MAP);
+
+pub(super) fn migration_map_key(drift: &PackDrift) -> String {
+    format!(
+        "{}@{}->{}@{}",
+        drift.from_pack_id, drift.from_version, drift.to_pack_id, drift.to_version
+    )
+}
+
+/// Receipt of one pack-drift repair action, keyed by its own id.
+pub(super) const REPAIRS: SideTable<EntityId, RepairReceipt, Raw> =
+    SideTable::new(&side_table::SAVED_QUERY_REPAIR);
+
+pub(super) struct RepairReceipt {
+    pub(super) query_ref: EntityId,
+    pub(super) summary: String,
+    pub(super) recorded_at: u64,
+    pub(super) drift: PackDrift,
+}
+
+impl RawValue for RepairReceipt {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut row = JsonMap::new();
+        row.insert(
+            "query_ref".to_owned(),
+            Value::String(self.query_ref.to_hex()),
+        );
+        row.insert("summary".to_owned(), Value::String(self.summary.clone()));
+        row.insert("recorded_at".to_owned(), Value::from(self.recorded_at));
+        row.insert(
+            "drift".to_owned(),
+            serde_json::to_value(&self.drift)
+                .map_err(|_| Error::InvariantViolation("pack drift encode failed"))?,
+        );
+        Ok(canonical_json_bytes(&Value::Object(row))?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        const CONTEXT: &str = "saved query repair receipt";
+        let value = parse_row(bytes, CONTEXT)?;
+        Ok(Self {
+            query_ref: required_entity_ref(&value, "query_ref", CONTEXT)?,
+            summary: required_string(&value, "summary", CONTEXT)?,
+            recorded_at: required_u64(&value, "recorded_at", CONTEXT)?,
+            drift: serde_json::from_value(
+                value
+                    .get("drift")
+                    .cloned()
+                    .ok_or(Error::CorruptedIndex(CONTEXT))?,
+            )
+            .map_err(|_| Error::CorruptedIndex(CONTEXT))?,
+        })
+    }
+}
+
+/// Watermark rows are `epoch || content digest`.
+const WATERMARK_ROW_LEN: usize = 8 + EVIDENCE_HASH_LEN;
 
 /// The type byte this vault assigned the SAVED_QUERY kind at pack registration.
 ///
@@ -203,25 +242,20 @@ pub(super) fn read_watermark(
     query_ref: EntityId,
     entity_ref: EntityId,
 ) -> Result<Option<(u64, [u8; EVIDENCE_HASH_LEN])>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, &keys::watermark(&query_ref, &entity_ref))?
-    else {
-        return Ok(None);
-    };
-    decode_watermark(raw.as_ref()).map(Some)
+    Ok(WATERMARK
+        .get(&vault.store, rtxn, &(query_ref, entity_ref))?
+        .map(|watermark| (watermark.epoch, watermark.content)))
 }
 
 pub(super) fn encode_watermark(epoch: u64, content: &[u8; EVIDENCE_HASH_LEN]) -> Vec<u8> {
-    let mut row = Vec::with_capacity(keys::WATERMARK_ROW_LEN);
+    let mut row = Vec::with_capacity(WATERMARK_ROW_LEN);
     row.extend_from_slice(&epoch.to_be_bytes());
     row.extend_from_slice(content);
     row
 }
 
 pub(super) fn decode_watermark(raw: &[u8]) -> Result<(u64, [u8; EVIDENCE_HASH_LEN])> {
-    if raw.len() != keys::WATERMARK_ROW_LEN {
+    if raw.len() != WATERMARK_ROW_LEN {
         return Err(Error::CorruptedIndex("saved query epoch watermark"));
     }
     let (epoch, content) = raw.split_at(8);

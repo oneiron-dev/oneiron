@@ -42,7 +42,7 @@ pub(super) fn check_authority_log_store_key(
             id: *id,
         }));
     }
-    let Some(existing) = store.entities.get(wtxn, id.as_bytes())? else {
+    let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(AuthorityLogKeyOccupant::Admissible);
     };
     let existing_type = EntityMetadataHeader::parse(&existing)
@@ -144,11 +144,11 @@ pub(super) fn evict_authority_log_store_key_squatter(
     );
     // Captured BEFORE the deindex: afterwards the action bytes are gone and
     // the induced sources are unrecoverable.
-    let induced_shell_sources =
+    let displaced_topology_event =
         crate::identity_topology::identity_topology_shell_sources_for_store_in_txn(
             store, wtxn, id,
-        )?
-        .unwrap_or_default();
+        )?;
+    let induced_shell_sources = displaced_topology_event.unwrap_or_default();
     let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     if had_graph_mutation {
@@ -214,9 +214,7 @@ pub(super) fn stored_authority_log_entries(
     {
         let (key, _) = entry?;
         let id = authority_type_index_entity_id(&key)?;
-        let raw = store
-            .entities
-            .get(wtxn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
             .ok_or(Error::CorruptedIndex("type index row without entity"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;

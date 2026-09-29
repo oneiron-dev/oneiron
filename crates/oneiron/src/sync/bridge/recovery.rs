@@ -4,6 +4,7 @@ use super::Materializer;
 use crate::batch::EdgeValueFields;
 use crate::error::{ArtifactError, Result};
 use crate::recovery::CanonicalSnapshot;
+use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
 use crate::{EntityId, Vault};
 use loro::LoroDoc;
 
@@ -31,22 +32,25 @@ pub(crate) fn preflight_canonical_recovery(
     let mut txn = vault.store.env.write_txn()?;
     crate::recovery::validate_window_documents(doc)?;
     snapshot.preflight_note_recovery(vault, &txn)?;
+    let tombstones_map = doc.get_map("tombstones");
+    let ingest = IngestCtx::new(
+        vault,
+        &snapshot.window,
+        materializer.lease_vault_id(),
+        &tombstones_map,
+    );
     for entity in &snapshot.entity_blobs {
         let id = EntityId::from_bytes(entity.id)?;
         if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &id) {
             crate::batch::restore_recovery_shell_in_txn(vault, &mut txn, &id, &blob, &tombstone)?;
-        } else {
-            super::entities::materialize_entity_blob_in_txn(
-                vault,
-                &mut txn,
-                &doc.get_map("tombstones"),
-                &snapshot.window,
-                &id.to_hex(),
-                &entity.blob,
-                materializer.lease_vault_id(),
-            )?;
+        } else if let EntityStep::Quarantine(refusal) =
+            ingest_entity_in_txn(&ingest, &mut txn, &id.to_hex(), Some(&entity.blob))?
+        {
+            return Err(refusal.err);
         }
-        if vault.store.entities.get(&txn, &entity.id)?.as_deref() != Some(entity.blob.as_slice()) {
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.as_deref()
+            != Some(entity.blob.as_slice())
+        {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "entity refused recovery preflight",
             )
@@ -58,7 +62,36 @@ pub(crate) fn preflight_canonical_recovery(
         let target = EntityId::from_bytes(edge.target)?;
         let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(crate::Error::InvalidKey)?;
         let fields = crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
-        if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+        if kind == crate::edge::EdgeKind::AddressedTo {
+            let trusted_soft = crate::recovery::trusted_soft_addressing_edge(
+                snapshot,
+                &source,
+                &target,
+                &edge.value,
+            )?;
+            if trusted_soft
+                && crate::batch::stored_entity_type(&vault.store, &txn, &target)?
+                    != Some(crate::registry::ENTITY_TYPE_PERSON)
+            {
+                return Err(ArtifactError::InvalidRecoveryArtifact(
+                    "retained addressing recipient missing or not a PERSON",
+                )
+                .into());
+            }
+            if !trusted_soft
+                && !crate::conversation_dag::addressed_to_echo_in_txn(
+                    &vault.store,
+                    &txn,
+                    &source,
+                    &target,
+                    fields,
+                )?
+            {
+                return Err(
+                    crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
+                );
+            }
+        } else if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
             let mandated_at =
                 vault.identity_topology_mandated_shell_edge_in_txn(&txn, &source, kind, &target)?;
             if !mandated_at.is_some_and(|at| {
@@ -67,8 +100,9 @@ pub(crate) fn preflight_canonical_recovery(
                 return Err(reserved);
             }
         }
-        if vault.store.entities.get(&txn, &edge.source)?.is_none()
-            || vault.store.entities.get(&txn, &edge.target)?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source)?.is_none()
+            || crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &target)?
+                .is_none()
         {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "edge endpoint missing at recovery",

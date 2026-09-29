@@ -2,50 +2,14 @@
 
 use rmpv::Value;
 
-use super::{HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
+use super::{HubAdmissionProof, HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::entity_id::derived_domains::BOOTSTRAP_SKILL;
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
-
-/// Exact-record activation proof, issued after local consent and held-out replay,
-/// or at bootstrap: the vault's own genesis authorizes the embedded install set,
-/// which is why first-open seeding needs no separately minted owner consent.
-#[derive(Debug)]
-pub(crate) struct HubAdmissionProof {
-    id: EntityId,
-    binding: blake3::Hash,
-}
-impl HubAdmissionProof {
-    pub(in crate::skill_hub) fn post_fit(id: EntityId, data: &[u8]) -> Self {
-        Self {
-            id,
-            binding: blake3::hash(data),
-        }
-    }
-    pub(super) fn id(&self) -> EntityId {
-        self.id
-    }
-
-    pub(crate) fn binds(&self, id: &EntityId, data: &[u8]) -> bool {
-        self.id == *id && self.binding == blake3::hash(data)
-    }
-
-    pub(super) fn consent(
-        store: &crate::store::Store,
-        txn: &mut heed::RwTxn<'_>,
-        id: EntityId,
-        data: &[u8],
-        authorization: &crate::consent::ApproveOnceAuthorization,
-    ) -> Result<Self> {
-        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
-        Ok(Self {
-            id,
-            binding: blake3::hash(data),
-        })
-    }
-}
 
 impl Vault {
     pub(crate) fn admit_optimized_skill_in_txn(
@@ -61,17 +25,16 @@ impl Vault {
             proposal,
             learned_at,
             |txn, data| {
-                let proof = HubAdmissionProof {
-                    id: *proposal,
-                    binding: blake3::hash(&data),
-                };
+                let proof = HubAdmissionProof::optimized(*proposal, &data);
                 self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
             },
         )
     }
 }
 
-const SEED_KEY: &[u8] = b"bootstrap_skills/seeded/v1";
+/// Marker (engine version string) that the built-in bootstrap skill set has
+/// been seeded.
+const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
 const FILES: [(&str, &str); 4] = [
     (
         "skill-optimize",
@@ -86,12 +49,7 @@ const FILES: [(&str, &str); 4] = [
 ];
 
 fn stable_id(name: &str) -> Result<EntityId> {
-    let hash = blake3::hash(format!("oneiron/bootstrap/v1/{name}").as_bytes());
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(BOOTSTRAP_SKILL, &[name.as_bytes()])
 }
 
 fn package(name: &str, markdown: &str) -> Result<HubPackage> {
@@ -150,7 +108,7 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
 
 pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
-    if vault.store.vault_meta.get(&rtxn, SEED_KEY)?.is_some() {
+    if SEEDED.contains(&vault.store, &rtxn, &())? {
         return Ok(());
     }
     drop(rtxn);
@@ -163,7 +121,7 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     let mut wtxn = vault.store.env.write_txn()?;
-    if vault.store.vault_meta.get(&wtxn, SEED_KEY)?.is_some() {
+    if SEEDED.contains(&vault.store, &wtxn, &())? {
         return Ok(());
     }
     let occurred = TimeRange { start: 0, end: 0 };
@@ -176,11 +134,7 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         // could rewrite the holder or make Vault::open fail on immutable fields.
         let deletion =
             crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &wtxn, &seed_id)?;
-        if vault
-            .store
-            .entities
-            .get(&wtxn, seed_id.as_bytes())?
-            .is_some()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &wtxn, &seed_id)?.is_some()
             || deletion.deleted
             || deletion.stale
         {
@@ -214,17 +168,16 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         if record.lifecycle_status == SkillLifecycle::Candidate {
             record.lifecycle_status = SkillLifecycle::Active;
             let data = crate::skill::encode_skill_record(&record)?;
-            let proof = HubAdmissionProof {
-                id,
-                binding: blake3::hash(&data),
-            };
+            let proof = HubAdmissionProof::bootstrap(id, &data);
             vault.admit_hub_skill_record_in_txn(&mut wtxn, occurred, 0, data, proof)?;
         }
     }
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, SEED_KEY, env!("CARGO_PKG_VERSION").as_bytes())?;
+    SEEDED.put(
+        &vault.store,
+        &mut wtxn,
+        &(),
+        &env!("CARGO_PKG_VERSION").to_owned(),
+    )?;
     wtxn.commit()?;
     Ok(())
 }

@@ -42,8 +42,10 @@ mod export;
 mod expression_preference;
 pub mod extraction;
 mod key_value;
+mod machine_write;
 mod notes;
 mod outbound;
+mod read_lane;
 mod reads;
 mod recall;
 mod structural;
@@ -59,13 +61,15 @@ mod tests_regressions;
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
-    explicit_claim_override_in_txn, guard_existing_claim_in_txn, require_claim_self_grant_in_txn,
+    claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
+    require_claim_self_grant_in_txn,
 };
 pub use booking::EmergencyInstructionInput;
 pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
     ChatScope, ComposedChatAnswer,
 };
+pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
@@ -100,6 +104,7 @@ pub use recall::{
     RetrievalMeta, ScopeHonesty,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
+pub(crate) use skill_authoring::skill_author_proof_is_live_in_txn;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
@@ -122,8 +127,10 @@ pub(crate) use support::{
 };
 pub(crate) use witness::sole_edge_target;
 
-// Read-version and citation types are available under the existing memory
-// namespace; no additional crate-root surface is required.
+// Read-version, revision-change, and publication types are available under
+// the existing memory namespace; no additional crate-root surface is required.
+pub use crate::gate::LiveQueryTrackerLimits;
+pub use crate::vault::entity_revision::{EntityRevisionChange, IndexedPublication};
 pub use crate::vault::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,

@@ -48,10 +48,7 @@ use self::git::{
     run_git, run_git_at_path, validate_base_ref, validate_relative_repo_path,
 };
 #[cfg(test)]
-use self::oplog::{
-    decode_stored_oplog_entry, encode_oplog_entry, repo_mutation_oplog_key,
-    repo_mutation_repo_key_hash,
-};
+use self::oplog::{OPLOG, repo_mutation_oplog_key, repo_mutation_repo_key_hash};
 #[cfg(test)]
 use self::queue::{
     INJECT_REPO_MUTATION_CRASH, REPO_MUTATION_LOCK_FILE_NAME, RepoMutationCrashPoint,

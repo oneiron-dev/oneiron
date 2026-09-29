@@ -1789,14 +1789,14 @@ mod calendar_invite_fixture {
             .expect("put event");
         oneiron::calendar::index_passport_uid(&vault, UID, &event_ref()).expect("index uid");
 
-        let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+        let identity = crate::common::self_held_identity_in_state(
             "email",
             "me@primary.test",
             oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
             oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
+            oneiron::channel_identity::ChannelIdentityState::Active,
             100,
         );
-        identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
         vault
             .create_channel_identity(&id(0x93), &identity)
             .expect("create sending identity");
@@ -1859,6 +1859,7 @@ mod calendar_invite_fixture {
     #[derive(Default)]
     pub(super) struct InviteSink {
         pub(super) parts: Vec<(String, Vec<u8>)>,
+        pub(super) uncertain_first: bool,
     }
 
     impl oneiron::outbound::OutboundExecutionSink for InviteSink {
@@ -1872,6 +1873,12 @@ mod calendar_invite_fixture {
                 .expect("a calendar.invite send carries its iMIP part");
             self.parts
                 .push((part.content_type.clone(), part.ics.clone()));
+            if self.uncertain_first && self.parts.len() == 1 {
+                return oneiron::outbound::OutboundExecutionOutcome::failed(
+                    "uncertain_wire_crossing",
+                )
+                .with_possible_delivery();
+            }
             oneiron::outbound::OutboundExecutionOutcome::delivered_to_channel("oracle:imip-send")
         }
     }
@@ -1883,6 +1890,55 @@ mod calendar_invite_fixture {
             .find(|(_, value)| value.uid == UID)
             .map(|(_, value)| value.last_sequence)
     }
+}
+
+/// A calendar revision is semantic replacement, unlike queue-emulated sends:
+/// an ambiguous transport result must leave its frozen revision replayable.
+#[test]
+fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
+    use calendar_invite_fixture as fixture;
+    use oneiron::outbound_intent_ledger::{IntentState, intent_ledger_records};
+
+    let (_dir, vault, blob_ref) = fixture::admitted_vault();
+    vault
+        .memory(fixture::actor_ref(), oneiron::EdgeActorClass::Human)
+        .calendar_invite(&fixture::invite(&blob_ref))
+        .expect("schedule invite");
+    let mut sink = fixture::InviteSink {
+        uncertain_first: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 200)
+            .expect("ambiguous send"),
+        0
+    );
+    assert_eq!(sink.parts.len(), 1);
+    let first = intent_ledger_records(&vault).expect("pending intent");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].state, IntentState::Pending);
+    assert!(
+        first[0].idempotency_supported,
+        "same revision is replay safe"
+    );
+    let frozen_hash = first[0].payload_hash;
+
+    // The transport curve re-arms at 200+60. No new UID, SEQUENCE or method
+    // may be minted when that durable attempt resumes.
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 261)
+            .expect("retry"),
+        1
+    );
+    assert_eq!(sink.parts.len(), 2);
+    assert_eq!(sink.parts[0], sink.parts[1], "identical iMIP bytes");
+    let done = intent_ledger_records(&vault).expect("completed intent");
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].state, IntentState::Done);
+    assert_eq!(done[0].payload_hash, frozen_hash);
+    assert_eq!(fixture::live_sequence(&vault), Some(0));
 }
 
 /// CAL-04's spine oracle: gate first, one durable intent, exactly once.
@@ -2027,9 +2083,9 @@ fn calendar_invite_gate_and_intent_ledger_oracle() {
 // on the default feature set through exactly three doors — the targeted put,
 // the batch put, and the transaction-composable batch — and the validator
 // tests below drive all three. `Vault::put_replicated` is deliberately NOT a
-// fourth: both of its definitions are `pub(crate)` and feature-gated
-// (`sync` / `any(test, all(sync, test-hooks))`), i.e. an origin-validated
-// replay door for bytes a peer already authored, not a public write door.
+// fourth: its one definition is `pub(crate)` and feature-gated
+// (`any(sync, test)`), i.e. an origin-validated replay door for bytes a peer
+// already authored, not a public write door.
 // `one1891_put_replicated_is_not_a_fourth_write_door` pins that by source, so
 // "three doors" cannot quietly become "three doors plus a hole".
 
@@ -2057,10 +2113,9 @@ mod one1891 {
         include_str!("../../src/provider_confidence/indexes.rs");
     pub(super) const PROVIDER_CONFIDENCE_MEMO_SOURCE: &str =
         include_str!("../../src/provider_confidence/transaction_memo.rs");
-    pub(super) const BATCH_TXN_BUILDER_SOURCE: &str =
-        include_str!("../../src/batch/txn_builder.rs");
     pub(super) const BATCH_BUILDER_SOURCE: &str = concat!(
         include_str!("../../src/batch/builder/mod.rs"),
+        include_str!("../../src/batch/builder/apply.rs"),
         include_str!("../../src/batch/builder/ops.rs"),
         include_str!("../../src/batch/builder/puts.rs"),
         include_str!("../../src/batch/builder/claims.rs"),
@@ -2147,7 +2202,8 @@ mod one1891 {
             confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .expect("fixture");
         body.valid_from = Some(200);
         body.source = Some(ClaimSource::Observed);
         body
@@ -2797,7 +2853,8 @@ fn one1891_non_enrichment_and_missing_score_claims_are_refused() {
         0.95,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.valid_from = Some(200);
     vault
         .put_claim(&foreign, &body, one1891::at(200), 200)
@@ -3206,7 +3263,8 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.valid_from = Some(200);
     let error = vault
         .put_claim(&one1891::fixture_id(0xe2), &body, one1891::at(200), 200)
@@ -3220,17 +3278,14 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
     );
 }
 
-/// STRUCTURAL: `put_replicated` is not a fourth write door. Both definitions
-/// are `pub(crate)` and feature-gated, so the three doors exercised above are
+/// STRUCTURAL: `put_replicated` is not a fourth write door. Its definition is
+/// `pub(crate)` and feature-gated, so the three doors exercised above are
 /// the whole default-feature write surface for an enrichment claim — and a
 /// replicated body still meets the same validator inside `apply_put`, so this
 /// is a statement about REACH, not about a bypass.
 #[test]
 fn one1891_put_replicated_is_not_a_fourth_write_door() {
-    for (label, source) in [
-        ("txn_builder", one1891::BATCH_TXN_BUILDER_SOURCE),
-        ("builder", one1891::BATCH_BUILDER_SOURCE),
-    ] {
+    for (label, source) in [("builder", one1891::BATCH_BUILDER_SOURCE)] {
         assert!(
             !source.contains("pub fn put_replicated"),
             "{label}: put_replicated must never become public"

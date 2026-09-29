@@ -15,7 +15,7 @@ use super::{
     InstrumentAtoms, InstrumentView, LensAtom, LensExecutionBoundary, LensHostImport,
     LensRenderFrame, render_instrument,
 };
-use crate::claim::ScopedRead;
+use crate::claim::{ScopedRead, ScopedReadReceipt};
 use crate::{Error, Result};
 
 const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
@@ -128,11 +128,17 @@ impl LensExecutionRuntime {
         // acting principal and WorldSet. A stale or inaccessible row refuses
         // the entire run instead of silently broadening its view.
         let mut bindings = BTreeMap::new();
+        let mut admission_receipt: Option<ScopedReadReceipt> = None;
         let mut admitted_bytes = 0usize;
         for row in frame.backing_refs() {
             let bound = frame.resolve_backing_ref_token(read, row.token())?;
-            let body = frame
-                .scoped_body(read, bound.target().entity_id())?
+            let admitted = frame.scoped_body(read, bound.target().entity_id())?;
+            match &mut admission_receipt {
+                Some(receipt) => receipt.restrict_with(&admitted.receipt),
+                None => admission_receipt = Some(admitted.receipt),
+            }
+            let body = admitted
+                .value
                 .ok_or_else(|| failure("lens backing ref outside read scope"))?;
             admitted_bytes = admitted_bytes.saturating_add(body.len());
             if admitted_bytes > MAX_MESSAGE_BYTES {
@@ -181,7 +187,14 @@ impl LensExecutionRuntime {
         run.call(&mut store, ())
             .map_err(|_| failure("lens component execution refused"))?;
         let atoms = InstrumentAtoms::new(std::mem::take(&mut store.data_mut().atoms))?;
-        render_instrument(&atoms, frame, read)
+        let mut view = render_instrument(&atoms, frame, read)?;
+        if let Some(admission) = admission_receipt {
+            match &mut view.receipt {
+                Some(receipt) => receipt.restrict_with(&admission),
+                None => view.receipt = Some(admission),
+            }
+        }
+        Ok(view)
     }
 }
 

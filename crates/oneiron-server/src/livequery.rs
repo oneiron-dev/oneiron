@@ -17,6 +17,8 @@ mod budget;
 mod error;
 mod history;
 mod reads;
+mod residence;
+pub(crate) use residence::ResidenceIndexCache;
 mod routing;
 mod wire;
 use error::AppError;
@@ -89,7 +91,12 @@ fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory
             ["Re-mint the slip with a 32-character lowercase hex principal ref."],
         )
     })?;
-    Ok(vault.memory(actor, bound_actor_class(auth)?))
+    let memory = vault.memory(actor, bound_actor_class(auth)?);
+    // Reads run under the credential this principal presented (ONE-1187-D6).
+    Ok(match auth.verified_slip() {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
+    })
 }
 
 fn bound_actor_class(auth: &CoreAuth) -> Result<oneiron::EdgeActorClass, AppError> {
@@ -105,6 +112,15 @@ fn bound_actor_class(auth: &CoreAuth) -> Result<oneiron::EdgeActorClass, AppErro
             ],
         )),
     }
+}
+
+pub(crate) fn residence_rpc(
+    server: &crate::server::SyncServer,
+    auth: &CoreAuth,
+    request: RpcRequest,
+    index_cache: &mut Option<ResidenceIndexCache>,
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    residence::run(server, auth, request, index_cache)
 }
 
 pub(crate) fn bound_rpc(
@@ -197,6 +213,7 @@ impl SubRequest {
 
 pub(crate) mod connection;
 mod membership;
+mod publication;
 mod source;
 
 /// Opaque Loro cursor plus a container-batch ordinal. A single Loro commit

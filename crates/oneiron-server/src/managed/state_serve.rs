@@ -8,10 +8,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::Json;
 use axum::Router;
+use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, header::UPGRADE};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
+use oneiron_vault_contract::ManagedWidenAction;
 use oneiron_vault_contract::{
     CONTRACT_VERSION, CtlRequest, CtlResponse, UnixTs, now_ts, validate_wake_entries,
 };
@@ -132,6 +134,10 @@ pub struct ManagedState {
     alarms: Mutex<Vec<ObservedAlarm>>,
     ledger: WakeLedger,
 }
+
+/// A supervisor-signed account action, not the child process's host-root slip.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 
 struct HttpMutation(Arc<ManagedState>);
 
@@ -377,6 +383,34 @@ async fn refuse_frozen_writes(
     next: Next,
 ) -> Response {
     if state.server.managed_issuer.is_some() {
+        // This one route needs the SUPERVISOR'S holder action, not the host
+        // root. Verify the account-authenticated assertion against the
+        // per-spawn secret and the exact request body before removing every
+        // forwarded credential. Unverified headers never become extensions.
+        if request.method() == Method::POST
+            && request.uri().path() == "/v1/core/consent/widen/accept"
+        {
+            let assertion = request
+                .headers()
+                .get("x-oneiron-managed-widen-action")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|text| serde_json::from_str::<ManagedWidenAction>(text).ok());
+            if let Some(assertion) = assertion {
+                let (parts, body) = request.into_parts();
+                let Ok(bytes) = to_bytes(body, 2 * 1024 * 1024).await else {
+                    return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+                };
+                request = Request::from_parts(parts, Body::from(bytes.clone()));
+                if state.ledger.verify_widen_action(&assertion, &bytes)
+                    && let Ok(holder) = oneiron::EntityId::from_hex(&assertion.holder_ref)
+                {
+                    request.extensions_mut().insert(ManagedWidenHolder(holder));
+                }
+            }
+        }
+        request
+            .headers_mut()
+            .remove("x-oneiron-managed-widen-action");
         // Bearer authentication terminated at the supervisor. Do not let a
         // forwarded legacy/dev claim select a principal on secondary routes.
         for header in [
@@ -513,6 +547,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
     issuer_key.fill(0);
     vault.ensure_host_root_slip(&issuer)?;
+    // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+    vault.provision_engine_machine_identities(&issuer)?;
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
     sync_server.managed_issuer = Some(issuer);

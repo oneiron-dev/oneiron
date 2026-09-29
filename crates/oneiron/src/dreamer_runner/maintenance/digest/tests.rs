@@ -17,26 +17,23 @@ fn propose_named(vault: &Vault, id: u8, predicate: &str) -> Result<EntityId> {
         ClaimApprovalStatus::Proposed,
     );
     let id = entity(id);
+    let candidate = ClaimCandidate::new(
+        predicate,
+        ClaimSubject::Entity(actor.entity_ref()),
+        Value::from("pending action"),
+        0.7,
+    );
+    let envelope = crate::test_util::sign_machine_candidate(vault, &id, &candidate, &envelope);
     vault
         .batch()
-        .claim_candidate(
-            &id,
-            ClaimCandidate::new(
-                predicate,
-                ClaimSubject::Entity(actor.entity_ref()),
-                Value::from("pending action"),
-                0.7,
-            ),
-            &envelope,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .claim_candidate(&id, candidate, &envelope, TimeRange { start: 1, end: 1 }, 1)
         .commit()?;
     Ok(id)
 }
 #[test]
 fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x12);
     vault.put_entity(
         &owner_id,
@@ -96,7 +93,7 @@ fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()>
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let urgent = UrgentDigestWake {
@@ -152,6 +149,7 @@ fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()>
 #[test]
 fn policy_row_rejects_invalid_templates_and_disables_unpicked_breakthrough() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x51);
     vault.put_entity(
         &owner_id,
@@ -196,7 +194,8 @@ fn policy_row_rejects_invalid_templates_and_disables_unpicked_breakthrough() -> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let wake = UrgentDigestWake {
@@ -216,6 +215,7 @@ fn policy_row_rejects_invalid_templates_and_disables_unpicked_breakthrough() -> 
 #[test]
 fn repeated_urgent_groups_do_not_postpone_the_ordinary_group() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x61);
     vault.put_entity(
         &owner_id,
@@ -249,7 +249,8 @@ fn repeated_urgent_groups_do_not_postpone_the_ordinary_group() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let urgent = UrgentDigestWake {
@@ -281,6 +282,7 @@ fn agent_memory_request_requires_exact_owner_confirmation_before_policy_changes(
     };
     use crate::{EdgeActorClass, WriteActor};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x75);
     let agent_id = entity(0x76);
     for id in [owner_id, agent_id] {
@@ -381,5 +383,388 @@ fn agent_memory_request_requires_exact_owner_confirmation_before_policy_changes(
     let digest = vault.proactivity_digest(&owner, 105, None)?.unwrap();
     assert_eq!(digest.voice_style, "gentle");
     assert!(digest.rendered.starts_with("Next\n"));
+    Ok(())
+}
+
+#[test]
+fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<()> {
+    use crate::skill_optimize::{
+        ask_judge_disagreement, ask_judge_uncertainty, judge_label_anchor, record_judge_pick,
+        set_judge_digest_minutes,
+    };
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
+    let person = entity(0x61);
+    let other = entity(0x62);
+    let skill = entity(0x63);
+    for id in [person, other] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )?;
+    }
+    let skill_record = crate::skill::SkillRecord::new(
+        "oneiron.skill.calibration",
+        "Judge calibration instructions.",
+        "1.0.0",
+        ClaimApprovalStatus::Approved,
+        crate::skill::SkillLifecycle::Candidate,
+        ClaimSource::UserStated,
+        0.5,
+        false,
+        true,
+        Vec::new(),
+        Value::Map(vec![(Value::from("source"), Value::from("test"))]),
+    );
+    vault.put_skill_record(&skill, &skill_record, TimeRange { start: 1, end: 1 }, 1)?;
+    let owner = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let other_owner = vault.authenticate_owner(
+        other,
+        &other.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let first = ask_judge_disagreement(
+        &vault,
+        skill,
+        person,
+        "campaign-1",
+        "case-1",
+        "old answer",
+        "new answer",
+    )?;
+    let second = ask_judge_uncertainty(
+        &vault,
+        skill,
+        person,
+        "campaign-1",
+        "case-2",
+        "choice A",
+        "choice B",
+    )?;
+    assert_ne!(first.id, second.id);
+    assert_eq!(
+        ask_judge_disagreement(
+            &vault,
+            skill,
+            person,
+            "campaign-1",
+            "case-1",
+            "old answer",
+            "new answer"
+        )?,
+        first
+    );
+    assert!(judge_label_anchor(&vault, skill, "campaign-1")?.is_empty());
+    assert!(record_judge_pick(&vault, &owner, first.id, false, 3).is_err());
+    assert!(vault.proactivity_digest(&owner, 10, None)?.is_none());
+    set_judge_digest_minutes(&vault, &owner, 1)?;
+    let digest = vault.proactivity_digest(&owner, 11, None)?.unwrap();
+    assert_eq!(digest.judge_asks.len(), 1);
+    assert_eq!(
+        vault.read_proactivity_digest(digest.id)?,
+        Some(digest.clone())
+    );
+    let delivered = digest.judge_asks[0].id;
+    assert!(record_judge_pick(&vault, &other_owner, delivered, false, 12).is_err());
+    let picked = record_judge_pick(&vault, &owner, delivered, false, 12)?;
+    assert_eq!(
+        record_judge_pick(&vault, &owner, delivered, false, 13)?,
+        picked
+    );
+    assert!(record_judge_pick(&vault, &owner, delivered, true, 14).is_err());
+    assert_eq!(
+        judge_label_anchor(&vault, skill, "campaign-1")?,
+        vec![picked]
+    );
+    vault.set_proactivity_cadence(
+        &owner,
+        &ProactivityCadence {
+            period_secs: 1,
+            group_by_facet: false,
+            urgent_breakthrough: false,
+        },
+    )?;
+    assert!(vault.proactivity_digest(&owner, 12, None)?.is_none());
+    set_judge_digest_minutes(&vault, &owner, 1)?;
+    let later = vault.proactivity_digest(&owner, 13, None)?.unwrap();
+    assert_eq!(later.judge_asks.len(), 1);
+    assert_ne!(later.judge_asks[0].id, delivered);
+    assert!(vault.proactivity_digest(&owner, 14, None)?.is_none());
+    record_judge_pick(&vault, &owner, later.judge_asks[0].id, true, 15)?;
+    assert_eq!(judge_label_anchor(&vault, skill, "campaign-1")?.len(), 2);
+    Ok(())
+}
+
+fn calibration_fixture(vault: &Vault, skill: EntityId, people: &[EntityId]) -> Result<()> {
+    for person in people {
+        vault.put_entity(
+            person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )?;
+    }
+    vault.put_skill_record(
+        &skill,
+        &crate::skill::SkillRecord::new(
+            "oneiron.skill.calibration",
+            "Calibration.",
+            "1.0.0",
+            ClaimApprovalStatus::Approved,
+            crate::skill::SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            0.5,
+            false,
+            true,
+            Vec::new(),
+            Value::Map(vec![(Value::from("source"), Value::from("test"))]),
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    Ok(())
+}
+
+fn calibration_owner(
+    vault: &Vault,
+    person: EntityId,
+) -> Result<crate::consent::AuthenticatedOwner> {
+    vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )
+}
+
+#[test]
+fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<()> {
+    use crate::skill_optimize::{
+        ask_judge_uncertainty, judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
+    };
+    for archived in [false, true] {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        crate::test_util::provision_engine_machines(&vault);
+        let person = entity(0x66);
+        let skill = entity(0x67);
+        calibration_fixture(&vault, skill, &[person])?;
+        let owner = calibration_owner(&vault, person)?;
+        let ask = ask_judge_uncertainty(&vault, skill, person, "run", "case", "yes", "no")?;
+        set_judge_digest_minutes(&vault, &owner, 3)?;
+        assert_eq!(
+            vault
+                .proactivity_digest(&owner, 10, None)?
+                .unwrap()
+                .judge_asks
+                .len(),
+            1
+        );
+        let key = [
+            b"settings:skill_optimize:judge_minutes:v1:".as_slice(),
+            person.as_bytes(),
+        ]
+        .concat();
+        let before = {
+            let txn = vault.store.env.read_txn()?;
+            vault.store.vault_meta.get(&txn, &key)?.unwrap().to_vec()
+        };
+        if archived {
+            vault.with_write_txn(|txn| {
+                let marker = crate::deletion::TombstoneValueV2 {
+                    reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
+                    deleted_at: 20,
+                    request_id: [0x79; 16],
+                };
+                vault.store.sync_state.put(
+                    txn,
+                    &format!("ac:{}", person.to_hex()),
+                    &marker.encode(),
+                )?;
+                Ok(())
+            })?;
+        } else {
+            vault.delete_entity_with_reason(&person, crate::deletion::DeleteReason::UserDelete)?;
+        }
+        assert_eq!(
+            record_judge_pick(&vault, &owner, ask.id, false, 20)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(
+            set_judge_digest_minutes(&vault, &owner, 100)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        let txn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.store.vault_meta.get(&txn, &key)?.unwrap().as_ref(),
+            before
+        );
+        drop(txn);
+        assert!(judge_label_anchor(&vault, skill, "run")?.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn every_funded_recipient_has_an_independent_digest_cadence() -> Result<()> {
+    use crate::skill_optimize::{ask_judge_uncertainty, set_judge_digest_minutes};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
+    let (a, b, skill) = (entity(0x68), entity(0x69), entity(0x70));
+    calibration_fixture(&vault, skill, &[a, b])?;
+    let (owner_a, owner_b) = (calibration_owner(&vault, a)?, calibration_owner(&vault, b)?);
+    set_judge_digest_minutes(&vault, &owner_a, 2)?;
+    set_judge_digest_minutes(&vault, &owner_b, 2)?;
+    vault.set_proactivity_cadence(
+        &owner_a,
+        &ProactivityCadence {
+            period_secs: 10,
+            group_by_facet: false,
+            urgent_breakthrough: false,
+        },
+    )?;
+    for n in 0..2 {
+        let at = 10 + n * 10;
+        let evidence = format!("case-{n}");
+        let ask_a = ask_judge_uncertainty(&vault, skill, a, "run", &evidence, "yes", "no")?;
+        let ask_b = ask_judge_uncertainty(&vault, skill, b, "run", &evidence, "yes", "no")?;
+        if n > 0 {
+            // Each recipient's own mark holds its pending ask until the boundary.
+            assert!(vault.proactivity_digest(&owner_a, at - 5, None)?.is_none());
+            assert!(vault.proactivity_digest(&owner_b, at - 5, None)?.is_none());
+        }
+        let first = vault.proactivity_digest(&owner_a, at, None)?.unwrap();
+        let second = vault.proactivity_digest(&owner_b, at, None)?.unwrap();
+        assert_eq!(first.recipient, Some(a));
+        assert_eq!(second.recipient, Some(b));
+        let ids = |digest: &ProactivityDigest| {
+            digest
+                .judge_asks
+                .iter()
+                .map(|ask| ask.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&first), vec![ask_a.id]);
+        assert_eq!(ids(&second), vec![ask_b.id]);
+        assert_ne!(first.id, second.id);
+        assert_eq!(vault.read_proactivity_digest(first.id)?, Some(first));
+        assert_eq!(vault.read_proactivity_digest(second.id)?, Some(second));
+    }
+    assert!(vault.proactivity_digest(&owner_a, 30, None)?.is_none());
+    assert!(vault.proactivity_digest(&owner_b, 30, None)?.is_none());
+    Ok(())
+}
+
+fn set_calibration_manifest(vault: &Vault, cost: u32, limit: u32) -> Result<()> {
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest().unwrap());
+    let Value::Map(ref mut entries) = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| crate::Error::InvalidConfig("test manifest".into()))?
+    else {
+        unreachable!()
+    };
+    for (key, value) in entries.iter_mut() {
+        if key.as_str() == Some(crate::skill_optimize::policy::MANIFEST_KEY) {
+            *value = Value::Map(vec![
+                (Value::from("ask_minutes"), Value::from(cost)),
+                (Value::from("max_context_bytes"), Value::from(limit)),
+            ]);
+        }
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries.clone()))
+        .map_err(|_| crate::Error::InvalidConfig("test manifest".into()))?;
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
+#[test]
+fn manifest_cost_and_context_limit_narrow_questions_and_debits() -> Result<()> {
+    use crate::skill_optimize::{ask_judge_uncertainty, set_judge_digest_minutes};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
+    let (person, skill) = (entity(0x72), entity(0x73));
+    calibration_fixture(&vault, skill, &[person])?;
+    let owner = calibration_owner(&vault, person)?;
+    set_calibration_manifest(&vault, 2, 16)?;
+    assert!(
+        ask_judge_uncertainty(
+            &vault,
+            skill,
+            person,
+            "run",
+            "case",
+            "long-answer-over-16",
+            "no"
+        )
+        .is_err()
+    );
+    let first = ask_judge_uncertainty(&vault, skill, person, "run", "case-a", "yes", "no")?;
+    let second = ask_judge_uncertainty(&vault, skill, person, "run", "case-b", "yes", "no")?;
+    set_judge_digest_minutes(&vault, &owner, 3)?;
+    let digest = vault.proactivity_digest(&owner, 10, None)?.unwrap();
+    assert_eq!(digest.judge_asks.len(), 1);
+    assert!([first.id, second.id].contains(&digest.judge_asks[0].id));
+    vault.set_proactivity_cadence(
+        &owner,
+        &ProactivityCadence {
+            period_secs: 1,
+            group_by_facet: false,
+            urgent_breakthrough: false,
+        },
+    )?;
+    assert!(vault.proactivity_digest(&owner, 11, None)?.is_none());
+    set_calibration_manifest(&vault, 3, 8)?;
+    assert!(
+        ask_judge_uncertainty(&vault, skill, person, "campaign-long", "case", "yes", "no").is_err()
+    );
+    set_judge_digest_minutes(&vault, &owner, 3)?;
+    let later = vault.proactivity_digest(&owner, 12, None)?.unwrap();
+    assert_eq!(later.judge_asks.len(), 1);
+    assert_ne!(later.judge_asks[0].id, digest.judge_asks[0].id);
+    assert!(vault.proactivity_digest(&owner, 13, None)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn timer_digest_has_no_recipient_and_leaves_judge_asks_pending() -> Result<()> {
+    use crate::skill_optimize::{ask_judge_uncertainty, set_judge_digest_minutes};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
+    let (person, skill) = (entity(0x74), entity(0x77));
+    calibration_fixture(&vault, skill, &[person])?;
+    let owner = calibration_owner(&vault, person)?;
+    let ask = ask_judge_uncertainty(&vault, skill, person, "run", "case", "yes", "no")?;
+    set_judge_digest_minutes(&vault, &owner, 1)?;
+    propose(&vault, 0x78)?;
+    let timer = vault.assemble_proactivity_digest(None, 10, None)?.unwrap();
+    assert_eq!(timer.recipient, None);
+    assert!(timer.judge_asks.is_empty());
+    assert_eq!(timer.groups.values().map(Vec::len).sum::<usize>(), 1);
+    assert_eq!(
+        vault.read_proactivity_digest(timer.id)?,
+        Some(timer.clone())
+    );
+    let own = vault.proactivity_digest(&owner, 10, None)?.unwrap();
+    assert_eq!(own.recipient, Some(person));
+    assert!(own.groups.is_empty());
+    assert_eq!(own.judge_asks.len(), 1);
+    assert_eq!(own.judge_asks[0].id, ask.id);
+    assert_eq!(vault.latest_proactivity_digest()?, Some(timer));
     Ok(())
 }

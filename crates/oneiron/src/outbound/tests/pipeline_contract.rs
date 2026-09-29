@@ -1344,7 +1344,7 @@ fn an_earlier_ambiguous_send_is_not_erased_by_a_later_definite_failure()
         vault
             .dispatch_outbound_intent(request("first", 1_000), &mut sink)?
             .outcome,
-        OutboundDispatchOutcome::Failed
+        OutboundDispatchOutcome::Ambiguous
     );
     vault.clock.set(90_000);
     sink.outcome = OutboundExecutionOutcome::failed("not_started");

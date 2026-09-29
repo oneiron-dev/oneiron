@@ -1,14 +1,28 @@
 //! Atomic bulk consent and thin-star docs membership. Derivations never rewrite source evidence.
 use super::{DocsExport, DocsSegment, docs_extraction_id, docs_semantic_segments};
-use crate::batch::{BatchOp, apply_ops};
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
     GrantBound,
 };
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::workspace_roster::{ProjectRecord, ProjectRole};
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
+
+/// Stable durable-entity binding for one docs derivation slot. Key: the
+/// extraction id string.
+const EXTRACTION: SideTable<String, EntityId, Raw> =
+    SideTable::new(&side_table::INGEST_DOCS_EXTRACTION);
+/// Thin-star membership set for one imported asset. Key: the asset's hex id.
+const MEMBERSHIP: SideTable<String, BTreeSet<String>, LegacyJson> =
+    SideTable::new(&side_table::INGEST_DOCS_MEMBERSHIP);
+/// One derived-classifier annotation. Key: `{asset hex}:{request hex}`.
+const ANNOTATION: SideTable<String, Value, LegacyJson> =
+    SideTable::new(&side_table::INGEST_DOCS_ANNOTATION);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DocsImportCeiling {
@@ -44,6 +58,38 @@ pub struct DocsImportReceipt {
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
+/// The public reference string [`DocsImportReceipt::annotation_refs`] carries
+/// and [`Vault::docs_annotation`] accepts back: the table's own declared
+/// prefix plus the row's key, so this module never hand-spells the prefix a
+/// second time.
+fn annotation_reference(key: &str) -> String {
+    let prefix = std::str::from_utf8(ANNOTATION.decl().prefix).expect("annotation prefix is ASCII");
+    format!("{prefix}{key}")
+}
+/// Verify the named PROJECT at both consent planning and the import commit.
+/// A source label is not a project identity, and a missing/retyped hub cannot
+/// silently stamp claims into an arbitrary audience.
+pub(super) fn require_docs_corpus_project(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: EntityId,
+) -> Result<()> {
+    let expected = vault.project_type_byte()?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &project)?
+        .ok_or_else(|| invalid("docs corpus PROJECT missing"))?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("docs corpus PROJECT header"))?;
+    if header.entity_type != expected || raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Err(invalid("docs corpus PROJECT has wrong kind"));
+    }
+    let record: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map_err(|_| invalid("docs corpus PROJECT body invalid"))?;
+    if record.role != ProjectRole::Corpus {
+        return Err(invalid("docs corpus PROJECT must carry corpus role"));
+    }
+    Ok(())
+}
+
 fn encoded(value: &Value) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid("docs encoding failed"))
 }
@@ -76,34 +122,15 @@ fn existing_ref(
     txn: &heed::RoTxn<'_>,
     extraction: &str,
 ) -> Result<Option<EntityId>> {
-    let key = format!("docs-extraction:v1:{extraction}");
-    vault
-        .store
-        .vault_meta
-        .get(txn, key.as_bytes())?
-        .map(|raw| {
-            EntityId::from_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| invalid("corrupt docs extraction reference"))?,
-            )
-        })
-        .transpose()
+    EXTRACTION.get(&vault.store, txn, &extraction.to_owned())
 }
 fn stable_ref(vault: &Vault, txn: &mut heed::RwTxn<'_>, extraction: &str) -> Result<EntityId> {
-    let key = format!("docs-extraction:v1:{extraction}");
-    if let Some(raw) = vault.store.vault_meta.get(txn, key.as_bytes())? {
-        let bytes = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| invalid("corrupt docs extraction reference"))?;
-        return EntityId::from_bytes(bytes);
+    let key = extraction.to_owned();
+    if let Some(id) = EXTRACTION.get(&vault.store, txn, &key)? {
+        return Ok(id);
     }
     let id = EntityId::now();
-    vault
-        .store
-        .vault_meta
-        .put(txn, key.as_bytes(), id.as_bytes())?;
+    EXTRACTION.put(&vault.store, txn, &key, &id)?;
     Ok(id)
 }
 impl Vault {
@@ -117,6 +144,7 @@ impl Vault {
     ) -> Result<ComposedEffect> {
         docs.validate()
             .map_err(|_| invalid("invalid docs export"))?;
+        require_docs_corpus_project(self, &self.store.env.read_txn()?, docs.project_id)?;
         let bytes = serde_json::to_vec(docs).map_err(|_| invalid("docs export encoding"))?;
         if docs.pages.len() > ceiling.max_pages || bytes.len() > ceiling.max_bytes {
             return Err(invalid("docs import exceeds consent ceiling"));
@@ -173,18 +201,9 @@ impl Vault {
         for page in &docs.pages {
             let predicted = {
                 let read = self.store.env.read_txn()?;
-                let key = format!(
-                    "docs-extraction:v1:{}",
-                    docs_extraction_id(&docs.corpus_id, &page.page_id, "asset")
-                );
-                match self.store.vault_meta.get(&read, key.as_bytes())? {
-                    Some(bytes) => {
-                        let id = EntityId::from_bytes(
-                            bytes
-                                .as_ref()
-                                .try_into()
-                                .map_err(|_| invalid("corrupt docs asset mapping"))?,
-                        )?;
+                let key = docs_extraction_id(&docs.corpus_id, &page.page_id, "asset");
+                match EXTRACTION.get(&self.store, &read, &key)? {
+                    Some(id) => {
                         super::fingerprint::prepare_blob_birth(
                             &self.store,
                             &read,
@@ -226,6 +245,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
+        require_docs_corpus_project(self, &txn, docs.project_id)?;
         let authorization =
             crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &digest)?
                 .ok_or_else(|| invalid("docs consent already consumed"))?;
@@ -277,24 +297,19 @@ impl Vault {
                 super::docs_deep::DeepApproval {
                     owner: owner.actor(),
                     digest: &digest.to_hex(),
+                    project_id: docs.project_id,
                 },
                 now,
             )?;
-            ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
+            ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
             if unchanged {
                 continue;
             }
-            let membership_key = format!("docs-membership:v1:{}", asset.to_hex());
-            let previous_members: Vec<String> = self
-                .store
-                .vault_meta
-                .get(&txn, membership_key.as_bytes())?
-                .map(|raw| {
-                    serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs membership"))
-                })
-                .transpose()?
+            let membership_key = asset.to_hex();
+            let previous_members = MEMBERSHIP
+                .get(&self.store, &txn, &membership_key)?
                 .unwrap_or_default();
-            let mut members = std::collections::BTreeSet::new();
+            let mut members = BTreeSet::new();
             for (segment, summary_text) in segments.iter().zip(summaries) {
                 let chunk = stable_ref(
                     self,
@@ -381,27 +396,16 @@ impl Vault {
                 if crate::batch::export::redact_credentials(&mut data) {
                     return Err(invalid("credential-shaped classifier annotation"));
                 }
-                let key = format!(
-                    "docs-annotation:v1:{}:{}",
-                    asset.to_hex(),
-                    request_id.to_hex()
-                );
-                self.store.vault_meta.put(
-                    &mut txn,
-                    key.as_bytes(),
-                    &serde_json::to_vec(&data).map_err(|_| invalid("docs annotation encode"))?,
-                )?;
-                receipt.annotation_refs.push(key);
+                let key = format!("{}:{}", asset.to_hex(), request_id.to_hex());
+                ANNOTATION.put(&self.store, &mut txn, &key, &data)?;
+                receipt.annotation_refs.push(annotation_reference(&key));
             }
         }
         for op in &ops {
             if let BatchOp::Put {
                 id, entity_type, ..
             } = op
-                && self
-                    .store
-                    .entities
-                    .get(&txn, id.as_bytes())?
+                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
                     .is_some_and(|raw| {
                         crate::batch::EntityMetadataHeader::parse(&raw)
                             .is_none_or(|header| header.entity_type != *entity_type)
@@ -425,25 +429,19 @@ impl Vault {
             fingerprint.persist(&self.store, &mut txn, &asset)?;
         }
         for (key, members) in membership_updates {
-            self.store.vault_meta.put(
-                &mut txn,
-                key.as_bytes(),
-                &serde_json::to_vec(&members).map_err(|_| invalid("docs membership encode"))?,
-            )?;
+            MEMBERSHIP.put(&self.store, &mut txn, &key, &members)?;
         }
         crate::consent::spend_approve_once_in_txn(&self.store, &mut txn, &authorization)?;
         txn.commit()?;
         Ok(receipt)
     }
     pub fn docs_annotation(&self, reference: &str) -> Result<Option<Value>> {
-        if !reference.starts_with("docs-annotation:v1:") {
+        let prefix =
+            std::str::from_utf8(ANNOTATION.decl().prefix).expect("annotation prefix is ASCII");
+        let Some(key) = reference.strip_prefix(prefix) else {
             return Err(invalid("not a docs annotation reference"));
-        }
+        };
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, reference.as_bytes())?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("corrupt docs annotation")))
-            .transpose()
+        ANNOTATION.get(&self.store, &txn, &key.to_owned())
     }
 }

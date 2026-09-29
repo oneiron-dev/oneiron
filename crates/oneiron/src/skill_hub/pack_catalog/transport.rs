@@ -4,9 +4,14 @@ use crate::{
     Vault,
     entity_id::EntityId,
     error::Result,
+    side_table::{self, LegacyJson, SideTable},
     skill_hub::{ForeignSkillPublisher, HubPin, HubRef, SkillHubAdapter},
     temporal::TimeRange,
 };
+/// A fetched pack's source and configured publisher, keyed by source id and hub-ref digest.
+pub(super) const SOURCE_HUB_ALIAS: SideTable<(EntityId, [u8; 32]), (String, String), LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_PACK_SOURCE_ALIAS);
+
 pub trait PackSourceAdapter: SkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<PackSource>;
 }
@@ -52,6 +57,9 @@ impl Vault {
                 return Err(invalid("hub changed during pack fetch"));
             }
             let id = self.stage_pack_source_in_txn(txn, &source, occurred, learned_at)?;
+            // The hub path's scan evidence lands with the bytes, before any fit
+            // ask reads it; skill-less packs get the same hash-bound ledger.
+            self.scan_and_ingest_pack_source_in_txn(txn, &source, occurred, learned_at)?;
             self.record_pack_fetch_in_txn(txn, &id, &pinned, publisher)?;
             Ok((id, pinned))
         })
@@ -65,9 +73,11 @@ impl Vault {
         publisher: &ForeignSkillPublisher,
     ) -> Result<()> {
         let key = source_hub_alias_key(source_id, pinned)?;
-        let value = serde_json::to_vec(&(publisher.identity(), publisher.grant_ref()))
-            .map_err(|_| invalid("pack publisher receipt encoding"))?;
-        self.store.vault_meta.put(txn, &key, &value)?;
+        let value = (
+            publisher.identity().to_owned(),
+            publisher.grant_ref().to_owned(),
+        );
+        SOURCE_HUB_ALIAS.put(&self.store, txn, &key, &value)?;
         Ok(())
     }
     /// Fetch, pin, evaluate fit and install by the same immutable source hash.
@@ -89,11 +99,11 @@ impl Vault {
 }
 
 /// A source can carry multiple pinned hub aliases; no alias is minted by local staging.
-pub(super) fn source_hub_alias_key(source_id: &EntityId, pinned: &HubRef) -> Result<Vec<u8>> {
+pub(super) fn source_hub_alias_key(
+    source_id: &EntityId,
+    pinned: &HubRef,
+) -> Result<(EntityId, [u8; 32])> {
     let bytes =
         serde_json::to_vec(&pinned.to_value()?).map_err(|_| invalid("pack hub source encoding"))?;
-    let mut key = b"pack.source-alias.v1/".to_vec();
-    key.extend_from_slice(source_id.as_bytes());
-    key.extend_from_slice(blake3::hash(&bytes).as_bytes());
-    Ok(key)
+    Ok((*source_id, *blake3::hash(&bytes).as_bytes()))
 }

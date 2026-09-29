@@ -244,7 +244,7 @@ ordinary abort with the old bytes and the old stamp intact.
 
 This is the expiry register for the pre-release exception in `REVIEW.md`. Each
 ruling names the affected population; none licenses a compatibility decoder for
-an older vault. The current open gate accepts **only ABI 20** (and stamps a
+an older vault. The current open gate accepts **only ABI 21** (and stamps a
 new vault). The historical 16→17 and 17→18 re-keys are not current open paths.
 These rulings cover the four Wave-4 findings and later unregistered ABI moves;
 new in-place breaks before GA must be appended here before they ship.
@@ -301,6 +301,47 @@ writes create their own first-seen sidecar. **Discarded population at the ABI
 boundary:** all predecessor-stamped development vaults; this in-version repair
 does not make them openable by ABI 20. No additional open-time migration.
 
+### ONE-1634: authority widen delay removed
+
+**Ruling: no storage change; fold semantics change.** The device-key widen
+ceremony is dead (identity canon, 2026-08-05), so the fold no longer delays
+software-tier widens. `EnrollDevice`, `RotateKey` and a lowered `SetTierFloor`
+land as soon as their ancestry folds, and nothing waits behind them. The
+`Genesis.pending_widen_delay_secs` field stays signed and validated on the wire,
+but the fold never reads it. `VetoPendingWiden` still decodes and hashes. The
+fold now rejects it as `InvalidEntry`, and its descendants fail ancestry.
+First-seen sidecars now feed only the stale-roster window. The read-only fold
+no longer refuses a pre-migration log. A sidecar missing after the backfill
+marker is still corruption. **Discarded population:** development logs that
+carry a veto entry.
+
+### ONE-2545: the Dreamer principal becomes an engine MACHINE writer
+
+**Ruling: open-time row migration, no storage-format change.** The Dreamer
+principal keeps its derived id, but its row is the seeded System MACHINE
+(ARCH-0034: MACHINE admits only actor class system). Vault open re-births a row
+that earlier builds minted as an Agent PERSON as that MACHINE row, in place,
+before any caller gets the handle; the edges, facets and claims that name the
+id stay. The host then enrolls the Dreamer's key with the other engine writers
+(`provision_engine_machine_identities`), so its first signed write follows the
+migration. Like every engine writer it signs every claim write and has no
+unsigned or unrooted exemption. **Discarded population:** unsigned claims the
+Dreamer wrote as a PERSON under earlier builds; reads withhold them once their
+author is a MACHINE.
+
+### ONE-1634: engine MACHINE writers enrolled at host open
+
+**Ruling: open-time enrollment, no storage-format change.** MACHINE claims must
+carry a signature from an enrolled software key. The host enrolls one key per
+engine writer (commitment projector, ICS importer, transcript file-drop
+importer, e-sign artifact actor) through the authority log each time it opens a
+rooted vault (`provision_engine_machine_identities`, after
+`ensure_host_root_slip`), so an existing vault gets its engine keys before its
+first engine write. A writer that already has a binding is not enrolled again,
+so a revoked writer stays revoked. Unrooted vaults get no engine keys, and
+their engine MACHINE writes are refused. **Discarded population:** unsigned
+MACHINE claims written by earlier development builds; reads withhold them.
+
 ### ONE-1103: REDACTION_AUDIT temporal point index
 
 **Ruling: no-op. Discarded population:** pre-ONE-1103 development vaults
@@ -351,3 +392,29 @@ deleted before v19 shipped.
 an eight-character pairing code hashed with origin and intended holder, and
 bounds proof replay by request-time window. A v19 vault fails closed at the
 current ABI gate, so neither old row shape needs a decoder.
+
+### T50: one rule for derived ids (v20→v21)
+
+`STORAGE_ABI_VERSION` advances from **20** to **21**.
+
+Every deterministic id now comes from `EntityId::derive(domain, parts)`: BLAKE3 in
+derive-key mode with the domain as the context string, each part prefixed by its
+u64 little-endian length, the first 16 bytes, UUID version 8 and variant bits. A
+result in the reserved range is refused with an error, never perturbed. The domain
+strings are unchanged and listed in `entity_id/derived_domains.rs`; the hash,
+framing and version bits are not, so every id derived before (the embedded owner
+PERSON, substrate facets, bootstrap skills, supersession companions, code-symbol
+entities, consolidation claims, home rooms, projected `comm.*` claims, connector,
+commitment and calendar actors, commitment instances, lead-source entities and
+claims, ask records, ask soft-confirm notices and guest grants, connector send
+events, outbound receipt records, the first-party skill hub and the built-in
+connector pack hub) differs from what this engine derives.
+
+The same version gives each federation pact scope one spelling per lattice point
+(T51): a world set holding only the base world is written `{"kind":"base"}`, where
+`{"kind":"worlds","ids":[<base>]}` also meant it. The old spelling still decodes,
+but the slip pact-bound check, authority-log entry decode and the pact digest
+re-encode and compare bytes, so an entry or slip written with it is refused.
+
+**There is no migration pass.** An ABI 20 vault fails closed at the ABI gate;
+Oneiron is pre-launch, so recreate affected development vaults.

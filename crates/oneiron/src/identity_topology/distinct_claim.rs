@@ -149,7 +149,7 @@ impl Vault {
             write.confidence,
             write.approval,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(write.source);
         self.put_reserved_claim_in_txn(
             wtxn,
@@ -219,10 +219,9 @@ impl Vault {
         b: &EntityId,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let resolved = fold_identity_topology_log(
+        let fold = fold_identity_topology_log(
             &self.fold_effective_identity_topology_events_in_txn(&rtxn)?,
-        )
-        .resolved_proposals;
+        );
         let mut open = Vec::new();
         for event in self.identity_topology_events_in_txn(&rtxn)? {
             let IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(merge)) = &event.action
@@ -230,7 +229,8 @@ impl Vault {
                 continue;
             };
             if event.approval != ClaimApprovalStatus::Proposed
-                || resolved.contains_key(&event.event_id)
+                || fold.resolved_proposals.contains_key(&event.event_id)
+                || fold.moot_proposals.contains(&event.event_id)
             {
                 continue;
             }

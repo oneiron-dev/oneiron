@@ -27,7 +27,7 @@ fn psych_mirror_selection_affect_trigger_contributes_affect_salience() -> Result
         value.confidence(),
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.salience = Some(0.3);
 
     let affect_salience = psych_mirror_claim_affect_salience(&body)?;
@@ -46,7 +46,8 @@ fn psych_mirror_selection_affect_trigger_decode_errors_propagate() {
         0.8,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
 
     assert!(psych_mirror_claim_affect_salience(&body).is_err());
 }
@@ -155,7 +156,7 @@ fn write_door_validates_lexical_query_hint_claim_structure() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         encode_claim_body(&body)
     };
 
@@ -195,7 +196,7 @@ fn write_door_validates_companion_expression_claim_values() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         encode_claim_body(&body)
     };
 
@@ -239,7 +240,7 @@ fn affect_trigger_write_door_validates_value_shape() -> Result<()> {
                 confidence,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             encode_claim_body(&body)
         };
     let encode = |subject: ClaimSubject, value: Value| -> Result<Vec<u8>> {
@@ -389,7 +390,7 @@ fn affect_trigger_write_door_validates_value_shape() -> Result<()> {
         0.82,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let legacy_salience = psych_mirror_claim_affect_salience(&legacy_body)?;
     assert!(legacy_salience.is_finite());
     validate_claim_body_bytes(
@@ -454,7 +455,7 @@ fn conflict_predicates_validate_as_ordinary_claims() -> Result<()> {
             0.7,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Superseded,
-        );
+        )?;
         encode_claim_body(&body)
     };
 
@@ -550,7 +551,7 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     skill_body.source = Some(ClaimSource::Observed);
     assert_matches!(
         vault.put_claim(
@@ -597,7 +598,7 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     edge_body.source = Some(ClaimSource::Observed);
     let old_edge_id = EntityId::now();
     let new_edge_id = EntityId::now();
@@ -668,7 +669,8 @@ fn write_door_validates_edge_provenance_claim_structure() {
             confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.evidence = evidence;
         encode_claim_body(&body).expect("encode")
     };
@@ -808,7 +810,7 @@ fn claim_subject_decode_pins_both_encodings() {
 #[test]
 fn world_value_must_be_16_byte_binary() {
     let subj = EntityId::from_bytes([0x60; 16]).expect("valid subject id");
-    let facet = substrate_facet_id(subj);
+    let facet = substrate_facet_id(subj).unwrap();
     let project = default_project_id();
     let body_with_world = |world: Option<Value>| -> Vec<u8> {
         let mut entries = vec![
@@ -892,7 +894,8 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
         0.72,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     legacy.source = Some(ClaimSource::Observed);
     legacy.stale = false;
 
@@ -969,7 +972,8 @@ fn claim_surfaceable_pins_the_full_status_truth_table() {
 
     let subject = ClaimSubject::Entity(EntityId::from_bytes([0x60; 16]).expect("valid id"));
     let body = |appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool| {
-        let mut body = ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life);
+        let mut body =
+            ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life).unwrap();
         body.stale = stale;
         body
     };
@@ -994,14 +998,17 @@ fn claim_surfaceable_pins_the_full_status_truth_table() {
 
     // `ClaimBody::new` leaves `stale` at the decode default (absent =
     // false) — absence alone must not exclude (AC 4).
-    assert!(claim_surfaceable(&ClaimBody::new(
-        "test.pred",
-        subject,
-        Value::from("v"),
-        0.5,
-        A::Auto,
-        L::Active,
-    )));
+    assert!(claim_surfaceable(
+        &ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            A::Auto,
+            L::Active,
+        )
+        .unwrap()
+    ));
 }
 
 #[test]
@@ -1014,7 +1021,8 @@ fn claim_consolidatable_excludes_auto_generated_until_vetted() {
         0.5,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
 
     body.source = Some(ClaimSource::Generated);
     assert!(
@@ -1066,7 +1074,7 @@ fn self_unconfirmed_not_consolidatable() -> Result<()> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Generated);
     body.session_tag = Some("agent:alpha/session:42".to_owned());
 
@@ -1100,7 +1108,7 @@ fn session_claim_producer_uses_envelope_actor_evidence_fail_closed() -> Result<(
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.evidence = Some(crate::write_envelope::write_envelope_evidence(
         &envelope, None,
     ));
@@ -1150,7 +1158,8 @@ fn generated_not_evidence() {
             0.5,
             appr,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = source;
         body
     };
@@ -1202,7 +1211,8 @@ fn approved_generated_consolidatable_but_not_evidence() {
         0.5,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::Generated);
 
     assert!(
@@ -1241,7 +1251,8 @@ fn provenance_door_accepts_approved_and_rejects_proposed_wrappers() {
             0.75,
             appr,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.evidence = Some(actor_class_evid.clone());
         body
     };
@@ -1344,7 +1355,8 @@ fn band_probe_body(scope: Option<Value>) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.scope = scope;
     body
 }
@@ -1430,6 +1442,7 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let status_value = |status: &str| {
         Value::Map(vec![
@@ -1478,7 +1491,7 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(
         &EntityId::now(),
         &unknown,
@@ -1519,7 +1532,8 @@ fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) 
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(
             &id,
@@ -1532,6 +1546,60 @@ fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) 
         )
         .expect("seed active claim");
     id
+}
+
+#[test]
+fn gate_receipt_horizon_does_not_block_later_retraction_of_a_live_claim() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let vault = Vault::open(temp.path().join("vault"), crate::VaultConfig::device())?;
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let claim = guard_claim(&vault, &subject, "osaka", 2);
+    let owner = vault.authenticate_owner(
+        subject,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    // Seed an old, claim-bound receipt without changing the live CLAIM. The
+    // following lifecycle write must receive fresh custody after the sweep.
+    let old = crate::store::GateDecisionRecord {
+        version: crate::store::GATE_DECISION_LEDGER_VERSION,
+        decision_id: crate::store::GateDecisionId::now(),
+        created_at: 1,
+        outcome: "approved".to_owned(),
+        reason_codes: vec!["gate.test.receipt_family".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "agent".to_owned(),
+        actor_ref: None,
+        content_kind: "claim".to_owned(),
+        policy_manifest_version: "v0".to_owned(),
+        claim_id: Some(*claim.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![0xAA],
+        read_frontier_hash: [0xBB; 32],
+        redacted_at: None,
+    };
+    vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &old))?;
+    vault.set_gate_decision_retention_secs(&owner, Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("live claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    vault.retract_claim(&claim, vault.store.clock.now_recorded_at())?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("retracted").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
 }
 
 fn guard_short_ref(vault: &Vault, id: &EntityId) -> String {
@@ -1881,6 +1949,7 @@ fn coreference_body(predicate: &str, value: Value, approval: ClaimApprovalStatus
         approval,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 fn consent_value(pact_hex: &str) -> Value {
@@ -2152,6 +2221,7 @@ fn expression_preference_validators_pin_vocabularies() -> Result<()> {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     }
     for tag in ["ja", "en-US", "zh-Hant"] {
         validate_expression_preference_claim_structure(&body(
@@ -2216,6 +2286,7 @@ fn expression_preference_body(predicate: &str, subject: ClaimSubject, value: Val
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 #[test]
@@ -2317,7 +2388,7 @@ fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         validate_companion_expression_claim_structure(&body)?;
     }
     Ok(())
@@ -3111,7 +3182,7 @@ fn the_raw_claim_door_refuses_a_source_less_expression_preference() -> Result<()
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     assert!(body.source.is_none());
     let data = encode_claim_body(&body)?;
 
@@ -3410,7 +3481,7 @@ fn a_proposed_preference_arriving_by_sync_never_wins_the_winners_read() -> Resul
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     proposed.valid_from = Some(2);
     proposed.source = Some(ClaimSource::Inferred);
     let data = encode_claim_body(&proposed)?;
@@ -3743,7 +3814,8 @@ fn lineage_body(predicate: &str, source: ClaimSource, taint: Option<ClaimSource>
         0.7,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(source);
     if let Some(taint) = taint {
         body.scope = Some(Value::Map(vec![(
@@ -3918,7 +3990,7 @@ fn claim_demotion_rung_is_fail_closed_and_ordered() -> Result<()> {
         0.8,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     assert_eq!(claim_demotion_rung(&body)?, None);
     body.scope = Some(Value::Map(vec![(
         Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
@@ -4051,7 +4123,7 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
         use std::collections::BTreeSet;
         let mut scope = crate::federation::scope_codec::read_preset();
         scope.bands = ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_PERSON]));
-        let bytes = crate::gate::default_policy_manifest();
+        let bytes = crate::gate::default_policy_manifest()?;
         let Value::Map(mut entries) =
             rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
         else {
@@ -4130,7 +4202,8 @@ fn decay_claim(predicate: &str, life: ClaimLifecycleStatus, valid_to: Option<u64
         0.9,
         ClaimApprovalStatus::Auto,
         life,
-    );
+    )
+    .unwrap();
     body.valid_to = valid_to;
     body
 }
@@ -4290,6 +4363,7 @@ fn claim_access_factor_ignores_confidence() {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
 
     assert_eq!(
@@ -4451,150 +4525,29 @@ fn classifier_table() {
     }
 }
 
-// ── ONE-1914 · corpus scope inside the opaque `scope` map ───────────────
+// ── ONE-2668 · corpus is a project-axis selection ──────────────────────
 
-fn corpus_scope_body(scope: Option<Value>) -> ClaimBody {
+#[test]
+fn corpus_id_in_opaque_scope_does_not_change_project_stamp() -> Result<()> {
+    let project = EntityId::from_bytes([0x72; 16]).expect("valid id");
     let mut body = ClaimBody::new(
-        "profile.corpus_scope",
+        "profile.project_scope",
         ClaimSubject::Entity(EntityId::from_bytes([0x71; 16]).expect("valid id")),
         Value::from("value"),
         0.7,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
-    body.scope = scope;
-    body
-}
-
-fn corpus_entry(id: &EntityId) -> (Value, Value) {
-    (
-        Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-        Value::Binary(id.as_bytes().to_vec()),
-    )
-}
-
-/// The corpus id survives a full encode/decode round trip ALONGSIDE the
-/// engine's other scope stamps and an entry the crate does not recognize —
-/// the map stays opaque, it just now has one entry retrieval can read.
-#[test]
-fn corpus_id_round_trips_through_the_claim_codec() -> Result<()> {
-    let corpus = crate::corpus::CorpusId::from_entity_id(
-        EntityId::from_bytes([0x72; 16]).expect("valid id"),
-    );
-    let existing = Value::Map(vec![
-        (Value::from("sensitivity"), Value::from("internal")),
-        (
-            Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
-            Value::from(ClaimSource::ToolOutput.as_str()),
-        ),
+    )?;
+    body.scope_project = project;
+    // Pre-release scope-v2 decoders must not interpret the old nested entry.
+    // Even a malformed value is opaque; only the required stamp selects claims.
+    body.scope = Some(Value::Map(vec![
+        (Value::from("corpus_id"), Value::Array(vec![Value::Nil])),
         (Value::from("unknown_future_key"), Value::from("opaque")),
-    ]);
-    let body = corpus_scope_body(Some(crate::corpus::scope_with_corpus_id(
-        Some(existing),
-        corpus,
-    )?));
-
-    let encoded = encode_claim_body(&body)?;
-    let decoded = validate_claim_body_and_decode(&encoded, false)?;
-
-    assert_eq!(
-        decoded.scope, body.scope,
-        "scope map survives byte-for-byte"
-    );
-    assert_eq!(claim_corpus_id(&decoded)?, Some(corpus));
-    assert_eq!(claim_sensitivity_band(&decoded), Some(1));
-    assert_eq!(
-        claim_evidence_taint(&decoded),
-        Some(ClaimSource::ToolOutput)
-    );
-    Ok(())
-}
-
-/// A claim with no corpus entry is unscoped/core, not an error — including a
-/// claim with no scope map at all.
-#[test]
-fn absent_corpus_id_decodes_as_unscoped() -> Result<()> {
-    for scope in [
-        None,
-        Some(Value::Map(Vec::new())),
-        Some(Value::Map(vec![(
-            Value::from("sensitivity"),
-            Value::from("public"),
-        )])),
-    ] {
-        let body = corpus_scope_body(scope);
-        let decoded = validate_claim_body_and_decode(&encode_claim_body(&body)?, false)?;
-        assert_eq!(claim_corpus_id(&decoded)?, None);
-    }
-    Ok(())
-}
-
-/// Fail-closed at the codec: an ambiguous or malformed corpus entry is
-/// rejected on every validated decode, so it can neither be written nor read
-/// back into a retrieval scope decision.
-#[test]
-fn malformed_corpus_id_is_rejected_by_the_claim_codec() -> Result<()> {
-    let a = EntityId::from_bytes([0x73; 16]).expect("valid id");
-    let b = EntityId::from_bytes([0x74; 16]).expect("valid id");
-    let table: Vec<(&str, Value)> = vec![
-        (
-            "duplicate corpus entries",
-            Value::Map(vec![corpus_entry(&a), corpus_entry(&b)]),
-        ),
-        (
-            "non-binary value",
-            Value::Map(vec![(
-                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-                Value::from(a.to_hex()),
-            )]),
-        ),
-        (
-            "wrong-length binary",
-            Value::Map(vec![(
-                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-                Value::Binary(vec![0x73; 8]),
-            )]),
-        ),
-        (
-            "reserved id",
-            Value::Map(vec![(
-                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
-                Value::Binary(vec![0x00; 16]),
-            )]),
-        ),
-    ];
-
-    for (label, scope) in table {
-        let encoded = encode_claim_body(&corpus_scope_body(Some(scope)))?;
-        assert_matches!(
-            validate_claim_body_bytes(&encoded, false),
-            Err(Error::InvalidClaimBody(_)),
-            "{label} must fail the write chokepoint"
-        );
-        assert_matches!(
-            decode_claim_body(&encoded, true),
-            Err(Error::InvalidClaimBody(_)),
-            "{label} must fail the read decode too"
-        );
-    }
-    Ok(())
-}
-
-/// The check is scoped to the entries the engine recognizes: an unknown
-/// sibling may be duplicated, malformed or any shape at all and still decode.
-#[test]
-fn unrecognized_scope_entries_stay_opaque() -> Result<()> {
-    let scope = Value::Map(vec![
-        (Value::from("unknown_future_key"), Value::from(1)),
-        (Value::from("unknown_future_key"), Value::Array(Vec::new())),
-        (Value::from("another_unknown"), Value::Binary(vec![0x00; 3])),
-    ]);
-    let body = corpus_scope_body(Some(scope.clone()));
-
+    ]));
     let decoded = validate_claim_body_and_decode(&encode_claim_body(&body)?, false)?;
-
-    assert_eq!(decoded.scope, Some(scope));
-    assert_eq!(claim_corpus_id(&decoded)?, None);
+    assert_eq!(decoded.scope_project, project);
+    assert_eq!(decoded.scope, body.scope);
     Ok(())
 }
 
@@ -4705,6 +4658,53 @@ fn relationship_candidate_stamps_and_rejects_unknown_or_wrong_kind() -> Result<(
             .unwrap_err();
         assert_eq!(error.kind(), ErrorKind::InvalidRelationship);
         assert!(vault.get_claim(&rejected)?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn claim_gate_receipt_stamps_verified_world_project_retention_context() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), crate::VaultConfig::device())?;
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+    let world = EntityId::now();
+    let project = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let mut body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(subject),
+        Value::from("osaka"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    body.scope_project = project;
+    vault.put_claim(&claim, &body, TimeRange { start: 2, end: 2 }, 2)?;
+    vault.retract_claim(&claim, vault.store.clock.now_recorded_at())?;
+    let txn = vault.store.env.read_txn()?;
+    let decisions = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?;
+    assert!(!decisions.is_empty());
+    for decision in decisions {
+        assert_eq!(
+            vault.store.gate_retention_context_in_txn(&txn, &decision)?,
+            crate::gate::GateRetentionContext {
+                world: Some(world),
+                project: Some(project),
+                sub_project: None,
+                thread: None
+            }
+        );
     }
     Ok(())
 }

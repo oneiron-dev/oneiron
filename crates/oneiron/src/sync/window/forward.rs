@@ -26,6 +26,7 @@ struct RematCtx<'a> {
     doc: &'a LoroDoc,
     window_key: &'a WindowKey,
     lease_vault_id: u64,
+    trusted: Option<&'a crate::recovery::CanonicalSnapshot>,
     entities_map: LoroMap,
     edges_map: LoroMap,
     tombstones_map: LoroMap,
@@ -39,6 +40,10 @@ struct RematLedger {
     terminal_quarantines: Vec<EntityId>,
     pending_entity_dependencies: HashSet<EntityId>,
     pending_dag_parent_sources: HashSet<EntityId>,
+    /// Delete-protected rows the entity pass admitted: the ingest step already
+    /// refused every tombstone naming them, so the tombstone pass records
+    /// each such tombstone once, not twice.
+    protected_admissions: HashSet<EntityId>,
     count: u32,
 }
 
@@ -59,6 +64,11 @@ pub(crate) fn forward_recovery(
     snapshot: &crate::recovery::CanonicalSnapshot,
 ) -> Result<u32> {
     snapshot.validate()?;
+    if snapshot.window != window_key.as_str() {
+        return Err(crate::Error::InvalidConfig(
+            "recovery window key mismatch".into(),
+        ));
+    }
     forward_with_recovery(vault, doc, materializer, window_key, Some(snapshot))
 }
 
@@ -69,6 +79,43 @@ fn forward_with_recovery(
     window_key: &WindowKey,
     trusted: Option<&crate::recovery::CanonicalSnapshot>,
 ) -> Result<u32> {
+    if window_key.world().is_some() {
+        let mut witnesses = Vec::new();
+        doc.get_map("retained_claim_worlds").for_each(|raw, value| {
+            if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) = value {
+                witnesses.push((raw.to_owned(), bytes.to_vec()));
+            }
+        });
+        for (raw, value) in witnesses {
+            let id = EntityId::from_hex(&raw)?;
+            if value.as_slice() != window_key.world().expect("world key").as_bytes() {
+                return Err(crate::Error::InvalidConfig(
+                    "foreign retained world witness".into(),
+                ));
+            }
+            let Some(blob) =
+                crate::sync::loro_support::map_get_bytes(&doc.get_map("entities"), &raw)
+            else {
+                return Err(crate::Error::InvalidConfig(
+                    "orphan retained world witness".into(),
+                ));
+            };
+            let txn = vault.store.env.read_txn()?;
+            if !crate::sync::types::retained_world_shell_belongs_to_window(
+                vault,
+                &txn,
+                doc,
+                &id,
+                &blob,
+                window_key,
+                trusted.is_some(),
+            )? {
+                return Err(crate::Error::InvalidConfig(
+                    "unproven retained world witness".into(),
+                ));
+            }
+        }
+    }
     let native_notes = crate::sync::note::is_native(doc);
     let native_documents = native_notes
         .then(|| crate::sync::note::validate(doc))
@@ -76,6 +123,7 @@ fn forward_with_recovery(
     if trusted.is_none() && !native_notes {
         for name in [
             "documents",
+            "entity_documents",
             "document_heads",
             "head_move_receipts",
             "note_forks",
@@ -112,6 +160,7 @@ fn forward_with_recovery(
         doc,
         window_key,
         lease_vault_id,
+        trusted,
         entities_map,
         edges_map,
         tombstones_map,
@@ -122,6 +171,7 @@ fn forward_with_recovery(
         terminal_quarantines: Vec::new(),
         pending_entity_dependencies: HashSet::new(),
         pending_dag_parent_sources: HashSet::new(),
+        protected_admissions: HashSet::new(),
         count: 0u32,
     };
 
@@ -129,6 +179,9 @@ fn forward_with_recovery(
     // tombstones, then the marker settle below. The tombstone call has no
     // `?`: its error stays deferred past the marker txn (Trap 2).
     entity_pass::run(&ctx, &mut ledger)?;
+    // A redaction can arrive after its attribution in this same entity pass;
+    // clear the now-dominated live carrier and force history-free egress.
+    super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
     if let Some(documents) = native_documents {
         ledger.healed.extend(crate::sync::note::apply(
             vault,
@@ -137,7 +190,59 @@ fn forward_with_recovery(
             window_key.as_str(),
         )?);
     }
+    if window_key.world().is_some() {
+        let witnesses = doc.get_map("retained_claim_worlds");
+        let mut rows = Vec::new();
+        witnesses.for_each(|raw, _| rows.push(raw.to_owned()));
+        vault.with_write_txn(|txn| {
+            for raw in &rows {
+                let id = EntityId::from_hex(raw)?;
+                let Some(blob) =
+                    crate::sync::loro_support::map_get_bytes(&doc.get_map("entities"), raw)
+                else {
+                    return Err(crate::Error::InvalidConfig(
+                        "orphan retained world witness".into(),
+                    ));
+                };
+                if !crate::sync::types::retained_world_shell_belongs_to_window(
+                    vault,
+                    txn,
+                    doc,
+                    &id,
+                    &blob,
+                    window_key,
+                    trusted.is_some(),
+                )? {
+                    return Err(crate::Error::InvalidConfig(
+                        "unproven retained world witness".into(),
+                    ));
+                }
+                vault.store.sync_state.put(
+                    txn,
+                    &format!("m:dw:{raw}"),
+                    window_key.as_str().as_bytes(),
+                )?;
+            }
+            Ok(())
+        })?;
+    }
     crate::recovery::materialize_retained_shells(vault, doc)?;
+    if let Some(snapshot) = trusted.filter(|_| window_key.world().is_some()) {
+        // The validated canonical artifact binds every retained soft shell
+        // to this world. Persist that address before the edge pass and the
+        // next ordinary reopen consult the same durable proof.
+        vault.with_write_txn(|txn| {
+            for shell in &snapshot.retained_claim_worlds {
+                let id = EntityId::from_bytes(shell.id)?;
+                vault.store.sync_state.put(
+                    txn,
+                    &format!("m:dw:{}", id.to_hex()),
+                    window_key.as_str().as_bytes(),
+                )?;
+            }
+            Ok(())
+        })?;
+    }
     edge_pass::run(&ctx, &mut ledger)?;
     // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
     // Parent obligation left by a different window whose doc is not loaded.

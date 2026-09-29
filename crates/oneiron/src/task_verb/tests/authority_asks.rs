@@ -39,6 +39,7 @@ fn scope_spec(vault: &Vault, key: &str) -> TaskAskSpec {
                 outcome_binding: None,
                 ladder_answer: None,
                 class_key: None,
+                commitment: false,
             },
             Some(unix_seconds_now() + 3600),
             crate::task_verb::TaskAskDefault::AskMe,

@@ -37,7 +37,7 @@ impl Vault {
         Ok((page, bytes))
     }
     fn esign_pdf_after_admission(&self, token: &EsignCapability, item: usize) -> Result<Vec<u8>> {
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         let txn = self.store.env.read_txn()?;
         let cap = binding(self, &txn, token)?;
         let id = EntityId::from_hex(&cap.document)?;
@@ -63,16 +63,9 @@ impl Vault {
             DocumentStatus::Completed | DocumentStatus::Rejected
         ) {
             // Read the canonical swap in THIS snapshot, then the immutable version.
-            let bytes = self
-                .store
-                .vault_meta
-                .get(
-                    &txn,
-                    &[b"esign.sealed.v1/".as_slice(), id.as_bytes()].concat(),
-                )?
+            let manifest = super::seal::CANONICAL
+                .get(&self.store, &txn, &id)?
                 .ok_or_else(|| invalid("sealed manifest missing"))?;
-            let manifest: super::SealedDocument =
-                serde_json::from_slice(&bytes).map_err(|_| invalid("sealed manifest"))?;
             let item = manifest
                 .items
                 .get(item)

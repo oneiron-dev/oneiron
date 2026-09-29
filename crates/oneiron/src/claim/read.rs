@@ -59,7 +59,30 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<ClaimBody>> {
-        crate::ports::ClaimStore::port_claim_get(self, rtxn, id)
+        let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
+        let Some(body) = body else { return Ok(None) };
+        if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
+            || !super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?
+                .is_empty()
+            || self
+                .store
+                .vault_meta
+                .get(rtxn, &super::history_projection::pin_key(*id))?
+                .is_some()
+        {
+            let fold = self.authority_fold_readonly_in_txn(rtxn)?;
+            let projection =
+                super::history_projection::resolved_machine_history(&self.store, rtxn, &fold, *id)?;
+            // A superseded history's same-id successor is an ordinary claim.
+            if !projection.admits_successor_by(crate::memory::claim_author(&body))
+                || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
+            {
+                return Ok(Some(super::history_projection::project_machine_claim(
+                    &projection,
+                )));
+            }
+        }
+        Ok(Some(body))
     }
 
     pub(crate) fn session_claim_bundle_members_in_txn(
@@ -270,37 +293,22 @@ impl Vault {
     }
 }
 
-/// The `FacetOf` targets of `id`, read through whichever out-edge accessor the
-/// caller composes over.
-///
-/// Parameterized rather than pinned to `store.edges_out` because a scoped read
-/// opened in a session composes overlay union base, and the facets a claim
-/// carries decide what a facet-scoped grant authorizes. Reading base here
-/// while every other edge scan in that read reads the union would evaluate a
-/// session's grants against a graph the session cannot see.
-pub(crate) fn facet_refs_in_db(
-    db: &crate::overlay_db::OverlayDb,
-    rtxn: &heed::RoTxn<'_>,
+/// The `FacetOf` targets of `id` in the caller's composed transaction.
+/// Key-only enumeration preserves the facet grant check even if an unrelated
+/// edge value is malformed; malformed keys still fail closed.
+pub(crate) fn facet_refs_in_port<P: crate::ports::EdgeStoreRead>(
+    ports: &P,
+    txn: &P::Read<'_>,
     id: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
-    prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
-    prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
-
     let mut facets = Vec::new();
-    for entry in db.prefix_iter(rtxn, prefix.as_slice())? {
+    for peer in
+        ports.port_edge_peers(txn, id, crate::ports::EdgeDirection::Out, EdgeKind::FacetOf)?
+    {
         if facets.len() >= MAX_EDGE_QUERY_RESULTS {
             return Err(Error::IndexOverflow("claim_facet_refs"));
         }
-        let (key, _) = entry?;
-        crate::vault::require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
-        let target = EntityId::from_bytes(
-            key[ENTITY_ID_LEN + 1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("facet edge key"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("facet edge key"))?;
-        facets.push(target);
+        facets.push(peer?);
     }
     Ok(facets)
 }

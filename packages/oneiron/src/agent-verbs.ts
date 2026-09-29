@@ -29,13 +29,13 @@ export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref
 export interface TaskAskCoverage {met: boolean; required: number; responded: string[]; unknown: string[]; unmet_people: string[]}
 export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: TaskAskOptionId} | "no" | "conflict" | "unknown";
 export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
-export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"; ladder_changed: boolean | null}
-export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
+export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "foreign_stated" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"; ladder_changed: boolean | null}
+export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null; link_result_proof?: number[]}
 export type TaskAskEffectAuthorization = "not_evaluated_by_ask";
 export interface TaskAskResult {effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
-export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
-export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
-export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
+export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Changed: {voided: string[]; generation: number}} | {Settled: TaskAskResult};
+export type TaskAskWait = { Pending: {trap_ref: string} } | { Changed: {voided: string[]; generation: number} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
+export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]} | {kind: "self_card"; tail: string};
 export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" | "rejected"; effected: boolean; proposal_ref: string | null; gate_decision_ref: string | null; status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned" | null; cancel_requested: boolean; forced: boolean}
 export function agentVerbs(invoke: AgentInvoke) {
   return {
@@ -53,6 +53,10 @@ outcomes(handle: TaskAskHandle): CalibrationPair[] { return invoke("tasksOutcome
 rooms: {
 list(): unknown[] { return invoke("roomsList", {}) as unknown[] },
 messages(roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} { return invoke("roomsMessages", {room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null} },
+render(roomRef: string): string[] { return invoke("roomsRender", {room_ref: roomRef}) as string[] },
+find(roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} { return invoke("roomsFind", {room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null} },
+get(roomRef: string, turnRef: string): unknown { return invoke("roomsGet", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
+trunk(roomRef: string, turnRef: string): unknown { return invoke("roomsTrunk", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
 claim(roomRef: string, turnRef: string): unknown { return invoke("roomsClaim", {room_ref: roomRef, turn_ref: turnRef}) as unknown },
 speak(turn: Record<string, unknown>): unknown { return invoke("roomsSpeak", turn) as unknown },
 },

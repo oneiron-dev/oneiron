@@ -139,32 +139,25 @@ impl Vault {
 
     fn backfill_authority_first_seen_sidecars(&self) -> Result<()> {
         let rtxn = self.store.env.read_txn()?;
-        let already_backfilled = self
-            .store
-            .sync_state
-            .get(&rtxn, authority_first_seen_backfill_sync_key())?
-            .is_some();
+        let already_backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
+            &self.store,
+            &rtxn,
+            &authority_first_seen_backfill_key(),
+        )?;
         drop(rtxn);
         if already_backfilled {
             return Ok(());
         }
 
         self.with_write_txn(|wtxn| {
-            if self
-                .store
-                .sync_state
-                .get(wtxn, authority_first_seen_backfill_sync_key())?
-                .is_some()
-            {
+            let backfill_key = authority_first_seen_backfill_key();
+            if AUTHORITY_FIRST_SEEN_BACKFILLED.contains(&self.store, wtxn, &backfill_key)? {
                 return Ok(());
             }
 
-            let floor_key = authority_first_seen_clock_sync_key();
-            let previous_floor = self
-                .store
-                .sync_state
-                .get(wtxn, floor_key)?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            let floor_key = authority_first_seen_clock_key();
+            let previous_floor = AUTHORITY_FIRST_SEEN
+                .get_lenient(&self.store, wtxn, &floor_key)?
                 .unwrap_or(0);
             let observed_floor = authority_observation_secs(
                 &self.store,
@@ -172,8 +165,7 @@ impl Vault {
                 self.store.clock.now_recorded_at(),
             );
             if observed_floor != previous_floor {
-                let encoded = encode_authority_first_seen_secs(observed_floor);
-                self.store.sync_state.put(wtxn, floor_key, &encoded)?;
+                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &observed_floor)?;
             }
 
             let mut missing_sidecars = Vec::new();
@@ -195,44 +187,43 @@ impl Vault {
                 let authority_entry =
                     decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
                 let hash = authority_entry_hash(&authority_entry)?;
-                let sidecar_key = authority_first_seen_sync_key(&hash);
-                if self
-                    .store
-                    .sync_state
-                    .get(wtxn, sidecar_key.as_str())?
-                    .is_none()
-                {
+                let sidecar_key = authority_first_seen_sidecar_key(&hash);
+                if !AUTHORITY_FIRST_SEEN.contains(&self.store, wtxn, &sidecar_key)? {
                     // fix-leg 4: the persisted value is THIS vault's local
-                    // observation time, never `header.learned_at`. The header
-                    // field is entity metadata written by whichever peer
-                    // shipped the row, so trusting it lets a legacy
-                    // sidecar-less `EnrollDevice(learned_at = 0)` claim it was
-                    // first seen in 1970 — instantly past its veto delay, with
-                    // a child `BindActor` on the freshly owner-capable key
-                    // folding ACTIVE on arrival. `observed_floor` clamps
-                    // FUTURE claims only; the whole past is unclamped, and the
-                    // past is the dangerous direction.
-                    //
-                    // Migrating at the observation time means an
-                    // already-imported widen serves its full delay from HERE
-                    // rather than from a claim, which delays a legitimate
-                    // legacy widen once and never skips one.
-                    missing_sidecars.push((
-                        sidecar_key,
-                        encode_authority_first_seen_secs(observed_floor),
-                    ));
+                    // observation time, never `header.learned_at`. First-seen
+                    // is a LOCAL observation, and the header field is entity
+                    // metadata written by whichever peer shipped the row, so
+                    // it must never set this vault's stale-roster clock.
+                    missing_sidecars.push((sidecar_key, observed_floor));
                 }
             }
             for (sidecar_key, first_seen) in missing_sidecars {
-                self.store
-                    .sync_state
-                    .put(wtxn, sidecar_key.as_str(), &first_seen)?;
+                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &sidecar_key, &first_seen)?;
             }
 
-            self.store
-                .sync_state
-                .put(wtxn, authority_first_seen_backfill_sync_key(), &[1])?;
+            AUTHORITY_FIRST_SEEN_BACKFILLED.put(&self.store, wtxn, &backfill_key, &[1])?;
             advance_authority_cache_generation(&self.store, wtxn)?;
+
+            Ok(())
+        })
+    }
+
+    /// Advance the persisted authority-observation floor in test fixtures.
+    /// The generic sync-state write door remains guarded.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn advance_authority_clock_for_test(&self, observed_secs: u64) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            let floor_key = authority_first_seen_clock_key();
+            let previous = AUTHORITY_FIRST_SEEN
+                .get_lenient(&self.store, wtxn, &floor_key)?
+                .unwrap_or(0);
+            AUTHORITY_FIRST_SEEN.put(
+                &self.store,
+                wtxn,
+                &floor_key,
+                &previous.max(observed_secs),
+            )?;
             Ok(())
         })
     }
@@ -241,31 +232,26 @@ impl Vault {
     ///
     /// The fold is the authority boundary: replay doors only admit canonical,
     /// origin-signed records; signer ancestry, sequence, quorum, and roster
-    /// semantics are recomputed here from the stored log. Software-tier widens
-    /// are evaluated against this device's local first-seen timestamps.
+    /// semantics are recomputed here from the stored log. Stale-roster approval
+    /// expiry is evaluated against this device's local first-seen timestamps;
+    /// no op waits on them.
     ///
     /// Admitted PEER authority logs (FED-03) are refolded alongside, and their
     /// consent roots enter as gesture evidence only: they never join the local
     /// roster, hold local quorum, or change this vault's id.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
         self.backfill_authority_first_seen_sidecars()?;
-        // Keep the original write-side monotonic observation. The read view is
-        // opened only after that transaction commits, so its clock and rows
-        // belong to the same snapshot (including a concurrent authority put).
+        // Update the monotonic local observation in a committed writer before
+        // the cached read view opens its own snapshot.
         self.with_write_txn(|wtxn| {
-            let key = authority_first_seen_clock_sync_key();
-            let floor = self
-                .store
-                .sync_state
-                .get(wtxn, key)?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            let floor_key = authority_first_seen_clock_key();
+            let floor = AUTHORITY_FIRST_SEEN
+                .get_lenient(&self.store, wtxn, &floor_key)?
                 .unwrap_or(0);
             let now =
                 authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
             if now != floor {
-                self.store
-                    .sync_state
-                    .put(wtxn, key, &encode_authority_first_seen_secs(now))?;
+                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &now)?;
             }
             Ok(())
         })?;

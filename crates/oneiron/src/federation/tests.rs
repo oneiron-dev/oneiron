@@ -200,13 +200,17 @@ fn delegate_member_ref() -> EntityId {
 }
 
 fn test_delegate() -> FederationGrant {
-    FederationGrant::attenuated_delegate(
+    let mut delegate = FederationGrant::attenuated_delegate(
         &test_grant(),
         delegate_member_ref(),
         DELEGATE_NOW,
         DELEGATE_EXPIRES_AT,
     )
-    .expect("an admin parent mints a delegate")
+    .expect("an admin parent mints a delegate");
+    // The fixture chooses read explicitly; production resolves it from the
+    // vault's policy manifest in the writer that stores the grant.
+    delegate.authority_scope = super::scope_codec::read_preset();
+    delegate
 }
 
 fn non_delegate_grant(role: FederationGrantRole, preset: FederationGrantPreset) -> FederationGrant {
@@ -280,7 +284,7 @@ fn attenuated_delegate_round_trips_byte_stable() -> Result<()> {
     let Value::Map(entries) = value else {
         panic!("delegate body must encode as a map");
     };
-    assert_eq!(entries.len(), FEDERATION_GRANT_BODY_KEYS.len());
+    assert_eq!(entries.len(), FEDERATION_GRANT_BODY_KEYS.len() - 1);
     assert_eq!(
         required_value(&entries, KEY_ROLE)?.as_str(),
         Some("delegate")
@@ -352,6 +356,7 @@ fn delegate_minting_never_self_widens() {
         FederationGrantRole::Viewer,
         FederationGrantRole::Auditor,
         FederationGrantRole::Delegate,
+        FederationGrantRole::Guest,
     ] {
         assert_eq!(
             role.is_admin(),
@@ -453,6 +458,25 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
         );
     }
     assert!(FederationGrantPreset::Delegate.permits_role(FederationGrantRole::Delegate));
+    assert!(FederationGrantPreset::Guest.permits_role(FederationGrantRole::Guest));
+    for preset in non_delegate_presets
+        .into_iter()
+        .chain([FederationGrantPreset::Delegate])
+    {
+        assert!(
+            !preset.permits_role(FederationGrantRole::Guest),
+            "{preset:?} must not carry the guest role"
+        );
+    }
+    for role in non_delegate_roles
+        .into_iter()
+        .chain([FederationGrantRole::Delegate])
+    {
+        assert!(
+            !FederationGrantPreset::Guest.permits_role(role),
+            "the guest preset must not carry {role:?}"
+        );
+    }
 
     // Every pre-existing role/preset verdict is unchanged.
     for preset in non_delegate_presets {
@@ -471,7 +495,9 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
                     FederationGrantRole::Viewer | FederationGrantRole::Auditor
                 ),
                 FederationGrantPreset::Audit => matches!(role, FederationGrantRole::Auditor),
-                FederationGrantPreset::Delegate => unreachable!("non-delegate presets only"),
+                FederationGrantPreset::Delegate | FederationGrantPreset::Guest => {
+                    unreachable!("non-delegate presets only")
+                }
             };
             assert_eq!(
                 preset.permits_role(role),
@@ -656,20 +682,13 @@ fn delegate_body_decode_fails_closed_on_new_keys() {
         .expect("the canonical delegate body decodes");
 }
 
-/// Done-means 5 (forward compatibility) + 9 (hydration does not grow).
-///
-/// Schema version stays 1 while the on-disk body grows to seven keys. There is
-/// no runtime assertion to make against a binary that no longer exists, so what
-/// is pinned here is the property that makes the old reader safe: a
-/// pre-Delegate reader's key allowlist is exactly the five-key head, and a
-/// delegate body carries keys outside it — so that reader FAILS CLOSED rather
-/// than reading a delegate as a non-expiring grant.
+/// Guest payloads get a new schema version while older member/delegate bodies
+/// remain decodable. Guest identity and fact details stay out of hydration.
 #[test]
-fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
-    assert_eq!(FEDERATION_GRANT_SCHEMA_VERSION, 2);
-    assert_eq!(FEDERATION_GRANT_BODY_KEYS.len(), 8);
+fn guest_schema_grows_while_hydration_stays_narrow() -> Result<()> {
+    assert_eq!(FEDERATION_GRANT_SCHEMA_VERSION, 3);
+    assert_eq!(FEDERATION_GRANT_BODY_KEYS.len(), 9);
 
-    // Hydration profiles keep their pre-Delegate content and lengths.
     assert_eq!(FEDERATION_GRANT_FIELDS_MINIMAL, ["scope", "role", "preset"]);
     assert_eq!(
         FEDERATION_GRANT_FIELDS_STANDARD,
@@ -679,7 +698,7 @@ fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
         FEDERATION_GRANT_FIELDS_FULL,
         ["schema_version", "scope", "member_ref", "role", "preset"]
     );
-    for key in [KEY_EXPIRES_AT, KEY_DELEGATED_BY] {
+    for key in [KEY_EXPIRES_AT, KEY_DELEGATED_BY, KEY_GUEST] {
         assert!(
             !FEDERATION_GRANT_FIELDS_FULL.contains(&key),
             "{key} must not enter context-pack hydration"
@@ -702,8 +721,6 @@ fn delegate_body_grows_while_schema_version_and_hydration_hold() -> Result<()> {
         "a five-key reader's allowlist rejects the delegate body"
     );
 
-    // Current non-delegate grants carry authority_scope as well. An old
-    // five-key reader must refuse them rather than discard that bound.
     let non_delegate = encode_federation_grant_body(&test_grant())?;
     let mut cursor = Cursor::new(&non_delegate);
     let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode grant body")
@@ -737,14 +754,200 @@ fn federation_grant_policy_rejects_admin_role_under_non_admin_preset() {
     assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
 }
 
+fn ask_guest_grant() -> FederationGrant {
+    FederationGrant::ask_guest(
+        scope_entity(0x70),
+        scope_entity(0x71),
+        scope_entity(0x72),
+        scope_entity(0x73),
+        BTreeSet::from([scope_entity(0x74), scope_entity(0x75)]),
+    )
+    .expect("bounded ask guest grant")
+}
+
+#[test]
+fn ask_guest_admits_only_the_named_fact_and_identity_tuple() {
+    let grant = ask_guest_grant();
+    assert_eq!(grant.scope, FederationGrantScope::ask(scope_entity(0x70)));
+    assert_eq!(grant.role, FederationGrantRole::Guest);
+    assert!(grant.role.is_guest());
+    assert!(!grant.role.is_admin());
+    assert!(!grant.is_admin());
+    assert!(grant.guest.is_some());
+    assert!(grant.allows_ask_fact(
+        scope_entity(0x70),
+        scope_entity(0x71),
+        scope_entity(0x72),
+        scope_entity(0x73),
+        scope_entity(0x74),
+    ));
+    for (ask_ref, guest_actor, person_ref, asker_ref, fact) in [
+        (
+            scope_entity(0x76),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x77),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x78),
+            scope_entity(0x73),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x79),
+            scope_entity(0x74),
+        ),
+        (
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            scope_entity(0x7A),
+        ),
+    ] {
+        assert!(
+            !grant.allows_ask_fact(ask_ref, guest_actor, person_ref, asker_ref, fact),
+            "mismatched or undisclosed tuple must be denied"
+        );
+    }
+
+    let member_role_grant = FederationGrant::new(
+        FederationGrantScope::vault(7),
+        scope_entity(0x71),
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    assert_eq!(member_role_grant.guest, None);
+    assert!(!member_role_grant.allows_ask_fact(
+        scope_entity(0x70),
+        scope_entity(0x71),
+        scope_entity(0x72),
+        scope_entity(0x73),
+        scope_entity(0x74),
+    ));
+
+    let invalid_member = FederationGrant::new(
+        FederationGrantScope::ask(scope_entity(0x70)),
+        scope_entity(0x71),
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    assert!(invalid_member.validate().is_err());
+    let invalid_vault_guest = FederationGrant::new(
+        FederationGrantScope::vault(7),
+        scope_entity(0x71),
+        FederationGrantRole::Guest,
+        FederationGrantPreset::Guest,
+    );
+    assert!(invalid_vault_guest.validate().is_err());
+}
+
+#[test]
+fn ask_guest_codec_is_strict_and_payload_is_bounded() -> Result<()> {
+    let grant = ask_guest_grant();
+    let encoded = encode_federation_grant_body(&grant)?;
+    let decoded = decode_federation_grant_body(&encoded)?;
+    assert_eq!(decoded, grant);
+    assert_eq!(encode_federation_grant_body(&decoded)?, encoded);
+    let mut prior = test_grant();
+    prior.role = FederationGrantRole::Member;
+    prior.preset = FederationGrantPreset::Member;
+    let bytes = encode_federation_grant_body(&prior)?;
+    let Value::Map(mut old) =
+        rmpv::decode::read_value(&mut Cursor::new(&bytes)).expect("grant map")
+    else {
+        panic!("grant map")
+    };
+    old.iter_mut()
+        .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+        .expect("schema version")
+        .1 = Value::from(2_u64);
+    assert_grant_rejected("old unshipped schema 2 member", &grant_map(old));
+
+    let mut cursor = Cursor::new(&encoded);
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("grant map") else {
+        panic!("grant is map");
+    };
+    {
+        let guest = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_GUEST))
+            .expect("guest payload");
+        let Value::Map(payload) = &mut guest.1 else {
+            panic!("guest payload is map");
+        };
+        payload.push((Value::from("future"), Value::from("ignored")));
+    }
+    assert_grant_rejected("unknown guest payload key", &grant_map(entries.clone()));
+    {
+        let guest = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(KEY_GUEST))
+            .expect("guest payload");
+        let Value::Map(payload) = &mut guest.1 else {
+            panic!("guest payload is map");
+        };
+        payload.pop();
+    }
+    entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+        .expect("schema version")
+        .1 = Value::from(2_u64);
+    assert_grant_rejected("schema 2 cannot carry guest payload", &grant_map(entries));
+
+    assert!(
+        FederationGrant::ask_guest(
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            BTreeSet::new(),
+        )
+        .is_err()
+    );
+    let too_many = (1..=65)
+        .map(|byte| {
+            let mut bytes = [0xFE; 16];
+            bytes[15] = byte;
+            EntityId::from_bytes(bytes).expect("distinct non-pinned test id")
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(too_many.len(), MAX_GUEST_DISCLOSED_REFS + 1);
+    assert!(
+        FederationGrant::ask_guest(
+            scope_entity(0x70),
+            scope_entity(0x71),
+            scope_entity(0x72),
+            scope_entity(0x73),
+            too_many,
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
 fn scope_entity(byte: u8) -> EntityId {
     crate::test_util::entity(byte)
 }
 
 fn direction(
-    worlds: FederationScopeWorlds,
-    facets: FederationScopeFacets,
-    bands: FederationScopeBands,
+    worlds: ScopeAxis<ScopeId>,
+    facets: ScopeAxis<ScopeId>,
+    bands: ScopeAxis<SelectorRange>,
 ) -> FederationDirectionScope {
     FederationDirectionScope {
         worlds,
@@ -756,16 +959,40 @@ fn direction(
 fn sample_pact_scope() -> FederationPactScope {
     FederationPactScope {
         lo_to_hi: direction(
-            FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]),
-            FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
-            FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            ScopeAxis::from_iter([scope_entity(0x10), scope_entity(0x12)].map(ScopeId)),
+            ScopeAxis::from_iter([scope_entity(0x21), scope_entity(0x22)].map(ScopeId)),
+            ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         ),
-        hi_to_lo: direction(
-            FederationScopeWorlds::Base,
-            FederationScopeFacets::All,
-            FederationScopeBands::Bottom,
-        ),
+        hi_to_lo: direction(base_world_axis(), ScopeAxis::All, ScopeAxis::Bottom),
     }
+}
+
+/// A hand-spelled pact scope axis: `{kind}`, or `{kind, ids}`.
+fn axis(kind: &str, ids: Option<Vec<Value>>) -> Value {
+    let mut entries = vec![(Value::from("kind"), Value::from(kind))];
+    if let Some(ids) = ids {
+        entries.push((Value::from("ids"), Value::Array(ids)));
+    }
+    Value::Map(entries)
+}
+
+fn direction_value(worlds: Value, facets: Value, bands: Value) -> Value {
+    Value::Map(vec![
+        (Value::from("worlds"), worlds),
+        (Value::from("facets"), facets),
+        (Value::from("bands"), bands),
+    ])
+}
+
+fn pact_value(lo: Value, hi: Value) -> Vec<u8> {
+    encode_value(&Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(FEDERATION_PACT_SCOPE_SCHEMA_VERSION),
+        ),
+        (Value::from("lo_to_hi"), lo),
+        (Value::from("hi_to_lo"), hi),
+    ]))
 }
 
 #[test]
@@ -786,31 +1013,7 @@ fn federation_pact_scope_decode_fails_closed() {
     assert!(decode_federation_pact_scope(&trailing).is_err());
     assert!(decode_federation_pact_scope(b"not-msgpack").is_err());
 
-    let axis = |kind: &str, ids: Option<Vec<Value>>| {
-        let mut entries = vec![(Value::from("kind"), Value::from(kind))];
-        if let Some(ids) = ids {
-            entries.push((Value::from("ids"), Value::Array(ids)));
-        }
-        Value::Map(entries)
-    };
-    let direction_value = |worlds: Value, facets: Value, bands: Value| {
-        Value::Map(vec![
-            (Value::from("worlds"), worlds),
-            (Value::from("facets"), facets),
-            (Value::from("bands"), bands),
-        ])
-    };
     let all = || axis("all", None);
-    let pact_value = |lo: Value, hi: Value| {
-        encode_value(&Value::Map(vec![
-            (
-                Value::from("schema_version"),
-                Value::from(FEDERATION_PACT_SCOPE_SCHEMA_VERSION),
-            ),
-            (Value::from("lo_to_hi"), lo),
-            (Value::from("hi_to_lo"), hi),
-        ]))
-    };
     let hex = |byte: u8| Value::from(scope_entity(byte).to_hex());
 
     // An empty id set must NEVER decode as "all facets"/"all bands"/"all
@@ -913,7 +1116,7 @@ fn federation_pact_scope_decode_fails_closed() {
             .unwrap()
             .lo_to_hi
             .worlds,
-        FederationScopeWorlds::Bottom
+        ScopeAxis::Bottom
     );
     for (case, bytes) in [
         ("empty some", empty_some),
@@ -944,21 +1147,13 @@ fn federation_pact_scope_decode_fails_closed() {
 
 #[test]
 fn federation_direction_scope_partial_order_is_axis_wise() {
-    let all = direction(
-        FederationScopeWorlds::All,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
+    let all = direction(ScopeAxis::All, ScopeAxis::All, ScopeAxis::All);
     let narrow = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
-        FederationScopeFacets::Some(vec![scope_entity(0x21)]),
-        FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+        ScopeAxis::from_iter([scope_entity(0x10)].map(ScopeId)),
+        ScopeAxis::from_iter([scope_entity(0x21)].map(ScopeId)),
+        ScopeAxis::from_iter([SelectorRange::Semantic]),
     );
-    let bottom = direction(
-        FederationScopeWorlds::Bottom,
-        FederationScopeFacets::Bottom,
-        FederationScopeBands::Bottom,
-    );
+    let bottom = direction(ScopeAxis::Bottom, ScopeAxis::Bottom, ScopeAxis::Bottom);
 
     assert!(Position::new(narrow.clone()).is_narrowing_of(&Ceiling::new(all.clone())));
     assert!(!Position::new(all.clone()).is_narrowing_of(&Ceiling::new(narrow.clone())));
@@ -971,22 +1166,14 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     assert!(Position::new(bottom.clone()).is_narrowing_of(&Ceiling::new(bottom)));
 
     // Bottom ⊑ Worlds(S) ⊑ Worlds(T ⊇ S) ⊑ All; Base is not implicit.
-    let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]);
-    let two_worlds = FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]);
-    assert!(!FederationScopeWorlds::Base.is_narrowing_of(&one_world));
+    let one_world = ScopeAxis::from_iter([scope_entity(0x10)].map(ScopeId));
+    let two_worlds = ScopeAxis::from_iter([scope_entity(0x10), scope_entity(0x12)].map(ScopeId));
+    assert!(!base_world_axis().is_narrowing_of(&one_world));
     let explicit_base =
-        FederationScopeWorlds::Worlds(vec![crate::claim::base_world_id(), scope_entity(0x10)]);
-    assert!(FederationScopeWorlds::Base.is_narrowing_of(&explicit_base));
-    let base_direction = direction(
-        FederationScopeWorlds::Base,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
-    let explicit_direction = direction(
-        explicit_base,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
+        ScopeAxis::from_iter([crate::claim::base_world_id(), scope_entity(0x10)].map(ScopeId));
+    assert!(base_world_axis().is_narrowing_of(&explicit_base));
+    let base_direction = direction(base_world_axis(), ScopeAxis::All, ScopeAxis::All);
+    let explicit_direction = direction(explicit_base, ScopeAxis::All, ScopeAxis::All);
     assert_eq!(
         base_direction.intersect(&explicit_direction),
         base_direction
@@ -997,51 +1184,122 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     );
     assert!(one_world.is_narrowing_of(&two_worlds));
     assert!(!two_worlds.is_narrowing_of(&one_world));
-    assert!(!FederationScopeWorlds::All.is_narrowing_of(&two_worlds));
-    assert!(!one_world.is_narrowing_of(&FederationScopeWorlds::Base));
+    assert!(!ScopeAxis::All.is_narrowing_of(&two_worlds));
+    assert!(!one_world.is_narrowing_of(&base_world_axis()));
 }
 
 #[test]
 fn federation_direction_scope_disjoint_meet_is_bottom_not_all() {
     let left = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
-        FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
-        FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+        ScopeAxis::from_iter([scope_entity(0x10)].map(ScopeId)),
+        ScopeAxis::from_iter([scope_entity(0x21), scope_entity(0x22)].map(ScopeId)),
+        ScopeAxis::from_iter([SelectorRange::Semantic]),
     );
     let right = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x12)]),
-        FederationScopeFacets::Some(vec![scope_entity(0x22), scope_entity(0x23)]),
-        FederationScopeBands::Some(vec![SelectorRange::Core]),
+        ScopeAxis::from_iter([scope_entity(0x12)].map(ScopeId)),
+        ScopeAxis::from_iter([scope_entity(0x22), scope_entity(0x23)].map(ScopeId)),
+        ScopeAxis::from_iter([SelectorRange::Core]),
     );
 
     let met = left.intersect(&right);
     // Every disjoint axis meets at Bottom, with no implicit base world.
-    assert_eq!(met.worlds, FederationScopeWorlds::Bottom);
+    assert_eq!(met.worlds, ScopeAxis::Bottom);
     assert_eq!(
         met.facets,
-        FederationScopeFacets::Some(vec![scope_entity(0x22)])
+        ScopeAxis::from_iter([scope_entity(0x22)].map(ScopeId))
     );
-    assert_eq!(met.bands, FederationScopeBands::Bottom);
+    assert_eq!(met.bands, ScopeAxis::Bottom);
     assert_eq!(met, right.intersect(&left));
 
-    let all = direction(
-        FederationScopeWorlds::All,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
+    let all = direction(ScopeAxis::All, ScopeAxis::All, ScopeAxis::All);
     assert_eq!(all.intersect(&left), left);
     assert_eq!(left.intersect(&left), left);
 
-    let bottom = direction(
-        FederationScopeWorlds::Base,
-        FederationScopeFacets::Bottom,
-        FederationScopeBands::Bottom,
+    let bottom = direction(base_world_axis(), ScopeAxis::Bottom, ScopeAxis::Bottom);
+    assert_eq!(bottom.intersect(&left).facets, ScopeAxis::Bottom);
+    assert_eq!(bottom.intersect(&left).bands, ScopeAxis::Bottom);
+}
+
+/// The three pact axes are `ScopeAxis` lattices and keep the wire bytes the
+/// hand-typed axis enums wrote. Each direction below is paired with its
+/// MessagePack spelled out by hand, so every kind of every axis is pinned.
+#[test]
+fn pact_scope_axes_are_scope_axes() -> Result<()> {
+    let hex = |byte: u8| Value::from(scope_entity(byte).to_hex());
+    let ids = |bytes: &[u8]| ScopeAxis::from_iter(bytes.iter().map(|b| ScopeId(scope_entity(*b))));
+    let named = |names: &[&str]| Some(names.iter().map(|name| Value::from(*name)).collect());
+    let cases = [
+        (
+            direction(ScopeAxis::Bottom, ScopeAxis::All, ScopeAxis::Bottom),
+            direction_value(
+                axis("bottom", None),
+                axis("all", None),
+                axis("bottom", None),
+            ),
+        ),
+        (
+            direction(ScopeAxis::All, ScopeAxis::Bottom, ScopeAxis::All),
+            direction_value(axis("all", None), axis("bottom", None), axis("all", None)),
+        ),
+        (
+            direction(
+                base_world_axis(),
+                ids(&[0x21, 0x22]),
+                ScopeAxis::from_iter([
+                    SelectorRange::Semantic,
+                    SelectorRange::Family(crate::registry::TypeByteFamily::People),
+                ]),
+            ),
+            direction_value(
+                axis("base", None),
+                axis("some", Some(vec![hex(0x21), hex(0x22)])),
+                axis("some", named(&["semantic", "core/people"])),
+            ),
+        ),
+        (
+            direction(
+                ids(&[0x10, 0x12]),
+                ids(&[0x23]),
+                ScopeAxis::from_iter([SelectorRange::Core, SelectorRange::Maintenance]),
+            ),
+            direction_value(
+                axis("worlds", Some(vec![hex(0x10), hex(0x12)])),
+                axis("some", Some(vec![hex(0x23)])),
+                axis("some", named(&["core", "maintenance"])),
+            ),
+        ),
+    ];
+    for (lo, lo_value) in &cases {
+        for (hi, hi_value) in &cases {
+            let scope = FederationPactScope {
+                lo_to_hi: lo.clone(),
+                hi_to_lo: hi.clone(),
+            };
+            let bytes = pact_value(lo_value.clone(), hi_value.clone());
+            assert_eq!(encode_federation_pact_scope(&scope)?, bytes);
+            assert_eq!(decode_federation_pact_scope(&bytes)?, scope);
+        }
+    }
+
+    // The one byte exception: a world set holding only the base world was a
+    // second spelling of `base`. It still decodes, to `base`, and re-encodes
+    // as `base`.
+    let base_hex = Value::from(crate::claim::base_world_id().to_hex());
+    let all = || axis("all", None);
+    let old_spelling = pact_value(
+        direction_value(axis("worlds", Some(vec![base_hex])), all(), all()),
+        direction_value(all(), all(), all()),
     );
+    let decoded = decode_federation_pact_scope(&old_spelling)?;
+    assert_eq!(decoded.lo_to_hi.worlds, base_world_axis());
     assert_eq!(
-        bottom.intersect(&left).facets,
-        FederationScopeFacets::Bottom
+        encode_federation_pact_scope(&decoded)?,
+        pact_value(
+            direction_value(axis("base", None), all(), all()),
+            direction_value(all(), all(), all()),
+        )
     );
-    assert_eq!(bottom.intersect(&left).bands, FederationScopeBands::Bottom);
+    Ok(())
 }
 
 #[test]
@@ -1164,7 +1422,8 @@ impl RelationshipClaimFixture {
                     1.0,
                     self.approval,
                     self.lifecycle,
-                ),
+                )
+                .unwrap(),
                 relationship_time(),
                 self.learned_at,
             )
@@ -1659,9 +1918,8 @@ use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue,
     AuthoritySignature, AuthorityTier, DeviceAuthority, FederationLifecycleAction,
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, ROLE_ADMIN,
-    ROLE_AGENT, ROLE_OWNER, authority_transcript, encode_authority_log_entry_body,
-    federation_scope_digest, fold_authority_log_with_peer_consent_roots,
-    sign_federation_pact_gesture,
+    ROLE_OWNER, authority_transcript, encode_authority_log_entry_body, federation_scope_digest,
+    fold_authority_log_with_peer_consent_roots, sign_federation_pact_gesture,
 };
 use crate::error::{ClaimError, RecordError, RegistryError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -1797,49 +2055,19 @@ fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
     let vault_id = genesis_vault_id(&genesis).expect("genesis vault id");
     let genesis_hash = authority_entry_hash(&genesis).expect("genesis hash");
 
-    let enroll_admin = auth_entry(
+    // The peer authority log has a host root and a signed, non-widening
+    // withdrawal. Admin is pinned for the Connect gesture, not enrolled into
+    // the peer authority roster; agent/spare keys remain ineligible too.
+    let withdrawal = auth_entry(
         Some(vault_id),
         1,
         vec![genesis_hash],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&admin_signing), ROLE_OWNER | ROLE_ADMIN),
+        AuthorityOp::SlipRevoke {
+            slip_id: [seed.wrapping_add(20); 32],
         },
         &host_signing,
         None,
         2,
-    );
-    let enroll_agent = auth_entry(
-        Some(vault_id),
-        2,
-        vec![authority_entry_hash(&enroll_admin).expect("hash")],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&agent_signing), ROLE_AGENT),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        3,
-    );
-    let enroll_spare = auth_entry(
-        Some(vault_id),
-        3,
-        vec![authority_entry_hash(&enroll_agent).expect("hash")],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&revoked_signing), ROLE_OWNER | ROLE_ADMIN),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        4,
-    );
-    let revoke_spare = auth_entry(
-        Some(vault_id),
-        4,
-        vec![authority_entry_hash(&enroll_spare).expect("hash")],
-        AuthorityOp::RevokeDevice {
-            revoked_key: auth_pub(&revoked_signing),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        5,
     );
 
     PeerVaultFixture {
@@ -1852,21 +2080,15 @@ fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
         agent_signing,
         revoked_signing,
         vault_id,
-        entries: vec![
-            genesis,
-            enroll_admin,
-            enroll_agent,
-            enroll_spare,
-            revoke_spare,
-        ],
+        entries: vec![genesis, withdrawal],
     }
 }
 
 fn peer_scope() -> FederationPactScope {
     let half = FederationDirectionScope {
-        worlds: FederationScopeWorlds::Base,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: base_world_axis(),
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     };
     FederationPactScope {
         lo_to_hi: half.clone(),
@@ -2054,7 +2276,7 @@ fn peer_roster_is_refolded_from_relayed_bytes_never_relayed_whole() {
         roots.contains(&peer.host),
         "host-root: the peer HOST key roots",
     );
-    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.admin));
     assert!(!roots.contains(&peer.agent));
     assert!(!roots.contains(&peer.revoked));
 
@@ -2089,7 +2311,7 @@ fn peer_entry_admission_is_idempotent_and_order_free() {
     assert_eq!(roster.vault_id, Some(peer.vault_id));
     let roots = peer_consent_roots(&roster);
     assert!(roots.contains(&peer.host));
-    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.admin));
     assert!(!roots.contains(&peer.agent));
     assert!(!roots.contains(&peer.revoked));
 
@@ -2213,8 +2435,8 @@ fn corrupt_stored_peer_bytes_fail_closed_instead_of_shrinking_the_roster() {
         "a corrupt local row is refused, never skipped into a partial roster"
     );
     assert!(
-        peer_consent_roots(&healthy).contains(&peer.admin),
-        "the skipped-row roster would have silently dropped this consent root"
+        peer_consent_roots(&healthy).contains(&peer.host),
+        "the healthy peer root is proved by the full signed history"
     );
     assert!(
         vault.authority_fold().is_err(),
@@ -2736,7 +2958,8 @@ fn confirmed_coreference_never_pools_claims_through_ppr() {
                     1.0,
                     ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 coreference_time(),
                 1,
             )
@@ -2961,7 +3184,8 @@ fn replicated_consent_never_shares_a_coreference_link() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     planted.source = Some(ClaimSource::Imported);
     let planted_id = entity(0x5C);
     vault
@@ -3372,7 +3596,7 @@ fn stamping_adds_rows_only_and_never_purges_world_or_claim_entities() -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world.entity_id());
     let claim_id = entity(0x37);
     vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)?;

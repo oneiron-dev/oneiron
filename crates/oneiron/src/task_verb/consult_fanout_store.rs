@@ -12,11 +12,16 @@ use crate::outbound_chokepoint::{
     FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink,
 };
 use crate::receipt::ReceiptRecord;
+use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use serde::{Deserialize, Serialize};
 
-pub(super) const RUN_PREFIX: &[u8] = b"tasks/fanout/v1/";
-pub(super) const POLICY_KEY: &[u8] = b"tasks/fanout_policy/v1";
+/// One fan-out run's frozen plan and progress, keyed by its correlation id.
+pub(super) const FANOUT_RUNS: SideTable<HexId, StoredFanout, Named> =
+    SideTable::new(&side_table::TASK_FANOUT_RUN);
+/// The vault-owned fan-out approval policy knobs. Key: `()`.
+pub(super) const FANOUT_POLICY: SideTable<(), ConsultFanOutPolicy, Named> =
+    SideTable::new(&side_table::TASK_FANOUT_POLICY);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct FrozenInput {
@@ -162,20 +167,9 @@ pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::InvariantViolation("fanout encoding"))
 }
 
-pub(super) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("fanout row"))
-}
-
-fn run_key(correlation: &str) -> Vec<u8> {
-    [RUN_PREFIX, correlation.as_bytes()].concat()
-}
-
 pub(super) fn save_run(vault: &Vault, txn: &mut heed::RwTxn<'_>, run: &StoredFanout) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(txn, &run_key(&run.correlation), &encode(run)?)?;
-    Ok(())
+    let correlation = EntityId::from_hex(&run.correlation)?;
+    FANOUT_RUNS.put(&vault.store, txn, &HexId(correlation), run)
 }
 
 pub(super) fn load_run(
@@ -183,35 +177,24 @@ pub(super) fn load_run(
     txn: &heed::RoTxn<'_>,
     correlation: EntityId,
 ) -> MemoryResult<StoredFanout> {
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &run_key(&correlation.to_hex()))?
-        .ok_or_else(|| MemoryError::not_found("fan-out plan not found"))?;
-    Ok(decode(&raw)?)
+    FANOUT_RUNS
+        .get(&vault.store, txn, &HexId(correlation))?
+        .ok_or_else(|| MemoryError::not_found("fan-out plan not found"))
 }
 
 pub(super) fn runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<StoredFanout>> {
-    vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, RUN_PREFIX)?
-        .map(|entry| {
-            let (_, raw) = entry?;
-            decode(&raw)
-        })
-        .collect()
+    Ok(FANOUT_RUNS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, run)| run)
+        .collect())
 }
 
 pub(super) fn policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ConsultFanOutPolicy> {
     let threshold = crate::gate::resolve_policy_manifest(&vault.store, txn)?
         .consult_fanout_approval_threshold()?;
-    let mut policy: ConsultFanOutPolicy = vault
-        .store
-        .vault_meta
-        .get(txn, POLICY_KEY)?
-        .map(|raw| decode(&raw))
-        .transpose()?
+    let mut policy = FANOUT_POLICY
+        .get(&vault.store, txn, &())?
         .unwrap_or_default();
     policy.approval_threshold = threshold;
     Ok(policy)
@@ -236,7 +219,7 @@ impl FanoutSurfaceSink for TxnSurface<'_, '_> {
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, self.txn)?;
         let mut decision = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::now(),
+            decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
             created_at: receipt.occurred_at / 1000,
             outcome: receipt.outcome.clone(),
             reason_codes: vec!["gate.fanout.human_ruling".to_owned()],

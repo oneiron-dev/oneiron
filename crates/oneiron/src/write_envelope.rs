@@ -12,6 +12,8 @@ use crate::claim::ClaimSubject;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 
+pub mod carry_forward;
+
 /// Actor metadata required by [`WriteEnvelope`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteActor {
@@ -145,6 +147,15 @@ impl SourceLineage {
     }
 }
 
+/// Ed25519 proof that a MACHINE authored the exact stored claim body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MachineWriteSignature {
+    /// Per-vault enrolled software authority key, not a transport key.
+    pub public_key: [u8; 32],
+    /// Signature over the domain-separated machine claim transcript.
+    pub signature: [u8; 64],
+}
+
 /// Required metadata for writing a [`ClaimCandidate`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct WriteEnvelope {
@@ -153,6 +164,7 @@ pub struct WriteEnvelope {
     provenance: WriteProvenance,
     approval: ClaimApprovalStatus,
     session_tag: Option<String>,
+    machine_signature: Option<MachineWriteSignature>,
     /// ONE-1314. Stamped HOST-INTERNALLY only: no public constructor, guest
     /// payload, or API argument reaches this field, and the 4-arity
     /// constructors below can only produce the trivial value.
@@ -174,6 +186,7 @@ impl WriteEnvelope {
             provenance,
             approval,
             session_tag: None,
+            machine_signature: None,
             lineage: SourceLineage::of(source),
         }
     }
@@ -198,6 +211,7 @@ impl WriteEnvelope {
             provenance,
             approval,
             session_tag: None,
+            machine_signature: None,
             lineage,
         }
     }
@@ -230,6 +244,19 @@ impl WriteEnvelope {
         Ok(Self::new(actor, source, provenance, approval))
     }
 
+    /// Carries a machine's signature; the shared write door verifies it against
+    /// the exact stored body, claim id and the vault's folded authority roster.
+    #[must_use]
+    pub fn with_machine_signature(mut self, proof: MachineWriteSignature) -> Self {
+        self.machine_signature = Some(proof);
+        self
+    }
+
+    /// Host-only access to the machine's proof for staging immutable birth.
+    pub(crate) const fn machine_signature(&self) -> Option<MachineWriteSignature> {
+        self.machine_signature
+    }
+
     /// Actor stamped into candidate writes.
     #[must_use]
     pub const fn actor(&self) -> WriteActor {
@@ -252,6 +279,13 @@ impl WriteEnvelope {
     #[must_use]
     pub const fn approval(&self) -> ClaimApprovalStatus {
         self.approval
+    }
+
+    /// Narrow the approval requested by a typed writer while preserving lineage.
+    #[must_use]
+    pub(crate) fn with_approval(mut self, approval: ClaimApprovalStatus) -> Self {
+        self.approval = approval;
+        self
     }
 
     /// The source classes this write's history actually drew on.
@@ -301,6 +335,8 @@ pub struct ClaimCandidate {
     world: Option<EntityId>,
     relationship: Option<EntityId>,
     scope: Option<Value>,
+    facet_stamp: Option<EntityId>,
+    project_stamp: Option<EntityId>,
     stale: bool,
 }
 
@@ -326,6 +362,8 @@ impl ClaimCandidate {
             world: None,
             relationship: None,
             scope: None,
+            facet_stamp: None,
+            project_stamp: None,
             stale: false,
         }
     }
@@ -342,6 +380,12 @@ impl ClaimCandidate {
     pub fn with_evidence(mut self, evidence: Value) -> Self {
         self.evidence = Some(evidence);
         self
+    }
+
+    /// Candidate-local evidence data, before the promotion writer replaces it
+    /// with the sealed evidence envelope.
+    pub(crate) fn evidence(&self) -> Option<&Value> {
+        self.evidence.as_ref()
     }
 
     /// Adds an optional validity window.
@@ -375,6 +419,14 @@ impl ClaimCandidate {
     #[must_use]
     pub fn with_scope(mut self, scope: Value) -> Self {
         self.scope = Some(scope);
+        self
+    }
+
+    /// Preserve an already-scoped claim's exact facet and audience on a
+    /// session-branch proposal. This internal door does not grant scope.
+    pub(crate) fn with_scope_stamps(mut self, facet: EntityId, project: EntityId) -> Self {
+        self.facet_stamp = Some(facet);
+        self.project_stamp = Some(project);
         self
     }
 
@@ -443,7 +495,7 @@ impl ClaimCandidate {
         self,
         envelope: &WriteEnvelope,
         default_facet: EntityId,
-    ) -> ClaimBody {
+    ) -> crate::Result<ClaimBody> {
         let mut body = ClaimBody::new(
             self.predicate,
             self.subject,
@@ -451,7 +503,7 @@ impl ClaimCandidate {
             self.confidence,
             envelope.approval(),
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.salience = self.salience;
         body.evidence = Some(write_envelope_evidence(envelope, self.evidence));
         body.valid_from = self.valid_from;
@@ -459,7 +511,10 @@ impl ClaimCandidate {
         body.source = Some(envelope.source());
         body.world = self.world;
         body.rel = self.relationship;
-        body.scope_facet = default_facet;
+        body.scope_facet = self.facet_stamp.unwrap_or(default_facet);
+        if let Some(project) = self.project_stamp {
+            body.scope_project = project;
+        }
         if let Some(Value::Map(entries)) = self.scope.as_ref() {
             for (key, value) in entries {
                 let id = match value {
@@ -475,7 +530,7 @@ impl ClaimCandidate {
                 if let Some(id) = id {
                     match key.as_str() {
                         Some("facet" | "facet_ref" | "facetRef") => body.scope_facet = id,
-                        Some("scopeProjectId" | "corpus_id") => body.scope_project = id,
+                        Some("scopeProjectId") => body.scope_project = id,
                         _ => {}
                     }
                 }
@@ -484,7 +539,7 @@ impl ClaimCandidate {
         body.scope = self.scope;
         body.session_tag = envelope.session_tag.clone();
         body.stale = self.stale;
-        body
+        Ok(body)
     }
 }
 
@@ -537,6 +592,16 @@ pub(crate) fn write_envelope_evidence(
                     .map(|source| Value::from(source.as_str()))
                     .collect(),
             ),
+        ));
+    }
+
+    if let Some(proof) = envelope.machine_signature {
+        entries.push((
+            Value::from("machine_signature"),
+            Value::Array(vec![
+                Value::Binary(proof.public_key.to_vec()),
+                Value::Binary(proof.signature.to_vec()),
+            ]),
         ));
     }
 

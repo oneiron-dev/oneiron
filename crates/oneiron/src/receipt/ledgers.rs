@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,17 +11,21 @@ use super::kernel::{
     FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, MAX_RECEIPT_QUERY_SCAN,
     ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
 };
+#[cfg(test)]
 use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundIntent;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
 
 /// `vault_meta` keyspace of the attempt PACK RECEIPT ledger. The suffix is the
-/// receipt id itself, so a cited `receipt_ref` point-reads its row.
-const ATTEMPT_PACK_RECEIPT_KEY_PREFIX: &[u8] = b"attempt_receipt:v1:";
+/// receipt id itself, so a cited `receipt_ref` point-reads its row. Key: string
+/// (the receipt id).
+const PACK_RECEIPT: SideTable<String, ReceiptRecord, Named> =
+    SideTable::new(&side_table::ATTEMPT_PACK_RECEIPT);
 /// `receipt_id` namespace of the same ledger.
 const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
 
@@ -48,6 +53,7 @@ pub(super) struct DurableSendReceipt {
 pub(crate) enum SendReceiptOutcome {
     Delivered,
     Failed,
+    Ambiguous,
 }
 
 /// The stable `receipt_id` of one attempt's terminal PACK RECEIPT.
@@ -62,41 +68,30 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
     )
 }
 
-fn attempt_pack_receipt_key(receipt_id: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(ATTEMPT_PACK_RECEIPT_KEY_PREFIX.len() + receipt_id.len());
-    key.extend_from_slice(ATTEMPT_PACK_RECEIPT_KEY_PREFIX);
-    key.extend_from_slice(receipt_id.as_bytes());
-    key
-}
-
-/// Stamps the terminal pack receipt for an attempt that ran underneath a
-/// skill pack, inside the terminal transition's OWN write transaction.
+/// Stamps the terminal pack or resident receipt in the transition's OWN
+/// write transaction. Complete, fail, retry-source finalization, queued/paused
+/// cancel, landing cancellation, force-cancel and abandon all call this seam.
+/// An attempt with neither a manifest nor an actor binding mints no row.
 ///
-/// This is the production call path for [`append_pack_manifest_fields`]:
-/// [`AttemptQueue::complete`] and [`AttemptQueue::fail`] are the two doors
-/// every execute leaves through, so stamping there cannot be forgotten by a
-/// caller and cannot drift per lane. An attempt whose pack loaded nothing
-/// mints no row — the manifest IS the reason this receipt exists.
-///
-/// Atomic with the state seal: a terminal attempt with a manifest and no
-/// receipt (or the reverse) is not a reachable state. The row is written
-/// once, at the transition, and never rewritten — which is what makes
-/// "a closed attempt's manifest is the evidence its receipt already
-/// projected" true rather than aspirational.
-///
-/// [`AttemptQueue::complete`]: crate::attempt_queue::AttemptQueue::complete
-/// [`AttemptQueue::fail`]: crate::attempt_queue::AttemptQueue::fail
+/// Atomic with the state seal: a terminal attempt with a manifest or actor
+/// binding and no receipt (or the reverse) is not a reachable state. The row
+/// is written once at the transition and never rewritten.
 pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
     actor: &str,
 ) -> Result<()> {
-    if record.manifest().is_empty() {
+    let receipt_id = attempt_pack_receipt_id(&record.id);
+    // A resident's terminal attempt has an attributable outcome even when it
+    // loaded no skill. Unbound legacy attempts keep their manifest-only rule.
+    if record.manifest().is_empty()
+        && crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_none()
+    {
         return Ok(());
     }
     let mut receipt = ReceiptRecord {
-        receipt_id: attempt_pack_receipt_id(&record.id),
+        receipt_id,
         receipt_kind: ReceiptKind::Outbound,
         occurred_at: record.updated_at,
         actor: Some(actor.to_owned()),
@@ -107,14 +102,21 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         policy_trace: Vec::new(),
         fields: BTreeMap::new(),
     };
+    if record
+        .manifest()
+        .iter()
+        .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
+        && record.executor_model.is_none()
+    {
+        return Err(Error::InvalidClaimBody(
+            "skill-bearing attempt requires executor model",
+        ));
+    }
     append_pack_manifest_fields(&mut receipt, record.manifest())?;
-    let encoded = rmp_serde::to_vec_named(&receipt)
-        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
-    store.vault_meta.put(
-        wtxn,
-        &attempt_pack_receipt_key(&receipt.receipt_id),
-        &encoded,
-    )?;
+    if let Some(model) = &record.executor_model {
+        receipt.fields.insert("model".to_owned(), model.clone());
+    }
+    PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }
 
@@ -128,14 +130,7 @@ pub fn attempt_pack_receipt(vault: &Vault, receipt_id: &str) -> Result<Option<Re
         return Ok(None);
     }
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &attempt_pack_receipt_key(receipt_id))?
-    else {
-        return Ok(None);
-    };
-    decode_attempt_pack_receipt(&raw).map(Some)
+    PACK_RECEIPT.get(&vault.store, &rtxn, &receipt_id.to_owned())
 }
 
 /// Overwrites one row of the pack receipt ledger.
@@ -160,27 +155,8 @@ pub(crate) fn put_attempt_pack_receipt_for_test(
     wtxn: &mut heed::RwTxn<'_>,
     receipt: &ReceiptRecord,
 ) -> Result<()> {
-    let encoded = rmp_serde::to_vec_named(receipt)
-        .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
-    store.vault_meta.put(
-        wtxn,
-        &attempt_pack_receipt_key(&receipt.receipt_id),
-        &encoded,
-    )?;
+    PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, receipt)?;
     Ok(())
-}
-
-/// Names the first key past the attempt pack receipt family.
-///
-/// The reverse walk needs an explicit half-open range because `OverlayDb`
-/// exposes no reverse prefix iterator. The prefix is an ASCII literal, so its
-/// final byte is nowhere near `0xFF` and bumping it is the exclusive bound.
-fn attempt_pack_receipt_key_range_end() -> Vec<u8> {
-    let mut end = ATTEMPT_PACK_RECEIPT_KEY_PREFIX.to_vec();
-    if let Some(last) = end.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    end
 }
 
 /// Collects the attempt pack receipt ledger under the family DoS guard.
@@ -200,32 +176,25 @@ pub(super) fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>>
 }
 
 /// Scans the same bounded prefix and reports a source continuation in production.
-/// The overflow probe is not decoded and does not increase the projection cap.
+/// The overflow probe is never projected and does not increase the projection cap.
 pub(super) fn scan_attempt_pack_receipts(vault: &Vault) -> Result<ReceiptScan> {
     let rtxn = vault.store.env.read_txn()?;
-    let end = attempt_pack_receipt_key_range_end();
-    let bounds = (
-        std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
-        std::ops::Bound::Excluded(&end[..]),
-    );
     let mut scan = ReceiptScan::from_complete_records(Vec::new());
     let mut before = None;
-    // One row PAST the cap is read and never decoded: it is what separates a
+    // One row PAST the cap is read and never projected: it is what separates a
     // ledger holding exactly the cap from one the cap truncated.
-    for row in vault
-        .store
-        .vault_meta
-        .rev_range(&rtxn, &bounds)?
+    for row in PACK_RECEIPT
+        .iter_rev_from(&vault.store, &rtxn, &[])?
         .take(MAX_RECEIPT_QUERY_SCAN + 1)
     {
-        let (key, raw) = row?;
+        let (key, record) = row?;
         if scan.records.len() == MAX_RECEIPT_QUERY_SCAN {
             scan.mark_incomplete().attempt_pack_before = before;
             note_attempt_pack_scan_capped();
             break;
         }
-        scan.records.push(decode_attempt_pack_receipt(&raw)?);
-        before = Some(key.to_vec());
+        scan.records.push(record);
+        before = Some(PACK_RECEIPT.key_bytes(&key));
     }
     Ok(scan)
 }
@@ -245,23 +214,23 @@ pub(crate) fn attempt_pack_receipt_page(
     if after.is_some_and(|id| !id.starts_with(ATTEMPT_PACK_RECEIPT_ID_PREFIX)) {
         return Err(Error::CorruptedIndex("receipt sweep cursor"));
     }
-    let start = after.map(attempt_pack_receipt_key);
-    let end = attempt_pack_receipt_key_range_end();
-    let bounds = (
-        start.as_deref().map_or(
-            std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
-            std::ops::Bound::Excluded,
-        ),
-        std::ops::Bound::Excluded(end.as_slice()),
-    );
+    let start = after.map(str::to_owned);
     let txn = vault.store.env.read_txn()?;
     let mut records = Vec::new();
-    for row in vault.store.vault_meta.range(&txn, &bounds)?.take(limit + 1) {
-        let (_, raw) = row?;
+    for row in PACK_RECEIPT
+        .iter_range(
+            &vault.store,
+            &txn,
+            start.as_ref().map_or(Bound::Unbounded, Bound::Excluded),
+            Bound::Unbounded,
+        )?
+        .take(limit + 1)
+    {
+        let (_, record) = row?;
         if records.len() == limit {
             return Ok((records, false));
         }
-        records.push(decode_attempt_pack_receipt(&raw)?);
+        records.push(record);
     }
     Ok((records, true))
 }
@@ -280,14 +249,8 @@ fn note_attempt_pack_scan_capped() {
     ATTEMPT_PACK_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
 }
 
-fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
-}
-
-/// Appends one outbound attempt's audit receipt and updates its TASK summary.
-/// Delivered summaries are sticky and atomically install the actor-scoped client
-/// idempotency index. Failed receipts never authorize idempotency and remain in
-/// the history after a later attempt updates the summary.
+/// Test fixture for delivered/failed send receipt summary and idempotency.
+#[cfg(test)]
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
     task_ref: EntityId,
@@ -331,6 +294,7 @@ pub(super) fn decode_durable_send_receipt(
     let expected_receipt_outcome = match durable.outcome {
         SendReceiptOutcome::Delivered => "delivered_to_channel",
         SendReceiptOutcome::Failed => "failed",
+        SendReceiptOutcome::Ambiguous => "ambiguous",
     };
     if durable.version != SEND_RECEIPT_RECORD_VERSION
         || durable.task_ref != crate::entity_id::bytes_to_hex_lower(task_id)
@@ -441,15 +405,32 @@ pub(crate) fn attempt_pack_receipt_in_txn(
     if id.to_hex() != suffix {
         return Ok(None);
     }
-    let Some(raw) = store
-        .vault_meta
-        .get(txn, &attempt_pack_receipt_key(receipt_id))?
-    else {
+    let Some(receipt) = PACK_RECEIPT.get(store, txn, &receipt_id.to_owned())? else {
         return Ok(None);
     };
-    let receipt = decode_attempt_pack_receipt(&raw)?;
     if receipt.receipt_id != receipt_id {
         return Err(Error::CorruptedIndex("attempt receipt key/body identity"));
     }
     Ok(Some(receipt))
+}
+
+/// Test fixture only: emulate a pack receipt imported from the pre-model wire.
+/// Production never removes the immutable executor stamp.
+#[cfg(test)]
+pub(crate) fn make_attempt_receipt_legacy_for_tests(vault: &Vault, receipt_id: &str) -> Result<()> {
+    let key = receipt_id.to_owned();
+    vault.with_write_txn(|txn| {
+        let mut receipt =
+            PACK_RECEIPT
+                .get(&vault.store, txn, &key)?
+                .ok_or(Error::InvalidClaimBody(
+                    "legacy fixture needs an attempt receipt",
+                ))?;
+        if receipt.fields.remove("model").is_none() {
+            return Err(Error::InvalidClaimBody(
+                "legacy fixture needs a stamped model",
+            ));
+        }
+        PACK_RECEIPT.put(&vault.store, txn, &key, &receipt)
+    })
 }

@@ -10,8 +10,10 @@ use super::mail_placement::PlacementPolicy;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, HexId, LegacyJson, SideTable};
 
-const MAILBOX_CURSOR_PREFIX: &[u8] = b"gmail:mailbox_cursor:v1:";
+const MAILBOX_CURSORS: SideTable<HexId, MailboxCursor, LegacyJson> =
+    SideTable::new(&side_table::GMAIL_MAILBOX_CURSOR);
 const MAX_CURSOR_BYTES: usize = 256;
 
 /// Provider-opaque, bounded page token. Never a credential.
@@ -93,12 +95,6 @@ pub(super) fn validate_mailbox_cursor(cursor: &str) -> Result<()> {
     Ok(())
 }
 
-fn cursor_key(identity_id: EntityId) -> Vec<u8> {
-    let mut key = MAILBOX_CURSOR_PREFIX.to_vec();
-    key.extend_from_slice(identity_id.to_hex().as_bytes());
-    key
-}
-
 /// Host-visible progress snapshot. The absence of a row means no page has
 /// been admitted for this delegated identity yet.
 ///
@@ -110,20 +106,21 @@ pub fn mailbox_cursor_snapshot(
     identity_id: EntityId,
 ) -> Result<Option<MailboxCursor>> {
     let txn = vault.store.env.read_txn()?;
-    decode_cursor(vault.store.vault_meta.get(&txn, &cursor_key(identity_id))?)
+    decode_cursor(MAILBOX_CURSORS.get(&vault.store, &txn, &HexId(identity_id)))
 }
 
-fn decode_cursor(raw: Option<std::borrow::Cow<'_, [u8]>>) -> Result<Option<MailboxCursor>> {
-    raw.map(|bytes| {
-        let row: MailboxCursor = serde_json::from_slice(bytes.as_ref()).map_err(|_| {
+fn decode_cursor(row: Result<Option<MailboxCursor>>) -> Result<Option<MailboxCursor>> {
+    let row = row.map_err(|error| {
+        if error.kind() == crate::ErrorKind::SideTableRow {
             Error::InvalidConfig("gmail mailbox cursor row did not decode".to_owned())
-        })?;
-        if let Some(cursor) = &row.next_cursor {
-            validate_mailbox_cursor(cursor.as_str())?;
+        } else {
+            error
         }
-        Ok(row)
-    })
-    .transpose()
+    })?;
+    if let Some(cursor) = row.as_ref().and_then(|row| row.next_cursor.as_ref()) {
+        validate_mailbox_cursor(cursor.as_str())?;
+    }
+    Ok(row)
 }
 
 /// Advance only if storage still matches the state read before the fetch.
@@ -142,17 +139,15 @@ pub(super) fn advance_mailbox_cursor(
     if let Some(cursor) = &next.next_cursor {
         validate_mailbox_cursor(cursor.as_str())?;
     }
-    let key = cursor_key(identity_id);
-    let encoded = serde_json::to_vec(next)
-        .map_err(|_| Error::InvalidConfig("gmail mailbox cursor did not encode".to_owned()))?;
+    let key = HexId(identity_id);
     vault.try_with_write_txn(|txn| {
-        let current = decode_cursor(vault.store.vault_meta.get(txn, &key)?)?;
+        let current = decode_cursor(MAILBOX_CURSORS.get(&vault.store, txn, &key))?;
         if current.as_ref() != previous {
             return Err(Error::InvalidConfig(
                 "gmail mailbox cursor changed during page read".to_owned(),
             ));
         }
-        vault.store.vault_meta.put(txn, &key, &encoded)?;
+        MAILBOX_CURSORS.put(&vault.store, txn, &key, next)?;
         Ok(())
     })
 }

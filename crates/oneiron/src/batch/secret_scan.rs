@@ -43,8 +43,8 @@ pub(super) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
                 // A facet id is no secret material; any stamp scans alike.
                 let body = (**candidate).clone().into_claim_body(
                     envelope,
-                    crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
-                );
+                    crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+                )?;
                 let data = crate::claim::encode_claim_body(&body)?;
                 let _secrets_nulled = scan_payload(&data)?;
             }
@@ -72,6 +72,13 @@ pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static st
 
 pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
     let _secrets_nulled = scan_payload(value.as_bytes())?;
+    Ok(())
+}
+
+/// Apply the same raw/structured scan as ordinary non-custody batch puts to
+/// source bytes staged outside the entity tables, before their first write.
+pub(crate) fn scan_staged_payload(data: &[u8]) -> Result<()> {
+    let _secrets_nulled = scan_payload(data)?;
     Ok(())
 }
 

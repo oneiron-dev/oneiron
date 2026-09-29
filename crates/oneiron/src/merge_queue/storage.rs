@@ -5,8 +5,17 @@ use crate::{
     contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
     error::{Error, Result},
     git_wire::lock_repository,
+    side_table::{self, Named, SideTable},
 };
-use serde::{Serialize, de::DeserializeOwned};
+
+/// One repo's queue state: a singleton row per repo, keyed by the repo's hex identity.
+const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
+    SideTable::new(&side_table::MERGE_QUEUE_STATE);
+
+/// One merge batch, keyed by `{repo_hex}:{batch_id}` exactly as `batch_key` spelled it —
+/// a plain `String` key rather than a split key type, since nothing ever scans this table.
+const BATCHES: SideTable<String, MergeBatch, Named> =
+    SideTable::new(&side_table::MERGE_QUEUE_BATCH);
 
 impl MergeQueue<'_> {
     pub fn initialize(
@@ -49,8 +58,8 @@ impl MergeQueue<'_> {
 
     pub fn batch(&self, id: &str) -> Result<MergeBatch> {
         validate_id(id)?;
-        let batch: MergeBatch = self
-            .read(&self.batch_key(id))?
+        let batch = self
+            .read(BATCHES, self.batch_key(id))?
             .ok_or_else(|| invalid("merge batch not found"))?;
         if batch.schema_version != 1
             || batch.id != id
@@ -89,7 +98,7 @@ impl MergeQueue<'_> {
             .ok_or_else(|| invalid("merge queue is not initialized"))
     }
     fn read_queue(&self) -> Result<Option<QueueRecord>> {
-        let record: Option<QueueRecord> = self.read(&self.queue_key())?;
+        let record = self.read(QUEUE_STATE, self.queue_key())?;
         if let Some(record) = &record
             && (record.schema_version != 1 || record.sequence > 100_000)
         {
@@ -98,50 +107,40 @@ impl MergeQueue<'_> {
         Ok(record)
     }
     pub(super) fn save(&self, state: &QueueRecord, batches: &[&MergeBatch]) -> Result<()> {
+        check_row_size(&QUEUE_STATE.encode_value(state)?)?;
         let mut txn = self.vault.store.env.write_txn()?;
-        self.vault
-            .store
-            .vault_meta
-            .put(&mut txn, &self.queue_key(), &encode(state)?)?;
+        QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
         for batch in batches {
-            self.vault.store.vault_meta.put(
+            check_row_size(&BATCHES.encode_value(batch)?)?;
+            BATCHES.put(
+                &self.vault.store,
                 &mut txn,
                 &self.batch_key(&batch.id),
-                &encode(batch)?,
+                batch,
             )?;
         }
         txn.commit()?;
         Ok(())
     }
-    fn read<T: DeserializeOwned>(&self, key: &[u8]) -> Result<Option<T>> {
+    fn read<T>(&self, table: SideTable<String, T, Named>, key: String) -> Result<Option<T>>
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
         let txn = self.vault.store.env.read_txn()?;
-        self.vault
-            .store
-            .vault_meta
-            .get(&txn, key)?
-            .map(|raw| {
-                rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("merge queue row"))
-            })
-            .transpose()
+        table.get(&self.vault.store, &txn, &key)
     }
-    fn queue_key(&self) -> Vec<u8> {
-        format!("merge_queue:state:v1:{}", self.repo.identity().as_hex()).into_bytes()
+    fn queue_key(&self) -> String {
+        self.repo.identity().as_hex()
     }
-    fn batch_key(&self, id: &str) -> Vec<u8> {
-        format!(
-            "merge_queue:batch:v1:{}:{id}",
-            self.repo.identity().as_hex()
-        )
-        .into_bytes()
+    fn batch_key(&self, id: &str) -> String {
+        format!("{}:{id}", self.repo.identity().as_hex())
     }
 }
-fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
-    let bytes =
-        rmp_serde::to_vec_named(value).map_err(|_| invalid("merge queue encoding failed"))?;
+fn check_row_size(bytes: &[u8]) -> Result<()> {
     if bytes.len() > 128 * 1024 * 1024 {
         return Err(invalid("merge queue row exceeds limit"));
     }
-    Ok(bytes)
+    Ok(())
 }
 fn validate_id(id: &str) -> Result<()> {
     if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {

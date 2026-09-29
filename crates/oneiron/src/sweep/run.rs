@@ -11,6 +11,16 @@ use crate::deletion::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, HexId, Raw, SideTable};
+
+/// The local hard-delete marker this run scans for the erased-id authority.
+/// `deletion::tombstone` owns the row family (see its `HARD_DELETE_MARKER`
+/// doc comment: other modules keep using `local_hard_delete_key` plus their
+/// own raw access) and is not reachable from here, so this binds the SAME
+/// declaration independently (two typed tables, one declaration). Key:
+/// hex32.
+const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 /// Retry backoff cap: a failed job is retried no later than 24 h out, so
 /// the ≤30 d `deadline_at` SLA cannot be silently outwaited by backoff.
@@ -189,17 +199,11 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
     let mut erased: BTreeSet<EntityId> = BTreeSet::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for row in vault
-            .store
-            .sync_state
-            .prefix_iter(&rtxn, crate::deletion::LOCAL_HARD_DELETE_PREFIX)?
+        for (HexId(id), _) in HARD_DELETE_MARKER
+            .iter_from(&vault.store, &rtxn, &[])?
+            .flatten()
         {
-            let (key, _) = row?;
-            if let Some(hex) = key.strip_prefix(crate::deletion::LOCAL_HARD_DELETE_PREFIX)
-                && let Ok(id) = EntityId::from_hex(hex)
-            {
-                erased.insert(id);
-            }
+            erased.insert(id);
         }
     }
     for (_, job) in &due {

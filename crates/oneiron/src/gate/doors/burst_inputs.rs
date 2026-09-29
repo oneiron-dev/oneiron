@@ -18,6 +18,7 @@ pub(super) fn claim_burst_inputs(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: &EntityId,
+    actor_class: &str,
     now: u64,
 ) -> Result<NormalizedBurstInputs> {
     let actor_ref = actor.to_hex();
@@ -33,7 +34,7 @@ pub(super) fn claim_burst_inputs(
         GateReasonCode::DenyPersonaSingleCycle.as_str(),
     ];
     store.for_each_gate_decision_in_txn(txn, |record| {
-        if record.actor_class != "agent"
+        if record.actor_class != actor_class
             || record.actor_ref.as_deref() != Some(actor_ref.as_str())
             || record.content_kind != "claim"
             || record.claim_id.is_none()
@@ -68,7 +69,7 @@ pub(super) fn claim_burst_inputs(
         recent,
         window,
         baseline,
-        store.entities.len(txn)?,
+        crate::ports::EntityStoreRead::port_entity_count(store, txn)?,
         streak,
     ))
 }

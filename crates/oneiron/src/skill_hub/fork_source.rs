@@ -76,3 +76,67 @@ impl Vault {
         Ok(Some(package))
     }
 }
+
+impl Vault {
+    /// Carry the exact skill tree into an improver revision. The edit changes
+    /// only the descriptive recipe text; companion scripts/capabilities stay
+    /// byte-exact, so a callable never silently loses its executable file.
+    pub(crate) fn optimized_skill_package_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent_id: &EntityId,
+        parent: &SkillRecord,
+        proposed: &mut SkillRecord,
+    ) -> Result<Option<HubPackage>> {
+        let Some(mut package) = self.fork_skill_package_in_txn(txn, parent_id, parent, proposed)?
+        else {
+            if parent.content_hash.is_some() {
+                return Err(invalid(
+                    "source-backed optimized skill has no recoverable source",
+                ));
+            }
+            return Ok(None);
+        };
+        let text = folder::instruction_text(&package.files)?;
+        let front = folder::source_frontmatter(text)?;
+        let description = serde_json::to_string(&proposed.desc)
+            .map_err(|_| invalid("optimized description cannot be encoded"))?;
+        let changed = if let Some(front) = front {
+            let mut changed = String::from("---\n");
+            for line in front.lines() {
+                if !line.starts_with("description:") {
+                    changed.push_str(line);
+                    changed.push('\n');
+                }
+            }
+            changed.push_str(&format!("description: {description}\n---\n"));
+            // Workflow recipes are their own load-order/effort instructions:
+            // the improver's replacement text must become what the next pack
+            // loads, not merely a metadata edit to an unchanged old body.
+            if proposed.role == crate::skill::SkillRole::Workflow {
+                changed.push_str(&proposed.desc);
+                changed.push('\n');
+            } else {
+                changed.push_str(&text[4 + front.len() + 5..]);
+            }
+            changed
+        } else {
+            // Native source without frontmatter: the record carries metadata.
+            // Preserve scripts and rewrite only the workflow instruction body.
+            if proposed.role == crate::skill::SkillRole::Workflow {
+                format!("{}\n", proposed.desc)
+            } else {
+                text.to_owned()
+            }
+        };
+        package
+            .files
+            .iter_mut()
+            .find(|file| file.path == "SKILL.md")
+            .ok_or_else(|| invalid("optimized source has no SKILL.md"))?
+            .content = changed.into_bytes();
+        proposed.content_hash = Some(package.content_hash()?);
+        package.record = proposed.clone();
+        folder::package_from_source(proposed, package.files, SkillPackageFormat::Native).map(Some)
+    }
+}

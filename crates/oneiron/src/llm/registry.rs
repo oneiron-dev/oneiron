@@ -1,13 +1,29 @@
 //! Vault-persisted, priced model catalogs. Scores are evidence, never routing authority.
+mod description;
+mod installed_pack;
+pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
+
 use super::{LlmCatalogEntry, ModelId};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     error::{Error, Result},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-const ROW_PREFIX: &[u8] = b"llm:registry:v1:";
-const DIFF_PREFIX: &[u8] = b"llm:scores:v1:";
+
+/// One priced model registry row. Key: string (model id).
+const REGISTRY_ROW: SideTable<String, ModelRegistryRow, LegacyJson> =
+    SideTable::new(&side_table::LLM_REGISTRY_ROW);
+/// Bounded recent benchmark-score change history for one model. Key: string (model id) + NUL.
+const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =
+    SideTable::new(&side_table::LLM_SCORE_DIFFS);
+
+/// The `SCORE_DIFFS` key for `model`: its id, NUL-terminated, exactly as the pre-migration byte
+/// key spelled it.
+fn score_diffs_key(model: &ModelId) -> String {
+    format!("{}\0", model.as_str())
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelWireFormat {
@@ -58,17 +74,8 @@ pub struct ScoreSnapshot {
 pub(super) fn invalid(message: impl Into<String>) -> Error {
     Error::InvalidConfig(message.into())
 }
-fn row_key(model: &ModelId) -> Vec<u8> {
-    [ROW_PREFIX, model.as_str().as_bytes()].concat()
-}
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|e| invalid(e.to_string()))
-}
-fn decode(bytes: &[u8]) -> Result<ModelRegistryRow> {
-    let row: ModelRegistryRow =
-        serde_json::from_slice(bytes).map_err(|e| invalid(e.to_string()))?;
-    row.validate()?;
-    Ok(row)
 }
 fn price(value: &str) -> bool {
     !value.is_empty()
@@ -78,7 +85,15 @@ fn price(value: &str) -> bool {
         && value.bytes().any(|c| c.is_ascii_digit())
 }
 impl ModelRegistryRow {
+    /// Descriptions stay alongside the model entry; older host-created rows have no evidence.
+    pub fn description(&self) -> Result<ModelDescription> {
+        self.catalog.metadata.get("description").map_or_else(
+            || Ok(ModelDescription::default()),
+            |value| serde_json::from_value(value.clone()).map_err(|e| invalid(e.to_string())),
+        )
+    }
     pub fn validate(&self) -> Result<()> {
+        self.description()?.validate()?;
         let entry = &self.catalog;
         if self.version != 1
             || entry.display_name.trim().is_empty()
@@ -124,63 +139,105 @@ impl CatalogSeed {
         let mut ids = std::collections::BTreeSet::new();
         for row in &seed.rows {
             row.validate()?;
-            if !ids.insert(&row.catalog.model)
+            if !row.catalog.metadata.contains_key("description")
+                || row.catalog.capabilities.is_empty()
+                || row
+                    .catalog
+                    .capabilities
+                    .iter()
+                    .enumerate()
+                    .any(|(index, flag)| row.catalog.capabilities[..index].contains(flag))
+                || !ids.insert(&row.catalog.model)
                 || !row.scores.is_empty()
                 || !row.fetched_at.is_empty()
             {
-                return Err(invalid("duplicate seed model or seeded benchmark metadata"));
+                return Err(invalid("invalid seed fields or seeded benchmark metadata"));
             }
         }
         Ok(seed)
     }
-    pub fn bundled() -> Result<Self> {
-        Self::from_json(include_bytes!("catalog-seed.json"))
-    }
+}
+/// Read the registry in the caller's snapshot. Binding may already hold a
+/// read transaction; opening another LMDB reader on the same thread fails.
+pub(super) fn read_model_registry_row(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    model: &ModelId,
+) -> Result<Option<ModelRegistryRow>> {
+    let Some(row) = REGISTRY_ROW.get(store, txn, &model.as_str().to_owned())? else {
+        return Ok(None);
+    };
+    row.validate()?;
+    Ok(Some(row))
 }
 impl Vault {
     pub fn put_model_registry_row(&self, row: &ModelRegistryRow) -> Result<()> {
         row.validate()?;
-        let key = row_key(&row.catalog.model);
+        let key = row.catalog.model.as_str().to_owned();
         let mut txn = self.store.env.write_txn()?;
-        let previous = self
-            .store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|bytes| decode(&bytes))
-            .transpose()?;
+        let previous = REGISTRY_ROW.get(&self.store, &txn, &key)?;
+        if let Some(old) = &previous {
+            old.validate()?;
+        }
         if previous.as_ref().map_or(
             !row.scores.is_empty() || !row.fetched_at.is_empty(),
             |old| old.scores != row.scores || old.fetched_at != row.fetched_at,
         ) {
             return Err(invalid("scores must change through snapshot diff"));
         }
-        self.store.vault_meta.put(&mut txn, &key, &encode(row)?)?;
+        REGISTRY_ROW.put(&self.store, &mut txn, &key, row)?;
         txn.commit()?;
         Ok(())
     }
     pub fn model_registry_row(&self, model: &ModelId) -> Result<Option<ModelRegistryRow>> {
-        let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &row_key(model))?
-            .map(|bytes| decode(&bytes))
-            .transpose()
+        let stored = {
+            let txn = self.store.env.read_txn()?;
+            read_model_registry_row(&self.store, &txn, model)?
+        };
+        if stored.is_some() {
+            return Ok(stored);
+        }
+        if self
+            .installed_pack(crate::skill_hub::MODEL_PACK_NAME)?
+            .is_some()
+        {
+            return Ok(CatalogSeed::from_installed_pack(self)?
+                .rows
+                .into_iter()
+                .find(|row| &row.catalog.model == model));
+        }
+        Ok(None)
     }
     pub fn model_registry_rows(&self) -> Result<Vec<ModelRegistryRow>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for item in self.store.vault_meta.prefix_iter(&txn, ROW_PREFIX)? {
-            let (_, bytes) = item?;
-            rows.push(decode(&bytes)?);
+        for (_, row) in REGISTRY_ROW.scan(&self.store, &txn)? {
+            row.validate()?;
+            rows.push(row);
         }
         Ok(rows)
     }
     pub fn model_catalog_entries(&self, wire: ModelWireFormat) -> Result<Vec<LlmCatalogEntry>> {
-        Ok(self
-            .model_registry_rows()?
+        let mut rows = self.model_registry_rows()?;
+        if self
+            .installed_pack(crate::skill_hub::MODEL_PACK_NAME)?
+            .is_some()
+        {
+            // Installed pack data is visible to adapters even before it is copied
+            // into the priced registry. Local overrides and scores keep precedence.
+            let existing: std::collections::BTreeSet<_> =
+                rows.iter().map(|row| row.catalog.model.clone()).collect();
+            let additional = CatalogSeed::from_installed_pack(self)?
+                .rows
+                .into_iter()
+                .filter(|row| !existing.contains(&row.catalog.model))
+                .collect::<Vec<_>>();
+            rows.extend(additional);
+        }
+        Ok(rows
             .into_iter()
-            .filter(|r| r.wire == wire)
-            .map(|r| r.catalog)
+            .filter(|row| row.wire == wire)
+            .map(|row| row.catalog)
             .collect())
     }
     /// Atomic, insert-only seed. Existing host prices and scraped scores survive reseeding.
@@ -188,9 +245,9 @@ impl Vault {
         let checked = CatalogSeed::from_json(&encode(seed)?)?;
         let mut txn = self.store.env.write_txn()?;
         for row in checked.rows {
-            let key = row_key(&row.catalog.model);
-            if self.store.vault_meta.get(&txn, &key)?.is_none() {
-                self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
+            let key = row.catalog.model.as_str().to_owned();
+            if !REGISTRY_ROW.contains(&self.store, &txn, &key)? {
+                REGISTRY_ROW.put(&self.store, &mut txn, &key, &row)?;
             }
         }
         txn.commit()?;
@@ -219,13 +276,11 @@ impl Vault {
                 {
                     return Err(invalid("invalid or duplicate benchmark observation"));
                 }
-                let key = row_key(&observation.model);
-                let bytes = self
-                    .store
-                    .vault_meta
-                    .get(&txn, &key)?
+                let key = observation.model.as_str().to_owned();
+                let mut row = REGISTRY_ROW
+                    .get(&self.store, &txn, &key)?
                     .ok_or_else(|| invalid("score model is not registered"))?;
-                let mut row = decode(&bytes)?;
+                row.validate()?;
                 let prior_watermark = *prior_watermarks
                     .entry(observation.model.clone())
                     .or_insert_with(|| row.fetched_at.get(&snapshot.source).copied());
@@ -245,7 +300,7 @@ impl Vault {
                     // but must not append a spurious change record.
                     row.fetched_at
                         .insert(snapshot.source.clone(), snapshot.fetched_at);
-                    self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
+                    REGISTRY_ROW.put(&self.store, &mut txn, &key, &row)?;
                     continue;
                 }
                 scores.insert(observation.benchmark.clone(), observation.score);
@@ -259,22 +314,16 @@ impl Vault {
                     score: observation.score,
                     fetched_at: snapshot.fetched_at,
                 };
-                let prefix = [DIFF_PREFIX, observation.model.as_str().as_bytes(), b"\0"].concat();
-                let mut prior: Vec<ModelScoreDiff> = self
-                    .store
-                    .vault_meta
-                    .get(&txn, &prefix)?
-                    .map(|b| serde_json::from_slice(&b).map_err(|e| invalid(e.to_string())))
-                    .transpose()?
+                let diffs_key = score_diffs_key(&observation.model);
+                let mut prior = SCORE_DIFFS
+                    .get(&self.store, &txn, &diffs_key)?
                     .unwrap_or_default();
                 prior.push(diff.clone());
                 if prior.len() > 64 {
                     prior.remove(0);
                 }
-                self.store
-                    .vault_meta
-                    .put(&mut txn, &prefix, &encode(&prior)?)?;
-                self.store.vault_meta.put(&mut txn, &key, &encode(&row)?)?;
+                SCORE_DIFFS.put(&self.store, &mut txn, &diffs_key, &prior)?;
+                REGISTRY_ROW.put(&self.store, &mut txn, &key, &row)?;
                 diffs.push(diff);
             }
         }
@@ -283,13 +332,9 @@ impl Vault {
     }
     pub fn model_score_diffs(&self, model: &ModelId) -> Result<Vec<ModelScoreDiff>> {
         let txn = self.store.env.read_txn()?;
-        let key = [DIFF_PREFIX, model.as_str().as_bytes(), b"\0"].concat();
-        self.store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|b| serde_json::from_slice(&b).map_err(|e| invalid(e.to_string())))
-            .transpose()
-            .map(Option::unwrap_or_default)
+        Ok(SCORE_DIFFS
+            .get(&self.store, &txn, &score_diffs_key(model))?
+            .unwrap_or_default())
     }
 }
 

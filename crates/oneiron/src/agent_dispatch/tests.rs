@@ -22,6 +22,14 @@ use crate::temporal::TimeRange;
 use crate::test_util::{entity as test_id, put_policy_manifest_bytes};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
+/// The live root-project depth row a root dispatch is clamped to.
+fn root_project_depth(vault: &Vault) -> Result<u8> {
+    Ok(vault
+        .project(vault.root_project()?)?
+        .ok_or(Error::EntityNotFound)?
+        .depth)
+}
+
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
 }
@@ -517,7 +525,7 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // The system/Dreamer bookkeeping envelope: a MACHINE actor, class System,
     // with the agent attribution carried in the provenance payload (B1 (a)).
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let dreamer_host = seed_dreamer_machine(&vault, dreamer_actor)?;
     // The milestone subject is the attempt id itself (pinned); anchor an entity at
     // those bytes so the claim door's subject-existence check passes.
     // (`EntityId::from_bytes` takes the 16-byte array by value.)
@@ -588,23 +596,15 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // Mid-run checkpoint: an ordinary gated claim under the same envelope.
     let checkpoint_id = EntityId::now();
-    let checkpoint_value =
-        dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 30);
-    vault
-        .batch()
-        .claim_candidate(
-            &checkpoint_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                checkpoint_value,
-                1.0,
-            ),
-            &milestone_envelope,
-            t(30),
-            30,
-        )
-        .commit()?;
+    write_milestone_claim(
+        &vault,
+        &checkpoint_id,
+        subject,
+        attempt_id,
+        DreamerMilestoneKind::CheckpointReached,
+        30,
+        &milestone_envelope,
+    )?;
 
     // The milestone claim landed Approved (not held to proposal) and carries
     // the agent attribution in its stamped envelope provenance.
@@ -632,6 +632,8 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
     // Drop and REOPEN the vault: milestone index and queue row are durable.
     drop(vault);
     let vault = Vault::open(dir.path(), config).expect("reopen vault");
+    // Signers live on the vault handle: the host provisions them again.
+    vault.provision_host_machine_identity(&dreamer_host, dreamer_actor)?;
     let runner = DreamerRunnerStore::new(&vault);
     let milestone = runner
         .latest_durable_milestone(attempt_id)?
@@ -778,7 +780,7 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     };
     let attempt_id = status.attempt.id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(
         &subject,
@@ -866,21 +868,15 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     // Ordinary-claim door: a forged checkpoint commits as a claim but never
     // enters the durable index.
     let forged_checkpoint_id = EntityId::now();
-    vault
-        .batch()
-        .claim_candidate(
-            &forged_checkpoint_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 30),
-                1.0,
-            ),
-            &forged_envelope,
-            t(30),
-            30,
-        )
-        .commit()?;
+    write_milestone_claim(
+        &vault,
+        &forged_checkpoint_id,
+        subject,
+        attempt_id,
+        DreamerMilestoneKind::CheckpointReached,
+        30,
+        &forged_envelope,
+    )?;
     assert_eq!(
         runner
             .latest_durable_milestone(attempt_id)?
@@ -904,21 +900,15 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
         crate::claim::ClaimApprovalStatus::Approved,
     );
     let checkpoint_id = EntityId::now();
-    vault
-        .batch()
-        .claim_candidate(
-            &checkpoint_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                dreamer_milestone_value(attempt_id, DreamerMilestoneKind::CheckpointReached, 40),
-                1.0,
-            ),
-            &bound_envelope,
-            t(40),
-            40,
-        )
-        .commit()?;
+    write_milestone_claim(
+        &vault,
+        &checkpoint_id,
+        subject,
+        attempt_id,
+        DreamerMilestoneKind::CheckpointReached,
+        40,
+        &bound_envelope,
+    )?;
     assert_eq!(
         runner
             .latest_durable_milestone(attempt_id)?
@@ -927,6 +917,19 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
         DreamerMilestoneKind::CheckpointReached
     );
     Ok(())
+}
+
+/// Seeds the Dreamer bookkeeping MACHINE with a host-held key: Dreamer signs
+/// like any other machine (ONE-1634). The returned host issuer re-provisions
+/// the signer after a reopen.
+fn seed_dreamer_machine(
+    vault: &Vault,
+    dreamer_actor: EntityId,
+) -> Result<crate::authority::HostSlipIssuer> {
+    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let issuer = crate::test_util::provision_engine_machines(vault);
+    vault.provision_host_machine_identity(&issuer, dreamer_actor)?;
+    Ok(issuer)
 }
 
 /// A system/Dreamer bookkeeping envelope with the given agent attribution.
@@ -954,20 +957,21 @@ fn write_milestone_claim(
     at: u64,
     envelope: &WriteEnvelope,
 ) -> Result<()> {
+    let candidate = ClaimCandidate::new(
+        DREAMER_MILESTONE_PREDICATE,
+        ClaimSubject::Entity(subject),
+        dreamer_milestone_value(attempt_id, kind, at),
+        1.0,
+    );
+    // The runner signs its own bookkeeping with the host-held key.
+    let mut envelope = envelope.clone();
+    {
+        let txn = vault.store.env.read_txn()?;
+        vault.sign_retained_machine_claim_in_txn(&txn, claim_id, &candidate, &mut envelope)?;
+    }
     vault
         .batch()
-        .claim_candidate(
-            claim_id,
-            ClaimCandidate::new(
-                DREAMER_MILESTONE_PREDICATE,
-                ClaimSubject::Entity(subject),
-                dreamer_milestone_value(attempt_id, kind, at),
-                1.0,
-            ),
-            envelope,
-            t(at),
-            at,
-        )
+        .claim_candidate(claim_id, candidate, &envelope, t(at), at)
         .commit()
 }
 
@@ -1000,7 +1004,7 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
     let decoy_subject = test_id(0x2E);
@@ -1174,7 +1178,7 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
 
@@ -1226,7 +1230,7 @@ fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
         Some(dreamer_actor),
     )?;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     // An attempt id that exists on some other device only.
     let foreign_attempt = crate::attempt_queue::AttemptId::now();
     let subject = EntityId::from_bytes(*foreign_attempt.as_bytes())?;
@@ -1288,7 +1292,7 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    seed_dreamer_machine(&vault, dreamer_actor)?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
 
@@ -1838,7 +1842,7 @@ fn attenuation_reads_live_rows_not_payload_snapshots() -> Result<()> {
     assert_ne!(child.input.target, AgentDispatchTarget::Custom(child_id));
     assert_eq!(
         persisted_depth(&vault, parent.attempt.id),
-        Some(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
+        Some(root_project_depth(&vault)?)
     );
     Ok(())
 }
@@ -2201,10 +2205,9 @@ fn dedupe_existing_row_with_a_different_spawn_context_is_a_typed_error() -> Resu
     Ok(())
 }
 
-/// A root recursion budget above the ancestor-projection cap is clamped at
-/// admission, so no persisted lineage can exceed the projection walk.
+/// A root request above the project's ceiling cannot enlarge the live row.
 #[test]
-fn root_depth_budget_is_clamped_to_the_ancestor_projection_cap() -> Result<()> {
+fn root_depth_budget_is_clamped_to_the_live_project_ceiling() -> Result<()> {
     let (_dir, vault) = open_vault();
     let row = put_row(&vault, 0xE4, "clamp.row", AgentCeiling::Proposed)?;
     let dispatcher = AgentDispatcher::new(&vault);
@@ -2218,14 +2221,8 @@ fn root_depth_budget_is_clamped_to_the_ancestor_projection_cap() -> Result<()> {
         },
         AgentSpawnContext::default().with_depth_remaining(200),
     )?);
-    assert_eq!(
-        root.input.depth_remaining,
-        Some(CONTEXT_PROJECTION_MAX_ANCESTORS as u8)
-    );
-    assert_eq!(
-        dispatcher.child_depth_remaining(root.attempt.id)?,
-        CONTEXT_PROJECTION_MAX_ANCESTORS as u8 - 1
-    );
+    assert_eq!(root.input.depth_remaining, Some(10));
+    assert_eq!(dispatcher.child_depth_remaining(root.attempt.id)?, 9);
     Ok(())
 }
 
@@ -2464,11 +2461,11 @@ fn roots_persist_a_depth_and_legacy_parents_resolve_the_compat_cap() -> Result<(
     })?);
     assert_eq!(
         persisted_depth(&vault, root.attempt.id),
-        Some(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
+        Some(root_project_depth(&vault)?)
     );
     assert_eq!(
         dispatcher.child_depth_remaining(root.attempt.id)?,
-        AGENT_DISPATCH_ROOT_DEPTH_REMAINING - 1
+        root_project_depth(&vault)? - 1
     );
 
     // A parent that is not an agent dispatch at all carries no stored depth.
@@ -2526,6 +2523,8 @@ fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
         context_spec: Some(ContextSpec::excluded()),
         context_from: vec![test_id(0x96), test_id(0x97)],
         depth_remaining: Some(3),
+        project_ref: None,
+        spawn_intent: None,
         scope: None,
     };
     assert_eq!(
@@ -3103,6 +3102,287 @@ fn child_dispatch_inherits_scope_and_refuses_widening_before_enqueue() -> Result
 }
 
 mod widen;
+
+#[test]
+fn spawn_reads_live_project_depth_and_never_widens_a_frozen_parent() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_row(&vault, 0x4D, "project.depth", AgentCeiling::Proposed)?;
+    let root_project = vault.root_project()?;
+    let child_project = EntityId::now();
+    let leader = EntityId::from_hex(&vault.project(root_project)?.unwrap().leader)?;
+    vault.put_project(
+        child_project,
+        &crate::workspace_roster::ProjectRecord::new(
+            child_project,
+            Some(root_project),
+            root_project,
+            leader,
+        )
+        .unwrap(),
+        1,
+    )?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA4)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now: 2,
+    })?);
+    assert_eq!(root.input.depth_remaining, Some(10));
+    assert_eq!(
+        dispatcher
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(agent),
+                    parent_attempt: None,
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 2,
+                },
+                AgentSpawnContext::default().with_project(child_project),
+            )
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput,
+    );
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        child_project,
+        2,
+        &owner,
+        3,
+        0xA4,
+    )?;
+    let spawn = |parent: AttemptId, now: u64, project: Option<EntityId>| {
+        dispatcher.dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: Some(parent),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            },
+            project.map_or_else(AgentSpawnContext::default, |id| {
+                AgentSpawnContext::default().with_project(id)
+            }),
+        )
+    };
+    let child = dispatched(spawn(root.attempt.id, 4, Some(child_project))?);
+    assert_eq!(child.input.project_ref, Some(child_project));
+    assert_eq!(child.input.depth_remaining, Some(2));
+    let descendant = dispatched(spawn(child.attempt.id, 5, None)?);
+    assert_eq!(descendant.input.depth_remaining, Some(1));
+    assert_eq!(
+        spawn(child.attempt.id, 5, Some(root_project))
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput,
+    );
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        child_project,
+        0,
+        &owner,
+        6,
+        0xA4,
+    )?;
+    let before = AttemptQueue::new(&vault).list()?.len();
+    assert_eq!(
+        spawn(descendant.attempt.id, 7, None).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    assert_eq!(
+        dispatcher
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(agent),
+                    parent_attempt: Some(descendant.attempt.id),
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 7,
+                },
+                AgentSpawnContext::default().with_context_spec(ContextSpec {
+                    layers: vec!["identity".into()],
+                    ..ContextSpec::excluded()
+                }),
+            )
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput,
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    crate::workspace_roster::set_project_depth_signed_for_test(
+        &vault,
+        child_project,
+        12,
+        &owner,
+        8,
+        0xA4,
+    )?;
+    let narrow = dispatched(spawn(descendant.attempt.id, 9, None)?);
+    assert_eq!(narrow.input.depth_remaining, Some(0));
+    Ok(())
+}
+
+#[test]
+fn child_project_transition_obeys_live_parent_and_all_ancestor_depth_rows() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_row(&vault, 0x4E, "parent.depth", AgentCeiling::Proposed)?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let child_project = EntityId::now();
+    vault.put_project(
+        child_project,
+        &crate::workspace_roster::ProjectRecord::new(child_project, Some(root), root, leader)
+            .unwrap(),
+        1,
+    )?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA6)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root_attempt = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now: 2,
+    })?);
+    let spawn = |parent: AttemptId, now: u64| {
+        dispatcher.dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: Some(parent),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            },
+            AgentSpawnContext::default().with_project(child_project),
+        )
+    };
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 3, 0xA6)?;
+    let count = AttemptQueue::new(&vault).list()?.len();
+    assert_eq!(
+        spawn(root_attempt.attempt.id, 4).unwrap_err().kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), count);
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 2, &owner, 5, 0xA6)?;
+    let child = dispatched(spawn(root_attempt.attempt.id, 6)?);
+    assert_eq!(child.input.depth_remaining, Some(1));
+    // A root reduction applies through the already-dispatched child project.
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &owner, 7, 0xA6)?;
+    assert_eq!(
+        dispatcher
+            .dispatch(DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: Some(child.attempt.id),
+                dedupe_key: None,
+                run_id: None,
+                now: 8,
+            })
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 1, &owner, 9, 0xA6)?;
+    assert_eq!(
+        dispatched(spawn(root_attempt.attempt.id, 10)?)
+            .input
+            .depth_remaining,
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn depth_edits_do_not_change_identical_dedupe_intent() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_row(&vault, 0x4F, "depth.dedupe", AgentCeiling::Proposed)?;
+    let root = vault.root_project()?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA7)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let request = DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: Some("stable-inbox".into()),
+        run_id: Some("resident".into()),
+        now: 2,
+    };
+    let original = dispatched(dispatcher.dispatch(request.clone())?);
+    assert_eq!(original.input.depth_remaining, Some(10));
+    let task = EntityId::now();
+    let child_request = DispatchAgent {
+        parent_attempt: Some(original.attempt.id),
+        dedupe_key: Some("stable-task-child".into()),
+        ..request.clone()
+    };
+    let child = vault.with_write_txn(|txn| {
+        dispatcher.dispatch_for_task_in_txn(txn, task, child_request.clone())
+    })?;
+    let AgentDispatchOutcome::Dispatched(child) = child else {
+        panic!("child")
+    };
+    assert_eq!(child.input.depth_remaining, Some(9));
+    let count = AttemptQueue::new(&vault).list()?.len();
+    for (depth, at) in [(2, 3), (12, 5), (0, 7)] {
+        crate::workspace_roster::set_project_depth_signed_for_test(
+            &vault, root, depth, &owner, at, 0xA7,
+        )?;
+        let mut retry = request.clone();
+        retry.now = at + 1;
+        let AgentDispatchOutcome::Existing(existing) = dispatcher.dispatch(retry.clone())? else {
+            panic!("same caller intent must reuse original after project edit");
+        };
+        assert_eq!(existing.attempt.id, original.attempt.id);
+        assert_eq!(existing.input.depth_remaining, Some(10));
+        assert_eq!(AttemptQueue::new(&vault).list()?.len(), count);
+        assert_eq!(
+            dispatcher
+                .dispatch_with_context(retry, AgentSpawnContext::default().with_depth_remaining(1),)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidAgentDispatchInput
+        );
+    }
+    let AgentDispatchOutcome::Existing(reused_child) = vault
+        .with_write_txn(|txn| dispatcher.dispatch_for_task_in_txn(txn, task, child_request))?
+    else {
+        panic!("parented task dispatch retry")
+    };
+    assert_eq!(reused_child.attempt.id, child.attempt.id);
+    assert_eq!(reused_child.input.depth_remaining, Some(9));
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), count);
+    Ok(())
+}
 
 #[test]
 fn leased_healer_emits_four_case_bound_review_only_fix_agent_proposals() -> Result<()> {

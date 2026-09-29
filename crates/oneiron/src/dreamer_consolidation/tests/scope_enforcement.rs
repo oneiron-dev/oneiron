@@ -75,6 +75,8 @@ fn branch_resources_enforce_exact_reads_writes_and_revisions() -> Result<()> {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject: conversation,
         evidence_turn_refs: turns.clone(),
+        evidence_refs: Vec::new(),
+        verified_evidence: None,
         first_seen: 0,
         last_seen: 0,
         escalations: 0,
@@ -127,6 +129,139 @@ impl LlmBackend for ScopeBackend {
 }
 
 #[test]
+fn assembly_preserves_stricter_internal_taint_after_parent_reread() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, conversation) =
+        admitted_attempt_fixture(&vault, &store, 0x41, &[("user", "one cited statement")])?;
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let snapshot = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let branch = BranchResources::open_at_pin(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+        Some(&snapshot),
+    )?;
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 1,
+        ..Default::default()
+    })?;
+    let mut output = candidate(conversation, "profile.name", "a value", None);
+    output.evidence_turn_refs = turns;
+    // An already derived restriction (e.g. a prior-head ancestor) must not
+    // be overwritten just because this turn's own source is UserStated.
+    output.evidence_meet = ClaimSource::Imported;
+    derive_id(&mut output, attempt.status.attempt.id)?;
+    let assembled = super::super::assembly::assemble(&vault, &branch, vec![output], 21_000)?;
+    assert_eq!(assembled.candidates.len(), 1);
+    assert_eq!(assembled.candidates[0].evidence_meet, ClaimSource::Imported);
+    assert_eq!(
+        branch
+            .write_fence()
+            .evidence_source(&assembled.candidates[0])?,
+        ClaimSource::Imported
+    );
+    Ok(())
+}
+
+#[test]
+fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<()> {
+    use std::collections::BTreeMap;
+
+    use crate::llm::manifest::{
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
+    };
+    use crate::llm::{ModelId, ModelLocality, ModelTierRef};
+
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, _turns, _conversation) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0x73,
+        &[("user", "a private conversation transcript")],
+    )?;
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    ModelBinding {
+                        model: ModelId::new(format!("test/{role:?}@remote-r1")).unwrap(),
+                        slot: ModelSlot::Llm,
+                        tier: ModelTierRef("configured".into()),
+                        route_models: if role == ModelRole::ExtractionTeacher {
+                            BTreeMap::new()
+                        } else {
+                            BTreeMap::from([(
+                                ModelLocality::OnDevice,
+                                ModelId::new(format!("local/{role:?}@local-r1")).unwrap(),
+                            )])
+                        },
+                    },
+                )
+            })
+            .collect(),
+        routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+            .into_iter()
+            .map(|slot| (slot, ModelLocality::OwnServer))
+            .collect(),
+        verdict: None,
+        seat_policy: None,
+    };
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None)?,
+        1_000_000,
+    )?;
+    vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
+    // Other served roles may narrow, but the teacher has no approved local checkpoint.
+    vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)?;
+
+    let backend = ScriptedBackend::new(Vec::new());
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
+    };
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: ModelId::new("test/model@r1").unwrap(),
+        sink: &mut sink,
+        inference: test_inference_host(),
+        scope: None,
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&attempt, &mut ctx)),
+        Err(Error::InvalidConfig(_))
+    ));
+    drop(executor);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert!(sink.accepted.is_empty());
+    Ok(())
+}
+
+#[test]
 fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
@@ -155,6 +290,8 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let mut executor = ConsolidationExecutor {
         backend: &backend,
@@ -163,6 +300,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     assert!(matches!(
@@ -171,6 +309,10 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
     ));
     // A different revision forces a new extraction, not the prior memoized one.
     executor.model = crate::ModelId::new("test/model@r2").unwrap();
+    executor.inference.binding = crate::llm::HostInferenceBinding::Advertised {
+        model: executor.model.clone(),
+        locality: crate::ModelLocality::OwnServer,
+    };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx)),
         Err(Error::InvalidClaimBody(_))
@@ -207,6 +349,7 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: Some(no_output),
     };
     assert!(matches!(
@@ -240,7 +383,7 @@ fn derive_id(
         facts.facet,
         facts.rel,
         facts.topic.as_deref(),
-    );
+    )?;
     Ok(())
 }
 
@@ -384,6 +527,8 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
     for resolution in ["accumulate", "merge", "missing", "unlisted"] {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        crate::test_util::provision_engine_machines(&vault);
+        authorize_test_inference(&vault)?;
         grant_fixture_reads(&vault)?;
         let store = DreamerRunnerStore::new(&vault);
         let (attempt, turns, _) =
@@ -401,7 +546,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             vault.put_vector(&output.claim_id, &vec![1.0; vault.config.dimensions])?;
             items.push(
                 serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
-            "value": "same text", "evidence_turn_refs": [turns[0].to_hex()]}),
+            "value": "same text", "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]}),
             );
         }
         let judge = text_response(match resolution {
@@ -436,6 +581,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").unwrap(),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -443,6 +589,8 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let result = block_on_ready(executor.execute(&attempt, &mut ctx));
         if resolution == "missing" {
@@ -638,6 +786,13 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         super::super::branch_scope::resolve_scope(&vault, Some(child_id), None, None)?,
         Some(scope.clone())
     );
+    let prepared = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let Some(super::super::AttemptPreparation::Ready(child_plan)) = prepared.preparation(child_id)
+    else {
+        panic!("parent-bound branch must prepare at this revision")
+    };
+    assert_eq!(child_plan.scope(), Some(&scope));
+
     let (decoded_key, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
     assert_eq!(decoded_key, partition);
     let branch = BranchResources::open(
@@ -697,6 +852,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").unwrap(),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -704,6 +860,8 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx))?,
@@ -940,25 +1098,39 @@ fn production_epoch_timestamps_hold_then_release_and_rank_source_diversity() -> 
         epoch * 1_000 + 1_000,
     )?;
     assert_eq!(ranked.candidates[0].claim_id, recent.claim_id);
-    // Extraction timestamps are already milliseconds when no evidence supplies
-    // a stored seconds-scale timestamp (possible when the configured minimum is zero).
+    // A zero-evidence input is an assembler hold, never a verified claim.
+    // The base selector still measures its millisecond first-seen time without
+    // a stored TURN when the policy minimum is zero.
     recent.evidence_turn_refs.clear();
     recent.learned_at = epoch * 1_000;
     diversity.evidence_minimum = 0;
     diversity.soak_ms = 50_000;
-    vault.set_consolidation_selection(&diversity)?;
-    assert!(
-        super::super::assembly::assemble(
-            &vault,
-            &branch,
-            vec![recent.clone()],
-            epoch * 1_000 + 49_999
+    let input = selection::SelectionCandidate {
+        claim_id: recent.claim_id,
+        first_seen_ms: recent.learned_at,
+        evidence_count: 0,
+        fan_in: 0,
+        new_refs: 0,
+        signals: selection::StrengthSignals {
+            type_prior: 0.5,
+            frequency: 0.0,
+            recency: 0.0,
+            diversity: 0.0,
+        },
+    };
+    assert_eq!(
+        selection::select_candidates(
+            std::slice::from_ref(&input),
+            epoch * 1_000 + 49_999,
+            &diversity
         )?
         .held
+        .len(),
+        1,
     );
-    assert!(
-        !super::super::assembly::assemble(&vault, &branch, vec![recent], epoch * 1_000 + 50_000)?
-            .held
+    assert_eq!(
+        selection::select_candidates(&[input], epoch * 1_000 + 50_000, &diversity)?.ready,
+        vec![recent.claim_id],
     );
     Ok(())
 }
@@ -997,7 +1169,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             text_response(
                 serde_json::json!({"candidates":[{
                     "subject":subject.to_hex(),"predicate":"profile.name","value":"supported",
-                    "evidence_turn_refs":ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
+                    "evidence_refs":ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
                 }]})
                 .to_string(),
             )
@@ -1016,6 +1188,8 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let result = {
             let mut executor = ConsolidationExecutor {
@@ -1025,6 +1199,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
                 actor: vault.dreamer_authority()?,
                 model: crate::ModelId::new("test/model@r1").unwrap(),
                 sink: &mut sink,
+                inference: test_inference_host(),
                 scope: caller_scope,
             };
             block_on_ready(executor.execute(&attempt, &mut ctx))?
@@ -1054,6 +1229,8 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             "independent new evidence",
             22,
         );
+        // The next wake freezes the retry-expanded TURN set BEFORE admission.
+        let retry_pin = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
         let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
@@ -1075,6 +1252,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         };
         let backend = ScriptedBackend::new(vec![Ok(response(&[turns[0], next_turn]))]);
         ctx.now_ms = retry_at * 1_000;
+        ctx.prepared_wake = Some(&retry_pin);
         let mut executor = ConsolidationExecutor {
             backend: &backend,
             guard: &guard,
@@ -1082,6 +1260,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").unwrap(),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let outcome = block_on_ready(executor.execute(&next, &mut ctx));
@@ -1106,6 +1285,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
 #[test]
 fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    authorize_test_inference(&vault)?;
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x49, &[("user", "read grant required")])?;
@@ -1134,5 +1314,73 @@ fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> 
         branch.turn(branch.scope(), &turns[0])?.text.as_deref(),
         Some("read grant required")
     );
+    Ok(())
+}
+
+/// Captures the sealed write's folded read receipt.
+#[derive(Default)]
+struct ReceiptSink {
+    receipt: Option<crate::claim::ScopedReadReceipt>,
+}
+
+impl ConsolidationSink for ReceiptSink {
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        self.receipt = Some(write.read_receipt().clone());
+        Ok(())
+    }
+
+    fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0x4D, &[("user", "a receipted source")])?;
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
+    // A private diary about the subject: stored, never the Dreamer's to read.
+    let author = EntityId::now();
+    vault.put_entity(&author, ENTITY_TYPE_PERSON, occurred(1), 1, b"author")?;
+    let diary = EntityId::now();
+    let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
+        kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
+        author_ref: author,
+        markdown: "private graph evidence".to_owned(),
+        source_revision_ref: [1; 16],
+    })?;
+    vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .put_authored_note(&diary, &author, occurred(1), 1, &diary_body)
+            .edge(&diary, EdgeKind::AuthoredBy, &author, 1.0)
+            .edge(&diary, EdgeKind::About, &subject, 1.0)
+            .apply(txn)
+    })?;
+    let branch = BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+    )?;
+    let mut output = candidate(subject, "profile.name", "name", None);
+    output.evidence_turn_refs = turns;
+    derive_id(&mut output, attempt.status.attempt.id)?;
+    // The graph signal reads the subject's sources as the Dreamer: the diary
+    // is withheld, so it does not count toward fan-in. A withheld NOTE stays
+    // opaque in the receipt too (ONE-2110): its existence is not counted.
+    let (fan_in, _, _) = branch.candidate_signals(branch.scope(), &output)?;
+    assert_eq!(fan_in, 0);
+    let mut sink = ReceiptSink::default();
+    branch.accept(branch.scope(), &mut sink, vec![output])?;
+    let receipt = sink.receipt.expect("the sealed write carries its reads");
+    assert_eq!(receipt.suppressed_count, 0);
+    assert!(!receipt.narrowed_axes.contains(&"row_authority".to_owned()));
     Ok(())
 }

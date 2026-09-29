@@ -240,7 +240,8 @@ fn put_repo_provenance_claim_with_value(vault: &Vault, value: Value) -> EntityId
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let data = encode_claim_body(&body).expect("encode repo provenance claim");
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(ENTITY_TYPE_CLAIM);
@@ -889,20 +890,14 @@ fn repo_mutation_legacy_prepared_row_fails_once_without_reverting_repo() {
     let repo_key_hash = repo_mutation_repo_key_hash(&canonical);
     let key = repo_mutation_oplog_key(&repo_key_hash, 1);
     let mut wtxn = vault.store.env.write_txn().expect("legacy rewrite txn");
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)
+    let mut stored = OPLOG
+        .get(&vault.store, &wtxn, &key)
         .expect("read prepared row")
         .expect("prepared row exists");
-    let mut stored = decode_stored_oplog_entry(&raw).expect("decode prepared row");
     stored.expected_post_action_fork_hash = None;
     stored.prepared_conflict_resolution = None;
-    let encoded = encode_oplog_entry(&stored).expect("encode legacy row");
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, &key, &encoded)
+    OPLOG
+        .put(&vault.store, &mut wtxn, &key, &stored)
         .expect("write legacy row");
     wtxn.commit().expect("commit legacy rewrite");
     fs::write(&tracked, "foreign state\n").expect("foreign repo touch");
@@ -1227,6 +1222,80 @@ fn repo_mutation_recovery_rejects_snapshot_from_other_repo() {
     assert_eq!(
         fs::read_to_string(&b_readme).expect("read repo b after"),
         before_b
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn record_conflict_refuses_repository_clean_filter_before_merge_tree() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md filter=late\n",
+    )
+    .expect("tracked attributes");
+    run_git_at_path(
+        repo.path(),
+        &["add".into(), "--".into(), ".gitattributes".into()],
+    )
+    .expect("stage attributes");
+    run_git_at_path(
+        repo.path(),
+        &[
+            "-c".into(),
+            "user.name=Oneiron".into(),
+            "-c".into(),
+            "user.email=oneiron@example.invalid".into(),
+            "commit".into(),
+            "-m".into(),
+            "tracked attributes".into(),
+        ],
+    )
+    .expect("commit attributes");
+    create_conflicting_branches(&repo);
+    let fixture = tempfile::tempdir().expect("filter fixture");
+    let marker = fixture.path().join("clean-ran");
+    let filter = fixture.path().join("late-clean");
+    fs::write(
+        &filter,
+        format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    )
+    .expect("filter program");
+    fs::set_permissions(&filter, fs::Permissions::from_mode(0o755)).expect("executable filter");
+    run_git_at_path(
+        repo.path(),
+        &[
+            "config".into(),
+            "filter.late.clean".into(),
+            filter.to_string_lossy().into_owned(),
+        ],
+    )
+    .expect("configure clean filter");
+    run_git_at_path(
+        repo.path(),
+        &["config".into(), "merge.renormalize".into(), "true".into()],
+    )
+    .expect("configure renormalize");
+    let subject = put_branch_subject(&vault);
+    let outcome = vault.apply_repo_mutation(RepoMutationRequest::new(
+        repo_ref(&repo),
+        RepoMutationOperation::RecordConflict {
+            branch_subject: subject,
+            branch_name: "left".into(),
+            ours_ref: "left".into(),
+            theirs_ref: "right".into(),
+        },
+    ));
+    assert!(
+        outcome.is_err(),
+        "unsupported merge/filter profile must be refused"
+    );
+    assert!(
+        !marker.exists(),
+        "merge-tree must never execute the clean filter"
     );
 }
 
@@ -2190,7 +2259,7 @@ fn origin_epoch_cutover_refuses_stale_hosts_and_mirror_writes() {
     vault
         .put_claim(
             &request.provenance_claim_id,
-            &origin_publication_intent_claim(&request),
+            &origin_publication_intent_claim(&request).unwrap(),
             request.occurred,
             1,
         )
@@ -2317,8 +2386,8 @@ fn promotion_requires_reviewed_document_frontiers_for_every_changed_file() {
 #[test]
 fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
     use super::oplog::{
-        decode_stored_oplog_entry, encode_oplog_entry, repo_mutation_oplog_key,
-        repo_mutation_repo_key_hash, repo_mutation_snapshot_key,
+        OPLOG, SNAPSHOT, repo_mutation_oplog_key, repo_mutation_repo_key_hash,
+        repo_mutation_snapshot_key,
     };
     let (_dir, vault) = open_test_vault();
     let repo = init_repo();
@@ -2346,22 +2415,20 @@ fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
         landed.entry.seq,
     );
     let mut txn = vault.store.env.write_txn().unwrap();
-    let mut row =
-        decode_stored_oplog_entry(&vault.store.vault_meta.get(&txn, &key).unwrap().unwrap())
-            .unwrap();
+    let mut row = OPLOG.get(&vault.store, &txn, &key).unwrap().unwrap();
     row.pre_action_fork_hash = legacy;
     let (_, post) = super::snapshot::capture_repo_snapshot(repo.path()).unwrap();
     row.expected_post_action_fork_hash = Some(super::support::sha256_bytes(&post));
     row.status = RepoMutationStatus::Prepared.as_str().to_owned();
+    OPLOG.put(&vault.store, &mut txn, &key, &row).unwrap();
     vault
         .store
         .vault_meta
-        .put(&mut txn, &key, &encode_oplog_entry(&row).unwrap())
-        .unwrap();
-    vault
-        .store
-        .vault_meta
-        .put(&mut txn, &repo_mutation_snapshot_key(legacy), &raw)
+        .put(
+            &mut txn,
+            &SNAPSHOT.key_bytes(&repo_mutation_snapshot_key(legacy)),
+            &raw,
+        )
         .unwrap();
     txn.commit().unwrap();
     let recovered = vault.recover_prepared_repo_mutations(&reference).unwrap();

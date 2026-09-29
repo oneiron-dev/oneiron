@@ -13,8 +13,8 @@ use crate::error::{
     SyncSelectorValidation as SelectorError,
 };
 use crate::federation::{
-    FederationGrantScope, FederationScopeBands, FederationScopeFacets, GuestShareEnvelope,
-    GuestShareEnvelopeBody, SelectorRange, sign_guest_share_envelope,
+    FederationGrantScope, GuestShareEnvelope, GuestShareEnvelopeBody, ScopeAtom, ScopeAxis,
+    ScopeId, SelectorRange, sign_guest_share_envelope,
 };
 use crate::sync::types::WindowKey;
 
@@ -97,46 +97,50 @@ pub enum RequestedAxis<T> {
 impl RequestedAxis<EntityId> {
     /// Whether this request sits within `ceiling`.
     #[must_use]
-    pub fn within(&self, ceiling: &FederationScopeFacets) -> bool {
-        match self {
-            Self::Unnarrowed => true,
-            Self::Named(ids) => FederationScopeFacets::Some(ids.clone()).is_narrowing_of(ceiling),
-        }
+    pub fn within(&self, ceiling: &ScopeAxis<ScopeId>) -> bool {
+        self.within_ceiling(ceiling, |id| ScopeId(*id))
     }
 
     /// The ceiling-typed axis the export filters under.
     #[must_use]
-    pub fn resolve(&self, ceiling: &FederationScopeFacets) -> FederationScopeFacets {
-        match self {
-            Self::Unnarrowed => ceiling.clone(),
-            Self::Named(ids) => FederationScopeFacets::Some(ids.clone()),
-        }
+    pub fn resolve(&self, ceiling: &ScopeAxis<ScopeId>) -> ScopeAxis<ScopeId> {
+        self.resolve_under(ceiling, |id| ScopeId(*id))
     }
 }
 
 impl RequestedAxis<SelectorRange> {
     /// Whether this request sits within `ceiling`.
     #[must_use]
-    pub fn within(&self, ceiling: &FederationScopeBands) -> bool {
-        match self {
-            Self::Unnarrowed => true,
-            Self::Named(bands) => {
-                FederationScopeBands::Some(bands.clone()).is_narrowing_of(ceiling)
-            }
-        }
+    pub fn within(&self, ceiling: &ScopeAxis<SelectorRange>) -> bool {
+        self.within_ceiling(ceiling, |band| *band)
     }
 
     /// The ceiling-typed axis the export filters under.
     #[must_use]
-    pub fn resolve(&self, ceiling: &FederationScopeBands) -> FederationScopeBands {
-        match self {
-            Self::Unnarrowed => ceiling.clone(),
-            Self::Named(bands) => FederationScopeBands::Some(bands.clone()),
-        }
+    pub fn resolve(&self, ceiling: &ScopeAxis<SelectorRange>) -> ScopeAxis<SelectorRange> {
+        self.resolve_under(ceiling, |band| *band)
     }
 }
 
 impl<T> RequestedAxis<T> {
+    fn within_ceiling<A: ScopeAtom>(&self, ceiling: &ScopeAxis<A>, atom: fn(&T) -> A) -> bool {
+        match self {
+            Self::Unnarrowed => true,
+            Self::Named(_) => self.resolve_under(ceiling, atom).is_narrowing_of(ceiling),
+        }
+    }
+
+    fn resolve_under<A: ScopeAtom>(
+        &self,
+        ceiling: &ScopeAxis<A>,
+        atom: fn(&T) -> A,
+    ) -> ScopeAxis<A> {
+        match self {
+            Self::Unnarrowed => ceiling.clone(),
+            Self::Named(values) => ScopeAxis::Some(values.iter().map(atom).collect()),
+        }
+    }
+
     fn from_set(set: Vec<T>) -> Self {
         if set.is_empty() {
             Self::Unnarrowed

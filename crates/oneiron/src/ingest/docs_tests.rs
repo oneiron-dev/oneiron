@@ -55,6 +55,7 @@ impl DocsDeepExtractor for FalseQuote {
 fn document() -> DocsExport {
     DocsExport {
         corpus_id: "manual".into(),
+        project_id: EntityId::from_bytes([0xD6; 16]).expect("corpus project id"),
         registry: json!({"rows":[]}),
         pages: vec![DocsPage {
             page_id: "stable-page".into(),
@@ -63,6 +64,17 @@ fn document() -> DocsExport {
         }],
     }
 }
+fn ensure_docs_corpus(vault: &crate::Vault, leader: EntityId, docs: &DocsExport) -> Result<()> {
+    use crate::workspace_roster::{ProjectRecord, ProjectRole};
+    if vault.project(docs.project_id)?.is_some() {
+        return Ok(());
+    }
+    let root = vault.root_project()?;
+    let mut project = ProjectRecord::new(docs.project_id, Some(root), root, leader).unwrap();
+    project.role = ProjectRole::Corpus;
+    vault.put_project(docs.project_id, &project, 1)
+}
+
 fn deep_fixture() -> Result<(
     tempfile::TempDir,
     crate::Vault,
@@ -100,6 +112,7 @@ fn approved_docs_import(
     ceiling: DocsImportCeiling,
     now: u64,
 ) -> Result<DocsImportReceipt> {
+    ensure_docs_corpus(vault, owner.actor(), doc)?;
     let request = EntityId::now();
     vault.approve_once(
         owner,
@@ -141,7 +154,7 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
 
 fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
     use rmpv::Value;
-    let default = crate::gate::default_policy_manifest();
+    let default = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut default.as_slice()).unwrap() else {
         panic!("default policy manifest is a map");
     };
@@ -211,6 +224,7 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
         crate::store::GateDecisionId::now(),
     )?;
     let document = document();
+    ensure_docs_corpus(&vault, owner.actor(), &document)?;
     let request = EntityId::now();
     let ceiling = DocsImportCeiling {
         max_pages: 2,
@@ -381,6 +395,7 @@ fn searchable_docs(
         true,
         crate::store::GateDecisionId::now(),
     )?;
+    ensure_docs_corpus(&vault, owner.actor(), docs)?;
     let request = EntityId::now();
     let ceiling = DocsImportCeiling {
         max_pages: 8,
@@ -603,6 +618,7 @@ fn blob_birth_tree_reuses_unchanged_blocks_but_never_hides_case_edits() -> Resul
         vault.ingest_docs_export(&owner, request, docs, ceiling, None, None, 2)
     };
     let mut doc = document();
+    ensure_docs_corpus(&vault, owner.actor(), &doc)?;
     let first = ingest(&doc)?;
     let asset = EntityId::from_hex(&first.asset_refs[0])?;
     let before = vault.blob_fingerprint(&asset)?.unwrap();
@@ -692,6 +708,7 @@ fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let document = document();
+    ensure_docs_corpus(&vault, owner.actor(), &document)?;
     let ceiling = DocsImportCeiling {
         max_pages: 2,
         max_bytes: 10_000,
@@ -768,6 +785,132 @@ fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
 }
 
 #[test]
+fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::corpus::CorpusScope;
+    use crate::registry::ENTITY_TYPE_CLAIM;
+    use std::collections::BTreeSet;
+
+    let (_dir, vault, owner, first_doc, ceiling, first_import) = deep_fixture()?;
+    let first_project = first_doc.project_id;
+    let first_asset = EntityId::from_hex(&first_import.asset_refs[0])?;
+    let first = vault.deep_ingest_docs_asset(
+        &owner,
+        first_asset,
+        DocsDeepTrigger::Explicit,
+        &MultiNer,
+        3,
+    )?;
+    let first_ids: BTreeSet<_> = first
+        .claim_refs
+        .iter()
+        .map(|id| EntityId::from_hex(id))
+        .collect::<Result<_>>()?;
+
+    let mut second_doc = first_doc;
+    second_doc.corpus_id = "second-corpus".into();
+    second_doc.project_id = EntityId::from_bytes([0xD7; 16])?;
+    ensure_docs_corpus(&vault, owner.actor(), &second_doc)?;
+    let second_import = approved_docs_import(&vault, &owner, &second_doc, ceiling, 3)?;
+    let second_asset = EntityId::from_hex(&second_import.asset_refs[0])?;
+    let second = vault.deep_ingest_docs_asset(
+        &owner,
+        second_asset,
+        DocsDeepTrigger::Explicit,
+        &MultiNer,
+        4,
+    )?;
+    let second_ids: BTreeSet<_> = second
+        .claim_refs
+        .iter()
+        .map(|id| EntityId::from_hex(id))
+        .collect::<Result<_>>()?;
+    assert_eq!(first_ids.len(), 2);
+    assert_eq!(second_ids.len(), 2);
+
+    let default_claim = EntityId::from_bytes([0xD8; 16])?;
+    let body = ClaimBody::new(
+        "docs.default_project_fixture",
+        ClaimSubject::Entity(owner.actor()),
+        rmpv::Value::from("default"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    vault.put_claim(&default_claim, &body, TimeRange { start: 4, end: 4 }, 4)?;
+    // Import also writes consent/owner control claims in the default project.
+    // Restrict this retrieval to the three fixture audiences under test.
+    let fixture_ids: BTreeSet<_> = first_ids
+        .union(&second_ids)
+        .copied()
+        .chain([default_claim])
+        .collect();
+    let fixture =
+        |_: &crate::store::Store, _: &heed::RoTxn<'_>, id: &EntityId| Ok(fixture_ids.contains(id));
+    let query = |scope| -> Result<BTreeSet<EntityId>> {
+        Ok(vault
+            .query()
+            .search_temporal_with_sigma(3, 3, 10, crate::temporal::TemporalAnchorMode::Occurred, 16)
+            .temporal_adaptive(false)
+            .filter_types(&[ENTITY_TYPE_CLAIM])
+            .filter_candidates(&fixture)
+            .corpus(scope)
+            .run()?
+            .into_iter()
+            .map(|row| row.id)
+            .collect())
+    };
+    assert_eq!(query(CorpusScope::Corpus(first_project))?, first_ids);
+    assert_eq!(
+        query(CorpusScope::Corpus(second_doc.project_id))?,
+        second_ids
+    );
+    assert_eq!(
+        query(CorpusScope::Unscoped)?,
+        BTreeSet::from([default_claim])
+    );
+    assert_eq!(
+        query(CorpusScope::AnyOf(vec![
+            second_doc.project_id,
+            first_project
+        ]))?,
+        first_ids.union(&second_ids).copied().collect()
+    );
+    Ok(())
+}
+
+#[test]
+fn docs_import_refuses_missing_or_non_corpus_project() -> Result<()> {
+    use crate::workspace_roster::{ProjectRecord, ProjectRole};
+    let (_dir, vault, owner, mut doc, ceiling, _) = deep_fixture()?;
+    doc.project_id = EntityId::from_bytes([0xD9; 16])?;
+    let request = EntityId::now();
+    assert!(
+        vault
+            .docs_import_effect(&owner, request, &doc, ceiling)
+            .is_err()
+    );
+    let root = vault.root_project()?;
+    let project = ProjectRecord::new(doc.project_id, Some(root), root, owner.actor()).unwrap();
+    vault.put_project(doc.project_id, &project, 3)?;
+    assert!(
+        vault
+            .docs_import_effect(&owner, request, &doc, ceiling)
+            .is_err()
+    );
+    let mut project = project;
+    project.role = ProjectRole::Corpus;
+    vault.put_project(doc.project_id, &project, 4)?;
+    assert!(
+        vault
+            .docs_import_effect(&owner, request, &doc, ceiling)
+            .is_ok()
+    );
+    Ok(())
+}
+
+#[test]
 fn deep_docs_respect_revision_ceiling_and_quote_validation() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
@@ -798,6 +941,7 @@ fn deep_docs_respect_revision_ceiling_and_quote_validation() -> Result<()> {
         EntityId::from_hex(&receipt.asset_refs[0])
     };
     let mut doc = document();
+    ensure_docs_corpus(&vault, owner.actor(), &doc)?;
     let asset = import(&doc, ceiling, 2)?;
     assert!(
         vault
@@ -851,7 +995,7 @@ fn docs_deep_on_read_rechecks_reader_and_observed_source_after_model_work() -> R
             crate::test_util::put_policy_manifest_bytes(
                 &vault,
                 crate::gate::default_policy_manifest_id()?,
-                &crate::gate::default_policy_manifest(),
+                &crate::gate::default_policy_manifest().unwrap(),
             )?;
         }
         Ok(())
@@ -1101,6 +1245,7 @@ fn heading_reimport_keeps_rewritten_summaries_readable() -> Result<()> {
         allow_derivations: true,
     };
     let mut docs = document();
+    ensure_docs_corpus(&vault, owner.actor(), &docs)?;
     let request = EntityId::now();
     vault.approve_once(
         &owner,

@@ -1,6 +1,6 @@
 //! Canonical typed WIT imports over the bounded engine-host channel.
 
-use super::{HostEvent, State, bindings::*, failure, wire};
+use super::{HostEvent, State, bindings::*, failure};
 use crate::Result;
 use crate::code_sandbox::SandboxBoundaryContract;
 use serde_json::{Value, json};
@@ -138,6 +138,24 @@ pub(super) fn link_imports(
                         .and_then(|value| field(&value,"bytes"));
                     Ok((reply,))
                 }),
+            "vault.agents.put" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (input,): (AgentPutInput,)| {
+                    cx.data_mut().begin_call()?;
+                    let reply: Reply<AgentPutOutput> = (|| {
+                        if input.definition.len() > cx.data().message_bytes {
+                            return Err("agent definition exceeds message budget".into());
+                        }
+                        let definition: Value = serde_json::from_str(&input.definition)
+                            .map_err(|_| "invalid agent definition JSON")?;
+                        let value = cx.data_mut().call("vault.agents.put",
+                            json!({"id":input.id,"definition":definition}))?;
+                        Ok(AgentPutOutput {
+                            id: field(&value, "id")?,
+                            disposition: field(&value, "disposition")?,
+                        })
+                    })();
+                    Ok((reply,))
+                }),
             "self.json.validate" => root.func_wrap(wit,
                 |mut cx: StoreContextMut<'_, State>, (schema, value): (String, String)| {
                     cx.data_mut().begin_call()?;
@@ -178,7 +196,7 @@ pub(super) fn link_imports(
                     cx.data_mut().begin_call()?;
                     let reply: Reply<EdgeOutput> = (|| {
                         if input.weight.is_some_and(|v| !v.is_finite()) { return Err("non-finite edge weight".into()); }
-                        wire::edge_kind(&input.kind).map_err(|_| "invalid edge kind")?;
+                        crate::EdgeKind::from_name(&input.kind).ok_or("invalid edge kind")?;
                         let result = cx.data_mut().call("self.memory.put_edge",
                             json!({"src":input.src,"kind":input.kind,"tgt":input.tgt,"weight":input.weight}))?;
                         Ok(EdgeOutput { src: field(&result,"src")?, kind: input.kind, tgt: field(&result,"tgt")? })

@@ -16,7 +16,7 @@ pub(super) fn assert_mailbox_lifecycle_receipt(
     assert_eq!(result.identity.as_ref(), Some(&stored));
     assert!(!stored.may_send());
     if gate_outcome == Some("allow") || gate_outcome.is_none() {
-        assert_eq!(result.outcome, stored.state.as_str());
+        assert_eq!(result.outcome, stored.state().as_str());
     }
     let receipt = vault
         .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::IdentityLifecycle))?
@@ -30,11 +30,11 @@ pub(super) fn assert_mailbox_lifecycle_receipt(
         Some(format!("entity:{}", identity.to_hex()))
     );
     assert_eq!(field("verb"), Some(verb));
-    assert_eq!(field("state"), Some(stored.state.as_str()));
+    assert_eq!(field("state"), Some(stored.state().as_str()));
     assert_eq!(
         field("fulfillment_mode"),
         stored
-            .pending_fulfillment
+            .pending_fulfillment()
             .map(crate::channel_identity::ChannelIdentityFulfillment::as_str)
     );
     assert_eq!(
@@ -114,8 +114,7 @@ fn missing_custody_leaves_resumable_journal_and_no_identity() -> Result<()> {
             .get_channel_identity(&requested.identity_ref)?
             .is_none()
     );
-    let journal = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
-        .expect("fixture value exists");
+    let journal = read_journal(&vault, &intent.onboarding_id)?.expect("fixture value exists");
     assert_eq!(journal.step, MemberOnboardingStep::CompanionBorn);
     assert_eq!(journal.completed_at, None);
     register_mailbox_custody(&vault, &requested, &requested.address)?;
@@ -246,7 +245,7 @@ fn minted_kind_collision_is_rejected_before_the_first_effect() -> Result<()> {
         .onboard_workspace_member(intent.clone(), &writer(WRITER), None)
         .expect_err("maintenance grant id cannot alias a person");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-    assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
+    assert!(read_journal(&vault, &intent.onboarding_id)?.is_none());
     assert!(actor_subject_anchor(&vault, &intent.workspace.house_actor_ref, AT)?.is_none());
     Ok(())
 }
@@ -280,7 +279,7 @@ fn resumed_onboarding_requires_current_admin_authority() -> Result<()> {
             .is_none()
     );
     assert_eq!(
-        read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+        read_journal(&vault, &intent.onboarding_id)?
             .expect("journal survives refusal")
             .step,
         MemberOnboardingStep::ActorLinked
@@ -395,8 +394,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
                     .is_none()
             );
         }
-        let before =
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.expect("journal");
+        let before = read_journal(&vault, &intent.onboarding_id)?.expect("journal");
         assert_eq!(before.completed_at, None);
         assert_eq!(
             before.step,
@@ -432,10 +430,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
                 "checkpoint {checkpoint}: reopening must not change policy"
             );
         }
-        assert_eq!(
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?,
-            Some(before)
-        );
+        assert_eq!(read_journal(&vault, &intent.onboarding_id)?, Some(before));
         assert_eq!(
             vault.get_channel_identity(&requested.identity_ref)?,
             Some(identity)
@@ -475,8 +470,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
         if let Some(applied) = applied {
             assert_eq!(state, applied, "resume must preserve existing exact grants");
         }
-        let journal =
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.expect("journal");
+        let journal = read_journal(&vault, &intent.onboarding_id)?.expect("journal");
         assert_eq!(journal.step, MemberOnboardingStep::Complete);
         assert_eq!(journal.completed_at, Some(outcome.completed_at));
         assert_eq!(
@@ -626,7 +620,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
         let identity = vault
             .get_channel_identity(&requested.identity_ref)?
             .expect("identity");
-        assert_eq!(identity.state, ChannelIdentityState::Requested);
+        assert_eq!(identity.state(), ChannelIdentityState::Requested);
         for (outcome, gate_outcome) in [("denied", "deny"), ("held", "pending")] {
             let mut request = mailbox_bind_request(requested.identity_ref, &owner);
             if outcome == "denied" {
@@ -680,8 +674,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
             revision,
             "replay writes no rows or receipts"
         );
-        let journal =
-            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.expect("journal");
+        let journal = read_journal(&vault, &intent.onboarding_id)?.expect("journal");
         assert_eq!(journal.step, MemberOnboardingStep::Complete);
         assert_eq!(
             vault

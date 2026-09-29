@@ -394,7 +394,7 @@ fn embedding_migration_invalidates_inflight_async_fill_token() -> Result<()> {
                 0.9,
                 crate::claim::ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Active,
-            )))?,
+            )?))?,
         )
         .commit()?;
     let token = {
@@ -453,7 +453,7 @@ fn legacy_v1_marker_cannot_fill_after_embedding_epoch_change() -> Result<()> {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    )))?;
+    )?))?;
     vault
         .batch()
         .put(
@@ -564,7 +564,7 @@ fn embedding_migration_degrades_to_lexical_then_refills_without_mixing() -> Resu
                 0.9,
                 crate::claim::ClaimApprovalStatus::Auto,
                 crate::claim::ClaimLifecycleStatus::Active,
-            )))?,
+            )?))?,
         )
         .text(&id, &[("body", "migration lexical needle")])
         .commit()?;
@@ -636,7 +636,7 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
                     0.9,
                     crate::claim::ClaimApprovalStatus::Auto,
                     crate::claim::ClaimLifecycleStatus::Active,
-                )))?,
+                )?))?,
             )
             .text(id, &[("body", body)])
             .commit()
@@ -862,7 +862,7 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
             0.9,
             crate::claim::ClaimApprovalStatus::Auto,
             crate::claim::ClaimLifecycleStatus::Active,
-        )))?;
+        )?))?;
     rollback
         .batch()
         .put(

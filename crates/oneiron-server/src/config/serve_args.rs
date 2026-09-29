@@ -96,7 +96,7 @@ pub struct ServeArgs {
     #[arg(long)]
     pub port: Option<u16>,
 
-    /// Bearer trust root: the owner credential and the MAC key input for
+    /// Host issuer key material (never a bearer credential) and input for
     /// minted `v2` tokens. Rotating it invalidates all minted tokens.
     #[arg(long)]
     pub auth_secret: Option<String>,

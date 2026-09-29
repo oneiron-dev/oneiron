@@ -166,50 +166,28 @@ fn legacy_headers_and_unlogged_v1_v2_tokens_never_authenticate() {
 }
 
 #[test]
-fn bare_secret_is_a_revocable_logged_root_not_an_org_credential() {
+fn logged_host_root_does_not_make_the_verbatim_secret_a_credential() {
     let fixture = Fixture::new();
     let headers = bearer(SECRET);
-    let auth = require_owner_auth(&headers, &fixture.config, fixture.vault.as_ref()).unwrap();
-    assert_eq!(auth.principal_ref(), None);
-    assert_eq!(
-        auth.verified_slip().unwrap().claims().slip_id,
-        fixture.root.claims.slip_id
-    );
-    assert_eq!(
-        auth.jti(),
-        Some(
-            fixture
-                .root
-                .claims
-                .slip_id
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-                .as_str()
-        )
-    );
-    assert!(auth.require(CoreScope::Read).is_ok());
-    assert!(auth.require(CoreScope::Write).is_ok());
-    assert!(!auth.has_scope(CoreScope::OrgAdmin(OrgAdminPower::AddMember)));
-    assert!(auth.credential_is_live(fixture.vault.as_ref()));
-    assert!(!is_revoked_or_unreadable(
-        auth.jti().unwrap(),
-        fixture.vault.as_ref()
-    ));
-    fixture
-        .vault
-        .revoke_capability_slip(&fixture.issuer, fixture.root.claims.slip_id)
-        .unwrap();
-    assert!(!auth.credential_is_live(fixture.vault.as_ref()));
-    assert!(is_revoked_or_unreadable(
-        auth.jti().unwrap(),
-        fixture.vault.as_ref()
+    assert_unauthorized(CoreAuth::from_headers(
+        &headers,
+        &fixture.config,
+        fixture.vault.as_ref(),
     ));
     assert_unauthorized(require_owner_auth(
         &headers,
         &fixture.config,
         fixture.vault.as_ref(),
     ));
+    let slip = fixture.mint(|_| {});
+    let auth = require_owner_auth(
+        &fixture.headers(&slip),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    )
+    .unwrap();
+    assert!(auth.is_owner_grade());
+    assert!(auth.credential_is_live(fixture.vault.as_ref()));
 }
 
 #[test]
@@ -250,7 +228,11 @@ fn identified_exact_top_slips_are_owner_grade_and_individually_revocable() {
         )
         .is_ok()
     );
-    assert!(require_owner_auth(&bearer(SECRET), &fixture.config, fixture.vault.as_ref()).is_ok());
+    assert_unauthorized(require_owner_auth(
+        &bearer(SECRET),
+        &fixture.config,
+        fixture.vault.as_ref(),
+    ));
 }
 
 #[test]
@@ -458,20 +440,16 @@ fn slip_tampering_wrong_holder_and_stale_or_missing_proofs_fail_closed() {
 }
 
 #[test]
-fn v2_shaped_secrets_are_still_verified_through_the_logged_root() {
+fn v2_shaped_secrets_cannot_bypass_slip_parsing() {
     for secret in ["v2.something.rest", "v2.slip.not-a-slip"] {
         let fixture = Fixture::with_secret(secret);
-        let auth =
-            require_owner_auth(&bearer(secret), &fixture.config, fixture.vault.as_ref()).unwrap();
-        assert!(auth.is_owner_grade());
-        assert!(auth.jti().is_some());
-        let scoped = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
-        assert!(!fixture.auth(&scoped).unwrap().is_owner_grade());
-        assert_unauthorized(CoreAuth::from_headers(
-            &bearer(&format!("{secret}x")),
+        assert_unauthorized(require_owner_auth(
+            &bearer(secret),
             &fixture.config,
             fixture.vault.as_ref(),
         ));
+        let scoped = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+        assert!(!fixture.auth(&scoped).unwrap().is_owner_grade());
     }
 }
 
@@ -599,57 +577,32 @@ fn revocation_registry_key_is_namespaced_and_id_keyed() {
 }
 
 #[test]
-fn later_host_fork_revokes_cached_owner_auth_and_its_session_jti() {
-    use oneiron::authority::{
-        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-        AuthoritySignatureSuite, authority_transcript,
-    };
+fn revoked_host_root_closes_cached_owner_auth_and_its_session_jti() {
     let fixture = Fixture::new();
-    let auth =
-        require_owner_auth(&bearer(SECRET), &fixture.config, fixture.vault.as_ref()).unwrap();
-    let parent = fixture.vault.authority_fold().unwrap().slips.mints[&fixture.root.claims.slip_id]
-        .entry_hash;
-    let signing = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        SECRET.as_bytes(),
-    ));
-    let at = oneiron::TimeRange {
-        start: fixture.root.claims.issued_at,
-        end: fixture.root.claims.issued_at,
-    };
-    let mut rows = Vec::new();
-    for id in [[71; 32], [72; 32]] {
-        let mut entry = AuthorityLogEntry {
-            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-            vault_id: Some(fixture.root.claims.vault_id),
-            seq: 2,
-            parent_hashes: vec![parent],
-            op: AuthorityOp::SlipRevoke { slip_id: id },
-            signer: AuthoritySignature {
-                suite: AuthoritySignatureSuite::Ed25519,
-                public_key: fixture.issuer.public_key(),
-                signature: vec![0; 64],
-            },
-            cosigns: Vec::new(),
-            ts: at.start,
-        };
-        entry.signer.signature = signing
-            .sign(&authority_transcript(&entry).unwrap())
-            .to_bytes()
-            .to_vec();
-        rows.push((entry, at, at.start));
-    }
-    fixture.vault.put_authority_log_entries(&rows).unwrap();
+    let auth = CoreAuth::from_verified(
+        fixture
+            .vault
+            .verified_host_root_slip(&fixture.issuer)
+            .unwrap(),
+        true,
+    )
+    .unwrap();
+    assert!(auth.credential_is_live(fixture.vault.as_ref()));
+    fixture
+        .vault
+        .revoke_capability_slip(&fixture.issuer, fixture.root.claims.slip_id)
+        .unwrap();
     assert!(!auth.credential_is_live(fixture.vault.as_ref()));
     assert!(is_revoked_or_unreadable(
         auth.jti().unwrap(),
         fixture.vault.as_ref()
     ));
-    assert_unauthorized(require_owner_auth(
-        &bearer(SECRET),
-        &fixture.config,
-        fixture.vault.as_ref(),
-    ));
+    assert!(
+        fixture
+            .vault
+            .verified_host_root_slip(&fixture.issuer)
+            .is_err()
+    );
 }
 
 #[test]

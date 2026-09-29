@@ -2,9 +2,14 @@
 //! boundary, not read authority: source bytes still pass through ScopedRead,
 //! and the promotion sink still owns the write gate and live ceiling.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::conflict::{candidate_facts, deterministic_claim_id, swarm_evidence_content_hash};
+use super::conflict::{
+    SwarmEvidenceRef, VerifiedSwarmEvidence, candidate_facts, deterministic_claim_id,
+    swarm_evidence_content_hash, turn_trust_class,
+};
+use super::wake_plan::PreparedWake;
 
 mod prior;
 mod signals;
@@ -14,12 +19,16 @@ use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
 use super::watermark::{TurnBodyFacts, decode_turn_body};
 use crate::attempt_queue::AttemptId;
-use crate::claim::{ScopedRead, ScopedReadActorKey};
+use crate::claim::{
+    PointRead, ReadRow, ScopedRead, ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult,
+};
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::llm::{Scope, ScopeResource};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::llm::{LlmResponse, Scope, ScopeResource, StepEffectBinding};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+};
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
 pub(crate) use write::ConsolidationFence;
@@ -30,10 +39,31 @@ struct SourcePin {
     resource: ScopeResource,
     entity_type: u8,
     learned_at: u64,
+    #[cfg(test)]
+    trust_class: Option<crate::claim::ClaimSource>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct FallbackOutputPin {
+    pub(super) step: StepEffectBinding,
+    pub(super) response_hash: [u8; 32],
+}
+
+impl FallbackOutputPin {
+    pub(super) fn new(step: StepEffectBinding, response: &LlmResponse) -> Result<Self> {
+        let encoded = serde_json::to_vec(response)
+            .map_err(|_| invalid_consolidation("fallback response encoding failed"))?;
+        Ok(Self {
+            step,
+            response_hash: *blake3::hash(&encoded).as_bytes(),
+        })
+    }
 }
 
 pub(super) struct BranchResources<'a> {
+    actor: WriteActor,
     read: ScopedRead<'a>,
+    prepared_wake: Option<&'a PreparedWake>,
     partition: ConsolidationPartitionKey,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
@@ -41,14 +71,19 @@ pub(super) struct BranchResources<'a> {
     output: ScopeResource,
     scope: Scope,
     attempt: AttemptId,
+    fallback_binding: Cell<Option<FallbackOutputPin>>,
     signals: ScopeResource,
     priors: BTreeMap<EntityId, super::PriorHead>,
     rules: super::routing::PredicateKeyRules,
+    /// Every scoped read this branch made, folded. Methods read through
+    /// `&self`, so the fold sits behind a lock.
+    read_receipt: std::sync::Mutex<ScopedReadReceipt>,
 }
 
 impl<'a> BranchResources<'a> {
     /// Admit the already queued partition, never a model-selected resource set.
     /// The executor checks the queued Dreamer actor before entering this door.
+    #[cfg(test)]
     pub(super) fn open(
         vault: &'a Vault,
         actor: WriteActor,
@@ -56,6 +91,46 @@ impl<'a> BranchResources<'a> {
         turns: &[EntityId],
         attempt: AttemptId,
         requested: Option<&Scope>,
+    ) -> Result<Self> {
+        Self::open_at_pin(vault, actor, partition, turns, attempt, requested, None)
+    }
+
+    /// Consume the exact already-prepared branch; no new scope or source
+    /// discovery is performed here. The live structural checks and write fence
+    /// still refuse revocation or drift.
+    pub(super) fn open_prepared(
+        vault: &'a Vault,
+        actor: WriteActor,
+        plan: &super::PreparedConsolidationAttempt,
+        wake: &'a PreparedWake,
+    ) -> Result<Self> {
+        let resources = Self::open_at_pin(
+            vault,
+            actor,
+            plan.partition(),
+            plan.turn_ids(),
+            plan.attempt_id(),
+            plan.scope(),
+            Some(wake),
+        )?;
+        for (id, pin) in &resources.sources {
+            if plan.version(id) != Some(&pin.resource) {
+                return Err(invalid_consolidation(
+                    "prepared source version changed or was not admitted",
+                ));
+            }
+        }
+        Ok(resources)
+    }
+
+    pub(super) fn open_at_pin(
+        vault: &'a Vault,
+        actor: WriteActor,
+        partition: ConsolidationPartitionKey,
+        turns: &[EntityId],
+        attempt: AttemptId,
+        requested: Option<&Scope>,
+        prepared_wake: Option<&'a PreparedWake>,
     ) -> Result<Self> {
         let actor_key = ScopedReadActorKey::with_actor_class(
             actor.entity_ref().to_hex(),
@@ -72,8 +147,30 @@ impl<'a> BranchResources<'a> {
         let output = output_projection(&partition, turns);
         let mut sources = BTreeMap::new();
         let mut readable = BTreeSet::from([bucket.clone()]);
-        for id in std::iter::once(&partition.conversation_ref).chain(turns) {
-            let (entity_type, learned_at, body) = read_source(&read, id)?;
+        // One LMDB read transaction pins all branch sources at one ledger
+        // revision. Later reads and the write fence must match these pins.
+        let source_ids: Vec<_> = std::iter::once(partition.conversation_ref)
+            .chain(turns.iter().copied())
+            .collect();
+        let (source_rows, read_receipt): (Vec<_>, _) = if let Some(pin) = prepared_wake {
+            // The wake's one scoped read supplied these bytes; its receipt
+            // travels with the branch.
+            let mut read_receipt = read.read_receipt(None, 0)?;
+            if let Some(wake_receipt) = pin.read_receipt() {
+                read_receipt.restrict_with(wake_receipt);
+            }
+            (
+                source_ids.iter().map(|id| pin.source(id)).collect(),
+                read_receipt,
+            )
+        } else {
+            let ScopedReadResult { value, receipt } =
+                read.get_entities_parts_with_receipt(&source_ids, None)?;
+            (value, receipt)
+        };
+        for (id, row) in source_ids.iter().zip(source_rows) {
+            let (entity_type, learned_at, body) =
+                row.ok_or_else(|| invalid_consolidation("branch source is not readable"))?;
             if (*id == partition.conversation_ref
                 && !matches!(entity_type, ENTITY_TYPE_SESSION | ENTITY_TYPE_CONVERSATION))
                 || (*id != partition.conversation_ref && entity_type != ENTITY_TYPE_TURN)
@@ -82,12 +179,27 @@ impl<'a> BranchResources<'a> {
             }
             let resource = document_version(*id, &body);
             readable.insert(resource.clone());
+            #[cfg(test)]
+            let trust_class = (entity_type == ENTITY_TYPE_TURN)
+                .then(|| {
+                    let facts = decode_turn_body(&body);
+                    turn_trust_class(
+                        dreamer_turn_role(
+                            facts.speaker.as_deref(),
+                            &vault.config.assistant_display_names,
+                        ),
+                        false,
+                    )
+                })
+                .flatten();
             sources.insert(
                 *id,
                 SourcePin {
                     resource,
                     entity_type,
                     learned_at,
+                    #[cfg(test)]
+                    trust_class,
                 },
             );
         }
@@ -112,7 +224,9 @@ impl<'a> BranchResources<'a> {
         // A supplied scope is authority, not a request to infer more authority.
         let scope = requested.cloned().unwrap_or(granted);
         let mut resources = Self {
+            actor,
             read,
+            prepared_wake,
             partition,
             sources,
             turns: turns.iter().copied().collect(),
@@ -120,9 +234,11 @@ impl<'a> BranchResources<'a> {
             output,
             scope,
             attempt,
+            fallback_binding: Cell::new(None),
             signals,
             priors: BTreeMap::new(),
             rules: vault.consolidation_key_rules()?,
+            read_receipt: std::sync::Mutex::new(read_receipt),
         };
         resources.check_axes(&resources.scope)?;
         resources.source(&resources.scope, &partition.conversation_ref)?;
@@ -134,8 +250,45 @@ impl<'a> BranchResources<'a> {
         Ok(resources)
     }
 
+    pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {
+        self.sources
+            .get(id)
+            .map(|pin| pin.resource.clone())
+            .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))
+    }
+
+    pub(super) fn bind_fallback(&self, pin: FallbackOutputPin) -> Result<()> {
+        if pin.step.attempt_id != self.attempt || self.fallback_binding.get().is_some() {
+            return Err(invalid_consolidation("invalid extraction fallback binding"));
+        }
+        self.fallback_binding.set(Some(pin));
+        Ok(())
+    }
+
+    pub(super) fn fallback_binding(&self) -> Option<FallbackOutputPin> {
+        self.fallback_binding.get()
+    }
+
     pub(super) fn key_rules(&self) -> &super::routing::PredicateKeyRules {
         &self.rules
+    }
+
+    /// Fold a later scoped read into this branch's receipt.
+    pub(super) fn fold_read_receipt(&self, later: &ScopedReadReceipt) -> Result<()> {
+        self.read_receipt
+            .lock()
+            .map_err(|_| crate::Error::InvariantViolation("branch read receipt lock"))?
+            .restrict_with(later);
+        Ok(())
+    }
+
+    /// The folded receipt of every scoped read made so far.
+    pub(super) fn read_receipt(&self) -> Result<ScopedReadReceipt> {
+        Ok(self
+            .read_receipt
+            .lock()
+            .map_err(|_| crate::Error::InvariantViolation("branch read receipt lock"))?
+            .clone())
     }
 
     pub(super) fn scope(&self) -> &Scope {
@@ -164,7 +317,17 @@ impl<'a> BranchResources<'a> {
         if !scope.allows_read(&self.bucket) || !scope.allows_read(&pin.resource) {
             return Err(invalid_consolidation("branch document read refused"));
         }
-        let (entity_type, learned_at, body) = read_source(&self.read, id)?;
+        let (entity_type, learned_at, body) = if pin.entity_type == ENTITY_TYPE_CLAIM {
+            self.prior(*id)?;
+            let head = self.read.get_entity_parts_with_receipt(id, None)?;
+            self.fold_read_receipt(&head.receipt)?;
+            head.value
+                .ok_or_else(|| invalid_consolidation("admitted prior not readable"))?
+        } else {
+            let source = read_source(&self.read, id)?;
+            self.fold_read_receipt(&source.receipt)?;
+            source.value
+        };
         if entity_type != pin.entity_type
             || learned_at != pin.learned_at
             || document_version(*id, &body) != pin.resource
@@ -183,6 +346,7 @@ impl<'a> BranchResources<'a> {
         let facts = decode_turn_body(&body);
         let parent = decode_turn_body(&conversation);
         let edges = self.read.edges_out(id)?;
+        self.fold_read_receipt(&edges.receipt)?;
         if edges.receipt.suppressed_count != 0 {
             return Err(invalid_consolidation("branch turn graph is incomplete"));
         }
@@ -221,8 +385,95 @@ impl<'a> BranchResources<'a> {
         Ok(transcript)
     }
 
+    /// Parent-only evidence accounting: one actor-scoped read transaction for
+    /// every cited source, then content hash and source classification. Both
+    /// the branch pins and the sink's live fence reject revision drift.
+    pub(in crate::dreamer_consolidation) fn verify_evidence_refs(
+        &self,
+        refs: &[SwarmEvidenceRef],
+    ) -> Result<Vec<VerifiedSwarmEvidence>> {
+        self.check_axes(&self.scope)?;
+        let ids: Vec<_> = refs.iter().map(|entry| entry.source_id).collect();
+        for entry in refs {
+            if let Some(claim) = entry.claim_id {
+                if claim != entry.source_id
+                    || entry.byte_range.is_some()
+                    || !self.priors.contains_key(&claim)
+                {
+                    return Err(invalid_consolidation("unadmitted branch claim evidence"));
+                }
+            } else if !self.turns.contains(&entry.source_id) {
+                return Err(invalid_consolidation("unlisted branch evidence"));
+            }
+            let pin = self
+                .sources
+                .get(&entry.source_id)
+                .ok_or_else(|| invalid_consolidation("unlisted branch evidence"))?;
+            if !self.scope.allows_read(&self.bucket) || !self.scope.allows_read(&pin.resource) {
+                return Err(invalid_consolidation("branch evidence read refused"));
+            }
+        }
+        let source_rows: Vec<_> = if let Some(pin) = self.prepared_wake {
+            // Bytes from the wake's one read, whose receipt the branch holds.
+            ids.iter().map(|id| pin.source(id)).collect()
+        } else {
+            let rows = self.read.get_entities_parts_with_receipt(&ids, None)?;
+            self.fold_read_receipt(&rows.receipt)?;
+            rows.value
+        };
+        refs.iter()
+            .zip(source_rows)
+            .map(|(entry, row)| {
+                let (kind, learned_at, body) =
+                    row.ok_or_else(|| invalid_consolidation("branch evidence is not readable"))?;
+                let pin = &self.sources[&entry.source_id];
+                if kind != pin.entity_type
+                    || learned_at != pin.learned_at
+                    || document_version(entry.source_id, &body) != pin.resource
+                {
+                    return Err(invalid_consolidation("branch evidence revision changed"));
+                }
+                let trust_class = if entry.claim_id.is_some() {
+                    if kind != crate::registry::ENTITY_TYPE_CLAIM {
+                        return Err(invalid_consolidation("branch claim evidence type changed"));
+                    }
+                    let claim = crate::claim::decode_claim_body(&body, true)?;
+                    if !crate::claim::claim_evidence_admissible(&claim) {
+                        return Err(invalid_consolidation("generated claim cannot corroborate"));
+                    }
+                    let source = claim.source.unwrap_or(crate::claim::ClaimSource::Imported);
+                    crate::dreamer_consolidation::provenance::source_meet(
+                        source,
+                        crate::claim::claim_evidence_taint(&claim).unwrap_or(source),
+                    )
+                } else {
+                    if kind != crate::registry::ENTITY_TYPE_TURN {
+                        return Err(invalid_consolidation("branch turn evidence type changed"));
+                    }
+                    let facts = decode_turn_body(&body);
+                    let role = dreamer_turn_role(
+                        facts.speaker.as_deref(),
+                        &self.read.vault().config.assistant_display_names,
+                    );
+                    turn_trust_class(role, false)
+                        .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
+                };
+                let bytes = cited_evidence_bytes(*entry, &body)?;
+                Ok(VerifiedSwarmEvidence {
+                    source_id: entry.source_id,
+                    content_hash: swarm_evidence_content_hash(&bytes),
+                    trust_class,
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn evidence_time(&self, scope: &Scope, id: &EntityId) -> Result<u64> {
-        self.turn(scope, id)?;
+        if self.turns.contains(id) {
+            self.turn(scope, id)?;
+        } else {
+            self.prior(*id)?;
+        }
         Ok(self.source(scope, id)?.0)
     }
 
@@ -257,17 +508,63 @@ impl<'a> BranchResources<'a> {
                         facts.facet,
                         facts.rel,
                         facts.topic.as_deref(),
-                    )
+                    )?
             {
                 return Err(invalid_consolidation("candidate crossed its branch scope"));
             }
+            if candidate.candidate.evidence().is_some() {
+                return Err(invalid_consolidation(
+                    "unverified candidate evidence is not an authority source",
+                ));
+            }
             for id in &candidate.evidence_turn_refs {
-                self.turn(scope, id)?;
+                if self.turns.contains(id) {
+                    self.turn(scope, id)?;
+                } else {
+                    self.prior(*id)?;
+                    self.source(scope, id)?;
+                }
             }
         }
         Ok(())
     }
 
+    pub(super) fn upsert_verified_gaps(
+        &self,
+        scope: &Scope,
+        gaps: Vec<(
+            super::gap::ReflectionGap,
+            super::evidence::VerifiedEvidenceSet,
+        )>,
+        now: u64,
+    ) -> Result<super::gap::GapQueueDelta> {
+        self.check_axes(scope)?;
+        let mut persisted = Vec::new();
+        for (mut gap, evidence) in gaps {
+            evidence.check_pins(self)?;
+            gap.evidence_turn_refs = evidence.refs();
+            gap.evidence_refs = evidence.locators();
+            gap.verified_evidence = Some(evidence.envelope(Vec::new()));
+            for id in &gap.evidence_turn_refs {
+                if self.turns.contains(id) {
+                    self.turn(scope, id)?;
+                } else {
+                    self.prior(*id)?;
+                    self.source(scope, id)?;
+                }
+            }
+            persisted.push(gap);
+        }
+        super::gap::upsert_branch_gap_queue(
+            self.read.vault(),
+            scope,
+            &self.partition,
+            persisted,
+            now,
+        )
+    }
+
+    #[cfg(test)]
     pub(super) fn upsert_gaps(
         &self,
         scope: &Scope,
@@ -276,25 +573,108 @@ impl<'a> BranchResources<'a> {
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         for gap in &gaps {
-            for turn in &gap.evidence_turn_refs {
-                self.turn(scope, turn)?;
+            if gap.evidence_refs.is_empty() {
+                // TURN-only reflection detectors have no child locators.
+                for turn in &gap.evidence_turn_refs {
+                    self.turn(scope, turn)?;
+                }
+            } else {
+                let projected: BTreeSet<_> = gap.evidence_turn_refs.iter().copied().collect();
+                let cited: BTreeSet<_> = gap
+                    .evidence_refs
+                    .iter()
+                    .map(|entry| entry.source_id)
+                    .collect();
+                if projected != cited {
+                    return Err(invalid_consolidation("gap evidence projection mismatch"));
+                }
+                self.verify_evidence_refs(&gap.evidence_refs)?;
+                for source in projected {
+                    if self.turns.contains(&source) {
+                        self.turn(scope, &source)?;
+                    } else {
+                        self.prior(source)?;
+                        self.source(scope, &source)?;
+                    }
+                }
             }
         }
         super::gap::upsert_branch_gap_queue(self.read.vault(), scope, &self.partition, gaps, now)
     }
 
+    pub(super) fn accept_verified(
+        &self,
+        scope: &Scope,
+        sink: &mut dyn ConsolidationSink,
+        candidates: Vec<super::evidence::VerifiedCandidate>,
+    ) -> Result<()> {
+        let write = self.prepare_write_verified(scope, candidates)?;
+        sink.accept_scoped(write)
+    }
+
+    #[cfg(test)]
     pub(super) fn accept(
         &self,
         scope: &Scope,
         sink: &mut dyn ConsolidationSink,
         candidates: Vec<PromotionCandidate>,
     ) -> Result<()> {
-        let write = self.prepare_write(scope, candidates)?;
-        sink.accept_scoped(write)
+        let verified = candidates
+            .into_iter()
+            .map(|candidate| {
+                let refs = candidate
+                    .evidence_turn_refs
+                    .iter()
+                    .copied()
+                    .map(super::evidence::EvidenceLocator::whole_turn)
+                    .collect();
+                let raw = super::evidence::ExtractedCandidate::new(candidate, refs)?;
+                super::evidence::VerifiedCandidate::from_extracted(self, raw)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.accept_verified(scope, sink, verified)
     }
 }
 
-fn read_source(read: &ScopedRead<'_>, id: &EntityId) -> Result<(u8, u64, Vec<u8>)> {
+/// A byte range is measured over the exact UTF-8 TURN text the child saw in
+/// the transcript, never over its MessagePack storage framing. Whole TURNs
+/// retain their existing body-hash identity; CLAIM ids name the stored body.
+pub(crate) fn cited_evidence_bytes(locator: SwarmEvidenceRef, body: &[u8]) -> Result<Vec<u8>> {
+    if let Some((start, end)) = locator.byte_range {
+        let text = decode_turn_body(body)
+            .text
+            .ok_or_else(|| invalid_consolidation("cited turn has no text"))?;
+        if start >= end {
+            return Err(invalid_consolidation("empty evidence byte range"));
+        }
+        let bytes = text
+            .as_bytes()
+            .get(start..end)
+            .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?;
+        std::str::from_utf8(bytes)
+            .map_err(|_| invalid_consolidation("evidence range splits UTF-8 text"))?;
+        Ok(bytes.to_vec())
+    } else {
+        Ok(body.to_vec())
+    }
+}
+
+/// Native TURN source classification at the same bytes the orchestrator
+/// pinned; a generated assistant turn never upgrades the Dreamer floor.
+pub(crate) fn native_turn_source(vault: &Vault, body: &[u8]) -> Result<crate::claim::ClaimSource> {
+    let facts = decode_turn_body(body);
+    let role = dreamer_turn_role(
+        facts.speaker.as_deref(),
+        &vault.config.assistant_display_names,
+    );
+    turn_trust_class(role, false)
+        .ok_or_else(|| invalid_consolidation("inadmissible evidence turn role"))
+}
+
+fn read_source(
+    read: &ScopedRead<'_>,
+    id: &EntityId,
+) -> Result<ScopedReadResult<(u8, u64, Vec<u8>)>> {
     // Restrict the type BEFORE asking for bytes, including at the custody door.
     if !matches!(
         read.vault().get_entity_type(id)?,
@@ -304,11 +684,20 @@ fn read_source(read: &ScopedRead<'_>, id: &EntityId) -> Result<(u8, u64, Vec<u8>
             "branch source is not a turn or conversation",
         ));
     }
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = read.get_entity_parts_with_receipt(id, None)?;
-    value.ok_or_else(|| invalid_consolidation("branch source is not readable"))
+    let ScopedReadResult { value, receipt } = read.read(&[PointRead::id(*id)], None)?.single();
+    let Some(ReadRow {
+        entity_type,
+        learned_at,
+        body: Some(body),
+        ..
+    }) = value
+    else {
+        return Err(invalid_consolidation("branch source is not readable"));
+    };
+    Ok(ScopedReadResult {
+        value: (entity_type, learned_at, body),
+        receipt,
+    })
 }
 
 pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource {

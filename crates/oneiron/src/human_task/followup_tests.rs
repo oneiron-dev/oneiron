@@ -4,7 +4,8 @@ use super::*;
 
 use crate::attempt_queue::AttemptQueue;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, SelfHeldShape,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityStep,
+    SelfHeldShape,
 };
 use crate::comm::{
     CommClaimValue, record_comm_inbound_stop, resolve_or_create_comm_party, run_comm_projector,
@@ -157,14 +158,19 @@ fn add_owner_route(fixture: &HumanFixture) {
         )
         .expect("owner connector key");
     let actor_identity = crate::test_util::entity(ACTOR_IDENTITY);
-    let mut identity = ChannelIdentity::requested(
+    let identity = ChannelIdentity::requested(
         "email",
         ACTOR_ADDRESS,
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::actor(owner),
         NOW,
-    );
-    identity.state = ChannelIdentityState::Active;
+    )
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        NOW,
+    )
+    .and_then(|pending| pending.step(ChannelIdentityStep::Fulfill, NOW))
+    .expect("owner sending face is active");
     vault
         .create_channel_identity(&actor_identity, &identity)
         .expect("owner sending face");
@@ -204,16 +210,14 @@ fn active_email_identity(vault: &Vault) -> EntityId {
         )
         .expect("create channel identity");
     vault
-        .transition_channel_identity(
+        .step_channel_identity(
             &identity_ref,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
             NOW,
-            None,
         )
         .expect("enter fulfillment");
     vault
-        .transition_channel_identity(&identity_ref, ChannelIdentityState::Active, None, NOW, None)
+        .step_channel_identity(&identity_ref, ChannelIdentityStep::Fulfill, NOW)
         .expect("activate the identity");
     identity_ref
 }
@@ -474,7 +478,7 @@ fn preflight_face_is_the_sender_on_the_scheduled_ask_notice() {
         .get_channel_identity(&sender_ref)
         .expect("sender read")
         .expect("sender identity");
-    assert_eq!(sender.address_or_handle, face);
+    assert_eq!(sender.address_or_handle(), face);
     assert_ne!(sender_ref, crate::test_util::entity(0x7C));
 }
 
@@ -529,17 +533,15 @@ fn delegated_read_only_face_is_not_a_sending_route() {
         .expect("delegate identity");
     fixture
         .vault
-        .transition_channel_identity(
+        .step_channel_identity(
             &id,
-            ChannelIdentityState::PendingFulfillment,
-            Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
             NOW,
-            None,
         )
         .expect("pending delegate");
     fixture
         .vault
-        .transition_channel_identity(&id, ChannelIdentityState::Active, None, NOW, None)
+        .step_channel_identity(&id, ChannelIdentityStep::Fulfill, NOW)
         .expect("active delegate");
     fixture
         .vault
@@ -658,7 +660,8 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
                         channel_class: "email".to_owned(),
                         reachable: false,
                     }
-                    .claim_body(),
+                    .claim_body()
+                    .unwrap(),
                     TimeRange { start: 1, end: 1 },
                     1,
                 )
@@ -929,11 +932,7 @@ fn a_lost_cursor_rebuilds_from_the_synced_task_fact() {
     fixture
         .vault
         .with_write_txn(|wtxn| {
-            fixture
-                .vault
-                .store
-                .vault_meta
-                .delete(wtxn, followup_key(task_ref).as_slice())?;
+            FOLLOWUPS.delete(&fixture.vault.store, wtxn, &task_ref)?;
             Ok(())
         })
         .expect("drop the cursor");
@@ -997,5 +996,116 @@ fn non_human_lanes_get_no_cursor() {
             .expect("rebuild"),
         0,
         "a rebuild invents no cursor for a realized lane"
+    );
+}
+
+/// An undeliverable policy push cannot stop an unrelated due human TASK.
+#[test]
+fn failed_policy_push_does_not_stop_an_unrelated_due_human_followup()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::federation::{FederationGrantRole, InitialSharedMember};
+    let fixture = HumanFixture::open();
+    let task = fixture.create_human_task();
+    let due = fixture.cursor(task).next_due_at.expect("due task");
+    let root = fixture.vault.ensure_embedded_owner_actor()?;
+    let owner = fixture.vault.authenticate_owner(
+        root,
+        &root.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    fixture.vault.initialize_shared_vault(
+        &owner,
+        62,
+        None,
+        &[
+            InitialSharedMember {
+                member_ref: root,
+                role: Some(FederationGrantRole::Owner),
+            },
+            InitialSharedMember {
+                member_ref: fixture.person,
+                role: Some(FederationGrantRole::Owner),
+            },
+            // The TASK's creating agent keeps a writing role, so its own
+            // follow-up passes the shared-vault role gate.
+            InitialSharedMember {
+                member_ref: fixture.owner,
+                role: Some(FederationGrantRole::Member),
+            },
+        ],
+        NOW,
+    )?;
+    let invalid_author = EntityId::from_bytes([0xec; 16])?;
+    // A previously queued receipt whose author has lost its actor binding.
+    // The row is well formed and the recipient still holds policy power.
+    let queued = serde_json::json!({
+        "receipt_id": "000-bad-author", "recipient": fixture.person.to_hex(),
+        "author": invalid_author.to_hex(), "scope": "Vault",
+        "grant_target": "policy-row:unavailable-author", "mode": "push_all",
+        "followup_task": null, "digest_due_at": null,
+    });
+    fixture.vault.with_write_txn(|txn| {
+        fixture.vault.store.vault_meta.put(
+            txn,
+            b"owner_policy:notification:queued:v1:000-bad-author",
+            &rmp_serde::to_vec_named(&queued)
+                .map_err(|_| crate::Error::InvariantViolation("test notification encode"))?,
+        )?;
+        Ok(())
+    })?;
+    run_human_followups_on_wake(&fixture.vault, due)?;
+    assert_eq!(fixture.vault.policy_notification_failures()?.len(), 1);
+    assert_eq!(fixture.cursor(task).stage, HumanFollowupStage::ReminderDue);
+    Ok(())
+}
+
+#[test]
+fn token_answer_completes_its_member_and_suppresses_due_reminder_while_group_waits() {
+    use crate::task_verb::{
+        TaskAskOptionId, TaskAskStatus, TaskAskTarget, task_human_assignee, task_is_terminal,
+    };
+    let fixture = HumanFixture::open();
+    add_owner_route(&fixture);
+    let other = crate::test_util::entity(0xD6);
+    put_person(&fixture.vault, other);
+    let mut spec = routed_ask_spec(&fixture);
+    spec.intent_key = "linked-member-followup".into();
+    spec.who = Some(TaskAskTarget::People([fixture.person, other].into()));
+    spec.decide = None;
+    spec.what
+        .options
+        .insert(TaskAskOptionId::new("yes").expect("id"), "Yes".into());
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
+    let receipt = memory.tasks_ask(&spec).expect("two-person ask");
+    let task = receipt
+        .task_refs
+        .into_iter()
+        .find(|task_ref| {
+            task_human_assignee(&fixture.vault, *task_ref).expect("assignee")
+                == Some(fixture.person)
+        })
+        .expect("routed member");
+    let due = fixture.cursor(task).next_due_at.expect("reminder due");
+    let link = memory
+        .tasks_ask_option_link(receipt.handle, fixture.person)
+        .expect("link");
+    fixture
+        .vault
+        .answer_ask_option_link(&link.token, &TaskAskOptionId::new("yes").expect("id"))
+        .expect("bearer answer");
+    assert!(task_is_terminal(&fixture.vault, task).expect("terminal member"));
+    assert!(matches!(
+        memory.tasks_ask_status(receipt.handle).expect("aggregate"),
+        TaskAskStatus::Pending { .. }
+    ));
+    let dispatched = HumanTaskFollowupDriver::new(&fixture.vault)
+        .run_due(due, 8)
+        .expect("due pass");
+    assert!(dispatched.iter().all(|entry| entry.task_ref != task));
+    assert!(fixture.cursor(task).completed_at.is_some());
+    assert_eq!(
+        fixture.scheduled_sends(&task_follow_up_dedupe_key(task, "human_reminder:0")),
+        0
     );
 }

@@ -4,7 +4,7 @@ use rmpv::Value;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
-use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -323,10 +323,32 @@ impl Memory<'_> {
         // deadline has already passed writes a body carrying that past
         // deadline against a later `now`. The public door's born-expired check
         // would refuse exactly the write the expiry lane exists to make.
+        // The generic batch path also admits raw/replayed TASKs. Verify the
+        // facade's actor on this transaction and stamp only a changed typed
+        // write, so a raw write cannot borrow the scheduler's external grant.
+        crate::memory::verify_actor_binding_in_txn(
+            self.vault(),
+            &*wtxn,
+            self.actor(),
+            self.actor_class(),
+        )?;
+        let previous =
+            super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?;
         self.vault()
             .batch_in()
             .put_internal(&task_ref, ENTITY_TYPE_TASK, occurred, now, body)
             .apply(wtxn)?;
+        if super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?
+            > previous
+        {
+            super::linear_store::note_task_writer_in_txn(
+                &self.vault().store,
+                wtxn,
+                task_ref,
+                self.actor(),
+                self.actor_class(),
+            )?;
+        }
         Ok(())
     }
 
@@ -421,7 +443,8 @@ impl Memory<'_> {
         spec: &Value,
         now: u64,
     ) -> MemoryResult<AttemptId> {
-        let outcome = AttemptQueue::new(self.vault()).enqueue_with_task_ref_in_txn(
+        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
+            self.vault(),
             wtxn,
             EnqueueAttempt {
                 kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
@@ -430,7 +453,10 @@ impl Memory<'_> {
                 run_id: None,
                 now,
             },
-            Some(task_ref.to_hex()),
+            crate::ports::JobScope {
+                task_ref: Some(task_ref.to_hex()),
+                dedupe_actor_ref: None,
+            },
         )?;
         let (EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record)) = outcome;
         Ok(record.id)

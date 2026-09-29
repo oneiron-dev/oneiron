@@ -8,12 +8,15 @@ mod document;
 mod forks;
 mod message_stream;
 mod pins;
+mod recovery;
 mod registry;
+mod side_keys;
 mod storage;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
     birth_message_stream_in_txn,
 };
+pub(crate) use recovery::{capture as capture_canonical, restore as restore_canonical};
 mod verbs;
 
 pub use document::{Birth, EntityDoc, TextChange};

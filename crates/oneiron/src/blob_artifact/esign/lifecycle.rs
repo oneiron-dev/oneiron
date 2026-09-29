@@ -106,13 +106,8 @@ pub(super) fn notify(
         {
             return Err(invalid("terminal mail requires sealed output"));
         }
-        let manifest = vault
-            .store
-            .vault_meta
-            .get(
-                txn,
-                &[b"esign.sealed.v1/".as_slice(), document.as_bytes()].concat(),
-            )?
+        let manifest = super::seal::CANONICAL
+            .get_bytes(&vault.store, txn, &document)?
             .ok_or_else(|| invalid("sealed manifest missing"))?;
         let sealed: super::SealedDocument =
             serde_json::from_slice(&manifest).map_err(|_| invalid("sealed manifest schema"))?;
@@ -169,7 +164,8 @@ pub(super) fn notify(
             "generation": seal_generation,
         }))
         .map_err(|_| invalid("delivery encoding"))?;
-        crate::attempt_queue::AttemptQueue::new(vault).enqueue_in_txn(
+        crate::ports::JobQueue::port_job_enqueue(
+            vault,
             txn,
             crate::attempt_queue::EnqueueAttempt {
                 kind: if dispatch_ref.is_some() {

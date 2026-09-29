@@ -25,7 +25,7 @@ pub enum RecordError {
     InvalidProjectBody(&'static str),
     #[error("invalid project home room: {0}")]
     InvalidProjectRoomBody(&'static str),
-    /// A well-formed project reference has not materialized yet.
+    /// A project parent or the signer of its depth fact has not materialized yet.
     #[error("project dependency is not materialized")]
     ProjectDependencyPending,
     #[error("message stream recovery refused: {0}")]
@@ -36,6 +36,9 @@ pub enum RecordError {
     ConversationState(&'static str),
     #[error("conversation actor is not authorized")]
     ConversationDenied,
+    /// A live shared-ancestor rule narrowed the default leader-chat admission.
+    #[error("leader chat refused by rule claim {}", rule.to_hex())]
+    LeaderChatRule { rule: EntityId },
 
     #[error("DAG parent is outside the conversation")]
     DagParentOutsideConversation,
@@ -169,6 +172,10 @@ pub enum RecordError {
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
+    /// A replicated ask fact names a group or person row that has not
+    /// materialized yet. Its proof is checked once that row arrives.
+    #[error("ask fact dependency is not materialized")]
+    AskDependencyPending,
     /// An AUTHORITY_LOG row is append-only at its store key (ONE-1604-D1): a
     /// write carried body-divergent bytes for an existing AUTHORITY_LOG id. Local
     /// callers get this as a hard error; replicated doors classify it as a
@@ -213,7 +220,7 @@ impl RecordError {
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
             Self::ConversationState(_) => ErrorKind::ConversationState,
-            Self::ConversationDenied => ErrorKind::ConversationDenied,
+            Self::ConversationDenied | Self::LeaderChatRule { .. } => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
             Self::DagParentOutsideConversation => ErrorKind::DagParentOutsideConversation,
             Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,
@@ -246,6 +253,7 @@ impl RecordError {
             Self::InvalidSuppressionReceiptBody(_) => ErrorKind::InvalidSuppressionReceiptBody,
             Self::SuppressionReceiptDivergence => ErrorKind::SuppressionReceiptDivergence,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
+            Self::AskDependencyPending => ErrorKind::AskDependencyPending,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             // Deliberately the SAME coarse kind a companion body fault has
             // always reported: only the variant is distinct, so the staging

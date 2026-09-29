@@ -1,21 +1,21 @@
 //! The public verb door and the home-node consumer turn: enqueue, checkout
 //! lease, and one claimed attempt run to a receipt.
 
-use super::CheckoutLeaseRow;
-use super::storage::{booking_writer, decode_row, encode_row, engine_failure, meta_key, put_meta};
+use super::storage::{booking_writer, decode_row, encode_row, engine_failure};
 use super::token::{
     OpaqueCheckoutLeaseToken, SessionKey, lease_digest, mint_raw_token, read_hold_row,
     session_digest, token_page_ref,
 };
 use super::transition::execute_booking_lifecycle_attempt;
 use super::types::{
-    BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_TOKEN_META_PREFIX, BookingLifecycleAttempt,
-    BookingVerbReceipt, BookingVerbRequest, MAX_ATTEMPT_FAILURE_REASON_BYTES,
-    MAX_CHECKOUT_HOLD_TTL_SECS, validate_request,
+    BOOKING_LIFECYCLE_ATTEMPT_KIND, BookingLifecycleAttempt, BookingVerbReceipt,
+    BookingVerbRequest, MAX_ATTEMPT_FAILURE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS,
+    validate_request,
 };
+use super::{CHECKOUT_LEASE, CheckoutLeaseRow};
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    EnqueueAttempt, EnqueueOutcome, FailAttempt,
+    AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
+    EnqueueOutcome, FailAttempt,
 };
 use crate::booking::invite_grant::NoConfirmInviteSink;
 use crate::booking::{BookingError, SlotOracle, SolveRequest, SolveResult};
@@ -77,13 +77,19 @@ pub fn enqueue_booking_verb_with_publication(
     };
     let payload = encode_row(&attempt)?;
 
-    let outcome = AttemptQueue::new(vault)
-        .enqueue(EnqueueAttempt {
-            kind: BOOKING_LIFECYCLE_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key,
-            run_id: None,
-            now: now_utc,
+    let outcome = vault
+        .with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                vault,
+                txn,
+                EnqueueAttempt {
+                    kind: BOOKING_LIFECYCLE_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key,
+                    run_id: None,
+                    now: now_utc,
+                },
+            )
         })
         .map_err(|error| engine_failure("verb enqueue", error))?;
     Ok(match outcome {
@@ -117,9 +123,11 @@ pub fn issue_checkout_lease(
         session_hash: session_digest(session_key),
         expires_at,
     };
-    let key = meta_key(BOOKING_TOKEN_META_PREFIX, &lease_digest(&lease));
-    let encoded = encode_row(&row)?;
-    booking_writer(vault, |wtxn| put_meta(vault, wtxn, &key, &encoded))?;
+    booking_writer(vault, |wtxn| {
+        CHECKOUT_LEASE
+            .put(&vault.store, wtxn, &lease_digest(&lease), &row)
+            .map_err(|error| engine_failure("meta write", error))
+    })?;
     Ok((lease, expires_at))
 }
 
@@ -204,22 +212,25 @@ where
         });
     }
 
-    let queue = AttemptQueue::new(vault);
-    let claimed = queue
-        .claim_kind(
-            BOOKING_LIFECYCLE_ATTEMPT_KIND,
-            ClaimAttempt {
-                lease_owner: input.lease_owner.clone(),
-                now: input.now_utc,
-            },
-        )
+    let claimed = vault
+        .with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_claim(
+                vault,
+                txn,
+                Some(BOOKING_LIFECYCLE_ATTEMPT_KIND),
+                ClaimAttempt {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now_utc,
+                },
+            )
+        })
         .map_err(|error| engine_failure("lifecycle attempt claim", error))?;
     let ClaimOutcome::Claimed(record) = claimed else {
         return Ok(BookingLifecycleTurn::Empty);
     };
 
     let outcome = execute_claimed_attempt(vault, make_oracle, &record, input.now_utc);
-    finalize_attempt(&queue, &record, &outcome, input)?;
+    finalize_attempt(vault, &record, &outcome, input)?;
     outcome.map(BookingLifecycleTurn::Executed)
 }
 
@@ -261,28 +272,40 @@ where
 /// A `SlotTaken` receipt is a SUCCESSFUL attempt: the transition ran and
 /// decided. Only a typed failure fails the row.
 fn finalize_attempt(
-    queue: &AttemptQueue<'_>,
+    vault: &Vault,
     record: &AttemptRecord,
     outcome: &Result<BookingVerbReceipt, BookingError>,
     input: &BookingLifecycleConsumerInput,
 ) -> Result<(), BookingError> {
     match outcome {
-        Ok(_) => queue
-            .complete(CompleteAttempt {
-                id: record.id,
-                lease_owner: input.lease_owner.clone(),
-                attempt_count: record.attempt_count,
-                now: input.now_utc,
+        Ok(_) => vault
+            .with_write_txn(|txn| {
+                crate::ports::JobQueue::port_job_complete(
+                    vault,
+                    txn,
+                    CompleteAttempt {
+                        id: record.id,
+                        lease_owner: input.lease_owner.clone(),
+                        attempt_count: record.attempt_count,
+                        now: input.now_utc,
+                    },
+                )
             })
             .map(|_| ())
             .map_err(|error| engine_failure("lifecycle attempt complete", error)),
-        Err(failure) => queue
-            .fail(FailAttempt {
-                id: record.id,
-                lease_owner: input.lease_owner.clone(),
-                attempt_count: record.attempt_count,
-                reason: attempt_failure_reason(failure),
-                now: input.now_utc,
+        Err(failure) => vault
+            .with_write_txn(|txn| {
+                crate::ports::JobQueue::port_job_fail(
+                    vault,
+                    txn,
+                    FailAttempt {
+                        id: record.id,
+                        lease_owner: input.lease_owner.clone(),
+                        attempt_count: record.attempt_count,
+                        reason: attempt_failure_reason(failure),
+                        now: input.now_utc,
+                    },
+                )
             })
             .map(|_| ())
             .map_err(|error| engine_failure("lifecycle attempt fail", error)),

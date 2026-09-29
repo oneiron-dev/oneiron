@@ -304,3 +304,84 @@ fn a_claim_written_with_no_mask_carries_the_vault_default_facet() -> crate::Resu
     );
     Ok(())
 }
+
+#[test]
+fn candidate_project_stamp_ignores_legacy_corpus_entry() -> crate::Result<()> {
+    use crate::corpus::CorpusScope;
+    use crate::temporal::TemporalAnchorMode;
+    let project = EntityId::from_bytes([0x61; 16])?;
+    let legacy = EntityId::from_bytes([0x62; 16])?;
+    let envelope = WriteEnvelope::new(
+        actor(),
+        ClaimSource::Observed,
+        provenance(),
+        ClaimApprovalStatus::Approved,
+    );
+    let candidate = |scope| {
+        ClaimCandidate::new(
+            "test.project_axis",
+            ClaimSubject::Entity(actor().entity_ref()),
+            Value::from("fact"),
+            1.0,
+        )
+        .with_scope(Value::Map(scope))
+        .into_claim_body(&envelope, actor().entity_ref())
+        .unwrap()
+    };
+    let corpus_entry = (
+        Value::from("corpus_id"),
+        Value::Binary(legacy.as_bytes().to_vec()),
+    );
+    let project_entry = (
+        Value::from("scopeProjectId"),
+        Value::Binary(project.as_bytes().to_vec()),
+    );
+    let legacy_only = candidate(vec![corpus_entry.clone()]);
+    assert_eq!(
+        legacy_only.scope_project,
+        crate::claim::default_project_id()
+    );
+    let first = candidate(vec![corpus_entry.clone(), project_entry.clone()]);
+    let last = candidate(vec![project_entry, corpus_entry]);
+    assert_eq!(first.scope_project, project);
+    assert_eq!(last.scope_project, project);
+
+    // The public read result, not the converter's private map order, decides
+    // which audience sees a stored candidate-derived claim.
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.put_entity(
+        &actor().entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 9, end: 9 },
+        9,
+        b"actor",
+    )?;
+    let id = EntityId::from_bytes([0x63; 16])?;
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            crate::TimeRange { start: 10, end: 10 },
+            10,
+            &crate::claim::encode_claim_body(&last)?,
+        )
+        .commit()?;
+    let query = |scope| -> crate::Result<Vec<EntityId>> {
+        Ok(vault
+            .query()
+            .search_temporal_with_sigma(10, 10, 10, TemporalAnchorMode::Occurred, 10)
+            .temporal_adaptive(false)
+            .filter_types(&[crate::registry::ENTITY_TYPE_CLAIM])
+            .corpus(scope)
+            .run()?
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect())
+    };
+    assert_eq!(query(CorpusScope::Corpus(project))?, vec![id]);
+    assert!(query(CorpusScope::Corpus(legacy))?.is_empty());
+    assert!(!query(CorpusScope::Unscoped)?.contains(&id));
+    Ok(())
+}

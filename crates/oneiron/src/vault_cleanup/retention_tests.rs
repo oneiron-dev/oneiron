@@ -76,7 +76,7 @@ fn retention_archives_only_old_completed_tasks_and_resolver_restores_same_bytes(
         0.99,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Observed);
     vault.put_claim(
         &evidence,

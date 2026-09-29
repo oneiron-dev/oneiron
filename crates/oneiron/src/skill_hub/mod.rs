@@ -5,6 +5,7 @@ mod admission;
 mod admission_guard;
 mod admission_view;
 mod bootstrap;
+mod claim_refinement;
 mod default_hub;
 mod doors;
 mod folder;
@@ -12,23 +13,52 @@ mod git_fetch;
 mod git_process;
 mod http_fetch;
 mod import_receipt;
+mod install_transition;
+pub use import_receipt::{
+    HubImportReceipt, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
+};
 mod package_codec;
 mod publisher;
-pub use import_receipt::HubImportReceipt;
+mod refinement_admission;
+mod refinement_custody;
 mod shared_delta;
 mod shared_gate;
 
 pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
-pub(crate) use admission_guard::check_hub_skill_put;
+pub(crate) use admission_guard::HubAdmissionProof;
+pub(crate) use admission_guard::{check_hub_skill_put, scan_skill_admission};
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
-pub(crate) use bootstrap::HubAdmissionProof;
-pub(crate) use default_hub::seed_default_skill_hub;
+pub use claim_refinement::{
+    ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt,
+    HeldOutClaimReplayCase, HeldOutClaimReplayScorer, LocalClaimRefinement,
+    UsefulUpstreamClaimJudge,
+};
+pub(crate) use claim_refinement::{
+    claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
+};
+pub(crate) use default_hub::{
+    MODEL_PACK_HASH, MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub,
+};
 pub use default_hub::{default_skill_hub_commit, default_skill_hub_id};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
+pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
+pub(crate) use refinement_admission::{
+    RefinementAdmissionProof, skill_refinement_origin_in_txn, stage_refinement_origin,
+    validate_refinement_admission,
+};
+#[cfg(test)]
+pub(crate) use refinement_custody::refinement_carriers_for_holder_in_txn;
+pub(crate) use refinement_custody::{
+    erase_refinement_custody_in_txn, refinement_custody_exists_in_txn,
+    remove_refinement_carrier_in_txn, retire_refinement_holder_in_txn,
+    stage_refinement_carrier_put, validate_refinement_carrier_put,
+};
+#[cfg(feature = "sync")]
+pub(crate) use refinement_custody::{refinement_carrier_holder, refinement_carrier_matches_id};
 pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
     SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, UsefulUpstreamJudge,
@@ -36,6 +66,8 @@ pub use shared_gate::{
 
 #[cfg(test)]
 mod admission_tests;
+#[cfg(test)]
+mod claim_refinement_tests;
 #[cfg(test)]
 mod transport_tests;
 
@@ -58,7 +90,7 @@ pub use self::index::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use self::package::{
     HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat,
 };
-pub(crate) use folder::package_from_source;
+pub(crate) use folder::{declared_role_call, package_from_source};
 mod fork_source;
 pub use self::record::{
     HUB_PIN_KEYS, HUB_REF_KEYS, HubPin, HubRef, HubSyncPolicy, SKILL_HUB_BODY_KEYS, SkillHubKind,
@@ -86,8 +118,8 @@ pub(crate) use self::verdict::{
 // the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
 use self::index::{
-    CONTENT_HASH_INDEX_SCHEMA_VERSION, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY,
-    MAX_HUB_SKILL_SCAN_ENTRIES, content_hash_index_key, same_hub_alias,
+    CONTENT_HASH_INDEX, CONTENT_HASH_INDEX_SCHEMA_VERSION, MAX_HUB_SKILL_SCAN_ENTRIES,
+    SCHEMA_VERSION, same_hub_alias,
 };
 #[cfg(test)]
 use self::support::{map_text, map_value};

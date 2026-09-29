@@ -194,13 +194,13 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
         .unwrap()
         .id;
     crate::test_util::authorize_readers(&vault, &["viewer"]);
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = vault
+    let row = vault
         .scoped_read(ScopedReadActorKey::new("viewer").unwrap())
-        .get_entity_parts_with_receipt(&retired, None)?;
-    let mut skill = crate::skill::decode_skill_record(&value.unwrap().2)?;
+        .read(&[crate::claim::PointRead::id(retired)], None)?
+        .single()
+        .value
+        .expect("readable skill");
+    let mut skill = crate::skill::decode_skill_record(&row.body.expect("live body"))?;
     skill.lifecycle_status = SkillLifecycle::Superseded;
     vault.put_entity(
         &retired,
@@ -287,7 +287,8 @@ fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> 
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         posterior.source = Some(ClaimSource::Observed);
         vault.with_write_txn(|txn| {
             vault.put_reserved_claim_in_txn(
@@ -309,6 +310,133 @@ fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> 
         vec![skills[3], skills[5], skills[1], skills[0], skills[2]],
         "posterior mean first, then UCB exploration for equal-mean arms"
     );
+    Ok(())
+}
+
+#[test]
+fn executor_pair_controls_production_pack_skill_ranking() -> Result<()> {
+    use crate::claim::{ClaimBody, ClaimSubject};
+    use crate::skill_reliability::PREDICATE_SKILL_RELIABILITY;
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let mut ids = Vec::new();
+    for index in 1..=2 {
+        let id = crate::test_util::entity(index);
+        let mut skill = SkillRecord::new(
+            format!("skill.pair.{index}"),
+            "pair ranking",
+            "v1",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            0.01,
+            false,
+            true,
+            vec![],
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("fixture"),
+            )]),
+        );
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_SKILL,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encode_skill_record(&skill)?,
+            )
+            .text(&id, &[("body", "channel")])
+            .commit()?;
+        skill.lifecycle_status = SkillLifecycle::Active;
+        vault.update_skill_record(&id, &skill, TimeRange { start: 2, end: 2 }, 2)?;
+        vault.batch().text(&id, &[("body", "channel")]).commit()?;
+        ids.push(id);
+    }
+    for (n, model, alpha, beta) in [
+        (0, "old@1", 90.0, 10.0),
+        (1, "old@1", 10.0, 90.0),
+        (2, "new@2", 10.0, 90.0),
+        (3, "new@2", 90.0, 10.0),
+    ] {
+        let id = ids[n % 2];
+        let mut body = ClaimBody::new(
+            PREDICATE_SKILL_RELIABILITY,
+            ClaimSubject::Entity(id),
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("alpha"), rmpv::Value::F32(alpha)),
+                (rmpv::Value::from("beta"), rmpv::Value::F32(beta)),
+                (rmpv::Value::from("executor"), rmpv::Value::from(model)),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.source = Some(ClaimSource::Observed);
+        vault.with_write_txn(|txn| {
+            vault.put_reserved_claim_in_txn(
+                txn,
+                &crate::test_util::entity(u8::try_from(n + 100).expect("small fixture")),
+                &body,
+                TimeRange { start: 3, end: 3 },
+                3,
+            )
+        })?;
+    }
+    let rank = |model: &str| -> Result<Vec<crate::EntityId>> {
+        Ok(vault
+            .context_pack()
+            .skill_executor(model)?
+            .search_text("channel", 20)
+            .run()?
+            .capabilities
+            .iter()
+            .map(|hit| hit.id)
+            .collect())
+    };
+    assert_eq!(rank("old@1")?, ids);
+    assert_eq!(rank("new@2")?, vec![ids[1], ids[0]]);
+    assert!(
+        vault
+            .context_pack()
+            .skill_executor("missing-revision")
+            .is_err()
+    );
+    let unmeasured = rank("new@3")?;
+    assert_eq!(unmeasured.len(), 2);
+    let captured = |model: Option<&str>| -> Result<_> {
+        let mut builder = vault
+            .context_pack()
+            .search_text("private-query-sentinel", 20)
+            .replay_query_ref("eval://pair-routing")
+            .capture_retrieval_trace(true);
+        if let Some(model) = model {
+            builder = builder.skill_executor(model)?;
+        }
+        let run = builder.run_with_telemetry()?;
+        let row = vault
+            .retrieval_run(run.run_id.expect("recorded run"))?
+            .expect("row");
+        let inputs = row.replay_inputs.expect("captured replay inputs");
+        assert!(!inputs.config.to_string().contains("private-query-sentinel"));
+        Ok((inputs.config, row.trace.expect("trace").fork_hash))
+    };
+    let (old_config, old_hash) = captured(Some("old@1"))?;
+    let (new_config, new_hash) = captured(Some("new@2"))?;
+    let (unknown_config, unknown_hash) = captured(None)?;
+    assert_eq!(old_config["skill_executor"], "old@1");
+    assert_eq!(old_config["pack"]["assembly"]["skill_executor"], "old@1");
+    assert_eq!(new_config["skill_executor"], "new@2");
+    assert_eq!(new_config["pack"]["assembly"]["skill_executor"], "new@2");
+    assert!(unknown_config["skill_executor"].is_null());
+    assert!(unknown_config["pack"]["assembly"]["skill_executor"].is_null());
+    assert_ne!(old_hash, new_hash);
+    assert_ne!(old_hash, unknown_hash);
+    assert_ne!(new_hash, unknown_hash);
+    assert_eq!(old_hash, captured(Some("old@1"))?.1);
     Ok(())
 }
 

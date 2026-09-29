@@ -45,6 +45,7 @@ fn drive(vault: &Vault, now: u64) -> Result<()> {
         budget_total_units: 1000,
         reserve_units: 10,
         now,
+        host_scope: None,
     };
     let cancel = WakeCancellation::new();
     let mut exec = UnusedExecutor;
@@ -62,6 +63,7 @@ fn drive(vault: &Vault, now: u64) -> Result<()> {
 #[test]
 fn idle_curator_grades_own_consolidation_and_only_proposes_minimum_force() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let actor = vault.dreamer_authority()?;
     let target = entity(0x51);
     let envelope = WriteEnvelope::new(
@@ -73,16 +75,18 @@ fn idle_curator_grades_own_consolidation_and_only_proposes_minimum_force() -> Re
         )]))?,
         ClaimApprovalStatus::Proposed,
     );
+    let candidate = ClaimCandidate::new(
+        "profile.preference",
+        ClaimSubject::Entity(actor.entity_ref()),
+        Value::from("old consolidation"),
+        0.9,
+    );
+    let envelope = crate::test_util::sign_machine_candidate(&vault, &target, &candidate, &envelope);
     vault
         .batch()
         .claim_candidate(
             &target,
-            ClaimCandidate::new(
-                "profile.preference",
-                ClaimSubject::Entity(actor.entity_ref()),
-                Value::from("old consolidation"),
-                0.9,
-            ),
+            candidate,
             &envelope,
             TimeRange { start: 1, end: 1 },
             1,
@@ -90,7 +94,14 @@ fn idle_curator_grades_own_consolidation_and_only_proposes_minimum_force() -> Re
         .commit()?;
     let mut body = vault.get_claim(&target)?.unwrap();
     body.approval = ClaimApprovalStatus::Approved;
-    vault.put_claim(&target, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    // The owner approves the Dreamer's MACHINE proposal through its signed
+    // history.
+    let approver = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    crate::test_util::bind_test_owner(&vault, approver);
+    vault.approve_machine_claim_as(
+        target,
+        crate::WriteActor::new(approver, crate::EdgeActorClass::Human),
+    )?;
     vault.schedule_curator(CuratorTrigger::Idle, 100_000)?;
     drive(&vault, 100_000)?;
     assert_eq!(vault.get_claim(&target)?, Some(body));
@@ -164,6 +175,7 @@ fn idle_curator_grades_own_consolidation_and_only_proposes_minimum_force() -> Re
 #[test]
 fn config_artifact_version_and_backbone_change_emits_retune_proposal() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner = entity(0x61);
     let artifact = entity(0x62);
     vault.put_entity(
@@ -306,6 +318,7 @@ fn config_artifact_version_and_backbone_change_emits_retune_proposal() -> Result
 #[test]
 fn score_regression_flags_only_targets_past_their_v1_cutoffs() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner = entity(0x63);
     let artifact = entity(0x64);
     vault.put_entity(
@@ -397,6 +410,7 @@ fn score_regression_flags_only_targets_past_their_v1_cutoffs() -> Result<()> {
 #[test]
 fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let (_other_dir, other) = open_test_vault_with(embedding_test_config());
     let actor = entity(0x71);
     other.put_entity(

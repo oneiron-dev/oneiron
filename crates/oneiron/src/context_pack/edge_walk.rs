@@ -202,7 +202,8 @@ pub(super) fn walk_edges(
                 {
                     continue;
                 }
-                if let Some(raw) = store.entities.get(rtxn, edge.target.as_bytes())?
+                if let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, &edge.target)?
                     && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
                     && (matches!(
                         header.entity_type,

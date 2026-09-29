@@ -12,6 +12,7 @@ use super::record::{
     SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES, SKILL_VERSION_MAX_BYTES,
     SkillDependency, SkillRecord,
 };
+use super::role::SkillRole;
 use crate::error::ArtifactError;
 
 pub(super) fn validate_skill_record(record: &SkillRecord) -> Result<()> {
@@ -58,7 +59,26 @@ pub(super) fn validate_skill_record(record: &SkillRecord) -> Result<()> {
             "quarantined is a human-ratified state: approval must be approved",
         )));
     }
+    match (&record.role, &record.call) {
+        (SkillRole::Callable, Some(call)) => call.validate()?,
+        (SkillRole::Callable, None) => {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "callable role requires call contract",
+            )));
+        }
+        (_, Some(_)) => {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "only a callable role may declare call",
+            )));
+        }
+        (_, None) => {}
+    }
     validate_provenance(&record.provenance)?;
+    if super::resident_of(record)?.is_some() && record.forked_from.is_none() {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "resident skill must carry forkedFrom lineage",
+        )));
+    }
     validate_dependencies(&record.skill_id, &record.dependencies)?;
     Ok(())
 }
@@ -183,6 +203,11 @@ fn validate_skill_update_for_door(
     if prior.forked_from != updated.forked_from {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "forkedFrom lineage cannot change on update",
+        )));
+    }
+    if super::resident_of(prior)? != super::resident_of(updated)? {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "resident ownership cannot change on update",
         )));
     }
     // Lifecycle machine (ARCH-0053 §6): a superseded revision is frozen

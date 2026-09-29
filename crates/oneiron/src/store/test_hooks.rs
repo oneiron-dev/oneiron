@@ -18,7 +18,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{LazyLock, Mutex};
 
@@ -37,6 +37,7 @@ use crate::store::GateDecisionId;
 /// the vault it opened; a sibling test running in the same binary opened a
 /// different vault and cannot see it.
 type GraphAskPreflightHook = (EntityId, Box<dyn FnOnce() + Send>);
+type BeforeDreamerPersonMintHook = Box<dyn FnOnce(&crate::Vault) + Send>;
 
 #[derive(Default)]
 pub(crate) struct TestHooks {
@@ -53,6 +54,11 @@ pub(crate) struct TestHooks {
     /// sync on this vault. The durability fence is what the count proves, so
     /// the reader wants an exact delta and now gets one.
     force_sync_calls: AtomicUsize,
+    /// One-shot failure after a durable fallback is saved, before policy resolution.
+    fail_next_dreamer_failure_policy_read: AtomicBool,
+    /// One-shot Dreamer boundary after a fallback passed read-side policy but
+    /// before the PERSON writer opens its transaction.
+    before_dreamer_person_mint: Mutex<Option<BeforeDreamerPersonMintHook>>,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One vault-owned rendezvous after a graph ask's last read preflight,
@@ -60,9 +66,63 @@ pub(crate) struct TestHooks {
     after_graph_ask_preflight: Mutex<Option<GraphAskPreflightHook>>,
     /// One-shot local-repo ingest boundary before its writer transaction.
     pub(crate) before_codebase_ingest_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One vault-scoped pause before correction obtains its write lock.
+    before_weave_correction_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
+    pub(crate) fn install_before_weave_correction_writer(
+        &self,
+        hook: impl FnOnce() + Send + 'static,
+    ) {
+        *self
+            .before_weave_correction_writer
+            .lock()
+            .expect("correction hook lock") = Some(Box::new(hook));
+    }
+
+    pub(crate) fn signal_before_weave_correction_writer(&self) {
+        let hook = self
+            .before_weave_correction_writer
+            .lock()
+            .expect("correction hook lock")
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    pub(crate) fn install_before_dreamer_person_mint(
+        &self,
+        hook: impl FnOnce(&crate::Vault) + Send + 'static,
+    ) {
+        *self
+            .before_dreamer_person_mint
+            .lock()
+            .expect("person mint hook") = Some(Box::new(hook));
+    }
+
+    pub(crate) fn run_before_dreamer_person_mint(&self, vault: &crate::Vault) {
+        let hook = self
+            .before_dreamer_person_mint
+            .lock()
+            .expect("person mint hook")
+            .take();
+        if let Some(hook) = hook {
+            hook(vault);
+        }
+    }
+
+    pub(crate) fn arm_fail_next_dreamer_failure_policy_read(&self) {
+        self.fail_next_dreamer_failure_policy_read
+            .store(true, Ordering::Release);
+    }
+
+    pub(crate) fn take_fail_next_dreamer_failure_policy_read(&self) -> bool {
+        self.fail_next_dreamer_failure_policy_read
+            .swap(false, Ordering::AcqRel)
+    }
+
     pub(crate) fn install_graph_ask_preflight(
         &self,
         unit: EntityId,
@@ -194,6 +254,11 @@ type LmdbOpenHookSlot = LazyLock<Mutex<Vec<TargetedLmdbOpenHook>>>;
 #[cfg(target_os = "linux")]
 static BEFORE_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(Vec::new()));
 
+#[cfg(unix)]
+thread_local! {
+    static AFTER_CREATE_ROOT_BIND: RefCell<Vec<TargetedLmdbOpenHook>> = const { RefCell::new(Vec::new()) };
+}
+
 /// The mirror of [`BEFORE_LMDB_OPEN`] on the other side of the open: on the
 /// existing-only door it runs the instant `mdb_env_open` returns, before any
 /// post-open identity check, which is what lets an ABA schedule restore the
@@ -241,6 +306,34 @@ pub(super) fn arm_before_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Sen
 #[cfg(target_os = "linux")]
 pub(super) fn run_before_lmdb_open(path: &Path) {
     run_lmdb_open_hook(&BEFORE_LMDB_OPEN, path);
+}
+
+/// Interleave after the create-capable door captures its root descriptor but
+/// before preflight or LMDB open observes the caller's pathname.
+#[cfg(unix)]
+pub(crate) fn arm_after_create_root_bind(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
+    AFTER_CREATE_ROOT_BIND.with(|slot| {
+        let mut armed = slot.borrow_mut();
+        armed.retain(|armed| armed.path != path);
+        armed.push(TargetedLmdbOpenHook {
+            path,
+            hook: Box::new(hook),
+        });
+    });
+}
+
+#[cfg(unix)]
+pub(super) fn run_after_create_root_bind(path: &Path) {
+    let hook = AFTER_CREATE_ROOT_BIND.with(|slot| {
+        let mut armed = slot.borrow_mut();
+        armed
+            .iter()
+            .position(|armed| armed.path == path)
+            .map(|at| armed.swap_remove(at).hook)
+    });
+    if let Some(hook) = hook {
+        hook(path);
+    }
 }
 
 pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {

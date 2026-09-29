@@ -14,7 +14,6 @@ use crate::memory::{
 use crate::outbound_chokepoint::{
     FanoutApprovalChoice, FanoutApprovalError, approve_and_resume_fanout, fanout_plan_digest,
 };
-use crate::unix_seconds_now;
 
 impl Memory<'_> {
     /// Reads the durable run, including a denial parked across restart.
@@ -70,7 +69,7 @@ impl Memory<'_> {
                 "Choose approve-and-remember for this cap.",
             ));
         }
-        let now = unix_seconds_now();
+        let now = self.vault().now_recorded_at();
         self.vault()
             .memory(owner.actor(), crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {

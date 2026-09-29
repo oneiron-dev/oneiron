@@ -224,7 +224,7 @@ fn anchor_session_admission_checks_both_base_and_overlay_dependencies() -> Resul
             } else {
                 Value::from(subject.to_hex())
             };
-            let body = subject_fact(PREDICATE_ACTOR_SUBJECT_REF, actor, value, writer(), 100);
+            let body = subject_fact(PREDICATE_ACTOR_SUBJECT_REF, actor, value, writer(), 100)?;
             entries.push(put_entry(
                 scope,
                 id,
@@ -282,7 +282,7 @@ fn anchor_session_admission_observes_only_earlier_dependency_ops() -> Result<()>
             Value::from(subject.to_hex()),
             writer(),
             100,
-        );
+        )?;
         let ops = [
             put_entry(scope, actor, ENTITY_TYPE_PERSON, b"actor".to_vec()),
             put_entry(scope, subject, ENTITY_TYPE_PERSON, b"subject".to_vec()),
@@ -318,7 +318,7 @@ fn substrate_session_admission_observes_only_earlier_person_ops() -> Result<()> 
                 Value::from("model"),
                 writer(),
                 100,
-            );
+            )?;
             let dependency = put_entry(scope, person, kind, b"person".to_vec());
             let claim = put_entry(scope, id, ENTITY_TYPE_CLAIM, encode_claim_body(&body)?);
             let entries = if person_first {
@@ -357,7 +357,7 @@ fn anchor_session_admission_honors_overlay_masks_over_base_dependencies() -> Res
                 Value::from(subject.to_hex()),
                 writer(),
                 100,
-            );
+            )?;
             let claim = put_entry(scope, id, ENTITY_TYPE_CLAIM, encode_claim_body(&body)?);
             if tombstone {
                 let route = session.write_route()?;

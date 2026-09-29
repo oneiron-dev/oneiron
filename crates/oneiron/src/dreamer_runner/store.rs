@@ -7,17 +7,17 @@ use crate::attempt_queue::{
 };
 use crate::dreamer_wake::WakeTrigger;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 
 use super::codec::{
-    decode_dreamer_attempt_payload, decode_parked_record, decode_run_tree_record,
-    encode_dreamer_attempt_payload, encode_parked_record, encode_run_tree_record,
-    invalid_dreamer_runner, parked_key, run_tree_key, validate_attempt_type, validate_park_owner,
-    validate_park_reason,
+    decode_dreamer_attempt_payload, encode_dreamer_attempt_payload, invalid_dreamer_runner,
+    validate_attempt_type, validate_park_owner, validate_park_reason,
 };
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
     DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -27,6 +27,13 @@ use super::types::{
     FailDreamerAttemptOutcome, ParkDreamerAttempt,
 };
 use crate::error::MaintenanceError;
+
+/// Private parent/child attempt-tree edge row, keyed by attempt id.
+pub(super) const RUN_TREE: SideTable<AttemptId, DreamerRunTreeRecord, Raw> =
+    SideTable::new(&side_table::DREAMER_RUN_TREE);
+/// Private paused-attempt row, keyed by attempt id.
+pub(super) const PARKED: SideTable<AttemptId, DreamerParkedAttemptRecord, Raw> =
+    SideTable::new(&side_table::DREAMER_PARKED);
 
 /// Private Dreamer runner store over an already-open vault.
 pub struct DreamerRunnerStore<'a> {
@@ -42,6 +49,12 @@ impl<'a> DreamerRunnerStore<'a> {
             vault,
             attempts: AttemptQueue::new(vault),
         }
+    }
+
+    /// The vault backing this store; used by the engine's one wake scheduler.
+    #[must_use]
+    pub(crate) fn vault(&self) -> &'a Vault {
+        self.vault
     }
 
     /// Enqueues a Dreamer attempt and records its private run-tree parent row in
@@ -72,7 +85,8 @@ impl<'a> DreamerRunnerStore<'a> {
         };
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
-        let outcome = self.attempts.enqueue_with_task_ref_in_txn(
+        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
+            self.vault,
             wtxn,
             EnqueueAttempt {
                 kind: DREAMER_RUNNER_ATTEMPT_KIND.to_owned(),
@@ -81,7 +95,10 @@ impl<'a> DreamerRunnerStore<'a> {
                 run_id: input.run_id,
                 now: input.now,
             },
-            task_ref,
+            crate::ports::JobScope {
+                task_ref,
+                dedupe_actor_ref: None,
+            },
         )?;
 
         let record = match &outcome {
@@ -284,7 +301,7 @@ impl<'a> DreamerRunnerStore<'a> {
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
     /// take the advisory dedupe floor, and co-commit the private run-tree row
     /// whichever way the queue answered.
-    pub(super) fn enqueue_kind_in_txn(
+    pub(crate) fn enqueue_kind_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
@@ -295,7 +312,8 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
-        let outcome = self.attempts.enqueue_in_txn(
+        let outcome = crate::ports::JobQueue::port_job_enqueue(
+            self.vault,
             wtxn,
             EnqueueAttempt {
                 kind: queue_kind.to_owned(),
@@ -380,7 +398,8 @@ impl<'a> DreamerRunnerStore<'a> {
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome = self.vault.with_write_txn(|wtxn| {
-            let outcome = self.attempts.complete_in_txn(
+            let outcome = crate::ports::JobQueue::port_job_complete(
+                self.vault,
                 wtxn,
                 CompleteAttempt {
                     id: input.id,
@@ -465,7 +484,8 @@ impl<'a> DreamerRunnerStore<'a> {
                         "agent dispatch failures require typed detector evidence",
                     ));
                 }
-                let outcome = self.attempts.fail_in_txn(
+                let outcome = crate::ports::JobQueue::port_job_fail(
+                    self.vault,
                     wtxn,
                     FailAttempt {
                         id: input.id,
@@ -509,11 +529,7 @@ impl<'a> DreamerRunnerStore<'a> {
     /// Reads a private Dreamer run-tree row.
     pub fn run_tree(&self, attempt_id: AttemptId) -> Result<Option<DreamerRunTreeRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let key = run_tree_key(attempt_id);
-        let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
-            return Ok(None);
-        };
-        decode_run_tree_record(&raw).map(Some)
+        RUN_TREE.get(&self.vault.store, &rtxn, &attempt_id)
     }
 
     /// Parks a Dreamer attempt in private runner state without changing the
@@ -546,15 +562,7 @@ impl<'a> DreamerRunnerStore<'a> {
             park_owner: input.park_owner,
             parked_at: input.now,
         };
-        let encoded = encode_parked_record(&record)?;
-        let key = parked_key(record.attempt_id);
-        let existing = self
-            .vault
-            .store
-            .vault_meta
-            .get(&*wtxn, &key)?
-            .map(|raw| decode_parked_record(&raw))
-            .transpose()?;
+        let existing = PARKED.get(&self.vault.store, &*wtxn, &record.attempt_id)?;
         if let Some(existing) = existing
             && existing.park_owner != record.park_owner
         {
@@ -562,7 +570,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 "dreamer parked row is owned by a different parker",
             ));
         }
-        self.vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        PARKED.put(&self.vault.store, wtxn, &record.attempt_id, &record)?;
         Ok(record)
     }
 
@@ -598,11 +606,9 @@ impl<'a> DreamerRunnerStore<'a> {
         park_owner: &str,
         _now: u64,
     ) -> Result<Option<DreamerAttemptStatus>> {
-        let key = parked_key(attempt_id);
-        let Some(raw) = self.vault.store.vault_meta.get(wtxn, &key)? else {
+        let Some(record) = PARKED.get(&self.vault.store, &*wtxn, &attempt_id)? else {
             return Ok(None);
         };
-        let record = decode_parked_record(&raw)?;
         if record.park_owner != park_owner {
             return Err(invalid_dreamer_runner(
                 "dreamer parked row is owned by a different parker",
@@ -611,7 +617,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let status = self
             .status(attempt_id)?
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
-        self.vault.store.vault_meta.delete(wtxn, &key)?;
+        PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         Ok(Some(status))
     }
 
@@ -621,11 +627,7 @@ impl<'a> DreamerRunnerStore<'a> {
         attempt_id: AttemptId,
     ) -> Result<Option<DreamerParkedAttemptRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let key = parked_key(attempt_id);
-        let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
-            return Ok(None);
-        };
-        decode_parked_record(&raw).map(Some)
+        PARKED.get(&self.vault.store, &rtxn, &attempt_id)
     }
 
     /// Pure proposal step. This method performs no LMDB write and enqueues no
@@ -667,6 +669,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+        || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
 }
 
@@ -688,8 +691,7 @@ fn ensure_run_tree_record_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
 ) -> Result<()> {
-    let key = run_tree_key(record.id);
-    if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
+    if RUN_TREE.contains(&vault.store, &*wtxn, &record.id)? {
         return Ok(());
     }
     let status = decode_dreamer_attempt_status(record.clone())?;
@@ -709,8 +711,5 @@ fn put_run_tree_record_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &DreamerRunTreeRecord,
 ) -> Result<()> {
-    let encoded = encode_run_tree_record(record)?;
-    let key = run_tree_key(record.attempt_id);
-    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
-    Ok(())
+    RUN_TREE.put(&vault.store, wtxn, &record.attempt_id, record)
 }

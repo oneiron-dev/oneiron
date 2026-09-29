@@ -467,20 +467,19 @@ fn seed_digest_proposal(vault: &Vault, seed: u8) {
         ClaimApprovalStatus::Proposed,
     );
     let id = EntityId::from_bytes([seed; 16]).unwrap();
+    let candidate = ClaimCandidate::new(
+        "dreamer.proactivity.follow_up",
+        ClaimSubject::Entity(actor.entity_ref()),
+        rmpv::Value::from("pending"),
+        0.7,
+    );
+    // The Dreamer signs its proposal with the key the host retained.
+    let envelope = vault
+        .sign_retained_machine_claim_for_test(&id, &candidate, &envelope)
+        .unwrap();
     vault
         .batch()
-        .claim_candidate(
-            &id,
-            ClaimCandidate::new(
-                "dreamer.proactivity.follow_up",
-                ClaimSubject::Entity(actor.entity_ref()),
-                rmpv::Value::from("pending"),
-                0.7,
-            ),
-            &envelope,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .claim_candidate(&id, candidate, &envelope, TimeRange { start: 1, end: 1 }, 1)
         .commit()
         .unwrap();
 }
@@ -501,21 +500,20 @@ fn seed_digest_proposal_in_txn(vault: &Vault, seed: u8, rollback: bool) {
         ClaimApprovalStatus::Proposed,
     );
     let id = EntityId::from_bytes([seed; 16]).unwrap();
+    let candidate = ClaimCandidate::new(
+        "dreamer.proactivity.follow_up",
+        ClaimSubject::Entity(actor.entity_ref()),
+        rmpv::Value::from("pending"),
+        0.7,
+    );
+    // The Dreamer signs its proposal with the key the host retained.
+    let envelope = vault
+        .sign_retained_machine_claim_for_test(&id, &candidate, &envelope)
+        .unwrap();
     let result = vault.with_write_txn(|txn| {
         vault
             .batch_in()
-            .claim_candidate(
-                &id,
-                ClaimCandidate::new(
-                    "dreamer.proactivity.follow_up",
-                    ClaimSubject::Entity(actor.entity_ref()),
-                    rmpv::Value::from("pending"),
-                    0.7,
-                ),
-                &envelope,
-                TimeRange { start: 1, end: 1 },
-                1,
-            )
+            .claim_candidate(&id, candidate, &envelope, TimeRange { start: 1, end: 1 }, 1)
             .apply(txn)?;
         if rollback {
             return Err(oneiron::Error::InvalidConfig("test rollback".into()));

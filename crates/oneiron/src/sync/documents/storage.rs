@@ -1,6 +1,7 @@
 //! Snapshot-then-update recovery and transactional text-plane persistence.
 
-use crate::error::{Error, Result, SyncProtocolValidation};
+use crate::error::{Error, Result};
+use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::{EntityId, Vault};
 use loro::VersionVector;
 
@@ -8,35 +9,17 @@ pub(crate) use crate::note::storage::{
     import_complete, load, load_for_erasure, snapshot, state_copy,
 };
 
+/// Appends one update at the entity's next sequence. The cached state vector is marked stale by
+/// its absence; recovery never trusts it.
 pub(crate) fn append(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     bytes: &[u8],
 ) -> Result<u32> {
-    let hex = id.to_hex();
-    let seq_key = format!("m:u_seq:e:{hex}");
-    let seq = match vault.store.sync_state.get(txn, &seq_key)? {
-        Some(bytes) => u32::from_be_bytes(
-            bytes[..]
-                .try_into()
-                .map_err(|_| Error::sync_protocol(SyncProtocolValidation::InvalidDocumentKey))?,
-        ),
-        None => 0,
-    }
-    .checked_add(1)
-    .ok_or(Error::InvariantViolation("document sequence exhausted"))?;
     vault
         .store
-        .sync_state
-        .put(txn, &format!("u:e:{hex}:{seq:08x}"), bytes)?;
-    vault
-        .store
-        .sync_state
-        .put(txn, &seq_key, &seq.to_be_bytes())?;
-    // Absence denotes a stale cached state vector. Recovery never trusts it.
-    vault.store.sync_state.delete(txn, &format!("sv:e:{hex}"))?;
-    Ok(seq)
+        .port_document_update_append(txn, DocumentSlot::of(id), bytes)
 }
 
 pub(crate) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {

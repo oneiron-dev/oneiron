@@ -237,7 +237,7 @@ fn session_scope_precedes_text_topk_and_deep_candidate_bodies() -> TestResult {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.world = Some(claim_world);
         vault
             .batch()
@@ -356,7 +356,7 @@ fn standard_specificity_ignores_unreadable_inbound_mentions() -> TestResult {
             0.9,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         vault
             .batch()
             .put_replicated(
@@ -368,7 +368,12 @@ fn standard_specificity_ignores_unreadable_inbound_mentions() -> TestResult {
             )
             .edge(&hidden, crate::edge::EdgeKind::Mentions, &anchor, 1.0)
             .commit()?;
-        assert!(scoped.get(&hidden)?.is_none());
+        assert!(
+            scoped
+                .read(&[crate::claim::PointRead::id(hidden)], None)?
+                .single()
+                .is_none()
+        );
     }
     let after = scoped.search_with_effort(&request)?;
     assert_eq!(hit_ids(&after), hit_ids(&baseline));
@@ -390,7 +395,7 @@ fn session_scope_cannot_admit_a_hidden_document_at_any_effort() -> TestResult {
         0.9,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault
         .batch()
         .put_replicated(
@@ -494,7 +499,7 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        ))
+        )?)
     };
     let body = claim("ranked zebra")?;
     vault
@@ -516,15 +521,13 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
     assert_eq!(hit_ids(&result), vec![id]);
     assert_ne!(vault.indexed_revision(&id)?, Some(before));
     assert_eq!(result.revisions.get(&id), Some(&before));
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = scoped.get_entity_parts_with_mode_with_receipt(
-        &id,
-        crate::vault::ReadMode::Pinned(before),
-        None,
-    )?;
-    assert_eq!(value.map(|(_, _, body)| body), Some(body));
+    let pinned = scoped
+        .read(
+            &[crate::claim::PointRead::id(id).at(crate::vault::ReadMode::Pinned(before))],
+            None,
+        )?
+        .single();
+    assert_eq!(pinned.value.and_then(|row| row.body), Some(body));
     Ok(())
 }
 
@@ -542,7 +545,7 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world_a);
     vault
         .batch()
@@ -556,10 +559,30 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
         .text(&id, &[("body", "scopefrontier original")])
         .commit()?;
     let old_pin = vault.indexed_revision(&id)?.expect("indexed birth");
+    // A claim keeps the scope it was born with: moving it to world B by an
+    // edit is refused, so the edit below stays in world A.
     body.world = Some(world_b);
     body.value = Value::from("world B content");
+    assert!(matches!(
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                range(2),
+                2,
+                &encode_claim_body(&body)?,
+            )
+            .commit(),
+        Err(crate::Error::InvalidClaimBody(
+            "record scope restamp refused"
+        ))
+    ));
+    body.world = Some(world_a);
+    body.value = Value::from("world A edited");
     // A local edit retains its old indexed revision until idle publication.
     // Replicated overwrites instead remove the losing posting immediately.
+
     vault
         .batch()
         .put(
@@ -588,21 +611,27 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
     let old_result = search(world_a)?;
     assert_eq!(hit_ids(&old_result), vec![id]);
     assert_eq!(old_result.revisions[&id], old_pin);
-    let pinned =
-        scoped.get_entity_parts_with_mode_with_receipt(&id, ReadMode::Pinned(old_pin), None)?;
+    let pinned = scoped
+        .read(
+            &[crate::claim::PointRead::id(id).at(ReadMode::Pinned(old_pin))],
+            None,
+        )?
+        .single();
     assert!(old_result.narrowing.contains(&pinned.receipt));
-    let (_, _, pinned_body) = pinned.value.expect("selected body");
-    assert_eq!(
-        crate::claim::decode_claim_body(&pinned_body, true)?.world,
-        Some(world_a)
-    );
+    let pinned_body = pinned
+        .value
+        .and_then(|row| row.body)
+        .expect("selected body");
+    let pinned_claim = crate::claim::decode_claim_body(&pinned_body, true)?;
+    assert_eq!(pinned_claim.world, Some(world_a));
+    assert_eq!(pinned_claim.value, Value::from("world A content"));
     vault.set_indexed_idle_delay_ms(0)?;
     assert_eq!(
         vault.refresh_staged_indexed_at_idle(u64::MAX)?.refreshed,
         vec![(id, new_pin)]
     );
-    assert!(search(world_a)?.hits.is_empty());
-    let current_result = search(world_b)?;
+    assert!(search(world_b)?.hits.is_empty());
+    let current_result = search(world_a)?;
     assert_eq!(hit_ids(&current_result), vec![id]);
     assert_eq!(current_result.revisions[&id], new_pin);
     Ok(())

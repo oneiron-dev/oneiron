@@ -37,6 +37,7 @@ use crate::commitment_schedule::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 
 use super::*;
@@ -45,10 +46,26 @@ use super::*;
 /// silent read.
 pub(crate) const COMMITMENT_DUE_INDEX_VERSION: u8 = 1;
 
+/// Kept as a standalone constant — not just `PRIMARY.decl().prefix` — because
+/// [`decode_commitment_due_row`] and [`commitment_due_primary_key`] are relied
+/// on directly by `crate::commitment_schedule::tests`, outside this migration
+/// slice.
+#[cfg(test)]
 const COMMITMENT_DUE_KEY_PREFIX: &[u8] = b"commitment_due:v1:";
-const COMMITMENT_DUE_REVERSE_PREFIX: &[u8] = b"commitment_due_rev:v1:";
-const COMMITMENT_DUE_SERIES_PROJECT_PREFIX: &[u8] = b"commitment_series_project:v1:";
-const COMMITMENT_DUE_SERIES_INSTANCE_PREFIX: &[u8] = b"commitment_series_instance:v1:";
+
+/// Typed doors for the four `commitment_due*` key spaces. Every row's value is
+/// the module's own fixed byte layout (or, for the primary table, one more
+/// hand-rolled layout on top), so all four stay on [`Raw`] with a `Vec<u8>`
+/// key: the module's existing codec functions keep spelling the exact bytes,
+/// and the table only takes over the raw get/put/delete/scan plumbing.
+const PRIMARY: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::COMMITMENT_DUE_PRIMARY);
+const REVERSE: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::COMMITMENT_DUE_REVERSE);
+const SERIES_PROJECT: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::COMMITMENT_SERIES_PROJECT);
+const SERIES_INSTANCE: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::COMMITMENT_SERIES_INSTANCE);
 
 /// `at(8) ‖ phase(1) ‖ series(16) ‖ instance_or_zero(16)`.
 const PRIMARY_KEY_BODY_LEN: usize = 8 + 1 + 16 + 16;
@@ -63,9 +80,10 @@ fn corrupt() -> Error {
     Error::CorruptedIndex(CORRUPT)
 }
 
-pub(crate) fn commitment_due_primary_key(entry: &CommitmentDueEntry) -> Vec<u8> {
-    let mut key = Vec::with_capacity(COMMITMENT_DUE_KEY_PREFIX.len() + PRIMARY_KEY_BODY_LEN);
-    key.extend_from_slice(COMMITMENT_DUE_KEY_PREFIX);
+/// Bytes after [`COMMITMENT_DUE_KEY_PREFIX`]: `at(8) ‖ phase(1) ‖ series(16) ‖
+/// instance_or_zero(16)`.
+fn primary_key_body(entry: &CommitmentDueEntry) -> Vec<u8> {
+    let mut key = Vec::with_capacity(PRIMARY_KEY_BODY_LEN);
     key.extend_from_slice(&entry.at.to_be_bytes());
     key.push(entry.phase.as_u8());
     key.extend_from_slice(entry.series_ref.as_bytes());
@@ -78,34 +96,30 @@ pub(crate) fn commitment_due_primary_key(entry: &CommitmentDueEntry) -> Vec<u8> 
     key
 }
 
-fn reverse_key(instance_ref: &EntityId, phase: CommitmentDuePhase) -> Vec<u8> {
-    let mut key = Vec::with_capacity(COMMITMENT_DUE_REVERSE_PREFIX.len() + 17);
-    key.extend_from_slice(COMMITMENT_DUE_REVERSE_PREFIX);
+/// The full stored primary key, prefix included — relied on directly by
+/// `crate::commitment_schedule::tests`.
+#[cfg(test)]
+pub(crate) fn commitment_due_primary_key(entry: &CommitmentDueEntry) -> Vec<u8> {
+    PRIMARY.key_bytes(&primary_key_body(entry))
+}
+
+fn reverse_key_body(instance_ref: &EntityId, phase: CommitmentDuePhase) -> Vec<u8> {
+    let mut key = Vec::with_capacity(17);
     key.extend_from_slice(instance_ref.as_bytes());
     key.push(phase.as_u8());
     key
 }
 
-fn series_project_key(series_ref: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(COMMITMENT_DUE_SERIES_PROJECT_PREFIX.len() + 16);
-    key.extend_from_slice(COMMITMENT_DUE_SERIES_PROJECT_PREFIX);
-    key.extend_from_slice(series_ref.as_bytes());
-    key
+fn series_project_key_body(series_ref: &EntityId) -> Vec<u8> {
+    series_ref.as_bytes().to_vec()
 }
 
-fn series_instance_prefix(series_ref: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(COMMITMENT_DUE_SERIES_INSTANCE_PREFIX.len() + 16);
-    key.extend_from_slice(COMMITMENT_DUE_SERIES_INSTANCE_PREFIX);
-    key.extend_from_slice(series_ref.as_bytes());
-    key
-}
-
-fn series_instance_key(
+fn series_instance_key_body(
     series_ref: &EntityId,
     occurrence: &CommitmentOccurrence,
     instance_ref: &EntityId,
 ) -> Vec<u8> {
-    let mut key = series_instance_prefix(series_ref);
+    let mut key = series_ref.as_bytes().to_vec();
     key.extend_from_slice(&occurrence.window.start.to_be_bytes());
     key.extend_from_slice(&occurrence.due_at.to_be_bytes());
     key.extend_from_slice(&occurrence.ordinal.to_be_bytes());
@@ -139,10 +153,17 @@ fn entity_at(bytes: &[u8]) -> Result<EntityId> {
 /// Parses one primary row. Every length, the version byte, the phase byte, both
 /// entity ids, the window ordering, and the Project-only zero-instance rule are
 /// checked here so no caller can act on a half-understood row.
+#[cfg(test)]
 pub(crate) fn decode_commitment_due_row(key: &[u8], value: &[u8]) -> Result<CommitmentDueEntry> {
     let body = key
         .strip_prefix(COMMITMENT_DUE_KEY_PREFIX)
         .ok_or_else(corrupt)?;
+    decode_commitment_due_body(body, value)
+}
+
+/// [`decode_commitment_due_row`] minus the prefix strip, for callers that
+/// already hold the typed table's key suffix.
+fn decode_commitment_due_body(body: &[u8], value: &[u8]) -> Result<CommitmentDueEntry> {
     if body.len() != PRIMARY_KEY_BODY_LEN || value.len() != VALUE_LEN {
         return Err(corrupt());
     }
@@ -192,16 +213,25 @@ impl Store {
         entry: &CommitmentDueEntry,
     ) -> Result<()> {
         entry.validate()?;
-        let key = commitment_due_primary_key(entry);
-        self.vault_meta.put(wtxn, &key, &encode_value(entry))?;
+        let key = primary_key_body(entry);
+        let full_key = PRIMARY.key_bytes(&key);
+        PRIMARY.put(self, wtxn, &key, &encode_value(entry))?;
         match entry.instance_ref {
             Some(instance_ref) => {
-                self.vault_meta
-                    .put(wtxn, &reverse_key(&instance_ref, entry.phase), &key)?;
+                REVERSE.put(
+                    self,
+                    wtxn,
+                    &reverse_key_body(&instance_ref, entry.phase),
+                    &full_key,
+                )?;
             }
             None => {
-                self.vault_meta
-                    .put(wtxn, &series_project_key(&entry.series_ref), &key)?;
+                SERIES_PROJECT.put(
+                    self,
+                    wtxn,
+                    &series_project_key_body(&entry.series_ref),
+                    &full_key,
+                )?;
             }
         }
         Ok(())
@@ -216,10 +246,11 @@ impl Store {
         occurrence: &CommitmentOccurrence,
         instance_ref: &EntityId,
     ) -> Result<()> {
-        self.vault_meta.put(
+        SERIES_INSTANCE.put(
+            self,
             wtxn,
-            &series_instance_key(series_ref, occurrence, instance_ref),
-            &[COMMITMENT_DUE_INDEX_VERSION],
+            &series_instance_key_body(series_ref, occurrence, instance_ref),
+            &vec![COMMITMENT_DUE_INDEX_VERSION],
         )?;
         Ok(())
     }
@@ -231,14 +262,13 @@ impl Store {
         txn: &RoTxn<'_>,
         series_ref: &EntityId,
     ) -> Result<Vec<(CommitmentOccurrence, EntityId)>> {
-        let prefix = series_instance_prefix(series_ref);
         let mut members = Vec::new();
-        for row in self.vault_meta.prefix_iter(txn, &prefix)? {
+        for row in SERIES_INSTANCE.iter_from(self, txn, series_ref.as_bytes())? {
             let (key, value) = row?;
-            if value.as_ref() != [COMMITMENT_DUE_INDEX_VERSION] {
+            if value != [COMMITMENT_DUE_INDEX_VERSION] {
                 return Err(corrupt());
             }
-            let body = key.strip_prefix(prefix.as_slice()).ok_or_else(corrupt)?;
+            let body = key.get(16..).ok_or_else(corrupt)?;
             if body.len() != 8 + 8 + 4 + 16 {
                 return Err(corrupt());
             }
@@ -271,16 +301,17 @@ impl Store {
         instance_ref: &EntityId,
         phase: CommitmentDuePhase,
     ) -> Result<Option<CommitmentDueEntry>> {
-        let Some(primary) = self
-            .vault_meta
-            .get(txn, &reverse_key(instance_ref, phase))?
-        else {
+        let Some(primary) = REVERSE.get(self, txn, &reverse_key_body(instance_ref, phase))? else {
             return Ok(None);
         };
-        let Some(value) = self.vault_meta.get(txn, primary.as_ref())? else {
+        let body = primary
+            .strip_prefix(PRIMARY.decl().prefix)
+            .ok_or_else(corrupt)?
+            .to_vec();
+        let Some(value) = PRIMARY.get(self, txn, &body)? else {
             return Err(corrupt());
         };
-        let entry = decode_commitment_due_row(primary.as_ref(), value.as_ref())?;
+        let entry = decode_commitment_due_body(&body, &value)?;
         if entry.instance_ref != Some(*instance_ref) || entry.phase != phase {
             return Err(corrupt());
         }
@@ -293,13 +324,18 @@ impl Store {
         txn: &RoTxn<'_>,
         series_ref: &EntityId,
     ) -> Result<Option<CommitmentDueEntry>> {
-        let Some(primary) = self.vault_meta.get(txn, &series_project_key(series_ref))? else {
+        let Some(primary) = SERIES_PROJECT.get(self, txn, &series_project_key_body(series_ref))?
+        else {
             return Ok(None);
         };
-        let Some(value) = self.vault_meta.get(txn, primary.as_ref())? else {
+        let body = primary
+            .strip_prefix(PRIMARY.decl().prefix)
+            .ok_or_else(corrupt)?
+            .to_vec();
+        let Some(value) = PRIMARY.get(self, txn, &body)? else {
             return Err(corrupt());
         };
-        let entry = decode_commitment_due_row(primary.as_ref(), value.as_ref())?;
+        let entry = decode_commitment_due_body(&body, &value)?;
         if entry.series_ref != *series_ref || entry.phase != CommitmentDuePhase::Project {
             return Err(corrupt());
         }
@@ -312,16 +348,13 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         entry: &CommitmentDueEntry,
     ) -> Result<bool> {
-        let key = commitment_due_primary_key(entry);
-        let existed = self.vault_meta.delete(wtxn, &key)?;
+        let existed = PRIMARY.delete(self, wtxn, &primary_key_body(entry))?;
         match entry.instance_ref {
             Some(instance_ref) => {
-                self.vault_meta
-                    .delete(wtxn, &reverse_key(&instance_ref, entry.phase))?;
+                REVERSE.delete(self, wtxn, &reverse_key_body(&instance_ref, entry.phase))?;
             }
             None => {
-                self.vault_meta
-                    .delete(wtxn, &series_project_key(&entry.series_ref))?;
+                SERIES_PROJECT.delete(self, wtxn, &series_project_key_body(&entry.series_ref))?;
             }
         }
         Ok(existed)
@@ -373,12 +406,9 @@ impl Store {
             [None; CommitmentDuePhase::COUNT];
         let mut next_due_at = None;
         let mut seen = 0_usize;
-        for row in self
-            .vault_meta
-            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
-        {
+        for row in PRIMARY.iter_from(self, txn, &[])? {
             let (key, value) = row?;
-            let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
+            let entry = decode_commitment_due_body(&key, &value)?;
             if next_due_at.is_none() {
                 next_due_at = Some(entry.at);
             }
@@ -402,12 +432,9 @@ impl Store {
         phases: &[CommitmentDuePhase],
     ) -> Result<Vec<CommitmentDueEntry>> {
         let mut entries = Vec::new();
-        for row in self
-            .vault_meta
-            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
-        {
+        for row in PRIMARY.iter_from(self, txn, &[])? {
             let (key, value) = row?;
-            let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
+            let entry = decode_commitment_due_body(&key, &value)?;
             if entry.at > now {
                 break;
             }
@@ -424,12 +451,9 @@ impl Store {
         txn: &RoTxn<'_>,
         phases: &[CommitmentDuePhase],
     ) -> Result<Option<CommitmentDueEntry>> {
-        for row in self
-            .vault_meta
-            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
-        {
+        for row in PRIMARY.iter_from(self, txn, &[])? {
             let (key, value) = row?;
-            let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
+            let entry = decode_commitment_due_body(&key, &value)?;
             if phases.contains(&entry.phase) {
                 return Ok(Some(entry));
             }
@@ -448,12 +472,9 @@ impl Store {
         now: u64,
     ) -> Result<Vec<EntityId>> {
         let mut ids = Vec::new();
-        for row in self
-            .vault_meta
-            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
-        {
+        for row in PRIMARY.iter_from(self, txn, &[])? {
             let (key, value) = row?;
-            let entry = decode_commitment_due_row(key.as_ref(), value.as_ref())?;
+            let entry = decode_commitment_due_body(&key, &value)?;
             if entry.at >= now {
                 break;
             }
@@ -474,23 +495,22 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         at: u64,
     ) -> Result<()> {
-        let mut key = Vec::from(COMMITMENT_DUE_KEY_PREFIX);
-        key.extend_from_slice(&at.to_be_bytes());
-        key.push(CommitmentDuePhase::Project.as_u8());
-        key.extend_from_slice(&[0x5a_u8; 32]);
-        self.vault_meta.put(wtxn, &key, &[0xff_u8; VALUE_LEN])?;
+        let mut body = Vec::with_capacity(PRIMARY_KEY_BODY_LEN);
+        body.extend_from_slice(&at.to_be_bytes());
+        body.push(CommitmentDuePhase::Project.as_u8());
+        body.extend_from_slice(&[0x5a_u8; 32]);
+        PRIMARY.put(self, wtxn, &body, &vec![0xff_u8; VALUE_LEN])?;
         Ok(())
     }
 }
 
 impl Store {
     pub(crate) fn rebuild_commitment_due_sidecars(&self, txn: &mut RwTxn<'_>) -> Result<()> {
-        let entries: Vec<_> = self
-            .vault_meta
-            .prefix_iter(txn, COMMITMENT_DUE_KEY_PREFIX)?
+        let entries: Vec<_> = PRIMARY
+            .iter_from(self, &*txn, &[])?
             .map(|row| {
                 let (key, value) = row?;
-                decode_commitment_due_row(&key, &value)
+                decode_commitment_due_body(&key, &value)
             })
             .collect::<Result<_>>()?;
         for entry in entries {

@@ -6,23 +6,80 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::ENTITY_BODY_OFFSET;
 use super::Store;
 use super::keys::{
-    PENDING_GATE_CONSENT_KEY_PREFIX, critical_confirm_index_key, index_suffix_id,
     pending_gate_consent_group_index_key, pending_gate_consent_group_index_prefix,
-    pending_gate_consent_hash_index_key, pending_gate_consent_hash_index_prefix,
-    pending_gate_consent_index_state_key, pending_gate_consent_run_index_key,
-    pending_gate_consent_run_index_prefix, pending_gate_consent_sequence_index_key,
-    pending_gate_consent_sequence_key,
+    pending_gate_consent_run_index_key, pending_gate_consent_run_index_prefix,
 };
 use super::records::{
     PENDING_GATE_CONSENT_INDEX_STATE_VERSION, PendingGateConsentIndexState,
-    PendingGateConsentRecord, decode_pending_gate_consent, decode_pending_gate_consent_index_state,
-    decode_pending_gate_consent_sequence, encode_pending_gate_consent_index_state,
-    sort_pending_gate_consents,
+    PendingGateConsentRecord, decode_pending_gate_consent_index_state,
+    encode_pending_gate_consent_index_state, sort_pending_gate_consents,
 };
+use super::tray::TRAY;
+
+/// Presence marker literal byte `b"1"`, matching the marker already on disk
+/// for the run/group/hash secondary indexes.
+struct OneMarker;
+
+impl RawValue for OneMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(b"1".to_vec())
+    }
+
+    fn from_raw(_bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self)
+    }
+}
+
+const RUN_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
+    SideTable::new(&side_table::PENDING_GATE_CONSENT_RUN_INDEX);
+const GROUP_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
+    SideTable::new(&side_table::PENDING_GATE_CONSENT_GROUP_INDEX);
+const HASH_INDEX: SideTable<([u8; 32], EntityId), OneMarker, Raw> =
+    SideTable::new(&side_table::PENDING_GATE_CONSENT_HASH_INDEX);
+const CRITICAL_CONFIRM_INDEX: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::CRITICAL_CONFIRM_INDEX);
+
+/// Codec fixed `Raw` (see the decls.rs note): [`RawValue`] delegates to
+/// [`encode_pending_gate_consent_index_state`]/
+/// [`decode_pending_gate_consent_index_state`].
+const INDEX_STATE: SideTable<EntityId, PendingGateConsentIndexState, Raw> =
+    SideTable::new(&side_table::PENDING_GATE_CONSENT_INDEX_STATE);
+
+impl RawValue for PendingGateConsentIndexState {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_pending_gate_consent_index_state(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_pending_gate_consent_index_state(bytes)?)
+    }
+}
+
+/// The bytes of a composite index key after its table's own declared prefix:
+/// strips `base_prefix` (the module's existing hand-spelled prefix constant,
+/// byte-identical to the table's declaration) from a key the module's
+/// existing builder already produced in full.
+fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
+    full[base_prefix.len()..].to_vec()
+}
+
+/// The trailing 16-byte id of a composite index key, given the raw suffix
+/// [`SideTable::scan_keys`] returns for a scan scoped to one string
+/// component (so the suffix still carries that component's own encoding
+/// ahead of the id).
+fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
+    bytes
+        .len()
+        .checked_sub(16)
+        .and_then(|start| bytes.get(start..))
+        .and_then(|slice| slice.try_into().ok())
+        .ok_or(Error::CorruptedIndex(context))
+}
 
 impl Store {
     fn pending_gate_consent_index_state_for_record_in_txn(
@@ -87,44 +144,41 @@ impl Store {
         record: &PendingGateConsentRecord,
         state: &PendingGateConsentIndexState,
     ) -> Result<()> {
-        self.vault_meta.put(
+        let claim_id = EntityId::from_bytes(record.claim_id)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+        RUN_INDEX.put(
+            self,
             wtxn,
-            &pending_gate_consent_run_index_key(&state.run_id, &record.claim_id),
-            b"1",
+            &suffix_of(
+                pending_gate_consent_run_index_key(&state.run_id, &record.claim_id),
+                super::keys::PENDING_GATE_CONSENT_RUN_INDEX_PREFIX,
+            ),
+            &OneMarker,
         )?;
-        self.vault_meta.put(
+        GROUP_INDEX.put(
+            self,
             wtxn,
-            &pending_gate_consent_group_index_key(&state.group_key, &record.claim_id),
-            b"1",
+            &suffix_of(
+                pending_gate_consent_group_index_key(&state.group_key, &record.claim_id),
+                super::keys::PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX,
+            ),
+            &OneMarker,
         )?;
         if let Some(semantic_claim_hash) = state.semantic_claim_hash.as_ref() {
-            self.vault_meta.put(
-                wtxn,
-                &pending_gate_consent_hash_index_key(semantic_claim_hash, &record.claim_id),
-                b"1",
-            )?;
+            HASH_INDEX.put(self, wtxn, &(*semantic_claim_hash, claim_id), &OneMarker)?;
         }
-        let encoded = encode_pending_gate_consent_index_state(state)?;
-        self.vault_meta.put(
-            wtxn,
-            &pending_gate_consent_index_state_key(&record.claim_id),
-            &encoded,
-        )?;
+        INDEX_STATE.put(self, wtxn, &claim_id, state)?;
         Ok(())
     }
 
     /// Rebuild checkpoint sidecars from pending rows and their historical
     /// index-state/sequence witnesses, never from a possibly changed claim.
     pub(crate) fn rebuild_pending_gate_consent_sidecars(&self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        let records = self
-            .vault_meta
-            .prefix_iter(&*wtxn, PENDING_GATE_CONSENT_KEY_PREFIX)?
-            .map(|row| {
-                let (key, raw) = row?;
-                let record = decode_pending_gate_consent(&raw)?;
-                if key.strip_prefix(PENDING_GATE_CONSENT_KEY_PREFIX)
-                    != Some(record.claim_id.as_slice())
-                {
+        let records = TRAY
+            .scan(self, &*wtxn)?
+            .into_iter()
+            .map(|(claim_id, record)| {
+                if claim_id != record.claim_id {
                     return Err(Error::CorruptedIndex("pending gate consent"));
                 }
                 Ok(record)
@@ -138,16 +192,17 @@ impl Store {
                 self.put_pending_gate_consent_index_state_in_txn(wtxn, &record, &state)?;
             }
             self.put_pending_gate_consent_critical_confirm_index_in_txn(wtxn, &record)?;
-            let raw = self
-                .vault_meta
-                .get(&*wtxn, &pending_gate_consent_sequence_key(&record.claim_id))?
+            let claim_id = EntityId::from_bytes(record.claim_id)
+                .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+            let sequence = super::sequence_sweep::SEQUENCE
+                .get(self, &*wtxn, &claim_id)?
                 .ok_or(Error::CorruptedIndex("pending gate consent sequence"))?;
-            let sequence = decode_pending_gate_consent_sequence(&raw)?;
-            let key = pending_gate_consent_sequence_index_key(sequence);
-            if sequence == 0 || self.vault_meta.get(&*wtxn, &key)?.is_some() {
+            if sequence == 0
+                || super::sequence_sweep::SEQUENCE_INDEX.contains(self, &*wtxn, &sequence)?
+            {
                 return Err(Error::CorruptedIndex("pending gate consent sequence index"));
             }
-            self.vault_meta.put(wtxn, &key, &record.claim_id)?;
+            super::sequence_sweep::SEQUENCE_INDEX.put(self, wtxn, &sequence, &claim_id)?;
         }
         Ok(())
     }
@@ -160,16 +215,14 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         run_id: &str,
     ) -> Result<()> {
-        let prefix = pending_gate_consent_run_index_prefix(run_id);
+        let scan_prefix = suffix_of(
+            pending_gate_consent_run_index_prefix(run_id),
+            super::keys::PENDING_GATE_CONSENT_RUN_INDEX_PREFIX,
+        );
         let mut records = Vec::new();
-        for row in self.vault_meta.prefix_iter(&*wtxn, &prefix)? {
-            let (key, _) = row?;
-            let claim_id = EntityId::from_bytes(index_suffix_id(
-                &key,
-                &prefix,
-                "pending gate consent run index",
-            )?)
-            .map_err(|_| Error::CorruptedIndex("pending gate consent run index"))?;
+        for key in RUN_INDEX.scan_keys(self, &*wtxn, &scan_prefix)? {
+            let claim_id = EntityId::from_bytes(tail_id(&key, "pending gate consent run index")?)
+                .map_err(|_| Error::CorruptedIndex("pending gate consent run index"))?;
             let Some(record) = self.pending_gate_consent_in_txn(&*wtxn, &claim_id)? else {
                 return Err(Error::CorruptedIndex("pending gate consent run index"));
             };
@@ -194,13 +247,11 @@ impl Store {
         txn: &RoTxn<'_>,
         record: &PendingGateConsentRecord,
     ) -> Result<Option<PendingGateConsentIndexState>> {
-        let Some(raw) = self
-            .vault_meta
-            .get(txn, &pending_gate_consent_index_state_key(&record.claim_id))?
-        else {
+        let claim_id = EntityId::from_bytes(record.claim_id)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+        let Some(state) = INDEX_STATE.get(self, txn, &claim_id)? else {
             return Ok(None);
         };
-        let state = decode_pending_gate_consent_index_state(&raw)?;
         if record.dreamer_run_id.as_deref() != Some(state.run_id.as_str()) {
             return Err(Error::CorruptedIndex("pending gate consent index state"));
         }
@@ -218,24 +269,28 @@ impl Store {
             }
             return Ok(());
         };
-        self.vault_meta.delete(
+        let claim_id = EntityId::from_bytes(record.claim_id)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+        RUN_INDEX.delete(
+            self,
             wtxn,
-            &pending_gate_consent_run_index_key(&state.run_id, &record.claim_id),
+            &suffix_of(
+                pending_gate_consent_run_index_key(&state.run_id, &record.claim_id),
+                super::keys::PENDING_GATE_CONSENT_RUN_INDEX_PREFIX,
+            ),
         )?;
-        self.vault_meta.delete(
+        GROUP_INDEX.delete(
+            self,
             wtxn,
-            &pending_gate_consent_group_index_key(&state.group_key, &record.claim_id),
+            &suffix_of(
+                pending_gate_consent_group_index_key(&state.group_key, &record.claim_id),
+                super::keys::PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX,
+            ),
         )?;
         if let Some(semantic_claim_hash) = state.semantic_claim_hash.as_ref() {
-            self.vault_meta.delete(
-                wtxn,
-                &pending_gate_consent_hash_index_key(semantic_claim_hash, &record.claim_id),
-            )?;
+            HASH_INDEX.delete(self, wtxn, &(*semantic_claim_hash, claim_id))?;
         }
-        self.vault_meta.delete(
-            wtxn,
-            &pending_gate_consent_index_state_key(&record.claim_id),
-        )?;
+        INDEX_STATE.delete(self, wtxn, &claim_id)?;
         Ok(())
     }
 
@@ -246,10 +301,14 @@ impl Store {
         run_id: &str,
     ) -> Result<Vec<PendingGateConsentRecord>> {
         let rtxn = self.env.read_txn()?;
-        let prefix = pending_gate_consent_run_index_prefix(run_id);
-        self.pending_gate_consents_for_index_in_txn(
+        let scan_prefix = suffix_of(
+            pending_gate_consent_run_index_prefix(run_id),
+            super::keys::PENDING_GATE_CONSENT_RUN_INDEX_PREFIX,
+        );
+        self.pending_gate_consents_for_vec_index_in_txn(
             &rtxn,
-            &prefix,
+            RUN_INDEX,
+            &scan_prefix,
             "pending gate consent run index",
             |state| state.run_id == run_id,
         )
@@ -263,10 +322,14 @@ impl Store {
         group_key: &str,
     ) -> Result<Vec<PendingGateConsentRecord>> {
         let rtxn = self.env.read_txn()?;
-        let prefix = pending_gate_consent_group_index_prefix(group_key);
-        self.pending_gate_consents_for_index_in_txn(
+        let scan_prefix = suffix_of(
+            pending_gate_consent_group_index_prefix(group_key),
+            super::keys::PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX,
+        );
+        self.pending_gate_consents_for_vec_index_in_txn(
             &rtxn,
-            &prefix,
+            GROUP_INDEX,
+            &scan_prefix,
             "pending gate consent group index",
             |state| state.group_key == group_key,
         )
@@ -281,19 +344,30 @@ impl Store {
         semantic_claim_hash: &[u8; 32],
     ) -> Result<Vec<PendingGateConsentRecord>> {
         let rtxn = self.env.read_txn()?;
-        let prefix = pending_gate_consent_hash_index_prefix(semantic_claim_hash);
-        self.pending_gate_consents_for_index_in_txn(
-            &rtxn,
-            &prefix,
-            "pending gate consent hash index",
-            |state| state.semantic_claim_hash.as_ref() == Some(semantic_claim_hash),
-        )
+        let mut records = Vec::new();
+        for ((_hash, claim_id), _marker) in
+            HASH_INDEX.scan_from(self, &rtxn, semantic_claim_hash)?
+        {
+            let Some(record) = self.pending_gate_consent_in_txn(&rtxn, &claim_id)? else {
+                return Err(Error::CorruptedIndex("pending gate consent hash index"));
+            };
+            let Some(state) = self.pending_gate_consent_index_state_in_txn(&rtxn, &record)? else {
+                return Err(Error::CorruptedIndex("pending gate consent hash index"));
+            };
+            if state.semantic_claim_hash.as_ref() != Some(semantic_claim_hash) {
+                return Err(Error::CorruptedIndex("pending gate consent hash index"));
+            }
+            records.push(record);
+        }
+        sort_pending_gate_consents(&mut records);
+        Ok(records)
     }
 
-    fn pending_gate_consents_for_index_in_txn<F>(
+    fn pending_gate_consents_for_vec_index_in_txn<F>(
         &self,
         txn: &RoTxn<'_>,
-        prefix: &[u8],
+        table: SideTable<Vec<u8>, OneMarker, Raw>,
+        scan_prefix: &[u8],
         index_name: &'static str,
         state_matches: F,
     ) -> Result<Vec<PendingGateConsentRecord>>
@@ -301,9 +375,8 @@ impl Store {
         F: Fn(&PendingGateConsentIndexState) -> bool,
     {
         let mut records = Vec::new();
-        for row in self.vault_meta.prefix_iter(txn, prefix)? {
-            let (key, _) = row?;
-            let claim_id = EntityId::from_bytes(index_suffix_id(&key, prefix, index_name)?)
+        for key in table.scan_keys(self, txn, scan_prefix)? {
+            let claim_id = EntityId::from_bytes(tail_id(&key, index_name)?)
                 .map_err(|_| Error::CorruptedIndex(index_name))?;
             let Some(record) = self.pending_gate_consent_in_txn(txn, &claim_id)? else {
                 return Err(Error::CorruptedIndex(index_name));
@@ -332,13 +405,14 @@ impl Store {
         let Ok(binding) = crate::gate::critical_write_confirm_binding(record) else {
             return Ok(());
         };
-        let key = critical_confirm_index_key(&binding.confirm_id);
-        if let Some(existing) = self.vault_meta.get(&*wtxn, &key)?
-            && existing.as_ref() != record.claim_id
+        let claim_id = EntityId::from_bytes(record.claim_id)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+        if let Some(existing) = CRITICAL_CONFIRM_INDEX.get(self, &*wtxn, &binding.confirm_id)?
+            && existing != claim_id
         {
             return Err(Error::CorruptedIndex("critical confirm index"));
         }
-        self.vault_meta.put(wtxn, &key, &record.claim_id)?;
+        CRITICAL_CONFIRM_INDEX.put(self, wtxn, &binding.confirm_id, &claim_id)?;
         Ok(())
     }
 
@@ -350,8 +424,7 @@ impl Store {
         let Ok(binding) = crate::gate::critical_write_confirm_binding(record) else {
             return Ok(());
         };
-        self.vault_meta
-            .delete(wtxn, &critical_confirm_index_key(&binding.confirm_id))?;
+        CRITICAL_CONFIRM_INDEX.delete(self, wtxn, &binding.confirm_id)?;
         Ok(())
     }
 
@@ -362,8 +435,9 @@ impl Store {
         confirm_id: &[u8; 32],
         claim_id: &[u8; 16],
     ) -> Result<()> {
-        self.vault_meta
-            .put(wtxn, &critical_confirm_index_key(confirm_id), claim_id)?;
+        let claim_id = EntityId::from_bytes(*claim_id)
+            .map_err(|_| Error::CorruptedIndex("critical confirm index"))?;
+        CRITICAL_CONFIRM_INDEX.put(self, wtxn, confirm_id, &claim_id)?;
         Ok(())
     }
 
@@ -372,20 +446,7 @@ impl Store {
         txn: &RoTxn<'_>,
         confirm_id: &[u8; 32],
     ) -> Result<Option<EntityId>> {
-        let Some(value) = self
-            .vault_meta
-            .get(txn, &critical_confirm_index_key(confirm_id))?
-        else {
-            return Ok(None);
-        };
-        EntityId::from_bytes(
-            value
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("critical confirm index"))?,
-        )
-        .map(Some)
-        .map_err(|_| Error::CorruptedIndex("critical confirm index"))
+        CRITICAL_CONFIRM_INDEX.get(self, txn, confirm_id)
     }
 
     pub(crate) fn delete_critical_confirm_index_in_txn(
@@ -393,8 +454,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         confirm_id: &[u8; 32],
     ) -> Result<()> {
-        self.vault_meta
-            .delete(wtxn, &critical_confirm_index_key(confirm_id))?;
+        CRITICAL_CONFIRM_INDEX.delete(self, wtxn, confirm_id)?;
         Ok(())
     }
 }

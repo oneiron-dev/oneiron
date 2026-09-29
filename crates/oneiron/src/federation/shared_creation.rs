@@ -6,8 +6,12 @@ use super::{
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, TimeRange, Vault};
-const CREATION_KEY: &[u8] = b"shared-vault:creation:v1";
+
+/// One-time creation-time membership defaults. Key: `()` (singleton).
+const SHARED_VAULT_CREATION: SideTable<(), SharedVaultCreation, LegacyJson> =
+    SideTable::new(&side_table::SHARED_VAULT_CREATION);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,14 +53,40 @@ fn role_preset(role: Role) -> Result<GrantPreset> {
         Role::Admin => GrantPreset::Admin,
         Role::Member => GrantPreset::Member,
         Role::Viewer => GrantPreset::ReadOnly,
-        Role::Auditor => GrantPreset::Audit,
+        Role::Auditor => GrantPreset::ReadOnly,
         Role::Delegate => {
             return Err(invalid(
                 "delegate needs a separately attenuated expiring grant",
             ));
         }
+        Role::Guest => return Err(invalid("ask guest is not shared-vault membership")),
     })
 }
+/// A guest grant is disjoint from member initialization even though both
+/// records carry the FEDERATION_GRANT kind byte.
+fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
+    {
+        let (key, _) = row?;
+        let id = crate::vault::entity_id_from_type_index_key(&key)?;
+        let raw = vault.get_raw_in(txn, &id)?.ok_or(Error::EntityNotFound)?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("federation grant header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
+            return Err(Error::CorruptedIndex("federation grant type"));
+        }
+        let grant =
+            super::decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+        if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Vault {
     /// Run once while creating shared membership. Reopening never reapplies defaults.
     /// No preset means exactly the explicitly supplied roles, without implicit grants.
@@ -73,14 +103,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        if self.store.vault_meta.get(&txn, CREATION_KEY)?.is_some()
-            || self
-                .store
-                .type_index
-                .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
-                .next()
-                .transpose()?
-                .is_some()
+        if SHARED_VAULT_CREATION.contains(&self.store, &txn, &())? || has_member_grant(self, &txn)?
         {
             return Err(invalid("shared membership has already been initialized"));
         }
@@ -106,15 +129,23 @@ impl Vault {
         };
         let mut ops = Vec::new();
         for (member, role) in rows {
-            if self.store.entities.get(&txn, member.as_bytes())?.is_none() {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &member)?.is_none()
+            {
                 return Err(Error::EntityNotFound);
             }
-            let grant = FederationGrant::new(
+            let role = if role == Role::Auditor {
+                Role::Viewer
+            } else {
+                role
+            };
+            let mut grant = FederationGrant::new(
                 FederationGrantScope::vault(vault_id),
                 member,
                 role,
                 role_preset(role)?,
             );
+            grant.authority_scope =
+                self.grant_default_scope_in_txn(&txn, role, vault_id, member)?;
             let id = EntityId::now();
             creation.grant_refs.push(id.to_hex());
             ops.push(BatchOp::Put {
@@ -131,35 +162,33 @@ impl Vault {
                 hub_sync_imported: false,
             });
         }
-        if preset.is_some() {
+        let mut seeded_manifest = None;
+        if let Some(preset) = preset {
             let id = crate::gate::default_policy_manifest_id()?;
-            // Creation cannot overwrite policy the owner has already customized.
-            if self
-                .store
-                .entities
-                .get(&txn, id.as_bytes())?
-                .is_some_and(|raw| {
-                    raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                        != Some(crate::gate::default_policy_manifest().as_slice())
-                })
-            {
-                return Err(invalid("shared preset must precede customized policy"));
+            let default = crate::gate::default_policy_manifest()?;
+            match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)? {
+                Some(raw)
+                    if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                        != Some(default.as_slice()) =>
+                {
+                    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("shared policy manifest header"))?;
+                    if header.entity_type != crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+                        return Err(invalid("shared policy id is not a policy manifest"));
+                    }
+                    // A customized vault policy remains authoritative; do not
+                    // overwrite its rows as a side effect of choosing a preset.
+                    creation.policy_ref = Some(id.to_hex());
+                }
+                _ => {
+                    // Defaults are ordinary editable stored policy, not a
+                    // second runtime policy engine. The preset's act-policy
+                    // rows ride the same manifest through the owner door.
+                    let data = super::pending_act::with_preset_act_policies(default, preset)?;
+                    seeded_manifest = Some((id, data));
+                    creation.policy_ref = Some(id.to_hex());
+                }
             }
-            // Defaults are ordinary editable stored policy, not a second runtime policy engine.
-            ops.push(BatchOp::Put {
-                id,
-                entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                data: crate::gate::default_policy_manifest(),
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            });
-            creation.policy_ref = Some(id.to_hex());
         }
         apply_ops(
             &self.store,
@@ -172,17 +201,22 @@ impl Vault {
             false,
             true,
         )?;
-        let bytes = serde_json::to_vec(&creation).map_err(|_| invalid("shared creation encode"))?;
-        self.store.vault_meta.put(&mut txn, CREATION_KEY, &bytes)?;
+        if let Some((id, data)) = seeded_manifest {
+            self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        }
+        SHARED_VAULT_CREATION.put(&self.store, &mut txn, &(), &creation)?;
         txn.commit()?;
         Ok(creation)
     }
+    pub(crate) fn shared_vault_creation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<SharedVaultCreation>> {
+        SHARED_VAULT_CREATION.get(&self.store, txn, &())
+    }
+
     pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, CREATION_KEY)?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("shared creation decode")))
-            .transpose()
+        self.shared_vault_creation_in_txn(&txn)
     }
 }

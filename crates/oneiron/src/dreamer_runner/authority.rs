@@ -1,6 +1,7 @@
 //! One vault-owned Dreamer principal; job kinds are facets, not new authorities.
-use crate::attempt_queue::AttemptRecord;
+use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault,
@@ -9,8 +10,14 @@ use crate::{
 use serde::{Deserialize, Serialize};
 mod policy;
 pub use policy::{DreamerAgentBoundary, dreamer_facet_for_job_type, warrants_new_agent};
-const ACTOR_KEY: &[u8] = b"dreamer:authority:v1:actor";
-const ATTEMPT_PREFIX: &[u8] = b"dreamer:authority:v1:attempt:";
+
+/// Pointer to the single vault-owned Dreamer principal actor entity id.
+const ACTOR: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::DREAMER_AUTHORITY_ACTOR);
+/// Stamp binding one attempt id to the Dreamer principal, facet, and
+/// gate-decision receipt that admitted it.
+const ATTEMPT: SideTable<AttemptId, DreamerAuthorityStamp, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_AUTHORITY_ATTEMPT);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerAuthorityStamp {
@@ -20,52 +27,88 @@ pub struct DreamerAuthorityStamp {
     pub facet: String,
     pub receipt_id: [u8; 16],
 }
+/// The seeded MACHINE row's body; the row itself carries seed time 0.
+const ACTOR_BODY: &[u8] = b"Dreamer authority";
+pub(crate) fn dreamer_actor_id() -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])
+}
+
+pub(crate) fn guard_actor_put(
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    if id == dreamer_actor_id()?
+        && (entity_type != crate::registry::ENTITY_TYPE_MACHINE
+            || data != ACTOR_BODY
+            || occurred.start != 0
+            || occurred.end != 0
+            || learned_at != 0)
+    {
+        return Err(Error::Registry(
+            crate::error::RegistryError::DreamerActorImmutable,
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn guard_actor_delete(id: &EntityId) -> Result<()> {
+    if *id == dreamer_actor_id()? {
+        return Err(Error::Registry(
+            crate::error::RegistryError::DreamerActorImmutable,
+        ));
+    }
+    Ok(())
+}
+
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer authority binding".into())
 }
 impl Vault {
-    /// Resolves the single principal. First use creates an ordinary actor,
-    /// granting it NO ceiling, consent grant, or privilege.
+    /// Resolves the vault-owned system principal. Open seeds it without granting
+    /// a ceiling, consent grant, or privilege.
     pub fn dreamer_authority(&self) -> Result<WriteActor> {
-        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, crate::unix_seconds_now()))
+        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, self.now_recorded_at()))
     }
-    pub(super) fn dreamer_authority_in_txn(
+    pub(crate) fn dreamer_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        now: u64,
+        _now: u64,
     ) -> Result<WriteActor> {
-        if let Some(raw) = self.store.vault_meta.get(&*txn, ACTOR_KEY)? {
-            let raw_id: &[u8] = &raw;
-            let id = EntityId::from_bytes(raw_id.try_into().map_err(|_| invalid())?)?;
-            let entity = self
-                .store
-                .entities
-                .get(&*txn, id.as_bytes())?
-                .ok_or_else(invalid)?;
-            if EntityMetadataHeader::parse(&entity)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
-            {
-                return Err(invalid());
-            }
-            return Ok(WriteActor::new(id, EdgeActorClass::Agent));
+        // The id is shared across replicas of one vault, but the local binding
+        // cannot be redirected to another MACHINE or a deleted shell.
+        let actor = dreamer_actor_id()?;
+        let bound = ACTOR.get(&self.store, &*txn, &())?;
+        if bound.is_some_and(|id| id != actor) {
+            return Err(invalid());
         }
-        // Like the embedded owner bootstrap, the engine principal has one
-        // namespace identity across nodes. Queue-local caches do not mint peers.
-        let actor =
-            crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])?;
-        if let Some(raw) = self.store.entities.get(&*txn, actor.as_bytes())? {
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
-                || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                    != Some(b"Dreamer authority".as_slice())
-            {
-                return Err(invalid());
+        let row = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &actor)?;
+        match row.as_deref().map(|raw| {
+            (
+                EntityMetadataHeader::parse(raw).map(|h| h.entity_type),
+                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..),
+            )
+        }) {
+            Some((Some(crate::registry::ENTITY_TYPE_MACHINE), Some(ACTOR_BODY))) => {}
+            // Earlier builds minted this id as an Agent PERSON on first use.
+            // It is re-born as the System MACHINE row under the same id, so
+            // its host key can be enrolled before any Dreamer write needs it.
+            Some((Some(crate::registry::ENTITY_TYPE_PERSON), Some(ACTOR_BODY))) => {
+                crate::batch::drop_seeded_actor_row(&self.store, txn, &actor)?;
+                self.seed_actor_in_txn(txn, actor)?;
             }
-            self.store
-                .vault_meta
-                .put(txn, ACTOR_KEY, actor.as_bytes())?;
-            return Ok(WriteActor::new(actor, EdgeActorClass::Agent));
+            Some(_) => return Err(invalid()),
+            None if bound.is_some() => return Err(invalid()),
+            None => self.seed_actor_in_txn(txn, actor)?,
         }
+        if bound.is_none() {
+            ACTOR.put(&self.store, txn, &(), &actor)?;
+        }
+        Ok(WriteActor::new(actor, EdgeActorClass::System))
+    }
+    fn seed_actor_in_txn(&self, txn: &mut heed::RwTxn<'_>, actor: EntityId) -> Result<()> {
         apply_ops(
             &self.store,
             &self.config,
@@ -73,13 +116,10 @@ impl Vault {
             txn,
             vec![BatchOp::Put {
                 id: actor,
-                entity_type: crate::registry::ENTITY_TYPE_PERSON,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                data: b"Dreamer authority".to_vec(),
+                entity_type: crate::registry::ENTITY_TYPE_MACHINE,
+                occurred: TimeRange { start: 0, end: 0 },
+                learned_at: 0,
+                data: ACTOR_BODY.to_vec(),
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
@@ -89,10 +129,7 @@ impl Vault {
             false,
             true,
         )?;
-        self.store
-            .vault_meta
-            .put(txn, ACTOR_KEY, actor.as_bytes())?;
-        Ok(WriteActor::new(actor, EdgeActorClass::Agent))
+        Ok(())
     }
     /// Proposal envelope shared by maintenance facets. Approval is never Auto.
     pub fn dreamer_proposal_envelope(
@@ -133,30 +170,39 @@ impl Vault {
         id: crate::attempt_queue::AttemptId,
     ) -> Result<WriteActor> {
         let stamp = self.dreamer_attempt_authority(id)?.ok_or_else(invalid)?;
-        Ok(WriteActor::new(stamp.actor, EdgeActorClass::Agent))
+        Ok(WriteActor::new(stamp.actor, EdgeActorClass::System))
     }
     pub fn dreamer_attempt_authority(
         &self,
         id: crate::attempt_queue::AttemptId,
     ) -> Result<Option<DreamerAuthorityStamp>> {
         let txn = self.store.env.read_txn()?;
-        let key = [ATTEMPT_PREFIX, id.as_bytes()].concat();
-        self.store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|raw| {
-                let stamp: DreamerAuthorityStamp =
-                    serde_json::from_slice(&raw).map_err(|_| invalid())?;
+        self.dreamer_attempt_authority_in_txn(&txn, id)
+    }
+
+    /// Validates a queued authority stamp at the SAME wake ledger revision.
+    pub(crate) fn dreamer_attempt_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: crate::attempt_queue::AttemptId,
+    ) -> Result<Option<DreamerAuthorityStamp>> {
+        ATTEMPT
+            .get(&self.store, txn, &id)?
+            .map(|stamp| {
                 if stamp.attempt_id != *id.as_bytes()
                     || stamp.facet.trim().is_empty()
-                    || self.store.vault_meta.get(&txn, ACTOR_KEY)?.as_deref()
-                        != Some(stamp.actor.as_bytes().as_slice())
-                    || self
-                        .store
-                        .entities
-                        .get(&txn, stamp.actor.as_bytes())?
-                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                    || ACTOR.get(&self.store, txn, &())? != Some(stamp.actor)
+                    || crate::ports::EntityStoreRead::port_entity_raw(
+                        &self.store,
+                        txn,
+                        &stamp.actor,
+                    )?
+                    .is_none_or(|raw| {
+                        EntityMetadataHeader::parse(&raw)
+                            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_MACHINE)
+                            || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                                != Some(ACTOR_BODY)
+                    })
                 {
                     return Err(invalid());
                 }
@@ -188,9 +234,7 @@ pub(crate) fn stamp_attempt(
     }
     let actor = vault.dreamer_authority_in_txn(txn, record.created_at)?;
     let facet = dreamer_facet_for_job_type(facet).unwrap_or(facet);
-    let key = [ATTEMPT_PREFIX, record.id.as_bytes()].concat();
-    if let Some(raw) = vault.store.vault_meta.get(&*txn, &key)? {
-        let stamp: DreamerAuthorityStamp = serde_json::from_slice(&raw).map_err(|_| invalid())?;
+    if let Some(stamp) = ATTEMPT.get(&vault.store, &*txn, &record.id)? {
         if stamp.actor != actor.entity_ref()
             || stamp.attempt_id != *record.id.as_bytes()
             || stamp.facet != facet
@@ -199,7 +243,7 @@ pub(crate) fn stamp_attempt(
         }
         return Ok(());
     }
-    let receipt_id = GateDecisionId::now();
+    let receipt_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
     let receipt = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: receipt_id,
@@ -208,7 +252,7 @@ pub(crate) fn stamp_attempt(
         reason_codes: vec!["gate.dreamer.facet_admitted".into()],
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
-        actor_class: "agent".into(),
+        actor_class: actor.actor_class().gate_actor_class().into(),
         actor_ref: Some(actor.entity_ref().to_hex()),
         content_kind: "dreamer_authority".into(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
@@ -226,11 +270,7 @@ pub(crate) fn stamp_attempt(
         facet: facet.into(),
         receipt_id: receipt_id.as_bytes(),
     };
-    vault.store.vault_meta.put(
-        txn,
-        &key,
-        &serde_json::to_vec(&stamp).map_err(|_| invalid())?,
-    )?;
+    ATTEMPT.put(&vault.store, txn, &record.id, &stamp)?;
     Ok(())
 }
 #[cfg(test)]

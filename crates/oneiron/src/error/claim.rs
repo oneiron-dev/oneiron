@@ -184,6 +184,23 @@ pub enum ClaimError {
         "edge (kind {kind}) is provenanced: a plain edge put cannot displace attributed truth; modify the relation via put_edge_provenance / the actor-bound surface (as_actor), set weight via set_edge_weight, set VAD via set_edge_vad"
     )]
     EdgeIsProvenanced { kind: u8 },
+    /// A replicated MACHINE-authored claim carried a missing, malformed, or
+    /// invalid origin proof. Unlike local authority denial, this identifies
+    /// the remote row itself so replay can quarantine it and continue.
+    #[error("invalid MACHINE claim origin proof")]
+    InvalidMachineClaimProof,
+    /// A MACHINE birth, transition parent, or authenticated handoff closure is unavailable.
+    #[error("machine claim history incomplete")]
+    MachineClaimHistoryIncomplete,
+    /// Peer transition/handoff lacks its signed birth; quarantine and re-offer.
+    #[error("remote machine claim history dependency pending")]
+    RemoteMachineHistoryPending,
+    /// A scoped read under the vault-owner key found the owner's binding no
+    /// longer holding in its own snapshot. Carries the owner verification's
+    /// refusal, so the facade reports that code (a revoked binding, a
+    /// conflicted authority root, a corrupt row) rather than a generic one.
+    #[error("scoped read owner binding no longer live: {0}")]
+    ScopedReadOwnerNotLive(Box<crate::memory::MemoryError>),
 }
 
 impl ClaimError {
@@ -197,6 +214,7 @@ impl ClaimError {
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
             Self::ActorLacksClaimAuthority { .. } => ErrorKind::ActorLacksClaimAuthority,
+            Self::ScopedReadOwnerNotLive(_) => ErrorKind::ScopedReadOwnerNotLive,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
             Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,
@@ -212,6 +230,9 @@ impl ClaimError {
             Self::ProvenanceSelfSupersession => ErrorKind::ProvenanceSelfSupersession,
             Self::ProvenancePrecedenceViolation { .. } => ErrorKind::ProvenancePrecedenceViolation,
             Self::EdgeIsProvenanced { .. } => ErrorKind::EdgeIsProvenanced,
+            Self::InvalidMachineClaimProof => ErrorKind::InvalidMachineClaimProof,
+            Self::MachineClaimHistoryIncomplete => ErrorKind::MachineClaimHistoryIncomplete,
+            Self::RemoteMachineHistoryPending => ErrorKind::RemoteMachineHistoryPending,
         }
     }
 }

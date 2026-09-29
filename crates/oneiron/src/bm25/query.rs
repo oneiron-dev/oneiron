@@ -30,6 +30,8 @@ where
 {
     pub(crate) recency: Option<Bm25RecencyConfig>,
     pub(crate) exact_posting_matches_scope: &'a mut F,
+    /// The scoped query's transaction-local, authenticated diary NOTE ids.
+    pub(crate) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -366,7 +368,7 @@ pub(super) fn apply_recency_blend(
     let decay = std::f64::consts::LN_2 / seconds_per_half_life;
 
     for (id, score) in scores {
-        let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -411,6 +413,7 @@ pub(super) fn search_text_with_recency(
         Bm25SearchOptions {
             recency,
             exact_posting_matches_scope: &mut exact_posting_matches_scope,
+            private_note_ids: None,
         },
     )
 }
@@ -449,7 +452,8 @@ where
     let mut ranked =
         scoring::score_query_terms(store, rtxn, config, &query_terms, options.recency, |id| {
             Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
-                && crate::note::ordinary_entity_visible(store, rtxn, id)?)
+                && (options.private_note_ids.is_some_and(|ids| ids.contains(id))
+                    || crate::note::ordinary_entity_visible(store, rtxn, id)?))
         })?;
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
@@ -520,7 +524,7 @@ fn resolve_lexical_query_hint_record(
     {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
-    let Some(raw) = store.entities().get(rtxn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
         return Ok(LexicalQueryHintResolution::NonHint);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -557,7 +561,7 @@ fn lexical_query_hint_target_is_live_claim(
     rtxn: &RoTxn<'_>,
     target: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.entities().get(rtxn, target.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, target)? else {
         return Ok(false);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

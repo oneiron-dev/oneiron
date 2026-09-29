@@ -2,31 +2,61 @@
 
 use super::{
     records::*,
-    store::{decode, encode, key},
+    store::{
+        LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
+        encode, family_prefix,
+    },
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey};
 use crate::gate::PolicyManifestResolution;
+use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
-const WATCH: &[u8] = b"typed_question:watch:v1:";
-const UNIT_WATCH: &[u8] = b"typed_question:unit:v1:";
-pub(super) const PENDING: &[u8] = b"typed_question:pending:v1:";
+/// Key of one predicate watcher registration. Not fixed-width: a variable-length predicate,
+/// then a NUL separator, then the watching question's id16. `OutcomeBinding::validate` refuses a
+/// predicate containing `\0`, so the separator is unambiguous.
+struct WatchKey {
+    predicate: String,
+    id: EntityId,
+}
 
+impl SideKey for WatchKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.predicate.as_bytes());
+        out.push(0);
+        out.extend_from_slice(self.id.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let split = bytes.len().checked_sub(16)?;
+        let (rest, id_bytes) = bytes.split_at(split);
+        let (&zero, predicate_bytes) = rest.split_last()?;
+        if zero != 0 {
+            return None;
+        }
+        Some(Self {
+            predicate: std::str::from_utf8(predicate_bytes).ok()?.to_owned(),
+            id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
+        })
+    }
+}
+
+const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_WATCH);
+const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_UNIT_WATCH);
+pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_PENDING);
 pub(super) fn unwatch_units(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     record: &QuestionRecord,
 ) -> Result<()> {
     for unit in &record.definition.units {
-        let watch_key = [
-            UNIT_WATCH,
-            unit.as_bytes(),
-            record.definition.question.id.as_bytes(),
-        ]
-        .concat();
-        store.vault_meta.delete(txn, &watch_key)?;
+        UNIT_WATCH.delete(store, txn, &(*unit, record.definition.question.id))?;
         // A queued arrival for a still-covered unit survives the edit; all
         // others are retired by the caller once the new definition is known.
     }
@@ -40,13 +70,7 @@ pub(super) fn watch(
 ) -> Result<()> {
     if record.definition.refresh.on_arrival {
         for unit in &record.definition.units {
-            let watch_key = [
-                UNIT_WATCH,
-                unit.as_bytes(),
-                record.definition.question.id.as_bytes(),
-            ]
-            .concat();
-            store.vault_meta.put(txn, &watch_key, &[])?;
+            UNIT_WATCH.put(store, txn, &(*unit, record.definition.question.id), &())?;
         }
     }
     let Some(binding) = &record.definition.binding else {
@@ -55,16 +79,15 @@ pub(super) fn watch(
     if !record.definition.learning {
         return Ok(());
     }
-    let predicate = predicate(&binding.source);
-    let prefix = watch_prefix(predicate);
+    let predicate = predicate(&binding.source).to_owned();
     let id = record.definition.question.id;
-    let watch_key = [prefix.as_slice(), id.as_bytes()].concat();
-    store.vault_meta.put(txn, &watch_key, id.as_bytes())?;
-    Ok(())
+    QUESTION_WATCH.put(store, txn, &WatchKey { predicate, id }, &id)
 }
 
-fn watch_prefix(predicate: &str) -> Vec<u8> {
-    [WATCH, predicate.as_bytes(), &[0]].concat()
+/// The key-prefix (bytes after the table's own declared prefix) matching every watcher
+/// registered for `predicate`.
+fn watch_key_prefix(predicate: &str) -> Vec<u8> {
+    [predicate.as_bytes(), &[0]].concat()
 }
 
 fn predicate(source: &OutcomeSource) -> &str {
@@ -92,39 +115,24 @@ fn enqueue_arrivals(
     ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<()> {
     for unit in ids {
-        let prefix = [UNIT_WATCH, unit.as_bytes()].concat();
-        let questions = store
-            .vault_meta
-            .prefix_iter(txn, &prefix)?
-            .map(|row| {
-                let (key, _) = row?;
-                let bytes = key
-                    .get(prefix.len()..)
-                    .ok_or(Error::CorruptedIndex("question unit watcher"))?;
-                EntityId::from_bytes(
-                    bytes
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("question unit watcher"))?,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let questions: Vec<EntityId> = UNIT_WATCH
+            .scan_from(store, txn, unit.as_bytes())?
+            .into_iter()
+            .map(|((_, question), _)| question)
+            .collect();
         for question in questions {
-            let Some(head) = store
-                .vault_meta
-                .get(txn, &super::store::key(question, b"head", &[]))?
-                .map(|raw| decode::<QuestionHead>(&raw))
-                .transpose()?
+            let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))?
             else {
                 continue;
             };
-            let Some(record) = store
-                .vault_meta
-                .get(
-                    txn,
-                    &super::store::key(question, b"version", &head.version.to_be_bytes()),
-                )?
-                .map(|raw| decode::<QuestionRecord>(&raw))
-                .transpose()?
+            let Some(record) = QUESTION_VERSION.get(
+                store,
+                txn,
+                &VersionKey {
+                    id: question,
+                    version: head.version,
+                },
+            )?
             else {
                 continue;
             };
@@ -132,19 +140,11 @@ fn enqueue_arrivals(
                 && record.definition.refresh.on_arrival
                 && record.definition.units.contains(unit)
             {
-                store.vault_meta.put(
-                    txn,
-                    &pending_key(question, *unit),
-                    EntityId::now().as_bytes(),
-                )?;
+                PENDING.put(store, txn, &(question, *unit), &EntityId::now())?;
             }
         }
     }
     Ok(())
-}
-
-pub(super) fn pending_key(question: EntityId, unit: EntityId) -> Vec<u8> {
-    [PENDING, question.as_bytes(), unit.as_bytes()].concat()
 }
 
 pub(super) fn project_question_in_txn(
@@ -162,13 +162,13 @@ fn project(
     ids: &std::collections::BTreeSet<EntityId>,
     only: Option<EntityId>,
 ) -> Result<usize> {
-    if store.vault_meta.prefix_iter(txn, WATCH)?.next().is_none() {
+    if QUESTION_WATCH.iter_from(store, txn, &[])?.next().is_none() {
         return Ok(0);
     }
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     let mut count = 0;
     for id in ids {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -184,19 +184,11 @@ fn project(
         {
             continue;
         }
-        let watchers = store
-            .vault_meta
-            .prefix_iter(txn, &watch_prefix(&body.predicate))?
-            .map(|row| {
-                let (_, bytes) = row?;
-                EntityId::from_bytes(
-                    bytes
-                        .as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("outcome watcher"))?,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let watchers: Vec<EntityId> = QUESTION_WATCH
+            .scan_from(store, txn, &watch_key_prefix(&body.predicate))?
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
         for question in watchers {
             if only.is_some_and(|id| id != question) {
                 continue;
@@ -224,14 +216,11 @@ fn project_fact(
     body: &ClaimBody,
     occurred_at: u64,
 ) -> Result<usize> {
-    let answers = store
-        .vault_meta
-        .prefix_iter(txn, &key(question, b"answer", &[]))?
-        .map(|row| {
-            let (_, raw) = row?;
-            decode::<AnswerRecord>(&raw)
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let answers: Vec<AnswerRecord> = QUESTION_ANSWER
+        .scan_from(store, txn, &family_prefix(question, b"answer"))?
+        .into_iter()
+        .map(|(_, answer)| answer)
+        .collect();
     let fact = Fact {
         id: fact,
         body,
@@ -240,26 +229,29 @@ fn project_fact(
     let mut count = 0;
     for answer in answers {
         let version = answer.decision.receipt.question_version;
-        let Some(raw) = store
-            .vault_meta
-            .get(txn, &key(question, b"version", &version.to_be_bytes()))?
+        let Some(record) = QUESTION_VERSION.get(
+            store,
+            txn,
+            &VersionKey {
+                id: question,
+                version,
+            },
+        )?
         else {
             continue;
         };
-        let record: QuestionRecord = decode(&raw)?;
         let Some(label) = evaluate_fact(store, txn, policy, &record, &answer, &fact)? else {
             continue;
         };
-        let suffix = [
-            answer.claim.as_bytes().as_slice(),
-            fact.id.as_bytes().as_slice(),
-        ]
-        .concat();
-        let label_key = key(question, b"label", &suffix);
-        if store.vault_meta.get(txn, &label_key)?.is_some() {
+        let label_key = LabelKey {
+            question,
+            claim: answer.claim,
+            fact: fact.id,
+        };
+        if QUESTION_LABEL.contains(store, txn, &label_key)? {
             continue;
         }
-        store.vault_meta.put(txn, &label_key, &encode(&label)?)?;
+        QUESTION_LABEL.put(store, txn, &label_key, &label)?;
         count += 1;
     }
     Ok(count)
@@ -336,7 +328,8 @@ pub(super) fn evaluate_fact(
     {
         return Ok(None);
     }
-    let Some(raw) = store.entities.get(txn, answer.claim.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &answer.claim)?
+    else {
         return Ok(None);
     };
     let header =
@@ -350,7 +343,7 @@ pub(super) fn evaluate_fact(
     let encoded = encode(answer)?;
     let expected = rmpv::decode::read_value(&mut encoded.as_slice())
         .map_err(|_| Error::CorruptedIndex("outcome answer value"))?;
-    let facets = crate::claim::facet_refs_in_db(&store.edges_out, txn, &answer.claim)?;
+    let facets = crate::claim::facet_refs_in_port(store, txn, &answer.claim)?;
     if crate::vault_cleanup::is_archived_in_txn(store, txn, &answer.claim)?
         || !crate::gate::scoped_read_claim_allowed(policy, &actor, &prediction, &facets)
         || prediction.stale
@@ -371,7 +364,7 @@ pub(super) fn evaluate_fact(
             stage.stage.0
         }
         OutcomeSource::Edge { relation } => {
-            if crate::edge::parse_relation(relation) != edge_kind {
+            if crate::edge::EdgeKind::from_name(relation) != edge_kind {
                 return Ok(None);
             }
             let provenance = crate::provenance::decode_edge_provenance_body(&body.value)?;
@@ -412,11 +405,10 @@ fn linked(
     let Some(relation) = relation else {
         return Ok(false);
     };
-    for row in store.edges_out.prefix_iter(txn, unit.as_bytes())? {
-        let (key, value) = row?;
-        let edge = crate::vault::parse_edge_record(&key, &value)?;
+    for edge in store.port_edges(txn, unit, EdgeDirection::Out, None, None)? {
+        let edge = edge?;
         if edge.target == *subject
-            && Some(edge.kind) == crate::edge::parse_relation(relation)
+            && Some(edge.kind) == crate::edge::EdgeKind::from_name(relation)
             && edge.provenance.is_none_or(|p| {
                 p.confirmation_status != crate::edge::EdgeConfirmationStatus::Retracted
             })
@@ -437,7 +429,7 @@ pub(super) fn readable(
     if crate::vault_cleanup::is_archived_in_txn(store, txn, id)? {
         return Ok(false);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     let header =
@@ -449,7 +441,7 @@ pub(super) fn readable(
         return Ok(true);
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    let facets = crate::claim::facet_refs_in_db(&store.edges_out, txn, id)?;
+    let facets = crate::claim::facet_refs_in_port(store, txn, id)?;
     Ok(crate::claim::claim_surfaceable(&body)
         && crate::gate::scoped_read_claim_allowed(policy, actor, &body, &facets))
 }

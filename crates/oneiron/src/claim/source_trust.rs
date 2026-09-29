@@ -57,8 +57,7 @@ pub(crate) enum MapValue<'a> {
 }
 
 /// The single duplicate-aware scope-map lookup. Shared with
-/// [`crate::corpus`] so the corpus entry reads the surrounding map exactly
-/// like the provenance/taint/sensitivity stamps beside it.
+/// the recognized provenance/taint/sensitivity entries of the opaque map.
 pub(crate) fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
     let mut found = None;
     for (key, value) in entries {
@@ -254,6 +253,7 @@ pub(crate) const KEY_VALUE_PREDICATE: &str = "core.memory.key_value";
 
 pub(crate) fn claim_generic_readable(body: &ClaimBody) -> bool {
     body.predicate != KEY_VALUE_PREDICATE
+        && super::history_store::machine_history_kind(&body.predicate).is_none()
 }
 
 /// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004
@@ -265,7 +265,7 @@ pub(crate) fn claim_generic_readable(body: &ClaimBody) -> bool {
 /// * `appr ∈ {auto, approved}` — respect consent;
 /// * `life = active` — only current beliefs;
 /// * `stale = false` — only regenerated content (absent on disk means
-///   `false`, [`decode_claim_body`]; absence alone never excludes).
+///   `false`, [`crate::claim::decode_claim_body`]; absence alone never excludes).
 ///
 /// The gate is an EXCLUSION, not an error: failing claims are silently
 /// dropped and counted (`PackStats::claims_suppressed`). Targeted reads stay

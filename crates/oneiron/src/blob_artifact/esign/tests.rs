@@ -61,8 +61,14 @@ fn original_pdf() -> &'static [u8] {
     ))
 }
 fn setup() -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
+    setup_with(VaultConfig::default(), 1000)
+}
+fn setup_with(
+    config: VaultConfig,
+    expires_at: u64,
+) -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let vault = Vault::open(dir.path(), config)?;
     let person = EntityId::now();
     vault.put_entity(
         &person,
@@ -71,6 +77,9 @@ fn setup() -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
         1,
         b"owner",
     )?;
+    // The artifact actor is a MACHINE: it signs with a host-held key, so the
+    // vault is host-rooted and its owner verbs need a human binding (ONE-1634).
+    crate::test_util::provision_engine_machines(&vault);
     let artifact = EntityId::now();
     vault.put_blob_artifact(
         &artifact,
@@ -86,10 +95,105 @@ fn setup() -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
         TimeRange { start: 1, end: 1 },
         1,
     )?;
-    let body = document(artifact);
+    let mut body = document(artifact);
+    body.expires_at = expires_at;
+    for recipient in &mut body.recipients {
+        recipient.expires_at = expires_at;
+    }
     vault.create_esign_document(artifact, &body, actor(), 2)?;
     Ok((dir, vault, artifact, body))
 }
+#[test]
+fn capability_preview_and_signature_share_injected_time_and_ids() -> Result<()> {
+    use crate::ports::{ChangeLogStore, ManualClock};
+    let clock = ManualClock::new(100);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    let (_dir, vault, document, doc) = setup_with(config, 200)?;
+    let owner = EntityId::from_bytes([0x42; 16])?;
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    crate::test_util::bind_test_owner(&vault, owner);
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes([0x43; 16]),
+    )?;
+    let tokens = vault.issue_esign_capabilities(&auth, document)?;
+    assert_eq!(tokens.len(), 2);
+    event(&vault, document, EsignEvent::Sent, 100)?;
+    let token = &tokens[0].1;
+    assert!(matches!(
+        vault.execute_signing_action(token, &SigningAction::Load, None, None)?,
+        SigningOutcome::Page(_)
+    ));
+    let (_, pdf) = vault.esign_preview_for_capability(token, 0, None, None)?;
+    assert_eq!(pdf, original_pdf());
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([1, 2, 3, 255]),
+    ))
+    .write_to(&mut encoded, image::ImageFormat::Png)
+    .unwrap();
+    let image = vault.upload_esign_signature_image(token, encoded.get_ref())?;
+    assert!(
+        !vault
+            .esign_signature_image_for_capability(token, &image)?
+            .is_empty()
+    );
+    // The event CLAIM and the version actor are persisted IDs, not host ULIDs.
+    assert!(vault.claims_for_subject(&document)?.iter().any(|id| {
+        id.as_bytes()[0] == 0x71
+            && vault
+                .get_claim(id)
+                .ok()
+                .flatten()
+                .is_some_and(|claim| claim.predicate.starts_with("esign."))
+    }));
+    let image_id = EntityId::from_hex(&image)?;
+    let txn = vault.store.env.read_txn()?;
+    let changes = vault.port_changelog_list_by_entity(&txn, &image_id, 100)?;
+    let machine = changes
+        .iter()
+        .find(|row| row.reason.as_deref() == Some("blob version appended"))
+        .expect("capability upload audit actor")
+        .actor_principal;
+    assert_eq!(machine.as_bytes()[0], 0x71);
+    drop(txn);
+    assert_eq!(
+        vault.get_entity_type(&machine)?,
+        Some(crate::registry::ENTITY_TYPE_MACHINE)
+    );
+    clock.set(201);
+    assert!(
+        vault
+            .esign_preview_for_capability(token, 0, None, None)
+            .is_err()
+    );
+    assert!(
+        vault
+            .esign_signature_image_for_capability(token, &image)
+            .is_err()
+    );
+    assert!(
+        vault
+            .upload_esign_signature_image(token, encoded.get_ref())
+            .is_err()
+    );
+    assert_eq!(doc.expires_at, 200);
+    Ok(())
+}
+
 fn event(vault: &Vault, id: EntityId, event: EsignEvent, at: u64) -> Result<EsignState> {
     vault.with_write_txn(|txn| append(vault, txn, id, event, actor(), at))
 }
@@ -176,7 +280,7 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     forged.source = Some(crate::claim::ClaimSource::Observed);
     assert!(
         vault
@@ -253,6 +357,7 @@ fn ceremony_setup() -> Result<(
         now,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     doc.recipients[0].principal_ref = Some(owner.to_hex());
     event(
         &vault,
@@ -1601,7 +1706,7 @@ fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locki
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     claim.source = Some(crate::claim::ClaimSource::Observed);
     vault.with_write_txn(|txn| {
         vault.put_reserved_claim_in_txn(
@@ -1845,14 +1950,14 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         &rmp_serde::to_vec_named(&manifest).unwrap(),
     )?;
     let put_sender = |sender_id: EntityId| {
-        let mut identity = crate::channel_identity::ChannelIdentity::requested(
+        let identity = crate::test_util::self_held_identity_in_state(
             "email",
-            format!("sender-{}@example.com", sender_id.to_hex()),
+            &format!("sender-{}@example.com", sender_id.to_hex()),
             crate::channel_identity::SelfHeldShape::DedicatedAddress,
             crate::channel_identity::ChannelIdentityBinding::actor(sender),
+            crate::channel_identity::ChannelIdentityState::Active,
             1_000,
         );
-        identity.state = crate::channel_identity::ChannelIdentityState::Active;
         vault.create_channel_identity(&sender_id, &identity)
     };
     let original_sender = EntityId::now();

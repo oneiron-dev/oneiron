@@ -730,9 +730,13 @@ fn an_undecodable_policy_row_is_uncertainty_not_absence() {
     // load-bearing rather than cosmetic.
     vault
         .with_write_txn(|wtxn| {
+            let key = ScopeTriggerKey {
+                scope_digest: scope_key(SCOPE),
+                trigger: EscalationTrigger::Policy,
+            };
             vault.store.vault_meta.put(
                 wtxn,
-                &standing_policy_key(SCOPE, EscalationTrigger::Policy),
+                &STANDING_POLICY.key_bytes(&key),
                 b"not a policy row",
             )?;
             Ok(())
@@ -855,7 +859,7 @@ fn a_cap_sized_scope_cannot_hide_a_newer_ruling_under_a_lower_one() {
             for index in 0..cap {
                 vault.store.vault_meta.put(
                     wtxn,
-                    &escalation_key(high_scope, &filler_id(index)),
+                    &ESCALATION.key_bytes(&(scope_key(high_scope), filler_id(index))),
                     &data,
                 )?;
             }

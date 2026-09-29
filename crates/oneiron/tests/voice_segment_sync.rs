@@ -73,6 +73,7 @@ fn segment_claim(asset: EntityId, value: Value) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .expect("fixture")
 }
 
 /// What the recorder's vault sink does: audio bytes as an ASSET entity, then

@@ -1,7 +1,8 @@
 use super::*;
 use crate::entity_id::EntityId;
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, SelectorRange, encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, SelectorRange,
+    base_world_axis, encode_federation_pact_scope,
 };
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::temporal::TimeRange;
@@ -25,16 +26,18 @@ mod federation_lifecycle;
 mod federation_merge;
 mod foundations;
 mod hosted_consent;
+mod instant_widen;
 mod observation_safety;
 mod peer_roster;
 mod readonly_fold;
-mod revoke_freeze_bypass;
+mod retired_device_ops;
+mod revoke_proof_matrix;
 mod support;
 mod tier_floor;
-mod widen_veto;
 
 mod causal_claim;
 mod checkpoint;
 mod history_transfer;
+mod machine_write;
 mod recovery_ceremony;
 mod retired_ceiling;

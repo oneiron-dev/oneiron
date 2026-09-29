@@ -4,16 +4,30 @@ use super::{
     ledger::state_in,
     model::*,
 };
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, TimeRange, Vault};
 use std::io::Cursor;
-pub(super) fn image_binding_key(document: EntityId, recipient: &str, image: &str) -> Vec<u8> {
-    [
-        b"esign.signature_image.v1/".as_slice(),
-        document.as_bytes(),
-        recipient.as_bytes(),
-        image.as_bytes(),
-    ]
-    .concat()
+
+/// Signature image ownership marker. Key: id16 (document) + string (recipient) + string (image
+/// hex) — recipient and image are concatenated with no separator between them, so the shape is
+/// exact-match or (document, recipient)-prefix only; the tail is never split back apart.
+pub(super) const BINDINGS: SideTable<(EntityId, Vec<u8>), (), Raw> =
+    SideTable::new(&side_table::ESIGN_SIGNATURE_IMAGE_BINDING);
+/// Signature image byte budget. Key: id16 (document).
+const IMAGE_BYTES_BUDGET: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::ESIGN_IMAGE_BYTES_BUDGET);
+
+pub(super) fn image_binding_key(
+    document: EntityId,
+    recipient: &str,
+    image: &str,
+) -> (EntityId, Vec<u8>) {
+    (document, [recipient.as_bytes(), image.as_bytes()].concat())
+}
+
+/// The (document, recipient) leading bytes of every [`BINDINGS`] key that recipient owns.
+fn image_binding_prefix(document: EntityId, recipient: &str) -> Vec<u8> {
+    [document.as_bytes().as_slice(), recipient.as_bytes()].concat()
 }
 impl Vault {
     pub fn upload_esign_signature_image(
@@ -21,7 +35,7 @@ impl Vault {
         token: &EsignCapability,
         bytes: &[u8],
     ) -> Result<String> {
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         // Authenticate before attacker-controlled image decode. Count the
         // attempt separately so an observation failure never denies signing.
         let (document, recipient) = self.with_write_txn(|txn| {
@@ -60,7 +74,7 @@ impl Vault {
         if canonical.len() > 2 * 1024 * 1024 {
             return Err(invalid("signature image output size"));
         }
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
             let id = EntityId::from_hex(&cap.document)?;
@@ -89,37 +103,22 @@ impl Vault {
                     .map_err(|_| invalid("image id"))?,
             )?;
             let key = image_binding_key(id, &cap.recipient, &image.to_hex());
-            if self.store.vault_meta.get(txn, &key)?.is_some() {
+            if BINDINGS.contains(&self.store, txn, &key)? {
                 return Ok(image.to_hex());
             }
-            let budget_key = [b"esign.image_bytes.v1/".as_slice(), id.as_bytes()].concat();
-            let prior = self
-                .store
-                .vault_meta
-                .get(txn, &budget_key)?
-                .map(|v| {
-                    <[u8; 8]>::try_from(v.as_ref())
-                        .map(u64::from_be_bytes)
-                        .map_err(|_| invalid("image budget encoding"))
-                })
-                .transpose()?
-                .unwrap_or(0);
+            let prior = IMAGE_BYTES_BUDGET.get(&self.store, txn, &id)?.unwrap_or(0);
             let total = prior
                 .checked_add(canonical.len() as u64)
                 .ok_or_else(|| invalid("image budget overflow"))?;
             if total > 64 * 1024 * 1024 {
                 return Err(invalid("document signature image budget"));
             }
-            self.store
-                .vault_meta
-                .put(txn, &budget_key, &total.to_be_bytes())?;
-            let prefix = image_binding_key(id, &cap.recipient, "");
-            if self
-                .store
-                .vault_meta
-                .prefix_iter(txn, &prefix)?
+            IMAGE_BYTES_BUDGET.put(&self.store, txn, &id, &total)?;
+            let prefix = image_binding_prefix(id, &cap.recipient);
+            if BINDINGS
+                .iter_from(&self.store, txn, &prefix)?
                 .take(16)
-                .collect::<std::result::Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>>>()?
                 .len()
                 >= 16
             {
@@ -154,10 +153,11 @@ impl Vault {
                 },
                 now,
             )?;
-            self.store.vault_meta.put(
+            BINDINGS.put(
+                &self.store,
                 txn,
                 &image_binding_key(id, &cap.recipient, &image.to_hex()),
-                &[],
+                &(),
             )?;
             Ok(image.to_hex())
         })
@@ -172,7 +172,7 @@ impl Vault {
         image_ref: &str,
     ) -> Result<Vec<u8>> {
         reference(image_ref)?;
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         let _ = self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
             super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
@@ -190,11 +190,11 @@ impl Vault {
             || now >= recipient.expires_at
             || state.status != DocumentStatus::Pending
             || recipient.signing != SigningStatus::Ready
-            || self
-                .store
-                .vault_meta
-                .get(&txn, &image_binding_key(id, &cap.recipient, image_ref))?
-                .is_none()
+            || !BINDINGS.contains(
+                &self.store,
+                &txn,
+                &image_binding_key(id, &cap.recipient, image_ref),
+            )?
         {
             return Err(invalid("signature image is unavailable"));
         }

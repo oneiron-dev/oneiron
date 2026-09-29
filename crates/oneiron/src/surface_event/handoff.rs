@@ -24,12 +24,33 @@ pub const SURFACE_EVENT_ATTEMPT_KIND: &str = "surface_event.dispatch.v1";
 /// Route prefix the ack's status path is built on.
 const SURFACE_EVENT_STATUS_PATH_PREFIX: &str = "/v1/core/surface-events/";
 
+/// Identity axes that define one inbound surface-event delivery.
+pub(crate) struct SurfaceEventKey<'a> {
+    pub(crate) channel: &'a str,
+    pub(crate) receiving: &'a str,
+    pub(crate) correlation_id: &'a str,
+}
+
+/// Builds a bounded, domain-separated key from the event's typed identity tuple.
+///
+/// Length framing keeps arbitrary provider strings from making tuple boundaries
+/// ambiguous, while the digest keeps the queue key under its 512-byte limit.
+pub(crate) fn surface_event_dedupe_key(key: SurfaceEventKey<'_>) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.surface-event.dedupe.v2\0");
+    for value in [key.channel, key.receiving, key.correlation_id] {
+        hasher.update(&(value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    format!("sev:v2:{}", hasher.finalize().to_hex())
+}
+
 /// Durable payload a queued surface-event attempt carries to its worker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceEventAttemptPayload {
     pub event: SurfaceEvent,
     pub route: SurfaceEventDispatchRoute,
-    /// Downstream idempotency key. Exactly the public correlation id.
+    /// Downstream idempotency key derived from the event's typed identity tuple.
     pub dispatch_idempotency_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_ref: Option<String>,
@@ -214,6 +235,39 @@ impl Vault {
         }))
     }
 
+    /// Foreign pack intake: resolve and enforce the acting agent under the
+    /// SAME writer transaction that creates the durable event handoff.
+    #[cfg(any(test, feature = "microvm-firecracker"))]
+    pub(crate) fn enqueue_pack_surface_event_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: InboundSurfaceEventInput,
+        expected_agent: crate::EntityId,
+        now: u64,
+    ) -> Result<SurfaceEventAdmission> {
+        let receipt = super::inbound::route_inbound_surface_event_in_txn(self, txn, input)?;
+        if receipt.agent_ref.as_deref() != Some(expected_agent.to_hex().as_str()) {
+            return Err(crate::Error::InvalidConfig(
+                "pack surface event outside acting agent".into(),
+            ));
+        }
+        let event = receipt.surface_event.ok_or_else(|| {
+            crate::Error::InvalidConfig("pack surface event did not route".into())
+        })?;
+        let record = admit_surface_event_once_in_txn(self, txn, &event, None, now)?;
+        Ok(SurfaceEventAdmission::Accepted(SurfaceEventAck {
+            status_path: surface_event_status_path(&event.correlation_id),
+            correlation_id: event.correlation_id,
+            attempt_ref: SurfaceEventAttemptRef::from_attempt_id(record.attempt.id),
+            state: SurfaceEventHandoffState::from_attempt_state(record.attempt.state),
+            replayed: record.replayed,
+            // The row's own stamp, not this call's clock: a replay admitted
+            // nothing, and dating the ack `now` would contradict the
+            // `created_at` the status snapshot reads off the same attempt.
+            accepted_at: record.attempt.created_at,
+        }))
+    }
+
     /// Reads the durable handoff snapshot for one public correlation id.
     pub fn surface_event_handoff_status(
         &self,
@@ -243,13 +297,17 @@ impl Vault {
         dispatcher: &dyn SurfaceEventDispatcher,
     ) -> Result<SurfaceEventWorkerOutcome> {
         let queue = AttemptQueue::new(self);
-        let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
-            SURFACE_EVENT_ATTEMPT_KIND,
-            ClaimAttempt {
-                lease_owner: lease_owner.to_owned(),
-                now,
-            },
-        )?
+        let ClaimOutcome::Claimed(attempt) = self.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_claim(
+                self,
+                txn,
+                Some(SURFACE_EVENT_ATTEMPT_KIND),
+                ClaimAttempt {
+                    lease_owner: lease_owner.to_owned(),
+                    now,
+                },
+            )
+        })?
         else {
             return Ok(SurfaceEventWorkerOutcome::Empty);
         };
@@ -267,11 +325,17 @@ impl Vault {
         let correlation_id = payload.event.correlation_id.as_str();
         match disposition {
             SurfaceEventDispatchDisposition::Complete => {
-                let outcome = queue.complete(CompleteAttempt {
-                    id: attempt.id,
-                    lease_owner: lease_owner.to_owned(),
-                    attempt_count: attempt.attempt_count,
-                    now,
+                let outcome = self.with_write_txn(|txn| {
+                    crate::ports::JobQueue::port_job_complete(
+                        self,
+                        txn,
+                        CompleteAttempt {
+                            id: attempt.id,
+                            lease_owner: lease_owner.to_owned(),
+                            attempt_count: attempt.attempt_count,
+                            now,
+                        },
+                    )
                 })?;
                 let (CompleteOutcome::Completed(record)
                 | CompleteOutcome::AlreadyCompleted(record)) = outcome;
@@ -298,12 +362,18 @@ impl Vault {
                 )))
             }
             SurfaceEventDispatchDisposition::Fail { reason } => {
-                let outcome = queue.fail(FailAttempt {
-                    id: attempt.id,
-                    lease_owner: lease_owner.to_owned(),
-                    attempt_count: attempt.attempt_count,
-                    reason,
-                    now,
+                let outcome = self.with_write_txn(|txn| {
+                    crate::ports::JobQueue::port_job_fail(
+                        self,
+                        txn,
+                        FailAttempt {
+                            id: attempt.id,
+                            lease_owner: lease_owner.to_owned(),
+                            attempt_count: attempt.attempt_count,
+                            reason,
+                            now,
+                        },
+                    )
                 })?;
                 let (FailOutcome::Failed(record) | FailOutcome::AlreadyFailed(record)) = outcome;
                 Ok(SurfaceEventWorkerOutcome::Failed(handoff_status(
@@ -342,6 +412,11 @@ pub(super) fn admit_surface_event_once_in_txn(
     now: u64,
 ) -> Result<AdmittedSurfaceEvent> {
     let run_id = surface_event_run_id(&event.correlation_id);
+    let dedupe_key = surface_event_dedupe_key(SurfaceEventKey {
+        channel: &event.channel,
+        receiving: &event.receiving_identity_ref,
+        correlation_id: &event.correlation_id,
+    });
     let payload = encode_surface_event_attempt_payload(&SurfaceEventAttemptPayload {
         event: event.clone(),
         route: if thread_ref.is_some() {
@@ -349,18 +424,19 @@ pub(super) fn admit_surface_event_once_in_txn(
         } else {
             event.dispatch_route()
         },
-        dispatch_idempotency_key: event.correlation_id.clone(),
+        dispatch_idempotency_key: dedupe_key.clone(),
         thread_ref: thread_ref.map(str::to_owned),
     })?;
 
     let queue = AttemptQueue::new(vault);
-    if let Some(existing) = sole_surface_event_attempt(
+    if let Some(existing) = matching_surface_event_attempt(
         attempts_for_run_in_write_txn(vault, &queue, wtxn, &run_id)?,
         &event.correlation_id,
+        &dedupe_key,
     )? {
-        // A row already owns this correlation id — including after it reached a
-        // terminal state. Replay derives that attempt instead of dispatching a
-        // second one; the write txn is dropped without a commit.
+        // A row already owns this identity tuple — including after it reached
+        // a terminal state. Replay derives that attempt instead of dispatching
+        // a second one; the write txn is dropped without a commit.
         let held = decode_surface_event_attempt_payload(&existing.payload)?;
         if thread_ref.is_some() || held.thread_ref.is_some() {
             let requested = thread_ref
@@ -387,20 +463,16 @@ pub(super) fn admit_surface_event_once_in_txn(
         });
     }
 
-    let outcome = queue.enqueue_in_txn(
+    let outcome = crate::ports::JobQueue::port_job_enqueue(
+        vault,
         wtxn,
         EnqueueAttempt {
             kind: SURFACE_EVENT_ATTEMPT_KIND.to_owned(),
             payload,
-            // One derivation keys both queue indexes. A raw provider id is
-            // unbounded, the queue's dedupe cap is 512 bytes, and a length
-            // rejection here would contradict the ruling that admission never
-            // refuses an event merely for a long provider id. The bounded run
-            // id is deterministic and equals the correlation id for every id
-            // the raw key could have carried, so replay still lands on this
-            // row; the public id stays verbatim on the envelope, the ack, and
-            // the status snapshot.
-            dedupe_key: Some(run_id.clone()),
+            // The bounded, typed tuple key keeps the dedupe scope to one
+            // channel identity and provider correlation id. The separate run
+            // id remains correlation-based for existing status lookup.
+            dedupe_key: Some(dedupe_key),
             run_id: Some(run_id),
             now,
         },
@@ -442,11 +514,43 @@ fn attempts_for_run_in_write_txn(
     Ok(records)
 }
 
-/// Resolves a run's attempt rows to the single surface-event row it may hold.
+/// Resolves the attempt that owns one typed dedupe tuple.
+///
+/// Multiple rows may share a run id when providers reuse a correlation id
+/// across receiving identities. Only the exact tuple is a replay. A row of
+/// another kind under the same public correlation id remains a typed collision.
+fn matching_surface_event_attempt(
+    records: Vec<AttemptRecord>,
+    correlation_id: &str,
+    dedupe_key: &str,
+) -> Result<Option<AttemptRecord>> {
+    let mut matching = None;
+    for record in records {
+        if record.kind != SURFACE_EVENT_ATTEMPT_KIND {
+            return Err(Error::Registry(
+                RegistryError::SurfaceEventCorrelationKindCollision {
+                    correlation_id: correlation_id.to_owned(),
+                    holding_kind: record.kind,
+                },
+            ));
+        }
+        if record.dedupe_key.as_deref() == Some(dedupe_key) {
+            if matching.is_some() {
+                return Err(Error::CorruptedIndex("surface event dedupe tuple"));
+            }
+            matching = Some(record);
+        }
+    }
+    Ok(matching)
+}
+
+/// Resolves a run's attempt rows to the single surface-event row a status
+/// lookup by correlation id can identify.
 ///
 /// A row of another kind under the same public correlation id is a typed
-/// collision, and more than one row for a once-only run is corruption — never
-/// "pick the latest".
+/// collision. Multiple surface-event rows are ambiguous because the public
+/// status lookup does not carry the rest of the dedupe tuple; never "pick the
+/// latest".
 fn sole_surface_event_attempt(
     mut records: Vec<AttemptRecord>,
     correlation_id: &str,
@@ -524,12 +628,11 @@ pub fn decode_surface_event_attempt_payload(bytes: &[u8]) -> Result<SurfaceEvent
 /// provider id.
 const MAX_VERBATIM_CORRELATION_RUN_ID_BYTES: usize = 128;
 
-/// Derives the bounded queue key for a public correlation id.
+/// Derives the bounded run id for a public correlation id.
 ///
-/// Keys both the durable run index and the queue's dedupe index, so a replay
-/// resolves to one row through either. Deterministic in both directions of a
-/// replay: the same provider id always yields the same key, and the public
-/// correlation id is never rewritten.
+/// This keeps status lookup and run-index behavior correlation-based. Dedupe
+/// uses `surface_event_dedupe_key` instead, scoped by the receiving identity.
+/// The public correlation id is never rewritten.
 #[must_use]
 pub fn surface_event_run_id(correlation_id: &str) -> String {
     if correlation_id.len() <= MAX_VERBATIM_CORRELATION_RUN_ID_BYTES {

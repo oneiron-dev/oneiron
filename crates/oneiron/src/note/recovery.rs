@@ -1,14 +1,21 @@
 //! Host-local history-free recovery of uncited NOTE values.
 use super::document::{NoteDocument, invalid};
+#[cfg(feature = "sync")]
+use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_NC_E, SYNC_QD_E};
+use super::sync_rows::{SYNC_DS_E, SYNC_QN_E};
+#[cfg(feature = "sync")]
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
+use crate::side_table::HexId;
 use crate::{EntityId, Result, Vault};
 
 pub(crate) fn rebuild(
     note: EntityId,
     text: &str,
+    title: Option<&str>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<loro::LoroDoc> {
     super::validate_markdown(text)?;
-    let doc = super::documents::proposal_value(note, text)?;
+    let doc = super::documents::proposal_value(note, text, title)?;
     let mut previous = None;
     for record in authorship {
         if previous.is_some_and(|id| id >= record.operation) {
@@ -38,33 +45,24 @@ pub(crate) fn guard(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId) -> Res
             "generic EntityDoc recovery needs its own value adapter",
         ));
     }
-    if vault
-        .store
-        .sync_state
-        .get(txn, &format!("ds:e:{}", note.to_hex()))?
-        .is_some()
-        || vault
-            .store
-            .sync_state
-            .prefix_iter(txn, &format!("qn:e:{}:", note.to_hex()))?
+    if SYNC_DS_E.contains(&vault.store, txn, &HexId(note))?
+        || SYNC_QN_E
+            .iter_from(&vault.store, txn, format!("{}:", note.to_hex()).as_bytes())?
             .next()
             .transpose()?
             .is_some()
-        || vault
-            .store
-            .vault_meta
-            .get(
-                txn,
-                format!("note.erase/authority-floor/{}", note.to_hex()).as_bytes(),
-            )?
-            .is_some()
+        || super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.contains(
+            &vault.store,
+            txn,
+            &HexId(note),
+        )?
         || super::citation_delete_scope_exists(&vault.store, txn, &note)?
     {
         return Err(invalid(
             "NOTE recovery requires authority or citation rebasing",
         ));
     }
-    if vault.store.entities.get(txn, note.as_bytes())?.is_some() {
+    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &note)?.is_some() {
         let doc = super::document_store::load(vault, txn, note)?;
         if !doc.pins()?.is_empty() {
             return Err(invalid(
@@ -87,14 +85,14 @@ pub(crate) fn capture(
 pub(crate) fn values(
     note: EntityId,
     doc: loro::LoroDoc,
-) -> Result<(String, Vec<super::NoteAuthorship>)> {
+) -> Result<(String, Option<String>, Vec<super::NoteAuthorship>)> {
     let view = NoteDocument::from_loro(note, doc)?.view()?;
     if !view.pins.is_empty() {
         return Err(invalid(
             "history-free NOTE recovery requires citation rebasing",
         ));
     }
-    Ok((view.markdown, view.authorship))
+    Ok((view.markdown, view.title, view.authorship))
 }
 
 /// Rebuilds a switched head's document where this vault has none: the head
@@ -104,15 +102,15 @@ pub(crate) fn restore_head(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
-    head: EntityId,
-    seq: u64,
+    head_and_seq: (EntityId, u64),
     text: &str,
+    title: Option<&str>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<()> {
     guard(vault, txn, note)?;
-    super::documents::set_head(&vault.store, txn, note, head, seq)?;
-    let doc = NoteDocument::from_loro(note, rebuild(note, text, authorship)?)?;
-    super::document_store::persist(vault, txn, &doc)
+    super::documents::set_head(&vault.store, txn, note, head_and_seq.0, head_and_seq.1)?;
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, authorship)?)?;
+    super::document_store::persist_recovered_document(vault, txn, &doc)
 }
 
 #[cfg(feature = "sync")]
@@ -121,11 +119,12 @@ pub(crate) fn restore(
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
     text: &str,
+    title: Option<&str>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<()> {
     guard(vault, txn, note)?;
     let old = super::document_store::load(vault, txn, note)?.view()?;
-    if old.markdown == text && old.authorship == authorship {
+    if old.markdown == text && old.title.as_deref() == title && old.authorship == authorship {
         return Ok(());
     }
     if old
@@ -135,20 +134,14 @@ pub(crate) fn restore(
     {
         return Err(invalid("NOTE recovery would discard admitted provenance"));
     }
-    let doc = NoteDocument::from_loro(note, rebuild(note, text, authorship)?)?;
-    for prefix in ["qd:e:", "ad:e:", "nr:e:", "nc:e:"] {
-        super::delete::delete_sync_prefix(
-            &vault.store,
-            txn,
-            &format!("{prefix}{}:", note.to_hex()),
-        )?;
-    }
-    let slot = super::storage::slot(vault, txn, note)?;
-    for prefix in ["ssv:e:", "m:u_seq:e:"] {
-        vault
-            .store
-            .sync_state
-            .delete(txn, &format!("{prefix}{}", slot.to_hex()))?;
-    }
-    super::document_store::persist(vault, txn, &doc)
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, authorship)?)?;
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    SYNC_QD_E.delete_from(&vault.store, txn, &key_prefix)?;
+    SYNC_AD_E.delete_from(&vault.store, txn, &key_prefix)?;
+    NOTE_RECEIPT_BY_REQUEST.delete_from(&vault.store, txn, &key_prefix)?;
+    SYNC_NC_E.delete_from(&vault.store, txn, &key_prefix)?;
+    let slot = DocumentSlot::of(super::storage::slot(vault, txn, note)?);
+    let rows = [DocumentRow::ShallowSince, DocumentRow::UpdateSequence];
+    vault.store.port_document_rows_delete(txn, slot, &rows)?;
+    super::document_store::persist_recovered_document(vault, txn, &doc)
 }

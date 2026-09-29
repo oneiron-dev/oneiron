@@ -55,6 +55,7 @@
 
 mod budget;
 mod cancellation;
+pub mod hosted_tts;
 mod protocol;
 mod retrieval;
 mod safeguard;
@@ -66,6 +67,7 @@ pub mod soniox;
 pub mod tts_spikes;
 #[cfg(unix)]
 pub mod uds;
+pub mod voxcpm2;
 
 pub use cancellation::{OutputStop, StopReason};
 pub use protocol::*;

@@ -8,7 +8,7 @@ fn put_corpus_coping_outcome(
     vault: &Vault,
     id: EntityId,
     person: EntityId,
-    scope: Option<CorpusId>,
+    scope: Option<EntityId>,
     learned_at: u64,
 ) -> Result<()> {
     let value = CopingOutcomeValue::new(
@@ -26,11 +26,11 @@ fn put_corpus_coping_outcome(
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(crate::claim::ClaimSource::Inferred);
     body.valid_from = Some(learned_at);
     if let Some(scope) = scope {
-        body.scope = Some(scope_with_corpus_id(None, scope)?);
+        body.scope_project = scope;
     }
     vault.put_claim(
         &id,
@@ -70,7 +70,7 @@ fn corpus_coping_terminal_filters_before_truncation() -> Result<()> {
     ] {
         assert_eq!(
             ids(vault.query().corpus(scope.clone()), 10)?,
-            vec![selected, core]
+            vec![selected]
         );
         assert_eq!(ids(vault.query().corpus(scope), 1)?, vec![selected]);
     }
@@ -90,7 +90,7 @@ fn corpus_coping_terminal_filters_before_truncation() -> Result<()> {
                 .relationship(&entity_id(0x73), RelMode::Filter),
             10
         )?,
-        vec![selected, core]
+        vec![selected]
     );
     Ok(())
 }

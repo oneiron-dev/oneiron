@@ -133,6 +133,7 @@ fn claim_body_with_bad_predicate() -> Vec<u8> {
             rmpv::Value::from("scopeFacetId"),
             rmpv::Value::Binary(
                 oneiron::claim::substrate_facet_id(subject)
+                    .expect("fixture")
                     .as_bytes()
                     .to_vec(),
             ),
@@ -242,6 +243,7 @@ fn edge_provenance_claim_body_with(
         rmpv::Value::from("scopeFacetId"),
         rmpv::Value::Binary(
             oneiron::claim::substrate_facet_id(edge_source)
+                .expect("fixture")
                 .as_bytes()
                 .to_vec(),
         ),
@@ -1868,12 +1870,12 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
         let original_room = vault.project_room(room_id).unwrap().unwrap();
         let mut room = original_room.clone();
         room.member_ids.push(EntityId::now().to_hex());
-        let mut malformed = ProjectRecord::new(bad, None, root_id, leader);
+        let mut malformed = ProjectRecord::new(bad, None, root_id, leader).expect("fixture");
         malformed.roster.clear();
-        let mut invalid_ref = ProjectRecord::new(bad_ref, None, root_id, leader);
+        let mut invalid_ref = ProjectRecord::new(bad_ref, None, root_id, leader).expect("fixture");
         invalid_ref.goal = Some("not-an-id".into());
-        let cyclic = ProjectRecord::new(cycle, Some(cycle), root_id, leader);
-        let waiting = ProjectRecord::new(child, Some(parent), root_id, leader);
+        let cyclic = ProjectRecord::new(cycle, Some(cycle), root_id, leader).expect("fixture");
+        let waiting = ProjectRecord::new(child, Some(parent), root_id, leader).expect("fixture");
         let mut body =
             rmpv::decode::read_value(&mut claim_body_with_bad_predicate().as_slice()).unwrap();
         let rmpv::Value::Map(fields) = &mut body else {
@@ -1939,7 +1941,8 @@ fn agent_record_rejections_do_not_wedge_replay_and_missing_projects_readmit() {
                 "missing quarantine for {reason}: {records:?}"
             );
         }
-        let parent_body = ProjectRecord::new(parent, Some(root_id), root_id, leader);
+        let parent_body =
+            ProjectRecord::new(parent, Some(root_id), root_id, leader).expect("fixture");
         insert_bytes(
             &entities,
             &parent.to_hex(),
@@ -1971,7 +1974,7 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
     vault
         .put_project(
             other,
-            &ProjectRecord::new(other, Some(root), root, leader),
+            &ProjectRecord::new(other, Some(root), root, leader).unwrap(),
             1,
         )
         .unwrap();
@@ -1979,7 +1982,7 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
     vault
         .put_project(
             child,
-            &ProjectRecord::new(child, Some(root), root, leader),
+            &ProjectRecord::new(child, Some(root), root, leader).unwrap(),
             2,
         )
         .unwrap();
@@ -2007,7 +2010,8 @@ fn forward_remat_quarantines_stale_project_parents_and_claim_membership() {
                 0.9,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             valid_time_range(),
             LEARNED_AT,
         )

@@ -4,7 +4,6 @@ use super::super::SearchResponse;
 use super::super::core_engine_error;
 use super::super::default_limit;
 use super::super::json_payload;
-use super::super::parse_entity_id_param;
 use super::super::scoped_read_for_core_auth;
 use super::super::search_fetch_limit;
 use super::super::search_meta;
@@ -18,7 +17,6 @@ use crate::projection;
 use crate::projection::View;
 use crate::protocol::CountMode;
 use crate::protocol::PaginatedResponse;
-use crate::protocol::ResponseMeta;
 use crate::server::SyncServer;
 use axum::extract::Path;
 use axum::extract::State;
@@ -122,11 +120,13 @@ pub(crate) async fn core_query(
     })?;
     let mut narrowing = results.receipt;
     let projected = scoped_read
-        .get_entities_parts_with_modes_with_receipt(
+        .read(
             &results
                 .value
                 .iter()
-                .map(|row| (row.id, oneiron::memory::ReadMode::Indexed))
+                .map(|row| {
+                    oneiron::claim::PointRead::id(row.id).at(oneiron::memory::ReadMode::Indexed)
+                })
                 .collect::<Vec<_>>(),
             Some(&narrowing.applied.as_filter()),
         )
@@ -135,15 +135,21 @@ pub(crate) async fn core_query(
     let total = projected.value.iter().filter(|row| row.is_some()).count();
     let mut staged = observations.as_deref().cloned();
     let mut response = Vec::with_capacity(total.min(req.limit));
-    for (result, parts) in results.value.into_iter().zip(projected.value) {
-        let Some((entity_type, learned_at, body)) = parts else {
+    for (result, row) in results.value.into_iter().zip(projected.value) {
+        let Some(oneiron::claim::ReadRow {
+            entity_type,
+            learned_at,
+            body: Some(body),
+            ..
+        }) = row
+        else {
             continue;
         };
         if response.len() >= req.limit {
             continue;
         }
-        if let Some(observations) = staged.as_mut() {
-            observations
+        if let Some(observations) = staged.as_mut()
+            && let Some(successor) = observations
                 .observe_snapshot(
                     &scoped_read,
                     result.id,
@@ -151,7 +157,9 @@ pub(crate) async fn core_query(
                     &body,
                     matches!(view, View::Full),
                 )
-                .map_err(|error| core_engine_error("session body observation failed", error))?;
+                .map_err(|error| core_engine_error("session body observation failed", error))?
+        {
+            narrowing.restrict_with(&successor);
         }
         let mut value = if matches!(view, View::Standard) {
             serde_json::json!({"id": result.id.to_hex(), "score": result.score})
@@ -251,38 +259,6 @@ pub(crate) struct CoreListQuery {
 
 pub(crate) fn core_list_limit(limit: usize) -> usize {
     limit.min(CORE_MAX_LIST_LIMIT)
-}
-
-pub(crate) fn core_list_entities_by_type(
-    vault: &oneiron::Vault,
-    entity_type: u8,
-    params: CoreListQuery,
-) -> Result<Json<SearchResponse>, EnvelopedApiError> {
-    let view = params.view.unwrap_or(View::Summary);
-    let limit = core_list_limit(params.limit);
-    let after = params
-        .after
-        .as_deref()
-        .map(|after| parse_entity_id_param(after, "after"))
-        .transpose()?;
-    let (ids, next_cursor) = collect_live_entity_page(vault, after, limit, |after, limit| {
-        vault
-            .entities_by_type_page(entity_type, after, limit)
-            .map_err(|error| {
-                tracing::error!(error = %error, entity_type, "core list failed");
-                core_engine_error("core list failed", error).into()
-            })
-    })?;
-    let items = project_entity_ids(vault, ids, view)?;
-    let meta = match params.count_mode {
-        CountMode::None => ResponseMeta::none(),
-        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
-        CountMode::Exact => {
-            let total = count_live_entities_by_type(vault, entity_type)?;
-            ResponseMeta::new(total, CountMode::Exact)
-        }
-    };
-    Ok(Json(PaginatedResponse::new(items, next_cursor, meta)))
 }
 
 pub(crate) fn collect_live_entity_page<F>(

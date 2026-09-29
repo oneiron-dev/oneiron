@@ -286,8 +286,9 @@ pub(crate) struct SessionClaimBundleMember {
 
 impl ClaimBody {
     /// Creates a claim body from the six required fields; all optional
-    /// fields start absent and `stale` starts `false`.
-    #[must_use]
+    /// fields start absent and `stale` starts `false`. The scope facet starts
+    /// as the subject's `substrate` FACET, a derived id, so construction
+    /// refuses with an error where that derivation does.
     pub fn new(
         predicate: impl Into<String>,
         subject: ClaimSubject,
@@ -295,8 +296,8 @@ impl ClaimBody {
         confidence: f32,
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             predicate: predicate.into(),
             subject,
             value,
@@ -311,11 +312,11 @@ impl ClaimBody {
             world: None,
             rel: None,
             scope: None,
-            scope_facet: super::scope_stamp::subject_facet(subject),
+            scope_facet: super::scope_stamp::subject_facet(subject)?,
             scope_project: super::default_project_id(),
             session_tag: None,
             stale: false,
-        }
+        })
     }
 }
 
@@ -323,7 +324,7 @@ impl ClaimBody {
 /// the present [`CLAIM_BODY_KEYS`] in canonical order. `stale == false` is
 /// omitted (absent means `false` on decode). Encoding performs no
 /// validation — every write path re-validates the encoded bytes through
-/// [`decode_claim_body`], the single validator.
+/// [`crate::claim::decode_claim_body`], the single validator.
 pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     let mut entries: Vec<(Value, Value)> = Vec::with_capacity(CLAIM_BODY_KEYS.len());
     entries.push((Value::from(KEY_PRED), Value::from(body.predicate.as_str())));
@@ -386,7 +387,7 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// Decodes and structurally validates a type-0 (CLAIM) body (D18).
 ///
 /// This is the single validator: every write path validates through it (via
-/// [`validate_claim_body_bytes`]) and `Vault::get_claim` decodes through it.
+/// `validate_claim_body_bytes`) and `Vault::get_claim` decodes through it.
 /// Fail-closed rules:
 ///
 /// * the body must be exactly one MessagePack map (no trailing bytes);
@@ -594,10 +595,10 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
 }
 
 /// Structural validation entry point for raw type-0 body bytes (D18).
-/// See [`decode_claim_body`] for the rules.
+/// See [`crate::claim::decode_claim_body`] for the rules.
 ///
 /// This is the WRITE-ONLY chokepoint (the read path — `Vault::get_claim` —
-/// decodes via [`decode_claim_body`] directly): every type-0 write on every
+/// decodes via [`crate::claim::decode_claim_body`] directly): every type-0 write on every
 /// door (`Vault::put_claim`, both batch builders' public puts, the
 /// reserved-namespace `put_reserved_claim` door, the `put_replicated`
 /// sync-replay doors, and the provenance lifecycle rewrites) validates
@@ -617,6 +618,7 @@ pub(crate) fn validate_claim_body_and_decode(
     // predicate-agnostic, so it must not sit behind a predicate-specific
     // branch that only some claims enter.
     validate_claim_source_lineage(&body)?;
+    crate::write_envelope::carry_forward::validate_claim(&body)?;
     crate::blob_artifact::esign::validate_event_claim(&body)?;
     super::supersession_provenance::validate(&body)?;
     if body.predicate.starts_with("world_access.") || body.predicate.starts_with("activated.") {
@@ -749,7 +751,7 @@ mod import_validation_tests {
                 0.8,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.source = Some(ClaimSource::Imported);
             admit(&body)?;
             assert_eq!(vault.get_claim(&id)?, Some(body.clone()));

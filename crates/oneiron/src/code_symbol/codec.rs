@@ -86,6 +86,19 @@ pub(super) const KEY_REPO_KEY: &str = CODE_SYMBOL_ENTITY_BODY_KEYS[1];
 
 pub(super) const CODE_SYMBOL_ENTITY_SCHEMA_VERSION: u64 = 1;
 
+/// The side table's declared codec is `Raw`: a manifest's on-disk shape is the hand-rolled
+/// MessagePack map [`encode_code_symbol_manifest`]/[`decode_code_symbol_manifest`] have always
+/// spelled.
+impl crate::side_table::RawValue for CodeSymbolManifest {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+        Ok(encode_code_symbol_manifest(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
+        Ok(decode_code_symbol_manifest(bytes)?)
+    }
+}
+
 pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<u8>> {
     validate_code_symbol_manifest(manifest)?;
     let chunks = manifest
@@ -583,13 +596,6 @@ pub(super) fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher.finalize().into()
-}
-
-pub(super) fn hash_len(hasher: &mut Sha256, len: usize) -> Result<()> {
-    let len = u64::try_from(len)
-        .map_err(|_| Error::ArithmeticOverflow("code symbol hash material length overflow"))?;
-    hasher.update(len.to_le_bytes());
-    Ok(())
 }
 
 fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {

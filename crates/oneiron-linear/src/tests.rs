@@ -640,7 +640,8 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
     assert_eq!(*calls.borrow(), 1);
     let recorded = linear_receipts(&vault);
     assert_eq!(recorded.len(), 1);
-    assert_eq!(recorded[0].outcome, "failed");
+    // ONE-1872: a failed attempt that may have delivered projects as ambiguous.
+    assert_eq!(recorded[0].outcome, "ambiguous");
     assert_eq!(
         recorded[0]
             .fields

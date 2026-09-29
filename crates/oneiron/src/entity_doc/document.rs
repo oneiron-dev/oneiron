@@ -74,6 +74,30 @@ impl EntityDoc {
         Ok(Self { doc, birth })
     }
 
+    /// Fresh value document for canonical recovery. Old frontiers are not imported.
+    pub(crate) fn rebuild_value(
+        entity: EntityId,
+        text: &str,
+        actor: EntityId,
+        at: u64,
+    ) -> Result<Self> {
+        let doc = LoroDoc::new();
+        doc.set_record_timestamp(true);
+        let birth = Birth {
+            entity: entity.to_hex(),
+            actor: actor.to_hex(),
+            at,
+        };
+        let bytes =
+            rmp_serde::to_vec_named(&birth).map_err(|_| invalid("document birth encoding"))?;
+        map_insert_bytes(&doc.get_map("meta"), BIRTH, &bytes)?;
+        doc.get_text(BODY)
+            .insert(0, text)
+            .map_err(|_| invalid("document recovery text"))?;
+        doc.commit();
+        Ok(Self { doc, birth })
+    }
+
     /// Restores state and immutable birth metadata from a full or shallow snapshot.
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
         Self::from_loro(doc_from_snapshot(bytes)?)

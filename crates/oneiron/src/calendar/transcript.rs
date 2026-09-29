@@ -253,6 +253,9 @@ fn persist_turns(
         // and classify as `Unknown` — inadmissible, i.e. invisible to every
         // dirty scan. The source label stays verbatim beside them under
         // `speaker_label`, which is provenance-only and outside the alias set.
+        // Import provides no verified PERSON identity. Do not stamp `actor`:
+        // the string is not authorship, so only owner/admin policy can later
+        // authorize deletion of this unknown-author room TURN.
         let body = rmp_serde::to_vec_named(&serde_json::json!({
             "ordinal": turn.ordinal, "speaker": "user", "spkr": "user",
             "role": "user", "speaker_label": turn.speaker_label,
@@ -282,7 +285,10 @@ fn persist_turns(
 }
 
 /// Stable dedicated actor for file-drop import NOTE authorship.
-fn file_drop_import_actor(vault: &crate::Vault, at: u64) -> crate::Result<crate::EntityId> {
+pub(crate) fn file_drop_import_actor(
+    vault: &crate::Vault,
+    at: u64,
+) -> crate::Result<crate::EntityId> {
     let digest = Sha256::digest(b"oneiron:calendar:file-drop-import-machine:v1");
     let actor = crate::EntityId::from_bytes(digest[..16].try_into().expect("sha256 prefix"))?;
     let _ = at;

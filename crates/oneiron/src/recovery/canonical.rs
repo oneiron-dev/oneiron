@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, encode_recovery_artifact};
+use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::HexId;
 use crate::{EntityId, Vault};
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
@@ -53,6 +55,27 @@ pub struct CanonicalTombstone {
     pub value: Vec<u8>,
 }
 
+/// Current generic EntityDoc value, independent of the document's Loro op log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalEntityDocument {
+    pub entity_id: [u8; 16],
+    pub document_id: [u8; 16],
+    /// None is the legacy UTF-8 body; Some is the moved MessagePack text field.
+    pub field: Option<String>,
+    pub text: String,
+    pub birth_actor: [u8; 16],
+    pub birth_at: u64,
+}
+
+/// World proof retained when a soft-deleted CLAIM has only its header left.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalShellWorld {
+    pub id: [u8; 16],
+    pub world: [u8; 16],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalContainerManifest {
@@ -78,9 +101,11 @@ pub struct CanonicalSchemaManifest {
 pub struct CanonicalSnapshot {
     pub window: String,
     pub entity_blobs: Vec<CanonicalEntity>,
+    pub retained_claim_worlds: Vec<CanonicalShellWorld>,
     pub base_edges: Vec<CanonicalBaseEdge>,
     pub tombstones: Vec<CanonicalTombstone>,
     pub doc_snapshots: Vec<CanonicalDocument>,
+    pub entity_documents: Vec<CanonicalEntityDocument>,
     pub document_heads: Vec<CanonicalHead>,
     pub head_move_receipts: Vec<CanonicalHeadMove>,
     /// Durable workflows, with value-based merge bases instead of old frontiers.
@@ -129,7 +154,9 @@ impl CanonicalSnapshot {
             "entities",
             "edges",
             "tombstones",
+            "retained_claim_worlds",
             "documents",
+            "entity_documents",
             "document_heads",
             "head_move_receipts",
             "note_forks",
@@ -140,6 +167,17 @@ impl CanonicalSnapshot {
                 container_kind: "map".to_owned(),
                 schema_version: 1,
                 source_entity_id: None,
+            });
+        }
+        for doc in &self.entity_documents {
+            rows.push(CanonicalContainerManifest {
+                container_id: format!(
+                    "entity_doc/{}/body",
+                    crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
+                ),
+                container_kind: "text".to_owned(),
+                schema_version: 1,
+                source_entity_id: Some(doc.entity_id),
             });
         }
         for doc in &self.doc_snapshots {
@@ -172,7 +210,9 @@ pub fn capture_canonical_window(
             "entities",
             "edges",
             "tombstones",
+            "retained_claim_worlds",
             "documents",
+            "entity_documents",
             "document_heads",
             "head_move_receipts",
             "note_forks",
@@ -185,9 +225,11 @@ pub fn capture_canonical_window(
     let mut snapshot = CanonicalSnapshot {
         window: window.to_owned(),
         entity_blobs: Vec::new(),
+        retained_claim_worlds: Vec::new(),
         base_edges: Vec::new(),
         tombstones: Vec::new(),
         doc_snapshots: Vec::new(),
+        entity_documents: Vec::new(),
         document_heads: Vec::new(),
         head_move_receipts: Vec::new(),
         note_forks: Vec::new(),
@@ -239,23 +281,22 @@ pub fn capture_canonical_window(
     }
     let txn = vault.store.env.read_txn()?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.
-    let prefix = format!("pt:{window}:");
-    for row in vault.store.sync_state.prefix_iter(&txn, &prefix)? {
-        let (key, value) = row?;
-        let entity = parse_id(&key[prefix.len()..])?;
+    let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
+    for (key, value) in PENDING_TOMBSTONE.scan_from(&vault.store, &txn, &window_prefix)? {
+        let entity = *key.id.as_bytes();
         if let Some(previous) = snapshot.tombstones.iter_mut().find(|row| row.id == entity) {
             if crate::deletion::decode_tombstone_value(&previous.value).is_hard()
                 && !crate::deletion::decode_tombstone_value(&value).is_hard()
             {
                 continue;
             }
-            previous.value = value.to_vec();
             previous.deleted_at = crate::deletion::decode_tombstone_value(&value).deleted_at;
+            previous.value = value;
         } else {
             snapshot.tombstones.push(CanonicalTombstone {
                 id: entity,
                 deleted_at: crate::deletion::decode_tombstone_value(&value).deleted_at,
-                value: value.to_vec(),
+                value,
             });
         }
     }
@@ -268,8 +309,7 @@ pub fn capture_canonical_window(
         .chain(snapshot.tombstones.iter().map(|row| row.id))
         .collect();
     for entity in candidates {
-        let key = format!("dt:{}", id(entity)?.to_hex());
-        if let Some(value) = vault.store.sync_state.get(&txn, &key)? {
+        if let Some(value) = HARD_DELETE_MARKER.get(&vault.store, &txn, &HexId(id(entity)?))? {
             if !crate::deletion::decode_tombstone_value(&value).is_hard() {
                 return Err(invalid("invalid hard delete marker"));
             }
@@ -277,7 +317,7 @@ pub fn capture_canonical_window(
             snapshot.tombstones.push(CanonicalTombstone {
                 id: entity,
                 deleted_at: crate::deletion::decode_tombstone_value(&value).deleted_at,
-                value: value.to_vec(),
+                value,
             });
         }
     }
@@ -340,10 +380,8 @@ pub fn capture_canonical_window(
         if hard.contains(&tombstone.id) {
             continue;
         }
-        let shell = vault
-            .store
-            .entities
-            .get(&txn, &tombstone.id)?
+        let id = EntityId::from_bytes(tombstone.id)?;
+        let shell = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?
             .ok_or(invalid("missing retained shell"))?;
         if shell.len() != crate::batch::ENTITY_METADATA_HEADER_LEN {
             return Err(invalid("soft delete not materialized"));
@@ -366,7 +404,7 @@ pub fn capture_canonical_window(
         snapshot
             .base_edges
             .retain(|row| !soft.contains(&row.source) && !soft.contains(&row.target));
-        for row in vault.store.edges_out.iter(&txn)? {
+        for row in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&vault.store, &txn)? {
             let (key, value) = row?;
             if key.len() != 33 {
                 return Err(invalid("retained edge key"));
@@ -391,13 +429,74 @@ pub fn capture_canonical_window(
         }
     }
     document::capture(vault, &txn, &mut snapshot)?;
+    #[cfg(feature = "sync")]
+    for entity in &snapshot.entity_blobs {
+        if crate::batch::EntityMetadataHeader::parse(&entity.blob)
+            .is_some_and(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
+            && let Some(row) = crate::entity_doc::capture_canonical(vault, &txn, entity.id)?
+        {
+            snapshot.entity_documents.push(row);
+        }
+    }
+    snapshot.entity_documents.sort_by_key(|row| row.entity_id);
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    let carried: std::collections::BTreeMap<_, _> = binary_rows(doc, "retained_claim_worlds")?
+        .into_iter()
+        .collect();
+    if let Some((_, hex)) = window.split_once('@') {
+        let world = EntityId::from_hex(hex).map_err(|_| invalid("window world"))?;
+        for entity in &snapshot.entity_blobs {
+            let header = crate::batch::EntityMetadataHeader::parse(&entity.blob)
+                .ok_or(invalid("entity metadata"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || entity.blob.len() != crate::batch::ENTITY_METADATA_HEADER_LEN
+            {
+                continue;
+            }
+            let mapping = format!("m:dw:{}", id(entity.id)?.to_hex());
+            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes())
+                && carried.get(&id(entity.id)?.to_hex()).map(Vec::as_slice)
+                    != Some(world.as_bytes().as_slice())
+            {
+                return Err(invalid("soft claim world address"));
+            }
+            snapshot.retained_claim_worlds.push(CanonicalShellWorld {
+                id: entity.id,
+                world: *world.as_bytes(),
+            });
+        }
+    }
+    if carried.keys().any(|id| {
+        !snapshot.retained_claim_worlds.iter().any(|row| {
+            EntityId::from_bytes(row.id)
+                .ok()
+                .is_some_and(|entity| entity.to_hex() == *id)
+        })
+    }) {
+        return Err(invalid("orphan retained world witness"));
+    }
     snapshot
         .base_edges
         .sort_by_key(|row| (row.source, row.kind, row.target));
     snapshot.tombstones.sort_by_key(|row| row.id);
     snapshot.refresh_containers();
     snapshot.validate()?;
+    for edge in &snapshot.base_edges {
+        if edge.kind == crate::EdgeKind::AddressedTo as u8
+            && super::trusted_soft_addressing_edge(
+                &snapshot,
+                &id(edge.source)?,
+                &id(edge.target)?,
+                &edge.value,
+            )?
+            && crate::batch::stored_entity_type(&vault.store, &txn, &id(edge.target)?)?
+                != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Err(invalid(
+                "retained addressing recipient missing or not a PERSON",
+            ));
+        }
+    }
     Ok(snapshot)
 }
 
@@ -408,6 +507,14 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     let doc = LoroDoc::new();
     for entity in &snapshot.entity_blobs {
         insert(&doc, "entities", &id(entity.id)?.to_hex(), &entity.blob)?;
+    }
+    for shell in &snapshot.retained_claim_worlds {
+        insert(
+            &doc,
+            "retained_claim_worlds",
+            &id(shell.id)?.to_hex(),
+            &shell.world,
+        )?;
     }
     for edge in &snapshot.base_edges {
         insert(&doc, "edges", &edge.key()?, &edge.value)?;
@@ -427,6 +534,14 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     // into its own fresh LoroDoc by the ordinary forward document pass.
     for document in &snapshot.doc_snapshots {
         insert(&doc, "documents", &document.key(), &pack(document)?)?;
+    }
+    for row in &snapshot.entity_documents {
+        insert(
+            &doc,
+            "entity_documents",
+            &id(row.entity_id)?.to_hex(),
+            &pack(row)?,
+        )?;
     }
     for head in &snapshot.document_heads {
         insert(

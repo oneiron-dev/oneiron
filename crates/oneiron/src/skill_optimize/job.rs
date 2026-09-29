@@ -23,6 +23,7 @@ use super::dials::{invalid, validate_text};
 use super::gate::SkillEditCycle;
 use super::selection::{affirm_candidates, optimize_candidates};
 use super::tier::{SkillTierVerdict, tier_verdict_in_txn};
+use super::{GOAL_ID_KEY, SkillGoalId};
 
 /// The [`PROVENANCE_BIRTH_KEY`] value stamped on a drafted proposal.
 pub const SKILL_OPTIMIZE_BIRTH_PATH: &str = "skill_optimize";
@@ -118,7 +119,7 @@ pub fn run_skill_optimize(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<SkillOptimizeOutcome> {
-    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, None)
+    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, None, None)
 }
 
 /// An optimizer job with an explicit host-authenticated preference audience.
@@ -135,7 +136,37 @@ pub fn run_skill_optimize_as(
     let txn = vault.store.env.read_txn()?;
     vault.verify_owner_write_actor_in_txn(&txn, &owner)?;
     drop(txn);
-    run_skill_optimize_bound(vault, attempt, author, occurred, learned_at, Some(owner))
+    run_skill_optimize_bound(
+        vault,
+        attempt,
+        author,
+        occurred,
+        learned_at,
+        Some(owner),
+        None,
+    )
+}
+
+/// Runs the existing dev/held-out optimizer on only this resident's forks.
+/// Each fork has its own receipt ledger, proposal and gate; shared ancestors
+/// are not candidates for a resident maintenance wake.
+pub fn run_skill_optimize_for_resident(
+    vault: &Vault,
+    resident: EntityId,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<SkillOptimizeOutcome> {
+    run_skill_optimize_bound(
+        vault,
+        attempt,
+        author,
+        occurred,
+        learned_at,
+        None,
+        Some(resident),
+    )
 }
 
 fn run_skill_optimize_bound(
@@ -145,9 +176,14 @@ fn run_skill_optimize_bound(
     occurred: TimeRange,
     learned_at: u64,
     owner: Option<crate::write_envelope::WriteActor>,
+    resident: Option<EntityId>,
 ) -> Result<SkillOptimizeOutcome> {
-    let Some(candidate) = optimize_candidates(vault)?.into_iter().next() else {
-        return affirm_healthy_skill(vault);
+    let candidates = match resident {
+        Some(resident) => super::selection::optimize_candidates_for_resident(vault, &resident)?,
+        None => optimize_candidates(vault)?,
+    };
+    let Some(candidate) = candidates.into_iter().next() else {
+        return affirm_healthy_skill(vault, resident);
     };
     let brief = optimize_brief_bound_at(
         vault,
@@ -215,7 +251,10 @@ fn run_skill_optimize_bound(
         // against a revision the gate can no longer supersede is dead on
         // arrival.
         let target = vault.read_skill_record_in_txn(&*wtxn, &candidate.skill)?;
-        if target.lifecycle_status != SkillLifecycle::Active || target.version != target_version {
+        if target.lifecycle_status != SkillLifecycle::Active
+            || target.version != target_version
+            || crate::skill::resident_of(&target)? != resident
+        {
             return Err(invalid(
                 "optimization target moved while the author was drafting",
             ));
@@ -234,6 +273,11 @@ fn run_skill_optimize_bound(
         let Value::Map(provenance) = &mut record.provenance else {
             return Err(invalid("invalid optimizer provenance"));
         };
+        let goal_id = SkillGoalId::of(&candidate.skill, &target)?;
+        provenance.push((
+            Value::from(GOAL_ID_KEY),
+            Value::from(goal_id.entity().to_hex()),
+        ));
         provenance.extend([
             (
                 Value::from("actor_entity_ref"),
@@ -241,7 +285,7 @@ fn run_skill_optimize_bound(
             ),
             (
                 Value::from("actor_class"),
-                Value::from(crate::EdgeActorClass::Agent as u8),
+                Value::from(authority.actor_class() as u8),
             ),
             (
                 Value::from("facet"),
@@ -254,7 +298,12 @@ fn run_skill_optimize_bound(
                 Value::from(owner.entity_ref().to_hex()),
             ));
         }
+        let package =
+            vault.optimized_skill_package_in_txn(wtxn, &candidate.skill, &target, &mut record)?;
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
+        if let Some(package) = package {
+            vault.persist_hub_package_in_txn(wtxn, &proposal_id, &package)?;
+        }
         Ok(())
     })?;
 
@@ -268,8 +317,8 @@ fn run_skill_optimize_bound(
 
 /// Healthy skills do not buy an LLM call or a revision. They still produce a
 /// named no-op with the receipts that support keeping the current instructions.
-fn affirm_healthy_skill(vault: &Vault) -> Result<SkillOptimizeOutcome> {
-    let Some(candidate) = affirm_candidates(vault)?.into_iter().next() else {
+fn affirm_healthy_skill(vault: &Vault, resident: Option<EntityId>) -> Result<SkillOptimizeOutcome> {
+    let Some(candidate) = affirm_candidates(vault, resident)?.into_iter().next() else {
         return Ok(SkillOptimizeOutcome {
             skill: None,
             proposal: None,
@@ -388,7 +437,7 @@ fn proposal_record(
             receipts.push(Value::from(receipt.as_str()));
         }
     }
-    let provenance = Value::Map(vec![
+    let mut provenance = Value::Map(vec![
         (
             Value::from(PROVENANCE_BIRTH_KEY),
             Value::from(SKILL_OPTIMIZE_BIRTH_PATH),
@@ -422,8 +471,17 @@ fn proposal_record(
             Value::from(cycle.as_str()),
         ),
     ]);
+    if let Some(resident) = crate::skill::resident_of(target)? {
+        let Value::Map(entries) = &mut provenance else {
+            return Err(invalid("invalid optimizer provenance"));
+        };
+        entries.push((
+            Value::from(crate::skill::resident::RESIDENT_PROVENANCE_KEY),
+            Value::from(resident.to_hex()),
+        ));
+    }
     let dependencies: Vec<SkillDependency> = target.dependencies.clone();
-    Ok(SkillRecord::new(
+    let mut proposal = SkillRecord::new(
         target.skill_id.as_str(),
         desc,
         optimize_version(desc),
@@ -441,7 +499,12 @@ fn proposal_record(
         dependencies,
         provenance,
     )
-    .with_governance_tier(tier))
+    .with_governance_tier(tier)
+    .with_role(target.role, target.call.clone());
+    if crate::skill::resident_of(target)?.is_some() {
+        proposal.forked_from = target.forked_from.or(Some(*parent));
+    }
+    Ok(proposal)
 }
 
 /// The drafted revision's version string.

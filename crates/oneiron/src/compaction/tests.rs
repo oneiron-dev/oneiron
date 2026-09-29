@@ -11,7 +11,7 @@ use crate::batch::EntityMetadataHeader;
 
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::error::ErrorKind;
+use crate::error::{Error, ErrorKind};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::session_lifecycle::SessionMintOutcome;
@@ -1647,7 +1647,8 @@ fn the_compaction_module_carries_no_scheduler_primitive() {
     ];
     for source in [
         include_str!("../compaction.rs"),
-        include_str!("driver.rs"),
+        include_str!("driver/mod.rs"),
+        include_str!("driver/integration.rs"),
         include_str!("epoch.rs"),
     ] {
         for needle in BANNED {

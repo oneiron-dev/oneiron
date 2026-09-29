@@ -104,12 +104,50 @@ pub(in crate::memory) fn decode_witness_turn_speaker(body: &[u8]) -> MemoryResul
     speaker.ok_or_else(unstamped)
 }
 
-/// The minted TURN body: one additive `speaker` entry, nothing else.
-pub(super) fn encode_witness_turn_body(speaker: &str) -> MemoryResult<Vec<u8>> {
-    encode_rmpv(&Value::Map(vec![(
-        Value::from(WITNESS_TURN_SPEAKER_KEY),
-        Value::from(speaker),
-    )]))
+/// A PERSON author is an immutable identity stamp, not a speaker label.
+/// Non-PERSON writer actors leave the author unknown.
+pub(super) fn encode_witness_turn_body(
+    speaker: &str,
+    person: Option<crate::EntityId>,
+) -> MemoryResult<Vec<u8>> {
+    let mut fields = vec![(Value::from(WITNESS_TURN_SPEAKER_KEY), Value::from(speaker))];
+    if let Some(person) = person {
+        fields.push((Value::from("actor"), Value::from(person.to_hex())));
+    }
+    encode_rmpv(&Value::Map(fields))
+}
+
+pub(super) fn decode_witness_turn_person(body: &[u8]) -> MemoryResult<Option<crate::EntityId>> {
+    let mut cursor = body;
+    let ValueRef::Map(entries) = rmpv::decode::read_value_ref(&mut cursor)
+        .map_err(|_| MemoryError::bad_request("invalid witnessed turn body"))?
+    else {
+        return Err(MemoryError::bad_request("invalid witnessed turn body"));
+    };
+    if !cursor.is_empty() {
+        return Err(MemoryError::bad_request("invalid witnessed turn body"));
+    }
+    let mut person = None;
+    for (key, value) in entries {
+        let ValueRef::String(key) = key else {
+            continue;
+        };
+        if key.as_str() != Some("actor") {
+            continue;
+        }
+        if person.is_some() {
+            return Err(MemoryError::bad_request("duplicate witnessed turn author"));
+        }
+        let ValueRef::String(value) = value else {
+            return Err(MemoryError::bad_request("invalid witnessed turn author"));
+        };
+        let id = value
+            .as_str()
+            .and_then(|text| crate::EntityId::from_hex(text).ok())
+            .ok_or_else(|| MemoryError::bad_request("invalid witnessed turn author"))?;
+        person = Some(id);
+    }
+    Ok(person)
 }
 
 /// The gate-side view of one message: the six envelope axes exactly as the

@@ -575,7 +575,30 @@ fn generic_propose_lane_counts_authenticated_actor_and_asks_once_without_rate_re
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map")
     };
-    entries.push((Value::from("proposal_check_threshold"), Value::from(2)));
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        panic!("value rows")
+    };
+    let Value::Map(fields) = rows
+        .iter_mut()
+        .find(|row| match row {
+            Value::Map(fields) => fields.iter().any(|(key, value)| {
+                key.as_str() == Some("key") && value.as_str() == Some("proposal_check_threshold")
+            }),
+            _ => false,
+        })
+        .unwrap()
+    else {
+        panic!("threshold row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from(2);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
     crate::test_util::put_policy_manifest_bytes(&vault, policy_id, &bytes).unwrap();
@@ -629,7 +652,30 @@ fn changed_same_id_proposals_are_new_submissions_but_exact_retries_are_not() {
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map")
     };
-    entries.push((Value::from("proposal_check_threshold"), Value::from(2)));
+    let (_, Value::Array(rows)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("policy_values"))
+        .unwrap()
+    else {
+        panic!("value rows")
+    };
+    let Value::Map(fields) = rows
+        .iter_mut()
+        .find(|row| match row {
+            Value::Map(fields) => fields.iter().any(|(key, value)| {
+                key.as_str() == Some("key") && value.as_str() == Some("proposal_check_threshold")
+            }),
+            _ => false,
+        })
+        .unwrap()
+    else {
+        panic!("threshold row")
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("value"))
+        .unwrap()
+        .1 = Value::from(2);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
     crate::test_util::put_policy_manifest_bytes(&vault, policy_id, &bytes).unwrap();
@@ -682,4 +728,34 @@ fn changed_same_id_proposals_are_new_submissions_but_exact_retries_are_not() {
             assert_eq!(check.proposal_ref, proposal_ref);
         }
     }
+}
+
+#[test]
+fn own_skill_edit_survives_a_receipt_retention_sweep() {
+    let (_dir, vault) = open_vault();
+    let resident = put_person(&vault, 0x25);
+    let owner = put_person(&vault, 0x26);
+    let memory = vault.memory(resident, EdgeActorClass::Agent);
+    let saved = memory.skill_save(id(0x27), &skill(), None, 100).unwrap();
+    crate::test_util::backdate_claim_gate_decisions(&vault, 1).unwrap();
+    vault
+        .set_gate_decision_retention_secs(&owner_proof(&vault, owner), Some(60))
+        .unwrap();
+    vault.sweep_gate_decision_retention().unwrap();
+    let mut record = vault.get_skill_record(&saved.skill_id).unwrap().unwrap();
+    record.version = "2".to_owned();
+    record.desc = "edited after retention".to_owned();
+    let edited = memory
+        .skill_save(saved.skill_id, &record, Some("1"), 101)
+        .unwrap();
+    assert_eq!(edited.author, resident);
+    assert_eq!(edited.author_receipt, saved.author_receipt);
+    assert_eq!(
+        vault
+            .get_skill_record(&saved.skill_id)
+            .unwrap()
+            .unwrap()
+            .desc,
+        "edited after retention"
+    );
 }

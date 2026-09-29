@@ -49,6 +49,10 @@ tasksAnswer(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 roomsList(input: unknown): unknown
 roomsMessages(input: unknown): unknown
+roomsRender(input: unknown): unknown
+roomsFind(input: unknown): unknown
+roomsGet(input: unknown): unknown
+roomsTrunk(input: unknown): unknown
 roomsClaim(input: unknown): unknown
 roomsSpeak(input: unknown): unknown
 // END GENERATED AGENT VERBS

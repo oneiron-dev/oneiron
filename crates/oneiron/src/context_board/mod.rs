@@ -12,6 +12,8 @@ mod observations_tests;
 mod read_set;
 mod room;
 mod room_verbs;
+#[cfg(test)]
+mod room_verbs_tests;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
@@ -20,9 +22,14 @@ pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;
 mod hydration;
+mod self_brief;
 pub(crate) use history::validate_board_claim;
 pub use history::{
     BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
+};
+pub use self_brief::{
+    BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
+    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
 };
 mod memories;
 mod memories_frame;

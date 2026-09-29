@@ -1,3 +1,4 @@
+mod connector_qualification;
 mod connector_schedule;
 mod dispatch_budget;
 #[path = "sender_selection/facet_selection.rs"]
@@ -10,6 +11,7 @@ mod quiet_window;
 mod retry_audit;
 mod sender_selection;
 mod space_posting;
+mod step_failure;
 
 use super::*;
 use crate::delivery_window::DeliveryWindowDecision;
@@ -272,7 +274,7 @@ fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
         .into_iter()
         .next()
         .expect("connector execution journals one intent");
-    // email/send is NonIdempotentInterrupt: the sink is not handed the ledger id
+    // Generic email/send has no provider key: the sink is not handed the ledger id
     // as a provider idempotency (dedup) token, even though the ledger row still
     // keys the intent internally.
     assert_eq!(executor.idempotency_keys, vec![None]);
@@ -558,7 +560,8 @@ fn quiet_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }
@@ -589,7 +592,8 @@ fn calendar_busy_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }
@@ -620,7 +624,8 @@ fn channel_delivery_window_claim_body(subject_seed: u8, channel: &str, reason: &
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }

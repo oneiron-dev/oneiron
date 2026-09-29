@@ -17,10 +17,14 @@ use super::super::rendezvous::{
     signal_delete_rendezvous,
 };
 use super::super::tombstone::{
-    DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
+    DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2, window_label_from_timestamp,
+};
+use super::super::topology_delete_intent::{
+    TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
 use super::{DeleteEntityOptions, DeleteEntityOutcome};
 use crate::error::RegistryError;
+use crate::side_table::HexId;
 
 impl Vault {
     /// Plain deletion retains a tombstone shell. Use `delete_entity_with_options`
@@ -51,7 +55,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, None)?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
     }
@@ -68,9 +72,73 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate))?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate), false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
+    }
+
+    /// Mechanical ARCH-0038 deletion of a room record without the actor-bound
+    /// room door: for replay reason transitions and for legacy fixtures that
+    /// hold no policy manifest (where the door fails closed). Never evidence
+    /// of room authority.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn delete_room_record_unchecked_for_test(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
+        while self.collect_lfs_garbage(32)? != 0 {}
+        Ok(outcome)
+    }
+
+    fn require_room_delete_gate(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        gate: Option<&GatedDeletion<'_>>,
+        allow_replay_test: bool,
+    ) -> Result<()> {
+        if allow_replay_test {
+            return Ok(());
+        }
+        // The owner pin survives removal of the ChildOf row and body scrub.
+        let room = crate::conversation_dag::room_turn_owner(&self.store, txn, id)?.or(
+            crate::conversation::room_message_owner_in(&self.store, txn, *id)?,
+        );
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+            if room.is_none()
+                || (room.is_some()
+                    && gate
+                        .and_then(GatedDeletion::room_authority)
+                        .map(|(id, _)| id)
+                        == room)
+            {
+                return Ok(());
+            }
+            return Err(Error::Record(crate::error::RecordError::ConversationDenied));
+        };
+        if raw.first() != Some(&crate::registry::ENTITY_TYPE_TURN)
+            && raw.first() != Some(&crate::registry::ENTITY_TYPE_MESSAGE)
+        {
+            return Ok(());
+        }
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("room deletion header"))?;
+        if room.is_none() && crate::conversation_dag::record_kind(body)?.is_none() {
+            return Ok(());
+        }
+        if room.is_some()
+            && gate
+                .and_then(GatedDeletion::room_authority)
+                .map(|(id, _)| id)
+                == room
+        {
+            return Ok(());
+        }
+        Err(Error::Record(crate::error::RecordError::ConversationDenied))
     }
 
     /// Under the single LMDB writer, refuse live grants and fence the target
@@ -88,6 +156,7 @@ impl Vault {
         ) {
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
+            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             if !crate::share::active_brief_shares_for(
                 &self.store,
                 &txn,
@@ -111,10 +180,13 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
+        allow_replay_test: bool,
     ) -> Result<DeleteEntityOutcome> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         {
             let rtxn = self.store.env.read_txn()?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
+            self.require_room_delete_gate(&rtxn, id, gate.as_ref(), allow_replay_test)?;
         }
         if reason == DeleteReason::ArchivedByCleanup {
             return Err(Error::InvariantViolation(
@@ -129,7 +201,18 @@ impl Vault {
         {
             let txn = self.store.env.read_txn()?;
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+            crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
+        }
+        // Hold the entire key partition, and refuse an unsafe explicit hard
+        // purge, before any tombstone can be published. The plain
+        // `delete_entity` door now defaults to a soft tombstone; an explicitly
+        // requested purge is never downgraded.
+        if reason.active_store_hard_purge_v1() {
+            let txn = self.store.env.read_txn()?;
+            self.store
+                .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
+            self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
@@ -139,6 +222,22 @@ impl Vault {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,
             )));
+        }
+        if reason == DeleteReason::UserDelete {
+            let rtxn = self.store.env.read_txn()?;
+            if crate::deletion::topology_delete_reservation_in_txn(&self.store, &rtxn, id)?
+                .is_some()
+                && self
+                    .store
+                    .entities
+                    .get(&rtxn, id.as_bytes())?
+                    .is_some_and(|raw| raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN)
+            {
+                // A previous soft scrub already committed its propagation
+                // marker and request-bound reservation. A second UserDelete
+                // must not mint a conflicting request or withdraw that intent.
+                return Ok(DeleteEntityOutcome::missing());
+            }
         }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed
@@ -165,7 +264,35 @@ impl Vault {
             gate.context
                 .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
         });
-        let window_label = window_label_from_timestamp(header.learned_at);
+        let mut window_label = window_label_from_timestamp(header.learned_at);
+        // Capture the world before soft erasure or hard purge removes the
+        // CLAIM body. The cfg-off pending marker and sync publication must
+        // address the same world-month document.
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            match self.get_raw_unsealed(id)? {
+                Some(raw) if raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN => {
+                    let body = crate::claim::decode_claim_body(
+                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                        true,
+                    )?;
+                    if let Some(world) = body.world {
+                        window_label.push('@');
+                        window_label.push_str(&world.to_hex());
+                    }
+                }
+                _ => {
+                    // A repeated soft delete sees only a shell; a concurrent
+                    // purge can remove even that after the header probe.
+                    let txn = self.store.env.read_txn()?;
+                    window_label = super::super::timeline::deletion_window_label(
+                        &self.store,
+                        &txn,
+                        id,
+                        header.learned_at,
+                    )?;
+                }
+            }
+        }
 
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-purge (SoftErase
@@ -181,6 +308,7 @@ impl Vault {
             // side): a soft delete with NO cross-device record would leave
             // the deleted body live on every other device.
             let mut wtxn = self.store.env.write_txn()?;
+            self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
             // TOCTOU close: `user_delete` scrubs the body in THIS txn, so the
             // owner authority is re-proven against THIS txn's view. A
             // RevokeActor committed since the gate ran is visible here and
@@ -188,20 +316,39 @@ impl Vault {
             // arm publishes its tombstone after the scrub, so the re-fold below
             // in the publish txn is the decision that binds.
             reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            // This scrub is the first destructive commit. The intent rides
+            // the same transaction as the pt: propagation marker.
+            reserve_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone,
+                header.learned_at,
+                TopologyDeletePhase::Committed,
+            )?;
+            let (existed, had_vector, _ledger_changed) =
+                self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
+            let mut changed = vec![*id];
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
             if existed && let Some(captured) = &captured {
-                self.refresh_subject_edge_after_claim_delete_in_txn(
+                changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
                     id,
                     &captured.subject,
-                )?;
+                )?);
             }
             if existed {
+                if window_label.contains('@') {
+                    self.store.sync_state.put(
+                        &mut wtxn,
+                        &format!("m:dw:{}", id.to_hex()),
+                        window_label.as_bytes(),
+                    )?;
+                }
                 if reason.publishes_crdt_tombstone() {
                     // OWNER-DECISION (cfg-off durability): the pending-tombstone
                     // marker rides the SAME txn as the shell scrub.
@@ -218,8 +365,18 @@ impl Vault {
                         .append_gate_decision_in_txn(&mut wtxn, decision)?;
                 }
             }
+            if !existed || !reason.publishes_crdt_tombstone() {
+                clear_own_topology_delete_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    id,
+                    &tombstone.request_id,
+                    false,
+                )?;
+            }
             wtxn.commit()?;
             if existed {
+                self.notify_local_delete_materialized(&changed);
                 gate.as_ref()
                     .inspect(|gate| gate.note_soft_scrub_committed());
             }
@@ -253,13 +410,14 @@ impl Vault {
                 let crdt_persisted = self.write_crdt_tombstone(
                     id,
                     header.learned_at,
+                    &window_label,
                     &tombstone,
                     None,
                     gate.as_ref(),
                 )?;
                 signal_delete_rendezvous(self, DeleteRendezvous::AfterTombstonePublish, id, None);
                 if crdt_persisted {
-                    self.clear_pending_tombstone(&window_label, id)?;
+                    self.finish_published_topology_delete(&window_label, id, &tombstone)?;
                 }
             }
             return Ok(DeleteEntityOutcome {
@@ -278,6 +436,7 @@ impl Vault {
         let crdt_persisted = self.write_crdt_tombstone(
             id,
             header.learned_at,
+            &window_label,
             &tombstone,
             gate_decision.as_ref(),
             gate.as_ref(),
@@ -320,6 +479,7 @@ impl Vault {
             // bodiless shell ⇒ `None`). The purge txn below re-runs the
             // refresh as an idempotent second pass.
             let mut wtxn = self.store.env.write_txn()?;
+            self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
             // Conditional re-fold (fix-leg 7's ruling, refined by fix-leg 8).
             // WHEN THE PUBLISH COMMITTED: no re-fold. That commit is this
             // delete's linearization point; a `RevokeActor` ordered after it did
@@ -332,18 +492,34 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
+            self.store
+                .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+            self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
+            if !authority_settled {
+                self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
+            }
+            reserve_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone,
+                header.learned_at,
+                TopologyDeletePhase::Committed,
+            )?;
             let scrub_is_the_linearization_point = !authority_settled;
-            crate::note::erase_citations_in_txn(self, &mut wtxn, id)?;
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            let mut changed = vec![*id];
+            changed.extend(crate::note::erase_citations_in_txn(self, &mut wtxn, id)?);
+            let (existed, had_vector, _ledger_changed) =
+                self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
             if existed && let Some(captured) = &captured {
-                self.refresh_subject_edge_after_claim_delete_in_txn(
+                changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
                     id,
                     &captured.subject,
-                )?;
+                )?);
             }
             // fix-leg 9 P1: on the NON-PUBLISHING path this txn's re-fold made
             // it the linearization point, so the deletion's propagation intent
@@ -390,7 +566,19 @@ impl Vault {
                 // there the flag is already `true` and stays untouched.
                 authority_settled = true;
             }
+            if existed && window_label.contains('@') {
+                // The shell loses its world body in this commit. Preserve the
+                // address with the scrub, not in the later hard-purge txn.
+                self.store.sync_state.put(
+                    &mut wtxn,
+                    &format!("m:dw:{}", id.to_hex()),
+                    window_label.as_bytes(),
+                )?;
+            }
             wtxn.commit()?;
+            if existed {
+                self.notify_local_delete_materialized(&changed);
+            }
             self.store.clock.now_recorded_at()
         } else {
             tombstone_complete_at
@@ -407,6 +595,7 @@ impl Vault {
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
         // The purge txn: the one that actually tears. It re-checks authority
         // ONLY if nothing has settled this delete yet — i.e. no publish commit
         // AND no earlier destructive commit of this call (fix-leg 8). On
@@ -421,7 +610,20 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-        let marker_key = local_hard_delete_key(id);
+        self.store
+            .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+        if !authority_settled {
+            self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
+        }
+        reserve_topology_delete_in_txn(
+            &self.store,
+            &mut wtxn,
+            id,
+            &tombstone,
+            header.learned_at,
+            TopologyDeletePhase::Committed,
+        )?;
+        let marker_key = HexId(*id);
         // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
         // erasing txn. LMDB's single writer makes this race-free — if the
         // probe sees state, this txn's purge erases it; if a concurrent
@@ -432,10 +634,14 @@ impl Vault {
         // CRDT tombstone above is already published, so the id IS
         // hard-deleted), guarded so an existing marker is never overwritten.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
-            if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
-                self.store
-                    .sync_state
-                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+            crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
+            if !HARD_DELETE_MARKER.contains(&self.store, &wtxn, &marker_key)? {
+                HARD_DELETE_MARKER.put(
+                    &self.store,
+                    &mut wtxn,
+                    &marker_key,
+                    &tombstone.encode().to_vec(),
+                )?;
             }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
@@ -448,6 +654,16 @@ impl Vault {
             {
                 return Err(Error::CorruptedIndex("pending deletion gate decision"));
             }
+            // No local work remains and there is no cfg-off pt: marker.
+            // A published tombstone is durable; an unpublished empty commit
+            // carries no deletion intent to hold an interlock for.
+            clear_own_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone.request_id,
+                false,
+            )?;
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
@@ -460,21 +676,29 @@ impl Vault {
         // wire bytes) is informational. Un-cfg'd on every build: `sync_state`
         // is unconditional and the marker is local delete truth, not
         // sync-only state (ONE-1132 cfg-off durability).
-        self.store
-            .sync_state
-            .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+        HARD_DELETE_MARKER.put(
+            &self.store,
+            &mut wtxn,
+            &marker_key,
+            &tombstone.encode().to_vec(),
+        )?;
         // ARCH-0055 §9 (r6): HardErase walks redirects. BEFORE the purge —
         // it deletes the head's incident shell edges, which are the walk's
         // primary witness — and in this same transaction, so a head can
         // never be erased while a shell of it stays readable.
-        let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
+        let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
+        let (cascaded_shells, changed_documents) =
+            self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
+        affected.extend(changed_documents);
         // The shells' historical carriers ride THIS erasure's sweep row:
         // clearing the active store while history keeps the bytes would
         // erase nothing.
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        let (existed, citing) =
+            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
+        affected.extend(citing);
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
@@ -482,7 +706,11 @@ impl Vault {
         // captured Claim whose record was raced away was already refreshed
         // by the racer's own delete txn.
         if existed && let Some(captured) = &captured {
-            self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
+            affected.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
+                &mut wtxn,
+                id,
+                &captured.subject,
+            )?);
         }
 
         // OWNER-DECISION (cfg-off durability): the pending-tombstone marker
@@ -495,6 +723,13 @@ impl Vault {
         // shape (publishing arms, `user_hard_delete`, a scrub that found
         // nothing) reaches here with no marker on disk and writes the first one.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+        if window_label.contains('@') {
+            self.store.sync_state.put(
+                &mut wtxn,
+                &format!("m:dw:{}", id.to_hex()),
+                window_label.as_bytes(),
+            )?;
+        }
         self.append_deletion_gate_decision_in_purge_txn(
             &mut wtxn,
             crdt_persisted,
@@ -511,6 +746,9 @@ impl Vault {
                 actor_principal: gate
                     .as_ref()
                     .map(super::super::gate::GatedDeletion::actor_principal),
+                room_authority: gate
+                    .as_ref()
+                    .and_then(super::super::gate::GatedDeletion::room_authority),
                 request_id: request_uuid.to_string(),
                 scope,
                 reason,
@@ -525,12 +763,13 @@ impl Vault {
         )?;
 
         wtxn.commit()?;
+        self.notify_local_delete_materialized(&affected);
         // The CRDT record (tombstone-first, above) is durable — the crash
         // marker has served its purpose. In non-`sync` builds the marker
         // STAYS: it is the deletion's only propagation intent until a
         // sync-enabled boot replays it.
         if crdt_persisted {
-            self.clear_pending_tombstone(&window_label, id)?;
+            self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
         Ok(DeleteEntityOutcome {
             existed,

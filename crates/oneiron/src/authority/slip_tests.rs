@@ -610,7 +610,7 @@ fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosign
         )
         .unwrap();
     let enrolled_hash = authority_entry_hash(&enroll).unwrap();
-    let enrolled = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
+    let enrolled = super::super::fold_engine::fold_authority_log(&[
         genesis.clone(),
         root_mint.clone(),
         enroll.clone(),
@@ -648,9 +648,7 @@ fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosign
     mint.cosigns[0].signature = owner.sign(&transcript).to_bytes().to_vec();
     super::super::crypto::verify_entry_signatures(&mint).unwrap();
     let hash = authority_entry_hash(&mint).unwrap();
-    let fold = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
-        genesis, root_mint, enroll, mint,
-    ]);
+    let fold = super::super::fold_engine::fold_authority_log(&[genesis, root_mint, enroll, mint]);
     assert!(fold.valid_entries.contains(&enrolled_hash));
     assert!(!fold.valid_entries.contains(&hash));
 }
@@ -695,9 +693,8 @@ fn a_slip_revoke_signed_by_a_revoked_owner_device_folds_invalid() {
         )
         .unwrap();
     let hash = authority_entry_hash(&revoked).unwrap();
-    let fold = super::super::fold_engine::fold_authority_log_without_seen_time_delay(&[
-        genesis, mint, rotation, revoked,
-    ]);
+    let fold =
+        super::super::fold_engine::fold_legacy_authority_log(&[genesis, mint, rotation, revoked]);
     assert!(fold.valid_entries.contains(&rotation_hash));
     assert!(fold.roster[&issuer.public_key()].revoked);
     assert!(!fold.valid_entries.contains(&hash));
@@ -1173,19 +1170,18 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
 #[test]
 fn pact_caveats_meet_and_recheck_live_grant_state() {
     use crate::federation::{
-        FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
-        FederationScopeWorlds,
+        FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, base_world_axis,
     };
     let (_dir, vault, issuer, root) = fixture();
     let mut fold = vault.authority_fold().unwrap();
     let grant = crate::EntityId::from_bytes([41; 16]).unwrap();
     let wide = FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     };
     let narrow = FederationDirectionScope {
-        worlds: FederationScopeWorlds::Base,
+        worlds: base_world_axis(),
         ..wide.clone()
     };
     fold.federation_pacts.insert(
@@ -1250,7 +1246,7 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
         .get_mut(&[42; 32])
         .unwrap()
         .effective_scope
-        .facets = FederationScopeFacets::Bottom;
+        .facets = ScopeAxis::Bottom;
     assert!(
         slip.verify(
             &issuer.public_key(),
@@ -1309,9 +1305,9 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
             .attenuate(
                 &mut slip,
                 caveat(FederationDirectionScope {
-                    facets: FederationScopeFacets::Some(vec![
-                        crate::EntityId::from_bytes([id; 16]).unwrap(),
-                    ]),
+                    facets: ScopeAxis::from_iter(
+                        [crate::EntityId::from_bytes([id; 16]).unwrap()].map(ScopeId),
+                    ),
                     ..wide.clone()
                 }),
             )
@@ -1803,4 +1799,72 @@ fn paired_connection_verifies_publicly_and_spends_nonce_without_a_host_secret() 
             .verify_logged_capability_slip_request(&slip, timestamp, &signature, nonce)
             .is_err()
     );
+}
+
+#[test]
+fn signed_withdrawals_cross_rejected_enrollment_without_granting_its_key() {
+    for consume in [false, true] {
+        let (_dir, vault, issuer, root) = fixture();
+        let (_, mint) = rooted_log(&vault, &root);
+        let binding = SigningKey::from_bytes(&[202; 32]);
+        let client_key = AuthorityKey::Ed25519(binding.verifying_key().to_bytes());
+        // A client role: the host's agent-only MACHINE enrollment is not retired.
+        let enroll = issuer
+            .sign_entry(
+                Some(root.claims.vault_id),
+                2,
+                vec![authority_entry_hash(&mint).unwrap()],
+                AuthorityOp::EnrollDevice {
+                    device: DeviceAuthority {
+                        key: client_key.clone(),
+                        transport_key_binding: binding.verifying_key().to_bytes(),
+                        attestation: AuthorityAttestation {
+                            kind: "software".into(),
+                            evidence: Vec::new(),
+                        },
+                        tier: AuthorityTier::Software,
+                        roles: ROLE_ADMIN,
+                    },
+                },
+                root.claims.issued_at,
+            )
+            .unwrap();
+        let enroll_hash = authority_entry_hash(&enroll).unwrap();
+        let op = if consume {
+            AuthorityOp::SlipConsume {
+                slip_id: root.claims.slip_id,
+            }
+        } else {
+            AuthorityOp::SlipRevoke {
+                slip_id: root.claims.slip_id,
+            }
+        };
+        let withdrawal = issuer
+            .sign_entry(
+                Some(root.claims.vault_id),
+                3,
+                vec![enroll_hash],
+                op,
+                root.claims.issued_at,
+            )
+            .unwrap();
+        let withdrawal_hash = authority_entry_hash(&withdrawal).unwrap();
+        let at = crate::TimeRange {
+            start: root.claims.issued_at,
+            end: root.claims.issued_at,
+        };
+        vault
+            .put_authority_log_entries(&[(enroll, at, at.start), (withdrawal, at, at.start)])
+            .unwrap();
+        let fold = vault.authority_fold().unwrap();
+        assert!(!fold.valid_entries.contains(&enroll_hash));
+        assert!(!fold.roster.contains_key(&client_key));
+        assert!(fold.valid_entries.contains(&withdrawal_hash));
+        assert!(!fold.slip_is_live(&root.claims.slip_id));
+        assert!(
+            !vault
+                .capability_slip_id_is_live(&root.claims.slip_id)
+                .unwrap()
+        );
+    }
 }

@@ -1,10 +1,10 @@
 //! Atomic critic admission and exact-prefix replay for a tested proposal stack.
 use super::git::{canonical_repo_ref_for_root, resolve_mutable_repo_root};
-use super::oplog::repo_mutation_snapshot_key;
-use super::proposal::{self, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid};
-use super::snapshot::{
-    StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot, decode_snapshot,
+use super::oplog::{SNAPSHOT, repo_mutation_snapshot_key};
+use super::proposal::{
+    self, PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid,
 };
+use super::snapshot::{StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot};
 use super::types::{RepoForkHash, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationStatus};
 use crate::{
     EntityId, Vault,
@@ -46,17 +46,20 @@ impl StackStep {
     }
 }
 
-fn key(identity: &str, batch: &str) -> Vec<u8> {
-    format!("repo_mutation:reviewed_stack:v1:{identity}:{batch}").into_bytes()
+/// One admitted reviewed merge stack. Key: string (repo identity hex) + ":" +
+/// string (batch id).
+const REVIEWED_STACK: crate::side_table::SideTable<
+    String,
+    ReviewedStack,
+    crate::side_table::Named,
+> = crate::side_table::SideTable::new(&crate::side_table::REPO_MUTATION_REVIEWED_STACK);
+
+fn key(identity: &str, batch: &str) -> String {
+    format!("{identity}:{batch}")
 }
 fn read(vault: &Vault, identity: &str, batch: &str) -> Result<Option<ReviewedStack>> {
     let txn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .get(&txn, &key(identity, batch))?
-        .map(|raw| rmp_serde::from_slice(&raw).map_err(|_| invalid("invalid reviewed stack")))
-        .transpose()
+    REVIEWED_STACK.get(&vault.store, &txn, &key(identity, batch))
 }
 
 impl Vault {
@@ -170,13 +173,9 @@ impl Vault {
                 // Keep its old terminal receipt, but allocate a fresh sequence on
                 // retry. The immutable edit ID makes the document step idempotent.
                 let mut txn = self.store.env.write_txn()?;
-                let mut current = proposal::decode(
-                    &self
-                        .store
-                        .vault_meta
-                        .get(&txn, &proposal::key(row.id))?
-                        .ok_or(Error::EntityNotFound)?,
-                )?;
+                let mut current = PROPOSAL
+                    .get(&self.store, &txn, &row.id)?
+                    .ok_or(Error::EntityNotFound)?;
                 if current.operation_seq != row.operation_seq
                     || current.status != RepoProposalStatus::Failed
                 {
@@ -237,15 +236,18 @@ impl Vault {
         }
         let snapshot = {
             let txn = self.store.env.read_txn()?;
-            let raw = self
-                .store
-                .vault_meta
-                .get(&txn, &repo_mutation_snapshot_key(stack.pre_snapshot))?
+            let snapshot = SNAPSHOT
+                .get(
+                    &self.store,
+                    &txn,
+                    &repo_mutation_snapshot_key(stack.pre_snapshot),
+                )?
                 .ok_or(Error::EntityNotFound)?;
+            let raw = SNAPSHOT.encode_value(&snapshot)?;
             if blake3::hash(&raw).as_bytes() != &stack.pre_snapshot {
                 return Err(Error::CorruptedIndex("reviewed stack snapshot hash"));
             }
-            decode_snapshot(&raw)?
+            super::snapshot::require_snapshot_schema(snapshot)?
         };
         if snapshot.head.as_deref() != Some(stack.expected_head.as_str()) {
             return Err(invalid("reviewed stack snapshot HEAD differs"));
@@ -282,13 +284,9 @@ impl Vault {
         // Review can run concurrently. Re-read every vote in this ONE transaction;
         // an invalid late member aborts all approvals and the stack binding.
         for row in rows {
-            let mut current = proposal::decode(
-                &self
-                    .store
-                    .vault_meta
-                    .get(&txn, &proposal::key(row.id))?
-                    .ok_or(Error::EntityNotFound)?,
-            )?;
+            let mut current = PROPOSAL
+                .get(&self.store, &txn, &row.id)?
+                .ok_or(Error::EntityNotFound)?;
             if current.merge_stack.is_some()
                 || current.operation_seq.is_some()
                 || !matches!(
@@ -305,11 +303,11 @@ impl Vault {
             current.status = RepoProposalStatus::Approved;
             proposal::store(self, &mut txn, &current)?;
         }
-        self.store.vault_meta.put(
+        REVIEWED_STACK.put(
+            &self.store,
             &mut txn,
             &key(&stack.repo_identity, &stack.batch),
-            &rmp_serde::to_vec_named(stack)
-                .map_err(|_| invalid("reviewed stack encoding failed"))?,
+            stack,
         )?;
         txn.commit()?;
         Ok(())

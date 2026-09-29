@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::error::{Error, Result};
 use crate::surface_event::{InboundSurfaceEventInput, SurfaceCounterpartyStamp};
 
@@ -99,8 +99,6 @@ pub const DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
 
 const LINKEDIN_MCP_GET_INBOX_TOOL: &str = "get_inbox";
 const LINKEDIN_MCP_GET_CONVERSATION_TOOL: &str = "get_conversation";
-const LINKEDIN_INBOX_SYNC_SEEN_PREFIX: &str = "linkedin:inbox_sync:seen:v1:";
-const LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX: &str = "linkedin:inbox_sync:provenance:v1:";
 const LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX: &str = "linkedin:inbox_sync:";
 const LINKEDIN_INBOX_SYNC_SOURCE: &str = "imported";
 const LINKEDIN_INBOX_SYNC_TIER: &str = "external";
@@ -342,12 +340,18 @@ impl LinkedInMcpConnectorAdapter {
         let payload = serde_json::to_vec(&config).map_err(|err| {
             Error::InvalidConfig(format!("LinkedIn inbox sync config did not encode: {err}"))
         })?;
-        AttemptQueue::new(vault).enqueue(EnqueueAttempt {
-            kind: LINKEDIN_INBOX_SYNC_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
-            run_id: None,
-            now,
+        vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                vault,
+                txn,
+                EnqueueAttempt {
+                    kind: LINKEDIN_INBOX_SYNC_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
+                    run_id: None,
+                    now,
+                },
+            )
         })
     }
 

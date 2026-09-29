@@ -23,6 +23,8 @@ pub struct GitWireProcessEnv {
     pub(super) timeout: Duration,
     pub(super) max_output_bytes: usize,
     pub(super) hub_root: Option<PathBuf>,
+    #[cfg(test)]
+    pub(super) after_attribute_snapshot: Option<(PathBuf, Vec<u8>)>,
 }
 
 /// The process baseline, resolved once. Pinning the executable at first use is
@@ -49,6 +51,8 @@ impl GitWireProcessEnv {
             timeout: GIT_WIRE_DEFAULT_TIMEOUT,
             max_output_bytes: GIT_WIRE_DEFAULT_MAX_OUTPUT_BYTES,
             hub_root: None,
+            #[cfg(test)]
+            after_attribute_snapshot: None,
         })
     }
 
@@ -79,6 +83,14 @@ impl GitWireProcessEnv {
         self.timeout = timeout;
         self.max_output_bytes = max_output_bytes;
         Ok(self)
+    }
+
+    /// Test-only: append a repository config change after the private attribute
+    /// snapshot is sealed but before the git operation executes.
+    #[cfg(test)]
+    pub(super) fn with_config_change_for_test(mut self, config: PathBuf, bytes: Vec<u8>) -> Self {
+        self.after_attribute_snapshot = Some((config, bytes));
+        self
     }
 
     /// Test-only: retargets the pinned executable so the bounded-runtime and

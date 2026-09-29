@@ -2,11 +2,19 @@ use super::*;
 
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::error::{ErrorKind, RegistryError};
+use crate::side_table::SideKey;
 use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::config::VaultConfig::default())
+}
+
+fn temp_ref_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("ref vault directory");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())
+        .expect("open seeded ref vault");
+    (dir, vault)
 }
 
 const DIMENSION: usize = 4;
@@ -198,15 +206,16 @@ fn stored_sample(
 
 fn print_family_rows(vault: &Vault, subject: EntityId) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let rtxn = vault.store.env.read_txn()?;
-    collect_prefix_rows(&vault.store, &rtxn, &voice_subject_prefix(&subject))
+    super::storage_admission::print_family_rows(&vault.store, &rtxn, subject.as_bytes())
 }
 
 fn raw_roster_bytes(vault: &Vault, voice_session_ref: &str) -> Result<Vec<u8>> {
     let rtxn = vault.store.env.read_txn()?;
+    let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
     let bytes = vault
         .store
         .vault_meta
-        .get(&rtxn, &voice_roster_key(voice_session_ref))?
+        .get(&rtxn, &ROSTER.key_bytes(&digest))?
         .expect("stored roster row");
     Ok(bytes.into_owned())
 }
@@ -621,16 +630,20 @@ fn consent_records_preserve_who_when_purposes_basis_and_evidence() -> Result<()>
     );
     assert_eq!(stored.state, VoiceConsentState::Granted);
 
-    for basis in [
+    for (index, basis) in [
         notice_basis(),
         VoiceConsentBasis::SettingsToggle {
             surface_ref: "settings/voice".to_owned(),
         },
-    ] {
-        let event = granted_event("consent-other", subject, recorder, 1_800, basis.clone());
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let event_id = format!("consent-other-{index}");
+        let event = granted_event(&event_id, subject, recorder, 1_800, basis.clone());
         vault.record_voice_consent(&event)?;
         assert_eq!(
-            stored_consent(&vault, subject, "consent-other")?
+            stored_consent(&vault, subject, &event_id)?
                 .expect("consent row")
                 .basis,
             basis
@@ -662,6 +675,126 @@ fn consent_records_preserve_who_when_purposes_basis_and_evidence() -> Result<()>
         assert!(vault.record_voice_consent(&event).is_err());
     }
     assert!(stored_consent(&vault, subject, "consent-bad")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn voice_consent_event_id_cannot_replace_an_existing_withdrawal() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x33);
+    let recorder = test_id(0x34);
+    let request = VoiceWithdrawalRequest {
+        event_id: "consent-final".to_owned(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: 300,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: notice_basis(),
+    };
+    vault.withdraw_voice_consent(&request)?;
+    let withdrawn = stored_consent(&vault, subject, &request.event_id)?.expect("withdrawal");
+    let replacement = granted_event(&request.event_id, subject, recorder, 301, notice_basis());
+    assert!(vault.record_voice_consent(&replacement).is_err());
+    assert_eq!(
+        stored_consent(&vault, subject, &request.event_id)?,
+        Some(withdrawn)
+    );
+    Ok(())
+}
+
+#[test]
+fn replaying_an_old_withdrawal_preserves_a_newer_grant_and_print() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x37);
+    let recorder = test_id(0x38);
+    let withdrawal = VoiceWithdrawalRequest {
+        event_id: "withdraw-old".to_owned(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: 200,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: notice_basis(),
+    };
+    let first = vault.withdraw_voice_consent(&withdrawal)?;
+    assert!(!first.replayed);
+    vault.record_voice_consent(&granted_event(
+        "grant-new",
+        subject,
+        recorder,
+        300,
+        notice_basis(),
+    ))?;
+    let print = vault.enroll_voice_print(&enrollment(
+        subject,
+        "grant-new",
+        vec![solo_sample("s-new", "en", [1.0, 0.0, 0.0, 0.0])],
+        400,
+    ))?;
+    let sample = stored_sample(&vault, subject, "s-new")?.expect("new sample");
+
+    let replay = vault.withdraw_voice_consent(&withdrawal)?;
+    assert!(replay.replayed);
+    assert!(replay.already_absent);
+    assert!(!replay.deleted_print);
+    assert_eq!(replay.deleted_sample_count, 0);
+    assert_eq!(replay.deleted_vector_count, 0);
+    assert_eq!(stored_print(&vault, subject)?, Some(print.clone()));
+    assert_eq!(
+        stored_sample(&vault, subject, "s-new")?,
+        Some(sample.clone())
+    );
+
+    let old_event = VoiceConsentEventV1 {
+        event_id: withdrawal.event_id.clone(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: withdrawal.occurred_at,
+        purposes: withdrawal.purposes.clone(),
+        basis: withdrawal.basis.clone(),
+        state: VoiceConsentState::Withdrawn,
+    };
+    vault.record_voice_consent(&old_event)?;
+    assert_eq!(stored_print(&vault, subject)?, Some(print));
+    assert_eq!(stored_sample(&vault, subject, "s-new")?, Some(sample));
+    assert!(
+        vault
+            .withdraw_voice_consent(&VoiceWithdrawalRequest {
+                occurred_at: 201,
+                ..withdrawal
+            })
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn recording_a_withdrawal_through_the_generic_consent_door_deletes_prints() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x35);
+    let recorder = test_id(0x36);
+    enroll_principal(
+        &vault,
+        subject,
+        recorder,
+        "consent-grant",
+        [1.0, 0.0, 0.0, 0.0],
+    )?;
+    let event = VoiceConsentEventV1 {
+        event_id: "consent-withdraw".to_owned(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: 400,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: notice_basis(),
+        state: VoiceConsentState::Withdrawn,
+    };
+    vault.record_voice_consent(&event)?;
+    assert!(stored_print(&vault, subject)?.is_none());
+    assert!(stored_sample(&vault, subject, "s-1")?.is_none());
+    assert_eq!(
+        stored_consent(&vault, subject, &event.event_id)?,
+        Some(event)
+    );
     Ok(())
 }
 
@@ -807,9 +940,10 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
     let active = stored_print(&vault, subject)?.expect("re-enrolled print");
     assert_eq!(active.space.space_id, revised.space_id);
     assert!(
-        !print_family_rows(&vault, subject)?
-            .iter()
-            .any(|(key, _)| key == &voice_print_key(&subject, &old_space_id)),
+        !print_family_rows(&vault, subject)?.iter().any(|(key, _)| {
+            let digest = digest16(b"voice_identity.space", old_space_id.as_bytes());
+            <(EntityId, [u8; 16]) as SideKey>::decode_key(key) == Some((subject, digest))
+        }),
         "the obsolete centroid must be deleted, not merely deactivated"
     );
 
@@ -833,6 +967,307 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
     assert!(matches!(
         evidence_of(&roster, "seg-1"),
         VoiceAttributionEvidence::ResidualCluster { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+
+    let (_tmp, vault) = temp_ref_vault();
+    let subject = test_id(0xA9);
+    let relationship = test_id(0xAA);
+    seed_relationship(&vault, relationship)?;
+    let clip = VoiceRegisterClip {
+        register: "neutral".into(),
+        media_type: "audio/wav".into(),
+        audio: vec![1, 2, 3],
+        transcript: "reference".into(),
+    };
+    for (id, origin) in [
+        (
+            "designed",
+            VoiceRefOrigin::Designed {
+                vendor: "design-tool".into(),
+            },
+        ),
+        ("generated", VoiceRefOrigin::Generated),
+    ] {
+        vault.store_voice_ref_pack(&VoiceRefPack {
+            version: 1,
+            id: id.into(),
+            voice_id: "stable-voice".into(),
+            owner: subject,
+            origin,
+            clips: vec![clip.clone()],
+        })?;
+    }
+    let request = vault.prepare_voice_clone("stable-voice", "render", true)?;
+    let target = vault.record_voice_target_clone(&request, "vendor-pointer", 123)?;
+    let assert_refs = || -> Result<()> {
+        assert_eq!(
+            vault
+                .voice_identity("stable-voice")?
+                .expect("vault identity")
+                .pack_ids,
+            vec!["designed", "generated"],
+        );
+        assert_eq!(
+            vault
+                .voice_ref_pack("designed")?
+                .expect("designed pack")
+                .clips,
+            vec![clip.clone()]
+        );
+        assert_eq!(
+            vault
+                .voice_ref_pack("generated")?
+                .expect("generated pack")
+                .clips,
+            vec![clip.clone()]
+        );
+        assert_eq!(
+            vault.voice_target_clone("stable-voice", "render", true)?,
+            Some(target.clone())
+        );
+        Ok(())
+    };
+    vault.record_voice_consent(&granted_event(
+        "consent-1",
+        subject,
+        test_id(0xAB),
+        100,
+        notice_basis(),
+    ))?;
+    let enrolled = enrollment(
+        subject,
+        "consent-1",
+        vec![solo_sample("s-1", "en", [1.0, 0.0, 0.0, 0.0])],
+        200,
+    );
+    vault.enroll_voice_print(&VoiceEnrollmentRequest {
+        relationship_ref: Some(relationship),
+        ..enrolled.clone()
+    })?;
+    assert_refs()?;
+    vault.enroll_voice_print(&VoiceEnrollmentRequest {
+        relationship_ref: Some(relationship),
+        space: space_with("rev-2", "mono/16k/vad-v1"),
+        requested_at: 400,
+        ..enrolled
+    })?;
+    assert_refs()?;
+    vault.end_voice_relationship(subject, relationship, 1_000, 100)?;
+    assert_eq!(vault.prune_expired_voice_prints(1_100)?, vec![subject]);
+    assert_refs()?;
+    vault.withdraw_voice_consent(&VoiceWithdrawalRequest {
+        event_id: "withdraw-all".into(),
+        subject_ref: subject,
+        recorded_by_ref: subject,
+        occurred_at: 1_200,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: notice_basis(),
+    })?;
+    assert!(vault.voice_identity("stable-voice")?.is_none());
+    assert!(vault.voice_ref_pack("designed")?.is_none());
+    assert!(
+        vault
+            .voice_target_clone("stable-voice", "render", true)?
+            .is_none()
+    );
+    Ok(())
+}
+
+fn install_voice_ref_policy(vault: &Vault, id: EntityId, row: Value) -> Result<()> {
+    let raw = crate::gate::default_policy_manifest().unwrap();
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(&raw))
+        .expect("shipped manifest decodes")
+    else {
+        unreachable!("manifest map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("voice_ref_limits"));
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("pack_id") {
+            *value = format!("voice-limits-{}", id.to_hex()).into();
+        }
+    }
+    entries.push(("voice_ref_limits".into(), row));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(vault, id, &encoded)
+}
+
+#[test]
+fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+
+    let (_tmp, vault) = temp_ref_vault();
+    let holder = test_id(0xB9);
+    let other = test_id(0xBA);
+    install_voice_ref_policy(
+        &vault,
+        test_id(0xBB),
+        Value::Map(vec![
+            (
+                "vault".into(),
+                Value::Map(vec![
+                    ("max_design_vendor_bytes".into(), 260u64.into()),
+                    ("max_vendor_voice_id_bytes".into(), 260u64.into()),
+                    ("max_clips_per_pack".into(), 1u64.into()),
+                ]),
+            ),
+            (
+                "holders".into(),
+                Value::Array(vec![
+                    Value::Map(vec![
+                        ("holder_ref".into(), holder.to_hex().into()),
+                        (
+                            "limits".into(),
+                            Value::Map(vec![("max_vendor_voice_id_bytes".into(), 200u64.into())]),
+                        ),
+                    ]),
+                    Value::Map(vec![
+                        ("holder_ref".into(), other.to_hex().into()),
+                        (
+                            "limits".into(),
+                            Value::Map(vec![("max_vendor_voice_id_bytes".into(), 500u64.into())]),
+                        ),
+                    ]),
+                ]),
+            ),
+        ]),
+    )?;
+    let clip = VoiceRegisterClip {
+        register: "neutral".into(),
+        media_type: "audio/wav".into(),
+        audio: vec![1],
+        transcript: String::new(),
+    };
+    let designed = VoiceRefPack {
+        version: 1,
+        id: "holder-pack".into(),
+        voice_id: "holder-voice".into(),
+        owner: holder,
+        origin: VoiceRefOrigin::Designed {
+            vendor: "d".repeat(180),
+        },
+        clips: vec![clip.clone()],
+    };
+    vault.store_voice_ref_pack(&designed)?; // > old fixed 128-byte provider limit.
+    let mut too_many_clips = designed;
+    too_many_clips.id = "excess-clips".into();
+    too_many_clips.clips.push(VoiceRegisterClip {
+        register: "soft".into(),
+        ..clip.clone()
+    });
+    assert!(vault.store_voice_ref_pack(&too_many_clips).is_err());
+    let request = vault.prepare_voice_clone("holder-voice", "host", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(201), 1)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&request, &"v".repeat(180), 1)?;
+    assert_eq!(
+        vault.voice_target_clone("holder-voice", "host", false)?,
+        Some(saved)
+    );
+
+    vault.store_voice_ref_pack(&VoiceRefPack {
+        version: 1,
+        id: "other-pack".into(),
+        voice_id: "other-voice".into(),
+        owner: other,
+        origin: VoiceRefOrigin::Captured,
+        clips: vec![clip],
+    })?;
+    let other_request = vault.prepare_voice_clone("other-voice", "host", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&other_request, &"v".repeat(261), 2)
+            .is_err()
+    );
+    vault.record_voice_target_clone(&other_request, &"v".repeat(250), 2)?;
+    Ok(())
+}
+
+#[test]
+fn manifest_rows_replace_shipped_ceiling_and_choose_precedence() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+    let (_tmp, vault) = temp_ref_vault();
+    let holder = test_id(0xBC);
+    let manifest_id = test_id(0xBD);
+    let limits_row = |precedence: &str| {
+        Value::Map(vec![
+            ("precedence".into(), precedence.into()),
+            (
+                "vault".into(),
+                Value::Map(vec![("max_vendor_voice_id_bytes".into(), 8_192u64.into())]),
+            ),
+            (
+                "holders".into(),
+                Value::Array(vec![Value::Map(vec![
+                    ("holder_ref".into(), holder.to_hex().into()),
+                    (
+                        "limits".into(),
+                        Value::Map(vec![("max_vendor_voice_id_bytes".into(), 5_000u64.into())]),
+                    ),
+                ])]),
+            ),
+        ])
+    };
+    vault.store_voice_ref_pack(&VoiceRefPack {
+        version: 1,
+        id: "source".into(),
+        voice_id: "voice".into(),
+        owner: holder,
+        origin: VoiceRefOrigin::Captured,
+        clips: vec![VoiceRegisterClip {
+            register: "neutral".into(),
+            media_type: "audio/wav".into(),
+            audio: vec![1],
+            transcript: String::new(),
+        }],
+    })?;
+    let request = vault.prepare_voice_clone("voice", "first-target", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(4_097), 1)
+            .is_err()
+    );
+
+    install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(5_001), 1)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&request, &"v".repeat(4_097), 1)?;
+    assert_eq!(
+        vault.voice_target_clone("voice", "first-target", false)?,
+        Some(saved)
+    );
+
+    // This authored row changes the precedence decision at the production
+    // manifest door. Vault-only ignores a holder's narrower row, but still
+    // observes the author-selected 8192-byte vault cap.
+    install_voice_ref_policy(&vault, manifest_id, limits_row("vault_only"))?;
+    let second = vault.prepare_voice_clone("voice", "second-target", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&second, &"v".repeat(8_193), 2)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&second, &"v".repeat(7_000), 2)?;
+    assert_eq!(
+        vault.voice_target_clone("voice", "second-target", false)?,
+        Some(saved)
+    );
+    install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
+    assert!(matches!(
+        vault.voice_target_clone("voice", "second-target", false),
+        Err(Error::InvalidConfig(_))
     ));
     Ok(())
 }
@@ -1304,6 +1739,19 @@ fn relationship_retention_validates_computes_and_prunes_when_due() -> Result<()>
         Some(1_100)
     );
 
+    // Re-enrolling the same subject cannot silently cancel an already due
+    // relationship-linked deletion.
+    let renewed = vault.enroll_voice_print(&VoiceEnrollmentRequest {
+        relationship_ref: Some(relationship),
+        ..enrollment(
+            subject,
+            "consent-1",
+            vec![solo_sample("s-1", "en", [1.0, 0.0, 0.0, 0.0])],
+            1_050,
+        )
+    })?;
+    assert_eq!(renewed.delete_after, Some(1_100));
+
     assert!(vault.prune_expired_voice_prints(1_099)?.is_empty());
     assert!(
         stored_print(&vault, subject)?.is_some(),
@@ -1359,6 +1807,7 @@ fn withdrawal_removes_every_biometric_row_in_one_transaction_and_is_idempotent()
     let receipt = vault.withdraw_voice_consent(&request)?;
     assert_eq!(receipt.consent_event_ref, "consent-withdraw");
     assert_eq!(receipt.subject_ref, subject);
+    assert!(!receipt.replayed);
     assert!(!receipt.already_absent);
     assert!(receipt.deleted_print);
     assert!(receipt.deleted_active_pointer);
@@ -1411,6 +1860,7 @@ fn withdrawal_removes_every_biometric_row_in_one_transaction_and_is_idempotent()
         ..request
     })?;
     assert!(second.already_absent);
+    assert!(!second.replayed);
     assert!(!second.deleted_print);
     assert!(!second.deleted_active_pointer);
     assert_eq!(second.deleted_sample_count, 0);

@@ -30,18 +30,6 @@ pub(super) const VOICE_CALIBRATION_MIN_LANGUAGES: usize = 2;
 /// ticket-owned dial, not a canon-frozen constant.
 pub(super) const VOICE_MAX_MATCH_SEGMENTS: usize = 1024;
 
-/// `vault_meta` key prefix for voice print rows and the active-space pointer.
-pub(super) const VOICE_PRINT_KEY_PREFIX: &[u8] = b"voice_identity.print.v1:";
-
-/// `vault_meta` key prefix for stored enrollment sample/vector rows.
-pub(super) const VOICE_SAMPLE_KEY_PREFIX: &[u8] = b"voice_identity.sample.v1:";
-
-/// `vault_meta` key prefix for consent/withdrawal event rows.
-pub(super) const VOICE_CONSENT_KEY_PREFIX: &[u8] = b"voice_identity.consent.v1:";
-
-/// `vault_meta` key prefix for resolved session roster rows.
-pub(super) const VOICE_ROSTER_KEY_PREFIX: &[u8] = b"voice_identity.roster.v1:";
-
 /// Purpose a voice print may be used for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -421,6 +409,11 @@ pub struct VoiceWithdrawalRequest {
 pub struct VoiceWithdrawalReceipt {
     pub consent_event_ref: String,
     pub subject_ref: EntityId,
+    /// An identical recorded withdrawal was redelivered; no biometric rows
+    /// were touched, even if a newer grant has since enrolled a new print.
+    pub replayed: bool,
+    /// No biometric rows were deleted by this invocation. On replay this
+    /// does not assert that a later enrollment is absent.
     pub already_absent: bool,
     pub deleted_print: bool,
     pub deleted_sample_count: usize,

@@ -6,25 +6,54 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::codec_core::{encode_consent_event, encode_sample};
-use super::codec_records::{decode_roster, encode_print_record, encode_roster};
 use super::math_keys::{
-    invalid_voice, require_non_empty, require_sha256_hex, validate_voice_vector,
-    voice_active_pointer_key, voice_consent_key, voice_print_key, voice_roster_key,
-    voice_sample_key,
+    digest16, invalid_voice, require_non_empty, require_sha256_hex, validate_voice_vector,
 };
 use super::storage_admission::{
+    CONSENT, PRINT_POINTER, PRINT_RECORD, ROSTER, SAMPLE, VoiceDeletionTally,
     active_print_subjects, admit_enrollment_consent, admit_match_segments, admit_sample_origin,
     best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
-    delete_voice_biometrics_in_txn, load_match_candidates, read_active_print,
+    delete_voice_prints_in_txn, load_match_candidates, read_active_print,
     require_counterparty_contact_entity, require_relationship_entity, residual_cluster_ref,
-    residual_speaker_label, unambiguous_invite_remainder,
+    residual_speaker_label, sample_digest, unambiguous_invite_remainder,
 };
 use super::types::{
     VoiceAttributionEvidence, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentRequest,
     VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintRecordV1, VoiceResolvedSegment,
     VoiceSessionRosterV1, VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
 };
+
+/// An event ID names one immutable decision. Only the first insertion may
+/// perform a withdrawal's destructive effect; identical redelivery is a replay.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConsentEventWrite {
+    Inserted,
+    Replayed,
+}
+
+/// Both consent doors compare inside the transaction that holds the event
+/// write and any hard deletion.
+fn put_consent_event_once(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    event: &VoiceConsentEventV1,
+) -> Result<ConsentEventWrite> {
+    let key = (
+        event.subject_ref,
+        digest16(b"voice_identity.consent", event.event_id.as_bytes()),
+    );
+    let data = CONSENT.encode_value(event)?;
+    match CONSENT.get_bytes(store, txn, &key)? {
+        Some(existing) if existing == data => Ok(ConsentEventWrite::Replayed),
+        Some(_) => Err(invalid_voice(
+            "voice consent event id already names another decision",
+        )),
+        None => {
+            CONSENT.put(store, txn, &key, event)?;
+            Ok(ConsentEventWrite::Inserted)
+        }
+    }
+}
 
 impl Vault {
     /// Appends one consent or withdrawal decision to the private consent log.
@@ -33,12 +62,20 @@ impl Vault {
     /// and its evidence refs. It grants no owner authority, no outbound
     /// permission, and no disclosure widening, and it never carries a vector.
     pub fn record_voice_consent(&self, event: &VoiceConsentEventV1) -> Result<()> {
-        let data = encode_consent_event(event)?;
-        let key = voice_consent_key(&event.subject_ref, &event.event_id);
-        self.with_write_txn(|wtxn| {
-            self.store.vault_meta.put(wtxn, &key, &data)?;
-            Ok(())
-        })
+        if event.state == VoiceConsentState::Withdrawn {
+            self.withdraw_voice_consent(&VoiceWithdrawalRequest {
+                event_id: event.event_id.clone(),
+                subject_ref: event.subject_ref,
+                recorded_by_ref: event.recorded_by_ref,
+                occurred_at: event.occurred_at,
+                purposes: event.purposes.clone(),
+                basis: event.basis.clone(),
+            })?;
+            return Ok(());
+        }
+        CONSENT.encode_value(event)?;
+        self.with_write_txn(|wtxn| put_consent_event_once(&self.store, wtxn, event))
+            .map(|_| ())
     }
 
     /// Builds (or rebuilds) one subject's active voice print.
@@ -104,7 +141,7 @@ impl Vault {
             }
 
             let previous = read_active_print(store, wtxn, &subject)?;
-            delete_voice_biometrics_in_txn(store, wtxn, &subject)?;
+            delete_voice_prints_in_txn(store, wtxn, &subject)?;
 
             let record = VoicePrintRecordV1 {
                 subject_ref: subject,
@@ -117,27 +154,18 @@ impl Vault {
                 sample_languages: sample_languages.clone(),
                 calibration,
                 print_generation: self.store.clock.entity_id()?,
-                created_at: previous.map_or(request.requested_at, |prior| prior.created_at),
+                created_at: previous
+                    .as_ref()
+                    .map_or(request.requested_at, |prior| prior.created_at),
                 updated_at: request.requested_at,
-                delete_after: None,
+                delete_after: previous.and_then(|prior| prior.delete_after),
             };
-            let body = encode_print_record(&record)?;
-            store.vault_meta.put(
-                wtxn,
-                &voice_print_key(&subject, &request.space.space_id),
-                &body,
-            )?;
-            store.vault_meta.put(
-                wtxn,
-                &voice_active_pointer_key(&subject),
-                request.space.space_id.as_bytes(),
-            )?;
+            let space_digest = digest16(b"voice_identity.space", request.space.space_id.as_bytes());
+            PRINT_RECORD.put(store, wtxn, &(subject, space_digest), &record)?;
+            PRINT_POINTER.put(store, wtxn, &subject, &request.space.space_id)?;
             for sample in &ordered {
-                store.vault_meta.put(
-                    wtxn,
-                    &voice_sample_key(&subject, &sample.sample_id),
-                    &encode_sample(sample)?,
-                )?;
+                let digest = sample_digest(&subject, &sample.sample_id);
+                SAMPLE.put(store, wtxn, &digest, sample)?;
             }
             Ok(record)
         })
@@ -255,10 +283,13 @@ impl Vault {
             segments,
             created_at: request.created_at,
         };
-        let body = encode_roster(&roster)?;
-        let key = voice_roster_key(&roster.voice_session_ref);
+        ROSTER.encode_value(&roster)?;
+        let digest = digest16(
+            b"voice_identity.roster",
+            roster.voice_session_ref.as_bytes(),
+        );
         self.with_write_txn(|wtxn| {
-            self.store.vault_meta.put(wtxn, &key, &body)?;
+            ROSTER.put(&self.store, wtxn, &digest, &roster)?;
             Ok(())
         })?;
         Ok(roster)
@@ -271,14 +302,8 @@ impl Vault {
         voice_session_ref: &str,
     ) -> Result<Option<VoiceSessionRosterV1>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &voice_roster_key(voice_session_ref))?
-        else {
-            return Ok(None);
-        };
-        decode_roster(&bytes).map(Some)
+        let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+        ROSTER.get(&self.store, &rtxn, &digest)
     }
 
     /// Display-only corroboration for a voice grant offer. No caller boolean
@@ -291,14 +316,10 @@ impl Vault {
         owner_actor: EntityId,
     ) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &voice_roster_key(voice_session_ref))?
-        else {
+        let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+        let Some(roster) = ROSTER.get(&self.store, &rtxn, &digest)? else {
             return Ok(false);
         };
-        let roster = decode_roster(&raw)?;
         let Some(print) = read_active_print(&self.store, &rtxn, &owner_actor)? else {
             return Ok(false);
         };
@@ -359,20 +380,16 @@ impl Vault {
                 delete_after: Some(delete_after),
                 ..record
             };
-            let body = encode_print_record(&updated)?;
-            store.vault_meta.put(
-                wtxn,
-                &voice_print_key(&subject_ref, &updated.space.space_id),
-                &body,
-            )?;
+            let digest = digest16(b"voice_identity.space", updated.space.space_id.as_bytes());
+            PRINT_RECORD.put(store, wtxn, &(subject_ref, digest), &updated)?;
             Ok(())
         })
     }
 
     /// Hard-deletes every voice print whose retention deadline has passed.
     ///
-    /// Uses the same deletion transaction as explicit withdrawal, so a pruned
-    /// subject and a withdrawn subject are left in exactly the same state.
+    /// Removes only expired recognition prints; render-reference packs and
+    /// target pointers have their own lifetime and remain available.
     /// Returns the pruned subjects in ascending id order.
     pub fn prune_expired_voice_prints(&self, now: u64) -> Result<Vec<EntityId>> {
         let store = &self.store;
@@ -388,7 +405,7 @@ impl Vault {
             }
             expired.sort_unstable();
             for subject in &expired {
-                delete_voice_biometrics_in_txn(store, wtxn, subject)?;
+                delete_voice_prints_in_txn(store, wtxn, subject)?;
             }
             Ok(expired)
         })
@@ -398,8 +415,9 @@ impl Vault {
     ///
     /// One write transaction appends the non-biometric withdrawal event and
     /// removes the print row, every stored sample/vector row, and the
-    /// active-space pointer. A second call is idempotent: nothing is left to
-    /// delete, and the receipt says `already_absent`.
+    /// active-space pointer. Replaying the same event is idempotent even when
+    /// a newer grant has enrolled a new print: the receipt marks the replay
+    /// and no later biometric material is deleted.
     pub fn withdraw_voice_consent(
         &self,
         request: &VoiceWithdrawalRequest,
@@ -413,20 +431,27 @@ impl Vault {
             basis: request.basis.clone(),
             state: VoiceConsentState::Withdrawn,
         };
-        let body = encode_consent_event(&event)?;
-        let consent_key = voice_consent_key(&event.subject_ref, &event.event_id);
+        CONSENT.encode_value(&event)?;
 
+        let _guard = self
+            .voice_ref_guard
+            .write()
+            .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         let subject = request.subject_ref;
-        let tally = self.with_write_txn(|wtxn| {
-            let tally = delete_voice_biometrics_in_txn(store, wtxn, &subject)?;
-            store.vault_meta.put(wtxn, &consent_key, &body)?;
-            Ok(tally)
+        let (tally, replayed) = self.with_write_txn(|wtxn| {
+            if put_consent_event_once(store, wtxn, &event)? == ConsentEventWrite::Replayed {
+                return Ok((VoiceDeletionTally::default(), true));
+            }
+            let mut tally = delete_voice_prints_in_txn(store, wtxn, &subject)?;
+            tally.owner_ref_rows = super::ref_bank::delete_owner_refs(store, wtxn, &subject)?;
+            Ok((tally, false))
         })?;
 
         Ok(VoiceWithdrawalReceipt {
             consent_event_ref: request.event_id.clone(),
             subject_ref: subject,
+            replayed,
             already_absent: tally.is_empty(),
             deleted_print: tally.print_rows > 0,
             deleted_sample_count: tally.sample_rows,
@@ -446,24 +471,25 @@ pub(crate) fn put_voice_roster_for_test(
     vault: &Vault,
     roster: &VoiceSessionRosterV1,
 ) -> Result<()> {
-    let body = encode_roster(roster)?;
-    let key = voice_roster_key(&roster.voice_session_ref);
+    ROSTER.encode_value(roster)?;
+    let digest = digest16(
+        b"voice_identity.roster",
+        roster.voice_session_ref.as_bytes(),
+    );
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &body)?;
+        ROSTER.put(&vault.store, wtxn, &digest, roster)?;
         Ok(())
     })
 }
 
-/// Stores arbitrary bytes at a roster key, for the corrupt-roster gate.
+/// Stores arbitrary bytes at a roster key, for the corrupt-roster gate: the
+/// bytes are not a valid encoded roster (that is the point of the gate).
 #[cfg(test)]
 pub(crate) fn put_raw_voice_roster_for_test(
     vault: &Vault,
     voice_session_ref: &str,
     bytes: &[u8],
 ) -> Result<()> {
-    let key = voice_roster_key(voice_session_ref);
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, bytes)?;
-        Ok(())
-    })
+    let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+    vault.with_write_txn(|wtxn| ROSTER.put_undecodable(&vault.store, wtxn, &digest, bytes))
 }

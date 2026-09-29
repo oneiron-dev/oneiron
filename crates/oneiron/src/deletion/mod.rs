@@ -4,12 +4,14 @@ mod coop_request;
 mod delete;
 mod erase;
 mod gate;
+mod identity_event_stamps;
 mod publish;
 mod receipt;
 mod rendezvous;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
+pub(crate) mod topology_delete_intent;
 
 #[cfg(test)]
 mod tests;
@@ -39,15 +41,20 @@ pub(crate) use sweep_queue::{
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
 pub(crate) use tombstone::{
-    ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, archive_tombstone_key,
-    local_hard_delete_key,
+    ARCHIVE_TOMBSTONE_PREFIX, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER,
+    LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, archive_tombstone_key, local_hard_delete_key,
 };
-// The `pt:` window vocabulary and the replay outcome are read by sync
-// production (`sync::window`, `sync::quarantine`, `sync::types`) and by the
-// white-box test modules that pin the base replay law; a plain no-feature
-// library reaches none of them.
+pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
+// The replay outcome is read by sync production (`sync::quarantine`) and by
+// the white-box test modules that pin the base replay law; a plain
+// no-feature library reaches neither.
 #[cfg(any(feature = "sync", test))]
-pub(crate) use tombstone::{PENDING_TOMBSTONE_PREFIX, ReplayedTombstoneOutcome};
+pub(crate) use tombstone::ReplayedTombstoneOutcome;
+// The `pt:` prefix constant's one remaining crate-external reader is a
+// no-feature-only regression fixture (`memory::tests::support`); production
+// sync code reaches the pending-tombstone rows through its own typed table.
+#[cfg(all(test, not(feature = "sync")))]
+pub(crate) use tombstone::PENDING_TOMBSTONE_PREFIX;
 
 #[cfg(feature = "sync")]
 pub(crate) use receipt::{
@@ -74,7 +81,9 @@ pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_SLA_SECS, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
     encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
-pub(crate) use tombstone::{pending_tombstone_key, window_label_from_timestamp};
+pub(crate) use tombstone::{
+    parse_window_label, pending_tombstone_key, window_label_from_timestamp,
+};
 
 // The flat deletion.rs module used to provide this name to the test module
 // through `use super::*`; after the directory split the seam re-imports it so

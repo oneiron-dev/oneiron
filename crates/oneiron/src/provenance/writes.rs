@@ -456,44 +456,14 @@ impl Vault {
             body.confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         claim_body.valid_from = body.valid_from;
         claim_body.valid_to = body.valid_to;
         if let Some(evidence) = imported_evidence {
             imported::stamp_imported_source(&mut claim_body, evidence);
         }
         if let Some(evidence) = generated_evidence {
-            let decoded = crate::dreamer_consolidation::decode_consolidation_evidence(&evidence)?
-                .ok_or(Error::InvalidClaimBody(
-                "derived edge requires typed evidence",
-            ))?;
-            if decoded.source_meet != crate::claim::ClaimSource::Generated
-                || !decoded.chain.is_empty()
-                || decoded.refs != [subject.source]
-                || subject.kind != EdgeKind::Supports
-            {
-                return Err(Error::InvalidClaimBody("derived support evidence mismatch"));
-            }
-            let source_row = self
-                .store
-                .entities
-                .get(wtxn, subject.source.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
-            let head_row = self
-                .store
-                .entities
-                .get(wtxn, subject.target.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
-            if EntityMetadataHeader::parse(&source_row)
-                .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_TURN)
-                || EntityMetadataHeader::parse(&head_row)
-                    .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "derived support endpoints mismatch",
-                ));
-            }
-            let source = crate::claim::ClaimSource::Generated;
+            let source = super::derived_attachment::verify(self, wtxn, subject, &evidence)?;
             claim_body.source = Some(source);
             claim_body.scope = Some(Value::Map(vec![
                 (

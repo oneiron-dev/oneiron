@@ -50,7 +50,7 @@ fn search_response_rechecks_projected_claim_body() {
     let claim_id = seeded_test_entity_id(0x0012_6901);
     let subject = seeded_test_entity_id(0x0012_6902);
     let world = oneiron::claim::base_world_id();
-    let facet = oneiron::claim::substrate_facet_id(subject);
+    let facet = oneiron::claim::substrate_facet_id(subject).unwrap();
     let project = oneiron::claim::default_project_id();
     let body = rmp_serde::to_vec_named(&ClaimSeed {
         pred: "profile.projected",
@@ -457,7 +457,7 @@ async fn context_pack_route_rejects_malformed_controls() {
     );
 
     let (status, body) = route_json(
-        server,
+        server.clone(),
         json_request(
             "POST",
             "/v1/core/context-pack",
@@ -479,6 +479,19 @@ async fn context_pack_route_rejects_malformed_controls() {
         error_envelope(&body)["details"]["field"],
         Value::from("time.since")
     );
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/core/context-pack",
+            json!({
+                "query": "recent decisions", "executor_model": "missing-revision"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
 }
 
 #[tokio::test]
@@ -544,6 +557,7 @@ fn search_summary_and_full_project_the_revision_that_produced_the_hit() {
             oneiron::ClaimApprovalStatus::Auto,
             oneiron::ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let at = |second| oneiron::TimeRange {
         start: second,

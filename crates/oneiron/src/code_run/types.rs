@@ -54,6 +54,12 @@ pub enum SelfCall {
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
+    /// Reusable definition authoring, independent of launching a child.
+    AgentsPut(Box<SelfAgentDefinitionPutCall>),
+    /// Read the active inference rows through the host-bound resident action.
+    InferenceDefaultsRead,
+    /// Replace validated inference rows under the host's delegated policy gate.
+    InferenceDefaultsReplace(String),
     /// Host-authorized action; a guest request alone carries no owner proof.
     WakePolicyWrite(SelfWakePolicyWriteCall),
 }
@@ -64,6 +70,7 @@ impl SelfCall {
     pub const fn effect(&self) -> SelfEffect {
         match self {
             Self::AgentsSpawn(_) => SelfEffect::AgentsSpawn,
+            Self::AgentsPut(_) => SelfEffect::AgentsPut,
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
@@ -79,6 +86,8 @@ impl SelfCall {
             Self::Think(_) => SelfEffect::Think,
             Self::Express(_) => SelfEffect::Express,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
+            Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
+            Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
         }
     }
@@ -136,6 +145,9 @@ pub enum SelfEffect {
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
     ReportBlocked,
+    AgentsPut,
+    InferenceDefaultsRead,
+    InferenceDefaultsReplace,
     WakePolicyWrite,
 }
 
@@ -145,6 +157,7 @@ impl SelfEffect {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AgentsSpawn => "agents.spawn",
+            Self::AgentsPut => "vault.agents.put",
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::MemorySearch => "self.memory.search",
@@ -161,6 +174,8 @@ impl SelfEffect {
             Self::Think => "self.think",
             Self::Express => "self.express",
             Self::ReportBlocked => "self.report_blocked",
+            Self::InferenceDefaultsRead => "self.inference_defaults.read",
+            Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
         }
     }
@@ -178,6 +193,7 @@ impl SelfEffect {
             Self::Think => Some(ExecutorUtterance::Think),
             Self::Express => Some(ExecutorUtterance::Express),
             Self::AgentsSpawn
+            | Self::AgentsPut
             | Self::TasksAsk
             | Self::TasksWait
             | Self::MemorySearch
@@ -191,7 +207,9 @@ impl SelfEffect {
             | Self::TaskDelegate
             | Self::Context
             | Self::ReportBlocked
-            | Self::WakePolicyWrite => None,
+            | Self::InferenceDefaultsRead
+            | Self::InferenceDefaultsReplace => None,
+            Self::WakePolicyWrite => None,
         }
     }
 
@@ -411,6 +429,7 @@ impl SelfFixtureEffectCall {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfDispatchOutcome {
     AgentSpawn(SelfAgentSpawnResult),
+    AgentDefinitionPut(SelfAgentDefinitionPutResult),
     TaskAsk(crate::task_verb::TaskAskReceipt),
     TaskAskStatus(crate::task_verb::TaskAskStatus),
     MemorySearch(SelfMemorySearchResult),
@@ -426,6 +445,8 @@ pub enum SelfDispatchOutcome {
     ReportBlocked {
         receipt: EntityId,
     },
+    /// JSON of the effective rows after a read or atomic replacement.
+    InferenceDefaults(String),
     /// The authorized v1 policy row that was persisted in the vault.
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
 }
@@ -528,6 +549,21 @@ pub const fn peer_result_wait(task_ref: EntityId) -> SelfDurableWait {
         reason: SelfDurableWaitReason::PeerResult,
         prompt: None,
     }
+}
+
+/// No actor, source, lease or approval fields are accepted from guest code.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfAgentDefinitionPutCall {
+    pub id: EntityId,
+    pub definition: Box<crate::agent_def::AgentDefinition>,
+    pub occurred: TimeRange,
+    pub learned_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfAgentDefinitionPutResult {
+    pub id: EntityId,
+    pub disposition: crate::agent_def::AgentDefinitionPutDisposition,
 }
 
 /// No parent/run/actor fields are accepted from guest code.

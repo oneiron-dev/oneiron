@@ -1,7 +1,7 @@
 //! Meter and admit consult fan-outs before any TASK exists.
 
 use super::consult_fanout_store::{
-    FrozenInput, POLICY_KEY, StoredFanout, TxnSurface, encode, policy_in, runs_in, save_run,
+    FANOUT_POLICY, FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
 };
 use super::create_validation::{ValidatedTaskCreate, consult_refusal, validate_task_create};
 use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling};
@@ -33,7 +33,6 @@ use crate::outbound_chokepoint::{
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::task_verb::sdk::AgentVerb;
-use crate::unix_seconds_now;
 use rmpv::Value;
 
 struct CachedAuto(FanoutAutoDisposition);
@@ -77,8 +76,8 @@ impl Memory<'_> {
         if preset.is_empty() || preset.trim() != preset {
             return Err(MemoryError::bad_request("fan-out preset must be canonical"));
         }
-        let now = input.now.unwrap_or_else(unix_seconds_now);
-        let correlation = EntityId::now();
+        let now = input.now.unwrap_or_else(|| self.vault().now_recorded_at());
+        let correlation = self.vault().new_entity_id()?;
         self.validate_fanout(input, correlation, now, true)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let policy = policy_in(self.vault(), &txn)?;
@@ -108,8 +107,8 @@ impl Memory<'_> {
         preset: Option<&str>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let now = input.now.unwrap_or_else(unix_seconds_now);
-        let correlation = EntityId::now();
+        let now = input.now.unwrap_or_else(|| self.vault().now_recorded_at());
+        let correlation = self.vault().new_entity_id()?;
         let validated = self.validate_fanout(input, correlation, now, allow_repeated_peers)?;
         let policy = {
             let txn = self
@@ -135,7 +134,7 @@ impl Memory<'_> {
             choice_receipt_ref: None,
         };
         let scope = run.scope();
-        let rate_now = unix_seconds_now();
+        let rate_now = self.vault().now_recorded_at();
         let has_pathology = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let (edges, rates) = self.fanout_history(&txn, &run, &policy, rate_now)?;
@@ -291,12 +290,9 @@ impl Memory<'_> {
                     txn,
                     id,
                     bytes,
-                    unix_seconds_now(),
+                    self.vault().now_recorded_at(),
                 )?;
-                self.vault()
-                    .store
-                    .vault_meta
-                    .put(txn, POLICY_KEY, &encode(policy)?)?;
+                FANOUT_POLICY.put(&self.vault().store, txn, &(), policy)?;
                 Ok(())
             })
     }

@@ -13,8 +13,7 @@ use super::burst_inputs::NormalizedBurstInputs;
 use super::model_id::dynamic_model_id;
 use super::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence,
+    LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 use crate::claim::ClaimSource;
 use crate::entity_id::bytes_to_hex_lower;
@@ -312,6 +311,7 @@ pub fn auto_check_llm_request(
     LlmRequest {
         model: auto_check_model_id(checker_ref),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::Durable {
@@ -327,8 +327,12 @@ pub fn auto_check_llm_request(
             response_format: ResponseFormat::Json {
                 schema: auto_check_verdict_schema(),
             },
-            // Purpose defaults apply first; explicit host/manifest bindings can override them.
-            locality: ModelLocality::ThirdParty,
+            // This constructor has no host route yet: seed the purpose's
+            // locality, then let an actual host/manifest binding replace it.
+            locality: CallPurpose::AutoCheck
+                .default_policy()
+                .expect("built-in checker purpose has a default")
+                .locality,
         }
         .with_purpose_defaults(),
         messages: vec![

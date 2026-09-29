@@ -20,9 +20,10 @@ use super::{
     ProjectorRule,
 };
 use crate::Vault;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStore};
 use crate::receipt::FIELD_TASK_REF;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
@@ -130,14 +131,11 @@ fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
                 .ok_or(CommError::InvalidRecord)?,
         )
         .map_err(|_| CommError::InvalidRecord)?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron.comm.connector_send_event.v1\0");
-        hash.update(task_ref.as_bytes());
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-        bytes[6] = (bytes[6] & 0x0f) | 0x70;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let event_id = EntityId::from_bytes(bytes).map_err(|_| CommError::InvalidRecord)?;
+        let event_id = EntityId::derive(
+            crate::entity_id::derived_domains::COMM_CONNECTOR_SEND_EVENT,
+            &[task_ref.as_bytes()],
+        )
+        .map_err(|_| CommError::InvalidRecord)?;
         vault.try_with_write_txn(|txn| {
             // Check the immutable source event BEFORE resolving today's party.
             // A merged shell keeps its original body, and a deleted subject has
@@ -155,8 +153,13 @@ fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
                         occurred_at,
                         ..
                     } if resident_channel == *channel && occurred_at == receipt.occurred_at => {
-                        if let Some(original) =
-                            vault.store.port_entity_record(&*txn, &original_party)?
+                        // A soft delete keeps a headerful PERSON shell with
+                        // scrubbed body bytes. It is not a live party to
+                        // compare against the frozen receipt; the already
+                        // imported event must remain replay-idempotent.
+                        if !vault.port_tombstone_is_deleted(&*txn, &original_party)?
+                            && let Some(original) =
+                                vault.store.port_entity_record(&*txn, &original_party)?
                         {
                             if original.entity_type != crate::registry::ENTITY_TYPE_PERSON {
                                 return Err(CommError::InvalidRecord);
@@ -199,19 +202,12 @@ fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
     Ok(())
 }
 
-/// Exact existing outbound message operations. Edits, reactions, calendar
-/// actions, and presence are not new contact touches merely because delivered.
+/// A message operation projects one delivered receipt into comm history.
+/// The connector manifest declares the eligible verbs; edits, reactions,
+/// invitations and presence never become touches just because they delivered.
 fn is_delivered_message(channel: &str, verb: &str) -> bool {
-    verb == "send"
-        || matches!(
-            (channel, verb),
-            ("line", "reply" | "push" | "send_media")
-                | ("telegram" | "imessage_bridge", "send_media")
-                | ("linkedin", "send_dm")
-                // Email replace delivers a new correction message, unlike an
-                // in-place edit on a chat transport.
-                | ("email", "replace")
-        )
+    crate::outbound::outbound_capability_manifest(channel)
+        .is_some_and(|manifest| manifest.message_verbs.iter().any(|kind| kind == verb))
 }
 
 /// Records a successful send receipt without directly writing standing-state claims.
@@ -334,7 +330,7 @@ fn record_event(
             sequence,
             kind,
             party_ref,
-            channel_class: channel_class.map(str::to_owned),
+            channel_class: channel_class.map(normalize_channel_class),
             thread_ref,
             occurred_at,
             projected: false,
@@ -400,6 +396,10 @@ pub(super) fn project_event(
             .iter()
             .find(|rule| rule.event_kind == kind)
             .ok_or(CommError::InvalidRecord)?;
+        // Decode can read provider-spelled events already accepted by this
+        // build; project their recipient class through the same rule as new
+        // events, without changing the original audit event bytes.
+        let recipient_class = channel_class.as_deref().map(normalize_channel_class);
         let delta = apply_projector_rule_in_txn(
             vault,
             wtxn,
@@ -408,7 +408,7 @@ pub(super) fn project_event(
                 rule: *rule,
                 source_event_id: event_id,
                 party_ref,
-                channel_class: channel_class.as_deref(),
+                channel_class: recipient_class.as_deref(),
                 thread_ref: thread_ref.as_deref(),
                 occurred_at,
             },
@@ -553,7 +553,8 @@ fn apply_projector_rule_in_txn(
                     };
                     if !pending
                         || gate_party_ref != party_ref
-                        || gate_channel != channel
+                        || normalize_channel_class(&gate_channel)
+                            != normalize_channel_class(channel)
                         || claim_ref != candidate.claim_ref
                         || created_at > occurred_at
                     {

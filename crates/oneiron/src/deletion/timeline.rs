@@ -11,9 +11,35 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 
 use super::tombstone::{
-    archive_tombstone_key, decode_tombstone_value, pending_tombstone_key,
+    ARCHIVE_MARKER, PENDING_TOMBSTONE, PendingTombstoneKey, decode_tombstone_value,
     window_label_from_timestamp,
 };
+use crate::side_table::HexId;
+
+/// A world claim's body may already be erased; the deletion txn preserves
+/// its window address before purge so every reader still finds its tombstone.
+pub(in crate::deletion) fn deletion_window_label(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    learned_at: u64,
+) -> Result<String> {
+    let key = format!("m:dw:{}", id.to_hex());
+    if let Some(raw) = store.sync_state.get(txn, &key)? {
+        let label = std::str::from_utf8(&raw).map_err(|_| Error::InvalidKey)?;
+        if label.len() != 40
+            || label.as_bytes()[7] != b'@'
+            || label.get(..7) != Some(window_label_from_timestamp(learned_at).as_str())
+            || EntityId::from_hex(&label[8..])
+                .ok()
+                .is_none_or(|world| world.to_hex() != label[8..])
+        {
+            return Err(Error::InvalidKey);
+        }
+        return Ok(label.to_owned());
+    }
+    Ok(window_label_from_timestamp(learned_at))
+}
 
 /// Stable deletion reason surfaced by short-id hydrate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -273,9 +299,11 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let window_label = window_label_from_timestamp(learned_at);
-        let pending_key = pending_tombstone_key(&window_label, id);
-        if let Some(value) = self.store.sync_state.get(txn, pending_key.as_str())? {
+        let pending_key = PendingTombstoneKey {
+            window: deletion_window_label(&self.store, txn, id, learned_at)?,
+            id: *id,
+        };
+        if let Some(value) = PENDING_TOMBSTONE.get(&self.store, txn, &pending_key)? {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
                 HydratedShortIdDeletionSource::PendingTombstone,
                 &value,
@@ -286,6 +314,7 @@ impl Vault {
             use crate::sync::loro_support::{
                 doc_from_snapshot, import_doc, tombstone_values_for_id,
             };
+            let window_label = &pending_key.window;
             let snapshot_key = format!("d:w:{window_label}");
             let Some(snapshot) = self.store.sync_state.get(txn, snapshot_key.as_str())? else {
                 return Ok(None);
@@ -326,9 +355,11 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let label = window_label_from_timestamp(learned_at);
-        let key = pending_tombstone_key(&label, id);
-        if let Some(raw) = self.store.sync_state.get(txn, key.as_str())? {
+        let pending_key = PendingTombstoneKey {
+            window: deletion_window_label(&self.store, txn, id, learned_at)?,
+            id: *id,
+        };
+        if let Some(raw) = PENDING_TOMBSTONE.get(&self.store, txn, &pending_key)? {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
                 HydratedShortIdDeletionSource::PendingTombstone,
                 &raw,
@@ -339,6 +370,7 @@ impl Vault {
             use crate::sync::loro_support::{
                 doc_from_snapshot, import_doc, tombstone_values_for_id,
             };
+            let label = &pending_key.window;
             let key = format!("d:w:{label}");
             let Some(snapshot) = self.store.sync_state.get(txn, key.as_str())? else {
                 return Ok(None);
@@ -453,16 +485,14 @@ impl Store {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<bool> {
-        if self
-            .sync_state
-            .get(txn, archive_tombstone_key(id).as_str())?
-            .is_some()
-        {
+        if ARCHIVE_MARKER.contains(self, txn, &HexId(*id))? {
             return Ok(true);
         }
-        let window_label = window_label_from_timestamp(learned_at);
-        let pending_key = pending_tombstone_key(&window_label, id);
-        if self.sync_state.get(txn, pending_key.as_str())?.is_some() {
+        let pending_key = PendingTombstoneKey {
+            window: deletion_window_label(self, txn, id, learned_at)?,
+            id: *id,
+        };
+        if PENDING_TOMBSTONE.contains(self, txn, &pending_key)? {
             return Ok(true);
         }
 
@@ -471,6 +501,7 @@ impl Store {
             use crate::sync::loro_support::{
                 doc_from_snapshot, import_doc, tombstone_map_contains_id,
             };
+            let window_label = &pending_key.window;
 
             // The window doc is rebuilt from the rows THIS transaction sees
             // (`d:w:` snapshot plus the pending `u:w:` updates applied on top,

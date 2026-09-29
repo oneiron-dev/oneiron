@@ -109,7 +109,7 @@ fn ui_event_and_agent_call_share_definition_gate_effect_and_replay() -> Result<(
     let agent = registry.execute_agent(&vault, actor, &principal, &call)?;
     assert_eq!(ui, agent);
     assert_eq!(vault.store.gate_decisions(100)?, before);
-    let SelfDispatchOutcome::MemoryWrite(result) = ui else {
+    let SelfDispatchOutcome::MemoryWrite(result) = ui.outcome else {
         return Err(invalid("expected memory write"));
     };
     assert_eq!(
@@ -146,7 +146,215 @@ fn ui_event_and_agent_call_share_definition_gate_effect_and_replay() -> Result<(
     );
     Ok(())
 }
+fn build_about(ctx: ActionBuildContext, args: &[ActionArgument]) -> Result<SelfCall> {
+    let [ActionArgument::Entity { .. }, text] = args else {
+        return Err(invalid("entity and text"));
+    };
+    build(ctx, std::slice::from_ref(text))
+}
+#[test]
+fn code_run_read_action_returns_the_scoped_read_receipt() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let actor = entity(0x67);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    let target = entity(0x68);
+    let mut about = crate::ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(actor),
+        Value::from("the entity an action names"),
+        1.0,
+        crate::ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+    )?;
+    about.source = Some(crate::ClaimSource::UserStated);
+    vault.put_claim(&target, &about, TimeRange { start: 1, end: 1 }, 1)?;
+    let actor = WriteActor::new(actor, EdgeActorClass::Agent);
+    let key = ScopedReadActorKey::with_actor_class(actor.entity_ref().to_hex(), "agent")
+        .ok_or_else(|| invalid("reader"))?;
+    let principal = LensPrincipalBinding::agent_task(
+        actor.entity_ref().to_hex(),
+        key.clone(),
+        vec![key.clone()],
+    )?;
+    let mut registry = ActionRegistry::default();
+    registry.register(
+        ActionVerbDefinition {
+            id: SelfUiActionId::new("remember-about")?,
+            args_schema: vec![ActionArgKind::Entity, ActionArgKind::Text],
+            required_ceiling: AgentCeiling::Proposed,
+        },
+        build_about,
+    )?;
+    let call = AgentActionCall {
+        verb_id: SelfUiActionId::new("remember-about")?,
+        args: vec![
+            ActionArgument::Entity { id: target },
+            ActionArgument::Text(LensText::new("Ada")?),
+        ],
+        idempotency_key: "read-action".into(),
+    };
+    // Without a read grant the principal's ceiling denies everything, so the
+    // entity argument is withheld and the action refuses before any effect.
+    let denied = vault.scoped_read(key.clone()).read_receipt(None, 0)?;
+    assert!(denied.narrowed_axes.contains(&"deny_all".to_owned()));
+    assert!(matches!(
+        registry.execute_agent(&vault, actor, &principal, &call),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(vault.claims_for_subject(&actor.entity_ref())?.len() == 1);
+    // Granted, the dispatch carries the principal's own receipt of its read.
+    crate::test_util::authorize_readers(&vault, &[actor.entity_ref().to_hex().as_str()]);
+    let dispatch = registry.execute_agent(&vault, actor, &principal, &call)?;
+    assert!(matches!(
+        dispatch.outcome,
+        SelfDispatchOutcome::MemoryWrite(_)
+    ));
+    assert_eq!(
+        dispatch.read_receipt,
+        vault.scoped_read(key).read_receipt(None, 0)?
+    );
+    assert!(!dispatch.read_receipt.applied.deny_all);
+    assert_eq!(dispatch.read_receipt.suppressed_count, 0);
+    Ok(())
+}
 
+#[test]
+fn authorized_agent_edits_inference_rows_and_next_call_uses_them() -> Result<()> {
+    use crate::llm::{
+        CallClass, CallEnvelope, CallPurpose, ModelLocality, ModelTierRef, ResponseFormat,
+        TierPrecedence,
+    };
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let agent = entity(0x76);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"agent",
+    )?;
+    let actor = WriteActor::new(agent, EdgeActorClass::Agent);
+    let read = ScopedReadActorKey::with_actor_class(agent.to_hex(), "agent")
+        .ok_or_else(|| invalid("reader"))?;
+    let principal = LensPrincipalBinding::agent_task(agent.to_hex(), read.clone(), vec![read])?;
+    let mut registry = ActionRegistry::default();
+    registry.register_inference_defaults()?;
+    let read_call = AgentActionCall {
+        verb_id: SelfUiActionId::new("inference.defaults.read")?,
+        args: vec![],
+        idempotency_key: "read-before".into(),
+    };
+    assert!(
+        registry
+            .execute_agent(&vault, actor, &principal, &read_call)
+            .is_err()
+    );
+    let raw = crate::code_run::GatedActorWrite::new(&vault, actor, "raw-attempt")?;
+    assert!(raw.dispatch(SelfCall::InferenceDefaultsRead).is_err());
+    assert!(
+        raw.dispatch(SelfCall::InferenceDefaultsReplace(
+            serde_json::to_string(&vault.purpose_default_table()?).unwrap(),
+        ))
+        .is_err()
+    );
+    crate::code_run::tests::install_exact_actor_ceiling(&vault, agent, "auto")?;
+    let SelfDispatchOutcome::InferenceDefaults(initial) = registry
+        .execute_agent(&vault, actor, &principal, &read_call)?
+        .outcome
+    else {
+        return Err(invalid("missing inference rows"));
+    };
+    let mut edited = crate::llm::PurposeDefaultTable::from_json(initial.as_bytes())?;
+    edited
+        .purposes
+        .get_mut(&CallPurpose::Consolidation)
+        .unwrap()
+        .tier = ModelTierRef("resident-consolidation".into());
+    let replacement = serde_json::to_string(&edited).unwrap();
+    let change = AgentActionCall {
+        verb_id: SelfUiActionId::new("inference.defaults.replace")?,
+        args: vec![ActionArgument::Text(LensText::new(replacement)?)],
+        idempotency_key: "edit-once".into(),
+    };
+    let SelfDispatchOutcome::InferenceDefaults(active) = registry
+        .execute_agent(&vault, actor, &principal, &change)?
+        .outcome
+    else {
+        return Err(invalid("missing edited inference rows"));
+    };
+    assert_eq!(
+        crate::llm::PurposeDefaultTable::from_json(active.as_bytes())?,
+        edited
+    );
+    let mut request = crate::llm::LlmRequest {
+        model: crate::llm::ModelId::new("test/own@r1").unwrap(),
+        envelope: CallEnvelope {
+            seat_effort: None,
+            scope: Default::default(),
+            purpose: CallPurpose::Consolidation,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::Consolidation,
+                ModelTierRef("global".into()),
+            ),
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::OwnServer,
+        },
+        messages: vec![],
+        tools: vec![],
+        params: Default::default(),
+        provider_options: Default::default(),
+    };
+    let host = crate::llm::HostInferenceContext {
+        binding: crate::llm::HostInferenceBinding::Advertised {
+            model: request.model.clone(),
+            locality: ModelLocality::OwnServer,
+        },
+        extraction_egress: None,
+    };
+    request = vault
+        .authorize_model_role(
+            crate::llm::manifest::ModelRole::GenerativeReasoner,
+            request,
+            &host,
+        )?
+        .into_request();
+    assert_eq!(
+        request.envelope.tier.resolved().as_str(),
+        "resident-consolidation"
+    );
+    let mut widening = edited;
+    widening
+        .voice
+        .get_mut(&crate::llm::VoiceLane::AsrBatch)
+        .unwrap()
+        .locality = ModelLocality::ThirdParty;
+    let disallowed = AgentActionCall {
+        args: vec![ActionArgument::Text(LensText::new(
+            serde_json::to_string(&widening).unwrap(),
+        )?)],
+        idempotency_key: "cannot-widen".into(),
+        ..change
+    };
+    assert!(
+        registry
+            .execute_agent(&vault, actor, &principal, &disallowed)
+            .is_err()
+    );
+    assert_eq!(
+        vault.purpose_default_table()?.purposes[&CallPurpose::Consolidation]
+            .tier
+            .as_str(),
+        "resident-consolidation"
+    );
+    Ok(())
+}
 struct PolicyReceiptExecutor;
 impl crate::dreamer_wake::DreamerAttemptExecutor for PolicyReceiptExecutor {
     async fn execute(
@@ -237,7 +445,10 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
     )?;
     let result =
         registry.execute_agent_with_owner(&vault, agent, &principal, &call, &owner_proof)?;
-    assert_eq!(result, SelfDispatchOutcome::WakePolicyWritten(policy));
+    assert_eq!(
+        result.outcome,
+        SelfDispatchOutcome::WakePolicyWritten(policy)
+    );
     assert_eq!(vault.dreamer_wake_policy()?, policy);
     assert_eq!(
         registry.execute_agent_with_owner(&vault, agent, &principal, &call, &owner_proof)?,
@@ -300,6 +511,7 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
             budget_total_units: 1_000,
             reserve_units: 10,
             now: 100,
+            host_scope: None,
         },
         &mut PolicyReceiptExecutor,
         &WakeCancellation::new(),

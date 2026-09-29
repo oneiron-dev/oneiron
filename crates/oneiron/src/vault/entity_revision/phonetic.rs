@@ -1,9 +1,11 @@
 //! Host-derived phonetic codes publish with the same indexed text frontier.
 use super::RevisionRef;
-use super::storage::{key, state};
+use super::storage::state;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Error, Result};
-const PENDING: &[u8] = b"entity_revision:phonetic:";
+const PENDING: SideTable<EntityId, Pending, Named> =
+    SideTable::new(&side_table::ENTITY_REVISION_PENDING_PHONETIC);
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Pending {
     revision: RevisionRef,
@@ -28,15 +30,8 @@ pub(crate) fn defer_phonetic(
     {
         return Err(Error::InvalidKey);
     }
-    let key = key(PENDING, id);
-    let mut pending = store
-        .vault_meta
-        .get(txn, &key)?
-        .map(|bytes| {
-            rmp_serde::from_slice::<Pending>(&bytes)
-                .map_err(|_| Error::CorruptedIndex("pending phonetic"))
-        })
-        .transpose()?
+    let mut pending = PENDING
+        .get(store, txn, id)?
         .filter(|pending| pending.revision == current.live)
         .unwrap_or(Pending {
             revision: current.live,
@@ -45,9 +40,7 @@ pub(crate) fn defer_phonetic(
     pending.codes.extend_from_slice(codes);
     pending.codes.sort();
     pending.codes.dedup();
-    let bytes = rmp_serde::to_vec_named(&pending)
-        .map_err(|_| Error::InvariantViolation("pending phonetic codec"))?;
-    store.vault_meta.put(txn, &key, &bytes)?;
+    PENDING.put(store, txn, id, &pending)?;
     Ok(true)
 }
 pub(super) fn take_phonetic(
@@ -56,16 +49,8 @@ pub(super) fn take_phonetic(
     id: &EntityId,
     revision: RevisionRef,
 ) -> Result<Vec<String>> {
-    let key = key(PENDING, id);
-    let pending = store
-        .vault_meta
-        .get(txn, &key)?
-        .map(|bytes| {
-            rmp_serde::from_slice::<Pending>(&bytes)
-                .map_err(|_| Error::CorruptedIndex("pending phonetic"))
-        })
-        .transpose()?;
-    store.vault_meta.delete(txn, &key)?;
+    let pending = PENDING.get(store, txn, id)?;
+    PENDING.delete(store, txn, id)?;
     Ok(pending
         .filter(|pending| pending.revision == revision)
         .map(|pending| pending.codes)
@@ -76,7 +61,7 @@ pub(super) fn clear_phonetic(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store.vault_meta().delete(txn, &key(PENDING, id))?;
+    PENDING.delete(store, txn, id)?;
     Ok(())
 }
 
@@ -88,17 +73,12 @@ pub(super) fn retarget_revision(
     prior: RevisionRef,
     next: RevisionRef,
 ) -> Result<()> {
-    let key = key(PENDING, id);
-    let Some(bytes) = store.vault_meta().get(txn, &key)? else {
+    let Some(mut pending) = PENDING.get(store, txn, id)? else {
         return Ok(());
     };
-    let mut pending: Pending =
-        rmp_serde::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("pending phonetic"))?;
     if pending.revision == prior {
         pending.revision = next;
-        let bytes = rmp_serde::to_vec_named(&pending)
-            .map_err(|_| Error::InvariantViolation("pending phonetic codec"))?;
-        store.vault_meta().put(txn, &key, &bytes)?;
+        PENDING.put(store, txn, id, &pending)?;
     }
     Ok(())
 }

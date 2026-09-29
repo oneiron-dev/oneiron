@@ -53,7 +53,8 @@ impl crate::Vault {
                 "code-run cannot reuse an erased claim id",
             ));
         }
-        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
+        else {
             return Ok(());
         };
         let header = EntityMetadataHeader::parse(&raw)

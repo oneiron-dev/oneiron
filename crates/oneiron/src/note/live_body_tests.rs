@@ -56,7 +56,7 @@ fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
             .markdown,
         expected
     );
-    let view = memory.get_entity(&receipt.id_hex).unwrap().unwrap();
+    let view = memory.get_entity(&receipt.id_hex).unwrap().value.unwrap();
     assert_eq!(view.body.as_ref().unwrap()["markdown"], expected);
     assert_eq!(
         memory
@@ -67,9 +67,17 @@ fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
     let read_key = ScopedReadActorKey::with_actor_class(actor.to_hex(), "human").unwrap();
     let read = vault.scoped_read(read_key);
     assert_eq!(
-        decode_note_body(&read.get(&note).unwrap().value.unwrap())
-            .unwrap()
-            .markdown,
+        decode_note_body(
+            &read
+                .read(&[crate::claim::PointRead::id(note)], None)
+                .unwrap()
+                .single()
+                .value
+                .and_then(|row| row.body)
+                .unwrap()
+        )
+        .unwrap()
+        .markdown,
         expected
     );
     let short_ref = view.short_ref.unwrap();
@@ -78,8 +86,9 @@ fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
     assert_eq!(
         decode_note_body(
             &read
-                .hydrate_short_id(short_id, hash)
+                .read(&[crate::claim::PointRead::short(short_id, hash)], None)
                 .unwrap()
+                .single()
                 .value
                 .unwrap()
                 .body

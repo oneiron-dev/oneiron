@@ -10,6 +10,7 @@ use crate::gate::ceiling::{
 use crate::gate::decision::{GateDecision, GateReasonCode, external_effect_receipt_reasons};
 use crate::gate::grants::external_effect_grant_matches;
 use crate::gate::input::{GateContentKind, GateEvaluatorInput, consent_ladder_reasons};
+use crate::gate::policy_values::{PolicyEvaluationScope, PolicyValue, PolicyValueKey};
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
@@ -141,7 +142,7 @@ impl PolicyManifestResolution {
 
     fn dreamer_auto_grant_requires_manifest_signature(&self, input: &GateEvaluatorInput) -> bool {
         input.content_kind == GateContentKind::Claim
-            && input.actor.actor_class.trim() == "agent"
+            && matches!(input.actor.actor_class.trim(), "agent" | "system")
             && input.provenance.dreamer_run_id.is_some()
             && self.actor_ceiling(
                 input.actor.actor_class.trim(),
@@ -163,6 +164,17 @@ impl PolicyManifestResolution {
         &self,
         input: &GateEvaluatorInput,
         lineage: Option<&SourceLineage>,
+    ) -> GateDecision {
+        self.evaluate_gate_in_scope(input, lineage, &PolicyEvaluationScope::default())
+    }
+
+    /// Resolve behaviour rows using the trusted location of the operation.
+    /// A scoped row is never authority to expand an actor ceiling or disclosure.
+    pub(crate) fn evaluate_gate_in_scope(
+        &self,
+        input: &GateEvaluatorInput,
+        lineage: Option<&SourceLineage>,
+        scope: &PolicyEvaluationScope,
     ) -> GateDecision {
         let actor_class = input.actor.actor_class.trim();
         if actor_class.is_empty() {
@@ -194,17 +206,42 @@ impl PolicyManifestResolution {
         //
         // The override never deletes `comm.opt_out`, `comm.do_not_contact`, or a
         // contact-level opt-out claim; CLEAR remains its own op.
+        let effective_posture = self.resolved_policy_value(
+            PolicyValueKey::CommOptOutPosture,
+            scope,
+            PolicyValue::CommOptOutPosture(self.comm_opt_out_posture()),
+        );
+        let PolicyValue::CommOptOutPosture(posture) = effective_posture.value else {
+            unreachable!("typed policy key")
+        };
+        let (_, precedence_row) = self.scope_precedence();
+        let mut deciding_row = None;
         if let Some(effect) = external_effect
             && effect.counterparty_opted_out
         {
-            match (
-                effect.counterparty_send_override,
-                self.comm_opt_out_posture(),
-            ) {
-                (Some(_), _) | (None, CommOptOutPosture::AllowWithReceipt) => {}
+            if scope.hidden_world && effect.counterparty_send_override.is_none() {
+                return GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
+                    .with_receipt_reasons(external_effect_receipt_reasons(effect))
+                    .with_policy_refusal(None, None, true);
+            }
+            match (effect.counterparty_send_override, posture) {
+                (Some(_), _) => {}
+                (None, CommOptOutPosture::AllowWithReceipt) => {
+                    deciding_row = effective_posture
+                        .deciding_row
+                        .map(|row| row.row_ref.as_str());
+                }
                 (None, CommOptOutPosture::Escalate) => {
+                    let row = effective_posture.deciding_row;
                     return GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
-                        .with_receipt_reasons(external_effect_receipt_reasons(effect));
+                        .with_receipt_reasons(external_effect_receipt_reasons(effect))
+                        .with_policy_refusal(
+                            row.map(|row| row.scope.as_str()),
+                            row.map(|row| row.row_ref.as_str()),
+                            false,
+                        )
+                        .with_policy_row_ref(row.map(|row| row.row_ref.as_str()))
+                        .with_precedence_row_ref(precedence_row);
                 }
             }
         }
@@ -307,6 +344,12 @@ impl PolicyManifestResolution {
             GateDecision::pending(pending)
         };
 
+        let decision = decision.with_policy_row_ref(deciding_row);
+        let decision = if deciding_row.is_some() {
+            decision.with_precedence_row_ref(precedence_row)
+        } else {
+            decision
+        };
         if let Some(effect) = external_effect {
             decision.with_receipt_reasons(external_effect_receipt_reasons(effect))
         } else {
@@ -384,6 +427,28 @@ impl PolicyManifestResolution {
         }
         if !effect.has_opted_in {
             return false;
+        }
+        // Per-send owner approval has an exact native-mail digest; unlike a
+        // standing grant it covers only the current cold recipient and send.
+        if effect.mail_approve_once
+            && input
+                .consent
+                .as_ref()
+                .is_some_and(|consent| consent.decision == crate::consent::ConsentDecision::Auto)
+        {
+            return true;
+        }
+        // MAIL-09: the engine-verified owner tap on an earned OF-399 offer
+        // supplies the missing external-effect authority as well as DEC-0006
+        // consent. A caller cannot assert this flag; the gate reads the exact
+        // live grant in the same transaction used for its decision.
+        if effect.mail_graduated
+            && input
+                .consent
+                .as_ref()
+                .is_some_and(|consent| consent.decision == crate::consent::ConsentDecision::Auto)
+        {
+            return true;
         }
 
         self.scoped_grants().iter().any(|grant| {

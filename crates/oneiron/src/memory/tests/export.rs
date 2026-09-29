@@ -16,12 +16,14 @@ fn export_five_formats_and_rehydrate_each_emitted_short_ref() {
     let actor_ref = memory
         .get_entity(&actor.to_hex())
         .unwrap()
+        .value
         .unwrap()
         .short_ref
         .unwrap();
     let other_ref = memory
         .get_entity(&other.to_hex())
         .unwrap()
+        .value
         .unwrap()
         .short_ref
         .unwrap();
@@ -208,6 +210,15 @@ fn export_streamed_message_uses_committed_document_not_pointer_or_partial() {
         .append_to_stream(partial, "-uncommitted-tail")
         .unwrap();
     let expected = "export-stream-base-committed";
+    let conversation = EntityId::from_hex(&turn.conversation_ref).unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap()
+            .as_deref(),
+        Some(expected),
+        "only committed stream text may appear inline"
+    );
     for format in ["toon", "md", "json", "yaml", "txt"] {
         let export = memory
             .export(&ExportOptions {
@@ -239,6 +250,78 @@ fn export_streamed_message_uses_committed_document_not_pointer_or_partial() {
         }
     }
     assert_eq!(vault.get_raw(&message).unwrap().unwrap(), raw);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn preview_migrated_edited_message_reads_committed_document() {
+    use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
+    use crate::write_envelope::WriteActor;
+
+    let (_dir, vault, actor) = owner_vault();
+    let memory = facade_for(&vault, actor);
+    let conversation = EntityId::now();
+    let message = EntityId::now();
+    memory
+        .witness(&WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            occurred_at: 10,
+            messages: vec![WitnessMessage {
+                id: Some(message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "migrated base".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .unwrap();
+    let writer = WriteActor::new(actor, EdgeActorClass::Human);
+    let owner = vault
+        .authenticate_owner(
+            actor,
+            "principal:preview-document-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    vault
+        .migrate_entity_text(
+            &message,
+            &TextField::MapField("content".into()),
+            writer,
+            &DocAuthorization::Owner(&owner),
+        )
+        .unwrap();
+    let raw = vault.get_raw(&message).unwrap().unwrap();
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+    assert!(body.get("content").is_none());
+    let end = vault.entity_text(&message).unwrap().chars().count();
+    let anchor = vault.entity_text_anchor(&message, end, end).unwrap();
+    vault
+        .edit_entity_text(
+            &message,
+            &[AnchoredEdit {
+                actor: Some(writer),
+                verb: EditVerb::AppendToSection {
+                    section: anchor,
+                    text: " and current".into(),
+                },
+            }],
+            &DocAuthorization::Owner(&owner),
+            20,
+        )
+        .unwrap();
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap()
+            .as_deref(),
+        Some("migrated base and current")
+    );
 }
 
 #[cfg(feature = "sync")]

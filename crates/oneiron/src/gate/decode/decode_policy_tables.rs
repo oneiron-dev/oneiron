@@ -2,6 +2,7 @@
 
 use rmpv::Value;
 
+use crate::federation::SharedActPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, OwnerRowAction, PolicyApprovalCeiling, PolicyAxes,
     PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyRule, PolicySensitivity,
@@ -15,6 +16,7 @@ use crate::gate::constants::{
     RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use std::collections::BTreeMap;
 
 use super::decode_map_util::{
     MapValue, optional_bool, optional_bool_default, optional_string, optional_value,
@@ -241,8 +243,29 @@ pub(super) fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant
     Some(grants)
 }
 
+/// Parses the optional shared-vault act-policy table: act name to one strict
+/// row map. An invalid name, a positional row or a row that fails validation
+/// drops the whole manifest, so a bad table never reverts to shipped defaults.
+pub(super) fn parse_shared_act_policies(
+    value: &Value,
+) -> Option<BTreeMap<String, SharedActPolicy>> {
+    let Value::Map(rows) = value else {
+        return None;
+    };
+    let mut parsed = BTreeMap::new();
+    for (key, row) in rows {
+        let act = key.as_str()?;
+        let policy = SharedActPolicy::from_manifest_value(row)?;
+        policy.validate_named(act).ok()?;
+        if parsed.insert(act.to_owned(), policy).is_some() {
+            return None;
+        }
+    }
+    Some(parsed)
+}
+
 /// Parses the `owner_policy_rows` array. Every entry must be a valid row map
-/// carrying only the five recognized keys — an unknown key rejects the whole
+/// carrying only the recognized keys — an unknown key rejects the whole
 /// table, exactly as [`parse_budget_policy_row`] does, so a misspelled
 /// `action` can never fall through to the gentle `Warn` default and quietly
 /// widen the owner's plane.
@@ -261,8 +284,10 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
                 | POLICY_ROW_TEXT_KEY
                 | POLICY_ROW_ACTIVE_KEY
                 | POLICY_ROW_WORLD_REF_KEY
+                | "project_ref"
                 | POLICY_ROW_ACTION_KEY
-                | "human" => {}
+                | "human"
+                | "why" => {}
                 _ => return None,
             }
         }
@@ -270,7 +295,9 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
         let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
+        let project_ref = optional_string(entries, "project_ref")?;
         let human = optional_string(entries, "human")?;
+        let why = super::super::policy_values::parse_optional_why(entries)?;
         if human.as_ref().is_some_and(|name| name.trim().is_empty()) {
             return None;
         }
@@ -285,13 +312,13 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
         // looks up — and resolution takes the FIRST match, so a duplicate is a
         // rule that can never fire, however strict its action.
         //
-        // The key is the PAIR, not the ref alone: one ref written twice under
-        // two worlds is the scoped-override shape `active_owner_policy_rows`
-        // exists to resolve, and only rows that would land in the same rubric
-        // together shadow each other. Refusing them here drops the rows as
-        // malformed rather than letting one silently swallow the other.
+        // Different scopes may override the same ref; within one exact
+        // (row_ref, world_ref, project_ref) slot, a duplicate would shadow
+        // whichever row followed it. Reject that ambiguity before resolution.
         if parsed.iter().any(|seen: &PolicyOwnerPolicyRow| {
-            seen.row_ref == row_ref && seen.world_ref == world_ref
+            seen.row_ref == row_ref
+                && seen.world_ref == world_ref
+                && seen.project_ref == project_ref
         }) {
             return None;
         }
@@ -300,7 +327,9 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
             text,
             active,
             world_ref,
+            project_ref,
             human,
+            why,
             action,
         });
     }

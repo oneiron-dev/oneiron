@@ -662,7 +662,12 @@ fn chat_answers_cite_short_ids_that_hydrate_back_out_of_the_pack() {
         .commit()
         .unwrap();
     assert_eq!(
-        memory.get_entity(&turn.id_hex).unwrap().unwrap().learned_at,
+        memory
+            .get_entity(&turn.id_hex)
+            .unwrap()
+            .value
+            .unwrap()
+            .learned_at,
         learned_at
     );
     assert_eq!(memory.hydrate(sources).unwrap(), views);

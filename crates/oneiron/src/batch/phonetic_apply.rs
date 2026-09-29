@@ -5,7 +5,13 @@ use heed::RwTxn;
 
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result, StoreError};
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
+
+/// Caller-supplied phonetic indexing instructions retained for delete/reindex
+/// reconciliation. Key: id16.
+const PHONETIC_SOURCE: SideTable<EntityId, Vec<String>, Named> =
+    SideTable::new(&side_table::BATCH_PHONETIC_INDEX_SOURCE);
 
 /// Stages one entity's phonetic postings and its forward code row.
 ///
@@ -65,22 +71,11 @@ pub(crate) fn apply_phonetic(
     }
 
     // Retain the caller's indexing instructions, not posting-list/cache bytes.
-    let mut source_key = b"index_source:phonetic:v1:".to_vec();
-    source_key.extend_from_slice(id.as_bytes());
-    let mut source: Vec<String> = store
-        .vault_meta()
-        .get(wtxn, &source_key)?
-        .map(|raw| {
-            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("phonetic source"))
-        })
-        .transpose()?
-        .unwrap_or_default();
+    let mut source = PHONETIC_SOURCE.get(store, wtxn, &id)?.unwrap_or_default();
     source.extend_from_slice(codes);
     source.sort();
     source.dedup();
-    let raw = rmp_serde::to_vec_named(&source)
-        .map_err(|_| Error::InvariantViolation("phonetic source encode"))?;
-    store.vault_meta().put(wtxn, &source_key, &raw)?;
+    PHONETIC_SOURCE.put(store, wtxn, &id, &source)?;
     if forward_changed {
         forward_codes.sort();
         forward_codes.dedup();
@@ -98,9 +93,7 @@ pub(crate) fn delete_from_phonetic_postings(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let mut source_key = b"index_source:phonetic:v1:".to_vec();
-    source_key.extend_from_slice(id.as_bytes());
-    store.vault_meta.delete(wtxn, &source_key)?;
+    PHONETIC_SOURCE.delete(store, wtxn, id)?;
     if let Some(raw) = store.phonetic_forward.get(wtxn, id.as_bytes())? {
         match decode_phonetic_forward_codes(&raw) {
             Ok(codes) => match delete_from_known_phonetic_codes(store, wtxn, id, &codes) {
