@@ -2,6 +2,10 @@
 //! and a recording executor that proves nothing downstream ever runs before
 //! admission says it may.
 
+fn default_test_threshold() -> u32 {
+    crate::gate::default_consult_fanout_approval_threshold()
+}
+
 use std::cell::Cell;
 
 use super::*;
@@ -267,7 +271,14 @@ fn fanout_estimate_is_deterministic_total_plus_per_peer() {
         let mut sink = RecordingSink::default();
         let decider = RecordingDecider::allow();
         let executor = RecordingExecutor::default();
-        let admission = admit_fanout_plan(malformed, None, &[], &decider, &mut sink, NOW_MS);
+        let admission = admit_fanout_plan(
+            malformed,
+            Some(default_test_threshold()),
+            &[],
+            &decider,
+            &mut sink,
+            NOW_MS,
+        );
         assert!(admission.is_err(), "malformed plan data is never admitted");
         assert!(sink.rows.is_empty());
         assert_eq!(decider.calls.get(), 0);
@@ -285,7 +296,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
     let setup_decider = RecordingDecider::allow();
     let canonical_admission = admit_fanout_plan(
         &canonical,
-        None,
+        Some(default_test_threshold()),
         &[],
         &setup_decider,
         &mut setup_sink,
@@ -326,7 +337,14 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
         let decider = RecordingDecider::allow();
         let executor = RecordingExecutor::default();
         assert_non_canonical_config(
-            admit_fanout_plan(malformed, None, &[], &decider, &mut sink, NOW_MS),
+            admit_fanout_plan(
+                malformed,
+                Some(default_test_threshold()),
+                &[],
+                &decider,
+                &mut sink,
+                NOW_MS,
+            ),
             field,
         );
         assert!(sink.rows.is_empty());
@@ -366,7 +384,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
     assert_non_canonical_config(
         admit_fanout_plan(
             &rate_plan,
-            None,
+            Some(default_test_threshold()),
             &padded_rate,
             &padded_rate_decider,
             &mut padded_rate_sink,
@@ -388,7 +406,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
     let mut canonical_rate_executor = RecordingExecutor::default();
     let canonical_rate_admission = admit_fanout_plan(
         &rate_plan,
-        None,
+        Some(default_test_threshold()),
         &canonical_rate,
         &canonical_rate_decider,
         &mut canonical_rate_sink,
@@ -450,15 +468,22 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
 
 #[test]
 fn fanout_at_or_below_default_25_is_silent() {
-    assert_eq!(DEFAULT_FANOUT_APPROVAL_THRESHOLD, 25);
+    assert_eq!(default_test_threshold(), 25);
 
-    for total in 0..=DEFAULT_FANOUT_APPROVAL_THRESHOLD {
+    for total in 0..=default_test_threshold() {
         // Manual mode would surface if the ladder were reached at all.
         let plan = plan_of_total(FanoutApprovalMode::Manual, total);
         let mut sink = RecordingSink::default();
         let decider = RecordingDecider::surface();
-        let admission = admit_fanout_plan(&plan, None, &[], &decider, &mut sink, NOW_MS)
-            .expect("silent fan-out admits");
+        let admission = admit_fanout_plan(
+            &plan,
+            Some(default_test_threshold()),
+            &[],
+            &decider,
+            &mut sink,
+            NOW_MS,
+        )
+        .expect("silent fan-out admits");
         match admission {
             FanoutAdmission::Proceed { estimate } => {
                 assert_eq!(estimate.total_count, total);
@@ -474,8 +499,15 @@ fn fanout_at_or_below_default_25_is_silent() {
     let over = plan_of_total(FanoutApprovalMode::Manual, 26);
     let mut sink = RecordingSink::default();
     let decider = RecordingDecider::surface();
-    let admission = admit_fanout_plan(&over, None, &[], &decider, &mut sink, NOW_MS)
-        .expect("over-threshold fan-out admits");
+    let admission = admit_fanout_plan(
+        &over,
+        Some(default_test_threshold()),
+        &[],
+        &decider,
+        &mut sink,
+        NOW_MS,
+    )
+    .expect("over-threshold fan-out admits");
     assert!(matches!(admission, FanoutAdmission::Paused { .. }));
     assert_eq!(sink.rows.len(), 1, "26 enters the ladder");
 }
@@ -503,7 +535,7 @@ fn r5v2_modes_are_exact_and_auto_is_default() {
     let mut full_sink = RecordingSink::default();
     let full = admit_fanout_plan(
         &plan_of_total(FanoutApprovalMode::FullAccess, over),
-        None,
+        Some(default_test_threshold()),
         &[],
         &RecordingDecider::surface(),
         &mut full_sink,
@@ -516,7 +548,7 @@ fn r5v2_modes_are_exact_and_auto_is_default() {
     let mut manual_sink = RecordingSink::default();
     let manual = admit_fanout_plan(
         &plan_of_total(FanoutApprovalMode::Manual, over),
-        None,
+        Some(default_test_threshold()),
         &[],
         &RecordingDecider::allow(),
         &mut manual_sink,
@@ -534,7 +566,7 @@ fn r5v2_modes_are_exact_and_auto_is_default() {
         let mut sink = RecordingSink::default();
         let admission = admit_fanout_plan(
             &plan_of_total(FanoutApprovalMode::Auto, over),
-            None,
+            Some(default_test_threshold()),
             &[],
             &decider,
             &mut sink,
@@ -557,8 +589,15 @@ fn auto_failure_escalates_instead_of_allowing_or_killing() {
     let decider = RecordingDecider::failing();
     let mut executor = RecordingExecutor::default();
 
-    let admission = admit_fanout_plan(&plan, None, &[], &decider, &mut sink, NOW_MS)
-        .expect("a classifier failure is not an admission error");
+    let admission = admit_fanout_plan(
+        &plan,
+        Some(default_test_threshold()),
+        &[],
+        &decider,
+        &mut sink,
+        NOW_MS,
+    )
+    .expect("a classifier failure is not an admission error");
     executor.run_admitted(&plan, &admission);
 
     assert_eq!(decider.calls.get(), 1);
@@ -587,8 +626,15 @@ fn consult_cycle_pauses_before_threshold_logic() {
     let decider = RecordingDecider::allow();
     let mut executor = RecordingExecutor::default();
 
-    let admission = admit_fanout_plan(&plan, None, &[], &decider, &mut sink, NOW_MS)
-        .expect("a cycle pauses rather than erroring");
+    let admission = admit_fanout_plan(
+        &plan,
+        Some(default_test_threshold()),
+        &[],
+        &decider,
+        &mut sink,
+        NOW_MS,
+    )
+    .expect("a cycle pauses rather than erroring");
     executor.run_admitted(&plan, &admission);
 
     let row = paused_row(&admission);
@@ -613,7 +659,7 @@ fn consult_cycle_pauses_before_threshold_logic() {
     let self_plan = plan_with(FanoutApprovalMode::FullAccess, &[("peer_a", "peer_a", 1)]);
     let self_admission = admit_fanout_plan(
         &self_plan,
-        None,
+        Some(default_test_threshold()),
         &[],
         &RecordingDecider::allow(),
         &mut self_sink,
@@ -642,7 +688,7 @@ fn per_peer_rate_spike_pauses_with_evidence() {
 
     let admission = admit_fanout_plan(
         &plan,
-        None,
+        Some(default_test_threshold()),
         std::slice::from_ref(&snapshot),
         &RecordingDecider::allow(),
         &mut sink,
@@ -672,7 +718,7 @@ fn per_peer_rate_spike_pauses_with_evidence() {
     let mut silent_sink = RecordingSink::default();
     let unspiked = admit_fanout_plan(
         &plan,
-        None,
+        Some(default_test_threshold()),
         &[],
         &RecordingDecider::allow(),
         &mut silent_sink,
@@ -686,7 +732,7 @@ fn per_peer_rate_spike_pauses_with_evidence() {
     let mut heavy_sink = RecordingSink::default();
     let heavy_admission = admit_fanout_plan(
         &heavy,
-        None,
+        Some(default_test_threshold()),
         &[],
         &RecordingDecider::allow(),
         &mut heavy_sink,
@@ -705,7 +751,7 @@ fn per_peer_rate_spike_pauses_with_evidence() {
     let mut unrelated_sink = RecordingSink::default();
     let unrelated_admission = admit_fanout_plan(
         &plan,
-        None,
+        Some(default_test_threshold()),
         std::slice::from_ref(&unrelated),
         &RecordingDecider::allow(),
         &mut unrelated_sink,
@@ -737,7 +783,7 @@ fn pathology_never_silent_kills_and_resumes_on_approve() {
         let mut executor = RecordingExecutor::default();
         let admission = admit_fanout_plan(
             plan,
-            None,
+            Some(default_test_threshold()),
             rates,
             &RecordingDecider::allow(),
             &mut sink,
@@ -778,7 +824,7 @@ fn approval_choices_are_receipted_and_persistable() {
     let mut sink = RecordingSink::default();
     let admission = admit_fanout_plan(
         &plan,
-        None,
+        Some(default_test_threshold()),
         &[],
         &RecordingDecider::allow(),
         &mut sink,
@@ -890,7 +936,7 @@ fn fanout_times_are_milliseconds_end_to_end() {
     let mut sink = RecordingSink::default();
     let admission = admit_fanout_plan(
         &plan,
-        None,
+        Some(default_test_threshold()),
         &rates,
         &RecordingDecider::allow(),
         &mut sink,
@@ -950,7 +996,7 @@ fn changed_plan_cannot_reuse_approval() {
     let mut sink = RecordingSink::default();
     let admission = admit_fanout_plan(
         &plan,
-        None,
+        Some(default_test_threshold()),
         &[],
         &RecordingDecider::allow(),
         &mut sink,
@@ -1032,7 +1078,7 @@ fn large_real_work_has_no_hard_cap() {
         let mut full_sink = RecordingSink::default();
         let full = admit_fanout_plan(
             &star_plan(FanoutApprovalMode::FullAccess, width),
-            None,
+            Some(default_test_threshold()),
             &[],
             &RecordingDecider::surface(),
             &mut full_sink,
@@ -1047,7 +1093,7 @@ fn large_real_work_has_no_hard_cap() {
         let mut auto_sink = RecordingSink::default();
         let auto = admit_fanout_plan(
             &star_plan(FanoutApprovalMode::Auto, width),
-            None,
+            Some(default_test_threshold()),
             &[],
             &RecordingDecider::allow(),
             &mut auto_sink,
@@ -1062,7 +1108,7 @@ fn large_real_work_has_no_hard_cap() {
         let mut executor = RecordingExecutor::default();
         let manual = admit_fanout_plan(
             &manual_plan,
-            None,
+            Some(default_test_threshold()),
             &[],
             &RecordingDecider::surface(),
             &mut manual_sink,
@@ -1119,8 +1165,15 @@ fn pause_is_before_effect_creation() {
     for (plan, decider, rates) in branches {
         let mut sink = RecordingSink::default();
         let mut executor = RecordingExecutor::default();
-        let admission = admit_fanout_plan(plan, None, rates, &decider, &mut sink, NOW_MS)
-            .expect("every branch pauses rather than erroring");
+        let admission = admit_fanout_plan(
+            plan,
+            Some(default_test_threshold()),
+            rates,
+            &decider,
+            &mut sink,
+            NOW_MS,
+        )
+        .expect("every branch pauses rather than erroring");
         executor.run_admitted(plan, &admission);
         let row = paused_row(&admission).clone();
         assert_eq!(sink.rows.len(), 1);
@@ -1155,7 +1208,7 @@ fn pause_is_before_effect_creation() {
     assert!(
         admit_fanout_plan(
             &manual,
-            None,
+            Some(default_test_threshold()),
             &[],
             &RecordingDecider::allow(),
             &mut blank,

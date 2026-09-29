@@ -21,6 +21,8 @@ use super::constants::{
     POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_ATTRIBUTION_LIMITS_KEY,
     POLICY_CONNECTOR_ADMISSION_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY,
     POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY, POLICY_CONNECTOR_CLASS_ROLE_KEY,
+    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
+    POLICY_CONSULT_FANOUT_PRECEDENCE_KEY, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
     POLICY_CREDENTIAL_LIFETIMES_KEY, POLICY_DEFAULTS_KEY, POLICY_DREAMER_FAILURE_PRECEDENCE_KEY,
     POLICY_DREAMER_FAILURE_RULES_KEY, POLICY_GATE_DECISION_RETENTION_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
@@ -830,6 +832,36 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 ),
             ]),
         ),
+        // Approval is triggered above this threshold. Keep the default as
+        // policy data so owner-authenticated manifest edits control it.
+        (
+            Value::from(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY),
+            Value::from(25_u64),
+        ),
+        (
+            Value::from(POLICY_CONSULT_FANOUT_CONTROLS_KEY),
+            Value::Map(vec![
+                (Value::from("mode"), Value::from("auto")),
+                (Value::from("peer_rate"), Value::Nil),
+                (
+                    Value::from("create_rate"),
+                    Value::Map(vec![
+                        (Value::from("limit"), Value::from(10_u64)),
+                        (Value::from("window_seconds"), Value::from(60_u64)),
+                    ]),
+                ),
+            ]),
+        ),
+        // Default precedence is nested narrowing; a holder-authored row can
+        // override its parent upward, but never past the vault's own row.
+        (
+            Value::from(POLICY_CONSULT_FANOUT_PRECEDENCE_KEY),
+            Value::from("nested_narrowing"),
+        ),
+        (
+            Value::from(POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY),
+            Value::Array(Vec::new()),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.
@@ -1179,4 +1211,45 @@ fn default_experiment_selection_rows() -> Value {
     let bytes = rmp_serde::to_vec_named(&rows).expect("encode shipped experiment selection rows");
     rmpv::decode::read_value(&mut bytes.as_slice())
         .expect("decode shipped experiment selection rows")
+}
+
+/// The shipped fan-out rows, decoded once from the same data the vault seeds.
+/// A vault manifest seeded before a row existed reads the shipped row instead.
+pub(crate) fn shipped_consult_fanout_rows() -> &'static super::fanout_policy::ShippedFanoutRows {
+    static ROWS: std::sync::LazyLock<super::fanout_policy::ShippedFanoutRows> =
+        std::sync::LazyLock::new(|| {
+            let bytes = default_policy_manifest().expect("the shipped policy manifest must encode");
+            let decoded = super::decode::decode_policy_manifest(&bytes)
+                .expect("the shipped fan-out manifest must decode");
+            super::fanout_policy::ShippedFanoutRows {
+                threshold: decoded
+                    .consult_fanout_approval_threshold
+                    .expect("the shipped fan-out threshold row must decode"),
+                controls: decoded
+                    .consult_fanout_controls
+                    .expect("the shipped fan-out controls row must decode"),
+                precedence: decoded
+                    .consult_fanout_precedence
+                    .expect("the shipped fan-out precedence row must decode"),
+            }
+        });
+    &ROWS
+}
+
+/// Default for caller-side policy builders, read from the shipped manifest
+/// rather than duplicated as executable behavior.
+#[cfg(test)]
+pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
+    shipped_consult_fanout_rows().threshold
+}
+
+/// Caller-side builder values come from the same shipped data the vault seeds.
+pub(crate) fn default_consult_fanout_policy() -> crate::task_verb::ConsultFanOutPolicy {
+    let shipped = shipped_consult_fanout_rows();
+    crate::task_verb::ConsultFanOutPolicy {
+        approval_threshold: shipped.threshold,
+        mode: shipped.controls.mode,
+        peer_rate: shipped.controls.peer_rate.clone(),
+        create_rate: shipped.controls.create_rate,
+    }
 }

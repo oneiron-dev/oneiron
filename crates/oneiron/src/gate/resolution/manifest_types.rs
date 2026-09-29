@@ -11,6 +11,7 @@ use crate::llm::{
 use std::collections::BTreeMap;
 
 use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
+use crate::gate::fanout_policy::{FanoutControls, FanoutPrecedence, FanoutScopedRow};
 
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
@@ -405,6 +406,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(crate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(crate) sync_world_default: Option<bool>,
+    pub(crate) consult_fanout_approval_threshold: Option<u32>,
+    pub(crate) consult_fanout_controls: Option<FanoutControls>,
+    pub(crate) consult_fanout_precedence: Option<FanoutPrecedence>,
+    pub(crate) consult_fanout_scope_rows: Vec<FanoutScopedRow>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) policy_values: Vec<PolicyValueRow>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,

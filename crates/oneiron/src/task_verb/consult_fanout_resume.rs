@@ -48,7 +48,27 @@ impl Memory<'_> {
         choice: ConsultFanOutChoice,
         owner: &AuthenticatedOwner,
     ) -> MemoryResult<ConsultFanOutReceipt> {
+        self.resume_fan_out_consults_with_cap(correlation, expected_digest, choice, owner, None)
+    }
+
+    /// The remembered cap is an authenticated human choice, scoped to the
+    /// frozen preset. It cannot be smaller than the plan being approved.
+    pub fn resume_fan_out_consults_with_cap(
+        &self,
+        correlation: EntityId,
+        expected_digest: [u8; 32],
+        choice: ConsultFanOutChoice,
+        owner: &AuthenticatedOwner,
+        remembered_cap: Option<u64>,
+    ) -> MemoryResult<ConsultFanOutReceipt> {
         self.reauthenticate_fanout_owner(owner)?;
+        if remembered_cap.is_some() && choice != ConsultFanOutChoice::ApproveAndRemember {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "a remembered cap requires a standing approval",
+                "Choose approve-and-remember for this cap.",
+            ));
+        }
         let now = self.vault().now_recorded_at();
         self.vault()
             .memory(owner.actor(), crate::EdgeActorClass::Human)
@@ -93,6 +113,13 @@ impl Memory<'_> {
                         "Submit a new fan-out plan.",
                     )
                 })?;
+                if remembered_cap.is_some_and(|cap| cap < u64::from(run.estimate.total_count)) {
+                    return Err(consult_refusal(
+                        MEMORY_CODE_INVALID_STATE,
+                        "a standing cap cannot exclude the approved plan",
+                        "Set a cap at or above the approved estimate.",
+                    ));
+                }
                 let core_choice = match choice {
                     ConsultFanOutChoice::ApproveOnce => FanoutApprovalChoice::ApproveOnce,
                     ConsultFanOutChoice::ApproveAndRemember => {
@@ -136,7 +163,9 @@ impl Memory<'_> {
                         rationale: run.choice_receipt_ref.clone().unwrap_or_default(),
                         // Raw consult count is the magnitude. The existing ED-06
                         // ceiling comparison enforces <=, never an unbounded verb grant.
-                        budget_band: Some(u64::from(run.estimate.total_count)),
+                        budget_band: Some(
+                            remembered_cap.unwrap_or(u64::from(run.estimate.total_count)),
+                        ),
                     },
                     choice == ConsultFanOutChoice::ApproveAndRemember,
                     now,
@@ -152,7 +181,8 @@ impl Memory<'_> {
                     drop(resume.grant_mint_intent);
                     let input = run.input.thaw(self.vault())?;
                     let created_at = run.input.now;
-                    let entries = self.validate_fanout(&input, correlation, now)?;
+                    let entries =
+                        self.validate_fanout(&input, correlation, now, run.input.preset.is_some())?;
                     self.mint_fanout_in(txn, &entries, &input, &mut run, created_at, now)?;
                 }
                 save_run(self.vault(), txn, &run)?;

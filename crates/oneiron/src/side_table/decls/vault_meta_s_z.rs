@@ -348,7 +348,8 @@ side_tables! {
     TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named;
     /// Consult fan-out plan. Key: hex32.
     TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named;
-    /// Consult fan-out admission policy. Key: ().
+    /// Retired consult fan-out policy carrier; the policy manifest now governs.
+    /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
     /// The pinned text analyzer manifest (JSON) and, under '_hash', its SHA-256. Key: string.
     TEXT_ANALYZER_MANIFEST: VaultMeta b"text_analyzer_manifest" Raw;

@@ -22,6 +22,16 @@ pub(super) const POLICY_SIGNATURE_KEY: &str = "signature";
 pub(super) const POLICY_SIGNATURES_KEY: &str = "signatures";
 pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
 pub(super) const POLICY_PROJECT_COLLABORATION_KEY: &str = "project_collaboration";
+/// Vault-wide limit at which a consult fan-out requires its ordinary approval
+/// ladder. The default is stored in the default manifest, not applied by the
+/// fan-out runtime when policy data is absent.
+pub(crate) const POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY: &str =
+    "consult_fanout_approval_threshold";
+/// The remaining fan-out control values and precedence live beside the
+/// approval trigger in the same authenticated vault manifest.
+pub(crate) const POLICY_CONSULT_FANOUT_CONTROLS_KEY: &str = "consult_fanout_controls";
+pub(crate) const POLICY_CONSULT_FANOUT_PRECEDENCE_KEY: &str = "consult_fanout_precedence";
+pub(crate) const POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY: &str = "consult_fanout_scope_rows";
 /// Optional top-level manifest key naming the HOST's auto checker (ONE-1296).
 ///
 /// The value is an opaque non-empty string the engine never interprets: it

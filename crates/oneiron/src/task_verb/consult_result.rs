@@ -115,6 +115,10 @@ pub struct ConsultFanOutReceipt {
     pub paused: Option<super::consult_fanout_types::ConsultFanOutPause>,
     /// Unified Gate receipt of the last human ruling, if any.
     pub choice_receipt_ref: Option<String>,
+    /// Shipped default rows admission read because the vault manifest lacks
+    /// them (e.g. `shipped:consult_fanout_controls`); empty when every row
+    /// came from the vault manifest.
+    pub shipped_policy_rows: Vec<String>,
 }
 
 /// Host-supplied addressing for the ARCH-0046 expiry digest, plus the typed

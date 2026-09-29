@@ -72,6 +72,26 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// A fan-out row missing from every trusted manifest falls back to the
+    /// shipped default row; a malformed or unreadable manifest refuses.
+    pub(crate) fn consult_fanout_policy_for(
+        &self,
+        scope: &crate::task_verb::ConsultFanOutScope,
+    ) -> crate::error::Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
+        if self.diagnostics.is_fail_closed() {
+            return Err(crate::error::Error::InvalidConfig(
+                "fan-out policy manifest is unavailable".into(),
+            ));
+        }
+        crate::gate::fanout_policy::resolve(
+            self.consult_fanout_approval_threshold,
+            self.consult_fanout_controls.as_ref(),
+            self.consult_fanout_precedence,
+            &self.consult_fanout_scope_rows,
+            scope,
+        )
+    }
+
     /// The effective residence-operation caps, absent when loaded policy is
     /// malformed or otherwise forces fail-closed. Holder narrowing has already
     /// been capped by the vault-level values during the trusted manifest fold.

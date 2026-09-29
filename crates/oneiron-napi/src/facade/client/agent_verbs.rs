@@ -86,6 +86,7 @@ impl NativeClient {
                 successor_short_id: None,
                 gate_denial: None,
                 read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -104,6 +105,7 @@ impl NativeClient {
                 successor_short_id: None,
                 gate_denial: None,
                 read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -122,6 +124,7 @@ impl NativeClient {
                 successor_short_id: None,
                 gate_denial: None,
                 read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -140,6 +143,7 @@ impl NativeClient {
                 successor_short_id: None,
                 gate_denial: None,
                 read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -158,6 +162,7 @@ impl NativeClient {
                 successor_short_id: None,
                 gate_denial: None,
                 read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -176,6 +181,7 @@ impl NativeClient {
                 successor_short_id: None,
                 gate_denial: None,
                 read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -191,6 +197,7 @@ impl NativeClient {
                 successor_short_id: None,
                 gate_denial: None,
                 read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;

@@ -43,9 +43,6 @@ use crate::receipt::{ReceiptKind, ReceiptRecord};
 /// never move an already-approved digest.
 const FANOUT_PLAN_DIGEST_DOMAIN: &[u8] = b"oneiron.fanout.plan.v1\0";
 
-/// Fan-out size that still proceeds silently. A knob with a default, not a cap.
-const DEFAULT_FANOUT_APPROVAL_THRESHOLD: u32 = 25;
-
 /// Surface component a fan-out pause is rendered as.
 const FANOUT_SURFACE_COMPONENT: &str = "fanout_approve";
 
@@ -326,9 +323,8 @@ pub(crate) fn fanout_estimate(plan: &FanoutPlan) -> Result<FanoutEstimate> {
 ///
 /// Metering runs first and always. Pathology is detected before any threshold
 /// or ladder logic and pauses on its own. Only then does size enter the
-/// picture: at or below `threshold` (default
-/// [`DEFAULT_FANOUT_APPROVAL_THRESHOLD`]) the plan proceeds silently, and above
-/// it the r5v2 ladder rules. Every paused branch returns before any callback
+/// picture: at or below the caller-provided manifest `threshold` the plan
+/// proceeds silently, and above it the r5v2 ladder rules. Every paused branch returns before any callback
 /// that could create a peer TASK or reach transport.
 ///
 /// # Errors
@@ -351,7 +347,9 @@ pub(crate) fn admit_fanout_plan(
         return pause(&canonical, estimate, Some(pathology), surface, now_ms);
     }
 
-    let threshold = threshold.unwrap_or(DEFAULT_FANOUT_APPROVAL_THRESHOLD);
+    let threshold = threshold.ok_or_else(|| {
+        Error::InvalidConfig("fan-out approval threshold policy row missing".into())
+    })?;
     if estimate.total_count <= threshold {
         return Ok(FanoutAdmission::Proceed { estimate });
     }
