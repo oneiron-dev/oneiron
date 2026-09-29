@@ -216,6 +216,7 @@ pub(super) struct PutCarrierContext<'a> {
     learned_at: u64,
     replicated: bool,
     origin: super::BaseWriteOrigin<'a>,
+    posture: crate::HostingPrivacyPosture,
 }
 
 impl<'a> PutCarrierContext<'a> {
@@ -225,6 +226,7 @@ impl<'a> PutCarrierContext<'a> {
         learned_at: u64,
         replicated: bool,
         origin: super::BaseWriteOrigin<'a>,
+        posture: crate::HostingPrivacyPosture,
     ) -> Self {
         Self {
             entity_type,
@@ -232,6 +234,7 @@ impl<'a> PutCarrierContext<'a> {
             learned_at,
             replicated,
             origin,
+            posture,
         }
     }
 }
@@ -274,7 +277,7 @@ pub(super) fn validate_put_carriers(
     data: &[u8],
     context: PutCarrierContext<'_>,
 ) -> Result<()> {
-    validate_scope_carriers(store, txn, id, context.entity_type, data, context.origin)?;
+    validate_scope_carriers(store, txn, id, data, &context)?;
     super::connector_key_guard::validate_connector_manifest_put(
         store,
         txn,
@@ -444,17 +447,31 @@ pub(super) fn validate_scope_carriers(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
-    entity_type: u8,
     data: &[u8],
-    origin: super::BaseWriteOrigin<'_>,
+    context: &PutCarrierContext<'_>,
 ) -> Result<()> {
+    let entity_type = context.entity_type;
     if entity_type == crate::registry::ENTITY_TYPE_FACET {
         super::super::facet_identity::validate_facet_overwrite(store, wtxn, id, data)?;
     }
     if crate::workspace_roster::is_project_type(store, entity_type) {
         for referenced in crate::workspace_roster::validate_project_body(id, data)? {
-            super::reject_overlay_member_base_write(store, &referenced, origin)?;
+            super::reject_overlay_member_base_write(store, &referenced, context.origin)?;
         }
+        // Live writes prove the signed leader or board authority at the door.
+        // Replay stops at structure (ARCH-0040 ONE-AUTHLOG-F2): its authority
+        // is judged by the project read fold, which quarantines, never refuses.
+        if !context.replicated {
+            crate::workspace_roster::validate_project_transition(
+                store,
+                wtxn,
+                id,
+                entity_type,
+                data,
+                context.posture,
+            )?;
+        }
+        crate::workspace_roster::note_project_proof(store, wtxn, id, entity_type, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;

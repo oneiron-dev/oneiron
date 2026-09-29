@@ -7,7 +7,7 @@ use crate::consent::{
 };
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
-use crate::workspace_roster::{ProjectRecord, ProjectRole};
+use crate::workspace_roster::ProjectRole;
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -82,8 +82,9 @@ pub(super) fn require_docs_corpus_project(
     if header.entity_type != expected || raw.len() == ENTITY_METADATA_HEADER_LEN {
         return Err(invalid("docs corpus PROJECT has wrong kind"));
     }
-    let record: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-        .map_err(|_| invalid("docs corpus PROJECT body invalid"))?;
+    let record = vault
+        .visible_project_in_txn(txn, project)?
+        .ok_or_else(|| invalid("docs corpus PROJECT is not authorized"))?;
     if record.role != ProjectRole::Corpus {
         return Err(invalid("docs corpus PROJECT must carry corpus role"));
     }

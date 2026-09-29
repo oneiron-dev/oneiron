@@ -1,5 +1,6 @@
 use super::*;
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::workspace_roster::ProjectRecord;
 
 fn axis(name: &str, measure: &str, bound: &str) -> GoalAxis {
     GoalAxis {

@@ -268,6 +268,9 @@ side_tables! {
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw;
     /// The root project's entity id, seeded once at first boot. Key: ().
     PROJECT_ROOT: VaultMeta b"project.root.v1" Raw;
+    /// A signed project row that replay replaced with an unsigned one, held
+    /// in quarantine until a signed row lands again. Key: id16 (project id).
+    PROJECT_STRIPPED_PROOF: VaultMeta b"project.stripped_proof.v1/" Raw;
     /// A cross-project widen ask a project raised on another board. Key: id16 (ask id).
     PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.

@@ -124,9 +124,9 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            let project: super::super::ProjectRecord =
-                super::super::record(&self.store, txn, project_id, self.project_type_byte()?)?
-                    .ok_or_else(invalid)?;
+            let project = self
+                .visible_project_in_txn(txn, project_id)?
+                .ok_or_else(invalid)?;
             let room = EntityId::from_hex(&project.home_room).map_err(|_| invalid())?;
             require_member(self, txn, room, owner.actor())?;
             let refs = [

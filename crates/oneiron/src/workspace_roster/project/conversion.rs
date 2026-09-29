@@ -438,8 +438,13 @@ impl Vault {
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("message project index"))?,
             )?;
-            let project = record::<ProjectRecord>(&self.store, &txn, id, kind)?
-                .ok_or(Error::CorruptedIndex("message project target"))?;
+            if record::<ProjectRecord>(&self.store, &txn, id, kind)?.is_none() {
+                return Err(Error::CorruptedIndex("message project target"));
+            }
+            // A project the read fold hides does not hang off the message.
+            let Some(project) = self.visible_project_in_txn(&txn, id)? else {
+                continue;
+            };
             if project.born_from.as_deref() != Some(message.to_hex().as_str())
                 || project.origin_room.as_deref() != Some(room.to_hex().as_str())
             {

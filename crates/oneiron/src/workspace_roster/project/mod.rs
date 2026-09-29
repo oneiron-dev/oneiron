@@ -11,6 +11,8 @@ mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
 mod leader_chat;
 mod projection;
+mod proof;
+mod read;
 mod widen;
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
@@ -33,6 +35,9 @@ pub(crate) use leader_chat::{
     validate_local_turns as validate_local_leader_chat_turns,
     verify_existing_turn as verify_existing_leader_chat_turn,
 };
+pub(crate) use proof::validate_transition as validate_project_transition;
+pub(crate) use read::ProjectReader;
+pub use read::{ProjectQuarantine, ProjectVerdict};
 pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]
 mod tests;
@@ -47,7 +52,8 @@ pub(crate) use tests::set_project_depth_signed_for_test;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
+use crate::llm::Scope;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
@@ -66,6 +72,10 @@ const ROOT: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::PROJECT_R
 /// home-room id).
 pub(super) const ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::PROJECT_ROOM_OWNER);
+
+/// A signed project row that replay replaced with an unsigned one. Key: id16.
+const STRIPPED_PROOF: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::PROJECT_STRIPPED_PROOF);
 
 /// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
 /// id16 (change event id).
@@ -95,6 +105,18 @@ pub struct ProjectRecord {
     /// Parent projects. A project may belong to more than one venture.
     pub parents: Vec<String>,
     pub claims_scope_ref: String,
+    /// What this project sees. It only narrows going down the tree.
+    #[serde(default)]
+    pub slice: Scope,
+    #[serde(default = "default_depth_limit")]
+    pub depth_limit: u8,
+    /// How many more subproject levels this project may spawn.
+    #[serde(default)]
+    pub depth_remaining: u8,
+    /// Signed leader or board authority for the authority fields. Membership
+    /// edits keep it; the project read fold verifies it against the authority log.
+    #[serde(default)]
+    pub write_proof: Option<ProjectWriteProof>,
     pub leader: String,
     pub board: Vec<String>,
     pub roster: Vec<String>,
@@ -121,7 +143,103 @@ pub struct ProjectRecord {
     #[serde(default)]
     pub origin_at: Option<u64>,
 }
+const fn default_depth_limit() -> u8 {
+    10
+}
+/// Deepest anchor chain the fold follows before it quarantines the row.
+pub(crate) const MAX_PROJECT_ANCHORS: usize = 64;
+
+/// The fields a leader may narrow and only a board holder may widen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectAuthority {
+    pub parents: Vec<String>,
+    pub claims_scope_ref: String,
+    pub slice: Scope,
+    pub depth_limit: u8,
+    pub depth_remaining: u8,
+    pub leader: String,
+    pub board: Vec<String>,
+}
+
+/// The holder signs the authority fields, its signing time and the anchor
+/// through the portable slip's binding transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectWriteProof {
+    pub slip_wire: String,
+    pub holder_signature: Vec<u8>,
+    /// The fold judges slip expiry at this signed time, not at the reader's
+    /// clock, so a change that syncs after its slip expired still verifies.
+    pub signed_at: u64,
+    /// The authority this revision builds on: none for a spawn, else the
+    /// prior authority fields with the proof that set them.
+    pub anchor: Option<Box<ProjectAnchor>>,
+}
+
+/// One earlier authority state, carried so any replica can verify a revision
+/// from the latest row alone, without the history sync never delivers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectAnchor {
+    pub authority: ProjectAuthority,
+    pub proof: Option<ProjectWriteProof>,
+}
+
+impl ProjectAuthority {
+    /// Domain-separated challenge for these fields at `signed_at` over `anchor`.
+    pub fn write_challenge(
+        &self,
+        id: EntityId,
+        signed_at: u64,
+        anchor: Option<&ProjectAnchor>,
+    ) -> Result<Vec<u8>> {
+        let bytes =
+            serde_json::to_vec(&(id.to_hex(), self, signed_at, anchor)).map_err(|_| invalid())?;
+        Ok([
+            b"oneiron/project-write/v2/".as_slice(),
+            blake3::hash(&bytes).as_bytes(),
+        ]
+        .concat())
+    }
+    /// A change only a board holder may make: structure, leadership, the
+    /// board itself, or any widening. Narrowing stays with the leader.
+    pub(crate) fn board_action(&self, next: &Self) -> bool {
+        self.parents != next.parents
+            || self.leader != next.leader
+            || self.board != next.board
+            || self.claims_scope_ref != next.claims_scope_ref
+            || self.depth_limit < next.depth_limit
+            || self.depth_remaining < next.depth_remaining
+            || self.slice.attenuate(next.slice.clone()).is_err()
+    }
+    /// A child never sees more than a parent, and has one level less.
+    pub(crate) fn fits_under(&self, parent: &Self) -> bool {
+        self.depth_limit <= parent.depth_limit
+            && self.depth_remaining < parent.depth_remaining
+            && parent.slice.attenuate(self.slice.clone()).is_ok()
+    }
+}
+
 impl ProjectRecord {
+    pub fn authority(&self) -> ProjectAuthority {
+        ProjectAuthority {
+            parents: self.parents.clone(),
+            claims_scope_ref: self.claims_scope_ref.clone(),
+            slice: self.slice.clone(),
+            depth_limit: self.depth_limit,
+            depth_remaining: self.depth_remaining,
+            leader: self.leader.clone(),
+            board: self.board.clone(),
+        }
+    }
+    /// The anchor a new signed revision of this stored record builds on.
+    pub fn anchor(&self) -> ProjectAnchor {
+        ProjectAnchor {
+            authority: self.authority(),
+            proof: self.write_proof.clone(),
+        }
+    }
     pub fn new(
         id: EntityId,
         parent: Option<EntityId>,
@@ -136,6 +254,14 @@ impl ProjectRecord {
             depth: crate::gate::seeded_project_depth_default(),
             parents: parent.into_iter().map(|p| p.to_hex()).collect(),
             claims_scope_ref: claims_scope_ref.to_hex(),
+            slice: Scope::default(),
+            depth_limit: default_depth_limit(),
+            depth_remaining: if parent.is_none() {
+                default_depth_limit()
+            } else {
+                0
+            },
+            write_proof: None,
             leader: leader.to_hex(),
             board: vec![],
             roster: vec![leader.to_hex()],
@@ -279,7 +405,10 @@ impl Vault {
     pub fn put_project(&self, id: EntityId, record: &ProjectRecord, now: u64) -> Result<()> {
         self.with_write_txn(|txn| {
             let body = record.clone();
-            if self.store.entities.get(txn, id.as_bytes())?.is_none() {
+            // A leader's signed spawn needs no owner birth; the shared door
+            // verifies its proof.
+            if self.store.entities.get(txn, id.as_bytes())?.is_none() && body.write_proof.is_none()
+            {
                 let posture = self.privacy_posture();
                 match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
                     Some((_, birth))
@@ -356,6 +485,70 @@ impl Vault {
             )
         })
     }
+    /// A project's leader spawns one new child under a slice no wider than its own.
+    /// The proof is the leader's attenuated slip signature over the child's
+    /// authority fields; the common write door verifies it in this transaction.
+    pub fn spawn_subproject(
+        &self,
+        parent_id: EntityId,
+        child_id: EntityId,
+        leader: EntityId,
+        slice: Scope,
+        proof: ProjectWriteProof,
+        now: u64,
+    ) -> Result<ProjectRecord> {
+        let kind = self.project_type_byte()?;
+        // Reading the claimed holder here only selects the board seat and
+        // refuses early; the door still verifies the whole proof.
+        let holder = crate::authority::CapabilitySlip::from_token(&proof.slip_wire)?
+            .claims
+            .holder_ref;
+        let actor = EntityId::from_hex(&holder)?;
+        self.with_write_txn(|txn| {
+            let parent = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+                .ok_or_else(invalid)?
+                .visible(parent_id)?
+                .ok_or(RecordError::InvalidProjectBody("missing parent project"))?;
+            if parent.leader != actor.to_hex() {
+                return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
+            }
+            if self.store.entities.get(txn, child_id.as_bytes())?.is_some() {
+                return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
+            }
+            let remaining = parent
+                .depth_remaining
+                .min(parent.depth_limit)
+                .checked_sub(1)
+                .ok_or(RecordError::InvalidProjectBody("project depth exhausted"))?;
+            parent.slice.attenuate(slice.clone()).map_err(|_| {
+                RecordError::InvalidProjectBody("subproject slice widens its parent")
+            })?;
+            let mut child = ProjectRecord::new(
+                child_id,
+                Some(parent_id),
+                EntityId::from_hex(&parent.claims_scope_ref)?,
+                leader,
+            )?;
+            child.slice = slice;
+            child.depth_limit = parent.depth_limit;
+            child.depth_remaining = remaining;
+            child.board.push(actor.to_hex());
+            child.write_proof = Some(proof);
+            self.batch_in()
+                .put(
+                    &child_id,
+                    kind,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &encode(&child)?,
+                )
+                .apply(txn)?;
+            Ok(child)
+        })
+    }
 
     /// Person-authorized project creation. The signed birth fact commits with
     /// membership, and can be verified on another replica without assuming
@@ -423,7 +616,7 @@ impl Vault {
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
         self.with_write_txn(|txn| {
-            if record::<ProjectRecord>(&self.store, txn, id, self.project_type_byte()?)?.is_none() {
+            if self.visible_project_in_txn(txn, id)?.is_none() {
                 return Err(Error::EntityNotFound);
             }
             crate::gate::project_depth::put_edit_in_txn(
@@ -440,29 +633,72 @@ impl Vault {
     }
 
     /// Complete project view: membership plus the live policy depth row.
+    /// A row whose authority the fold does not accept reads as absent.
     pub fn project(&self, id: EntityId) -> Result<Option<ProjectRecord>> {
         let txn = self.store.env.read_txn()?;
-        let Some(mut body) =
-            record::<ProjectRecord>(&self.store, &txn, id, self.project_type_byte()?)?
-        else {
+        self.project_in_txn(&txn, id)
+    }
+    /// The stored project if the read fold accepts it, without the depth row.
+    pub(crate) fn visible_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<ProjectRecord>> {
+        match ProjectReader::new(&self.store, txn, self.privacy_posture())? {
+            Some(reader) => reader.visible(id),
+            None => Ok(None),
+        }
+    }
+    pub(crate) fn project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<ProjectRecord>> {
+        let Some(reader) = ProjectReader::new(&self.store, txn, self.privacy_posture())? else {
+            return Err(invalid());
+        };
+        let Some(mut body) = reader.visible(id)? else {
             return Ok(None);
         };
         body.depth = crate::gate::project_depth::resolve_project_depth(
             &self.store,
-            &txn,
+            txn,
             self.privacy_posture(),
             id,
         )?
         .depth;
         Ok(Some(body))
     }
+    /// The home room of a visible project; a hidden project's room reads as absent.
     pub fn project_room(&self, id: EntityId) -> Result<Option<ProjectRoom>> {
-        record(
-            &self.store,
-            &self.store.env.read_txn()?,
-            id,
-            ENTITY_TYPE_CONVERSATION,
-        )
+        let txn = self.store.env.read_txn()?;
+        let Some(room) = record::<ProjectRoom>(&self.store, &txn, id, ENTITY_TYPE_CONVERSATION)?
+        else {
+            return Ok(None);
+        };
+        let Some(reader) = ProjectReader::new(&self.store, &txn, self.privacy_posture())? else {
+            return Ok(None);
+        };
+        let project = EntityId::from_hex(&room.project_id)?;
+        Ok(reader.visible(project)?.map(|_| room))
+    }
+    /// Owner view of stored project rows the fold hides, each with its reason.
+    /// They stay in storage and become visible when their authorization does.
+    pub fn quarantined_projects(&self) -> Result<Vec<ProjectQuarantine>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(reader) = ProjectReader::new(&self.store, &txn, self.privacy_posture())? else {
+            return Ok(Vec::new());
+        };
+        Ok(reader
+            .all()?
+            .into_iter()
+            .filter(|(_, _, verdict)| *verdict != ProjectVerdict::Visible)
+            .map(|(id, record, verdict)| ProjectQuarantine {
+                id,
+                record,
+                verdict,
+            })
+            .collect())
     }
     /// Resolve the root or a named project in the dispatch admission snapshot.
     pub(crate) fn project_for_spawn_in_txn(
@@ -474,15 +710,7 @@ impl Vault {
             Some(id) => id,
             None => ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?,
         };
-        let mut body: ProjectRecord = record(&self.store, txn, id, self.project_type_byte()?)?
-            .ok_or(Error::EntityNotFound)?;
-        body.depth = crate::gate::project_depth::resolve_project_depth(
-            &self.store,
-            txn,
-            self.privacy_posture(),
-            id,
-        )?
-        .depth;
+        let body = self.project_in_txn(txn, id)?.ok_or(Error::EntityNotFound)?;
         Ok((id, body))
     }
 
@@ -497,6 +725,33 @@ impl Vault {
             .map(|row| row.map(|(_, change)| change))
             .collect()
     }
+}
+
+/// Replay stores every structurally valid row and may only quarantine
+/// (ARCH-0040 ONE-AUTHLOG-F2). A signed row replaced by an unsigned one is
+/// held here until a signed row lands again; the live door refuses it.
+pub(crate) fn note_project_proof(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<()> {
+    let next: ProjectRecord = decode(data)?;
+    if next.write_proof.is_some() {
+        STRIPPED_PROOF.delete(store, txn, &id)?;
+    } else if read::stored(store, txn, id, kind)?.is_some_and(|old| old.write_proof.is_some()) {
+        STRIPPED_PROOF.put(store, txn, &id, &[1])?;
+    }
+    Ok(())
+}
+
+/// The vault's root project in this snapshot.
+pub(crate) fn root_project_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<EntityId>> {
+    ROOT.get(store, txn, &())
 }
 
 pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {

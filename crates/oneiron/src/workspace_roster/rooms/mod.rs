@@ -60,9 +60,9 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     )?
     .ok_or_else(invalid)?;
     let project_id = EntityId::from_hex(&room.project_id)?;
-    let project: super::ProjectRecord =
-        super::project::record(&vault.store, txn, project_id, vault.project_type_byte()?)?
-            .ok_or_else(invalid)?;
+    let project = vault
+        .visible_project_in_txn(txn, project_id)?
+        .ok_or_else(invalid)?;
     if project.roster != room.member_ids || project.claims_scope_ref != room.claims_scope_ref {
         return Err(invalid());
     }

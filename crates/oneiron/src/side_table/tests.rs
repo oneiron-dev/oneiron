@@ -472,6 +472,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROJECT_ORIGIN_BY_PROJECT",
         "PROJECT_ORIGIN_MESSAGE",
         "PROJECT_ORIGIN_THREAD",
+        "PROJECT_STRIPPED_PROOF",
         "PROJECT_WIDEN_ASK",
         "PROPOSAL_ACTOR_COUNT",
         "PROPOSAL_RECEIPT_HISTORY",
