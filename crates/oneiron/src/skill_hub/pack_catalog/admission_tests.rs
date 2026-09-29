@@ -151,6 +151,180 @@ fn fetched_fixture(
     vault.with_write_txn(|txn| vault.record_pack_fetch_in_txn(txn, &id, reference, publisher))?;
     Ok(id)
 }
+struct SourceAdapter {
+    hub: EntityId,
+    kind: SkillHubKind,
+    endpoint: String,
+    source: PackSource,
+}
+impl crate::skill_hub::SkillHubAdapter for SourceAdapter {
+    fn hub_id(&self) -> EntityId {
+        self.hub
+    }
+    fn kind(&self) -> SkillHubKind {
+        self.kind
+    }
+    fn endpoint(&self) -> Option<&str> {
+        Some(&self.endpoint)
+    }
+    fn fetch_package(&self, _: &HubRef) -> Result<crate::skill_hub::HubPackage> {
+        Err(crate::Error::EntityNotFound)
+    }
+}
+impl PackSourceAdapter for SourceAdapter {
+    fn fetch_pack_source(&self, _: &HubRef) -> Result<PackSource> {
+        Ok(self.source.clone())
+    }
+}
+/// `(provider, verdict)` of every active scan row on these exact bytes.
+fn scan_rows(vault: &Vault, source: &PackSource) -> Result<Vec<(String, String)>> {
+    let text = |value: &rmpv::Value, key: &str| match value {
+        rmpv::Value::Map(fields) => fields
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(key))
+            .and_then(|(_, value)| value.as_str())
+            .map(str::to_owned),
+        _ => None,
+    };
+    let mut rows = vault
+        .skill_scan_verdicts_for_content_hash(source.content_hash())?
+        .iter()
+        .map(|body| {
+            (
+                text(&body.value, "provider").expect("scan provider"),
+                text(&body.value, "verdict").expect("scan verdict"),
+            )
+        })
+        .collect::<Vec<_>>();
+    rows.sort();
+    Ok(rows)
+}
+#[test]
+fn knowledge_only_pack_fetch_scans_the_tree_and_keys_verdicts_by_content_hash() -> Result<()> {
+    use crate::skill_hub::{
+        ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt,
+    };
+    let knowledge = |rows: &str| {
+        PackSource::from_files(vec![
+            HubFile::new(
+                "PACK.md",
+                b"---\nname: alice.catalog\ndescription: data\nversion: 1\nkind: capability\n---\nData only.\n".to_vec(),
+            ),
+            HubFile::new("knowledge/catalog.json", rows.as_bytes().to_vec()),
+        ])
+    };
+    let source = knowledge(r#"{"rows":[]}"#)?;
+    let (_dir, vault, _owner, reference, publisher) =
+        fixture(SkillHubTrustTier::Verified, &source)?;
+    let endpoint = vault.skill_hub_record(&reference.hub_id)?.endpoint;
+    let fetch = |source: &PackSource, reference: &HubRef, at: u64| {
+        let adapter = SourceAdapter {
+            hub: reference.hub_id,
+            kind: SkillHubKind::HttpIndex,
+            endpoint: endpoint.clone(),
+            source: source.clone(),
+        };
+        let occurred = TimeRange { start: at, end: at };
+        vault.fetch_pack_from_adapter(&adapter, reference, &publisher, occurred, at)
+    };
+    let static_only = vec![(
+        crate::skill_scan::SCAN_PROVIDER_STATIC_PACK_V1.to_owned(),
+        "unknown".to_owned(),
+    )];
+    assert!(scan_rows(&vault, &source)?.is_empty());
+    // The hub fetch door scans a pack with no SKILL records at all.
+    let (source_id, pinned) = fetch(&source, &reference, 3)?;
+    assert_eq!(scan_rows(&vault, &source)?, static_only);
+    // Identical bytes fetched again reuse their evidence.
+    fetch(&source, &reference, 4)?;
+    assert_eq!(scan_rows(&vault, &source)?, static_only);
+    let ask = vault.prepare_pack_install(source_id, &pinned, &publisher, &policy())?;
+    assert_eq!(ask.scan_risk(), Some(ScanRiskLevel::None));
+    // An independent provider's disagreement is a second row on the same hash.
+    let flagged = SkillScanReceipt::new(
+        "fixture.external",
+        4,
+        ScanVerdict::Suspicious,
+        ScanRiskLevel::High,
+        ScanCompleteness::Complete,
+        SkillGovernance::Discouraged,
+    )?;
+    let at = TimeRange { start: 4, end: 4 };
+    vault.ingest_pack_scan_verdict(&source_id, &flagged, at, 4)?;
+    assert_eq!(scan_rows(&vault, &source)?.len(), 2);
+    // The verdict is a signal on the ask, never the gate.
+    let ask = vault.prepare_pack_install(source_id, &pinned, &publisher, &policy())?;
+    assert_eq!(ask.scan_risk(), Some(ScanRiskLevel::High));
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+        panic!("a scan signal does not block a fitting pack");
+    };
+    assert!(receipt.skills.is_empty());
+    // A new tree hash inherits none of the old tree's verdicts.
+    let next = knowledge(r#"{"rows":[1]}"#)?;
+    let next_ref = HubRef::new(
+        reference.hub_id,
+        "pack",
+        HubPin::ContentHash(next.content_hash().to_hex()),
+    )?;
+    let (next_id, next_pinned) = fetch(&next, &next_ref, 5)?;
+    assert_eq!(scan_rows(&vault, &next)?, static_only);
+    assert_eq!(scan_rows(&vault, &source)?.len(), 2);
+    let ask = vault.prepare_pack_install(next_id, &next_pinned, &publisher, &policy())?;
+    assert_eq!(ask.scan_risk(), Some(ScanRiskLevel::None));
+    Ok(())
+}
+#[test]
+fn model_catalog_loader_refuses_installed_bytes_outside_the_scan_ledger() -> Result<()> {
+    use crate::llm::registry::CatalogSeed;
+    let source = PackSource::from_files(vec![
+        HubFile::new(
+            "PACK.md",
+            include_bytes!("../../../tests/fixtures/model-pack/PACK.md").to_vec(),
+        ),
+        HubFile::new(
+            "knowledge/catalog.json",
+            include_bytes!("../../../tests/fixtures/model-pack/knowledge/catalog.json").to_vec(),
+        ),
+    ])?;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let at = TimeRange { start: 1, end: 1 };
+    let owner = EntityId::now();
+    vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
+    let owner = vault.authenticate_owner(
+        owner,
+        "principal:catalog-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub = crate::skill_hub::default_skill_hub_id()?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:model-catalog", hub)?;
+    let reference = HubRef::new(
+        hub,
+        crate::skill_hub::MODEL_PACK_SUBTREE,
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    // Staged and aliased without passing the fetch door's scan.
+    let id = fetched_fixture(&vault, &source, &reference, &publisher, 2)?;
+    let ask = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
+    assert!(matches!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Installed(_)
+    ));
+    assert!(scan_rows(&vault, &source)?.is_empty());
+    assert!(CatalogSeed::from_installed_pack(&vault).is_err());
+    let receipt = crate::skill_hub::SkillScanReceipt::new(
+        "fixture.external",
+        3,
+        crate::skill_hub::ScanVerdict::Unknown,
+        crate::skill_hub::ScanRiskLevel::None,
+        crate::skill_hub::ScanCompleteness::Complete,
+        crate::skill_hub::SkillGovernance::Recommended,
+    )?;
+    vault.ingest_pack_scan_verdict(&id, &receipt, TimeRange { start: 3, end: 3 }, 3)?;
+    assert_eq!(CatalogSeed::from_installed_pack(&vault)?.rows.len(), 54);
+    Ok(())
+}
 #[test]
 fn installed_inventory_skips_deleted_source_but_refuses_corrupt_receipt() -> Result<()> {
     let first = source(false)?;

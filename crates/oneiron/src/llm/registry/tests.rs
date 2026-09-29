@@ -45,27 +45,245 @@ fn prices_survive_restart_and_catalog_always_exposes_both_prices() -> Result<()>
     }
     Ok(())
 }
+fn pack_fixture() -> Result<crate::skill_hub::pack_catalog::PackSource> {
+    use crate::skill_hub::HubFile;
+    crate::skill_hub::pack_catalog::PackSource::from_files(vec![
+        HubFile::new(
+            "PACK.md",
+            include_bytes!("../../../tests/fixtures/model-pack/PACK.md").to_vec(),
+        ),
+        HubFile::new(
+            "knowledge/catalog.json",
+            include_bytes!("../../../tests/fixtures/model-pack/knowledge/catalog.json").to_vec(),
+        ),
+    ])
+}
+
+// Model the pinned Git transport's successful fetch of the fixture tree.
+struct CatalogAdapter {
+    hub: crate::EntityId,
+    endpoint: String,
+    source: crate::skill_hub::pack_catalog::PackSource,
+}
+impl crate::skill_hub::SkillHubAdapter for CatalogAdapter {
+    fn hub_id(&self) -> crate::EntityId {
+        self.hub
+    }
+    fn kind(&self) -> crate::skill_hub::SkillHubKind {
+        crate::skill_hub::SkillHubKind::Git
+    }
+    fn endpoint(&self) -> Option<&str> {
+        Some(&self.endpoint)
+    }
+    fn fetch_package(&self, _: &crate::skill_hub::HubRef) -> Result<crate::skill_hub::HubPackage> {
+        Err(crate::Error::EntityNotFound)
+    }
+}
+impl crate::skill_hub::pack_catalog::PackSourceAdapter for CatalogAdapter {
+    fn fetch_pack_source(
+        &self,
+        _: &crate::skill_hub::HubRef,
+    ) -> Result<crate::skill_hub::pack_catalog::PackSource> {
+        Ok(self.source.clone())
+    }
+}
+
+struct DataOnlyFit;
+impl crate::skill_hub::pack_catalog::PackFitPolicy for DataOnlyFit {
+    fn evaluate(
+        &self,
+        _: &crate::skill_hub::pack_catalog::PackSource,
+        permissions: &crate::skill_hub::pack_catalog::PackPermissions,
+    ) -> Result<crate::skill_hub::pack_catalog::PackFitVerdict> {
+        assert!(permissions.grants.is_empty());
+        assert!(permissions.wakes.is_empty());
+        assert!(permissions.bundled_skills.is_empty());
+        Ok(crate::skill_hub::pack_catalog::PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: false,
+        })
+    }
+}
+
 #[test]
-fn seeded_vendors_validate_and_flags_gate_admission() -> Result<()> {
-    let seed = CatalogSeed::bundled()?;
-    assert!(seed.rows.len() >= 40);
-    let vendors: std::collections::BTreeSet<_> = seed
+fn installed_hub_catalog_parity_and_capability_admission() -> Result<()> {
+    use crate::{
+        skill_hub::{HubPin, HubRef, pack_catalog::PackInstallDisposition},
+        temporal::TimeRange,
+    };
+    let source = pack_fixture()?;
+    assert_eq!(
+        source.content_hash().to_hex(),
+        crate::skill_hub::MODEL_PACK_HASH
+    );
+    // Install admission resolves the seeded policy manifest.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+    let at = TimeRange { start: 1, end: 1 };
+    // A staged source without an installation is not a catalog.
+    assert!(CatalogSeed::from_installed_pack(&vault).is_err());
+    vault.stage_pack_source(&source, at, 1)?;
+    assert!(CatalogSeed::from_installed_pack(&vault).is_err());
+    let owner_id = crate::EntityId::now();
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:catalog-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub_id = crate::skill_hub::default_skill_hub_id()?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:model-catalog", hub_id)?;
+    let reference = HubRef::new(
+        hub_id,
+        crate::skill_hub::MODEL_PACK_SUBTREE,
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    let adapter = CatalogAdapter {
+        hub: hub_id,
+        endpoint: vault.skill_hub_record(&hub_id)?.endpoint,
+        source: source.clone(),
+    };
+    let (source_id, pinned) =
+        vault.fetch_pack_from_adapter(&adapter, &reference, &publisher, at, 1)?;
+    let ask = vault.prepare_pack_install(source_id, &pinned, &publisher, &DataOnlyFit)?;
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+        panic!("post-fit data pack must install");
+    };
+    assert!(receipt.permissions.grants.is_empty());
+    assert!(receipt.permissions.wakes.is_empty());
+    assert!(receipt.skills.is_empty());
+    assert!(vault.model_manifest()?.is_none());
+    let loaded = CatalogSeed::from_installed_pack(&vault)?;
+    assert_eq!(
+        vault
+            .model_catalog_entries(ModelWireFormat::OpenaiCompat)?
+            .len(),
+        54
+    );
+    let pack_bytes = &source
+        .files()
+        .iter()
+        .find(|f| f.path == "knowledge/catalog.json")
+        .unwrap()
+        .content;
+    assert_eq!(loaded, CatalogSeed::from_json(pack_bytes)?);
+    assert_eq!(loaded.version, 1);
+    assert_eq!(loaded.rows.len(), 54);
+    assert_eq!(
+        vault.model_registry_row(&loaded.rows[0].catalog.model)?,
+        Some(loaded.rows[0].clone())
+    );
+    let vendors: std::collections::BTreeSet<_> = loaded
         .rows
         .iter()
         .map(|r| r.catalog.model.provider())
         .collect();
     assert!(vendors.len() >= 40);
-    for row in &seed.rows {
+    for row in &loaded.rows {
         row.validate()?;
         assert!(row.catalog.cost.is_some());
         assert!(row.catalog.context_window_tokens > 0);
+        assert!(!row.catalog.capabilities.is_empty());
+        assert!(row.catalog.metadata.contains_key("description"));
+        assert!(row.catalog.model.as_str().contains('@'));
+        assert!(
+            row.description()?
+                .ranked()
+                .all(|(_, contribution)| !contribution.source.is_empty())
+        );
     }
-    let entry = row("restricted").catalog;
-    assert!(entry.require(LlmCapability::ToolCalling).is_err());
+    let restricted = loaded
+        .rows
+        .iter()
+        .find(|row| !row.catalog.supports(&LlmCapability::ImageInput))
+        .expect("seed has a restricted model");
+    assert!(
+        restricted
+            .catalog
+            .require(LlmCapability::ImageInput)
+            .is_err()
+    );
+    let mut local = loaded.rows[0].clone();
+    local.catalog.cost.as_mut().unwrap().input_per_million = "0".into();
+    vault.put_model_registry_row(&local)?;
+    vault.seed_installed_model_catalog()?;
+    vault.seed_installed_model_catalog()?;
+    assert_eq!(vault.model_registry_row(&local.catalog.model)?, Some(local));
+    assert_eq!(vault.model_registry_rows()?.len(), loaded.rows.len());
+    assert!(vault.model_manifest()?.is_none()); // Catalog data never binds a role.
+    Ok(())
+}
+
+#[test]
+fn model_description_keeps_source_rank_and_rejects_fabricated_or_empty_evidence() -> Result<()> {
+    let mut model = row("model");
+    let description = ModelDescription {
+        owner_line: Some(DescriptionContribution {
+            text: "Owner preference".into(),
+            source: "owner:1".into(),
+        }),
+        vault_measurements: Some(DescriptionContribution {
+            text: "Measured on real tasks".into(),
+            source: "vault:task-1".into(),
+        }),
+        public_benchmarks: Some(DescriptionContribution {
+            text: "Public score".into(),
+            source: "https://bench.example/1".into(),
+        }),
+        vendor_copy: Some(DescriptionContribution {
+            text: "Vendor claim".into(),
+            source: "https://vendor.example/model".into(),
+        }),
+    };
+    model.catalog.metadata.insert(
+        "description".into(),
+        serde_json::to_value(&description).unwrap(),
+    );
+    model.validate()?;
+    assert_eq!(
+        model
+            .description()?
+            .ranked()
+            .map(|(class, _)| class)
+            .collect::<Vec<_>>(),
+        vec![
+            DescriptionClass::OwnerLine,
+            DescriptionClass::VaultMeasurements,
+            DescriptionClass::PublicBenchmarks,
+            DescriptionClass::VendorCopy,
+        ]
+    );
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    vault.seed_model_catalog(&seed)?;
-    vault.seed_model_catalog(&seed)?;
-    assert_eq!(vault.model_registry_rows()?.len(), seed.rows.len());
+    vault.put_model_registry_row(&model)?;
+    assert_eq!(
+        vault
+            .model_registry_row(&model.catalog.model)?
+            .unwrap()
+            .description()?,
+        description
+    );
+    let mut bad = model.clone();
+    bad.catalog.metadata.get_mut("description").unwrap()["owner_line"]["source"] =
+        serde_json::json!("");
+    assert!(bad.validate().is_err());
+    let mut poisoned = CatalogSeed {
+        version: 1,
+        rows: vec![row("absent")],
+    };
+    assert!(CatalogSeed::from_json(&serde_json::to_vec(&poisoned).unwrap()).is_err());
+    poisoned.rows[0]
+        .catalog
+        .metadata
+        .insert("description".into(), serde_json::json!({}));
+    assert!(CatalogSeed::from_json(&serde_json::to_vec(&poisoned).unwrap()).is_ok());
     Ok(())
 }
 #[test]
@@ -194,9 +412,18 @@ fn seed_rejects_score_watermarks_without_inserting_any_rows() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let mut poisoned = row("poisoned");
     poisoned.fetched_at.insert("bench".into(), u64::MAX);
+    poisoned
+        .catalog
+        .metadata
+        .insert("description".into(), serde_json::json!({}));
+    let mut valid = row("valid");
+    valid
+        .catalog
+        .metadata
+        .insert("description".into(), serde_json::json!({}));
     let seed = CatalogSeed {
         version: 1,
-        rows: vec![row("valid"), poisoned],
+        rows: vec![valid, poisoned],
     };
     assert!(matches!(
         CatalogSeed::from_json(&serde_json::to_vec(&seed).unwrap()),
