@@ -11,15 +11,15 @@ const INPUT: &[u8] = include_bytes!("../vendor/stemma-engine/testdata/simple-tex
 
 /// Copy `INPUT` with its first `<w:p ...>` start tag given `attributes`.
 fn with_paragraph_attributes(attributes: &str) -> Vec<u8> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(INPUT)).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(INPUT)).expect("fixture opens");
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).unwrap();
+        let mut entry = archive.by_index(index).expect("entry");
         let name = entry.name().to_owned();
         let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes).unwrap();
+        entry.read_to_end(&mut bytes).expect("entry inflates");
         if name == "word/document.xml" {
-            let xml = String::from_utf8(bytes).unwrap();
+            let xml = String::from_utf8(bytes).expect("UTF-8 part");
             assert!(xml.contains("<w:p "), "fixture paragraph has attributes");
             bytes = xml
                 .replacen("<w:p ", &format!("<w:p {attributes} "), 1)
@@ -27,17 +27,17 @@ fn with_paragraph_attributes(attributes: &str) -> Vec<u8> {
         }
         writer
             .start_file(name, zip::write::FileOptions::default())
-            .unwrap();
-        writer.write_all(&bytes).unwrap();
+            .expect("entry starts");
+        writer.write_all(&bytes).expect("entry writes");
     }
-    writer.finish().unwrap().into_inner()
+    writer.finish().expect("archive finishes").into_inner()
 }
 
 fn accepted_text(bytes: &[u8]) -> String {
     Document::parse(bytes)
-        .unwrap()
+        .expect("DOCX parses")
         .read_accepted()
-        .unwrap()
+        .expect("accepted view")
         .to_text()
 }
 
