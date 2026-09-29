@@ -6,7 +6,6 @@ use super::*;
 use crate::HostingPrivacyPosture;
 use crate::authority::{AuthorityFold, CapabilitySlip};
 use crate::federation::{ScopeAxis, ScopeId};
-use crate::gate::project_depth::ProjectDepthDisposition;
 use crate::store::Store;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -98,6 +97,13 @@ impl<'a, 't> ProjectReader<'a, 't> {
             Some((record, ProjectVerdict::Visible)) => Some(record),
             _ => None,
         })
+    }
+
+    /// A body read through another view (an off-record session composes its
+    /// overlay over base), judged by this same fold.
+    pub(crate) fn visible_body(&self, id: EntityId, body: &[u8]) -> Result<Option<ProjectRecord>> {
+        let record: ProjectRecord = decode(body)?;
+        Ok((self.judge(id, &record)? == ProjectVerdict::Visible).then_some(record))
     }
 
     /// The stored row with its verdict.
@@ -270,7 +276,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
     }
 
     /// Owner-door rows (card mint, thread conversion, owner creation) carry
-    /// no slip. Their creation authority is the owner birth of ONE-2118.
+    /// no slip: their creation authority is the owner birth their door
+    /// requires (ONE-2118). An unsigned row that replay laid over a signed
+    /// one stays quarantined.
     fn unsigned(&self, id: EntityId, authority: &ProjectAuthority) -> Result<ProjectVerdict> {
         if Some(id) == self.root {
             return Ok(ProjectVerdict::Visible);
@@ -280,22 +288,11 @@ impl<'a, 't> ProjectReader<'a, 't> {
                 "a parentless project is not this vault's root",
             ));
         }
-        Ok(
-            match crate::gate::project_depth::birth_authorization(
-                self.store,
-                self.txn,
-                self.posture,
-                id,
-            )? {
-                ProjectDepthDisposition::Authorized => ProjectVerdict::Visible,
-                ProjectDepthDisposition::Pending => {
-                    ProjectVerdict::Pending("owner birth not yet received")
-                }
-                ProjectDepthDisposition::Quarantined => ProjectVerdict::Quarantined(
-                    "unsigned project without an authorized owner birth",
-                ),
-            },
-        )
+        Ok(if STRIPPED_PROOF.contains(self.store, self.txn, &id)? {
+            ProjectVerdict::Quarantined("signed project replaced by an unsigned row")
+        } else {
+            ProjectVerdict::Visible
+        })
     }
 
     /// Verifies the slip chain and holder signature as of the signed time.

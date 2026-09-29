@@ -158,10 +158,19 @@ impl ScopedRead<'_> {
                 if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
                     continue;
                 }
+                let raw = self
+                    .entity_record_in(txn, &id)?
+                    .ok_or(Error::CorruptedIndex("weave project index"))?
+                    .encode();
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("weave project header"))?;
+                if header.entity_type != kind {
+                    return Err(Error::CorruptedIndex("weave project kind"));
+                }
                 // A row the project read fold hides never reaches a report.
                 let Some(record) = project_fold
                     .as_ref()
-                    .map(|fold| fold.visible(id))
+                    .map(|fold| fold.visible_body(id, &raw[ENTITY_METADATA_HEADER_LEN..]))
                     .transpose()?
                     .flatten()
                 else {

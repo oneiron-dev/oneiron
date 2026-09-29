@@ -73,6 +73,10 @@ const ROOT: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::PROJECT_R
 pub(super) const ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::PROJECT_ROOM_OWNER);
 
+/// A signed project row that replay replaced with an unsigned one. Key: id16.
+const STRIPPED_PROOF: SideTable<EntityId, [u8; 1], Raw> =
+    SideTable::new(&side_table::PROJECT_STRIPPED_PROOF);
+
 /// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
 /// id16 (change event id).
 const CHANGES: SideTable<(EntityId, EntityId), ProjectRoomChange, Named> =
@@ -149,7 +153,6 @@ pub(crate) const MAX_PROJECT_ANCHORS: usize = 64;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectAuthority {
-    pub role: ProjectRole,
     pub parents: Vec<String>,
     pub claims_scope_ref: String,
     pub slice: Scope,
@@ -202,8 +205,7 @@ impl ProjectAuthority {
     /// A change only a board holder may make: structure, leadership, the
     /// board itself, or any widening. Narrowing stays with the leader.
     pub(crate) fn board_action(&self, next: &Self) -> bool {
-        self.role != next.role
-            || self.parents != next.parents
+        self.parents != next.parents
             || self.leader != next.leader
             || self.board != next.board
             || self.claims_scope_ref != next.claims_scope_ref
@@ -222,7 +224,6 @@ impl ProjectAuthority {
 impl ProjectRecord {
     pub fn authority(&self) -> ProjectAuthority {
         ProjectAuthority {
-            role: self.role,
             parents: self.parents.clone(),
             claims_scope_ref: self.claims_scope_ref.clone(),
             slice: self.slice.clone(),
@@ -724,6 +725,25 @@ impl Vault {
             .map(|row| row.map(|(_, change)| change))
             .collect()
     }
+}
+
+/// Replay stores every structurally valid row and may only quarantine
+/// (ARCH-0040 ONE-AUTHLOG-F2). A signed row replaced by an unsigned one is
+/// held here until a signed row lands again; the live door refuses it.
+pub(crate) fn note_project_proof(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<()> {
+    let next: ProjectRecord = decode(data)?;
+    if next.write_proof.is_some() {
+        STRIPPED_PROOF.delete(store, txn, &id)?;
+    } else if read::stored(store, txn, id, kind)?.is_some_and(|old| old.write_proof.is_some()) {
+        STRIPPED_PROOF.put(store, txn, &id, &[1])?;
+    }
+    Ok(())
 }
 
 /// The vault's root project in this snapshot.

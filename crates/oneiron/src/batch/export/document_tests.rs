@@ -588,10 +588,11 @@ fn whole_vault_model_restore_reports_local_creation_and_repeat_mapping() -> Resu
     let bytes = source.export_whole_vault(PackFormat::Json)?;
     let first = target.import_whole_vault_json(bytes.bytes())?;
     // The model substrate remaps locally (1) and the fixture claim inserts
-    // (1); the two vaults'Conversation seed rows (type 11) and one further
-    // random-id seed row never collide, adding 2 more. Stable-id seeds
-    // (agent defs, bootstrap skills, anchors) count as unchanged.
-    assert_eq!(first.inserted_entities, 4);
+    // (1). The source's random-id root project and its home room map onto
+    // this vault's root instead of landing as a second root (ARCH-0067: the
+    // vault itself is the root project). Stable-id seeds (agent defs,
+    // bootstrap skills, anchors) count as unchanged.
+    assert_eq!(first.inserted_entities, 2);
     let local = target.ensure_model_substrate("archive fixture model", "v2", 7)?;
     assert_eq!(
         first.remapped_entities.get(&original.to_hex()),

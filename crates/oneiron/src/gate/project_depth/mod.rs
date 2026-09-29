@@ -13,8 +13,7 @@ pub(crate) use codec::{
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use fold::resolve_creation_default;
 pub(crate) use fold::{
-    ProjectDepthDisposition, birth_authorization, birth_for_project, implicit_birth_applies,
-    resolve_project_depth, unsigned_birth_trusted,
+    birth_for_project, implicit_birth_applies, resolve_project_depth, unsigned_birth_trusted,
 };
 pub(crate) use write::{put_edit_in_txn, put_local_birth_in_txn, put_signed_birth_in_txn};
 

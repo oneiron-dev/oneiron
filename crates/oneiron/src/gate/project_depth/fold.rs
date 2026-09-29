@@ -170,23 +170,6 @@ fn birth_disposition(
     })
 }
 
-/// How the creation of a project with no signed write proof is authorized:
-/// its stored owner birth, or the implicit seeded birth where that applies.
-pub(crate) fn birth_authorization(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    posture: HostingPrivacyPosture,
-    project: EntityId,
-) -> Result<ProjectDepthDisposition> {
-    match birth_for_project(store, txn, project)? {
-        Some((_, birth)) => birth_disposition(store, txn, posture, &birth),
-        None if implicit_birth_applies(store, txn, posture, project)? => {
-            Ok(ProjectDepthDisposition::Authorized)
-        }
-        None => Ok(ProjectDepthDisposition::Pending),
-    }
-}
-
 /// A vault with no authority root has no signer to require.
 fn vault_is_unrooted(
     store: &Store,

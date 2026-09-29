@@ -471,6 +471,7 @@ pub(super) fn validate_scope_carriers(
                 context.posture,
             )?;
         }
+        crate::workspace_roster::note_project_proof(store, wtxn, id, entity_type, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;

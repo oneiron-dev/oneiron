@@ -981,6 +981,49 @@ fn a_non_leader_change_by_sync_is_quarantined_not_dropped() -> Result<()> {
     Ok(())
 }
 
+/// Replay may only quarantine: an unsigned row laid over a signed one is
+/// stored but hidden until a signed row lands again.
+#[cfg(feature = "sync")]
+#[test]
+fn a_replayed_row_that_strips_the_proof_stays_quarantined() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let (root_id, root, leader) = root_leader(&vault)?;
+    let child_id = EntityId::now();
+    spawn_signed(
+        &vault,
+        root_id,
+        child_id,
+        leader,
+        EntityId::now(),
+        root.slice,
+        1,
+    )?;
+    let signed = vault.project(child_id)?.unwrap();
+    let mut stripped = signed.clone();
+    stripped.write_proof = None;
+    stripped.leader = leader.to_hex();
+    stripped.roster.push(leader.to_hex());
+    assert_eq!(
+        vault
+            .put_project(child_id, &stripped, 2)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidProjectBody
+    );
+    replay_project(&vault, child_id, &stripped, 2)?;
+    assert!(vault.project(child_id)?.is_none());
+    assert_eq!(
+        verdict_of(&vault, child_id)?,
+        Some(ProjectVerdict::Quarantined(
+            "signed project replaced by an unsigned row"
+        ))
+    );
+    replay_project(&vault, child_id, &signed, 3)?;
+    assert_eq!(vault.project(child_id)?, Some(signed));
+    Ok(())
+}
+
 /// Acceptance: every project read path goes through the read fold. Only the
 /// write doors and the fold itself decode a stored PROJECT row.
 #[test]
