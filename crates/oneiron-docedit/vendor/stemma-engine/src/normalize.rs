@@ -955,6 +955,9 @@ fn scan_part_streaming(
         config.trim_text(false);
         config.expand_empty_elements = false;
         config.check_end_names = true;
+        // The scan reads no text, so a lone `&` in it is not the scan's to
+        // reject; the tree-building parse decodes text and rejects it there.
+        config.allow_dangling_amp = true;
     }
 
     let mut rev_counts = PartRevisionCounts::default();
@@ -987,7 +990,7 @@ fn scan_part_streaming(
                 }
                 let frame = ns_frame_from_start(start, &reader)?;
                 scope.push(frame);
-                let (prefix, local) = split_name(start.name(), &reader)?;
+                let (prefix, local) = split_name(start.name());
                 classify_scan_element(
                     prefix.as_deref(),
                     &local,
@@ -1010,7 +1013,7 @@ fn scan_part_streaming(
                 // resolving its own name, so push, classify, then pop.
                 let frame = ns_frame_from_start(start, &reader)?;
                 scope.push(frame);
-                let (prefix, local) = split_name(start.name(), &reader)?;
+                let (prefix, local) = split_name(start.name());
                 classify_scan_element(
                     prefix.as_deref(),
                     &local,
@@ -1054,12 +1057,12 @@ fn ns_frame_from_start(
             })
         })?;
         let key = attr.key;
-        if key.as_ref() == b"xmlns" {
+        if key.as_ref() == "xmlns" {
             let value = decode_attr_value(&attr, reader)?;
             bindings.push((String::new(), value));
             continue;
         }
-        let (akey_prefix, akey_local) = split_name(key, reader)?;
+        let (akey_prefix, akey_local) = split_name(key);
         if akey_prefix.as_deref() == Some("xmlns") {
             let value = decode_attr_value(&attr, reader)?;
             bindings.push((akey_local, value));
@@ -1074,8 +1077,7 @@ fn decode_attr_value(
     reader: &Reader<&[u8]>,
 ) -> Result<String, NormalizeError> {
     use crate::word_xml::WordXmlError;
-    Ok(attr
-        .unescape_value()
+    Ok(quick_xml::escape::unescape(&attr.value)
         .map_err(|e| {
             NormalizeError::XmlParseQuick(WordXmlError::QuickXml {
                 position: reader.buffer_position(),
@@ -1085,35 +1087,14 @@ fn decode_attr_value(
         .into_owned())
 }
 
-/// Split a `QName` into `(prefix, local)` owned strings.
-fn split_name(
-    qname: QName<'_>,
-    reader: &Reader<&[u8]>,
-) -> Result<(Option<String>, String), NormalizeError> {
-    use crate::word_xml::WordXmlError;
+/// Split a `QName` into `(prefix, local)` owned strings. quick-xml has already
+/// validated the input as UTF-8.
+fn split_name(qname: QName<'_>) -> (Option<String>, String) {
     let (local, prefix) = qname.decompose();
-    let local = std::str::from_utf8(local.into_inner())
-        .map_err(|e| {
-            NormalizeError::XmlParseQuick(WordXmlError::QuickXml {
-                position: reader.buffer_position(),
-                reason: format!("non-UTF-8 element/attribute local name: {e}"),
-            })
-        })?
-        .to_string();
-    let prefix = match prefix {
-        Some(p) => Some(
-            std::str::from_utf8(p.into_inner())
-                .map_err(|e| {
-                    NormalizeError::XmlParseQuick(WordXmlError::QuickXml {
-                        position: reader.buffer_position(),
-                        reason: format!("non-UTF-8 namespace prefix: {e}"),
-                    })
-                })?
-                .to_string(),
-        ),
-        None => None,
-    };
-    Ok((prefix, local))
+    (
+        prefix.map(|p| p.into_inner().to_string()),
+        local.into_inner().to_string(),
+    )
 }
 
 // =============================================================================

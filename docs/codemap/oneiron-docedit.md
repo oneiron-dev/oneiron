@@ -26,3 +26,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/breaker.rs` | test | s | — | — | — |
 | `tests/identity.rs` | test | m | — | — | — |
 | `tests/revisions.rs` | test | s | — | — | — |
+| `tests/stemma_reader.rs` | test | s | — | — | The stemma fork reads untrusted DOCX parts with quick-xml |
