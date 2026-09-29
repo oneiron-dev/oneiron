@@ -174,11 +174,7 @@ fn provider_echo_binds_to_the_original_and_never_adds_a_second_reaction() {
         "no second reaction claim"
     );
     assert_eq!(
-        room.vault
-            .reactions_since(room.alice, 0)
-            .unwrap()
-            .signals
-            .len(),
+        room.vault.reactions_since(room.alice, 0).unwrap().len(),
         1,
         "and no second put signal"
     );
@@ -418,4 +414,63 @@ fn surface_reaction_event_normalizes_add_echo_and_removal() {
         ErrorKind::ConversationState,
         "an add needs its time"
     );
+}
+
+#[test]
+fn only_the_conversation_mirror_may_attest_another_persons_reaction() {
+    let room = room_with(Some(MIRROR));
+    let other = EntityId::now();
+    room.vault
+        .put_entity(
+            &other,
+            crate::registry::ENTITY_TYPE_MACHINE,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &[0x80],
+        )
+        .unwrap();
+    room.vault
+        .provision_host_machine_identity(&crate::test_util::test_host_issuer(), other)
+        .unwrap();
+    let machine = WriteActor::new(other, EdgeActorClass::System);
+    // Its ceiling allows Auto, so only the reaction rule can refuse it.
+    crate::conversation_dag::test_support::put_dag_test_policy(&room.vault, machine, true).unwrap();
+    let id = EntityId::now();
+    let candidate = crate::ClaimCandidate::new(
+        PREDICATE_CONVERSATION_REACTION,
+        crate::claim::ClaimSubject::Entity(room.message),
+        ReactionValue {
+            glyph: "👍".to_owned(),
+            occurred_at: 20,
+            by: room.bob,
+            external_id: Some(generation("g-x")),
+        }
+        .to_value(),
+        1.0,
+    );
+    let envelope = crate::test_util::sign_machine_candidate(
+        &room.vault,
+        &id,
+        &candidate,
+        &crate::WriteEnvelope::new(
+            machine,
+            crate::ClaimSource::Observed,
+            crate::WriteProvenance::new(rmpv::Value::Map(vec![])).unwrap(),
+            crate::claim::ClaimApprovalStatus::Auto,
+        ),
+    );
+    let err = room
+        .vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate,
+            &envelope,
+            TimeRange { start: 20, end: 20 },
+            20,
+        )
+        .commit()
+        .unwrap_err();
+    assert!(err.to_string().contains("conversation mirror"), "{err}");
+    assert!(room.vault.get(&id).unwrap().is_none());
 }

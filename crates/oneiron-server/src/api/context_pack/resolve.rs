@@ -598,23 +598,18 @@ fn read_reaction_signals(
         .as_deref()
         .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
         .transpose()?;
-    let page = server
+    let signals = server
         .vault
-        .reactions_since_page(
-            person,
-            since,
-            req.signals_after.as_deref(),
-            req.signals_limit
-                .unwrap_or(oneiron::reaction::MAX_REACTION_SIGNAL_PAGE),
-        )
+        .reactions_since(person, since)
         .map_err(|e| core_engine_error("reaction signal read failed", e))?;
-    response.signals_next = page.next;
     // An owner-grade feed of one person's messages keeps the owner's reach;
     // a delegated, room-scoped or interlocutor-scoped read is filtered by
-    // the same scoped read as the pack.
+    // the same scoped read as the pack. Paging follows the filter, so a
+    // cursor never names a signal this caller was not shown.
     let scoped =
         !auth.is_owner_grade() || req.conversation_id.is_some() || req.interlocutors.is_some();
-    for signal in page.signals {
+    let mut kept = Vec::new();
+    for signal in signals {
         if scoped
             && !scoped_read
                 .is_reaction_signal_readable(&signal)
@@ -637,7 +632,20 @@ fn read_reaction_signals(
                 continue;
             }
         }
-        response.signals.push(CoreReactionSignal {
+        kept.push(signal);
+    }
+    let page = oneiron::reaction::page_reaction_signals(
+        kept,
+        req.signals_after.as_deref(),
+        req.signals_limit
+            .unwrap_or(oneiron::reaction::MAX_REACTION_SIGNAL_PAGE),
+    )
+    .map_err(|e| core_engine_error("reaction signal page failed", e))?;
+    response.signals_next = page.next;
+    response.signals = page
+        .signals
+        .into_iter()
+        .map(|signal| CoreReactionSignal {
             event: signal.event(),
             reaction: signal.reaction.to_hex(),
             message: signal.message.to_hex(),
@@ -645,7 +653,7 @@ fn read_reaction_signals(
             glyph: signal.glyph,
             occurred_at: signal.occurred_at,
             recorded_at: signal.recorded_at,
-        });
-    }
+        })
+        .collect();
     Ok(())
 }

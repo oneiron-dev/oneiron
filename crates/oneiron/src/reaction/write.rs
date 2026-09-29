@@ -1,6 +1,6 @@
 //! First-party reaction writes on the (message, person, glyph) chain, and the
 //! claim write both first-party and mirrored reactions share.
-use super::chain::{StoredReaction, chain_in};
+use super::chain::{StoredReaction, admission_in, chain_in, reactions_on_in};
 use super::value::{PREDICATE_CONVERSATION_REACTION, ReactionValue};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::conversation::{AudienceCache, room_for_record_in, room_person_write_allowed};
@@ -19,10 +19,14 @@ use rmpv::Value;
 pub(crate) const REACTION_STANDALONE_WEIGHT: f32 = 0.1;
 /// Salience stamped on each reaction claim.
 const REACTION_SALIENCE: f32 = 0.1;
-/// Message text copied into a reaction's lexical document.
-const INDEXED_EXCERPT_CHARS: usize = 280;
-/// Tolerated provider clock skew for a reaction's occurrence time (seconds).
+/// Tolerated clock skew for a reaction's occurrence time (seconds).
 const OCCURRENCE_SKEW: u64 = 300;
+/// Reaction claims one person may hold on one record, removed ones included:
+/// room for any honest toggling, and a bound on what one member can attach.
+#[cfg(not(test))]
+pub(super) const MAX_REACTIONS_PER_PERSON: usize = 256;
+#[cfg(test)]
+pub(super) const MAX_REACTIONS_PER_PERSON: usize = 8;
 
 pub(super) fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
@@ -110,6 +114,16 @@ pub(super) fn require_occurrence(vault: &Vault, occurred_at: u64) -> Result<u64>
     Ok(now)
 }
 
+/// A first-party reaction happens now: a backdated one could reach a reader
+/// whose room window closed before the reaction was made.
+fn require_current_occurrence(vault: &Vault, occurred_at: u64) -> Result<u64> {
+    let now = require_occurrence(vault, occurred_at)?;
+    if occurred_at < now.saturating_sub(OCCURRENCE_SKEW) {
+        return Err(invalid("first-party reaction occurrence is not current"));
+    }
+    Ok(now)
+}
+
 fn first_party_envelope(actor: WriteActor) -> Result<WriteEnvelope> {
     let source = match actor.actor_class() {
         EdgeActorClass::Human => ClaimSource::UserStated,
@@ -126,22 +140,14 @@ fn first_party_envelope(actor: WriteActor) -> Result<WriteEnvelope> {
     ))
 }
 
-/// The lexical document of a reaction: its glyph, the reactor's name and an
-/// excerpt of the reacted record, so a direct question can reach it.
-fn indexed_text(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    message: EntityId,
-    value: &ReactionValue,
-) -> Result<String> {
+/// The lexical document of a reaction: its glyph and the reactor's name. It
+/// copies nothing from the reacted record, so erasing the record never
+/// depends on finding every reaction to scrub its text.
+fn indexed_text(vault: &Vault, txn: &heed::RoTxn<'_>, value: &ReactionValue) -> Result<String> {
     let mut text = value.glyph.clone();
     if let Some(name) = super::read::person_name_in(vault, txn, value.by)? {
         text.push(' ');
         text.push_str(&name);
-    }
-    if let Some(excerpt) = super::read::record_text_in(vault, txn, message)? {
-        text.push(' ');
-        text.extend(excerpt.chars().take(INDEXED_EXCERPT_CHARS));
     }
     Ok(text)
 }
@@ -167,7 +173,7 @@ pub(super) fn write_reaction_in_txn(
     )
     .with_salience(REACTION_SALIENCE);
     vault.sign_retained_machine_claim_in_txn(txn, &id, &candidate, &mut envelope)?;
-    let text = indexed_text(vault, txn, message, value)?;
+    let text = indexed_text(vault, txn, value)?;
     vault
         .batch_in()
         .claim_candidate(
@@ -221,16 +227,24 @@ impl Vault {
             }
             let room = target_room_in(self, txn, input.message)?;
             require_reactor_in(self, txn, room, input.by)?;
-            let now = require_occurrence(self, value.occurred_at)?;
-            if let Some(live) = chain_in(self, txn, input.message, input.by, &value.glyph)?
+            let now = require_current_occurrence(self, value.occurred_at)?;
+            let fold = admission_in(self, txn)?;
+            let mine: Vec<StoredReaction> = reactions_on_in(self, txn, &fold, input.message)?
                 .into_iter()
+                .filter(|row| row.value.by == input.by)
+                .collect();
+            if let Some(live) = mine
+                .iter()
                 .rev()
-                .find(StoredReaction::live)
+                .find(|row| row.live() && row.value.glyph == value.glyph)
             {
                 return Ok(ReactionChange {
                     id: live.id,
                     state: ReactionState::Replayed,
                 });
+            }
+            if mine.len() >= MAX_REACTIONS_PER_PERSON {
+                return Err(invalid("too many reactions by one person on one record"));
             }
             let envelope = first_party_envelope(input.actor)?;
             let id = write_reaction_in_txn(self, txn, input.message, &value, envelope, now)?;
@@ -258,7 +272,8 @@ impl Vault {
             }
             let room = target_room_in(self, txn, message)?;
             require_reactor_in(self, txn, room, by)?;
-            let chain = chain_in(self, txn, message, by, glyph)?;
+            let fold = admission_in(self, txn)?;
+            let chain = chain_in(self, txn, &fold, message, by, glyph)?;
             let Some(live) = chain.iter().rev().find(|row| row.live()) else {
                 let last = chain
                     .last()
@@ -272,11 +287,11 @@ impl Vault {
             let now = self.store.clock.now_recorded_at();
             // Offline peers can each have put the same reaction; the remove
             // retracts every live claim of the tuple, so none survives it.
+            // The person's own remove reaches the provider whichever side
+            // the claim came from; the connector decides what it can undo.
             for row in chain.iter().filter(|row| row.live()) {
                 retract_in_txn(self, txn, row, now)?;
-                if row.first_party() {
-                    super::outbound::enqueue_in_txn(self, txn, row.id, room, true)?;
-                }
+                super::outbound::enqueue_in_txn(self, txn, row.id, room, true)?;
             }
             Ok(ReactionChange {
                 id,

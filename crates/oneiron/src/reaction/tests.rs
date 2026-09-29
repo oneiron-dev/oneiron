@@ -132,7 +132,7 @@ pub(super) fn input(room: &Room, by: EntityId, glyph: &str) -> ReactionInput {
         message: room.message,
         by,
         glyph: glyph.to_owned(),
-        occurred_at: 20,
+        occurred_at: room.vault.store.clock.now_recorded_at(),
         actor: human(by),
     }
 }

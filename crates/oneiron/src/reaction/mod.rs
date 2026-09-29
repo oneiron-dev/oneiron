@@ -38,7 +38,9 @@ pub use outbound::{
 };
 pub(crate) use read::grouped_lines_in;
 pub use read::{REACTIONS_FIELD, ReactionHistoryEntry, ReactionPill, reaction_line};
-pub use signal::{MAX_REACTION_SIGNAL_PAGE, ReactionSignal, ReactionSignalPage};
+pub use signal::{
+    MAX_REACTION_SIGNAL_PAGE, ReactionSignal, ReactionSignalPage, page_reaction_signals,
+};
 pub use value::{
     PREDICATE_CONVERSATION_REACTION, PREDICATE_CONVERSATION_REACTION_ECHO, ReactionExternalId,
     ReactionValue,

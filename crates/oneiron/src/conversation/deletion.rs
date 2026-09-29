@@ -543,22 +543,22 @@ impl Vault {
                 cursor = ids.last().copied();
             }
         }
-        // Reactions about the record go with it, under the same reason. Their
-        // ids are read first: a hard delete removes the claims' subject edges.
+        // Reactions about the record go first, under the same reason: a hard
+        // delete removes the claims' subject edges, and a failure here leaves
+        // the record in place for a retry to find them again.
         let reactions = {
             let txn = self.store.env.read_txn()?;
             crate::reaction::record_reaction_claims_in(self, &txn, record)?
         };
+        crate::reaction::erase_reaction_claims(self, &reactions, reason)?;
         let reverify = |txn: &heed::RoTxn<'_>| {
             reverify_record_delete(self, txn, room, record, actor, reason, subject)
         };
-        let outcome = self.delete_entity_with_reason_gated(
+        self.delete_entity_with_reason_gated(
             &record,
             reason,
             GatedDeletion::new(context, &reverify),
-        )?;
-        crate::reaction::erase_reaction_claims(self, &reactions, reason)?;
-        Ok(outcome)
+        )
     }
 
     /// Deletes a room record as its author, or as a room owner/admin for policy.

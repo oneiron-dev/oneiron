@@ -64,6 +64,14 @@ fn room(server: &SyncServer, body: ConversationBody) -> (EntityId, EntityId, Ent
     (room, alice, bob, message)
 }
 
+/// A first-party reaction happens now, on the vault's clock.
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
 fn actor(person: EntityId) -> Value {
     json!({"entity_ref": person.to_hex(), "actor_class": "human"})
 }
@@ -73,7 +81,7 @@ async fn reaction_route_puts_groups_signals_and_removes() {
     let (_dir, server) = test_server();
     let (room, alice, bob, message) = room(&server, ConversationBody::default());
     let path = format!("/v1/core/messages/{}/reactions", message.to_hex());
-    let put = json!({"by": bob.to_hex(), "glyph": "👀", "occurred_at": 20, "actor": actor(bob)});
+    let put = json!({"by": bob.to_hex(), "glyph": "👀", "occurred_at": now(), "actor": actor(bob)});
     let (status, first) =
         route_json(server.clone(), json_request("POST", &path, put.clone())).await;
     assert_eq!(status, StatusCode::OK, "{first}");
@@ -157,7 +165,7 @@ async fn context_packed_message_carries_its_grouped_reactions() {
                 message,
                 by,
                 glyph: glyph.to_owned(),
-                occurred_at: 20,
+                occurred_at: now(),
                 actor: WriteActor::new(by, EdgeActorClass::Human),
             })
             .unwrap();
@@ -197,7 +205,7 @@ async fn reaction_route_refuses_another_persons_reaction_and_paging_without_sinc
         json_request(
             "POST",
             &path,
-            json!({"by": bob.to_hex(), "glyph": "👀", "occurred_at": 20, "actor": actor(alice)}),
+            json!({"by": bob.to_hex(), "glyph": "👀", "occurred_at": now(), "actor": actor(alice)}),
         ),
     )
     .await;
@@ -251,7 +259,7 @@ async fn first_party_append_record_is_reactable_without_a_witness_child() {
         json_request(
             "POST",
             &format!("/v1/core/messages/{id}/reactions"),
-            json!({"by": bob.to_hex(), "glyph": "👀", "occurred_at": 20, "actor": actor(bob)}),
+            json!({"by": bob.to_hex(), "glyph": "👀", "occurred_at": now(), "actor": actor(bob)}),
         ),
     )
     .await;
@@ -288,7 +296,7 @@ async fn mirrored_reaction_route_goes_through_the_signed_mirror_machine() {
         },
     );
     let path = format!("/v1/core/messages/{}/reactions", message.to_hex());
-    let add = json!({"by": bob.to_hex(), "glyph": "👍", "occurred_at": 20, "actor": actor(bob),
+    let add = json!({"by": bob.to_hex(), "glyph": "👍", "occurred_at": now(), "actor": actor(bob),
         "external": {"connector": "slack", "id": "g-1"}});
     let (status, put) = route_json(server.clone(), json_request("POST", &path, add)).await;
     assert_eq!(status, StatusCode::OK, "{put}");

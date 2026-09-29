@@ -1,6 +1,6 @@
 //! Grouped reaction pills, chain history, and the one-line-per-glyph rendering
 //! recall and context packs attach to a conversation record.
-use super::chain::{StoredReaction, chain_in, reactions_on_in};
+use super::chain::{StoredReaction, admission_in, chain_in, reactions_on_in};
 use super::value::ReactionExternalId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::conversation::AudienceCache;
@@ -13,7 +13,6 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const REACTIONS_FIELD: &str = "reactions";
 /// Names shown before a group's remainder is summarized as `+N`.
 const NAMED_REACTORS: usize = 2;
-const RECORD_TEXT_KEYS: [&str; 4] = ["content", "text", "body", "title"];
 const PERSON_NAME_KEYS: [&str; 2] = ["display_name", "name"];
 
 /// One glyph's live reactions, contributors in first-put order.
@@ -43,6 +42,7 @@ pub struct ReactionHistoryEntry {
 pub(crate) fn pills_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    fold: &crate::authority::AuthorityFold,
     record: EntityId,
     viewer: Option<EntityId>,
     audience: &mut AudienceCache,
@@ -50,7 +50,7 @@ pub(crate) fn pills_in(
 ) -> Result<Vec<ReactionPill>> {
     let mut pills: Vec<ReactionPill> = Vec::new();
     let mut seen = BTreeSet::new();
-    for row in reactions_on_in(vault, txn, record)? {
+    for row in reactions_on_in(vault, txn, fold, record)? {
         if !row.live()
             || seen.contains(&(row.value.by, row.value.glyph.clone()))
             || !audience.readable(vault, txn, row.id, &[row.value.by])?
@@ -91,21 +91,32 @@ pub fn reaction_line(glyph: &str, count: usize, names: &[String]) -> String {
     format!("{glyph}×{count} ({people})")
 }
 
-/// One grouped line per glyph for the reactions `admit` lets through.
+/// One grouped line per glyph for the reactions `admit` lets through. A
+/// record carrying more claims than one read may walk yields no lines rather
+/// than failing the recall or pack that returned it.
 pub(crate) fn grouped_lines_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: EntityId,
     admit: impl FnMut(&StoredReaction) -> Result<bool>,
 ) -> Result<Vec<String>> {
-    let pills = pills_in(
+    let fold = admission_in(vault, txn)?;
+    let pills = match pills_in(
         vault,
         txn,
+        &fold,
         record,
         None,
         &mut AudienceCache::default(),
         admit,
-    )?;
+    ) {
+        Ok(pills) => pills,
+        Err(crate::Error::IndexOverflow(_)) => {
+            tracing::warn!(record = %record.to_hex(), "reaction lines skipped: record over the claim read bound");
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error),
+    };
     pills
         .iter()
         .map(|pill| {
@@ -178,15 +189,6 @@ fn display_name_in(vault: &Vault, txn: &heed::RoTxn<'_>, person: EntityId) -> Re
     Ok(person_name_in(vault, txn, person)?.unwrap_or_else(|| person.to_hex()[..8].to_owned()))
 }
 
-/// The text of a conversation record, when its body carries one.
-pub(crate) fn record_text_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-) -> Result<Option<String>> {
-    Ok(body_map(vault, txn, record)?.and_then(|body| first_string(&body, &RECORD_TEXT_KEYS)))
-}
-
 impl Vault {
     /// Groups each readable message's live reactions for `viewer` in one
     /// snapshot. A message the viewer cannot read gets no pills, and a
@@ -197,6 +199,7 @@ impl Vault {
         viewer: EntityId,
     ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
         let txn = self.store.env.read_txn()?;
+        let fold = admission_in(self, &txn)?;
         let mut reactors = AudienceCache::default();
         let mut viewers = AudienceCache::default();
         let mut result = BTreeMap::new();
@@ -204,9 +207,15 @@ impl Vault {
             if !viewers.readable(self, &txn, message, &[viewer])? {
                 continue;
             }
-            let pills = pills_in(self, &txn, message, Some(viewer), &mut reactors, |row| {
-                viewers.readable(self, &txn, row.id, &[viewer])
-            })?;
+            let pills = pills_in(
+                self,
+                &txn,
+                &fold,
+                message,
+                Some(viewer),
+                &mut reactors,
+                |row| viewers.readable(self, &txn, row.id, &[viewer]),
+            )?;
             result.insert(message, pills);
         }
         Ok(result)
@@ -221,7 +230,8 @@ impl Vault {
         glyph: &str,
     ) -> Result<Vec<ReactionHistoryEntry>> {
         let txn = self.store.env.read_txn()?;
-        Ok(chain_in(self, &txn, message, by, glyph)?
+        let fold = admission_in(self, &txn)?;
+        Ok(chain_in(self, &txn, &fold, message, by, glyph)?
             .into_iter()
             .map(|row| ReactionHistoryEntry {
                 id: row.id,

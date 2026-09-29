@@ -20,9 +20,7 @@ fn signal_feed_pages_new_reactions_to_own_messages_since_the_last_turn() {
         .unwrap();
 
     let all = room.vault.reactions_since(room.alice, 0).unwrap();
-    assert_eq!(all.next, None);
     let events: Vec<_> = all
-        .signals
         .iter()
         .map(|signal| (signal.reaction, signal.event()))
         .collect();
@@ -30,14 +28,9 @@ fn signal_feed_pages_new_reactions_to_own_messages_since_the_last_turn() {
     let at = |event| events.iter().position(|row| *row == event).expect("event");
     assert!(at((bobs.id, "reaction.put")) < at((bobs.id, "reaction.revoked")));
     at((daves.id, "reaction.put"));
+    assert!(all.iter().all(|signal| signal.message == room.message));
     assert!(
-        all.signals
-            .iter()
-            .all(|signal| signal.message == room.message)
-    );
-    assert!(
-        all.signals
-            .windows(2)
+        all.windows(2)
             .all(|pair| pair[0].recorded_at <= pair[1].recorded_at)
     );
 
@@ -56,41 +49,29 @@ fn signal_feed_pages_new_reactions_to_own_messages_since_the_last_turn() {
             None => break,
         }
     }
-    assert_eq!(paged, all.signals);
+    assert_eq!(paged, all);
 
     // Since the last turn: nothing after it, then the new reaction.
-    let last_turn = all
-        .signals
-        .iter()
-        .map(|signal| signal.recorded_at)
-        .max()
-        .unwrap();
+    let last_turn = all.iter().map(|signal| signal.recorded_at).max().unwrap();
     assert!(
         room.vault
             .reactions_since(room.alice, u64::MAX)
             .unwrap()
-            .signals
             .is_empty()
     );
     let erins = react(&room, room.erin, "✅");
     let since = room.vault.reactions_since(room.alice, last_turn).unwrap();
+    assert!(since.iter().all(|signal| signal.recorded_at >= last_turn));
     assert!(
         since
-            .signals
-            .iter()
-            .all(|signal| signal.recorded_at >= last_turn)
-    );
-    assert!(
-        since
-            .signals
             .iter()
             .any(|signal| signal.reaction == erins.id && signal.event() == "reaction.put")
     );
 
     // Bob's feed holds only the reaction to Bob's own message.
     let bob_feed = room.vault.reactions_since(room.bob, 0).unwrap();
-    assert_eq!(bob_feed.signals.len(), 1);
-    assert_eq!(bob_feed.signals[0].message, other);
+    assert_eq!(bob_feed.len(), 1);
+    assert_eq!(bob_feed[0].message, other);
 }
 
 #[test]

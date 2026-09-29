@@ -2,7 +2,7 @@
 //! time, read from the reaction claims themselves so a replica answers the
 //! same as the writer. A put signals at its learned time, a removal at its
 //! retraction time.
-use super::chain::reactions_on_in;
+use super::chain::{admission_in, reactions_on_in};
 use crate::conversation::AudienceCache;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
@@ -81,31 +81,38 @@ fn cursor_hex(key: &[u8; CURSOR_BYTES]) -> String {
     key.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-impl Vault {
-    /// Every reaction signal for `person` recorded at or after `since`.
-    pub fn reactions_since(&self, person: EntityId, since: u64) -> Result<ReactionSignalPage> {
-        self.reactions_since_page(person, since, None, MAX_REACTION_SIGNAL_PAGE)
+/// Pages signals already in feed order: at most `limit`, strictly after the
+/// `after` cursor. A caller that withholds some signals pages what it keeps,
+/// so a cursor never names a signal the reader was not shown.
+pub fn page_reaction_signals(
+    signals: Vec<ReactionSignal>,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<ReactionSignalPage> {
+    if !(1..=MAX_REACTION_SIGNAL_PAGE).contains(&limit) {
+        return Err(Error::InvalidConfig(
+            "reaction signal limit must be 1..=1000".into(),
+        ));
     }
+    let after = after.map(parse_cursor).transpose()?;
+    let mut signals: Vec<_> = signals
+        .into_iter()
+        .filter(|signal| after.is_none_or(|cursor| signal.key() > cursor))
+        .collect();
+    let next = (signals.len() > limit).then(|| cursor_hex(&signals[limit - 1].key()));
+    signals.truncate(limit);
+    Ok(ReactionSignalPage { signals, next })
+}
 
-    /// One page of reaction signals for `person`: reactions by others to the
-    /// records `person` authored, at or after `since`, strictly after the
-    /// `after` cursor. A signal never broadens its message's audience: the
-    /// reactor must have been in the room at the reaction's time and the
-    /// reader must be able to read the reaction.
-    pub fn reactions_since_page(
-        &self,
-        person: EntityId,
-        since: u64,
-        after: Option<&str>,
-        limit: usize,
-    ) -> Result<ReactionSignalPage> {
-        if !(1..=MAX_REACTION_SIGNAL_PAGE).contains(&limit) {
-            return Err(Error::InvalidConfig(
-                "reaction signal limit must be 1..=1000".into(),
-            ));
-        }
-        let after = after.map(parse_cursor).transpose()?;
+impl Vault {
+    /// Every reaction signal for `person` recorded at or after `since`, in
+    /// feed order: reactions by others to the records `person` authored. A
+    /// signal never broadens its message's audience: the reactor must have
+    /// been in the room at the reaction's time and the reader must be able
+    /// to read the reaction.
+    pub fn reactions_since(&self, person: EntityId, since: u64) -> Result<Vec<ReactionSignal>> {
         let txn = self.store.env.read_txn()?;
+        let fold = admission_in(self, &txn)?;
         let mut audience = AudienceCache::default();
         let mut signals = Vec::new();
         for (scanned, edge) in self
@@ -129,7 +136,7 @@ impl Vault {
             ) {
                 continue;
             }
-            for row in reactions_on_in(self, &txn, record)? {
+            for row in reactions_on_in(self, &txn, &fold, record)? {
                 if row.value.by == person
                     || !audience.readable(self, &txn, row.id, &[row.value.by])?
                     || !audience.readable(self, &txn, row.id, &[person])?
@@ -155,12 +162,19 @@ impl Vault {
                 signals.push(put);
             }
         }
-        signals.retain(|signal| {
-            signal.recorded_at >= since && after.is_none_or(|cursor| signal.key() > cursor)
-        });
+        signals.retain(|signal| signal.recorded_at >= since);
         signals.sort_by_key(ReactionSignal::key);
-        let next = (signals.len() > limit).then(|| cursor_hex(&signals[limit - 1].key()));
-        signals.truncate(limit);
-        Ok(ReactionSignalPage { signals, next })
+        Ok(signals)
+    }
+
+    /// One page of [`Vault::reactions_since`].
+    pub fn reactions_since_page(
+        &self,
+        person: EntityId,
+        since: u64,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<ReactionSignalPage> {
+        page_reaction_signals(self.reactions_since(person, since)?, after, limit)
     }
 }

@@ -220,15 +220,22 @@ pub(crate) fn validate_reaction_claim_structure(body: &ClaimBody) -> Result<()> 
     };
     let author =
         crate::memory::claim_author(body).ok_or_else(|| invalid("reaction claim has no author"))?;
+    // The one MACHINE that may attest another person's reaction.
+    let mirrored = machine_written(body) && author == super::conversation_mirror_actor_id()?;
+    if machine_written(body) && !mirrored {
+        return Err(invalid("only the conversation mirror attests a reaction"));
+    }
     if body.predicate == PREDICATE_CONVERSATION_REACTION_ECHO {
         ReactionExternalId::from_value(&body.value)?;
-        if !machine_written(body) {
-            return Err(invalid("reaction echo must be written by a signed machine"));
+        if !mirrored {
+            return Err(invalid(
+                "reaction echo must be written by the conversation mirror",
+            ));
         }
         return Ok(());
     }
     let value = ReactionValue::from_value(&body.value)?;
-    if value.by != author && !machine_written(body) {
+    if value.by != author && !mirrored {
         return Err(invalid("reaction author must be the reacting person"));
     }
     Ok(())

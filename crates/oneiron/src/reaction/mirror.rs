@@ -9,7 +9,7 @@
 //! becomes a new claim in the chain. The provider's echo of our own reaction
 //! binds its generation to the original claim with a
 //! `conversation.reaction.echo` claim about it, never a second reaction.
-use super::chain::{StoredReaction, chain_in, echoes_in, names_generation};
+use super::chain::{StoredReaction, admission_in, chain_in, echoes_in, names_generation};
 use super::value::{PREDICATE_CONVERSATION_REACTION_ECHO, ReactionExternalId, ReactionValue};
 use super::write::{
     ReactionChange, ReactionState, invalid, require_occurrence, require_reactor_in, retract_in_txn,
@@ -178,11 +178,12 @@ fn replayed(id: EntityId) -> ReactionChange {
 fn named_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    fold: &crate::authority::AuthorityFold,
     chain: &[StoredReaction],
     generation: &ReactionExternalId,
 ) -> Result<Option<usize>> {
     for (index, row) in chain.iter().enumerate() {
-        if names_generation(vault, txn, row, generation)? {
+        if names_generation(vault, txn, fold, row, generation)? {
             return Ok(Some(index));
         }
     }
@@ -192,95 +193,98 @@ fn named_in(
 impl Vault {
     /// The single normalized connector-in door for reactions.
     pub fn ingest_reaction(&self, input: ReactionIngress) -> Result<ReactionChange> {
-        self.with_write_txn(|txn| match &input {
-            ReactionIngress::ProviderAdd {
-                message,
-                by,
-                glyph,
-                occurred_at,
-                generation,
-            } => {
-                require_mirror_target(self, txn, *message, *by, generation)?;
-                let now = require_occurrence(self, *occurred_at)?;
-                let chain = chain_in(self, txn, *message, *by, glyph)?;
-                if let Some(index) = named_in(self, txn, &chain, generation)? {
-                    return Ok(replayed(chain[index].id));
-                }
-                if let Some(live) = chain.iter().rev().find(|row| row.live()) {
-                    // The provider shows our own live reaction: an echo that
-                    // arrived without its origin binds to it once.
-                    if live.first_party() && echoes_in(self, txn, live.id)?.is_empty() {
-                        bind_echo_in_txn(self, txn, live.id, generation, now)?;
-                        return Ok(replayed(live.id));
+        self.with_write_txn(|txn| {
+            let fold = admission_in(self, txn)?;
+            match &input {
+                ReactionIngress::ProviderAdd {
+                    message,
+                    by,
+                    glyph,
+                    occurred_at,
+                    generation,
+                } => {
+                    require_mirror_target(self, txn, *message, *by, generation)?;
+                    let now = require_occurrence(self, *occurred_at)?;
+                    let chain = chain_in(self, txn, &fold, *message, *by, glyph)?;
+                    if let Some(index) = named_in(self, txn, &fold, &chain, generation)? {
+                        return Ok(replayed(chain[index].id));
                     }
-                    // The live claim names another generation. A provider
-                    // holds one add per person and glyph, so a newer add means
-                    // the older one was removed there; an older add is stale.
-                    if *occurred_at < live.value.occurred_at {
-                        return Ok(replayed(live.id));
+                    if let Some(live) = chain.iter().rev().find(|row| row.live()) {
+                        // The provider shows our own live reaction: an echo that
+                        // arrived without its origin binds to it once.
+                        if live.first_party() && echoes_in(self, txn, &fold, live.id)?.is_empty() {
+                            bind_echo_in_txn(self, txn, live.id, generation, now)?;
+                            return Ok(replayed(live.id));
+                        }
+                        // The live claim names another generation. A provider
+                        // holds one add per person and glyph, so a newer add means
+                        // the older one was removed there; an older add is stale.
+                        if *occurred_at < live.value.occurred_at {
+                            return Ok(replayed(live.id));
+                        }
+                        retract_in_txn(self, txn, live, now)?;
                     }
-                    retract_in_txn(self, txn, live, now)?;
+                    let value = ReactionValue {
+                        glyph: glyph.clone(),
+                        occurred_at: *occurred_at,
+                        by: *by,
+                        external_id: Some(generation.clone()),
+                    };
+                    let envelope = mirror_envelope(generation)?;
+                    let id = write_reaction_in_txn(self, txn, *message, &value, envelope, now)?;
+                    Ok(ReactionChange {
+                        id,
+                        state: ReactionState::Put,
+                    })
                 }
-                let value = ReactionValue {
-                    glyph: glyph.clone(),
-                    occurred_at: *occurred_at,
-                    by: *by,
-                    external_id: Some(generation.clone()),
-                };
-                let envelope = mirror_envelope(generation)?;
-                let id = write_reaction_in_txn(self, txn, *message, &value, envelope, now)?;
-                Ok(ReactionChange {
-                    id,
-                    state: ReactionState::Put,
-                })
-            }
-            ReactionIngress::Echo {
-                original,
-                message,
-                by,
-                glyph,
-                generation,
-            } => {
-                require_mirror_target(self, txn, *message, *by, generation)?;
-                let chain = chain_in(self, txn, *message, *by, glyph)?;
-                let Some(row) = chain.iter().find(|row| row.id == *original) else {
-                    return Err(invalid("echo differs from its original reaction"));
-                };
-                if let Some(index) = named_in(self, txn, &chain, generation)? {
-                    if chain[index].id != row.id {
-                        return Err(invalid("provider generation names another reaction"));
+                ReactionIngress::Echo {
+                    original,
+                    message,
+                    by,
+                    glyph,
+                    generation,
+                } => {
+                    require_mirror_target(self, txn, *message, *by, generation)?;
+                    let chain = chain_in(self, txn, &fold, *message, *by, glyph)?;
+                    let Some(row) = chain.iter().find(|row| row.id == *original) else {
+                        return Err(invalid("echo differs from its original reaction"));
+                    };
+                    if let Some(index) = named_in(self, txn, &fold, &chain, generation)? {
+                        if chain[index].id != row.id {
+                            return Err(invalid("provider generation names another reaction"));
+                        }
+                        return Ok(replayed(row.id));
                     }
-                    return Ok(replayed(row.id));
+                    if !row.first_party() || !echoes_in(self, txn, &fold, row.id)?.is_empty() {
+                        return Err(invalid(
+                            "echo target is already bound to a provider generation",
+                        ));
+                    }
+                    let now = self.store.clock.now_recorded_at();
+                    bind_echo_in_txn(self, txn, row.id, generation, now)?;
+                    Ok(replayed(row.id))
                 }
-                if !row.first_party() || !echoes_in(self, txn, row.id)?.is_empty() {
-                    return Err(invalid(
-                        "echo target is already bound to a provider generation",
-                    ));
+                ReactionIngress::Remove {
+                    message,
+                    by,
+                    glyph,
+                    generation,
+                } => {
+                    require_mirror_target(self, txn, *message, *by, generation)?;
+                    let chain = chain_in(self, txn, &fold, *message, *by, glyph)?;
+                    let Some(index) = named_in(self, txn, &fold, &chain, generation)? else {
+                        return Err(unresolved("reaction generation is not yet materialized"));
+                    };
+                    let row = &chain[index];
+                    if !row.live() {
+                        return Ok(replayed(row.id));
+                    }
+                    retract_in_txn(self, txn, row, self.store.clock.now_recorded_at())?;
+                    Ok(ReactionChange {
+                        id: row.id,
+                        state: ReactionState::Revoked,
+                    })
                 }
-                let now = self.store.clock.now_recorded_at();
-                bind_echo_in_txn(self, txn, row.id, generation, now)?;
-                Ok(replayed(row.id))
-            }
-            ReactionIngress::Remove {
-                message,
-                by,
-                glyph,
-                generation,
-            } => {
-                require_mirror_target(self, txn, *message, *by, generation)?;
-                let chain = chain_in(self, txn, *message, *by, glyph)?;
-                let Some(index) = named_in(self, txn, &chain, generation)? else {
-                    return Err(unresolved("reaction generation is not yet materialized"));
-                };
-                let row = &chain[index];
-                if !row.live() {
-                    return Ok(replayed(row.id));
-                }
-                retract_in_txn(self, txn, row, self.store.clock.now_recorded_at())?;
-                Ok(ReactionChange {
-                    id: row.id,
-                    state: ReactionState::Revoked,
-                })
             }
         })
     }

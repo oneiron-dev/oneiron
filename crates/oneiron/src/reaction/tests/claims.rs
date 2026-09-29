@@ -15,7 +15,7 @@ fn reaction_put_is_a_message_claim_authored_by_the_person() {
     let value = ReactionValue::from_value(&body.value).unwrap();
     assert_eq!(value.glyph, "👍");
     assert_eq!(value.by, room.bob);
-    assert_eq!(value.occurred_at, 20);
+    assert!(value.occurred_at > 20, "a first-party reaction happens now");
     assert_eq!(value.external_id, None);
     // Registered non-critical: the put lands live, never gate-pending.
     assert_eq!(body.approval, ClaimApprovalStatus::Auto);
@@ -390,4 +390,28 @@ fn a_peer_copy_of_the_same_reaction_counts_once_and_one_remove_retracts_both() {
             .unwrap()[&room.message]
             .is_empty()
     );
+}
+
+#[test]
+fn a_first_party_reaction_cannot_be_backdated_or_flood_a_message() {
+    let room = room();
+    let now = room.vault.store.clock.now_recorded_at();
+    let err = room
+        .vault
+        .react(ReactionInput {
+            occurred_at: now - 3_600,
+            ..input(&room, room.bob, "👍")
+        })
+        .unwrap_err();
+    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidClaimBody);
+    for index in 0..super::super::write::MAX_REACTIONS_PER_PERSON {
+        react(&room, room.bob, &format!("g{index}"));
+    }
+    let err = room
+        .vault
+        .react(input(&room, room.bob, "one more"))
+        .unwrap_err();
+    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidClaimBody);
+    // Another member is unaffected.
+    assert_eq!(react(&room, room.dave, "👍").state, ReactionState::Put);
 }

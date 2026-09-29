@@ -144,7 +144,7 @@ fn a_reaction_never_outranks_an_ordinary_memory_of_equal_relevance() {
         crate::WriteProvenance::new(rmpv::Value::Map(vec![])).unwrap(),
         crate::claim::ClaimApprovalStatus::Auto,
     );
-    let text = format!("👍 Bob {PLAN}");
+    let text = "👍 Bob".to_owned();
     room.vault
         .batch()
         .claim_candidate(
@@ -167,7 +167,7 @@ fn a_reaction_never_outranks_an_ordinary_memory_of_equal_relevance() {
         .vault
         .memory(room.alice, EdgeActorClass::Human)
         .recall(
-            "Bob Friday",
+            "Bob",
             Effort::Medium,
             &RecallScope::default(),
             20,

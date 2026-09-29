@@ -3,7 +3,7 @@
 //! same reason, and erasing a person from a room erases every reaction that
 //! person made there. Selection reads every family claim, whatever its
 //! approval or lifecycle, so a retracted put is erased with the live ones.
-use super::chain::stored_claim_in;
+use super::chain::{claim_ids_about, stored_claim_in};
 use super::value::{
     PREDICATE_CONVERSATION_REACTION, PREDICATE_CONVERSATION_REACTION_ECHO, ReactionValue,
 };
@@ -23,7 +23,7 @@ fn family_claims_about(
     predicate: &str,
 ) -> Result<Vec<(EntityId, crate::ClaimBody)>> {
     let mut rows = Vec::new();
-    for id in vault.claims_for_subject_in_txn(txn, &subject)? {
+    for id in claim_ids_about(vault, txn, subject)? {
         if let Some((body, _)) = stored_claim_in(vault, txn, &id)?
             && body.predicate == predicate
         {
