@@ -368,7 +368,25 @@ mod tests {
     }
 
     #[test]
-    fn ui_form_strips_both_qualifier_shapes_at_call_sites_only() {
+    fn storage_form_prefixes_post_2007_calls_only() {
+        assert_eq!(
+            storage_form("=XLOOKUP(1,A:A,B:B)"),
+            "=_xlfn.XLOOKUP(1,A:A,B:B)"
+        );
+        assert_eq!(
+            storage_form("=FILTER(A1:A5,B1:B5>2)"),
+            "=_xlfn._xlws.FILTER(A1:A5,B1:B5>2)"
+        );
+        assert_eq!(storage_form("=SUM(A1:A3)"), "=SUM(A1:A3)");
+        assert_eq!(
+            storage_form(r#"="XLOOKUP"&A1"#),
+            r#"="XLOOKUP"&A1"#,
+            "string literals are text, not calls"
+        );
+    }
+
+    #[test]
+    fn ui_form_strips_both_prefix_shapes() {
         assert_eq!(ui_form("=_xlfn.XLOOKUP(1,A:A,B:B)"), "=XLOOKUP(1,A:A,B:B)");
         assert_eq!(ui_form("=_xlfn._xlws.FILTER(A,B)"), "=FILTER(A,B)");
         assert_eq!(ui_form("=SUM(A1:A3)"), "=SUM(A1:A3)");
@@ -379,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_form_keeps_unicode_literals_sheet_names_and_legacy_functions() {
+    fn storage_mapping_preserves_unicode_literals_sheet_names_and_legacy_functions() {
         assert_eq!(
             storage_form("=XLOOKUP(1,A:A,B:B)&\"東京🌕\""),
             "=_xlfn.XLOOKUP(1,A:A,B:B)&\"東京🌕\""

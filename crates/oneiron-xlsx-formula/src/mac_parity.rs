@@ -27,3 +27,19 @@ pub(super) fn apply(workbook: &mut Workbook) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MAC_ABSENT_FUNCTIONS;
+
+    #[test]
+    fn mac_absent_set_is_exactly_the_oracle_edges() {
+        assert_eq!(
+            MAC_ABSENT_FUNCTIONS,
+            ["ENCODEURL", "FILTERXML", "WEBSERVICE"]
+        );
+        for present in ["XLOOKUP", "SUM", "FILTER"] {
+            assert!(!MAC_ABSENT_FUNCTIONS.contains(&present), "{present}");
+        }
+    }
+}
