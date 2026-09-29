@@ -557,6 +557,32 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(policy, |old| old.restrict(policy)),
                     );
                 }
+                if let Some(threshold) = decoded.consult_fanout_approval_threshold {
+                    resolution.consult_fanout_approval_threshold = Some(
+                        resolution
+                            .consult_fanout_approval_threshold
+                            .map_or(threshold, |old| old.min(threshold)),
+                    );
+                }
+                if let Some(controls) = decoded.consult_fanout_controls {
+                    resolution.consult_fanout_controls =
+                        Some(resolution.consult_fanout_controls.as_ref().map_or_else(
+                            || controls.clone(),
+                            |prior| crate::gate::fanout_policy::merge_controls(prior, &controls),
+                        ));
+                }
+                if let Some(precedence) = decoded.consult_fanout_precedence {
+                    // Trusted manifests compose restrictively: any pack that
+                    // withdraws holder lifts withdraws them for the vault.
+                    resolution.consult_fanout_precedence = Some(
+                        resolution
+                            .consult_fanout_precedence
+                            .map_or(precedence, |prior| prior.stricter(precedence)),
+                    );
+                }
+                resolution
+                    .consult_fanout_scope_rows
+                    .extend(decoded.consult_fanout_scope_rows);
                 resolution.packs.push(decoded.pack);
             }
             Some(DecodedManifestCarrier::ProjectDepth(_)) => {
@@ -603,6 +629,16 @@ pub(crate) fn resolve_policy_manifest(
         .unwrap_or_default();
 
     resolution.untrusted_sheet_answer_limits = untrusted_sheet_limits;
+
+    let mut fanout_row_refs = std::collections::BTreeSet::new();
+    if resolution
+        .consult_fanout_scope_rows
+        .iter()
+        .any(|row| !fanout_row_refs.insert(&row.row_ref))
+    {
+        resolution.diagnostics.malformed_manifest_seen = true;
+    }
+
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
     }

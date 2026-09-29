@@ -111,6 +111,10 @@ pub struct MemoryError {
     /// for its receipt. Boxed for the same reason `gate_denial` is.
     #[serde(default, rename = "narrowing", skip_serializing_if = "Option::is_none")]
     pub read_receipt: Option<Box<crate::claim::ScopedReadReceipt>>,
+    /// Policy refusal facts, addressable without parsing prose. Absent for
+    /// errors that did not refuse an act under a scoped manifest row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_denial: Option<Box<MemoryPolicyDenial>>,
 }
 
 /// The stable Gate rejection strings behind a [`MemoryError`] whose engine
@@ -124,6 +128,22 @@ pub struct MemoryGateDenial {
     pub reason_codes: Vec<String>,
 }
 
+/// Typed provenance and exception door for a refused policy-controlled act.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryPolicyDenial {
+    pub level: String,
+    pub row_ref: String,
+    pub role: String,
+    pub exception_proposal: MemoryPolicyExceptionProposal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryPolicyExceptionProposal {
+    pub action: String,
+    pub row_ref: String,
+    pub required_role: String,
+}
+
 impl MemoryError {
     pub(super) fn new(code: &str, message: impl Into<String>, suggestions: &[&str]) -> Self {
         Self {
@@ -133,6 +153,7 @@ impl MemoryError {
             successor_short_id: None,
             gate_denial: None,
             read_receipt: None,
+            policy_denial: None,
         }
     }
 

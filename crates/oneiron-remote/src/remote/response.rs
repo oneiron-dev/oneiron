@@ -128,6 +128,7 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         successor_short_id: None,
         gate_denial: None,
         read_receipt: None,
+        policy_denial: None,
     })
 }
 

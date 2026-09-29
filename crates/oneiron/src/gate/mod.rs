@@ -25,6 +25,7 @@ mod docx_budget;
 mod doors;
 mod dreamer_precommit;
 mod effect;
+pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
@@ -87,15 +88,21 @@ pub(crate) use self::constants::{
     POLICY_ROW_WORLD_REF_KEY,
 };
 pub(crate) use self::constants::{
+    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
+    POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
+};
+pub(crate) use self::constants::{
     POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
 };
 #[cfg(test)]
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
 pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReasonCode};
 pub(crate) use self::decode::normalize_policy_manifest_scope;
+#[cfg(test)]
+pub(crate) use self::default_manifest::default_consult_fanout_approval_threshold;
 pub(crate) use self::default_manifest::{
-    DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_policy_manifest, default_policy_manifest_id,
-    seeded_project_depth_default,
+    DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_consult_fanout_policy, default_policy_manifest,
+    default_policy_manifest_id, seeded_project_depth_default,
 };
 pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
