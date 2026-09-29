@@ -18351,7 +18351,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 125
+      "crate-vis": 129
      }
     },
     {
@@ -18489,7 +18489,7 @@
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -18646,6 +18646,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/fanout_policy.rs",
+     "purpose": "Manifest-backed fan-out policy composition; no executable defaults",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/foreign_agent.rs",
      "purpose": "Owner-bound foreign introductions",
      "surface": {
@@ -18714,7 +18724,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 49,
+      "crate-vis": 52,
       "re-export": 7
      }
     },
@@ -18885,7 +18895,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {
@@ -23854,7 +23864,9 @@
      "kind": "src",
      "notable": [
       "MemoryError",
-      "MemoryGateDenial"
+      "MemoryGateDenial",
+      "MemoryPolicyDenial",
+      "MemoryPolicyExceptionProposal"
      ],
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
@@ -23862,7 +23874,7 @@
       "const": 9,
       "crate-vis": 5,
       "fn": 1,
-      "struct": 2,
+      "struct": 4,
       "type": 1
      }
     },
@@ -35844,7 +35856,7 @@
      "purpose": "Meter and admit consult fan-outs before any TASK exists",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 11
      }
     },
     {
@@ -35864,7 +35876,7 @@
      "path": "src/task_verb/consult_fanout_resume.rs",
      "purpose": "Authenticated exact-digest resume; ruling, policy and TASKs commit together",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -35874,7 +35886,7 @@
      "path": "src/task_verb/consult_fanout_store.rs",
      "purpose": "Node-local frozen fan-out plans and transaction-owned surface sink",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
     },
     {
@@ -35882,17 +35894,19 @@
      "kind": "src",
      "notable": [
       "ConsultFanOutChoice",
+      "ConsultFanOutEstimate",
       "ConsultFanOutMeter",
       "ConsultFanOutPause",
       "ConsultFanOutPolicy",
-      "ConsultFanOutRate"
+      "ConsultFanOutRate",
+      "ConsultFanOutScope"
      ],
      "path": "src/task_verb/consult_fanout_types.rs",
      "purpose": "Public fan-out governance inputs and observable outcomes",
      "surface": {
       "enum": 1,
       "re-export": 1,
-      "struct": 4
+      "struct": 6
      }
     },
     {
@@ -36314,7 +36328,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/consult_fanout.rs",
@@ -38698,7 +38712,7 @@
      "path": "tests/it/effect_spine_oracle.rs",
      "purpose": "Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener",
      "surface": {
-      "crate-vis": 101
+      "crate-vis": 102
      }
     },
     {
@@ -39817,7 +39831,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40512,7 +40526,7 @@
    },
    "over_bar": 20,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2409,
+   "source_files": 2410,
    "test_files": 839
   },
   "oneiron-android": {
