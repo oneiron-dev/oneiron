@@ -783,28 +783,31 @@ fn fanout_threshold_is_owner_authored_manifest_data_and_survives_reopen() {
     );
 }
 
-#[test]
-fn fanout_missing_manifest_threshold_refuses_instead_of_falling_back() {
-    let (_dir, vault) = open_vault();
-    let actor = own_agent(&vault);
-    let peer = consult_peer(&vault, 0xE2);
+/// Rewrites the seeded default manifest, e.g. as a vault seeded before the
+/// fan-out rows existed.
+fn reseed_default_manifest(vault: &Vault, edit: impl FnOnce(&mut Vec<(Value, Value)>)) {
     let Value::Map(mut rows) =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .unwrap()
     else {
         panic!("default manifest must be a map")
     };
-    rows.retain(|(name, _)| {
-        name.as_str() != Some(crate::gate::POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY)
-    });
+    edit(&mut rows);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(rows)).unwrap();
     crate::test_util::put_policy_manifest_bytes(
-        &vault,
+        vault,
         crate::gate::default_policy_manifest_id().unwrap(),
         &bytes,
     )
     .unwrap();
+}
+
+#[test]
+fn fanout_missing_manifest_threshold_uses_shipped_row_and_malformed_refuses() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let peer = consult_peer(&vault, 0xE2);
     let input = ConsultFanOutSpec {
         question_ref: consult_turn(&vault, 0x7A),
         context_refs: Vec::new(),
@@ -813,10 +816,95 @@ fn fanout_missing_manifest_threshold_refuses_instead_of_falling_back() {
         label: None,
         now: None,
     };
+    reseed_default_manifest(&vault, |rows| {
+        rows.retain(|(name, _)| {
+            name.as_str() != Some(crate::gate::POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY)
+        });
+    });
     let facade = vault.memory(actor, EdgeActorClass::Agent);
+    // Owner ruling 2026-09-27: a missing row falls back to the shipped row.
+    assert_eq!(
+        facade.get_consult_fanout_policy().unwrap(),
+        ConsultFanOutPolicy::default()
+    );
+    let admitted = facade
+        .fan_out_counted_consults(&input, "research")
+        .expect("the shipped threshold row governs the missing one");
+    assert_eq!(admitted.task_refs.len(), 1);
+    assert_eq!(
+        admitted.shipped_policy_rows,
+        vec!["shipped:consult_fanout_approval_threshold".to_owned()]
+    );
+    assert_eq!(task_entity_census(&vault), 1);
+
+    // An unreadable value is not a missing row: it counts as strictest.
+    reseed_default_manifest(&vault, |rows| {
+        rows.iter_mut()
+            .find(|(name, _)| {
+                name.as_str() == Some(crate::gate::POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY)
+            })
+            .expect("shipped threshold row")
+            .1 = Value::from("twenty-five");
+    });
     assert!(facade.get_consult_fanout_policy().is_err());
     assert!(facade.fan_out_counted_consults(&input, "research").is_err());
-    assert_eq!(task_entity_census(&vault), 0);
+    assert_eq!(task_entity_census(&vault), 1);
+}
+
+#[test]
+fn fanout_vault_seeded_before_fanout_rows_runs_under_shipped_defaults() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let silent = plan(&vault, 25);
+    let over = plan(&vault, 26);
+    reseed_default_manifest(&vault, |rows| {
+        rows.retain(|(name, _)| {
+            !name
+                .as_str()
+                .is_some_and(|name| name.starts_with("consult_fanout_"))
+        });
+    });
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    assert_eq!(
+        facade.get_consult_fanout_policy().unwrap(),
+        ConsultFanOutPolicy::default()
+    );
+    let ran = facade
+        .fan_out_consults(&silent)
+        .expect("the shipped threshold admits 25");
+    assert!(ran.paused.is_none());
+    assert_eq!(ran.task_refs.len(), 25);
+    assert_eq!(
+        ran.shipped_policy_rows,
+        vec![
+            "shipped:consult_fanout_approval_threshold".to_owned(),
+            "shipped:consult_fanout_controls".to_owned(),
+            "shipped:consult_fanout_precedence".to_owned(),
+        ]
+    );
+    let paused = facade
+        .fan_out_consults(&over)
+        .expect("over the shipped threshold pauses");
+    assert!(paused.paused.is_some());
+    assert!(paused.task_refs.is_empty());
+    assert_eq!(task_entity_census(&vault), 25);
+
+    // The owner maps the missing rows by hand; precedence stays shipped.
+    let tuned = ConsultFanOutPolicy {
+        approval_threshold: 30,
+        ..ConsultFanOutPolicy::default()
+    };
+    facade.set_consult_fanout_policy(&human, &tuned).unwrap();
+    assert_eq!(facade.get_consult_fanout_policy().unwrap(), tuned);
+    let mapped = facade.fan_out_consults(&over).unwrap();
+    assert!(mapped.paused.is_none());
+    assert_eq!(mapped.task_refs.len(), 26);
+    assert_eq!(
+        mapped.shipped_policy_rows,
+        vec!["shipped:consult_fanout_precedence".to_owned()]
+    );
+    assert_eq!(task_entity_census(&vault), 51);
 }
 
 struct CountedAllowClassifier {

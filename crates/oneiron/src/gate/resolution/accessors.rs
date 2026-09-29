@@ -72,37 +72,24 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// A fan-out row missing from every trusted manifest falls back to the
+    /// shipped default row; a malformed or unreadable manifest refuses.
     pub(crate) fn consult_fanout_policy_for(
         &self,
         scope: &crate::task_verb::ConsultFanOutScope,
     ) -> crate::error::Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
-        let threshold = self.consult_fanout_approval_threshold()?;
-        let controls = self.consult_fanout_controls.as_ref().ok_or_else(|| {
-            crate::error::Error::InvalidConfig("fan-out controls row missing".into())
-        })?;
-        let precedence = self.consult_fanout_precedence.ok_or_else(|| {
-            crate::error::Error::InvalidConfig("fan-out precedence row missing".into())
-        })?;
-        crate::gate::fanout_policy::resolve(
-            threshold,
-            controls,
-            precedence,
-            &self.consult_fanout_scope_rows,
-            scope,
-        )
-    }
-
-    /// No runtime default: missing or malformed owner policy must not allow a
-    /// fan-out to pass silently under an invented threshold.
-    pub(crate) fn consult_fanout_approval_threshold(&self) -> crate::error::Result<u32> {
         if self.diagnostics.is_fail_closed() {
             return Err(crate::error::Error::InvalidConfig(
                 "fan-out policy manifest is unavailable".into(),
             ));
         }
-        self.consult_fanout_approval_threshold.ok_or_else(|| {
-            crate::error::Error::InvalidConfig("fan-out approval threshold row missing".into())
-        })
+        crate::gate::fanout_policy::resolve(
+            self.consult_fanout_approval_threshold,
+            self.consult_fanout_controls.as_ref(),
+            self.consult_fanout_precedence,
+            &self.consult_fanout_scope_rows,
+            scope,
+        )
     }
 
     /// The effective residence-operation caps, absent when loaded policy is

@@ -5,6 +5,10 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use super::constants::{
+    POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
+    POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
+};
 use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_chokepoint::FanoutApprovalMode;
@@ -60,9 +64,25 @@ pub(crate) struct FanoutPolicyTrace {
 pub(crate) struct ResolvedFanoutPolicy {
     pub(crate) policy: ConsultFanOutPolicy,
     pub(crate) quota_trace: FanoutPolicyTrace,
+    /// Shipped default rows read in place of rows the vault manifest lacks.
+    pub(crate) shipped_rows: Vec<String>,
+}
+
+/// The shipped default manifest's vault-level fan-out rows.
+#[derive(Debug)]
+pub(crate) struct ShippedFanoutRows {
+    pub(crate) threshold: u32,
+    pub(crate) controls: FanoutControls,
+    pub(crate) precedence: FanoutPrecedence,
 }
 
 pub(crate) const VAULT_ROW_REF: &str = "oneiron.default.fanout.v1";
+
+/// Names the shipped row a decision read in place of a missing vault row;
+/// `key` is the manifest key a holder writes to map the row by hand.
+pub(crate) fn shipped_row_ref(key: &str) -> String {
+    format!("shipped:{key}")
+}
 
 fn decode<T: serde::de::DeserializeOwned>(value: &Value) -> Option<T> {
     let mut bytes = Vec::new();
@@ -204,10 +224,13 @@ pub(crate) fn narrow(a: &ConsultFanOutPolicy, b: &ConsultFanOutPolicy) -> Consul
     }
 }
 
+/// A vault row missing from the manifest falls back to the shipped default
+/// row and is named in `shipped_rows`. A malformed row never reaches here:
+/// it fails the manifest decode, which refuses.
 pub(crate) fn resolve(
-    threshold: u32,
-    controls: &FanoutControls,
-    precedence: FanoutPrecedence,
+    threshold: Option<u32>,
+    controls: Option<&FanoutControls>,
+    precedence: Option<FanoutPrecedence>,
     rows: &[FanoutScopedRow],
     scope: &ConsultFanOutScope,
 ) -> Result<ResolvedFanoutPolicy> {
@@ -216,6 +239,26 @@ pub(crate) fn resolve(
             "fan-out policy scope malformed".into(),
         ));
     }
+    let shipped = super::default_manifest::shipped_consult_fanout_rows();
+    let mut shipped_rows = Vec::new();
+    let threshold = threshold.unwrap_or_else(|| {
+        shipped_rows.push(shipped_row_ref(
+            POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY,
+        ));
+        shipped.threshold
+    });
+    let (controls, controls_row) = match controls {
+        Some(controls) => (controls, VAULT_ROW_REF.to_owned()),
+        None => {
+            let row_ref = shipped_row_ref(POLICY_CONSULT_FANOUT_CONTROLS_KEY);
+            shipped_rows.push(row_ref.clone());
+            (&shipped.controls, row_ref)
+        }
+    };
+    let precedence = precedence.unwrap_or_else(|| {
+        shipped_rows.push(shipped_row_ref(POLICY_CONSULT_FANOUT_PRECEDENCE_KEY));
+        shipped.precedence
+    });
     let vault = ConsultFanOutPolicy {
         approval_threshold: threshold,
         mode: controls.mode,
@@ -226,9 +269,10 @@ pub(crate) fn resolve(
         policy: vault.clone(),
         quota_trace: FanoutPolicyTrace {
             level: "vault",
-            row_ref: VAULT_ROW_REF.into(),
+            row_ref: controls_row,
             role: "owner",
         },
+        shipped_rows,
     };
     let mut matches: Vec<_> = rows
         .iter()
@@ -295,6 +339,47 @@ mod tests {
         assert!(result.is_ok(), "shipped controls: {:?}", result.err());
         assert!(crate::gate::decode::decode_policy_manifest(&bytes).is_some());
     }
+    #[test]
+    fn missing_vault_rows_resolve_to_shipped_rows_named_as_source() {
+        let shipped = crate::gate::default_consult_fanout_policy();
+        let resolved = resolve(None, None, None, &[], &ConsultFanOutScope::default()).unwrap();
+        assert_eq!(resolved.policy, shipped);
+        assert_eq!(
+            resolved.shipped_rows,
+            [
+                "shipped:consult_fanout_approval_threshold",
+                "shipped:consult_fanout_controls",
+                "shipped:consult_fanout_precedence",
+            ]
+        );
+        assert_eq!(
+            resolved.quota_trace,
+            FanoutPolicyTrace {
+                level: "vault",
+                row_ref: "shipped:consult_fanout_controls".into(),
+                role: "owner",
+            }
+        );
+
+        let controls = FanoutControls {
+            mode: FanoutApprovalMode::Manual,
+            peer_rate: None,
+            create_rate: shipped.create_rate,
+        };
+        let present = resolve(
+            Some(7),
+            Some(&controls),
+            Some(FanoutPrecedence::NestedNarrowing),
+            &[],
+            &ConsultFanOutScope::default(),
+        )
+        .unwrap();
+        assert_eq!(present.policy.approval_threshold, 7);
+        assert_eq!(present.policy.mode, FanoutApprovalMode::Manual);
+        assert!(present.shipped_rows.is_empty());
+        assert_eq!(present.quota_trace.row_ref, VAULT_ROW_REF);
+    }
+
     #[test]
     fn malformed_controls_precedence_and_scope_rows_fail_closed() {
         let data = crate::gate::default_policy_manifest().unwrap();

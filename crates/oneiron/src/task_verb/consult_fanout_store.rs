@@ -123,6 +123,11 @@ pub(super) struct StoredFanout {
     pub(super) task_refs: Vec<String>,
     pub(super) denied: bool,
     pub(super) choice_receipt_ref: Option<String>,
+    /// Shipped default rows the admission decision read in place of rows
+    /// missing from the vault manifest. Runs stored before this field read
+    /// as empty.
+    #[serde(default)]
+    pub(super) shipped_policy_rows: Vec<String>,
 }
 
 impl StoredFanout {
@@ -163,6 +168,7 @@ impl StoredFanout {
                     denied: self.denied,
                 }),
             choice_receipt_ref: self.choice_receipt_ref.clone(),
+            shipped_policy_rows: self.shipped_policy_rows.clone(),
         })
     }
 }

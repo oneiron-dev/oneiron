@@ -1213,30 +1213,43 @@ fn default_experiment_selection_rows() -> Value {
         .expect("decode shipped experiment selection rows")
 }
 
+/// The shipped fan-out rows, decoded once from the same data the vault seeds.
+/// A vault manifest seeded before a row existed reads the shipped row instead.
+pub(crate) fn shipped_consult_fanout_rows() -> &'static super::fanout_policy::ShippedFanoutRows {
+    static ROWS: std::sync::LazyLock<super::fanout_policy::ShippedFanoutRows> =
+        std::sync::LazyLock::new(|| {
+            let bytes = default_policy_manifest().expect("the shipped policy manifest must encode");
+            let decoded = super::decode::decode_policy_manifest(&bytes)
+                .expect("the shipped fan-out manifest must decode");
+            super::fanout_policy::ShippedFanoutRows {
+                threshold: decoded
+                    .consult_fanout_approval_threshold
+                    .expect("the shipped fan-out threshold row must decode"),
+                controls: decoded
+                    .consult_fanout_controls
+                    .expect("the shipped fan-out controls row must decode"),
+                precedence: decoded
+                    .consult_fanout_precedence
+                    .expect("the shipped fan-out precedence row must decode"),
+            }
+        });
+    &ROWS
+}
+
 /// Default for caller-side policy builders, read from the shipped manifest
 /// rather than duplicated as executable behavior.
 #[cfg(test)]
 pub(crate) fn default_consult_fanout_approval_threshold() -> u32 {
-    let bytes = default_policy_manifest().expect("the shipped policy manifest must encode");
-    super::decode::decode_policy_manifest(&bytes)
-        .and_then(|manifest| manifest.consult_fanout_approval_threshold)
-        .expect("the shipped fan-out threshold row must decode")
+    shipped_consult_fanout_rows().threshold
 }
 
 /// Caller-side builder values come from the same shipped data the vault seeds.
 pub(crate) fn default_consult_fanout_policy() -> crate::task_verb::ConsultFanOutPolicy {
-    let bytes = default_policy_manifest().expect("the shipped policy manifest must encode");
-    let decoded = super::decode::decode_policy_manifest(&bytes)
-        .expect("the shipped fan-out manifest must decode");
-    let controls = decoded
-        .consult_fanout_controls
-        .expect("the shipped fan-out controls row must decode");
+    let shipped = shipped_consult_fanout_rows();
     crate::task_verb::ConsultFanOutPolicy {
-        approval_threshold: decoded
-            .consult_fanout_approval_threshold
-            .expect("the shipped fan-out threshold row must decode"),
-        mode: controls.mode,
-        peer_rate: controls.peer_rate,
-        create_rate: controls.create_rate,
+        approval_threshold: shipped.threshold,
+        mode: shipped.controls.mode,
+        peer_rate: shipped.controls.peer_rate.clone(),
+        create_rate: shipped.controls.create_rate,
     }
 }

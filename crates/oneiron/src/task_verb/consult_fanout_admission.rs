@@ -164,15 +164,16 @@ impl Memory<'_> {
         let now = input.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let correlation = self.vault().new_entity_id()?;
         let validated = self.validate_fanout(input, correlation, now, allow_repeated_peers)?;
-        let policy = {
+        let governed = {
             let txn = self
                 .vault()
                 .store
                 .env
                 .read_txn()
                 .map_err(crate::error::Error::from)?;
-            policy_in(self.vault(), &txn, &policy_scope)?.policy
+            policy_in(self.vault(), &txn, &policy_scope)?
         };
+        let policy = governed.policy.clone();
         let frozen = FrozenInput::new(input, now, preset, policy_scope);
         let plan = frozen.plan(self.actor(), correlation, &policy)?;
         let estimate = fanout_estimate(&plan)?;
@@ -186,6 +187,7 @@ impl Memory<'_> {
             task_refs: Vec::new(),
             denied: false,
             choice_receipt_ref: None,
+            shipped_policy_rows: governed.shipped_rows.clone(),
         };
         let scope = run.scope();
         let rate_now = self.vault().now_recorded_at();
@@ -227,7 +229,7 @@ impl Memory<'_> {
         };
         self.with_verified_actor_write_txn(|txn| {
             self.require_fanout_ceiling(txn)?;
-            if policy_in(self.vault(), txn, &run.input.policy_scope)?.policy != policy
+            if policy_in(self.vault(), txn, &run.input.policy_scope)? != governed
                 || standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget)? != standing
             {
                 return Err(consult_refusal(
@@ -348,8 +350,11 @@ impl Memory<'_> {
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
                 rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
-                    let position =
-                        manifest_row_position(entries, POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY)?;
+                    let position = manifest_row_or_insert(
+                        entries,
+                        POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
+                        Value::Array(Vec::new()),
+                    )?;
                     let Value::Array(ref mut rows) = entries[position].1 else {
                         return Err(MemoryError::bad_request("fan-out scope rows malformed"));
                     };
@@ -615,12 +620,26 @@ fn manifest_row_position(entries: &[(Value, Value)], key: &str) -> MemoryResult<
     Ok(*position)
 }
 
+/// A vault seeded before a fan-out row existed reads the shipped row; the
+/// owner's first write maps it by adding the row. A duplicate still refuses.
+fn manifest_row_or_insert(
+    entries: &mut Vec<(Value, Value)>,
+    key: &str,
+    value: Value,
+) -> MemoryResult<usize> {
+    if entries.iter().any(|(name, _)| name.as_str() == Some(key)) {
+        return manifest_row_position(entries, key);
+    }
+    entries.push((Value::from(key), value));
+    Ok(entries.len() - 1)
+}
+
 fn replace_manifest_row(
-    entries: &mut [(Value, Value)],
+    entries: &mut Vec<(Value, Value)>,
     key: &str,
     value: Value,
 ) -> MemoryResult<()> {
-    let position = manifest_row_position(entries, key)?;
+    let position = manifest_row_or_insert(entries, key, Value::Nil)?;
     entries[position].1 = value;
     Ok(())
 }
