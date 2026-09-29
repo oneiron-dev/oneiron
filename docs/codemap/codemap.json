@@ -8230,6 +8230,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/reactions.rs",
+     "purpose": "Reactions riding along with the conversation records a scoped read admits",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -17150,7 +17160,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -21946,7 +21956,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 169,
+      "mod": 170,
       "re-export": 72
      }
     },
@@ -28982,6 +28992,179 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/reaction/chain.rs",
+     "purpose": "Reaction claims on one conversation record, read in the caller's snapshot",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reaction/erase.rs",
+     "purpose": "Reactions follow the room deletion doors: deleting a conversation record deletes the reaction claims about…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReactionIngress"
+     ],
+     "path": "src/reaction/mirror.rs",
+     "purpose": "Connector-mirrored reactions (connector in)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reaction/mod.rs",
+     "purpose": "Message reactions as `conversation.reaction` claims (OF-372)",
+     "surface": {
+      "crate-vis": 5,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionOutboundAttempt"
+     ],
+     "path": "src/reaction/outbound.rs",
+     "purpose": "Connector-neutral outbound reactions (connector out)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionHistoryEntry",
+      "ReactionPill"
+     ],
+     "path": "src/reaction/read.rs",
+     "purpose": "Grouped reaction pills, chain history, and the one-line-per-glyph rendering recall and context packs attach…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionSignal",
+      "ReactionSignalPage"
+     ],
+     "path": "src/reaction/signal.rs",
+     "purpose": "The agent signal feed: new reactions to a person's own messages since a time, read from the reaction claims…",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests.rs",
+     "purpose": "Shared room fixture for the reaction-claim suites",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests/claims.rs",
+     "purpose": "Acceptance 1 and 2: a reaction is a room-scoped claim about the message, authored by the person, one live…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests/lifecycle.rs",
+     "purpose": "Acceptance 6 and 7: outbound reactions go only where the adapter declares `ReactionTarget`; erasing the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests/mirror.rs",
+     "purpose": "Acceptance 3: connector-mirrored reactions go through the signed-writer path; the provider echo of our own…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests/recall.rs",
+     "purpose": "Acceptance 4: a recalled or context-packed message carries its grouped reactions; a direct query finds a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests/signal.rs",
+     "purpose": "Acceptance 5: the agent signal feed returns new reactions to the agent's own messages since its last turn…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionExternalId",
+      "ReactionValue"
+     ],
+     "path": "src/reaction/value.rs",
+     "purpose": "The `conversation.reaction` value and its provider-echo binding value",
+     "surface": {
+      "const": 2,
+      "crate-vis": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReactionChange",
+      "ReactionInput",
+      "ReactionState"
+     ],
+     "path": "src/reaction/write.rs",
+     "purpose": "First-party reaction writes on the (message, person, glyph) chain, and the claim write both first-party and…",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/receipt/archive_source/access.rs",
      "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
      "surface": {
@@ -34161,6 +34344,7 @@
       "SurfaceEventDispatchRoute",
       "SurfaceEventSource",
       "SurfaceInteractionKind",
+      "SurfaceReaction",
       "SurfaceSourceApp"
      ],
      "path": "src/surface_event/inbound.rs",
@@ -34170,7 +34354,7 @@
       "crate-vis": 2,
       "enum": 7,
       "fn": 15,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -39397,7 +39581,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40145,6 +40329,13 @@
      "layout": "file+dir",
      "purpose": "Host-injected HyDE query-expansion seam"
     },
+    "reaction": {
+     "files": 15,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
+    },
     "receipt": {
      "files": 20,
      "impl_vault": true,
@@ -40526,8 +40717,8 @@
    },
    "over_bar": 20,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2410,
-   "test_files": 839
+   "source_files": 2420,
+   "test_files": 845
   },
   "oneiron-android": {
    "files": [
@@ -45310,7 +45501,7 @@
      "path": "src/api/context_pack/response.rs",
      "purpose": "Response DTOs and engine-to-wire mapping functions for context-pack assembly",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -45320,17 +45511,17 @@
      "path": "src/api/conversation_dag/mod.rs",
      "purpose": "HTTP adapters for transactional conversation DAG and summary doors",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 32
      }
     },
     {
@@ -46090,7 +46281,7 @@
      "path": "src/api/surface_events.rs",
      "purpose": "Inbound SurfaceEvent handoff over `/v1/core` (OF-247 CID-6)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -46163,6 +46354,14 @@
      "notable": [],
      "path": "src/api/tests/conversation_dag.rs",
      "purpose": "Wire-level DAG, summary and reply-strip acceptance",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/conversation_reactions.rs",
+     "purpose": "HTTP reactions: put and remove, grouped pills on listed records, grouped lines on context-packed messages…",
      "surface": {}
     },
     {
@@ -48413,7 +48612,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 164,
+     "files": 165,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48598,7 +48797,7 @@
    "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 239,
-   "test_files": 104
+   "test_files": 105
   },
   "oneiron-uniffi": {
    "files": [
