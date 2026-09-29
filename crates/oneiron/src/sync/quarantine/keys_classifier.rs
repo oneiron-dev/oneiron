@@ -140,6 +140,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::ReservedPredicate
         | ErrorKind::EntityTypeImmutable
+        | ErrorKind::DreamerActorImmutable
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
         // A remote MACHINE claim's origin proof is invalid. Keep the generic

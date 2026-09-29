@@ -390,6 +390,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DREAMER_WAKE_PROJECTION",
         "DREAMER_WAKE_RECIPE_INPUT",
         "DREAMER_WAKE_STATE",
+        "DREAMER_WEAVE_RECIPE_RESULT",
         "EMERGENCY_ITEM",
         "EMERGENCY_PLAN",
         "ENTITY_REVISION_PENDING_PHONETIC",

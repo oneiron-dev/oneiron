@@ -14,7 +14,7 @@ use crate::llm::ModelLocality;
 pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
     use super::super::{
         DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-        DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+        DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
     };
     match job_type {
         "micro" | "meso" | "macro" => Some("dreamer.consolidation"),
@@ -26,6 +26,7 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         }
         DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND => Some(DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
         DREAMER_VAULT_CLEANUP_ATTEMPT_KIND => Some(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND),
+        DREAMER_WEAVE_RECIPE_ATTEMPT_KIND => Some(DREAMER_WEAVE_RECIPE_ATTEMPT_KIND),
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
         super::super::maintenance::representation::REPRESENTATION_FACET => {

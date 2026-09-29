@@ -4271,6 +4271,62 @@ fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn dreamer_actor_conflicting_peer_put_and_tombstone_quarantine_without_disabling_open() -> Result<()>
+{
+    let (dir, vault) = test_vault();
+    let actor = vault.dreamer_authority()?.entity_ref();
+    let raw = vault.get_raw(&actor)?.expect("seeded Dreamer");
+    let window = WindowKey::from_timestamp(0);
+    let sibling = EntityId::from_bytes([0x75; 16])?;
+    let doc = create_window_doc("hostile-dreamer", &window);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &actor.to_hex(),
+        &make_entity_blob(crate::registry::ENTITY_TYPE_MACHINE, 0, b"forged"),
+    )?;
+    map_insert_bytes(
+        &entities,
+        &sibling.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, 0, b"ordinary turn"),
+    )?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 1,
+        request_id: [0x37; 16],
+    }
+    .encode();
+    map_insert_bytes(&doc.get_map("tombstones"), &actor.to_hex(), &tombstone)?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window)?;
+    assert_eq!(vault.get_raw(&actor)?.as_deref(), Some(raw.as_slice()));
+    assert!(
+        vault.get_raw(&sibling)?.is_some(),
+        "rejected actor op cannot wedge a sibling"
+    );
+    let rows = quarantine::quarantined_records(&vault)?;
+    assert!(
+        rows.iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Entities
+                && row.reason_code == "DreamerActorImmutable")
+    );
+    assert!(
+        rows.iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Tombstones
+                && row.reason_code == "DreamerActorImmutable")
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(!vault.local_hard_delete_marker_exists_in_txn(&rtxn, &actor)?);
+    drop(rtxn);
+    reverse_rematerialize(&vault, &doc, &window)?;
+    assert_eq!(map_get_bytes(&entities, &actor.to_hex()), Some(raw.clone()));
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(reopened.get_raw(&actor)?.as_deref(), Some(raw.as_slice()));
+    Ok(())
+}
+
 /// Forward rematerialization must apply the same MACHINE origin-proof verdict
 /// as Observer B, without checking whether the signer was locally enrolled.
 #[test]

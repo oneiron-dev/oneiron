@@ -44,8 +44,8 @@ fn entities_by_type_returns_correct_ids() -> Result<()> {
     assert_eq!(tasks.len(), 1);
     assert!(tasks.contains(&tk1));
 
-    let empty = vault.entities_by_type(ENTITY_TYPE_MACHINE)?;
-    assert!(empty.is_empty());
+    let machines = vault.entities_by_type(ENTITY_TYPE_MACHINE)?;
+    assert_eq!(machines, vec![vault.dreamer_authority()?.entity_ref()]);
     Ok(())
 }
 

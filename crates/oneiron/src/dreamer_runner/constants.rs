@@ -31,6 +31,8 @@ pub const DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND: &str = "dreamer.consolidatio
 pub const DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND: &str = "dreamer.consolidation.meso";
 /// MACRO consolidation queue kind. Admission is restricted to the elected home node.
 pub const DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND: &str = "dreamer.consolidation.macro";
+/// A per-vault, owner-admitted workflow skill executed under the Dreamer stamp.
+pub const DREAMER_WEAVE_RECIPE_ATTEMPT_KIND: &str = "dreamer.weave_recipe";
 /// SKILL-OPT maintenance queue kind (ONE-1448). Private per-device attempt
 /// rows, like MICRO/MESO: the job only DRAFTS gated proposals, so a second
 /// device drafting one is a second question for a human, never a second edit.

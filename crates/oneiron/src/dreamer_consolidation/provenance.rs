@@ -463,6 +463,30 @@ pub fn peer_answer_provenance_chain(
     Ok(chain)
 }
 
+/// The one-row trust answer for bytes read under the caller's scoped snapshot.
+/// TURNs start at Generated; CLAIMs fold their stored source and transitive
+/// taint; anything else cannot supply recipe evidence.
+pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<ClaimSource> {
+    if entity_type == ENTITY_TYPE_TURN {
+        return Ok(ClaimSource::Generated);
+    }
+    if entity_type != ENTITY_TYPE_CLAIM {
+        return Err(invalid_consolidation(
+            "evidence is neither a TURN nor a CLAIM",
+        ));
+    }
+    let body = crate::claim::decode_claim_body(data, true)?;
+    Ok(source_meet(
+        ClaimSource::Generated,
+        evidence_source_from_claim(&body),
+    ))
+}
+
+fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {
+    let source = body.source.unwrap_or(ClaimSource::Imported);
+    claim_evidence_taint(body).map_or(source, |taint| source_meet(source, taint))
+}
+
 /// Folds a candidate's whole evidence surface into one D10 meet — the ONLY
 /// input to a consolidation claim's stored source (§3: callers never choose
 /// it).
@@ -504,10 +528,7 @@ pub fn evidence_chain_source(
                 meet = source_meet(meet, ClaimSource::Imported);
                 continue;
             };
-            meet = source_meet(meet, body.source.unwrap_or(ClaimSource::Imported));
-            if let Some(taint) = claim_evidence_taint(&body) {
-                meet = source_meet(meet, taint);
-            }
+            meet = source_meet(meet, evidence_source_from_claim(&body));
             continue;
         }
         if entity_type != ENTITY_TYPE_TURN {

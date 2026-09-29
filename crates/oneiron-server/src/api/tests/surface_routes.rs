@@ -87,6 +87,11 @@ async fn context_board_hides_fresh_default_policy_manifest() {
                 oneiron::registry::ENTITY_TYPE_FACET.to_string(),
                 Value::from(1)
             ),
+            // Every open seeds the Dreamer principal's MACHINE row (ONE-2545).
+            (
+                oneiron::registry::ENTITY_TYPE_MACHINE.to_string(),
+                Value::from(1)
+            ),
         ]),
         "a fresh vault exposes its agents, bootstrap skills, root project room and owner"
     );

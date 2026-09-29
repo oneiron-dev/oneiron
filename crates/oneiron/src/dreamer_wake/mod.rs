@@ -13,6 +13,7 @@ mod driver;
 mod grain;
 mod legibility;
 mod policy;
+mod recipe;
 mod scheduling;
 mod settlement;
 mod types;
@@ -22,6 +23,7 @@ pub use self::driver::*;
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::policy::*;
+pub use self::recipe::*;
 pub use self::scheduling::*;
 pub use self::types::*;
 

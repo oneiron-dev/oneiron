@@ -53,6 +53,25 @@ pub(crate) fn stage_machine_transition_as(
     )
 }
 
+/// Owner consent on a MACHINE claim's pending Gate row: approval signs an
+/// Approve event and a decline a Reject event, which the fold never retracts.
+/// Returns the projection the live row must carry.
+pub(crate) fn stage_consent_transition(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: crate::EntityId,
+    approve: bool,
+    actor: crate::WriteActor,
+    now: u64,
+) -> crate::Result<crate::ClaimBody> {
+    let kind = if approve {
+        ClaimTransitionKind::Approve
+    } else {
+        ClaimTransitionKind::Reject
+    };
+    stage_machine_transition_as(vault, txn, id, kind, TransitionDelta::None, actor, now)
+}
+
 /// Existing owner-typed lifecycle doors carry no separate actor argument;
 /// their host-root action is attributed to the vault's embedded owner.
 /// Actor-bound memory/inbox doors can pass their authenticated actor directly

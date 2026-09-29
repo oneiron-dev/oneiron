@@ -17,26 +17,23 @@ fn propose_named(vault: &Vault, id: u8, predicate: &str) -> Result<EntityId> {
         ClaimApprovalStatus::Proposed,
     );
     let id = entity(id);
+    let candidate = ClaimCandidate::new(
+        predicate,
+        ClaimSubject::Entity(actor.entity_ref()),
+        Value::from("pending action"),
+        0.7,
+    );
+    let envelope = crate::test_util::sign_machine_candidate(vault, &id, &candidate, &envelope);
     vault
         .batch()
-        .claim_candidate(
-            &id,
-            ClaimCandidate::new(
-                predicate,
-                ClaimSubject::Entity(actor.entity_ref()),
-                Value::from("pending action"),
-                0.7,
-            ),
-            &envelope,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .claim_candidate(&id, candidate, &envelope, TimeRange { start: 1, end: 1 }, 1)
         .commit()?;
     Ok(id)
 }
 #[test]
 fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x12);
     vault.put_entity(
         &owner_id,
@@ -152,6 +149,7 @@ fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()>
 #[test]
 fn policy_row_rejects_invalid_templates_and_disables_unpicked_breakthrough() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x51);
     vault.put_entity(
         &owner_id,
@@ -217,6 +215,7 @@ fn policy_row_rejects_invalid_templates_and_disables_unpicked_breakthrough() -> 
 #[test]
 fn repeated_urgent_groups_do_not_postpone_the_ordinary_group() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x61);
     vault.put_entity(
         &owner_id,
@@ -283,6 +282,7 @@ fn agent_memory_request_requires_exact_owner_confirmation_before_policy_changes(
     };
     use crate::{EdgeActorClass, WriteActor};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let owner_id = entity(0x75);
     let agent_id = entity(0x76);
     for id in [owner_id, agent_id] {
@@ -393,6 +393,7 @@ fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<(
         set_judge_digest_minutes,
     };
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let person = entity(0x61);
     let other = entity(0x62);
     let skill = entity(0x63);
@@ -553,6 +554,7 @@ fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<(
     };
     for archived in [false, true] {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        crate::test_util::provision_engine_machines(&vault);
         let person = entity(0x66);
         let skill = entity(0x67);
         calibration_fixture(&vault, skill, &[person])?;
@@ -620,6 +622,7 @@ fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<(
 fn every_funded_recipient_has_an_independent_digest_cadence() -> Result<()> {
     use crate::skill_optimize::{ask_judge_uncertainty, set_judge_digest_minutes};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let (a, b, skill) = (entity(0x68), entity(0x69), entity(0x70));
     calibration_fixture(&vault, skill, &[a, b])?;
     let (owner_a, owner_b) = (calibration_owner(&vault, a)?, calibration_owner(&vault, b)?);
@@ -694,6 +697,7 @@ fn set_calibration_manifest(vault: &Vault, cost: u32, limit: u32) -> Result<()> 
 fn manifest_cost_and_context_limit_narrow_questions_and_debits() -> Result<()> {
     use crate::skill_optimize::{ask_judge_uncertainty, set_judge_digest_minutes};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let (person, skill) = (entity(0x72), entity(0x73));
     calibration_fixture(&vault, skill, &[person])?;
     let owner = calibration_owner(&vault, person)?;
@@ -741,6 +745,7 @@ fn manifest_cost_and_context_limit_narrow_questions_and_debits() -> Result<()> {
 fn timer_digest_has_no_recipient_and_leaves_judge_asks_pending() -> Result<()> {
     use crate::skill_optimize::{ask_judge_uncertainty, set_judge_digest_minutes};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::provision_engine_machines(&vault);
     let (person, skill) = (entity(0x74), entity(0x77));
     calibration_fixture(&vault, skill, &[person])?;
     let owner = calibration_owner(&vault, person)?;

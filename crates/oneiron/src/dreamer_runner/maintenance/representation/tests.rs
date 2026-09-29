@@ -33,6 +33,7 @@ impl Fixture {
         // Keep the production default policy. No legacy fixture helper that
         // deletes it, no fail-open policy, no modified production gate.
         let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        crate::test_util::provision_engine_machines(&vault);
         vault
             .put_entity(
                 &id(0x51),
@@ -156,7 +157,7 @@ fn install_policy(vault: &Vault, actor: EntityId, allow_send: bool) {
         panic!("actor ceilings");
     };
     rows.push(Value::Map(vec![
-        (Value::from("actor_class"), Value::from("agent")),
+        (Value::from("actor_class"), Value::from("system")),
         (Value::from("actor_ref"), Value::from(actor.to_hex())),
         (Value::from("ceiling"), Value::from("auto")),
     ]));
@@ -337,7 +338,7 @@ fn wake_cites_scoped_sources_owner_accept_delivers_via_of327_decline_sends_nothi
         .approve_representation(&f.owner, &review, 103)
         .unwrap();
     let actor = f.vault.dreamer_authority().unwrap().entity_ref();
-    let facade = f.vault.memory(actor, EdgeActorClass::Agent);
+    let facade = f.vault.memory(actor, EdgeActorClass::System);
     let context = crate::memory::OutboundScheduleContext {
         utc_offset_minutes: Some(0),
         ..Default::default()
@@ -422,7 +423,7 @@ fn source_revision_drift_refuses_review_token_schedule_and_queued_dispatch() {
         .unwrap();
     let facade = f.vault.memory(
         f.vault.dreamer_authority().unwrap().entity_ref(),
-        EdgeActorClass::Agent,
+        EdgeActorClass::System,
     );
     let context = crate::memory::OutboundScheduleContext {
         utc_offset_minutes: Some(0),
@@ -465,7 +466,7 @@ fn owner_approval_is_not_an_external_effect_grant() {
         .unwrap();
     let facade = f.vault.memory(
         f.vault.dreamer_authority().unwrap().entity_ref(),
-        EdgeActorClass::Agent,
+        EdgeActorClass::System,
     );
     let receipt =
         schedule_approved_representation(&facade, approved, &Default::default(), 102).unwrap();
@@ -572,7 +573,7 @@ fn receipt_retention_keeps_the_owner_bundle_receipt_for_load_and_schedule() {
     );
     let facade = f.vault.memory(
         f.vault.dreamer_authority().unwrap().entity_ref(),
-        EdgeActorClass::Agent,
+        EdgeActorClass::System,
     );
     let context = crate::memory::OutboundScheduleContext {
         utc_offset_minutes: Some(0),

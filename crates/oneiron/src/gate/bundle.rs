@@ -358,9 +358,20 @@ impl Vault {
                 }
 
                 let mut resolved = body.clone();
+                // A MACHINE claim changes only through its signed history,
+                // whose fold rejects without retracting.
+                let machine =
+                    crate::authority::machine_claim_needs_history(&self.store, &*wtxn, &body)?;
                 let occurred = match action {
                     GateConsentBundleAction::Approve => {
                         resolved.approval = ClaimApprovalStatus::Approved;
+                        TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        }
+                    }
+                    GateConsentBundleAction::Decline if machine => {
+                        resolved.approval = ClaimApprovalStatus::Rejected;
                         TimeRange {
                             start: header.occurred_start,
                             end: header.occurred_end,
@@ -398,6 +409,12 @@ impl Vault {
                     actor,
                     &mut recorded_decisions,
                 )?;
+                if machine {
+                    let approve = action == GateConsentBundleAction::Approve;
+                    resolved = crate::claim::transition::stage_consent_transition(
+                        self, wtxn, id, approve, actor, now,
+                    )?;
+                }
                 let data = encode_claim_body(&resolved)?;
                 let verified_put = BatchOp::Put {
                     id,

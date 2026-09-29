@@ -688,20 +688,27 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 "executor actor is not the queued Dreamer authority",
             ));
         }
-        let special = matches!(
-            attempt.status.payload.attempt_type.as_str(),
-            DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE | DREAMER_GAP_SCAN_ATTEMPT_TYPE,
-        );
-        let branch_scope = if special {
-            super::branch_scope::resolve_scope(
-                ctx.vault,
-                attempt.status.payload.parent_attempt,
-                super::branch_scope::decode_branch_scope(&attempt.status.payload.input)?,
-                self.scope.as_ref(),
-            )?
-        } else {
-            None
-        };
+        // The session-end miner carries its own pinned `{session}` payload,
+        // not a partition map. Reject a supplied branch scope explicitly,
+        // then let the miner's codec validate the exact session ref below.
+        let branch_scope =
+            if attempt.status.payload.attempt_type == DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE {
+                if self.scope.is_some() || attempt.status.payload.parent_attempt.is_some() {
+                    return Err(invalid_consolidation(
+                        "the miner has no branch resource contract",
+                    ));
+                }
+                None
+            } else if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
+                super::branch_scope::resolve_scope(
+                    ctx.vault,
+                    attempt.status.payload.parent_attempt,
+                    super::branch_scope::decode_branch_scope(&attempt.status.payload.input)?,
+                    self.scope.as_ref(),
+                )?
+            } else {
+                None
+            };
         // ED-04 (ONE-1760): the recurring-substitution miner is a
         // consolidation-scope job like the gap scan — deterministic, no LLM
         // step, so it spends no units. The payload shape and the pass itself

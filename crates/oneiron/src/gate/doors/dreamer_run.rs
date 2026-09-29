@@ -34,7 +34,7 @@ pub(super) fn pending_consent_dreamer_run_id(
 /// The Dreamer run this write is authored by, if any.
 ///
 /// Authorship is a property of the WRITE, read off provenance and
-/// SOURCE-AGNOSTIC: `Agent` actor class, the Dreamer run surface/runner
+/// SOURCE-AGNOSTIC: `Agent` or `System` actor class, the Dreamer run surface/runner
 /// marker, and a non-empty run id. `envelope.source()` is the computed
 /// evidence meet — epistemic taint derived FROM the candidate's evidence —
 /// so a truthful `ToolOutput` or `Observed` meet says how well the claim is
@@ -44,7 +44,10 @@ pub(super) fn pending_consent_dreamer_run_id(
 pub(in crate::gate) fn dreamer_run_id_from_write_envelope(
     envelope: &WriteEnvelope,
 ) -> Option<String> {
-    if envelope.actor().actor_class() != EdgeActorClass::Agent {
+    if !matches!(
+        envelope.actor().actor_class(),
+        EdgeActorClass::Agent | EdgeActorClass::System
+    ) {
         return None;
     }
     dreamer_run_id_from_provenance(envelope.provenance().value())

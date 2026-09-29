@@ -143,7 +143,11 @@ impl ClaimTransitionProjection {
         }
         match (event.kind, event.delta) {
             (ClaimTransitionKind::Approve, TransitionDelta::None) if self.approval == Proposed => {
-                self.approval = Approved;
+                // The MACHINE author's own Approve is the Gate's deferred Auto
+                // grant of its proposal; any other actor's is an approval.
+                let own_grant = event.actor_class == crate::edge::EdgeActorClass::System
+                    && crate::memory::claim_author(&self.birth) == Some(event.actor);
+                self.approval = if own_grant { Auto } else { Approved };
             }
             (ClaimTransitionKind::Reject, TransitionDelta::None)
                 if matches!(self.approval, Proposed | Approved | Auto) =>

@@ -54,12 +54,14 @@ pub(super) fn emit_in_txn(
         Value::from(String::from_utf8(bytes).map_err(|_| super::invalid())?),
         1.0,
     );
+    let mut envelope = envelope.clone();
+    vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
     vault
         .batch_in()
         .claim_candidate(
             &id,
             candidate,
-            envelope,
+            &envelope,
             TimeRange {
                 start: now,
                 end: now,

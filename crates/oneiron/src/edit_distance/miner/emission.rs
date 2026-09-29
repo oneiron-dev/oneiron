@@ -302,6 +302,8 @@ pub(super) fn emit_preference_value(
                 &evidence_record,
             )
             .apply(wtxn)?;
+        let mut envelope = envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
         vault
             .batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, cluster.at)

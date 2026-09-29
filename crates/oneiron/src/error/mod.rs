@@ -300,6 +300,7 @@ pub enum ErrorKind {
     InvalidSuppressionReceiptBody,
     SuppressionReceiptDivergence,
     PackPredicateNameCollision,
+    DreamerActorImmutable,
     PackInstallRuleBlocked,
     ResidentOwnerDependencyPending,
     InvalidMachineClaimProof,

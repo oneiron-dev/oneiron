@@ -66,6 +66,7 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
