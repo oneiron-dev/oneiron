@@ -1,0 +1,35 @@
+[package]
+name = "oneiron-xlsx-formula"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Opt-in in-process XLSX formula recalculation for the edit round trip (owned formualizer 0.9.3-oneiron.1 fork)"
+
+[lib]
+# No doc-comment code fences in this crate; skip the doctest compile pass.
+doctest = false
+
+[dependencies]
+oneiron = { path = "../oneiron" }
+oneiron-docedit = { path = "../oneiron-docedit" }
+# Exact upstream releases; the root manifest patches all five to the org fork
+# by rev (docs/ops/forked-dependencies.md).
+formualizer-workbook = { version = "=0.9.3", default-features = false }
+formualizer-common = "=3.1.2"
+formualizer-parse = "=3.1.2"
+formualizer-eval = { version = "=0.9.3", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"
+zip = "0.6.6"
+
+[lints]
+workspace = true

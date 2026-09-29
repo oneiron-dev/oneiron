@@ -1,0 +1,11 @@
+{
+  "source": "https://zenodo.org/records/21974469",
+  "repository": "https://github.com/xxaflabsxx/spreadsheet-compat",
+  "revision": "fbfd43be",
+  "archive_sha256": "1026f408b381001b2b8d99b79ae7874990b5e8fee2e77be7e21dba86b3cf5721",
+  "normalized_cases_sha256": "d4740551ddcae1828c8e1c59784a5594a9bb0802423271148e225589acbab8bd",
+  "function_files": 277,
+  "cases": 834,
+  "license": "CC-BY-4.0",
+  "normalization": "Sort function filenames; preserve case order and every case field; add function from source file."
+}

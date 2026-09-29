@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "input_sha256": "9480aa326c9dd56723ac60879fc4259beb0405f90985dda1df007c25d061f79a",
+  "script_sha256": "7b18e9b4aea10aa534871898d374fd156be59e431f8f4c5613f0aafc137e68f6",
+  "started_at": 1789796649.347627,
+  "app_version": "16.112.4",
+  "revisions": 2,
+  "comments": 1,
+  "paragraphs": 3,
+  "initial_documents": 0,
+  "final_documents": 0,
+  "repair_requested": false,
+  "output_sha256": "c1de8378bd2b5b836bce2efae2b0220924fd313beb55f4e486f913763cbf2535",
+  "pdf_sha256": "eaa7409c102c4a15c9c02b5a6a6b1884415751041e446d4e85895f955a5723fe",
+  "lock_retained": false,
+  "finished_at": 1789796666.936288,
+  "input_generator": "cargo run -p oneiron-docedit --example docx_tracked_change -- target/docx-native.docx",
+  "scope": "synthetic insert/delete/comment sample; not full DOCX corpus or accept/reject proof"
+}

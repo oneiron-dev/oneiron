@@ -214,7 +214,7 @@ pub(super) fn extract_formulas(xml: &str) -> Vec<String> {
     super::xml::formulas(xml).unwrap_or_default()
 }
 
-pub(super) fn scan_tag_attr(xml: &str, tag: &str, attr: &str) -> Vec<String> {
+fn scan_tag_attr(xml: &str, tag: &str, attr: &str) -> Vec<String> {
     let needle = format!("{attr}=\"");
     let mut out = Vec::new();
     let mut rest = xml;
@@ -251,7 +251,7 @@ fn scan_tag_attr_pairs(xml: &str, tag: &str, attr1: &str, attr2: &str) -> Vec<(S
 
 /// Reads a double-quoted attribute value from a tag body given the search
 /// needle `name="` (already including the opening quote).
-pub(super) fn attr_value(tag_body: &str, needle: &str) -> Option<String> {
+fn attr_value(tag_body: &str, needle: &str) -> Option<String> {
     let start = tag_body.find(needle)? + needle.len();
     let end = tag_body[start..].find('"')?;
     Some(tag_body[start..start + end].to_owned())

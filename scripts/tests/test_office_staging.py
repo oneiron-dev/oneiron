@@ -1,0 +1,150 @@
+"""Office runner contract tests using a fake app process; no Apple events."""
+from argparse import Namespace
+from pathlib import Path
+import importlib
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts/office"))
+
+
+def package(path, organ):
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("_rels/.rels", "<Relationships/>")
+        archive.writestr({"word": "word/document.xml", "ppt": "ppt/presentation.xml", "excel": "xl/workbook.xml"}[organ], "<root/>")
+
+
+class OfficeStaging(unittest.TestCase):
+    def exercise(self, name, organ, timeout, custody_changed=False):
+        driver = importlib.import_module(name)
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            extension = {"word": "docx", "ppt": "pptx", "excel": "xlsx"}[organ]
+            source = base / ("source." + extension)
+            package(source, organ)
+            original = source.read_bytes()
+            script = base / "driver.applescript"
+            script.write_text("-- fake driver")
+            stage = base / "container" / "run"
+            stage.mkdir(parents=True)
+            args = Namespace(input=source, output=base / "results", lock=base / "lock", script=script,
+                             action="accept", expected=None if organ == "word" else 2.0,
+                             sheet="Sheet1", cell="A1")
+            def invoke(command, **kwargs):
+                self.assertIn("alarm 120; exec @ARGV", command)
+                self.assertEqual(kwargs["timeout"], 130)
+                index = command.index(str(script))
+                paths = command[index + 1:]
+                self.assertTrue(Path(paths[0]).is_relative_to(stage))
+                self.assertEqual(Path(paths[0]).read_bytes(), original)
+                if name == "run_word_revision_oracle":
+                    destinations = [Path(paths[2])]
+                elif name == "run_excel_file_oracle":
+                    destinations = [Path(paths[1])]
+                else:
+                    destinations = [Path(paths[1]), Path(paths[2])]
+                for destination in destinations:
+                    self.assertTrue(destination.is_relative_to(stage))
+                if timeout:
+                    raise subprocess.TimeoutExpired(command, 130)
+                if name == "run_word_revision_oracle":
+                    destinations[0].write_text("resolved")
+                    result = "16.112.4\t2\t0\t1\t0\t0\n"
+                else:
+                    package(destinations[0], organ)
+                    if len(destinations) > 1: destinations[1].write_bytes(b"%PDF-fake")
+                    result = {"run_word_oracle": "16.112.4\t2\t0\t1\t0\t0\n",
+                              "run_powerpoint_oracle": "16.112.4\t1\t0\t0\n",
+                              "run_excel_file_oracle": "16.112.4\t2\t1\t1\t[user>saved]\t[user>saved]\n"}[name]
+                if custody_changed:
+                    # Same workbook count, but an unsaved user workbook disappeared.
+                    result = "16.112.4\t2\t1\t1\t[Book7>>false;]\t[Book8>>false;]\n"
+                return subprocess.CompletedProcess(command, 0, result, "")
+            stage_fn = "word_stage" if name in ("run_word_oracle", "run_word_revision_oracle") else "app_stage"
+            with patch.object(driver.sys, "platform", "darwin"), patch.object(driver, stage_fn, return_value=stage), patch.object(driver.subprocess, "run", side_effect=invoke):
+                if timeout:
+                    with self.assertRaises(subprocess.TimeoutExpired): driver.run(args)
+                elif custody_changed:
+                    with self.assertRaisesRegex(RuntimeError, "custody changed"): driver.run(args)
+                else:
+                    driver.run(args)
+            receipt = json.loads((args.output / "receipt.json").read_text())
+            retained = timeout or custody_changed
+            self.assertEqual(receipt["lock_retained"], retained)
+            self.assertEqual(args.lock.exists(), retained)
+            self.assertEqual(stage.exists(), retained)
+            self.assertEqual(source.read_bytes(), original)
+            if retained:
+                self.assertIn(receipt["status"], ("timed-out", "validation-error"))
+                self.assertEqual(Path(receipt["stage"]), stage)
+                self.assertTrue((stage / source.name).is_file())
+            else:
+                self.assertEqual(receipt["status"], "completed")
+                expected = "resolved.txt" if name == "run_word_revision_oracle" else "roundtrip." + extension
+                self.assertTrue((args.output / expected).is_file())
+
+    def test_all_app_paths_are_staged_and_outputs_return_after_cleanup(self):
+        for name, organ in [("run_word_oracle", "word"), ("run_word_revision_oracle", "word"), ("run_powerpoint_oracle", "ppt"), ("run_excel_file_oracle", "excel")]:
+            with self.subTest(driver=name): self.exercise(name, organ, False)
+
+    def test_timeouts_keep_only_owned_staging_and_lock_for_recovery(self):
+        for name, organ in [("run_word_oracle", "word"), ("run_word_revision_oracle", "word"), ("run_powerpoint_oracle", "ppt"), ("run_excel_file_oracle", "excel")]:
+            with self.subTest(driver=name): self.exercise(name, organ, True)
+
+    def test_same_count_cannot_hide_changed_unsaved_workbook_identity(self):
+        self.exercise("run_excel_file_oracle", "excel", False, custody_changed=True)
+
+    def test_owner_office_rules_are_carried_in_the_scripts(self):
+        office = ROOT / "scripts/office"
+        def code(path, comment):
+            return "\n".join(line.split(comment, 1)[0] for line in path.read_text().splitlines())
+        # deck_oracle.py is the separate PowerPoint deck harness with its own documented run rules.
+        drivers = [path for path in office.glob("*.py") if path.name != "deck_oracle.py"
+                   and ("osascript" in path.read_text() or "from run_word_oracle import" in path.read_text())]
+        self.assertLessEqual({"run_word_oracle.py", "run_word_revision_oracle.py", "run_powerpoint_oracle.py",
+                              "run_excel_oracle.py", "run_excel_file_oracle.py", "run_real_excel_oracle.py",
+                              "resume_real_excel_oracle.py", "run_docx_comparison.py"}, {path.name for path in drivers})
+        for path in drivers:
+            with self.subTest(driver=path.name):
+                text = code(path, "#")
+                # (1) One staging helper owns every container path. (2) No driver quits an app.
+                if path.name != "run_word_oracle.py":
+                    self.assertNotIn("Library/Containers", text)
+                self.assertNotIn("tell application", text)
+                self.assertNotRegex(text, r"\bquit\b")
+        for path in sorted(office.glob("*.applescript")) + sorted(office.glob("*.js")):
+            with self.subTest(script=path.name):
+                self.assertNotRegex(code(path, "--" if path.suffix == ".applescript" else "//"), r"\bquit\b")
+        for path in sorted(office.glob("*excel*.applescript")) + [office / "real_workbook_recalc.applescript"]:
+            with self.subTest(excel=path.name):
+                depth = 0
+                for line in code(path, "--").splitlines():
+                    line = line.strip()
+                    if line == 'tell application "Microsoft Excel"':
+                        depth += 1
+                    elif line == "end tell" and depth:
+                        depth -= 1
+                    # (3) The field separator is bound outside Excel's tell block.
+                    if "ASCII character 9" in line:
+                        self.assertEqual(depth, 0, line)
+                    self.assertNotRegex(line, r"\btab\b")
+                    # (5) Workbooks are read by index, never through a loop reference.
+                    self.assertNotRegex(line, r"repeat with \w+ in (every )?workbooks?\b|path of (every )?workbooks\b")
+
+    def test_container_names_include_case_sensitive_powerpoint_spelling(self):
+        from run_word_oracle import app_stage
+        with tempfile.TemporaryDirectory() as directory, patch("pathlib.Path.home", return_value=Path(directory)):
+            for app, container in [("word", "com.microsoft.Word"), ("excel", "com.microsoft.Excel"), ("ppt", "com.microsoft.Powerpoint")]:
+                stage = app_stage(app)
+                self.assertTrue(stage.is_relative_to(Path(directory) / "Library/Containers" / container / "Data/tmp/w7-oracle"))
+                self.assertTrue(stage.is_dir())
+
+
+if __name__ == "__main__": unittest.main()

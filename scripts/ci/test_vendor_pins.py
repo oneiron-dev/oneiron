@@ -16,8 +16,21 @@ ROOT = Path(__file__).resolve().parents[2]
 FORK_ORG = "https://github.com/oneiron-dev/"
 SUDACHI_FORK = "https://github.com/oneiron-dev/sudachi.rs"
 SUDACHI_UPSTREAM = "https://github.com/WorksApplications/sudachi.rs"
+FORMUALIZER_FORK = "https://github.com/oneiron-dev/formualizer"
+FORMUALIZER_UPSTREAM = "https://github.com/psu3d0/formualizer"
+# The five formualizer crates the xlsx formula engine links, at their exact releases.
+FORMUALIZER_CRATES = {
+    "formualizer-common": "3.1.2",
+    "formualizer-eval": "0.9.3",
+    "formualizer-macros": "0.9.3",
+    "formualizer-parse": "3.1.2",
+    "formualizer-workbook": "0.9.3",
+}
 # Vendor trees replaced by a fork pin. Nothing may point back into them.
-REMOVED_VENDOR_TREES = ("crates/oneiron/vendor/sudachi-0.6.11",)
+REMOVED_VENDOR_TREES = (
+    "crates/oneiron/vendor/sudachi-0.6.11",
+    "crates/oneiron-xlsx-formula/vendor",
+)
 GIT_SOURCE = re.compile(
     r"git\+(?P<url>[^?#]+)\?rev=(?P<rev>[0-9a-f]{40})#(?P<commit>[0-9a-f]{40})"
 )
@@ -62,6 +75,25 @@ class VendorPinTests(unittest.TestCase):
         self.assertEqual(match["url"], SUDACHI_FORK)
         self.assertEqual(match["rev"], match["commit"])
 
+    def test_formualizer_resolves_from_the_org_fork_by_rev(self):
+        packages = [p for p in _lock_packages() if p["name"] in FORMUALIZER_CRATES]
+        self.assertEqual(sorted(p["name"] for p in packages), sorted(FORMUALIZER_CRATES))
+        revs = set()
+        for package in packages:
+            self.assertEqual(package["version"], FORMUALIZER_CRATES[package["name"]], package)
+            match = GIT_SOURCE.fullmatch(package.get("source", ""))
+            self.assertIsNotNone(match, f"not a git source pinned by rev: {package.get('source')}")
+            self.assertEqual(match["url"], FORMUALIZER_FORK)
+            self.assertEqual(match["rev"], match["commit"])
+            revs.add(match["rev"])
+        self.assertEqual(len(revs), 1, revs)
+        patch = tomllib.loads((ROOT / "Cargo.toml").read_text())["patch"]["crates-io"]
+        (rev,) = revs
+        for name in FORMUALIZER_CRATES:
+            self.assertEqual(patch[name], {"git": FORMUALIZER_FORK, "rev": rev}, name)
+        doc = (ROOT / "docs/ops/forked-dependencies.md").read_text()
+        self.assertIn(rev, doc)
+
     def test_no_dependency_path_points_into_a_removed_vendor_tree(self):
         removed = [(ROOT / tree).resolve() for tree in REMOVED_VENDOR_TREES]
         for tree in removed:
@@ -81,12 +113,14 @@ class VendorPinTests(unittest.TestCase):
                         f"{manifest.relative_to(ROOT)} points into removed {tree}: {value}",
                     )
 
-    def test_deny_allows_the_fork_git_sources_and_not_upstream_sudachi(self):
+    def test_deny_allows_the_fork_git_sources_and_not_upstream(self):
         sources = tomllib.loads((ROOT / "deny.toml").read_text())["sources"]
         self.assertEqual(sources["unknown-git"], "deny")
         allowed = sources.get("allow-git", [])
         self.assertIn(SUDACHI_FORK, allowed)
         self.assertNotIn(SUDACHI_UPSTREAM, allowed)
+        self.assertIn(FORMUALIZER_FORK, allowed)
+        self.assertNotIn(FORMUALIZER_UPSTREAM, allowed)
         for url in allowed:
             self.assertTrue(url.startswith(FORK_ORG), url)
         for package in _lock_packages():

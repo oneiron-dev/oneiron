@@ -156,6 +156,21 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_fleet_regression.py' -v
+      # Office oracle scripts are host tools CI never runs. These checks read only stored
+      # inputs, synthetic packages and the archived-receipt pointer: no Office, network or receipt.
+      - name: Test stored Office inputs and archived-receipt pointers (offline)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_docedit_receipt_pointers.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_excel_goldens.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_office_corpus.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_office_staging.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_docedit_direction.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_excel_resume.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_lo_oracle.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_real_workbook_oracle.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_saved_cache_benchmark.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_word_oracle.py' -v
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'
         run: sccache --show-stats

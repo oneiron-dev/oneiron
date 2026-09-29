@@ -1,6 +1,5 @@
 //! Edit session seam and validation.
 
-use super::inspect::{attr_value, scan_tag_attr};
 use super::opc::{self, OpcPackage, PartClass};
 use super::{EditOp, EditWarning, OfficeFormat};
 use crate::blob_artifact::CalcEngineStamp;
@@ -194,7 +193,7 @@ pub(super) fn validate(
         {
             Some(formulas) => {
                 for formula in formulas {
-                    if super::formula::prefix_functions(&formula) != formula {
+                    if oneiron_docedit::xlfn::storage_form(&formula) != formula {
                         modern_formulas.push(part.name.clone());
                     }
                 }
@@ -329,8 +328,17 @@ fn referential_integrity_violations(after: &OpcPackage) -> Vec<String> {
         let Some(base) = rels_base_dir(&part.name) else {
             continue;
         };
-        let xml = String::from_utf8_lossy(&part.data);
-        for (target, mode) in relationship_targets(&xml) {
+        let targets = match super::xml::relationship_targets(&part.data) {
+            Ok(targets) => targets,
+            Err(reason) => {
+                violations.push(format!(
+                    "{} -> unreadable relationships ({reason})",
+                    part.name
+                ));
+                continue;
+            }
+        };
+        for (target, mode) in targets {
             // External targets name a URI, not a package part.
             if mode.as_deref() == Some("External") {
                 continue;
@@ -347,8 +355,11 @@ fn referential_integrity_violations(after: &OpcPackage) -> Vec<String> {
         }
     }
     if let Some(content_types) = after.part(opc::CONTENT_TYPES_PART) {
-        let xml = String::from_utf8_lossy(content_types);
-        for part_name in scan_tag_attr(&xml, "<Override", "PartName") {
+        let part_names = super::xml::override_part_names(content_types).unwrap_or_else(|reason| {
+            violations.push(format!("[Content_Types].xml -> unreadable ({reason})"));
+            Vec::new()
+        });
+        for part_name in part_names {
             let resolved = part_name.strip_prefix('/').unwrap_or(&part_name);
             if !after.contains(resolved) {
                 violations.push(format!(
@@ -385,23 +396,6 @@ pub(super) fn resolve_part_path(base_dir: &str, target: &str) -> Option<String> 
         }
     }
     Some(segments.join("/"))
-}
-
-/// Extracts `(Target, TargetMode?)` from every `<Relationship>` in a `.rels`
-/// part.
-fn relationship_targets(xml: &str) -> Vec<(String, Option<String>)> {
-    let mut out = Vec::new();
-    let mut rest = xml;
-    while let Some(pos) = rest.find("<Relationship") {
-        let after_tag = &rest[pos + "<Relationship".len()..];
-        let tag_end = after_tag.find('>').unwrap_or(after_tag.len());
-        let body = &after_tag[..tag_end];
-        if let Some(target) = attr_value(body, "Target=\"") {
-            out.push((target, attr_value(body, "TargetMode=\"")));
-        }
-        rest = &after_tag[tag_end..];
-    }
-    out
 }
 
 pub(super) fn diff_parts(before: &OpcPackage, after: &OpcPackage) -> BTreeSet<String> {
