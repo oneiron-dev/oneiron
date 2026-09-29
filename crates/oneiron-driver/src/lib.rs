@@ -31,6 +31,20 @@
 mod session;
 mod supervisor;
 mod tick;
+mod wave;
+mod wave_dispatch;
+
+/// Roots a test vault under a fixed host and provisions the engine's MACHINE
+/// writers, the Dreamer among them, as a host does at bootstrap.
+#[cfg(test)]
+fn provision_test_engine_machines(vault: &oneiron::Vault) {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"oneiron-driver test host root")
+        .expect("host issuer");
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+}
 
 pub use session::{
     DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint,
@@ -39,10 +53,17 @@ pub use session::{
 pub use supervisor::{
     ConsolidationExecutorFactory, MAX_PASS_BUDGET_BASE_LEN, NowSeconds, PassExecutorFactory,
     RestartBackoffConfig, ShutdownHandle, WakeSupervisor, WakeSupervisorConfig,
-    WakeSupervisorReport,
+    WakeSupervisorReport, WaveReadyDispatcher,
 };
 pub use tick::{
     AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher,
     HintSignal, HybridTick, IdleSample, NowMillis, PushTick, Tick, TickPushError, TickSource,
     TimerTick, WakePolicyTicks, WakePusher, WakeSignal,
+};
+
+pub use wave::WaveHost;
+
+pub use wave_dispatch::{
+    WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome,
+    WaveHandoffReceipt,
 };

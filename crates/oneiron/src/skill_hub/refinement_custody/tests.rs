@@ -80,6 +80,8 @@ fn ruling(candidate: EntityId, id: EntityId, claim: bool) -> RefinementReceipt {
             after: None,
             held_out_digest: "reserve".into(),
             accepted: false,
+            judge_revision: None,
+            displaced_by_revision: None,
             at: 2,
         })
     }
@@ -174,14 +176,8 @@ fn candidate_prefix_erases_over_100k_own_without_scanning_100k_unrelated() -> Re
         vault.with_write_txn(|txn| {
             for i in 0..100_001 {
                 let fake = synthetic_id(i, 0x52);
-                vault
-                    .store
-                    .vault_meta
-                    .put(txn, &owned_key(OWNED, &unrelated, &fake), &[])?;
-                vault
-                    .store
-                    .vault_meta
-                    .put(txn, &key(BINDING, &fake), unrelated.as_bytes())?;
+                OWNED.put(&vault.store, txn, &(unrelated, fake), &())?;
+                BINDING.put(&vault.store, txn, &fake, &unrelated)?;
             }
             Ok(())
         })?;
@@ -204,14 +200,8 @@ fn candidate_prefix_erases_over_100k_own_without_scanning_100k_unrelated() -> Re
             }
             for i in 0..100_001 {
                 let fake = synthetic_id(i, 0x53);
-                vault
-                    .store
-                    .vault_meta
-                    .put(txn, &owned_key(OWNED, &large, &fake), &[])?;
-                vault
-                    .store
-                    .vault_meta
-                    .put(txn, &key(BINDING, &fake), large.as_bytes())?;
+                OWNED.put(&vault.store, txn, &(large, fake), &())?;
+                BINDING.put(&vault.store, txn, &fake, &large)?;
             }
             Ok(())
         })?;

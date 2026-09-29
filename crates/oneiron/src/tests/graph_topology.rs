@@ -44,8 +44,8 @@ fn entities_by_type_returns_correct_ids() -> Result<()> {
     assert_eq!(tasks.len(), 1);
     assert!(tasks.contains(&tk1));
 
-    let empty = vault.entities_by_type(ENTITY_TYPE_MACHINE)?;
-    assert!(empty.is_empty());
+    let machines = vault.entities_by_type(ENTITY_TYPE_MACHINE)?;
+    assert_eq!(machines, vec![vault.dreamer_authority()?.entity_ref()]);
     Ok(())
 }
 
@@ -690,7 +690,7 @@ fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
                 .iter()
                 .map(|s| s.id)
                 .collect::<std::collections::BTreeSet<_>>(),
-            std::collections::BTreeSet::from([e, crate::claim::substrate_facet_id(e)]),
+            std::collections::BTreeSet::from([e, crate::claim::substrate_facet_id(e)?]),
             "ChildOf must not propagate beyond the seed and its own substrate facet"
         );
         assert_eq!(scores[0].id, e);

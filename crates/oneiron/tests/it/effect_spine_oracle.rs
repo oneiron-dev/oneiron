@@ -34,6 +34,7 @@ fn test_config() -> VaultConfig {
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), test_config()).unwrap();
+    seam::reset_fan_out_oracle();
     (dir, vault)
 }
 
@@ -386,120 +387,475 @@ mod seam {
 
     // ---- ONE-1719 (ES-06): fan-out estimate-then-approve gate ----
 
-    /// Registers a consult plan: (peer id, consult count) per peer, under a
-    /// named preset. Returns an opaque plan handle.
+    use oneiron::edit_distance::escalation::{EscalationTrigger, standing_policy_for};
+    use oneiron::receipt::{ReceiptKind, ReceiptQuery};
+    use oneiron::task_verb::{
+        ConsultFanOutChoice, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutReceipt,
+        ConsultFanOutSpec, ConsultPayloadRef,
+    };
+    use std::cell::RefCell;
+
+    #[derive(Clone)]
+    struct OraclePlan {
+        input: ConsultFanOutSpec,
+        preset: String,
+        peers: Vec<(String, oneiron::EntityId)>,
+        receipt: Option<ConsultFanOutReceipt>,
+        surfaced: bool,
+        /// Snapshot before admission, after any real history fixture was added.
+        owned_tasks_before: usize,
+        /// Catches even an incorrectly owned TASK during estimate-only calls.
+        all_tasks_before: u64,
+    }
+    thread_local! {
+        static FAN_OUT_PLANS: RefCell<Vec<OraclePlan>> = const { RefCell::new(Vec::new()) };
+    }
+    pub(crate) fn reset_fan_out_oracle() {
+        FAN_OUT_PLANS.with(|plans| plans.borrow_mut().clear());
+    }
+    fn id(seed: u8) -> oneiron::EntityId {
+        oneiron::EntityId::from_bytes([seed; 16]).expect("oracle actor id")
+    }
+    fn actor() -> oneiron::EntityId {
+        id(0xE1)
+    }
+    fn owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
+        let owner = id(0xF0);
+        put_person(vault, owner);
+        vault
+            .authenticate_owner(
+                owner,
+                &owner.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("authenticated owner")
+    }
+    fn put_person(vault: &Vault, person: oneiron::EntityId) {
+        if vault
+            .get_entity_type(&person)
+            .expect("read person")
+            .is_none()
+        {
+            vault
+                .put_entity(
+                    &person,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    oneiron::temporal::TimeRange {
+                        start: 100,
+                        end: 100,
+                    },
+                    100,
+                    b"oracle actor",
+                )
+                .expect("put person");
+        }
+    }
+    fn question(vault: &Vault) -> ConsultPayloadRef {
+        let turn = id(0x7A);
+        if vault
+            .get_entity_type(&turn)
+            .expect("read question")
+            .is_none()
+        {
+            let mut body = Vec::new();
+            rmpv::encode::write_value(
+                &mut body,
+                &rmpv::Value::Map(vec![(
+                    rmpv::Value::from("role"),
+                    rmpv::Value::from("question"),
+                )]),
+            )
+            .expect("encode question");
+            vault
+                .put_entity(
+                    &turn,
+                    oneiron::registry::ENTITY_TYPE_TURN,
+                    oneiron::temporal::TimeRange {
+                        start: 100,
+                        end: 100,
+                    },
+                    100,
+                    &body,
+                )
+                .expect("put question");
+        }
+        ConsultPayloadRef::parse(vault, &format!("tn_{}", turn.to_hex())).unwrap()
+    }
+    fn peer_id(peer: &str) -> oneiron::EntityId {
+        match peer {
+            "codex" => id(0xE2),
+            "cc-2" => id(0xE3),
+            _ => panic!("unknown oracle peer: {peer}"),
+        }
+    }
+    fn owned_task_count(vault: &Vault) -> usize {
+        let mut count = 0;
+        let mut after = None;
+        loop {
+            let page = vault
+                .tasks_by_owner(actor(), after, 256)
+                .expect("query TASK owner index");
+            count += page.len();
+            after = page.last().copied();
+            if page.len() < 256 {
+                return count;
+            }
+        }
+    }
+    fn all_task_count(vault: &Vault) -> u64 {
+        vault
+            .count_entities_by_type(oneiron::registry::ENTITY_TYPE_TASK)
+            .expect("count actual TASK entities")
+    }
+    fn plan(handle: u64) -> OraclePlan {
+        FAN_OUT_PLANS.with(|plans| plans.borrow()[handle as usize].clone())
+    }
+    fn recorded(vault: &Vault, handle: u64) -> ConsultFanOutReceipt {
+        let plan = plan(handle);
+        let receipt = plan.receipt.expect("gate must have run");
+        vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .consult_fanout_status(receipt.correlation_ref)
+            .expect("durable plan status")
+    }
+    fn all_recorded(vault: &Vault) -> Vec<(OraclePlan, ConsultFanOutReceipt)> {
+        FAN_OUT_PLANS.with(|plans| {
+            plans
+                .borrow()
+                .iter()
+                .filter_map(|plan| {
+                    plan.receipt.as_ref().map(|receipt| {
+                        let status = vault
+                            .memory(actor(), oneiron::EdgeActorClass::Human)
+                            .consult_fanout_status(receipt.correlation_ref)
+                            .expect("stored run");
+                        (plan.clone(), status)
+                    })
+                })
+                .collect()
+        })
+    }
+    fn scope(plan: &OraclePlan) -> String {
+        format!("consult:{}:preset:{}", actor().to_hex(), plan.preset)
+    }
+
+    /// Stages a fixture; all estimation and admission use the production facade.
     pub(crate) fn submit_fan_out_plan(
-        _vault: &Vault,
-        _preset: &str,
-        _per_peer: &[(&str, u64)],
+        vault: &Vault,
+        preset: &str,
+        per_peer: &[(&str, u64)],
     ) -> u64 {
-        unimplemented!("armed by ONE-1719: submit fan-out plan")
+        put_person(vault, actor());
+        let peers: Vec<_> = per_peer
+            .iter()
+            .map(|(peer, count)| {
+                let peer_id = peer_id(peer);
+                put_person(vault, peer_id);
+                ((*peer).to_owned(), peer_id, *count)
+            })
+            .collect();
+        let assignees = peers
+            .iter()
+            .flat_map(|(_, peer, count)| {
+                std::iter::repeat_n(
+                    *peer,
+                    usize::try_from(*count).expect("bounded oracle count"),
+                )
+            })
+            .collect();
+        let input = ConsultFanOutSpec {
+            question_ref: question(vault),
+            context_refs: Vec::new(),
+            assignees,
+            deadline_at: u64::MAX / 2,
+            label: Some("oracle consult".into()),
+            now: None,
+        };
+        FAN_OUT_PLANS.with(|plans| {
+            let mut plans = plans.borrow_mut();
+            let handle = plans.len() as u64;
+            plans.push(OraclePlan {
+                input,
+                preset: preset.to_owned(),
+                peers: peers.into_iter().map(|(name, id, _)| (name, id)).collect(),
+                receipt: None,
+                surfaced: false,
+                owned_tasks_before: owned_task_count(vault),
+                all_tasks_before: all_task_count(vault),
+            });
+            handle
+        })
     }
-
-    /// Pre-execution estimate for a submitted plan (doc 13 §5).
-    pub(crate) fn estimate_fan_out(_vault: &Vault, _plan: u64) -> FanOutEstimate {
-        unimplemented!("armed by ONE-1719: estimate count + per-peer breakdown")
+    pub(crate) fn estimate_fan_out(vault: &Vault, handle: u64) -> FanOutEstimate {
+        let plan = plan(handle);
+        let estimate = vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .estimate_counted_consults(&plan.input, &plan.preset)
+            .expect("engine estimate");
+        FanOutEstimate {
+            total: u64::from(estimate.total_count),
+            per_peer: estimate
+                .per_peer
+                .into_iter()
+                .map(|(id, count)| {
+                    let name = plan
+                        .peers
+                        .iter()
+                        .find(|(_, peer)| peer.to_hex() == id)
+                        .expect("estimated peer from fixture")
+                        .0
+                        .clone();
+                    (name, u64::from(count))
+                })
+                .collect(),
+        }
     }
-
-    /// Runs the dispatch gate over the plan (threshold + ladder + detectors).
-    pub(crate) fn run_fan_out_gate(_vault: &Vault, _plan: u64) {
-        unimplemented!("armed by ONE-1719: estimate-then-approve gate")
+    pub(crate) fn run_fan_out_gate(vault: &Vault, handle: u64) {
+        let staged = plan(handle);
+        let owned_before = owned_task_count(vault);
+        let all_before = all_task_count(vault);
+        let receipt = vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .fan_out_counted_consults(&staged.input, &staged.preset)
+            .expect("admit fan-out");
+        FAN_OUT_PLANS.with(|plans| {
+            let mut plans = plans.borrow_mut();
+            plans[handle as usize].owned_tasks_before = owned_before;
+            plans[handle as usize].all_tasks_before = all_before;
+            plans[handle as usize].surfaced = receipt.paused.is_some();
+            plans[handle as usize].receipt = Some(receipt);
+        });
     }
-
-    /// Runs one executor tick over the plan WITHOUT re-running the gate —
-    /// a paused/denied plan must keep dispatching nothing across ticks.
-    pub(crate) fn tick_fan_out_executor(_vault: &Vault, _plan: u64) {
-        unimplemented!("armed by ONE-1719: executor tick over a gated plan")
+    pub(crate) fn tick_fan_out_executor(vault: &Vault, handle: u64) {
+        // Peer consults become TASKs, not connector-send ATTEMPTs. Claim the
+        // real node-local executor door anyway, then check the authoritative
+        // TASK owner index: no paused/denied plan can materialize work later.
+        let staged = plan(handle);
+        let status = recorded(vault, handle);
+        if status.paused.is_some() {
+            let claim = oneiron::AttemptQueue::new(vault)
+                .claim(oneiron::attempt_queue::ClaimAttempt {
+                    lease_owner: "es06-executor-tick".to_owned(),
+                    now: u64::MAX / 2,
+                })
+                .expect("claim runnable work");
+            assert_eq!(claim, oneiron::attempt_queue::ClaimOutcome::Empty);
+            assert!(status.task_refs.is_empty());
+            assert_eq!(owned_task_count(vault), staged.owned_tasks_before);
+            assert_eq!(all_task_count(vault), staged.all_tasks_before);
+        }
     }
-
-    /// Consults actually dispatched so far for the plan.
-    pub(crate) fn count_dispatched_consults(_vault: &Vault, _plan: u64) -> u64 {
-        unimplemented!("armed by ONE-1719: count dispatched consults")
+    pub(crate) fn count_dispatched_consults(vault: &Vault, handle: u64) -> u64 {
+        let staged = plan(handle);
+        if staged.receipt.is_none() {
+            // This is not a fixture flag standing in for dispatch: an
+            // estimate-only call can still be caught if it mints an unreceipted
+            // TASK, even if it misattributes that TASK to a different actor.
+            return all_task_count(vault)
+                .checked_sub(staged.all_tasks_before)
+                .expect("TASK count cannot fall during estimate");
+        }
+        let status = recorded(vault, handle);
+        let actual = owned_task_count(vault)
+            .checked_sub(staged.owned_tasks_before)
+            .expect("TASK count cannot fall during admission");
+        for id in &status.task_refs {
+            assert_eq!(
+                vault.get_entity_type(id).expect("read peer TASK"),
+                Some(oneiron::registry::ENTITY_TYPE_TASK)
+            );
+        }
+        assert_eq!(
+            actual,
+            status.task_refs.len(),
+            "stored receipt must name every created peer TASK"
+        );
+        actual as u64
     }
-
-    /// `needs_input` approval rows surfaced for fan-out plans.
-    pub(crate) fn count_needs_input_rows(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count needs_input rows")
+    pub(crate) fn count_needs_input_rows(vault: &Vault) -> usize {
+        all_recorded(vault)
+            .iter()
+            .filter(|(plan, status)| {
+                plan.surfaced && !status.paused.as_ref().is_some_and(|pause| pause.denied)
+            })
+            .count()
     }
-
-    /// Fan-out plans currently PAUSED (never silently killed).
-    pub(crate) fn count_paused_fan_outs(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count paused plans")
+    pub(crate) fn count_paused_fan_outs(vault: &Vault) -> usize {
+        all_recorded(vault)
+            .iter()
+            .filter(|(_, status)| status.paused.as_ref().is_some_and(|pause| !pause.denied))
+            .count()
     }
-
-    /// Fan-out plans cancelled/killed by the engine without a human ruling.
-    pub(crate) fn count_engine_killed_fan_outs(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count engine-killed plans (must stay 0)")
+    pub(crate) fn count_engine_killed_fan_outs(vault: &Vault) -> usize {
+        all_recorded(vault)
+            .iter()
+            .filter(|(_, status)| status.paused.is_none() && status.task_refs.is_empty())
+            .count()
     }
-
-    /// Board/metering rows rendered for fan-out runs (legibility lane).
-    pub(crate) fn count_fan_out_board_rows(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count board metering rows")
+    pub(crate) fn count_fan_out_board_rows(vault: &Vault) -> usize {
+        vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .fan_out_agents_section(&[], &[])
+            .expect("board metering")
+            .rows
+            .iter()
+            .filter(|row| {
+                row.lane == oneiron::context_board::AgentLane::Fanout
+                    && !row.line.contains(" peer=")
+                    && !row.line.contains(" evidence=")
+                    && !row.line.contains(" cycle_hop=")
+            })
+            .count()
     }
-
-    /// Current fan-out approval threshold (consult count).
-    pub(crate) fn fan_out_threshold(_vault: &Vault) -> u64 {
-        unimplemented!("armed by ONE-1719: threshold knob read")
+    pub(crate) fn fan_out_threshold(vault: &Vault) -> u64 {
+        put_person(vault, actor());
+        u64::from(
+            vault
+                .memory(actor(), oneiron::EdgeActorClass::Human)
+                .get_consult_fanout_policy()
+                .expect("manifest policy")
+                .approval_threshold,
+        )
     }
-
-    /// Tunes the fan-out approval threshold.
-    pub(crate) fn set_fan_out_threshold(_vault: &Vault, _threshold: u64) {
-        unimplemented!("armed by ONE-1719: threshold knob write")
+    pub(crate) fn set_fan_out_threshold(vault: &Vault, threshold: u64) {
+        let mut policy = vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .get_consult_fanout_policy()
+            .expect("read owner policy");
+        policy.approval_threshold = u32::try_from(threshold).expect("oracle threshold");
+        vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .set_consult_fanout_policy(&owner(vault), &policy)
+            .expect("owner tunes manifest");
     }
-
-    /// Human approves a pending plan; `persist_cap` optionally records the
-    /// choice as a receipted standing policy row ("always <= cap").
-    pub(crate) fn approve_fan_out(_vault: &Vault, _plan: u64, _persist_cap: Option<u64>) {
-        unimplemented!("armed by ONE-1719: approval ladder ruling")
+    fn rule(vault: &Vault, handle: u64, choice: ConsultFanOutChoice, cap: Option<u64>) {
+        let status = recorded(vault, handle);
+        vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .resume_fan_out_consults_with_cap(
+                status.correlation_ref,
+                status.meter.plan_digest,
+                choice,
+                &owner(vault),
+                cap,
+            )
+            .expect("authenticated fan-out ruling");
     }
-
-    /// Receipted standing fan-out policy rows.
-    pub(crate) fn count_fan_out_policy_rows(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count persisted policy rows")
+    pub(crate) fn approve_fan_out(vault: &Vault, handle: u64, cap: Option<u64>) {
+        rule(
+            vault,
+            handle,
+            if cap.is_some() {
+                ConsultFanOutChoice::ApproveAndRemember
+            } else {
+                ConsultFanOutChoice::ApproveOnce
+            },
+            cap,
+        );
     }
-
-    /// Receipts recorded for persisted standing-policy rows (spine law:
-    /// a standing policy without a receipt is invisible authority).
-    pub(crate) fn count_fan_out_policy_receipts(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count policy-row receipts")
+    pub(crate) fn count_fan_out_policy_rows(vault: &Vault) -> usize {
+        let mut scopes = std::collections::BTreeSet::new();
+        all_recorded(vault)
+            .iter()
+            .filter(|(plan, _)| scopes.insert(scope(plan)))
+            .filter(|(plan, _)| {
+                standing_policy_for(vault, &scope(plan), EscalationTrigger::Budget)
+                    .expect("read standing policy")
+                    .is_some()
+            })
+            .count()
     }
-
-    /// Human DENIES a pending plan (doc 13 §5 ladder "[deny]").
-    pub(crate) fn deny_fan_out(_vault: &Vault, _plan: u64) {
-        unimplemented!("armed by ONE-1719: approval ladder deny ruling")
+    pub(crate) fn count_fan_out_policy_receipts(vault: &Vault) -> usize {
+        let mut scopes = std::collections::BTreeSet::new();
+        all_recorded(vault)
+            .iter()
+            .filter(|(plan, _)| scopes.insert(scope(plan)))
+            .filter_map(|(plan, _)| {
+                standing_policy_for(vault, &scope(plan), EscalationTrigger::Budget)
+                    .expect("read standing policy")
+            })
+            .map(|row| {
+                let receipts = vault
+                    .receipts(ReceiptQuery::new(1000).with_kind(ReceiptKind::Gate))
+                    .expect("read gate receipts");
+                row.cited_receipts
+                    .iter()
+                    .filter(|cited| receipts.iter().any(|receipt| &receipt.receipt_id == *cited))
+                    .count()
+            })
+            .sum()
     }
-
-    /// Plans parked in an EXPLICIT denied state (visible, not killed).
-    pub(crate) fn count_denied_fan_outs(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count explicitly denied plans")
+    pub(crate) fn deny_fan_out(vault: &Vault, handle: u64) {
+        rule(vault, handle, ConsultFanOutChoice::Deny, None);
     }
-
-    /// Receipts recorded for deny rulings.
-    pub(crate) fn count_fan_out_denial_receipts(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1719: count denial receipts")
+    pub(crate) fn count_denied_fan_outs(vault: &Vault) -> usize {
+        all_recorded(vault)
+            .iter()
+            .filter(|(_, status)| status.paused.as_ref().is_some_and(|pause| pause.denied))
+            .count()
     }
-
-    /// Injects a consult cycle signature (A -> B -> A, same ask) into a
-    /// submitted plan — before or during gating — so the pathology detector
-    /// can trip at dispatch time.
-    pub(crate) fn inject_consult_cycle(_vault: &Vault, _plan: u64) {
-        unimplemented!("armed by ONE-1719: cycle-signature detector input")
+    pub(crate) fn count_fan_out_denial_receipts(vault: &Vault) -> usize {
+        vault
+            .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))
+            .expect("gate receipts")
+            .iter()
+            .filter(|row| row.outcome == "kept_paused")
+            .count()
     }
-
-    /// Injects a per-peer rate spike into a submitted plan — before or
-    /// during gating.
-    pub(crate) fn inject_peer_rate_spike(_vault: &Vault, _plan: u64, _peer: &str) {
-        unimplemented!("armed by ONE-1719: rate-spike detector input")
+    pub(crate) fn inject_consult_cycle(vault: &Vault, handle: u64) {
+        let staged = plan(handle);
+        let peer = staged.peers[0].1;
+        let prior = ConsultFanOutSpec {
+            assignees: vec![actor()],
+            ..staged.input
+        };
+        let admitted = vault
+            .memory(peer, oneiron::EdgeActorClass::Human)
+            .fan_out_counted_consults(&prior, "cycle-fixture")
+            .expect("create real reverse consult edge");
+        assert_eq!(admitted.task_refs.len(), 1);
     }
-
-    /// Consults dispatched AFTER the plan entered its paused state.
-    pub(crate) fn count_consults_dispatched_while_paused(_vault: &Vault, _plan: u64) -> u64 {
-        unimplemented!("armed by ONE-1719: dispatch-while-paused counter")
+    pub(crate) fn inject_peer_rate_spike(vault: &Vault, handle: u64, peer: &str) {
+        let staged = plan(handle);
+        let count = staged.input.assignees.len() as u32;
+        let policy = ConsultFanOutPolicy {
+            peer_rate: Some(ConsultFanOutRate {
+                window_secs: 3600,
+                spike_at: count + 1,
+            }),
+            ..vault
+                .memory(actor(), oneiron::EdgeActorClass::Human)
+                .get_consult_fanout_policy()
+                .expect("read policy")
+        };
+        vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .set_consult_fanout_policy(&owner(vault), &policy)
+            .expect("set rate anomaly row");
+        let prior = ConsultFanOutSpec {
+            assignees: vec![peer_id(peer)],
+            ..staged.input
+        };
+        let admitted = vault
+            .memory(actor(), oneiron::EdgeActorClass::Human)
+            .fan_out_counted_consults(&prior, "rate-fixture")
+            .expect("create real prior peer consult");
+        assert_eq!(admitted.task_refs.len(), 1);
     }
-
-    /// Resumes a paused plan on human approve (doc 13 §5: resume on approve).
-    pub(crate) fn resume_fan_out(_vault: &Vault, _plan: u64) {
-        unimplemented!("armed by ONE-1719: resume paused plan")
+    pub(crate) fn count_consults_dispatched_while_paused(vault: &Vault, handle: u64) -> u64 {
+        let status = recorded(vault, handle);
+        if status.paused.is_some() {
+            let staged = plan(handle);
+            owned_task_count(vault)
+                .checked_sub(staged.owned_tasks_before)
+                .expect("paused run cannot remove TASKs") as u64
+        } else {
+            0
+        }
+    }
+    pub(crate) fn resume_fan_out(vault: &Vault, handle: u64) {
+        approve_fan_out(vault, handle, None);
     }
 
     // ---- ONE-1720 (ES-07): AUTO-mode escalation learning ----
@@ -1024,7 +1380,6 @@ fn es03_contact_record_rebuilds_byte_identical_from_claims() {
 /// Doc 13 §5: the engine estimates FIRST — total plus per-peer breakdown
 /// ("240 consults — codex 180, cc-2 60") — before anything dispatches.
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_estimate_precedes_execution_with_per_peer_breakdown() {
     let (_dir, vault) = open_vault();
     let plan =
@@ -1046,7 +1401,6 @@ fn es06_estimate_precedes_execution_with_per_peer_breakdown() {
 /// Ticket ONE-1719: "silent under threshold knob (default 25)". A 24-consult
 /// plan runs without any approval row — but still meters (board row).
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_under_threshold_runs_silent_with_board_row_only() {
     let (_dir, vault) = open_vault();
     let plan = seam::submit_fan_out_plan(&vault, "research-preset", &[("codex", 24)]);
@@ -1059,7 +1413,6 @@ fn es06_under_threshold_runs_silent_with_board_row_only() {
 /// Ticket ONE-1719: the threshold defaults to 25 and is tunable — and the
 /// tuned value actually GOVERNS the gate (not just a getter roundtrip).
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_threshold_defaults_to_25_and_is_tunable() {
     let (_dir, vault) = open_vault();
     assert_eq!(seam::fan_out_threshold(&vault), 25);
@@ -1083,7 +1436,6 @@ fn es06_threshold_defaults_to_25_and_is_tunable() {
 /// It must never silently kill the plan AND never silently send — zero
 /// consults out, zero engine kills, exactly one needs_input row, one pause.
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_over_threshold_pauses_never_kills_never_sends() {
     let (_dir, vault) = open_vault();
     let plan =
@@ -1105,7 +1457,6 @@ fn es06_over_threshold_pauses_never_kills_never_sends() {
 /// preset]" choice persists as ONE receipted policy row; a later 300-consult
 /// plan under the same preset then runs silent (no second needs_input row).
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_approval_persists_policy_row_and_later_plans_run_silent() {
     let (_dir, vault) = open_vault();
     let plan =
@@ -1144,7 +1495,6 @@ fn es06_approval_persists_policy_row_and_later_plans_run_silent() {
 /// the plan and surfaces a row — never a silent kill, no dispatch while
 /// paused — and the plan resumes on approve.
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_consult_cycle_pauses_surfaces_and_resumes_on_approve() {
     let (_dir, vault) = open_vault();
     let plan = seam::submit_fan_out_plan(&vault, "research-preset", &[("codex", 10)]);
@@ -1170,7 +1520,6 @@ fn es06_consult_cycle_pauses_surfaces_and_resumes_on_approve() {
 /// Doc 13 §5 pathology lane: a per-peer rate spike gets the same PAUSE
 /// semantics — pause + surface, never kill — and resumes on approve.
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_peer_rate_spike_pauses_not_kills() {
     let (_dir, vault) = open_vault();
     let plan = seam::submit_fan_out_plan(&vault, "research-preset", &[("codex", 10)]);
@@ -1197,7 +1546,6 @@ fn es06_peer_rate_spike_pauses_not_kills() {
 /// pending needs_input row, records the denial as a receipt, and parks the
 /// plan in an EXPLICIT denied state — never a silent engine kill.
 #[test]
-#[ignore = "armed by ONE-1719"]
 fn es06_deny_ruling_dispatches_nothing_and_records_denial() {
     let (_dir, vault) = open_vault();
     let plan =
@@ -1511,14 +1859,14 @@ mod calendar_invite_fixture {
             .expect("put event");
         oneiron::calendar::index_passport_uid(&vault, UID, &event_ref()).expect("index uid");
 
-        let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+        let identity = crate::common::self_held_identity_in_state(
             "email",
             "me@primary.test",
             oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
             oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
+            oneiron::channel_identity::ChannelIdentityState::Active,
             100,
         );
-        identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
         vault
             .create_channel_identity(&id(0x93), &identity)
             .expect("create sending identity");
@@ -1805,9 +2153,9 @@ fn calendar_invite_gate_and_intent_ledger_oracle() {
 // on the default feature set through exactly three doors — the targeted put,
 // the batch put, and the transaction-composable batch — and the validator
 // tests below drive all three. `Vault::put_replicated` is deliberately NOT a
-// fourth: both of its definitions are `pub(crate)` and feature-gated
-// (`sync` / `any(test, all(sync, test-hooks))`), i.e. an origin-validated
-// replay door for bytes a peer already authored, not a public write door.
+// fourth: its one definition is `pub(crate)` and feature-gated
+// (`any(sync, test)`), i.e. an origin-validated replay door for bytes a peer
+// already authored, not a public write door.
 // `one1891_put_replicated_is_not_a_fourth_write_door` pins that by source, so
 // "three doors" cannot quietly become "three doors plus a hole".
 
@@ -1835,10 +2183,9 @@ mod one1891 {
         include_str!("../../src/provider_confidence/indexes.rs");
     pub(super) const PROVIDER_CONFIDENCE_MEMO_SOURCE: &str =
         include_str!("../../src/provider_confidence/transaction_memo.rs");
-    pub(super) const BATCH_TXN_BUILDER_SOURCE: &str =
-        include_str!("../../src/batch/txn_builder.rs");
     pub(super) const BATCH_BUILDER_SOURCE: &str = concat!(
         include_str!("../../src/batch/builder/mod.rs"),
+        include_str!("../../src/batch/builder/apply.rs"),
         include_str!("../../src/batch/builder/ops.rs"),
         include_str!("../../src/batch/builder/puts.rs"),
         include_str!("../../src/batch/builder/claims.rs"),
@@ -1925,7 +2272,8 @@ mod one1891 {
             confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .expect("fixture");
         body.valid_from = Some(200);
         body.source = Some(ClaimSource::Observed);
         body
@@ -2575,7 +2923,8 @@ fn one1891_non_enrichment_and_missing_score_claims_are_refused() {
         0.95,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.valid_from = Some(200);
     vault
         .put_claim(&foreign, &body, one1891::at(200), 200)
@@ -2984,7 +3333,8 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.valid_from = Some(200);
     let error = vault
         .put_claim(&one1891::fixture_id(0xe2), &body, one1891::at(200), 200)
@@ -2998,17 +3348,14 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
     );
 }
 
-/// STRUCTURAL: `put_replicated` is not a fourth write door. Both definitions
-/// are `pub(crate)` and feature-gated, so the three doors exercised above are
+/// STRUCTURAL: `put_replicated` is not a fourth write door. Its definition is
+/// `pub(crate)` and feature-gated, so the three doors exercised above are
 /// the whole default-feature write surface for an enrichment claim — and a
 /// replicated body still meets the same validator inside `apply_put`, so this
 /// is a statement about REACH, not about a bypass.
 #[test]
 fn one1891_put_replicated_is_not_a_fourth_write_door() {
-    for (label, source) in [
-        ("txn_builder", one1891::BATCH_TXN_BUILDER_SOURCE),
-        ("builder", one1891::BATCH_BUILDER_SOURCE),
-    ] {
+    for (label, source) in [("builder", one1891::BATCH_BUILDER_SOURCE)] {
         assert!(
             !source.contains("pub fn put_replicated"),
             "{label}: put_replicated must never become public"

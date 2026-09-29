@@ -36,6 +36,18 @@ impl Memory<'_> {
                 "Propose the ask through the authority surface.",
             ));
         }
+        if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
+            for (person, guest) in guests {
+                super::ask_guest::check_disclosure(
+                    self.vault(),
+                    &txn,
+                    *person,
+                    self.actor(),
+                    guest,
+                    &effective,
+                )?;
+            }
+        }
         let seats = effective
             .need
             .of
@@ -80,7 +92,7 @@ impl Memory<'_> {
                 Some(route) => self
                     .vault()
                     .get_channel_identity_in_txn(&txn, &route.channel_identity_ref)?
-                    .map(|identity| identity.address_or_handle),
+                    .map(|identity| identity.address_or_handle().to_owned()),
                 None => None,
             };
             recipients.push(TaskAskPreflightRecipient {

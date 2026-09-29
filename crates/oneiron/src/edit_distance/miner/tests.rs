@@ -670,7 +670,10 @@ fn a_pass_with_no_review_surface_is_refused() -> Result<()> {
     assert!(run_substitution_miner(&vault, &run).is_err());
     run.run_id = "run-ed04".to_owned();
     run.agent = WriteActor::new(run.agent.entity_ref(), EdgeActorClass::System);
-    assert!(run_substitution_miner(&vault, &run).is_err());
+    assert!(
+        run_substitution_miner(&vault, &run).is_err(),
+        "foreign System actor refused"
+    );
     assert!(
         preference_rows(&vault, &actor)?.is_empty(),
         "a refused pass writes nothing"
@@ -940,15 +943,14 @@ fn the_dedup_check_sees_the_mark_written_in_its_own_transaction() -> Result<()> 
             cluster_is_eligible(&vault, wtxn, &handle, 0)?,
             "an unmarked cluster may propose"
         );
-        vault.store.vault_meta.put(
-            wtxn,
-            &meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes()),
-            &row,
-        )?;
         vault
             .store
             .vault_meta
-            .put(wtxn, &mint_mark_key(&handle), &mark)?;
+            .put(wtxn, &SKILL_EDIT.key_bytes(&proposal_id), &row)?;
+        vault
+            .store
+            .vault_meta
+            .put(wtxn, &MINT_MARK.key_bytes(&handle), &mark)?;
         assert!(
             !cluster_is_eligible(&vault, wtxn, &handle, 0)?,
             "and the uncommitted mark is what stops the second proposal"
@@ -1392,3 +1394,30 @@ fn miner_floor_still_denies() -> Result<()> {
 }
 
 mod preference_learning;
+
+#[test]
+fn session_end_miner_uses_queued_system_dreamer() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    // The Dreamer is a MACHINE writer: the host roots the vault and holds its
+    // key. The judging owner keeps writing under the host root.
+    crate::test_util::provision_engine_machines(&vault);
+    crate::test_util::bind_test_owner(&vault, fixture_owner(&vault).entity_ref());
+    let actor = put_actor(&vault);
+    let mut run = miner_run(&vault);
+    run.agent = vault.dreamer_authority()?;
+    land_sign_offs(&vault, actor, "outbound", 3)?;
+    let outcomes = run_substitution_miner_at(&vault, &run, 10_000)?;
+    assert!(!emitted(&outcomes).is_empty());
+    let id = preference_ids(&vault, &actor)?[0];
+    let body = vault.get_claim(&id)?.expect("mined proposal");
+    let Value::Map(evidence) = body.evidence.expect("writer evidence") else {
+        panic!("evidence");
+    };
+    assert!(
+        evidence
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("actor_class")
+                && value.as_u64() == Some(u64::from(EdgeActorClass::System as u8)))
+    );
+    Ok(())
+}

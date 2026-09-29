@@ -82,3 +82,34 @@ fn redirected_retry_keeps_worker_and_predecessor_lineage() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn empty_kind_claim_does_not_wake_its_own_notification_worker() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let mut updates = queue.subscribe();
+    let claim = || {
+        queue.claim_kind(
+            "wave.plan",
+            ClaimAttempt {
+                lease_owner: "wave-worker".into(),
+                now: 100,
+            },
+        )
+    };
+    assert!(matches!(claim()?, ClaimOutcome::Empty));
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    queue.enqueue(enqueue("wave.plan", None, 100))?;
+    updates.try_recv().expect("enqueue notified");
+    assert!(matches!(claim()?, ClaimOutcome::Claimed(_)));
+    updates.try_recv().expect("real claim notified");
+    assert!(matches!(claim()?, ClaimOutcome::Empty));
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    Ok(())
+}

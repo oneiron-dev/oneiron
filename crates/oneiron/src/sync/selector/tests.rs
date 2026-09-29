@@ -94,7 +94,8 @@ fn claim_blob(world: Option<EntityId>) -> Vec<u8> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = world;
     entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
 }
@@ -114,7 +115,8 @@ fn public_claim_blob() -> Vec<u8> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
         Value::from("public"),
@@ -137,7 +139,8 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
         confidence,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.evidence = Some(encode_actor_class_evidence(EdgeActorClass::Human));
     claim.source = Some(ClaimSource::ToolOutput);
     // Explicit `sensitivity: public` (band 0). The ONE-1645 provenance floor
@@ -3415,19 +3418,19 @@ use crate::authority::{
 };
 use crate::error::{RegistryError, SyncError};
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
-    FederationScopeWorlds, encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, base_world_axis,
+    encode_federation_pact_scope,
 };
 
 fn all_direction_scope() -> FederationDirectionScope {
     FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     }
 }
 
-fn selector_pact_scope(facets: FederationScopeFacets) -> FederationPactScope {
+fn selector_pact_scope(facets: ScopeAxis<ScopeId>) -> FederationPactScope {
     let mut half = all_direction_scope();
     half.facets = facets;
     FederationPactScope {
@@ -3483,7 +3486,7 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     let peer_vault_id = genesis_vault_id(&authority_genesis_entry(0x62)).unwrap();
     let pact_id = [0x63; 32];
     let nonce = [0x64; 16];
-    let scope = selector_pact_scope(FederationScopeFacets::All);
+    let scope = selector_pact_scope(ScopeAxis::All);
     let digest = federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
     let connect_gesture = sign_federation_pact_gesture(
         FederationLifecycleKind::Connect,
@@ -3547,7 +3550,7 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
         )
     };
     let repact = |seq: u64, facet_byte: u8, nonce_byte: u8| {
-        let scope = selector_pact_scope(FederationScopeFacets::Some(vec![entity_id(facet_byte)]));
+        let scope = selector_pact_scope(ScopeAxis::from_iter([entity_id(facet_byte)].map(ScopeId)));
         let nonce = [nonce_byte; 16];
         let digest =
             federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
@@ -3911,14 +3914,14 @@ fn selector_request_decodes_wire_semantics() {
     // Test each empty axis independently: the other axis remains populated.
     for scope in [
         FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::Bottom,
-            bands: FederationScopeBands::All,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::Bottom,
+            bands: ScopeAxis::All,
         },
         FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::All,
-            bands: FederationScopeBands::Bottom,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::Bottom,
         },
     ] {
         let (_scope_dir, scope_vault, _) = test_vault_with_grant(member);
@@ -3934,7 +3937,7 @@ fn selector_request_decodes_wire_semantics() {
             1,
         )
         .unwrap();
-        let empty_facets = matches!(&scope.facets, FederationScopeFacets::Bottom);
+        let empty_facets = matches!(&scope.facets, ScopeAxis::Bottom);
         seed_scoped_pacts_for_grant(&scope_vault, grant, &[scope]);
         authorize_sync_selector(&scope_vault, test_selector_scope(), &silent).unwrap();
         let selector = SyncSelector::new(
@@ -3993,9 +3996,9 @@ fn selector_within_pact_ceiling_authorizes() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id()]),
-            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            worlds: ScopeAxis::from_iter([world_a.entity_id()].map(ScopeId)),
+            facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+            bands: ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     let selector = SyncSelector::new(
@@ -4014,9 +4017,9 @@ fn selector_within_pact_ceiling_authorizes() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+            bands: ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     for (name, world, facets, bands) in [
@@ -4056,9 +4059,9 @@ fn selector_within_pact_ceiling_authorizes() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id(), world_b.entity_id()]),
-            facets: FederationScopeFacets::All,
-            bands: FederationScopeBands::All,
+            worlds: ScopeAxis::from_iter([world_a.entity_id(), world_b.entity_id()].map(ScopeId)),
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
         }],
     );
     let selector = SyncSelector::new(
@@ -4088,9 +4091,9 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id(), world_b.entity_id()]),
-            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            worlds: ScopeAxis::from_iter([world_a.entity_id(), world_b.entity_id()].map(ScopeId)),
+            facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+            bands: ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     for (name, world, facets, bands) in [
@@ -4139,14 +4142,14 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
         grant_id,
         &[
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_a]),
-                bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_a].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Semantic]),
             },
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_b]),
-                bands: FederationScopeBands::Some(vec![SelectorRange::Core]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_b].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Core]),
             },
         ],
     );
@@ -4156,12 +4159,12 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
         ceiling.as_scope().facets,
-        FederationScopeFacets::Bottom,
+        ScopeAxis::Bottom,
         "disjoint facet narrows must meet at ⊥, not widen"
     );
     assert_eq!(
         ceiling.as_scope().bands,
-        FederationScopeBands::Bottom,
+        ScopeAxis::Bottom,
         "disjoint band narrows must meet at ⊥, not widen"
     );
 
@@ -4186,7 +4189,7 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
             .unwrap()
             .as_scope()
             .facets,
-        FederationScopeFacets::Bottom
+        ScopeAxis::Bottom
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
         .expect("an unnarrowed request sits within every ceiling");
@@ -4227,9 +4230,9 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
     let claim_named = entity_id(0x66);
     let window_key = WindowKey::new("2026-12");
     let ceiling = FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::Some(vec![facet_named]),
-        bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::from_iter([facet_named].map(ScopeId)),
+        bands: ScopeAxis::from_iter([SelectorRange::Semantic]),
     };
     for (name, facets, bands) in [
         ("both axes unnarrowed", Vec::new(), Vec::new()),
@@ -4279,9 +4282,9 @@ fn bottom_ceiling_exports_nothing_to_an_unnarrowed_request() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::Bottom,
-            bands: FederationScopeBands::All,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::Bottom,
+            bands: ScopeAxis::All,
         }],
     );
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
@@ -4309,14 +4312,14 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
         grant_id,
         &[
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-                bands: FederationScopeBands::All,
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+                bands: ScopeAxis::All,
             },
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_b, facet_c]),
-                bands: FederationScopeBands::All,
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_b, facet_c].map(ScopeId)),
+                bands: ScopeAxis::All,
             },
         ],
     );
@@ -4326,7 +4329,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
         ceiling.as_scope().facets,
-        FederationScopeFacets::Some(vec![facet_b]),
+        ScopeAxis::from_iter([facet_b].map(ScopeId)),
         "the ceiling is the meet of every bound pact, not one arbitrary pact"
     );
 
@@ -4519,9 +4522,14 @@ fn put_delegate_grant(
         FederationGrantRole::Admin,
         FederationGrantPreset::Admin,
     );
-    let delegate =
+    let mut delegate =
         FederationGrant::attenuated_delegate(&parent, member_ref, now_secs, expires_at_secs)
             .expect("an admin parent mints a delegate");
+    // Clock/selector fixture: select an explicit read capability. The bare
+    // constructor is inert; production mints from vault-resident policy.
+    delegate.authority_scope = parent
+        .authority_scope
+        .meet(&crate::federation::scope_codec::read_preset());
     let grant_id = EntityId::now();
     vault
         .batch()
@@ -4626,9 +4634,9 @@ fn delegate_expiry_is_the_last_arm_of_the_door() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Base,
-            facets: FederationScopeFacets::Bottom,
-            bands: FederationScopeBands::Bottom,
+            worlds: base_world_axis(),
+            facets: ScopeAxis::Bottom,
+            bands: ScopeAxis::Bottom,
         }],
     );
     let wide = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
@@ -4740,7 +4748,8 @@ fn coreference_export(pacted: bool) -> CoreferenceExport {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )
@@ -5009,6 +5018,161 @@ fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
 }
 
 #[test]
+fn selector_export_verifies_machine_origin_against_actual_crdt_id_and_body() {
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    let member = entity_id(0xB8);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let machine = entity_id(0xB9);
+    let facet = entity_id(0xBA);
+    let signed_id = entity_id(0xBB);
+    let changed_id = entity_id(0xBC);
+    let stamp = TimeRange { start: 1, end: 1 };
+    vault
+        .put_entity(
+            &machine,
+            crate::registry::ENTITY_TYPE_MACHINE,
+            stamp,
+            1,
+            b"machine",
+        )
+        .unwrap();
+    vault
+        .put_entity(&facet, ENTITY_TYPE_FACET, stamp, 1, b"facet")
+        .unwrap();
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"selector machine root").unwrap();
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let signing = SigningKey::from_bytes(&[0xB9; 32]);
+    vault
+        .enroll_machine_identity(
+            &issuer,
+            machine,
+            signing.verifying_key().to_bytes(),
+            [8; 32],
+            |transcript| Ok(signing.sign(transcript).to_bytes()),
+        )
+        .unwrap();
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("machine")).unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "selector.machine",
+        ClaimSubject::Entity(machine),
+        Value::from("safe"),
+        1.0,
+    );
+    let transcript = vault
+        .machine_claim_transcript(&signed_id, &candidate, &envelope)
+        .unwrap();
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    vault
+        .batch()
+        .claim_candidate(&signed_id, candidate.clone(), &signed, stamp, 1)
+        .commit()
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = candidate
+        .into_claim_body(
+            &signed,
+            crate::claim::default_facet_in(&vault.store, &txn).unwrap(),
+        )
+        .unwrap();
+    drop(txn);
+    let window = WindowKey::new("2026-03");
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
+    let selected = |id: EntityId, claim: &ClaimBody| {
+        let doc = create_window_doc("source", &window);
+        insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"facet");
+        insert_blob(
+            &doc,
+            id,
+            &entity_blob(
+                crate::registry::ENTITY_TYPE_CLAIM,
+                &encode_claim_body(claim).unwrap(),
+            ),
+        );
+        insert_edge(&doc, id, EdgeKind::FacetOf, facet);
+        let history = crate::claim::history_store::machine_history_ids_for_target(
+            &vault.store,
+            &vault.store.env.read_txn().unwrap(),
+            signed_id,
+        )
+        .unwrap();
+        for control_id in history {
+            let raw = vault.get_raw(&control_id).unwrap().unwrap();
+            insert_blob(&doc, control_id, &raw);
+            insert_edge(&doc, control_id, EdgeKind::FacetOf, facet);
+        }
+        doc.commit();
+        let filtered =
+            filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector).unwrap();
+        let selected =
+            import_ids(&filtered.export(ExportMode::all_updates()).unwrap()).contains(&id);
+        let guest =
+            guest_share_envelope_body(&vault, &doc, &window, test_selector_scope(), &selector)
+                .unwrap();
+        let guest_selected = import_ids(&guest.update).contains(&id);
+        (selected, guest_selected)
+    };
+    assert_eq!(
+        selected(signed_id, &body),
+        (true, true),
+        "valid signed row must cross both selector and guest share"
+    );
+    assert!(
+        selected(changed_id, &body) == (false, false),
+        "transplanted id must be withheld"
+    );
+    let mut tampered = body.clone();
+    tampered.value = Value::from("attacker");
+    assert!(
+        selected(signed_id, &tampered) == (false, false),
+        "changed payload must be withheld"
+    );
+    let mut bogus = body.clone();
+    if let Some(Value::Map(entries)) = &mut bogus.evidence {
+        for (key, value) in entries {
+            if key.as_str() == Some("machine_signature") {
+                *value = Value::Array(vec![
+                    Value::Binary(signing.verifying_key().to_bytes().to_vec()),
+                    Value::Binary(vec![0; 64]),
+                ]);
+            }
+        }
+    }
+    assert!(
+        selected(signed_id, &bogus) == (false, false),
+        "bogus enrolled-key proof must be withheld"
+    );
+    vault.retract_claim(&signed_id, 20).unwrap();
+    let current = vault.get_claim(&signed_id).unwrap().unwrap();
+    assert_eq!(current.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(
+        selected(signed_id, &current),
+        (true, true),
+        "the full scoped handoff chain must travel after retraction"
+    );
+    assert_eq!(
+        selected(signed_id, &body),
+        (false, false),
+        "the old signed birth cannot be exported as current state"
+    );
+}
+
+#[test]
 fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() {
     for family in crate::registry::TYPE_BYTE_FAMILIES {
         let selector = SyncSelector::new(
@@ -5255,7 +5419,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         vault.put_edge(&id, EdgeKind::FacetOf, &facet, 1.0).unwrap();
         if active {
             let mut ceiling = all_direction_scope();
-            ceiling.facets = FederationScopeFacets::Some(vec![facet]);
+            ceiling.facets = ScopeAxis::from_iter([facet].map(ScopeId));
             seed_scoped_pacts_for_grant(&vault, grant_id, &[ceiling]);
         } else {
             seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Disconnected);
@@ -5325,6 +5489,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         preset: FederationGrantPreset::Delegate,
         expires_at: Some(1),
         delegated_by: Some(entity_id(0x35)),
+        guest: None,
     };
     vault
         .batch()
@@ -5643,4 +5808,174 @@ fn a_named_facet_request_selects_a_note_born_under_that_facet() {
     );
 
     assert!(import_ids(&note_window_export(&vault, note, &selector)).contains(&note));
+}
+
+#[test]
+fn federation_addressing_copy_requires_stamped_source_and_exact_edge_bytes() {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let recipient = EntityId::now();
+    let forged = EntityId::now();
+    for id in [recipient, forged] {
+        source
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &crate::conversation_dag::fixtures::body("person"),
+            )
+            .unwrap();
+    }
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input).unwrap().id;
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let source_doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&source, &source_doc, &key).unwrap();
+    let valid = crate::sync::bridge::format_edge_key(&record, EdgeKind::AddressedTo, &recipient);
+    let invalid = crate::sync::bridge::format_edge_key(&record, EdgeKind::AddressedTo, &forged);
+    map_insert_bytes(
+        &source_doc.get_map("edges"),
+        &invalid,
+        &encode_edge_value_for_crdt(EdgeKind::AddressedTo, 1.0, input.learned_at, None, None)
+            .unwrap(),
+    )
+    .unwrap();
+    let target = create_window_doc("target", &key);
+    let peer_dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(peer_dir.path(), crate::VaultConfig::device()).unwrap();
+    edge::copy_admitted_edges(
+        &peer,
+        &key,
+        &source_doc.get_map("entities"),
+        &source_doc.get_map("edges"),
+        &target.get_map("edges"),
+    )
+    .unwrap();
+    assert!(crate::sync::loro_support::map_contains_binary(
+        &target.get_map("edges"),
+        &valid
+    ));
+    assert!(!crate::sync::loro_support::map_contains_binary(
+        &target.get_map("edges"),
+        &invalid
+    ));
+    assert!(
+        quarantined_records(&peer)
+            .unwrap()
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Edges
+                && row.reason_code == "ReservedEdgeKind")
+    );
+}
+
+#[test]
+fn ask_guest_grant_cannot_authorize_sync_selector() {
+    let member = entity_id(0x70);
+    let group = entity_id(0x71);
+    let guest = FederationGrant::ask_guest(
+        group,
+        member,
+        entity_id(0x72),
+        entity_id(0x73),
+        std::collections::BTreeSet::from([entity_id(0x74)]),
+    )
+    .expect("valid guest grant");
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let grant_id = EntityId::now();
+    let body = encode_federation_grant_body(&guest).unwrap();
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .commit()
+        .unwrap();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+
+    assert!(authorize_sync_selector(&vault, FederationGrantScope::ask(group), &selector).is_err());
+    assert!(authorize_sync_selector(&vault, FederationGrantScope::vault(7), &selector).is_err());
+}
+
+#[test]
+fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5e);
+    let person = entity_id(0x62);
+    let claim = entity_id(0x63);
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.shared_subject",
+        ClaimSubject::Entity(person),
+        Value::from("world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault
+        .batch()
+        .edge(&claim, EdgeKind::About, &person, 1.0)
+        .commit()?;
+    let world_key = WindowKey::for_month_world(&base_key, world.entity_id());
+    let base_doc = create_window_doc("source", &base_key);
+    let world_doc = create_window_doc("source", &world_key);
+    crate::sync::window::reverse_rematerialize(&vault, &base_doc, &base_key)?;
+    crate::sync::window::reverse_rematerialize(&vault, &world_doc, &world_key)?;
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::World(world),
+        vec![],
+        vec![],
+    );
+    let base = filtered_window_doc(
+        &vault,
+        &base_doc,
+        &base_key,
+        test_selector_scope(),
+        &selector,
+    )?;
+    let scoped = filtered_window_doc(
+        &vault,
+        &world_doc,
+        &world_key,
+        test_selector_scope(),
+        &selector,
+    )?;
+    let edge = crate::sync::bridge::format_edge_key(&claim, EdgeKind::About, &person);
+    assert!(base.get_map("entities").get(&person.to_hex()).is_some());
+    assert!(scoped.get_map("entities").get(&claim.to_hex()).is_some());
+    assert!(scoped.get_map("entities").get(&person.to_hex()).is_none());
+    assert!(scoped.get_map("edges").get(&edge).is_some());
+    let peer_dir = tempfile::tempdir()?;
+    let peer = Vault::open(peer_dir.path(), crate::VaultConfig::device())?;
+    let materializer = crate::sync::bridge::Materializer::new();
+    crate::sync::window::forward_rematerialize(&peer, &base, &materializer, &base_key)?;
+    crate::sync::window::forward_rematerialize(&peer, &scoped, &materializer, &world_key)?;
+    assert!(
+        peer.edges_out(&claim)?
+            .iter()
+            .any(|row| row.kind == EdgeKind::About && row.target == person)
+    );
+    Ok(())
 }

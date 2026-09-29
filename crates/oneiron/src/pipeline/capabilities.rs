@@ -26,7 +26,7 @@ pub(crate) fn capability_hit(
     txn: &RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<CapabilityHit>> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -68,13 +68,15 @@ pub(super) fn partition_capabilities(
     vault: &Vault,
     txn: &RoTxn<'_>,
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    executor: Option<&str>,
 ) -> Result<Vec<ScoredEntity>> {
     let store = &vault.store;
     let mut memory = Vec::with_capacity(scores.len());
     let mut eligible = Vec::new();
     let mut skill_ids = HashSet::new();
     for scored in std::mem::take(scores) {
-        let Some(raw) = store.entities.get(txn, scored.id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &scored.id)?
+        else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -98,7 +100,8 @@ pub(super) fn partition_capabilities(
     let mut total_pulls = 0_u32;
     let mut posteriors = HashMap::with_capacity(skill_ids.len());
     for id in &skill_ids {
-        let posterior = crate::skill_reliability::selection_posterior_in_txn(vault, txn, id)?;
+        let posterior =
+            crate::skill_reliability::selection_posterior_in_txn(vault, txn, id, executor)?;
         // Observations are positive integer-valued Beta weights. Saturation
         // keeps an extremely large candidate set from wrapping the horizon.
         #[expect(
@@ -221,7 +224,7 @@ pub(super) fn memory_candidate_count(
 ) -> Result<usize> {
     let mut count = 0;
     for scored in scores {
-        if let Some(raw) = store.entities.get(txn, scored.id.as_bytes())?
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &scored.id)?
             && let Some(header) = EntityMetadataHeader::parse(&raw)
             && !is_capability(header.entity_type)
         {
@@ -241,7 +244,7 @@ pub(super) enum CapabilityLane {
 
 impl CapabilityLane {
     pub(super) fn admits(self, store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             return Ok(false);
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {

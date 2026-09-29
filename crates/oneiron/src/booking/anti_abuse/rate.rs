@@ -4,12 +4,52 @@ use serde::{Deserialize, Serialize};
 
 use super::rules::check_slot_list_cache_ttl;
 use super::storage::{
-    CACHE_BODY_MAX_LEN, QUARANTINE_RATE_DOMAIN, RATE_WINDOW_SECS, decode_row, encode_row,
-    engine_failure, rate_counter_key, refused, slot_list_cache_key,
+    CACHE_BODY_MAX_LEN, CACHE_KEY_DOMAIN, CACHE_KEY_TAG, QUARANTINE_RATE_DOMAIN, RATE_KEY_DOMAIN,
+    RATE_KEY_TAG, RATE_WINDOW_SECS, decode_row, encode_row, engine_failure, refused,
+    to_codec_error,
 };
-use crate::booking::lifecycle::{booking_writer, digest_with, put_meta, read_meta_bytes};
+use crate::booking::lifecycle::{booking_writer, digest_with};
 use crate::booking::{BookingError, EventTypeKey};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
+
+/// One node-local rate-window counter: `{window(8 BE), count(8 BE)}`. Key:
+/// `"rate\0"` + hash32 (the `(purpose, material)` digest).
+const RATE: SideTable<([u8; 5], [u8; 32]), [u8; 16], Raw> =
+    SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
+
+fn rate_digest(purpose: &[u8], material: &[u8]) -> [u8; 32] {
+    let mut keyed = Vec::with_capacity(purpose.len() + 1 + material.len());
+    keyed.extend_from_slice(purpose);
+    keyed.push(0);
+    keyed.extend_from_slice(material);
+    digest_with(RATE_KEY_DOMAIN, &keyed)
+}
+
+/// The cached slot-list response body. Key: `"cache\0"` + hash32 (the
+/// `(page_ref, event_type)` digest).
+const CACHE: SideTable<([u8; 6], [u8; 32]), SlotListCacheRow, Raw> =
+    SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
+
+fn cache_digest(page_ref: &EntityId, event_type: Option<&EventTypeKey>) -> [u8; 32] {
+    let mut material = Vec::new();
+    material.extend_from_slice(page_ref.as_bytes());
+    if let Some(event_type) = event_type {
+        material.push(0);
+        material.extend_from_slice(event_type.0.as_bytes());
+    }
+    digest_with(CACHE_KEY_DOMAIN, &material)
+}
+
+impl crate::side_table::RawValue for SlotListCacheRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+        encode_row(self).map_err(to_codec_error)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, crate::side_table::CodecError> {
+        decode_row(bytes).map_err(to_codec_error)
+    }
+}
 
 // -------------------------------------------------------------------------
 // Rate counters
@@ -35,13 +75,12 @@ pub(super) fn consume_rate_token_in_txn(
     now_secs: u64,
 ) -> Result<BookingRateDecision, BookingError> {
     let window = now_secs / RATE_WINDOW_SECS;
-    let key = rate_counter_key(purpose, material);
-    let count = match read_meta_bytes(vault, &*wtxn, &key)? {
-        Some(raw) => {
-            let stored: [u8; 16] = raw
-                .as_slice()
-                .try_into()
-                .map_err(|_| refused("booking anti-abuse rate row is malformed"))?;
+    let key = (*RATE_KEY_TAG, rate_digest(purpose, material));
+    let count = match RATE
+        .get(&vault.store, &*wtxn, &key)
+        .map_err(|error| engine_failure("rate read", error))?
+    {
+        Some(stored) => {
             let stored_window = u64::from_le_bytes(stored[..8].try_into().expect("rate window"));
             if stored_window == window {
                 u64::from_le_bytes(stored[8..].try_into().expect("rate count"))
@@ -59,7 +98,8 @@ pub(super) fn consume_rate_token_in_txn(
     let mut value = [0_u8; 16];
     value[..8].copy_from_slice(&window.to_le_bytes());
     value[8..].copy_from_slice(&count.saturating_add(1).to_le_bytes());
-    put_meta(vault, wtxn, &key, &value)?;
+    RATE.put(&vault.store, wtxn, &key, &value)
+        .map_err(|error| engine_failure("rate write", error))?;
     Ok(BookingRateDecision::Allowed)
 }
 
@@ -173,11 +213,16 @@ pub fn read_slot_list_cache(
         .env
         .read_txn()
         .map_err(|error| engine_failure("read transaction", error))?;
-    let Some(raw) = read_meta_bytes(vault, &rtxn, &slot_list_cache_key(page_ref, event_type))?
+    let Some(row) = CACHE
+        .get(
+            &vault.store,
+            &rtxn,
+            &(*CACHE_KEY_TAG, cache_digest(page_ref, event_type)),
+        )
+        .map_err(|error| engine_failure("cache read", error))?
     else {
         return Ok(None);
     };
-    let row: SlotListCacheRow = decode_row(&raw)?;
     if now_secs.saturating_sub(row.stored_at) >= row.ttl_secs {
         return Ok(None);
     }
@@ -209,13 +254,10 @@ pub fn write_slot_list_cache(
         ttl_secs: ttl_secs.get(),
         body: body.to_vec(),
     };
-    let encoded = encode_row(&row)?;
+    let key = (*CACHE_KEY_TAG, cache_digest(page_ref, event_type));
     booking_writer(vault, |wtxn| {
-        put_meta(
-            vault,
-            wtxn,
-            &slot_list_cache_key(page_ref, event_type),
-            &encoded,
-        )
+        CACHE
+            .put(&vault.store, wtxn, &key, &row)
+            .map_err(|error| engine_failure("cache write", error))
     })
 }

@@ -8,6 +8,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
 
 use super::codec::invalid;
@@ -15,17 +16,45 @@ use super::ledger::tally_outcomes;
 use super::posterior::{KEY_ALPHA, KEY_BETA, SkillReliabilityPosterior};
 use super::projector::attributed_outcomes;
 use super::provenance::skill_reliability_prior;
-use super::read::{active_claims_in_txn, resolved_reliability_posterior_in_txn};
+use super::read::{
+    active_claims_in_txn, active_reliability_heads_in_txn, resolved_reliability_posterior_in_txn,
+};
 
 /// The floor-crossing PROPOSAL predicate. A proposal to quarantine is a ROW,
 /// never a lifecycle state (`skill.rs` lifecycle machine): the record stays
 /// `active` until a human rules on this claim.
 pub const PREDICATE_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
 
-/// `vault_meta` key of the reliability floor dial. Per-feature key const in the
-/// owning module (the `INBOX_REVIEW_DIAL_KEY` house pattern) — `settings.rs` is
-/// UI customization and owns nothing here.
+/// `vault_meta` key of the reliability floor dial. Kept as a public constant for crate
+/// consumers (re-exported from [`crate::skill_reliability`]); `FLOOR` is this module's own
+/// door onto the row and owns the read/write path below.
 pub const SKILL_RELIABILITY_FLOOR_KEY: &[u8] = b"settings:skill:v1:reliability_floor";
+
+/// The reliability floor dial. Key: ().
+const FLOOR: SideTable<(), ReliabilityFloorRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_FLOOR);
+
+/// `FLOOR`'s row: four big-endian bytes, finite and within `[0, 1]`. Any other shape is a
+/// corrupted dial rather than a silently-defaulted one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ReliabilityFloorRow(f32);
+
+impl RawValue for ReliabilityFloorRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(self.0.to_be_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let bytes: [u8; 4] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("skill reliability floor"))?;
+        let floor = f32::from_be_bytes(bytes);
+        if !floor.is_finite() || !(0.0..=1.0).contains(&floor) {
+            return Err(Error::CorruptedIndex("skill reliability floor").into());
+        }
+        Ok(Self(floor))
+    }
+}
 
 /// Default reliability floor: the posterior LOWER BOUND a skill must hold to
 /// stay out of the quarantine-proposal path.
@@ -59,22 +88,9 @@ pub fn skill_reliability_floor(vault: &Vault) -> Result<f32> {
 }
 
 fn floor_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<f32> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, SKILL_RELIABILITY_FLOOR_KEY)?
-    else {
-        return Ok(DEFAULT_SKILL_RELIABILITY_FLOOR);
-    };
-    let bytes: [u8; 4] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("skill reliability floor"))?;
-    let floor = f32::from_be_bytes(bytes);
-    if !floor.is_finite() || !(0.0..=1.0).contains(&floor) {
-        return Err(Error::CorruptedIndex("skill reliability floor"));
-    }
-    Ok(floor)
+    Ok(FLOOR
+        .get(&vault.store, rtxn, &())?
+        .map_or(DEFAULT_SKILL_RELIABILITY_FLOOR, |row| row.0))
 }
 
 /// Sets the reliability floor dial.
@@ -83,10 +99,7 @@ pub fn set_skill_reliability_floor(vault: &Vault, floor: f32) -> Result<()> {
         return Err(invalid("reliability floor must be finite in [0, 1]"));
     }
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, SKILL_RELIABILITY_FLOOR_KEY, &floor.to_be_bytes())?;
+        FLOOR.put(&vault.store, wtxn, &(), &ReliabilityFloorRow(floor))?;
         Ok(())
     })
 }
@@ -115,14 +128,42 @@ pub fn check_reliability_floor(
 ) -> Result<Option<EntityId>> {
     let prior = skill_reliability_prior(vault, skill)?;
     vault.with_write_txn(|wtxn| {
-        let posterior = match resolved_reliability_posterior_in_txn(vault, wtxn, skill)? {
+        let posterior = match resolved_reliability_posterior_in_txn(vault, wtxn, skill, None)? {
             Some(posterior) => posterior,
-            None => tally_outcomes(vault, wtxn, skill)?.posterior(prior),
+            None => tally_outcomes(vault, wtxn, skill, None)?.posterior(prior),
         };
         floor_check_in_txn(
             vault,
             wtxn,
             skill,
+            None,
+            posterior,
+            attributed_outcomes(prior, posterior),
+            at,
+        )
+    })
+}
+
+/// Checks the floor against just one executor arm, not pooled skill history.
+pub fn check_reliability_floor_for_executor(
+    vault: &Vault,
+    skill: &EntityId,
+    executor: &str,
+    at: u64,
+) -> Result<Option<EntityId>> {
+    super::read::validate_executor(executor)?;
+    let prior = skill_reliability_prior(vault, skill)?;
+    vault.with_write_txn(|wtxn| {
+        let posterior =
+            match resolved_reliability_posterior_in_txn(vault, wtxn, skill, Some(executor))? {
+                Some(posterior) => posterior,
+                None => tally_outcomes(vault, wtxn, skill, Some(executor))?.posterior(prior),
+            };
+        floor_check_in_txn(
+            vault,
+            wtxn,
+            skill,
+            Some(executor),
             posterior,
             attributed_outcomes(prior, posterior),
             at,
@@ -134,39 +175,56 @@ pub(super) fn floor_check_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     posterior: SkillReliabilityPosterior,
     outcomes: u32,
     at: u64,
 ) -> Result<Option<EntityId>> {
-    if outcomes < SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES {
-        return Ok(None);
-    }
     let floor = floor_in_txn(vault, wtxn)?;
     let lower_bound = posterior.lower_bound();
-    if lower_bound >= floor {
-        return Ok(None);
-    }
-    if let Some((existing, _, _)) =
+    let open: Vec<_> =
         active_claims_in_txn(vault, wtxn, skill, PREDICATE_SKILL_QUARANTINE_PROPOSAL)?
             .into_iter()
-            .next()
-    {
+            .filter(|(_, body, _)| {
+                super::codec::map_entry(&body.value, "executor").and_then(Value::as_str) == executor
+            })
+            .collect();
+    if outcomes < SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES || lower_bound >= floor {
+        // The proposal remains history, but a no-longer-crossing pair must
+        // not leave an actionable retirement recommendation behind. The
+        // current reliability claim is the superseding evidence-bearing head.
+        if !open.is_empty() {
+            let head = active_reliability_heads_in_txn(vault, wtxn, skill, executor)?
+                .into_iter()
+                .next()
+                .ok_or(invalid("floor withdrawal requires a reliability head"))?;
+            for (old_id, _, old_start) in open {
+                vault.supersede_reserved_claim_in_txn(wtxn, &head.0, &old_id, at.max(old_start))?;
+            }
+        }
+        return Ok(None);
+    }
+    if let Some((existing, _, _)) = open.into_iter().next() {
         return Ok(Some(existing));
     }
     let proposal_id = vault.store.clock.entity_id()?;
+    let mut fields = vec![
+        (Value::from(KEY_ALPHA), Value::F32(posterior.alpha)),
+        (Value::from(KEY_BETA), Value::F32(posterior.beta)),
+        (Value::from(KEY_LOWER_BOUND), Value::F32(lower_bound)),
+        (Value::from(KEY_FLOOR), Value::F32(floor)),
+    ];
+    if let Some(executor) = executor {
+        fields.push((Value::from("executor"), Value::from(executor)));
+    }
     let mut body = ClaimBody::new(
         PREDICATE_SKILL_QUARANTINE_PROPOSAL,
         ClaimSubject::Entity(*skill),
-        Value::Map(vec![
-            (Value::from(KEY_ALPHA), Value::F32(posterior.alpha)),
-            (Value::from(KEY_BETA), Value::F32(posterior.beta)),
-            (Value::from(KEY_LOWER_BOUND), Value::F32(lower_bound)),
-            (Value::from(KEY_FLOOR), Value::F32(floor)),
-        ]),
+        Value::Map(fields),
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Observed);
     vault.put_reserved_claim_in_txn(
         wtxn,

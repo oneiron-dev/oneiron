@@ -9,6 +9,7 @@ use super::{GateOutcome, PolicyCriticality, resolve_policy_manifest};
 use crate::agent_def::AgentCeiling;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
@@ -23,20 +24,12 @@ struct Introduction {
     // A successful explicit widening is invalidated by any policy-frontier change.
     widen: Option<([u8; 32], bool)>,
 }
-fn key(id: EntityId) -> Vec<u8> {
-    let mut key = b"gate.foreign-agent.v1:".to_vec();
-    key.extend(id.as_bytes());
-    key
-}
+/// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent
+/// introduction. Key: id16.
+const INTRODUCTION: SideTable<EntityId, Introduction, Named> =
+    SideTable::new(&side_table::GATE_FOREIGN_AGENT_INTRODUCTION);
 fn load(store: &Store, txn: &heed::RoTxn<'_>, actor: EntityId) -> Result<Option<Introduction>> {
-    store
-        .vault_meta
-        .get(txn, &key(actor))?
-        .map(|raw| {
-            rmp_serde::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("foreign agent introduction"))
-        })
-        .transpose()
+    INTRODUCTION.get(store, txn, &actor)
 }
 fn put(
     store: &Store,
@@ -44,10 +37,7 @@ fn put(
     actor: EntityId,
     row: &Introduction,
 ) -> Result<()> {
-    let raw = rmp_serde::to_vec_named(row)
-        .map_err(|_| Error::InvariantViolation("foreign agent encode"))?;
-    store.vault_meta.put(txn, &key(actor), &raw)?;
-    Ok(())
+    INTRODUCTION.put(store, txn, &actor, row)
 }
 fn ceiling(auto: bool) -> PolicyApprovalCeiling {
     if auto {
@@ -87,9 +77,7 @@ fn resolve_chain(
         return Ok(None);
     };
     let owner = EntityId::from_bytes(row.owner)?;
-    if store
-        .entities
-        .get(txn, owner.as_bytes())?
+    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &owner)?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
         .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)
     {
@@ -132,12 +120,14 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             if foreign == introducer.entity_ref()
-                || self.store.entities.get(txn, foreign.as_bytes())?.is_none()
-                || self
-                    .store
-                    .entities
-                    .get(txn, introducer.entity_ref().as_bytes())?
+                || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &foreign)?
                     .is_none()
+                || crate::ports::EntityStoreRead::port_entity_raw(
+                    &self.store,
+                    txn,
+                    &introducer.entity_ref(),
+                )?
+                .is_none()
             {
                 return Err(Error::InvalidClaimBody("foreign introduction identity"));
             }
@@ -296,10 +286,7 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let id = super::default_policy_manifest_id()?;
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("policy manifest header"))?;

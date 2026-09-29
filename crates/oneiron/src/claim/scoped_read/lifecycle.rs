@@ -66,9 +66,12 @@ impl ScopedRead<'_> {
             return Ok(Some(ServedLifecycle::Retracted));
         }
         let mut successor = None;
-        for row in self.vault.store.edges_in.prefix_iter(&txn, id.as_bytes())? {
-            let (key, bytes) = row?;
-            let edge = crate::vault::parse_edge_record(&key, &bytes)?;
+        for row in
+            self.vault
+                .store
+                .port_edges(&txn, id, crate::ports::EdgeDirection::In, None, None)?
+        {
+            let edge = row?;
             if edge.kind != crate::EdgeKind::Supersedes {
                 continue;
             }

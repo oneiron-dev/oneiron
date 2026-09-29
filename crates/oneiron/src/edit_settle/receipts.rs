@@ -2,12 +2,12 @@
 
 use std::collections::BTreeMap;
 
-use super::codec::{corrupt, decode_settlement_record, settlement_key_artifact_id};
+use super::codec::{RECORD, corrupt};
 use super::keys::{
-    BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX, FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES,
-    FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION, FIELD_BRIEF_REF, FIELD_CONTENT_HASH,
-    FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF, FIELD_PROPOSAL_REF, FIELD_REASON, FIELD_RUN_REF,
-    FIELD_VERSION,
+    FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES, FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION,
+    FIELD_BRIEF_REF, FIELD_CONTENT_HASH, FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF,
+    FIELD_PROPOSAL_REF, FIELD_QUESTION_VERSION, FIELD_REASON, FIELD_RUN_REF,
+    FIELD_SHEET_ANSWER_COUNT, FIELD_SLIDE_JUDGMENTS, FIELD_VERSION,
 };
 use super::records::{SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::Vault;
@@ -26,18 +26,11 @@ use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for (scanned, entry) in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX)?
-        .enumerate()
-    {
+    for (scanned, entry) in RECORD.iter_from(&vault.store, &rtxn, &[])?.enumerate() {
         if scanned >= crate::receipt::MAX_RECEIPT_QUERY_SCAN {
             break;
         }
-        let (key, raw) = entry?;
-        let artifact_id = settlement_key_artifact_id(&key)?;
-        let record = decode_settlement_record(&raw)?;
+        let ((artifact_id, _), record) = entry?;
         let receipt = settlement_receipt_record(artifact_id, &record)?;
         if query.matches(&receipt) {
             out.push(receipt);
@@ -65,6 +58,47 @@ pub(super) fn settlement_receipt_record(
         fields.insert(FIELD_BRIEF_REF.to_owned(), brief_ref.clone());
     }
 
+    if let Some(bundle) = &record.sheet_answers {
+        fields.insert(
+            FIELD_QUESTION_VERSION.to_owned(),
+            bundle.question_version.clone(),
+        );
+        fields.insert(
+            FIELD_SHEET_ANSWER_COUNT.to_owned(),
+            bundle.answers.len().to_string(),
+        );
+    }
+
+    if !record.pptx_judgments.is_empty() {
+        fields.insert(
+            FIELD_SLIDE_JUDGMENTS.to_owned(),
+            serde_json::to_string(&record.pptx_judgments).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "slide judgment receipt cannot encode",
+                ))
+            })?,
+        );
+    }
+    if !record.pptx_review_identities.is_empty() {
+        let identities: Vec<_> = record
+            .pptx_review_identities
+            .iter()
+            .map(|identity| {
+                serde_json::json!({
+                    "thread_id": identity.thread_id.to_hex(),
+                    "asked_by": identity.asked_by.to_hex(),
+                    "answered_by": identity.answered_by.to_hex(),
+                    "export_author_guid": identity.export_author_guid,
+                    "export_author_name": identity.export_author_name,
+                })
+            })
+            .collect();
+        fields.insert(
+            "pptx_review_identities".into(),
+            serde_json::to_string(&identities)
+                .map_err(|_| Error::InvariantViolation("settlement review identity encoding"))?,
+        );
+    }
     let trigger_ref = match record.outcome {
         SettleOutcomeKind::Selected | SettleOutcomeKind::Proposed => {
             // Fail closed: a Selected ledger row MUST carry its version and the
@@ -89,6 +123,14 @@ pub(super) fn settlement_receipt_record(
                 FIELD_MANIFEST_OPS.to_owned(),
                 record.manifest_ops.to_string(),
             );
+            if !record.pptx_slide_creation_id_mints.is_empty() {
+                fields.insert(
+                    "pptx_slide_creation_id_mints".into(),
+                    serde_json::to_string(&record.pptx_slide_creation_id_mints).map_err(|_| {
+                        Error::InvariantViolation("settlement mint receipt encoding")
+                    })?,
+                );
+            }
             let drifts = record.anchors.iter().filter(|a| a.drifted).count();
             let moves = record.anchors.len() - drifts;
             fields.insert(FIELD_ANCHOR_MOVES.to_owned(), moves.to_string());

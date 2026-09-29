@@ -29,3 +29,78 @@ pub(crate) fn entity(seed: u8) -> EntityId {
     );
     EntityId::from_bytes([seed; 16]).expect("non-pinned seed byte forms a valid entity id")
 }
+
+/// Mirror of `test_util::provision_engine_machines`: roots the vault under a
+/// test host and provisions the engine's MACHINE writers with host-held keys,
+/// as a host does at bootstrap (ONE-1634).
+pub(crate) fn provision_engine_machines(vault: &oneiron::Vault) {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"oneiron integration test host")
+        .expect("host issuer");
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+}
+
+/// Mirror of `test_util::self_held_identity_in_state`; see the canonical doc
+/// comment. A row's state is not assignable after ONE-1970, so an integration
+/// fixture that needs a live identity walks the machine here.
+pub(crate) fn self_held_identity_in_state(
+    channel: &str,
+    address_or_handle: &str,
+    shape: oneiron::channel_identity::SelfHeldShape,
+    binding: oneiron::channel_identity::ChannelIdentityBinding,
+    state: oneiron::channel_identity::ChannelIdentityState,
+    at: u64,
+) -> oneiron::channel_identity::ChannelIdentity {
+    use oneiron::channel_identity::{
+        ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, ChannelIdentityStep,
+        DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+    };
+
+    let mut row = ChannelIdentity::requested(channel, address_or_handle, shape, binding, at);
+    let walk: &[ChannelIdentityStep] = match state {
+        ChannelIdentityState::Requested => &[],
+        ChannelIdentityState::PendingFulfillment => {
+            &[ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api)]
+        }
+        ChannelIdentityState::Active => &[
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Fulfill,
+        ],
+        ChannelIdentityState::Rotating => &[
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Fulfill,
+            ChannelIdentityStep::Rotate,
+        ],
+        ChannelIdentityState::Released => &[
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Fulfill,
+            ChannelIdentityStep::Release,
+        ],
+        ChannelIdentityState::Quarantine => &[
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Fulfill,
+            ChannelIdentityStep::Release,
+            ChannelIdentityStep::Quarantine {
+                until: at + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+            },
+        ],
+        ChannelIdentityState::Tombstone => &[
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+            ChannelIdentityStep::Fulfill,
+            ChannelIdentityStep::Release,
+            ChannelIdentityStep::Quarantine {
+                until: at + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+            },
+            ChannelIdentityStep::Close,
+        ],
+        // `ChannelIdentityState` is `#[non_exhaustive]`, so an out-of-crate
+        // match needs this arm even though the crate-internal twin does not.
+        _ => panic!("unhandled channel identity state {state:?}"),
+    };
+    for step in walk {
+        row = row.step(*step, at).expect("self-held lifecycle walk");
+    }
+    row
+}

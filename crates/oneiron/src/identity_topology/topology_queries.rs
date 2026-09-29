@@ -5,22 +5,104 @@ use std::collections::BTreeSet;
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, SyncError};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
 use crate::vault::Vault;
 
+use super::ledger_fold::fold_identity_topology_log;
 use super::reassignment_map::reassignment_claims_for_prefix_in_txn;
-use super::stored_event::StoredIdentityOpEvent;
-use super::{REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX};
+use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
+use super::transition_table::IdentityTopologyRejection;
+use super::{REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX};
+
+/// Role relative to the currently applied merge (not old/undone events).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActiveMergeDeleteRole {
+    None,
+    Source,
+    Survivor,
+    Actor,
+}
 
 impl Vault {
+    /// The delete precondition for an active merge. Both source shells and
+    /// the survivor are participants: tearing either row/edge before undo
+    /// would make the merge un-undoable. Actor-only deletes instead retain a
+    /// tombstone; the actor stamp in the event remains self-contained.
+    pub(crate) fn active_merge_delete_role_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<ActiveMergeDeleteRole> {
+        let events = self.fold_effective_identity_topology_events_in_txn(rtxn)?;
+        let fold = fold_identity_topology_log(&events);
+        let mut actor = false;
+        let mut survivor_role = false;
+        for event in events {
+            let record = self
+                .identity_topology_event_in_txn(rtxn, &event.event_id)?
+                .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+            let StoredIdentityOpAction::Merge { sources, survivor } = &record.action else {
+                continue;
+            };
+            if !sources
+                .iter()
+                .any(|source| fold.current_event.get(source) == Some(&event.event_id))
+            {
+                continue;
+            }
+            // A head of one merge may be a source in a later merge. Only a
+            // current source is a hard-delete refusal, so scan ALL current
+            // events before returning a lesser survivor/actor role.
+            if sources.contains(id) {
+                return Ok(ActiveMergeDeleteRole::Source);
+            }
+            survivor_role |= *id == *survivor;
+            actor |= super::effective_author_in_txn(&self.store, rtxn, event.event_id)?
+                .is_some_and(|author| author.entity_ref() == *id);
+        }
+        Ok(if survivor_role {
+            ActiveMergeDeleteRole::Survivor
+        } else if actor {
+            ActiveMergeDeleteRole::Actor
+        } else {
+            ActiveMergeDeleteRole::None
+        })
+    }
+
+    /// A hard purge of a live source would remove its canonical shell edge.
+    /// The survivor hard-erase instead walks/scrubs its whole redirect tree.
+    pub(crate) fn guard_active_merge_hard_delete_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        if self.active_merge_delete_role_in_txn(rtxn, id)? == ActiveMergeDeleteRole::Source {
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: *id },
+            )));
+        }
+        Ok(())
+    }
+
     /// Reads one type-76 ledger event record. `Ok(None)` when the id is
     /// absent; a present id of another type is a typed mismatch; a present
     /// record that fails decode is corruption (the family is engine-
     /// authored and door-validated).
     pub fn identity_topology_event(&self, id: &EntityId) -> Result<Option<StoredIdentityOpEvent>> {
         let rtxn = self.store.env.read_txn()?;
-        self.identity_topology_event_in_txn(&rtxn, id)
+        let Some(mut record) = self.identity_topology_event_in_txn(&rtxn, id)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            record.action,
+            StoredIdentityOpAction::AuthorAttribution { .. }
+                | StoredIdentityOpAction::AuthorRedaction { .. }
+                | StoredIdentityOpAction::AdmissionDisposition(_)
+        ) {
+            record.actor = super::effective_author_in_txn(&self.store, &rtxn, *id)?;
+        }
+        Ok(Some(record))
     }
 
     /// CLAIM ids a topology decision assigned to `target` (ARCH-0055 r2/r5),
@@ -45,7 +127,7 @@ impl Vault {
         let mut claims = reassignment_claims_for_prefix_in_txn(
             &self.store,
             &rtxn,
-            REASSIGNMENT_TARGET_META_PREFIX,
+            REASSIGNMENT_TARGET_INDEX,
             target,
             |_| true,
         )?;
@@ -73,7 +155,7 @@ impl Vault {
         let residue = reassignment_claims_for_prefix_in_txn(
             &self.store,
             &rtxn,
-            REASSIGNMENT_ORIGIN_META_PREFIX,
+            REASSIGNMENT_ORIGIN_INDEX,
             origin,
             |target| target.is_none(),
         )?;
@@ -109,7 +191,7 @@ impl Vault {
         reassignment_claims_for_prefix_in_txn(
             &self.store,
             rtxn,
-            REASSIGNMENT_ORIGIN_META_PREFIX,
+            REASSIGNMENT_ORIGIN_INDEX,
             origin,
             |target| target.is_some(),
         )

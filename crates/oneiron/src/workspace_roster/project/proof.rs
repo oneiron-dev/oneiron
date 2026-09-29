@@ -1,8 +1,8 @@
-//! Signed project revision admission, common to local, batch and replicated puts.
+//! Live admission of a PROJECT write: direct, batch and typed doors. Replay
+//! never reaches this check; the read fold judges replicated rows instead.
+use super::read::{ProjectReader, ProjectVerdict, bound_by_parents, stored};
 use super::*;
 use crate::authority::{CapabilitySlip, authority_fold_readonly_for_store_in_txn};
-use crate::error::RecordError;
-use crate::federation::{ScopeAxis, ScopeId};
 use crate::store::Store;
 
 fn refused(reason: &'static str) -> Error {
@@ -18,33 +18,59 @@ pub(crate) fn validate_transition(
     posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
     let next: ProjectRecord = decode(bytes).map_err(|_| refused("invalid project body"))?;
-    let prior = record::<ProjectRecord>(store, txn, id, kind)?;
-    let root = store.vault_meta.get(txn, ROOT)?;
-    // Only the initial vault bootstrap writes an unproved root. The root
-    // binding and row are committed atomically by seed_root_project.
-    if prior.is_none()
-        && root.is_none()
-        && store.vault_meta.get(txn, ROOT_SEEDING)?.as_deref() == Some(id.as_bytes())
-        && next.parents.is_empty()
-        && next.claims_scope_ref == id.to_hex()
+    let prior = stored(store, txn, id, kind)?;
+    if let Some(old) = &prior {
+        // Membership, goal and ask edits keep the authority and its proof.
+        if old.authority() == next.authority() && old.write_proof == next.write_proof {
+            return Ok(());
+        }
+        if next.write_proof.is_none() {
+            return Err(refused("project authority change needs a signed proof"));
+        }
+    }
+    let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
+    if let Some(proof) = &next.write_proof
+        && prior
+            .as_ref()
+            .is_none_or(|old| old.write_proof.as_ref() != Some(proof))
     {
-        return Ok(());
+        verify_live(store, txn, id, &next, proof, posture)?;
+        match &prior {
+            // A visible row is the current authority; a hidden one (say, a
+            // forged replay) may be repaired over the last authorized state.
+            Some(old)
+                if proof.anchor.as_deref() != Some(&old.anchor())
+                    && reader.judge(id, old)? == ProjectVerdict::Visible =>
+            {
+                return Err(refused("project write must build on its current authority"));
+            }
+            None if proof.anchor.is_some() => {
+                return Err(refused("a new project has no earlier authority"));
+            }
+            _ => {}
+        }
+        if prior.is_some() {
+            refuse_stranded_children(store, txn, id, kind, &next.authority())?;
+        }
     }
-    if next.parents.is_empty() && root.as_deref() != Some(id.as_bytes()) {
-        return Err(refused("only the vault root has no project parent"));
+    match reader.judge(id, &next)? {
+        ProjectVerdict::Visible => Ok(()),
+        ProjectVerdict::Pending(reason) | ProjectVerdict::Quarantined(reason) => {
+            Err(refused(reason))
+        }
     }
-    let mut parents = Vec::new();
-    for parent in &next.parents {
-        let parent_id = EntityId::from_hex(parent).map_err(|_| refused("invalid parent id"))?;
-        parents.push((
-            parent_id,
-            super::projection::dependency(store, txn, parent_id, kind)?,
-        ));
-    }
-    let proof = next
-        .write_proof
-        .as_ref()
-        .ok_or_else(|| refused("missing project write proof"))?;
+}
+
+/// A new signature is a live act: its slip must be live at this door's
+/// clock as well as at its signed time, and it may not be dated ahead.
+fn verify_live(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    next: &ProjectRecord,
+    proof: &ProjectWriteProof,
+    posture: crate::HostingPrivacyPosture,
+) -> Result<()> {
     let slip = CapabilitySlip::from_token(&proof.slip_wire)
         .map_err(|_| refused("invalid project write slip"))?;
     let fold = authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
@@ -53,80 +79,54 @@ pub(crate) fn validate_transition(
         .mints
         .get(&slip.claims.slip_id)
         .ok_or_else(|| refused("project write slip not minted"))?;
-    let floor = store
-        .sync_state
-        .get(txn, crate::authority::authority_first_seen_clock_sync_key())?
-        .and_then(|raw| crate::authority::decode_authority_first_seen_secs(&raw))
+    let floor = crate::authority::AUTHORITY_FIRST_SEEN
+        .get_lenient(
+            store,
+            txn,
+            &crate::authority::authority_first_seen_clock_key(),
+        )?
         .unwrap_or(0);
     let now =
         crate::authority::authority_observation_secs(store, floor, store.clock.now_recorded_at());
-    let verified = slip
-        .verify_with_host_key(
-            &mint.signer,
-            &fold,
-            now,
-            &next.write_challenge(id)?,
-            &proof.holder_signature,
-        )
-        .map_err(|_| refused("invalid project write proof"))?;
-    let claims = verified.claims();
-    let actor = &claims.holder_ref;
-    let scope = verified.scope();
-    if !scope.verbs.contains(&"project.write".to_owned())
-        || !scope.bands.contains(&kind)
-        || !scope
-            .worlds
-            .contains(&ScopeId(next.slice.world.unwrap_or(id)))
-            && !matches!(scope.worlds, ScopeAxis::All)
-        || next
-            .slice
-            .facet
-            .is_some_and(|facet| !scope.facets.contains(&ScopeId(facet)))
-    {
-        return Err(refused("project write outside slip scope"));
+    if proof.signed_at > now {
+        return Err(refused("project write proof is dated ahead"));
     }
-    let board_action = prior.as_ref().is_some_and(|old| {
-        old.parents != next.parents
-            || old.leader != next.leader
-            || old.depth_limit < next.depth_limit
-            || old.depth_remaining < next.depth_remaining
-            || old.slice.attenuate(next.slice.clone()).is_err()
-            || old.board != next.board
-            || old.claims_scope_ref != next.claims_scope_ref
-    });
-    if let Some(old) = &prior {
-        if !scope.audience.contains(&ScopeId(id)) && old != &next {
-            return Err(refused("project write outside slip audience"));
-        }
-        if !board_action && old.leader != *actor {
-            return Err(refused("only leader may update project"));
-        }
-        if board_action
-            && !old.board.contains(actor)
-            && !(root.as_deref() == Some(id.as_bytes()) && actor == "host")
+    let challenge =
+        next.authority()
+            .write_challenge(id, proof.signed_at, proof.anchor.as_deref())?;
+    slip.verify_with_host_key(
+        &mint.signer,
+        &fold,
+        now,
+        &challenge,
+        &proof.holder_signature,
+    )
+    .map_err(|_| refused("invalid project write proof"))?;
+    Ok(())
+}
+
+/// Narrowing a live parent may not leave a signed subproject wider than it.
+fn refuse_stranded_children(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    next: &ProjectAuthority,
+) -> Result<()> {
+    let parent = id.to_hex();
+    for row in store.type_index.prefix_iter(txn, &[kind])? {
+        let (key, _) = row?;
+        let child = EntityId::from_bytes(
+            key[1..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("project type index"))?,
+        )?;
+        if let Some(body) = stored(store, txn, child, kind)?
+            && bound_by_parents(&body)
+            && body.parents.contains(&parent)
+            && !body.authority().fits_under(next)
         {
-            return Err(refused("project widening needs board holder proof"));
-        }
-    } else {
-        let (parent_id, parent) = parents
-            .first()
-            .ok_or_else(|| refused("missing project parent"))?;
-        if parent.leader != *actor
-            || slip.caveats.is_empty()
-            || !scope.audience.contains(&ScopeId(*parent_id))
-        {
-            return Err(refused("project spawn needs parent leader slip"));
-        }
-    }
-    // The project's hierarchy is a meet: even a board action cannot widen
-    // a descendant beyond any current parent; a wider parent is the board's
-    // separate, explicit mutation.
-    for (_, parent) in &parents {
-        if next.depth_limit > parent.depth_limit
-            || next.depth_remaining >= parent.depth_remaining
-            || parent.slice.attenuate(next.slice.clone()).is_err()
-        {
-            return Err(refused("project slice exceeds parent"));
+            return Err(refused("narrowing would strand a wider subproject"));
         }
     }
     Ok(())

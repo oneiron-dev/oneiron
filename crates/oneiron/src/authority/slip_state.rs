@@ -104,11 +104,20 @@ impl SlipAuthorityState {
         self.ancestors(id).is_some()
     }
     fn ancestors(&self, id: &[u8; 32]) -> Option<Vec<&FoldedSlip>> {
+        self.ancestors_where(id, |slip| {
+            self.revoked.contains(slip) || self.consumed.contains(slip)
+        })
+    }
+    fn ancestors_where(
+        &self,
+        id: &[u8; 32],
+        dead: impl Fn(&[u8; 32]) -> bool,
+    ) -> Option<Vec<&FoldedSlip>> {
         let mut current = Some(*id);
         let mut seen = BTreeSet::new();
         let mut path = Vec::new();
         while let Some(id) = current {
-            if !seen.insert(id) || self.revoked.contains(&id) || self.consumed.contains(&id) {
+            if !seen.insert(id) || dead(&id) {
                 return None;
             }
             let mint = self.mints.get(&id)?;
@@ -117,10 +126,35 @@ impl SlipAuthorityState {
         }
         Some(path)
     }
+    /// Whether the slip or an ancestor carries a revocation or id collision.
+    #[must_use]
+    pub fn is_revoked(&self, id: &[u8; 32]) -> bool {
+        let mut current = Some(*id);
+        let mut seen = BTreeSet::new();
+        while let Some(id) = current {
+            if !seen.insert(id) {
+                return false;
+            }
+            if self.revoked.contains(&id) {
+                return true;
+            }
+            current = self
+                .mints
+                .get(&id)
+                .and_then(|mint| mint.action.claims.parent_id);
+        }
+        false
+    }
     /// Every ancestor's minting host must still be live in the final roster.
     #[must_use]
     pub fn is_live(&self, id: &[u8; 32], roster: &BTreeMap<AuthorityKey, FoldedDevice>) -> bool {
-        self.ancestors(id).is_some_and(|path| {
+        Self::hosts_live(self.ancestors(id), roster)
+    }
+    fn hosts_live(
+        path: Option<Vec<&FoldedSlip>>,
+        roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+    ) -> bool {
+        path.is_some_and(|path| {
             path.iter().all(|mint| {
                 roster.get(&mint.signer).is_some_and(|host| {
                     !host.revoked && host.roles & (ROLE_OWNER | ROLE_ADMIN) != 0
@@ -141,5 +175,21 @@ impl AuthorityFold {
                 path.iter()
                     .all(|mint| self.valid_entries.contains(&mint.entry_hash))
             })
+    }
+    /// Whether a slip still authorizes what it signed in the past. Revokes
+    /// and minting-host revocation win over concurrent use (federation:F-MERGE);
+    /// the normal spend of a single-use slip does not undo its earlier act.
+    #[must_use]
+    pub fn slip_authorized_history(&self, id: &[u8; 32]) -> bool {
+        let path = self
+            .slips
+            .ancestors_where(id, |slip| self.slips.revoked.contains(slip));
+        self.vault_id.is_some()
+            && !self.vault_root_is_conflicted()
+            && path.as_ref().is_some_and(|path| {
+                path.iter()
+                    .all(|mint| self.valid_entries.contains(&mint.entry_hash))
+            })
+            && SlipAuthorityState::hosts_live(path, &self.roster)
     }
 }

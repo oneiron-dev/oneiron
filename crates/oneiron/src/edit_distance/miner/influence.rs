@@ -31,12 +31,12 @@ pub fn mined_preferences_for_principal(
         "brief.preference",
     ] {
         for (id, body) in vault.claims_with_predicate_in_txn(&txn, predicate)? {
-            let learned_at = vault
-                .store
-                .entities
-                .get(&txn, id.as_bytes())?
-                .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.learned_at))
-                .ok_or(Error::CorruptedIndex("mined preference header"))?;
+            let learned_at =
+                crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?
+                    .and_then(|raw| {
+                        EntityMetadataHeader::parse(&raw).map(|header| header.learned_at)
+                    })
+                    .ok_or(Error::CorruptedIndex("mined preference header"))?;
             if claim_principal_id(&body)? == Some(*principal)
                 && preference_in_force(&body, learned_at, now)?
             {

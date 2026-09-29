@@ -34,6 +34,26 @@ fn register_scoped_key(
 ) -> ScopedCapabilityProvenance {
     let capability = capability(server, grant_id);
     register_key(vault, key_id, capability.connector());
+    // Recovery fixtures describe an already-qualified scoped key. The
+    // separately tested lifecycle doors own qualification and owner consent.
+    let mut key = vault.get_connector_key(key_id).unwrap().unwrap();
+    key.retained_manifest = Some(
+        crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+            crate::connector_key::ConnectorToolSchema {
+                name: "read_file".into(),
+                permissions: ["read".into()].into(),
+                triggers: Default::default(),
+                input_schema: serde_json::json!({"properties": {}}),
+            },
+        ])
+        .unwrap(),
+    );
+    key.protocol_revision = Some("R1".into());
+    vault
+        .with_write_txn(|txn| {
+            crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, key_id, &key)
+        })
+        .unwrap();
     capability
 }
 
@@ -72,6 +92,25 @@ fn charged_record(
         .map_or_else(|| "files".to_owned(), |value| value.server().to_owned());
     let mut request = recovery_request(&server, tool);
     if let Some(capability) = capability {
+        let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
+            crate::connector_key::ConnectorToolSchema {
+                name: "read_file".into(),
+                permissions: ["read".into()].into(),
+                triggers: Default::default(),
+                input_schema: serde_json::json!({"properties": {}}),
+            },
+        ])
+        .unwrap();
+        request.payload = serde_json::to_vec(&serde_json::json!({
+            "call":{"server":server,"tool":tool,"payload_data_class":"personal",
+                "resolved_endpoint":"https://files.example.test/mcp"},
+            "arguments":{},"headers":{},"grant_requirements":[],
+            "manifest_binding":{"key_ref":key_id.to_hex(), "manifest_hash":manifest.hash().unwrap(),
+                "protocol_revision":"R1"},
+            "destructive_hint":false,"mutation":"preview","read_only_hint":false,
+            "idempotency_supported_hint":true
+        }))
+        .unwrap();
         // Capability rows are minted only on the scoped path, which always
         // binds the authorization in the same admission step.
         request = request
@@ -86,17 +125,6 @@ fn charged_record(
 /// The reconstructed v3 shape a recovery seam must never downgrade: endpoint-
 /// and binding-bound — so only scoped authorization could have written it —
 /// while the typed discriminator is absent.
-fn endpoint_bound_record_without_provenance(key_id: EntityId, tool: &str) -> IntentLedgerRecord {
-    IntentLedgerRecord::pending(
-        recovery_request("files", tool)
-            .with_authorization_binding(OutboundAuthorizationBinding::new([0xB1; 32]))
-            .with_resolved_endpoint("https://files.example.test/mcp"),
-        true,
-        charged_marker(key_id),
-    )
-    .expect("pending ledger record")
-}
-
 /// The frozen call identity every recovery fixture shares.
 fn recovery_request(server: &str, tool: &str) -> OutboundCallRequest {
     OutboundCallRequest::new(
@@ -183,7 +211,7 @@ fn recovery_rejects_reconstructed_endpoint_row_without_provenance_before_transpo
     // The SAME durable identity, reconstructed without its typed discriminator.
     // The endpoint and binding survive, so an ordinary reading of this row would
     // send it; an endpoint-bound row is a scoped row and must fail closed.
-    let reconstructed = endpoint_bound_record_without_provenance(key_id, "read_file");
+    let reconstructed = persisted.clone().without_capability_provenance_for_test();
     assert_eq!(
         reconstructed.id, persisted.id,
         "the reconstructed row must keep the persisted identity"

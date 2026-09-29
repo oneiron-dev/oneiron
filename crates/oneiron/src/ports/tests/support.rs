@@ -8,6 +8,7 @@ pub(super) trait Backend:
     EntityStore
     + ClaimStore
     + EdgeStore
+    + EdgeStoreInventory
     + PlaceStore
     + RetrievalIndex
     + ShortIdStore

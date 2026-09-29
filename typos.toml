@@ -13,6 +13,11 @@ extend-exclude = [
     # prose this repo authors, and editing it would invalidate the reference
     # vectors committed beside it.
     "crates/oneiron-server/tests/fixtures/embed/**",
+    # Hash-pinned Office corpus inputs: upstream function names (AVERAGEIFS), upstream prose and
+    # quoted upstream test assertions. provenance.json and goldens.json pin these exact bytes.
+    "crates/oneiron-docedit/tests/fixtures/spreadsheet-compat/cases.json",
+    "crates/oneiron-docedit/tests/fixtures/spreadsheet-compat/excel/goldens.json",
+    "crates/oneiron-docedit/tests/fixtures/docx-corpus/manifest.json",
 ]
 
 [default.extend-words]

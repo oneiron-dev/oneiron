@@ -491,7 +491,11 @@ fn owner_rows_sharing_a_row_ref_across_manifests_are_dropped_too() -> Result<()>
     let rtxn = vault.store.env.read_txn()?;
     let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
     assert!(policy.owner_policy_rows_dropped());
-    assert!(policy.active_owner_policy_rows(None).is_empty());
+    assert!(
+        policy
+            .active_owner_policy_rows_for_scope(None, None)
+            .is_empty()
+    );
     drop(rtxn);
 
     let err = vault
@@ -542,7 +546,7 @@ fn a_disabled_row_does_not_shadow_the_live_row_that_replaced_it() -> Result<()> 
         "one live row and one disabled one are not an ambiguity"
     );
     assert_eq!(
-        policy.active_owner_policy_rows(None).len(),
+        policy.active_owner_policy_rows_for_scope(None, None).len(),
         1,
         "the live row is the sole candidate, and it survives"
     );
@@ -577,7 +581,12 @@ fn one_row_ref_under_two_worlds_survives_a_manifest_split() -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
     assert!(!policy.owner_policy_rows_dropped());
-    assert_eq!(policy.active_owner_policy_rows(Some("work")).len(), 1);
+    assert_eq!(
+        policy
+            .active_owner_policy_rows_for_scope(Some("work"), None)
+            .len(),
+        1
+    );
     Ok(())
 }
 

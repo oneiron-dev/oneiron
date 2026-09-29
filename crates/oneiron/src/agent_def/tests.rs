@@ -5,6 +5,7 @@
 //! contract.
 
 use super::*;
+use crate::dreamer_wake::{AgentWakeRole, AgentWakeSignals, CadencePrecedence};
 use crate::error::{ArtifactError, ErrorKind, RegistryError};
 use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteZone, entity_type_registry_entry,
@@ -608,6 +609,7 @@ fn pinned_key_contract_is_stable() {
             "memory_profile",
             "dreaming",
             "dreamingModel",
+            "wakeCadence",
         ]
     );
     assert_eq!(MCP_REF_KEYS, ["key", "minVersion"]);
@@ -1810,5 +1812,209 @@ fn seeded_work_agents_inherit_dreaming() -> Result<()> {
         assert_eq!(def.dreaming_mode(), DreamingMode::Inherit);
         assert_eq!(def.dreaming_model, None);
     }
+    Ok(())
+}
+
+#[test]
+fn authored_definitions_land_at_author_ceiling_or_remain_non_dispatchable_proposals() -> Result<()>
+{
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let author_id = crate::test_util::entity(0x81);
+    let mut author = minimal_agent("1");
+    author.scope = AgentScope::World(world_id());
+    author.ceiling = AgentCeiling::Proposed;
+    author.skills = vec![SkillDependency::new("known-skill")];
+    vault.put_agent_definition(&author_id, &author, TimeRange { start: 1, end: 1 }, 1)?;
+
+    let child_id = crate::test_util::entity(0x82);
+    let mut child = minimal_agent("1");
+    child.agent_id = "child".into();
+    child.scope = AgentScope::Base;
+    child.skills = author.skills.clone();
+    child.ceiling = AgentCeiling::Auto;
+    // A wider requested ceiling, even with narrower scope, cannot be active.
+    assert_eq!(
+        vault.put_agent_definition_for_author(
+            &author_id,
+            &child_id,
+            &child,
+            TimeRange { start: 2, end: 2 },
+            2
+        )?,
+        AgentDefinitionPutDisposition::Proposed
+    );
+    let pending = vault
+        .get_agent_definition(&child_id)?
+        .expect("saved proposal");
+    assert_eq!(pending.ceiling, AgentCeiling::Auto);
+    assert_eq!(pending.approval_status, ClaimApprovalStatus::Proposed);
+    assert_eq!(pending.lifecycle_status, ClaimLifecycleStatus::Active);
+    assert_eq!(pending.source, ClaimSource::Generated);
+    assert!(pending.generated && !pending.human_authored);
+    let author_hex = author_id.to_hex();
+    assert!(
+        matches!(&pending.provenance, Value::Map(entries) if entries.iter().any(|(key, value)|
+        key.as_str() == Some("author") && value.as_str() == Some(author_hex.as_str())))
+    );
+    assert_eq!(
+        crate::agent_dispatch::AgentDispatcher::new(&vault)
+            .dispatch(crate::agent_dispatch::DispatchAgent {
+                target: crate::agent_dispatch::AgentDispatchTarget::Custom(child_id),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: None,
+                now: 2,
+            })
+            .expect_err("a proposal must not dispatch")
+            .kind(),
+        ErrorKind::AgentNotDispatchable
+    );
+
+    let active_id = crate::test_util::entity(0x83);
+    child.ceiling = AgentCeiling::Proposed;
+    child.skills.clear();
+    assert_eq!(
+        vault.put_agent_definition_for_author(
+            &author_id,
+            &active_id,
+            &child,
+            TimeRange { start: 3, end: 3 },
+            3
+        )?,
+        AgentDefinitionPutDisposition::Active
+    );
+    let stored = vault
+        .get_agent_definition(&active_id)?
+        .expect("saved definition");
+    assert_eq!(stored.ceiling, author.ceiling);
+    assert_eq!(stored.approval_status, author.approval_status);
+    assert_eq!(stored.lifecycle_status, ClaimLifecycleStatus::Active);
+    assert!(vault.get_agent_definition(&author_id)?.is_some());
+    // Authoring creates only definitions. Spawn has a separate attempt door.
+    assert!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn resident_cadence_dials_round_trip_and_choose_their_own_triggers() -> Result<()> {
+    let mut policy: crate::dreamer_wake::DreamerWakePolicy =
+        serde_json::from_str(include_str!("../dreamer_wake/wake_policy_defaults.json"))
+            .expect("shipped wake policy");
+    policy.wake_grain_turns = 3;
+    let companion = AgentWakeCadence::Companion { every_turns: None };
+    let leader = AgentWakeCadence::Leader {
+        every_turns: Some(2),
+    };
+    let worker = AgentWakeCadence::Worker;
+    for dial in [companion, leader, worker] {
+        let agent = minimal_agent("1").with_wake_cadence(dial);
+        assert_eq!(
+            decode_agent_definition(&encode_agent_definition(&agent)?)?.wake_cadence,
+            Some(dial)
+        );
+    }
+    let companion = minimal_agent("1").with_wake_cadence(companion);
+    let leader = minimal_agent("1").with_wake_cadence(leader);
+    let worker = minimal_agent("1").with_wake_cadence(worker);
+    assert!(!companion.dream_wake_due(&policy, 2, AgentWakeSignals::default()));
+    assert!(companion.dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    assert!(companion.dream_wake_due(
+        &policy,
+        2,
+        AgentWakeSignals {
+            surprise: true,
+            ..Default::default()
+        }
+    ));
+    assert!(!leader.dream_wake_due(&policy, 2, AgentWakeSignals::default()));
+    assert!(leader.dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    assert!(!leader.dream_wake_due(
+        &policy,
+        1,
+        AgentWakeSignals {
+            surprise: true,
+            ..Default::default()
+        }
+    ));
+    assert!(leader.dream_wake_due(
+        &policy,
+        1,
+        AgentWakeSignals {
+            agency: true,
+            ..Default::default()
+        }
+    ));
+    assert!(!worker.dream_wake_due(
+        &policy,
+        3,
+        AgentWakeSignals {
+            surprise: true,
+            agency: true,
+            ..Default::default()
+        }
+    ));
+    assert!(worker.dream_wake_due(
+        &policy,
+        1,
+        AgentWakeSignals {
+            event: true,
+            ..Default::default()
+        }
+    ));
+    assert!(!minimal_agent("1").dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    policy.agent_cadence.absent_role = AgentWakeRole::Companion;
+    assert!(minimal_agent("1").dream_wake_due(&policy, 3, AgentWakeSignals::default()));
+    policy.agent_cadence.precedence = CadencePrecedence::AgentOverride;
+    assert!(leader.dream_wake_due(&policy, 2, AgentWakeSignals::default()));
+    let mut disabled = companion;
+    disabled.enabled = false;
+    assert!(!disabled.dream_wake_due(
+        &policy,
+        3,
+        AgentWakeSignals {
+            event: true,
+            ..Default::default()
+        }
+    ));
+    disabled.enabled = true;
+    disabled.dreaming = Some(DreamingMode::Off);
+    assert!(!disabled.dream_wake_due(
+        &policy,
+        3,
+        AgentWakeSignals {
+            event: true,
+            ..Default::default()
+        }
+    ));
+    Ok(())
+}
+
+#[test]
+fn invalid_resident_dial_is_refused_on_both_codec_doors() -> Result<()> {
+    let mut agent = minimal_agent("1").with_wake_cadence(AgentWakeCadence::Leader {
+        every_turns: Some(0),
+    });
+    assert!(encode_agent_definition(&agent).is_err());
+    agent.wake_cadence = Some(AgentWakeCadence::Worker);
+    let mut value =
+        rmpv::decode::read_value(&mut encode_agent_definition(&agent)?.as_slice()).unwrap();
+    let Value::Map(ref mut fields) = value else {
+        unreachable!()
+    };
+    let (_, dial) = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("wakeCadence"))
+        .unwrap();
+    *dial = Value::Map(vec![
+        (Value::from("kind"), Value::from("worker")),
+        (Value::from("everyTurns"), Value::from(2)),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).unwrap();
+    assert!(decode_agent_definition(&bytes).is_err());
     Ok(())
 }

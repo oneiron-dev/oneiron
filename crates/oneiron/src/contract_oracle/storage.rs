@@ -6,10 +6,19 @@ use super::{
 use crate::{
     Vault,
     error::{Error, Result},
+    side_table::{self, Named, SideTable},
 };
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::BTreeMap;
 use std::path::Path;
+
+/// Immutable baseline rows, keyed by their content digest.
+const BASELINES: SideTable<String, ContractBaseline, Named> =
+    SideTable::new(&side_table::CONTRACT_ORACLE_BASELINE);
+
+/// Immutable verdict rows, keyed by their content digest.
+const VERDICTS: SideTable<String, ContractVerdict, Named> =
+    SideTable::new(&side_table::CONTRACT_ORACLE_VERDICT);
 
 pub struct ContractOracle<'a> {
     vault: &'a Vault,
@@ -71,12 +80,12 @@ impl<'a> ContractOracle<'a> {
             spec,
             snapshot,
         };
-        self.put("baseline", &id, &baseline)?;
+        self.put(BASELINES, &id, &baseline)?;
         Ok(baseline)
     }
 
     pub fn baseline(&self, id: &str) -> Result<Option<ContractBaseline>> {
-        let row: Option<ContractBaseline> = self.get("baseline", id)?;
+        let row = self.get(BASELINES, id)?;
         if let Some(row) = &row {
             if row.schema_version != 1
                 || row.id != id
@@ -137,12 +146,12 @@ impl<'a> ContractOracle<'a> {
             diffs,
         };
         verdict.id = verdict_digest(&verdict)?;
-        self.put("verdict", &verdict.id, &verdict)?;
+        self.put(VERDICTS, &verdict.id, &verdict)?;
         Ok(verdict)
     }
 
     pub fn verdict(&self, id: &str) -> Result<Option<ContractVerdict>> {
-        let row: Option<ContractVerdict> = self.get("verdict", id)?;
+        let row = self.get(VERDICTS, id)?;
         if let Some(row) = &row
             && (row.schema_version != 1 || row.id != id || verdict_digest(row)? != id)
         {
@@ -151,37 +160,37 @@ impl<'a> ContractOracle<'a> {
         Ok(row)
     }
 
-    fn put<T: Serialize>(&self, family: &str, id: &str, value: &T) -> Result<()> {
-        let key = key(family, id)?;
-        let bytes =
-            rmp_serde::to_vec_named(value).map_err(|_| invalid("oracle row encoding failed"))?;
+    fn put<T: Serialize + DeserializeOwned + PartialEq>(
+        &self,
+        table: SideTable<String, T, Named>,
+        id: &str,
+        value: &T,
+    ) -> Result<()> {
+        validate_oracle_id(id)?;
+        let bytes = table.encode_value(value)?;
         if bytes.len() > 32 * 1024 * 1024 {
             return Err(invalid("oracle row exceeds limit"));
         }
         let mut txn = self.vault.store.env.write_txn()?;
-        if let Some(prior) = self.vault.store.vault_meta.get(&txn, &key)? {
-            if prior.as_ref() != bytes.as_slice() {
+        if let Some(prior) = table.get(&self.vault.store, &txn, &id.to_owned())? {
+            if prior != *value {
                 return Err(Error::CorruptedIndex("immutable oracle row differs"));
             }
         } else {
-            self.vault.store.vault_meta.put(&mut txn, &key, &bytes)?;
+            table.put(&self.vault.store, &mut txn, &id.to_owned(), value)?;
         }
         txn.commit()?;
         Ok(())
     }
 
-    fn get<T: DeserializeOwned>(&self, family: &str, id: &str) -> Result<Option<T>> {
-        let key = key(family, id)?;
+    fn get<T: Serialize + DeserializeOwned>(
+        &self,
+        table: SideTable<String, T, Named>,
+        id: &str,
+    ) -> Result<Option<T>> {
+        validate_oracle_id(id)?;
         let txn = self.vault.store.env.read_txn()?;
-        self.vault
-            .store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|bytes| {
-                rmp_serde::from_slice(&bytes)
-                    .map_err(|_| Error::CorruptedIndex("contract oracle row"))
-            })
-            .transpose()
+        table.get(&self.vault.store, &txn, &id.to_owned())
     }
 }
 
@@ -195,11 +204,11 @@ fn validate_snapshot(spec: &ContractSpec, snapshot: &ContractSnapshot) -> Result
     }
     Ok(())
 }
-fn key(family: &str, id: &str) -> Result<Vec<u8>> {
+fn validate_oracle_id(id: &str) -> Result<()> {
     if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(invalid("oracle id must be a content digest"));
     }
-    Ok(format!("contract_oracle:{family}:v1:{id}").into_bytes())
+    Ok(())
 }
 fn digest(value: &impl Serialize) -> Result<String> {
     let bytes =

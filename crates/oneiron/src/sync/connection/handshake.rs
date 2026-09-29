@@ -13,8 +13,9 @@ use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
+use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
-use super::session::{FULL_RESYNC_MARKER_PREFIX, FullResyncMarker};
+use super::session::{FullResyncMarker, WsSink, WsSource, residence_update_frame};
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 impl SyncConnection {
@@ -34,6 +35,12 @@ impl SyncConnection {
         is_full: crate::error::Result<bool>,
     ) {
         match is_full {
+            Ok(true) if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened => {
+                let _ = event_tx.send(SyncEvent::Error(
+                    "Opened-item queue full — updates retained; explicit sync-all recovery required"
+                        .to_owned(),
+                ));
+            }
             Ok(true) => {
                 let _ = event_tx.send(SyncEvent::Error(
                     "Queue overflow — performing re-bootstrap".to_string(),
@@ -99,6 +106,7 @@ impl SyncConnection {
         self.manager.outbound().attach(local_tx);
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
+        let mut promotion_rx = self.manager.subscribe_promotions();
 
         loop {
             // Attempt connection
@@ -118,6 +126,7 @@ impl SyncConnection {
                             &mut client,
                             &event_tx,
                             &mut local_rx,
+                            &mut promotion_rx,
                             &mut shutdown_rx,
                         )
                         .await;
@@ -177,20 +186,20 @@ impl SyncConnection {
         String,
     > {
         client.note_session_bound = false;
-        // Connect WebSocket. The credential (SyncClientConfig.auth_token)
-        // rides as `Authorization: Bearer` on the upgrade request — the same
-        // scheme the server HTTP API uses — and the server rejects the
-        // upgrade when a secret is configured and the credential is missing
-        // or wrong (fail-closed). Sync pulls the full root snapshot, so the
-        // server requires an owner-grade credential here: the trust-root
-        // secret or an empty-claims token, never a scoped one.
+        // Sync pulls the full root snapshot. The upgrade therefore proves an
+        // unattenuated logged slip with a fresh holder signature; a device-key
+        // lease or an issuer secret never grants this read. Each reconnect has
+        // its own nonce, so it cannot replay a previous upgrade's proof.
         let url = &self.config.client_config.server_url;
         let mut request = url
             .into_client_request()
             .map_err(|e| format!("WS connect failed: {e}"))?;
-        let auth_token = &self.config.client_config.auth_token;
-        if !auth_token.is_empty() {
-            let header_value = format!("Bearer {auth_token}")
+        if let Some(credential) = &self.config.client_config.transport_credential {
+            credential
+                .sign_upgrade(self.manager.vault().now_recorded_at(), &mut request)
+                .map_err(str::to_owned)?;
+        } else if !self.config.client_config.auth_token.is_empty() {
+            let header_value = format!("Bearer {}", self.config.client_config.auth_token)
                 .parse()
                 .map_err(|_| "Auth token is not a valid header value".to_string())?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
@@ -201,7 +210,9 @@ impl SyncConnection {
 
         let (mut write, mut read) = ws_stream.split();
 
-        // Phase 1-2: Initial sync (send our VVs, receive server state)
+        // Phase 1-2: this socket needs fresh window subscriptions even if
+        // the same client instance survived a prior disconnect.
+        client.begin_connection_sync();
         let initial_messages = client
             .try_generate_initial_sync()
             .map_err(|e| format!("Generate initial sync failed: {e}"))?;
@@ -305,6 +316,19 @@ impl SyncConnection {
             }
         }
 
+        // Opened-item enrol finishes only after the grant-filtered thin index
+        // is durable. A missing actor grant/session is a failure, never an
+        // excuse to fall back to full-window sync.
+        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs());
+            client
+                .fetch_current_index(now_secs)
+                .await
+                .map_err(|e| format!("Fetch residence index failed: {e}"))?;
+        }
+
         // Phase 3: Drain offline queue
         let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
         let full_resync_markers = self.full_resync_markers()?;
@@ -312,6 +336,11 @@ impl SyncConnection {
             .iter()
             .map(|marker| marker.window_key.clone())
             .collect();
+        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
+            && !full_resync_markers.is_empty()
+        {
+            return Err("opened-item full-resync requires explicit sync-all recovery".into());
+        }
         if !full_resync_markers.is_empty() {
             tracing::info!(
                 marker_count = full_resync_markers.len(),
@@ -337,12 +366,17 @@ impl SyncConnection {
                     )));
                 }
                 // Re-encode as WindowSync wire message
-                let msg = transport::encode_window_sync(
-                    &update.window_key,
-                    window_sub_tags::UPDATE,
-                    &update.encoded,
-                )
-                .into_result()
+                let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                {
+                    residence_update_frame(update.seq, &update.window_key, &update.encoded)
+                } else {
+                    transport::encode_window_sync(
+                        &update.window_key,
+                        window_sub_tags::UPDATE,
+                        &update.encoded,
+                    )
+                    .into_result()
+                }
                 .map_err(|e| format!("Queue replay encode failed: {e}"))?;
                 write
                     .send(Message::Binary(msg.into()))
@@ -352,15 +386,20 @@ impl SyncConnection {
 
             // ARCH-0023b Fig. 2 convergence dance. Any error here leaves the
             // queue intact (fail-closed) and surfaces as a connection failure.
-            self.run_convergence(
-                &mut write,
-                &mut read,
-                client,
-                event_tx,
-                &queued,
-                &force_resync,
-            )
-            .await?;
+            if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+                self.wait_residence_acks(&mut write, &mut read, client)
+                    .await?;
+            } else {
+                self.run_convergence(
+                    &mut write,
+                    &mut read,
+                    client,
+                    event_tx,
+                    &queued,
+                    &force_resync,
+                )
+                .await?;
+            }
             self.clear_full_resync_markers(&full_resync_markers)?;
         } else if !full_resync_markers.is_empty() {
             self.re_bootstrap(&mut write, &mut read, client, event_tx, &force_resync)
@@ -390,22 +429,67 @@ impl SyncConnection {
         Ok(ws_stream)
     }
 
-    fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {
-        let keys = self
+    /// A home acknowledgment is sent only after persistence. A missing ACK
+    /// leaves every unconfirmed queue row intact for the next reconnect.
+    async fn wait_residence_acks(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+    ) -> Result<(), String> {
+        let budgets = self
             .manager
             .vault()
-            .sync_state_keys_with_prefix(FULL_RESYNC_MARKER_PREFIX)
+            .residence_operation_budgets()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "residence policy unavailable".to_string())?;
+        tokio::time::timeout(Duration::from_millis(budgets.ack_timeout_ms), async {
+            while !self
+                .queue
+                .drain_updates()
+                .map_err(|e| e.to_string())?
+                .is_empty()
+            {
+                let message = read
+                    .next()
+                    .await
+                    .ok_or_else(|| "home closed before residence ACK".to_string())?
+                    .map_err(|e| e.to_string())?;
+                if let Message::Binary(data) = message {
+                    for response in client
+                        .handle_server_message(&data)
+                        .map_err(|e| e.to_string())?
+                    {
+                        write
+                            .send(Message::Binary(response.into()))
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                    self.clear_residence_acks(client)?;
+                }
+            }
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|_| "home residence acknowledgment timed out".to_string())?
+    }
+
+    fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {
+        let vault = self.manager.vault();
+        let rtxn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|e| format!("Read full-resync markers failed: {e}"))?;
+        let keys = WINDOW_FULL_RESYNC_MARKER
+            .scan_keys(&vault.store, &rtxn, &[])
             .map_err(|e| format!("Read full-resync markers failed: {e}"))?;
         let mut markers = Vec::with_capacity(keys.len());
-        for key in keys {
-            let Some(window_key) = key.strip_prefix(FULL_RESYNC_MARKER_PREFIX) else {
-                continue;
-            };
-            if parse_window_key_str(window_key).is_none() {
-                return Err(format!("Invalid full-resync marker key: {key}"));
+        for window_key in keys {
+            if parse_window_key_str(&window_key).is_none() {
+                return Err(format!("Invalid full-resync marker key: fr:w:{window_key}"));
             }
-            let window_key = window_key.to_string();
-            markers.push(FullResyncMarker { key, window_key });
+            markers.push(FullResyncMarker { window_key });
         }
         Ok(markers)
     }
@@ -418,7 +502,7 @@ impl SyncConnection {
         vault
             .with_write_txn(|wtxn| {
                 for marker in markers {
-                    vault.store.sync_state.delete(wtxn, &marker.key)?;
+                    WINDOW_FULL_RESYNC_MARKER.delete(&vault.store, wtxn, &marker.window_key)?;
                 }
                 Ok(())
             })

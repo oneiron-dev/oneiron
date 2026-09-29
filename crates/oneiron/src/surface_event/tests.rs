@@ -1,12 +1,13 @@
+use super::handoff::{SurfaceEventKey, surface_event_dedupe_key};
 use super::*;
 use crate::channel_identity::{
-    CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityFulfillment,
-    SelfHeldShape,
+    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityStep, SelfHeldShape,
 };
 use crate::config::VaultConfig;
 use crate::test_util::open_test_vault_with;
 
 use crate::test_util::entity;
+use std::collections::HashSet;
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     test_vault_with_clock(crate::ports::StoreClock::default())
@@ -29,21 +30,35 @@ fn subject_owner(vault: &Vault) -> Result<crate::write_envelope::WriteActor> {
 }
 
 fn identity(address: &str, agent_ref: EntityId, state: ChannelIdentityState) -> ChannelIdentity {
-    let mut identity = ChannelIdentity::requested(
-        "email",
+    identity_bound(address, ChannelIdentityBinding::agent(agent_ref), state)
+}
+
+/// [`identity`] on an arbitrary binding: the masked, unmasked, and vault-bound
+/// cases the router answers differently.
+fn identity_bound(
+    address: &str,
+    binding: ChannelIdentityBinding,
+    state: ChannelIdentityState,
+) -> ChannelIdentity {
+    identity_on_channel("email", address, binding, state)
+}
+
+/// [`identity_bound`] on an arbitrary channel key, including one outside the
+/// ruled set.
+fn identity_on_channel(
+    channel: &str,
+    address: &str,
+    binding: ChannelIdentityBinding,
+    state: ChannelIdentityState,
+) -> ChannelIdentity {
+    crate::test_util::self_held_identity_in_state(
+        channel,
         address,
         SelfHeldShape::DedicatedAddress,
-        ChannelIdentityBinding::agent(agent_ref),
+        binding,
+        state,
         1_800_000_000,
-    );
-    identity.state = state;
-    identity.pending_fulfillment = None;
-    identity.quarantine_until = None;
-    if state == ChannelIdentityState::Quarantine {
-        identity.quarantine_until =
-            Some(identity.state_changed_at + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS);
-    }
-    identity
+    )
 }
 
 fn input(address: &str, counterparty: SurfaceCounterpartyStamp) -> InboundSurfaceEventInput {
@@ -197,12 +212,19 @@ fn inbound_requested_and_pending_fulfillment_reject_as_inactive() -> Result<()> 
 
     let pending_ref = entity(0x16);
     let pending_agent = entity(0xD6);
-    let mut pending = identity(
+    // The MANUAL lane, not the helper's API default: the fulfillment mode rides
+    // on the bind act, so naming the lane is naming the step.
+    let pending = ChannelIdentity::requested(
+        "email",
         "pending@example.com",
-        pending_agent,
-        ChannelIdentityState::PendingFulfillment,
-    );
-    pending.pending_fulfillment = Some(ChannelIdentityFulfillment::Manual);
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(pending_agent),
+        1_800_000_000,
+    )
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
+        1_800_000_000,
+    )?;
     vault.create_channel_identity(&pending_ref, &pending)?;
 
     for (address, identity_ref, agent_ref) in [
@@ -307,6 +329,7 @@ fn interaction_actions_decode_and_route_to_observed_source_enrichment() {
         let action = SurfaceEventAction::Interaction {
             interaction: kind,
             target_ref: Some("msg-1".to_owned()),
+            reaction: None,
         };
         let encoded = serde_json::to_value(&action).expect("action serializes");
         assert_eq!(encoded["kind"], "interaction");
@@ -324,6 +347,29 @@ fn interaction_actions_decode_and_route_to_observed_source_enrichment() {
     assert_eq!(
         SurfaceEventAction::Message.dispatch_route(),
         SurfaceEventDispatchRoute::ActorSelf
+    );
+}
+
+#[test]
+fn surface_event_dedupe_key_uses_all_tuple_fields_without_boundary_collisions() {
+    let key = |channel, receiving, correlation_id| {
+        surface_event_dedupe_key(SurfaceEventKey {
+            channel,
+            receiving,
+            correlation_id,
+        })
+    };
+    let base = key("email", "identity-1", "provider-id");
+
+    assert!(base.starts_with("sev:v2:"));
+    assert_eq!(base.len(), "sev:v2:".len() + 64);
+    assert_ne!(base, key("slack", "identity-1", "provider-id"));
+    assert_ne!(base, key("email", "identity-2", "provider-id"));
+    assert_ne!(base, key("email", "identity-1", "other-id"));
+    assert_ne!(
+        key("email\0identity", "other", "provider-id"),
+        key("email", "identity\0other", "provider-id"),
+        "length framing distinguishes NUL-containing tuple members"
     );
 }
 
@@ -376,6 +422,7 @@ fn builders_override_the_defaults_new_derives() {
         .with_action(SurfaceEventAction::Interaction {
             interaction: SurfaceInteractionKind::Tap,
             target_ref: None,
+            reaction: None,
         })
         .with_correlation_id("provider-correlation-9");
     assert_eq!(overridden.source.app, SurfaceSourceApp::Telegram);
@@ -420,14 +467,11 @@ fn blank_source_and_correlation_stamps_are_rejected() -> Result<()> {
 fn inbound_vault_bound_identity_rejects_as_non_agent_bound() -> Result<()> {
     let (_dir, vault) = test_vault();
     let identity_ref = entity(0x17);
-    let mut vault_bound = ChannelIdentity::requested(
-        "email",
+    let vault_bound = identity_bound(
         "vault-bound@example.com",
-        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::vault(7),
-        1_800_000_000,
+        ChannelIdentityState::Active,
     );
-    vault_bound.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&identity_ref, &vault_bound)?;
 
     let receipt = vault.route_inbound_surface_event(input(
@@ -483,13 +527,36 @@ impl SurfaceEventDispatcher for FakeDispatcher {
             request.agent_ref.to_owned(),
             request.route,
         ));
-        assert_eq!(
-            request.idempotency_key, request.correlation_id,
-            "downstream idempotency key is exactly the correlation id"
-        );
+        let expected_idempotency_key = surface_event_dedupe_key(SurfaceEventKey {
+            channel: &request.event.channel,
+            receiving: &request.event.receiving_identity_ref,
+            correlation_id: request.correlation_id,
+        });
+        assert_eq!(request.idempotency_key, expected_idempotency_key);
         self.disposition
             .clone()
             .expect("fake dispatcher was scripted")
+    }
+}
+
+/// Test dispatcher that models a downstream service which accepts each
+/// idempotency key only once.
+#[derive(Default)]
+struct IdempotentDispatcher {
+    seen_keys: RefCell<HashSet<String>>,
+    delivered_keys: RefCell<Vec<String>>,
+}
+
+impl SurfaceEventDispatcher for IdempotentDispatcher {
+    fn dispatch(
+        &self,
+        request: SurfaceEventDispatchRequest<'_>,
+    ) -> SurfaceEventDispatchDisposition {
+        let key = request.idempotency_key.to_owned();
+        if self.seen_keys.borrow_mut().insert(key.clone()) {
+            self.delivered_keys.borrow_mut().push(key);
+        }
+        SurfaceEventDispatchDisposition::Complete
     }
 }
 
@@ -675,6 +742,143 @@ fn surface_event_once_per_correlation_survives_terminal_state() -> Result<()> {
 }
 
 #[test]
+fn reused_correlation_id_on_another_receiving_identity_is_admitted() -> Result<()> {
+    let (_dir, vault, _) = admitting_vault("first@example.com", 0x82, 0x83);
+    let second_identity_ref = entity(0x84);
+    vault.create_channel_identity(
+        &second_identity_ref,
+        &identity(
+            "second@example.com",
+            entity(0x85),
+            ChannelIdentityState::Active,
+        ),
+    )?;
+
+    let correlation_id = "provider-reused-id";
+    let first = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "first@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_500,
+        )?,
+    );
+    let second = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "second@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_501,
+        )?,
+    );
+
+    assert!(!first.replayed);
+    assert!(
+        !second.replayed,
+        "another receiving identity is not a replay"
+    );
+    assert_ne!(first.attempt_ref, second.attempt_ref);
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
+
+    let records = AttemptQueue::new(&vault).list()?;
+    let rows = records
+        .iter()
+        .filter(|record| record.kind == SURFACE_EVENT_ATTEMPT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    let expected_run_id = surface_event_run_id(correlation_id);
+    assert!(
+        rows.iter()
+            .all(|row| row.run_id.as_deref() == Some(expected_run_id.as_str()))
+    );
+    assert_ne!(rows[0].dedupe_key, rows[1].dedupe_key);
+
+    // Same tuple still replays to its own row after another identity has used
+    // the same public correlation id.
+    let first_replay = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "first@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_502,
+        )?,
+    );
+    assert!(first_replay.replayed);
+    assert_eq!(first_replay.attempt_ref, first.attempt_ref);
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
+
+    // The public status route remains correlation-only and therefore fails
+    // closed when that id names more than one admitted identity tuple.
+    assert!(matches!(
+        vault.surface_event_handoff_status(correlation_id),
+        Err(Error::CorruptedIndex("surface event correlation run"))
+    ));
+    Ok(())
+}
+
+#[test]
+fn reused_correlation_id_delivers_once_per_receiving_identity() -> Result<()> {
+    let (_dir, vault, _) = admitting_vault("first@example.com", 0x86, 0x87);
+    let second_identity_ref = entity(0x88);
+    vault.create_channel_identity(
+        &second_identity_ref,
+        &identity(
+            "second@example.com",
+            entity(0x89),
+            ChannelIdentityState::Active,
+        ),
+    )?;
+
+    let correlation_id = "provider-shared-id";
+    let first = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "first@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_600,
+        )?,
+    );
+    let second = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "second@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_601,
+        )?,
+    );
+    assert!(!first.replayed);
+    assert!(!second.replayed);
+    assert_ne!(first.attempt_ref, second.attempt_ref);
+
+    let dispatcher = IdempotentDispatcher::default();
+    for _ in 0..2 {
+        assert!(matches!(
+            vault.dispatch_next_surface_event("test-worker", 1_800_001_700, &dispatcher)?,
+            SurfaceEventWorkerOutcome::Completed(_)
+        ));
+    }
+
+    // The simulated downstream deduplicates by key. Both receiving identities
+    // must therefore carry distinct keys or one accepted event is suppressed.
+    let delivered_keys = dispatcher.delivered_keys.borrow();
+    assert_eq!(delivered_keys.len(), 2);
+    assert_ne!(delivered_keys[0], delivered_keys[1]);
+
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
+    Ok(())
+}
+
+#[test]
 fn concurrent_submissions_of_one_correlation_id_produce_one_attempt() -> Result<()> {
     let (_dir, vault, _) = admitting_vault("race@example.com", 0x25, 0x65);
     let submit = || {
@@ -812,10 +1016,18 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
         Some(ack.attempt_ref)
     );
     assert_eq!(row.payload, payload_before);
-    assert_eq!(row.dedupe_key.as_deref(), Some("evt-retry@example.com"));
     assert_eq!(row.run_id.as_deref(), Some("evt-retry@example.com"));
     let decoded = decode_surface_event_attempt_payload(&row.payload)?;
-    assert_eq!(decoded.dispatch_idempotency_key, "evt-retry@example.com");
+    let expected_dedupe_key = surface_event_dedupe_key(SurfaceEventKey {
+        channel: &decoded.event.channel,
+        receiving: &decoded.event.receiving_identity_ref,
+        correlation_id: &decoded.event.correlation_id,
+    });
+    assert_eq!(
+        row.dedupe_key.as_deref(),
+        Some(expected_dedupe_key.as_str())
+    );
+    assert_eq!(decoded.dispatch_idempotency_key, expected_dedupe_key);
     assert_eq!(decoded.event.correlation_id, "evt-retry@example.com");
 
     // The source row is terminal and carries the retry's reason.
@@ -870,6 +1082,7 @@ fn surface_event_interaction_never_creates_turn() -> Result<()> {
                 .with_action(SurfaceEventAction::Interaction {
                     interaction,
                     target_ref: Some("msg-1".to_owned()),
+                    reaction: None,
                 }),
                 1_800_004_000 + index as u64,
             )?,
@@ -920,8 +1133,13 @@ fn long_provider_correlation_id_is_admitted_under_a_digested_run_id() -> Result<
     let expected_run_id = surface_event_run_id(&correlation_id);
     assert!(expected_run_id.starts_with("sha256:"));
     assert_eq!(row.run_id.as_deref(), Some(expected_run_id.as_str()));
-    // Both queue indexes are keyed by the one bounded derivation.
-    assert_eq!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
+    // The run id remains correlation-based; the dedupe key has its own scope.
+    assert!(
+        row.dedupe_key
+            .as_deref()
+            .is_some_and(|key| key.starts_with("sev:v2:"))
+    );
+    assert_ne!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
 
     // Replay derives the same attempt rather than rejecting on length.
     let replayed = accepted(submit(1_800_005_100)?);
@@ -960,19 +1178,29 @@ fn correlation_id_beyond_the_dedupe_cap_is_admitted_and_replays_once() -> Result
     assert!(!ack.replayed);
     assert_eq!(ack.state, SurfaceEventHandoffState::Queued);
 
-    // One bounded derivation keys both the run index and the dedupe index.
+    // The run id remains bounded and correlation-based while the typed dedupe
+    // tuple has its own bounded digest.
     let row = sole_attempt(&vault);
-    let expected_key = surface_event_run_id(&correlation_id);
-    assert!(expected_key.starts_with("sha256:"));
-    assert!(expected_key.len() <= 128);
-    assert_eq!(row.run_id.as_deref(), Some(expected_key.as_str()));
-    assert_eq!(row.dedupe_key.as_deref(), Some(expected_key.as_str()));
+    let expected_run_id = surface_event_run_id(&correlation_id);
+    assert!(expected_run_id.starts_with("sha256:"));
+    assert!(expected_run_id.len() <= 128);
+    assert_eq!(row.run_id.as_deref(), Some(expected_run_id.as_str()));
 
-    // The raw provider id survives verbatim on the durable envelope and on the
-    // downstream idempotency key.
+    // The raw provider id survives verbatim on the durable envelope; the
+    // downstream idempotency key remains bounded and receiving-identity scoped.
     let decoded = decode_surface_event_attempt_payload(&row.payload)?;
+    let expected_dedupe_key = surface_event_dedupe_key(SurfaceEventKey {
+        channel: &decoded.event.channel,
+        receiving: &decoded.event.receiving_identity_ref,
+        correlation_id: &decoded.event.correlation_id,
+    });
+    assert_eq!(
+        row.dedupe_key.as_deref(),
+        Some(expected_dedupe_key.as_str())
+    );
+    assert_ne!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
     assert_eq!(decoded.event.correlation_id, correlation_id);
-    assert_eq!(decoded.dispatch_idempotency_key, correlation_id);
+    assert_eq!(decoded.dispatch_idempotency_key, expected_dedupe_key);
 
     // A duplicate submission observes exactly one admission.
     let replayed = accepted(submit(1_800_010_100)?);
@@ -994,15 +1222,12 @@ fn unruled_channel_key_is_refused_before_a_source_app_is_stamped() -> Result<()>
     let agent_ref = entity(0x66);
     // ChannelIdentity admits any nonempty channel string, so an ACTIVE identity
     // on a key outside the ruled nine is a reachable shape.
-    let mut unruled = ChannelIdentity::requested(
+    let unruled = identity_on_channel(
         "carrier-pigeon",
         "coop@example.com",
-        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(agent_ref),
-        1_800_000_000,
+        ChannelIdentityState::Active,
     );
-    unruled.state = ChannelIdentityState::Active;
-    unruled.pending_fulfillment = None;
     vault.create_channel_identity(&identity_ref, &unruled)?;
 
     let inbound = InboundSurfaceEventInput::new(
@@ -1062,14 +1287,11 @@ fn identity_rejections_never_enqueue() -> Result<()> {
         ),
     )?;
     // Non-agent-bound identity.
-    let mut vault_bound = ChannelIdentity::requested(
-        "email",
+    let vault_bound = identity_bound(
         "vault-bound@example.com",
-        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::vault(7),
-        1_800_000_000,
+        ChannelIdentityState::Active,
     );
-    vault_bound.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&entity(0x21), &vault_bound)?;
     // Inactive + tombstoned identities.
     vault.create_channel_identity(
@@ -1241,12 +1463,11 @@ fn routed_event_carries_actor_facet_and_subject_stamps() -> Result<()> {
     )?;
 
     let identity_ref = entity(0x95);
-    let mut record = identity(
+    let record = identity_bound(
         "masked@example.com",
-        actor_ref,
+        ChannelIdentityBinding::actor_with_facet(actor_ref, facet),
         ChannelIdentityState::Active,
     );
-    record.binding = ChannelIdentityBinding::actor_with_facet(actor_ref, facet);
     vault.create_channel_identity(&identity_ref, &record)?;
 
     let receipt = vault.route_inbound_surface_event(input(
@@ -1268,12 +1489,11 @@ fn routed_event_carries_actor_facet_and_subject_stamps() -> Result<()> {
 fn vault_bound_identity_still_rejects_with_the_stable_wire_string() -> Result<()> {
     let (_dir, vault) = test_vault();
     let identity_ref = entity(0x96);
-    let mut record = identity(
+    let record = identity_bound(
         "vaulted@example.com",
-        entity(0x97),
+        ChannelIdentityBinding::vault(7),
         ChannelIdentityState::Active,
     );
-    record.binding = ChannelIdentityBinding::vault(7);
     vault.create_channel_identity(&identity_ref, &record)?;
 
     let receipt = vault.route_inbound_surface_event(input(
@@ -1374,8 +1594,11 @@ fn routing_resolves_merge_and_omits_split_subject_without_rewriting_anchor() -> 
             1_800_000_000,
         )?;
         let historical = vault.get_claim(&anchor_id)?.expect("anchor");
-        let mut record = identity("redirect@example.com", actor, ChannelIdentityState::Active);
-        record.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+        let record = identity_bound(
+            "redirect@example.com",
+            ChannelIdentityBinding::actor_with_facet(actor, facet),
+            ChannelIdentityState::Active,
+        );
         vault.create_channel_identity(&entity(0xC9), &record)?;
         let evidence = IdentityOpEvidence {
             refs: Vec::new(),
@@ -1511,8 +1734,11 @@ fn subject_stamp_uses_event_received_at_not_processing_time() -> Result<()> {
             )
         })?;
         let before = vault.get(&id)?;
-        let mut record = identity("timed@example.com", actor, state);
-        record.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+        let record = identity_bound(
+            "timed@example.com",
+            ChannelIdentityBinding::actor_with_facet(actor, facet),
+            state,
+        );
         vault.create_channel_identity(&entity(0xD3), &record)?;
         for (at, present) in [
             (start + 2, false),

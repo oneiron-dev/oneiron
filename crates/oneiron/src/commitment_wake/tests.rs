@@ -13,7 +13,7 @@ use crate::commitment::{
     CommitmentObligorKind,
 };
 use crate::commitment_schedule::{
-    CommitmentSchedulePayload, CommitmentSeriesWriteOutcome, Schedule, commitment_projection_actor,
+    CommitmentSchedulePayload, CommitmentSeriesWriteOutcome, Schedule,
 };
 use crate::config::VaultConfig;
 use crate::dreamer_runner::{
@@ -29,7 +29,7 @@ use crate::outbound::{
     OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
     OutboundIntentTrigger,
 };
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::{entity_record, put_policy_manifest_bytes};
 
 use super::*;
@@ -94,15 +94,7 @@ fn seed_world(vault: &Vault) -> WriteEnvelope {
             .put_entity(&party(seed), ENTITY_TYPE_PERSON, at(1), 1, b"cmt3 person")
             .expect("seed person");
     }
-    vault
-        .put_entity(
-            &commitment_projection_actor().entity_ref(),
-            ENTITY_TYPE_MACHINE,
-            at(1),
-            1,
-            b"commitment projector",
-        )
-        .expect("seed projection actor");
+    crate::test_util::provision_engine_machines(vault);
     WriteEnvelope::new(
         WriteActor::new(party(OBLIGOR), EdgeActorClass::Human),
         ClaimSource::UserStated,
@@ -294,6 +286,8 @@ fn execute_wrapped(
         deadline: &deadline,
         budget_id: "wake",
         now_ms: DUE_AT.saturating_mul(1_000),
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let mut executor = CommitmentWakeExecutor::new(inner, planner, actor)?;
     block_on_ready(executor.execute(attempt, &mut ctx))
@@ -867,7 +861,8 @@ fn quiet_hours_claim(subject: EntityId) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }

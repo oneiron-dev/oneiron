@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff"]
 
 # Limited debug information keeps file/line backtraces while reducing build CPU,
 # peak memory and target size. Tests inherit this profile. For debugger locals:
@@ -121,3 +121,10 @@ paste = { path = "crates/paste/vendor/paste-1.0.15" }
 # Match .cargo/config.toml: trybuild copies manifest patches into its external
 # offline workspace, but does not copy the checkout's Cargo configuration.
 pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
+# formualizer 0.9.3 with the owned error-concatenation patch (0.9.3-oneiron.1),
+# from the org fork by rev. See docs/ops/forked-dependencies.md.
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }

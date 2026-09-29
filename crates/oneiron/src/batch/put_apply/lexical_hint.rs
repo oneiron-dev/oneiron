@@ -46,7 +46,8 @@ pub(super) fn validate_lexical_query_hint(
             "lexical query hint target must not be self",
         ));
     }
-    if let Some(target_raw) = store.entities.get(wtxn, target.as_bytes())? {
+    if let Some(target_raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &target)?
+    {
         let Some(target_header) = EntityMetadataHeader::parse(&target_raw) else {
             return Err(Error::CorruptedIndex("entity header"));
         };

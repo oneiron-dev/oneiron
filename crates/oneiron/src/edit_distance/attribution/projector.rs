@@ -2,8 +2,8 @@
 
 use super::evidence_judge::amendment_judgments;
 use super::stored::{
-    MAX_CITED_RECEIPTS, ROW_VERSION, StoredTarget, TARGET_KEY_PREFIX, TARGET_ROW_LABEL, decode_row,
-    encode_row, hex_entity, invalid, meta_key, normalized_scope,
+    MAX_CITED_RECEIPTS, ROW_VERSION, StoredTarget, TARGET, TARGET_ROW_LABEL, TargetKey, hex_entity,
+    invalid, normalized_scope,
 };
 use super::taxonomy::{AmendmentJudgment, cost_predicate};
 use crate::Vault;
@@ -15,9 +15,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST,
 };
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
+use crate::side_table::HexId;
 use crate::temporal::TimeRange;
 
 // ---------------------------------------------------------------------------
@@ -162,18 +163,15 @@ fn record_target(
     subject: &EntityId,
     scope: &str,
 ) -> Result<()> {
-    let encoded = encode_row(
-        &StoredTarget {
-            v: ROW_VERSION,
-            predicate: predicate.to_owned(),
-            subject: subject.to_hex(),
-            scope: scope.to_owned(),
-        },
-        TARGET_ROW_LABEL,
-    )?;
+    let row = StoredTarget {
+        v: ROW_VERSION,
+        predicate: predicate.to_owned(),
+        subject: subject.to_hex(),
+        scope: scope.to_owned(),
+    };
     let key = target_key(predicate, subject, scope);
     vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        TARGET.put(&vault.store, wtxn, &key, &row)?;
         Ok(())
     })
 }
@@ -182,16 +180,7 @@ fn record_target(
 fn recorded_targets(vault: &Vault) -> Result<Vec<(&'static str, EntityId, String)>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, TARGET_KEY_PREFIX)?
-    {
-        let (_, raw) = entry?;
-        let row: StoredTarget = decode_row(&raw, TARGET_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(Error::CorruptedIndex(TARGET_ROW_LABEL));
-        }
+    for (_, row) in TARGET.scan(&vault.store, &rtxn)? {
         let predicate =
             known_cost_predicate(&row.predicate).ok_or(Error::CorruptedIndex(TARGET_ROW_LABEL))?;
         out.push((
@@ -264,21 +253,19 @@ fn retract_target(
                 header.learned_at,
             )?;
         }
-        vault.store.vault_meta.delete(wtxn, &key)?;
+        TARGET.delete(&vault.store, wtxn, &key)?;
         Ok(())
     })
 }
 
-/// The `vault_meta` key of one landed tuple. The scope goes LAST: it is the
-/// only field a caller supplies, so nothing it can contain shifts another.
-fn target_key(predicate: &str, subject: &EntityId, scope: &str) -> Vec<u8> {
-    let mut handle = Vec::with_capacity(predicate.len() + scope.len() + 2 * ENTITY_ID_LEN + 2);
-    handle.extend_from_slice(predicate.as_bytes());
-    handle.push(0);
-    handle.extend_from_slice(subject.to_hex().as_bytes());
-    handle.push(0);
-    handle.extend_from_slice(scope.as_bytes());
-    meta_key(TARGET_KEY_PREFIX, &handle)
+/// The key of one landed tuple. The scope goes LAST: it is the only field a
+/// caller supplies, so nothing it can contain shifts another.
+fn target_key(predicate: &str, subject: &EntityId, scope: &str) -> TargetKey {
+    TargetKey {
+        predicate: predicate.to_owned(),
+        subject: HexId(*subject),
+        scope: scope.to_owned(),
+    }
 }
 
 /// The `'static` predicate a stored token names, if it names one of the two.
@@ -378,7 +365,7 @@ fn write_skill_edit_cost(
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(evidence.clone());
         body.scope = Some(edit_cost_scope(&scope));
         body.valid_from = Some(at);

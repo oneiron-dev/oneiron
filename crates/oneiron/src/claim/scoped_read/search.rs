@@ -1,6 +1,41 @@
 use super::*;
 
 impl ScopedRead<'_> {
+    /// Resolve a bounded query's actor/proof ceiling once. The terminal read
+    /// checks fresh authority again, so this snapshot can never widen it.
+    pub(crate) fn recall_plan(
+        &self,
+    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        let txn = self.vault.store.env.read_txn()?;
+        let plan = self.resolve_retrieval_filter_in(&txn, None)?;
+        let fold = self.vault.authority_fold_readonly_in_txn(&txn)?;
+        *self
+            .recall_authority
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall authority lock"))? = Some(fold);
+        Ok(plan)
+    }
+
+    /// The final result and receipt must recheck authority in a fresh read.
+    pub(crate) fn end_recall_plan(&self) -> Result<()> {
+        *self
+            .recall_authority
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall authority lock"))? = None;
+        Ok(())
+    }
+
+    /// Admit one candidate in the retrieval transaction under the query plan.
+    pub(crate) fn recall_candidate_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+    ) -> Result<bool> {
+        self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
+    }
+
     /// Searches within this actor's resolved read authority. Unset means the floor.
     pub fn search(
         &self,
@@ -23,6 +58,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
             .search(query, vector, None, fetch_limit)
             .run_for_pack()?;
         self.filter_search_results(
@@ -80,6 +116,7 @@ impl ScopedRead<'_> {
                 "scoped read credential no longer live",
             ));
         }
+        self.owner_live_in(txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
@@ -109,36 +146,39 @@ impl ScopedRead<'_> {
         let mut value = Vec::new();
         let mut suppressed = 0;
         for result in results {
-            if self.is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)?
-                && self.is_entity_retrievable_with_policy_in(
-                    &txn,
-                    &fresh_policy,
-                    &fresh_filter,
-                    &result.id,
-                )?
-                && match revisions.get(&result.id) {
-                    Some(revision) => {
-                        let mode = crate::vault::ReadMode::Pinned(*revision);
-                        self.entity_raw_with_mode_in(&txn, policy, filter, &result.id, mode)?
-                            .is_some()
-                            && self
-                                .entity_raw_with_mode_in(
-                                    &txn,
-                                    &fresh_policy,
-                                    &fresh_filter,
-                                    &result.id,
-                                    mode,
-                                )?
+            let admitted = self.admit_in(&txn, &result.id, || {
+                let allowed = self
+                    .is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)?
+                    && self.is_entity_retrievable_with_policy_in(
+                        &txn,
+                        &fresh_policy,
+                        &fresh_filter,
+                        &result.id,
+                    )?
+                    && match revisions.get(&result.id) {
+                        Some(revision) => {
+                            let mode = crate::vault::ReadMode::Pinned(*revision);
+                            self.entity_raw_with_mode_in(&txn, policy, filter, &result.id, mode)?
                                 .is_some()
-                    }
-                    None => true,
-                }
+                                && self
+                                    .entity_raw_with_mode_in(
+                                        &txn,
+                                        &fresh_policy,
+                                        &fresh_filter,
+                                        &result.id,
+                                        mode,
+                                    )?
+                                    .is_some()
+                        }
+                        None => true,
+                    };
+                Ok(allowed.then_some(result))
+            })?;
+            suppressed += admitted.suppression();
+            if let Some(row) = admitted.into_option()
+                && value.len() < limit
             {
-                if value.len() < limit {
-                    value.push(result);
-                }
-            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
-                suppressed += 1;
+                value.push(row);
             }
         }
         let mut receipt = self.receipt_for(requested, policy, filter, previously_suppressed);
@@ -218,10 +258,13 @@ impl ScopedRead<'_> {
         let mut value = Vec::with_capacity(before);
         let mut suppressed = 0;
         for result in results {
-            if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &result.id)? {
-                value.push(result);
-            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
-                suppressed += 1;
+            let admitted = self.admit_in(&txn, &result.id, || {
+                self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &result.id)
+                    .map(|visible| visible.then_some(result))
+            })?;
+            suppressed += admitted.suppression();
+            if let Some(row) = admitted.into_option() {
+                value.push(row);
             }
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);

@@ -2,7 +2,7 @@
 
 use super::{
     ConsultFanOutMeter, ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutReceipt,
-    ConsultFanOutSpec, ConsultPayloadRef,
+    ConsultFanOutScope, ConsultFanOutSpec, ConsultPayloadRef,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -12,11 +12,13 @@ use crate::outbound_chokepoint::{
     FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink,
 };
 use crate::receipt::ReceiptRecord;
+use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use serde::{Deserialize, Serialize};
 
-pub(super) const RUN_PREFIX: &[u8] = b"tasks/fanout/v1/";
-pub(super) const POLICY_KEY: &[u8] = b"tasks/fanout_policy/v1";
+/// One fan-out run's frozen plan and progress, keyed by its correlation id.
+pub(super) const FANOUT_RUNS: SideTable<HexId, StoredFanout, Named> =
+    SideTable::new(&side_table::TASK_FANOUT_RUN);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct FrozenInput {
@@ -26,10 +28,18 @@ pub(super) struct FrozenInput {
     pub(super) deadline_at: u64,
     label: Option<String>,
     pub(super) now: u64,
+    /// An explicit preset scopes a counted fan-out standing ruling.
+    pub(super) preset: Option<String>,
+    pub(super) policy_scope: ConsultFanOutScope,
 }
 
 impl FrozenInput {
-    pub(super) fn new(input: &ConsultFanOutSpec, now: u64) -> Self {
+    pub(super) fn new(
+        input: &ConsultFanOutSpec,
+        now: u64,
+        preset: Option<&str>,
+        policy_scope: ConsultFanOutScope,
+    ) -> Self {
         let mut assignees: Vec<_> = input.assignees.iter().map(EntityId::to_hex).collect();
         assignees.sort_unstable();
         Self {
@@ -43,6 +53,8 @@ impl FrozenInput {
             deadline_at: input.deadline_at,
             label: input.label.clone(),
             now,
+            preset: preset.map(str::to_owned),
+            policy_scope,
         }
     }
 
@@ -79,15 +91,23 @@ impl FrozenInput {
             brief_ref: self.question.clone(),
             actor_ref: actor.to_hex(),
             mode: policy.mode,
-            edges: self
-                .assignees
-                .iter()
-                .map(|peer| FanoutPlanEdge {
-                    from_peer_ref: actor.to_hex(),
-                    to_peer_ref: peer.clone(),
-                    count: 1,
-                })
-                .collect(),
+            edges: {
+                let mut counts = std::collections::BTreeMap::<&str, u32>::new();
+                for peer in &self.assignees {
+                    let count = counts.entry(peer).or_default();
+                    *count = count
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow("fan-out per-peer count"))?;
+                }
+                counts
+                    .into_iter()
+                    .map(|(peer, count)| FanoutPlanEdge {
+                        from_peer_ref: actor.to_hex(),
+                        to_peer_ref: peer.to_owned(),
+                        count,
+                    })
+                    .collect()
+            },
         })
     }
 }
@@ -103,12 +123,20 @@ pub(super) struct StoredFanout {
     pub(super) task_refs: Vec<String>,
     pub(super) denied: bool,
     pub(super) choice_receipt_ref: Option<String>,
+    /// Shipped default rows the admission decision read in place of rows
+    /// missing from the vault manifest. Runs stored before this field read
+    /// as empty.
+    #[serde(default)]
+    pub(super) shipped_policy_rows: Vec<String>,
 }
 
 impl StoredFanout {
     pub(super) fn scope(&self) -> String {
         // A cap is for this actor, this durable question and the consult verb.
-        format!("consult:{}:{}", self.plan.actor_ref, self.plan.brief_ref)
+        match &self.input.preset {
+            Some(preset) => format!("consult:{}:preset:{preset}", self.plan.actor_ref),
+            None => format!("consult:{}:{}", self.plan.actor_ref, self.plan.brief_ref),
+        }
     }
 
     pub(super) fn receipt(&self) -> MemoryResult<ConsultFanOutReceipt> {
@@ -140,6 +168,7 @@ impl StoredFanout {
                     denied: self.denied,
                 }),
             choice_receipt_ref: self.choice_receipt_ref.clone(),
+            shipped_policy_rows: self.shipped_policy_rows.clone(),
         })
     }
 }
@@ -148,20 +177,9 @@ pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::InvariantViolation("fanout encoding"))
 }
 
-pub(super) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("fanout row"))
-}
-
-fn run_key(correlation: &str) -> Vec<u8> {
-    [RUN_PREFIX, correlation.as_bytes()].concat()
-}
-
 pub(super) fn save_run(vault: &Vault, txn: &mut heed::RwTxn<'_>, run: &StoredFanout) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(txn, &run_key(&run.correlation), &encode(run)?)?;
-    Ok(())
+    let correlation = EntityId::from_hex(&run.correlation)?;
+    FANOUT_RUNS.put(&vault.store, txn, &HexId(correlation), run)
 }
 
 pub(super) fn load_run(
@@ -169,34 +187,25 @@ pub(super) fn load_run(
     txn: &heed::RoTxn<'_>,
     correlation: EntityId,
 ) -> MemoryResult<StoredFanout> {
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &run_key(&correlation.to_hex()))?
-        .ok_or_else(|| MemoryError::not_found("fan-out plan not found"))?;
-    Ok(decode(&raw)?)
+    FANOUT_RUNS
+        .get(&vault.store, txn, &HexId(correlation))?
+        .ok_or_else(|| MemoryError::not_found("fan-out plan not found"))
 }
 
 pub(super) fn runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<StoredFanout>> {
-    vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, RUN_PREFIX)?
-        .map(|entry| {
-            let (_, raw) = entry?;
-            decode(&raw)
-        })
-        .collect()
+    Ok(FANOUT_RUNS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, run)| run)
+        .collect())
 }
 
-pub(super) fn policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ConsultFanOutPolicy> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, POLICY_KEY)?
-        .map(|raw| decode(&raw))
-        .transpose()
-        .map(Option::unwrap_or_default)
+pub(super) fn policy_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &ConsultFanOutScope,
+) -> Result<crate::gate::fanout_policy::ResolvedFanoutPolicy> {
+    crate::gate::resolve_policy_manifest(&vault.store, txn)?.consult_fanout_policy_for(scope)
 }
 
 /// The caller commits this transaction before returning any durable ref.

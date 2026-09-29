@@ -1170,6 +1170,9 @@ async fn session_ticks_explicit_end_reaches_the_meso_deadline_without_a_micro_pa
 async fn end_then_open_burst_ends_the_sitting_and_mints_its_replacement() {
     let clock = tokio_clock(1_000_000_000);
     let (_dir, vault) = open_vault_with_clock(Arc::clone(&clock));
+    // The session-end miner runs as the Dreamer, a MACHINE writer: the host
+    // roots the vault and holds its key.
+    crate::provision_test_engine_machines(&vault);
     let lifecycle = driver(
         &vault,
         SessionLifecycleConfig::new(FLOOR, CEILING),

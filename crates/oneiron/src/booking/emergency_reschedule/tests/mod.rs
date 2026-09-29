@@ -98,6 +98,7 @@ impl SlotOracle for Offered {
                 start_utc: self.0.start,
                 end_utc: self.0.end,
                 host_refs: vec![id(self.1).to_hex()],
+                host_zones: vec!["UTC".to_owned()],
             }],
         })
     }
@@ -167,7 +168,8 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
@@ -225,6 +227,7 @@ fn book_as(vault: &Vault, page_seed: u8, start: u64, host: u8) -> ConfirmReceipt
             hold_token: held.token,
             session_key: session,
             booker_contact: id(0x53),
+            intake: Vec::new(),
             idempotency_key: None,
         }),
         slot,
@@ -299,20 +302,26 @@ fn executable_with_invite(
     action_policy: EmergencyActionPolicy,
     send_initial: bool,
 ) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
-    use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
-    };
-    let (dir, vault) = open_test_vault_with(VaultConfig::default());
+    executable_with_invite_config(action_policy, send_initial, VaultConfig::default())
+}
+
+fn executable_with_invite_config(
+    action_policy: EmergencyActionPolicy,
+    send_initial: bool,
+    config: VaultConfig,
+) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
+    let (dir, vault) = open_test_vault_with(config);
     page(&vault, PAGE, OWNER);
     let receipt = book(&vault, PAGE, NOW + 3_600);
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "host@example.test",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(id(OWNER)),
+        ChannelIdentityState::Active,
         NOW,
     );
-    identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id(0x79), &identity).unwrap();
     policy(&vault);
     crate::booking::mint_publish_page_invite_grant(

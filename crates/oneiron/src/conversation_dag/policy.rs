@@ -42,7 +42,7 @@ pub(super) fn check_append_policy(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(envelope.source());
     body.evidence = Some(crate::write_envelope::write_envelope_evidence(
         &envelope, None,

@@ -1,5 +1,6 @@
 //! Consent-bound held-out admission, using the existing host scorer and lifecycle write door.
 use super::{HubActivationAsk, admission_view::AdmissionSnapshot, package_codec::invalid};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     claim::ClaimApprovalStatus,
@@ -10,6 +11,13 @@ use crate::{
     skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
     temporal::TimeRange,
 };
+
+/// Append-only history of hub-admission receipts, keyed by receipt id.
+const ADMISSION_HISTORY: SideTable<String, HubAdmissionReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_ADMISSION_HISTORY);
+/// Latest hub-admission receipt for one candidate entity.
+const ADMISSION_RECEIPT: SideTable<EntityId, HubAdmissionReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_ADMISSION_RECEIPT);
 
 /// Durable ruling with both actual scores, exact consent, content and source.
 /// IDs are canonical hex strings to keep this envelope transport-neutral.
@@ -31,6 +39,11 @@ pub struct HubAdmissionReceipt {
     pub before: f32,
     pub after: f32,
     pub accepted: bool,
+    /// Immutable revision of the skill that scored this candidate.
+    pub judge_revision: String,
+    /// Read projection of the replacement fence; original scores stay intact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub displaced_by_revision: Option<String>,
     pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -138,6 +151,8 @@ impl Vault {
             .ok_or_else(|| invalid("candidate has no instructions"))?;
         let instructions = std::str::from_utf8(&instructions.content)
             .map_err(|_| invalid("instructions are not UTF-8"))?;
+        let judge_revision = scorer.judge_revision().to_owned();
+        crate::skill_optimize::validate_judge_revision(&judge_revision)?;
         let before = score(
             scorer,
             ask,
@@ -152,12 +167,17 @@ impl Vault {
             &snapshot.record.version,
             instructions,
         )?;
+        if scorer.judge_revision() != judge_revision {
+            return Err(invalid("marketplace judge revision moved during scoring"));
+        }
         self.with_write_txn(|txn| {
+            crate::skill_optimize::ensure_current_judge_in_txn(self, txn, &judge_revision)?;
             self.check_hub_ask_in_txn(txn, ask)?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
                     .ok_or_else(|| invalid("human install consent is missing"))?;
-            let receipt = admission_receipt(ask, &snapshot, before, after, learned_at)?;
+            let receipt =
+                admission_receipt(ask, &snapshot, before, after, &judge_revision, learned_at)?;
             if receipt.accepted {
                 self.activate_scored_hub_record_in_txn(
                     txn,
@@ -171,19 +191,8 @@ impl Vault {
             if !receipt.accepted {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            let encoded_receipt = serde_json::to_vec(&receipt)
-                .map_err(|_| invalid("admission receipt encode failed"))?;
-            let mut history_key = b"skill_hub/admission-history/v1\0".to_vec();
-            history_key.extend_from_slice(receipt.receipt_id.as_bytes());
-            self.store
-                .vault_meta
-                .put(txn, &history_key, &encoded_receipt)?;
-            self.store.vault_meta.put(
-                txn,
-                &receipt_key(&ask.candidate),
-                &serde_json::to_vec(&receipt)
-                    .map_err(|_| invalid("admission receipt encode failed"))?,
-            )?;
+            ADMISSION_HISTORY.put(&self.store, txn, &receipt.receipt_id, &receipt)?;
+            ADMISSION_RECEIPT.put(&self.store, txn, &ask.candidate, &receipt)?;
             Ok(HubAdmissionDisposition::Ruled(Box::new(receipt)))
         })
     }
@@ -201,7 +210,7 @@ impl Vault {
         admitted.lifecycle_status = SkillLifecycle::Active;
         let data = crate::skill::encode_skill_record(&admitted)?;
         let proof =
-            super::HubAdmissionProof::consent(&self.store, txn, *candidate, &data, authorization)?;
+            super::HubAdmissionProof::held_out(&self.store, txn, *candidate, &data, authorization)?;
         self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
     }
     pub(super) fn activate_refined_hub_record_in_txn(
@@ -242,11 +251,16 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         candidate: &EntityId,
     ) -> Result<Option<HubAdmissionReceipt>> {
-        self.store
-            .vault_meta
-            .get(txn, &receipt_key(candidate))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid admission receipt"))
+        ADMISSION_RECEIPT
+            .get(&self.store, txn, candidate)?
+            .map(|mut receipt| {
+                receipt.displaced_by_revision =
+                    crate::skill_optimize::displaced_judge_revision_in_txn(
+                        self,
+                        txn,
+                        &receipt.judge_revision,
+                    )?;
+                Ok(receipt)
             })
             .transpose()
     }
@@ -294,6 +308,7 @@ fn admission_receipt(
     snapshot: &AdmissionSnapshot,
     before: f32,
     after: f32,
+    judge_revision: &str,
     at: u64,
 ) -> Result<HubAdmissionReceipt> {
     Ok(HubAdmissionReceipt {
@@ -312,11 +327,8 @@ fn admission_receipt(
         before,
         after,
         accepted: after > before,
+        judge_revision: judge_revision.to_owned(),
+        displaced_by_revision: None,
         at,
     })
-}
-fn receipt_key(candidate: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/admission-receipt/v1\0".to_vec();
-    key.extend_from_slice(candidate.as_bytes());
-    key
 }

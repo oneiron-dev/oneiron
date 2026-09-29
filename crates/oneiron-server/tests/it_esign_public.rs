@@ -17,12 +17,13 @@ async fn public_path_signing_bypasses_hosted_lease_but_not_capability_admission(
             vault,
             SyncServerConfig {
                 lease_vault_id: 1,
+                auth_secret: Some("editor-owner-issuer".into()),
                 ..Default::default()
             },
         )
         .expect("create device sync server"),
     );
-    let app = build_app(server);
+    let app = build_app(server.clone());
     let token = "11".repeat(32);
     let response = app
         .clone()
@@ -97,6 +98,34 @@ async fn public_path_signing_bypasses_hosted_lease_but_not_capability_admission(
             .expect("serve protected-path request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
+    // A logged owner slip, not a historical lease, reaches the editor shell.
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"editor-owner-issuer").unwrap();
+    let slip = server.vault().ensure_host_root_slip(&issuer).unwrap();
+    let timestamp = server.vault().capability_slip_now().unwrap();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .unwrap()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let proof = serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature});
+    let editor = app
+        .oneshot(
+            Request::builder()
+                .uri("/sign/editor")
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", slip.to_token().unwrap()),
+                )
+                .header("x-oneiron-binding", proof.to_string())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(editor.status(), StatusCode::OK);
 }
 
 /// Seed a real sent request through the owner-authored send gate, not by

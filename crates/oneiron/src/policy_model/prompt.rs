@@ -80,6 +80,7 @@ impl PolicyClassifyPrompt {
         LlmRequest {
             model: config.safeguard_binding.llm_model_id(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: crate::llm::Scope::default(),
                 purpose: CallPurpose::Other {
                     name: "policy_model_classify".to_owned(),
@@ -107,20 +108,43 @@ impl PolicyClassifyPrompt {
                     .response_format(self.category_vocabulary()),
                 locality: config.safeguard_binding.locality(),
             },
-            messages: vec![
-                LlmMessage {
+            messages: {
+                let mut messages = vec![LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: self.system.clone(),
                     }],
-                },
-                LlmMessage {
+                }];
+                // A row's why is explanation, never a new instruction. Keep
+                // the owner document and candidate verbatim in their original
+                // message positions; carry only applied rubric evidence.
+                let explained: Vec<_> = self
+                    .rubric_rows
+                    .iter()
+                    .filter_map(|row| {
+                        row.why.as_ref().map(|why| {
+                            json!({
+                                "row_ref": row.row_ref, "text": row.text, "why": why
+                            })
+                        })
+                    })
+                    .collect();
+                if !explained.is_empty() {
+                    messages.push(LlmMessage {
+                        role: LlmMessageRole::User,
+                        content: vec![ContentPart::Text {
+                            text: json!({"policy_row_evidence": explained}).to_string(),
+                        }],
+                    });
+                }
+                messages.push(LlmMessage {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: self.user.clone(),
                     }],
-                },
-            ],
+                });
+                messages
+            },
             tools: Vec::new(),
             params,
             provider_options,

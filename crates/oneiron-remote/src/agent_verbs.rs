@@ -102,6 +102,18 @@ impl OneironClient {
                     "rooms.messages" => remote_agent_verb_output::<
                         oneiron::workspace_roster::RoomPage,
                     >(client, verb, &input),
+                    "rooms.render" => remote_agent_verb_output::<Vec<String>>(client, verb, &input),
+                    "rooms.find" => remote_agent_verb_output::<
+                        oneiron::workspace_roster::RoomThreadPage,
+                    >(client, verb, &input),
+                    "rooms.get" => remote_agent_verb_output::<
+                        Option<oneiron::workspace_roster::RoomThread>,
+                    >(client, verb, &input),
+                    "rooms.trunk" => {
+                        remote_agent_verb_output::<oneiron::workspace_roster::RoomTrunk>(
+                            client, verb, &input,
+                        )
+                    }
                     "rooms.claim" => remote_agent_verb_output::<
                         oneiron::workspace_roster::RoomClaimOutcome,
                     >(client, verb, &input),
@@ -160,6 +172,7 @@ impl OneironClient {
     ) -> Result<oneiron::task_verb::TaskDescription, MemoryError> {
         let input = oneiron::task_verb::sdk::DescribeRequest {
             task_ref: task_ref.map(str::to_owned),
+            ..Default::default()
         };
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
@@ -449,6 +462,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("rooms.messages", value)
+    }
+    pub fn rooms_render(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomRefRequest,
+    ) -> Result<Vec<String>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("rooms.render", value)
+    }
+    pub fn rooms_find(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomRequest,
+    ) -> Result<oneiron::workspace_roster::RoomThreadPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("rooms.find", value)
+    }
+    pub fn rooms_get(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomTurnRequest,
+    ) -> Result<Option<oneiron::workspace_roster::RoomThread>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("rooms.get", value)
+    }
+    pub fn rooms_trunk(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomTurnRequest,
+    ) -> Result<oneiron::workspace_roster::RoomTrunk, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("rooms.trunk", value)
     }
     pub fn rooms_claim(
         &self,

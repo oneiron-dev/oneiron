@@ -3,6 +3,7 @@
 //! can bind a consented usefulness-yes and held-out win to promoted bytes.
 
 use super::{ClaimRefinementMergeReceipt, SharedSkillMergeReceipt, package_codec::invalid};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -13,14 +14,13 @@ use serde::{Deserialize, Serialize};
 
 // Permanent candidate origin, keyed only by entity ID. The value is the hash
 // of the first native Proposed bytes, never the body or an approval receipt.
-const CLAIM_ORIGIN: &[u8] = b"skill_hub/refinement-claim-origin/v1\0";
-const SKILL_ORIGIN: &[u8] = b"skill_hub/refinement-skill-origin/v1\0";
-const CONTROL: &[u8] = b"skill_hub/refinement-control/v1\0";
-fn key(id: &EntityId) -> Vec<u8> {
-    let mut out = CONTROL.to_vec();
-    out.extend_from_slice(id.as_bytes());
-    out
-}
+const CLAIM_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_CLAIM_ORIGIN);
+const SKILL_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_SKILL_ORIGIN);
+/// Content-free refinement control row for one candidate.
+const CONTROL: SideTable<EntityId, RefinementControl, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_CONTROL);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RefinementState {
@@ -99,13 +99,7 @@ pub(super) fn read_control(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<RefinementControl>> {
-    store
-        .vault_meta
-        .get(txn, &key(id))?
-        .map(|raw| {
-            serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("refinement control"))
-        })
-        .transpose()
+    CONTROL.get(store, txn, id)
 }
 pub(super) fn put_control(
     store: &Store,
@@ -113,12 +107,7 @@ pub(super) fn put_control(
     id: &EntityId,
     control: &RefinementControl,
 ) -> Result<()> {
-    store.vault_meta.put(
-        txn,
-        &key(id),
-        &serde_json::to_vec(control).map_err(|_| invalid("refinement control encode failed"))?,
-    )?;
-    Ok(())
+    CONTROL.put(store, txn, id, control)
 }
 pub(crate) fn refinement_control_scope_exists(
     store: &Store,
@@ -141,9 +130,7 @@ pub(crate) fn retire_refinement_control(
     if matches!(row.target, RefinementTarget::Skill { .. }) {
         // The offer's source assertion is not a permanent deletion marker.
         // Retain only the content-free typed control/erased-ID fact.
-        store
-            .vault_meta
-            .delete(txn, &super::shared_delta::delta_key(id))?;
+        super::shared_delta::SHARED_DELTA.delete(store, txn, id)?;
     }
     row.state = RefinementState::Erased;
     put_control(store, txn, id, &row)?;
@@ -291,11 +278,6 @@ fn declares_refinement(body: &crate::claim::ClaimBody) -> bool {
         })
     })
 }
-fn origin_key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
 fn declares_skill_refinement(record: &crate::skill::SkillRecord) -> bool {
     record.provenance.as_map().is_some_and(|fields| {
         fields.iter().any(|(key, value)| {
@@ -310,13 +292,7 @@ pub(crate) fn skill_refinement_origin_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let Some(raw) = store.vault_meta.get(txn, &origin_key(SKILL_ORIGIN, id))? else {
-        return Ok(false);
-    };
-    if raw.len() != 32 {
-        return Err(Error::CorruptedIndex("skill refinement origin"));
-    }
-    Ok(true)
+    Ok(SKILL_ORIGIN.get(store, txn, id)?.is_some())
 }
 /// The ordinary put chokepoint stages the first native Candidate/Proposed
 /// origin after validation, for local and replicated writes alike. Delete
@@ -329,7 +305,7 @@ pub(crate) fn stage_refinement_origin(
     skill: Option<&crate::skill::SkillRecord>,
     data: &[u8],
 ) -> Result<()> {
-    let prefix = if claim.is_some_and(|body| {
+    let table = if claim.is_some_and(|body| {
         body.approval == crate::claim::ClaimApprovalStatus::Proposed && declares_refinement(body)
     }) {
         CLAIM_ORIGIN
@@ -342,13 +318,12 @@ pub(crate) fn stage_refinement_origin(
         return Ok(());
     };
     let digest = blake3::hash(data);
-    let key = origin_key(prefix, id);
-    if let Some(prior) = store.vault_meta.get(txn, &key)? {
-        if prior.as_ref() != digest.as_bytes() {
+    if let Some(prior) = table.get(store, txn, id)? {
+        if prior != *digest.as_bytes() {
             return Err(invalid("refinement origin changed"));
         }
     } else {
-        store.vault_meta.put(txn, &key, digest.as_bytes())?;
+        table.put(store, txn, id, digest.as_bytes())?;
     }
     Ok(())
 }
@@ -362,22 +337,23 @@ pub(crate) fn validate_refinement_admission(
     data: &[u8],
     proof: Option<&RefinementAdmissionProof>,
 ) -> Result<()> {
-    let origin = store.vault_meta.get(txn, &origin_key(CLAIM_ORIGIN, id))?;
-    let skill_origin = store.vault_meta.get(txn, &origin_key(SKILL_ORIGIN, id))?;
+    let origin = CLAIM_ORIGIN.get(store, txn, id)?;
+    let skill_origin = SKILL_ORIGIN.get(store, txn, id)?;
     let control = read_control(store, txn, id)?;
     if let Some(ref origin) = origin {
-        if origin.len() != 32 || kind != ENTITY_TYPE_CLAIM {
+        if kind != ENTITY_TYPE_CLAIM {
             return Err(Error::CorruptedIndex("refinement origin binding"));
         }
         if control.is_none() {
-            let same_stored_proposal = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
-            });
+            let same_stored_proposal = crate::ports::EntityStoreRead::port_entity_raw(
+                store, txn, id,
+            )?
+            .is_some_and(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data));
             let body = crate::claim::decode_claim_body(data, true)?;
             if !same_stored_proposal
                 || body.approval != crate::claim::ClaimApprovalStatus::Proposed
                 || !declares_refinement(&body)
-                || origin.as_ref() != blake3::hash(data).as_bytes()
+                || origin != blake3::hash(data).as_bytes()
             {
                 return Err(invalid("refinement origin requires exact local admission"));
             }
@@ -385,19 +361,19 @@ pub(crate) fn validate_refinement_admission(
         }
     }
     if let Some(ref skill_origin) = skill_origin {
-        if skill_origin.len() != 32 || kind != ENTITY_TYPE_SKILL {
+        if kind != ENTITY_TYPE_SKILL {
             return Err(Error::CorruptedIndex("skill refinement origin binding"));
         }
         if control.is_none() {
-            let same_stored_candidate =
-                store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-                    raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
-                });
+            let same_stored_candidate = crate::ports::EntityStoreRead::port_entity_raw(
+                store, txn, id,
+            )?
+            .is_some_and(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data));
             let record = crate::skill::decode_skill_record(data)?;
             if !same_stored_candidate
                 || record.lifecycle_status != crate::skill::SkillLifecycle::Candidate
                 || !declares_skill_refinement(&record)
-                || skill_origin.as_ref() != blake3::hash(data).as_bytes()
+                || skill_origin != blake3::hash(data).as_bytes()
             {
                 return Err(invalid(
                     "skill refinement origin requires useful-upstream admission",
@@ -446,10 +422,11 @@ pub(crate) fn validate_refinement_admission(
     }
     match (kind, control.state) {
         (ENTITY_TYPE_CLAIM, RefinementState::Pending | RefinementState::Refused) => {
-            let same_proposed = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data)
-            }) && crate::claim::decode_claim_body(data, false)?.approval
-                == crate::claim::ClaimApprovalStatus::Proposed;
+            let same_proposed =
+                crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some_and(
+                    |raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) == Some(data),
+                ) && crate::claim::decode_claim_body(data, false)?.approval
+                    == crate::claim::ClaimApprovalStatus::Proposed;
             if !same_proposed && !proof.is_some_and(|p| p.binds(id, kind, data, &control)) {
                 return Err(invalid("claim refinement requires exact admission proof"));
             }

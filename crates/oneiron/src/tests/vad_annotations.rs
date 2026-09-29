@@ -513,13 +513,14 @@ fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
         232,
     )?;
     let legacy_key = vad_annotation_meta_key(ENTITY_TYPE_TURN, &legacy_turn);
-    let legacy_bytes = rmp_serde::to_vec_named(&legacy_annotation).expect("encode legacy VAD");
     {
         let mut wtxn = legacy_vault.store.env.write_txn()?;
-        legacy_vault
-            .store
-            .vault_meta
-            .put(&mut wtxn, &legacy_key, &legacy_bytes)?;
+        VAD_ANNOTATION_META.put(
+            &legacy_vault.store,
+            &mut wtxn,
+            &legacy_key,
+            &legacy_annotation,
+        )?;
         wtxn.commit()?;
     }
 
@@ -533,10 +534,8 @@ fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
     {
         let rtxn = legacy_vault.store.env.read_txn()?;
         assert!(
-            legacy_vault
-                .store
-                .vault_meta
-                .get(&rtxn, &legacy_key)?
+            VAD_ANNOTATION_META
+                .get(&legacy_vault.store, &rtxn, &legacy_key)?
                 .is_none(),
             "headerless delete must remove legacy VAD metadata residue"
         );

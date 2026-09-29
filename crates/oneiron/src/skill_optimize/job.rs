@@ -23,6 +23,7 @@ use super::dials::{invalid, validate_text};
 use super::gate::SkillEditCycle;
 use super::selection::{affirm_candidates, optimize_candidates};
 use super::tier::{SkillTierVerdict, tier_verdict_in_txn};
+use super::{GOAL_ID_KEY, SkillGoalId};
 
 /// The [`PROVENANCE_BIRTH_KEY`] value stamped on a drafted proposal.
 pub const SKILL_OPTIMIZE_BIRTH_PATH: &str = "skill_optimize";
@@ -272,6 +273,11 @@ fn run_skill_optimize_bound(
         let Value::Map(provenance) = &mut record.provenance else {
             return Err(invalid("invalid optimizer provenance"));
         };
+        let goal_id = SkillGoalId::of(&candidate.skill, &target)?;
+        provenance.push((
+            Value::from(GOAL_ID_KEY),
+            Value::from(goal_id.entity().to_hex()),
+        ));
         provenance.extend([
             (
                 Value::from("actor_entity_ref"),
@@ -279,7 +285,7 @@ fn run_skill_optimize_bound(
             ),
             (
                 Value::from("actor_class"),
-                Value::from(crate::EdgeActorClass::Agent as u8),
+                Value::from(authority.actor_class() as u8),
             ),
             (
                 Value::from("facet"),
@@ -292,7 +298,12 @@ fn run_skill_optimize_bound(
                 Value::from(owner.entity_ref().to_hex()),
             ));
         }
+        let package =
+            vault.optimized_skill_package_in_txn(wtxn, &candidate.skill, &target, &mut record)?;
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
+        if let Some(package) = package {
+            vault.persist_hub_package_in_txn(wtxn, &proposal_id, &package)?;
+        }
         Ok(())
     })?;
 
@@ -488,7 +499,8 @@ fn proposal_record(
         dependencies,
         provenance,
     )
-    .with_governance_tier(tier);
+    .with_governance_tier(tier)
+    .with_role(target.role, target.call.clone());
     if crate::skill::resident_of(target)?.is_some() {
         proposal.forked_from = target.forked_from.or(Some(*parent));
     }

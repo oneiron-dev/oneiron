@@ -66,10 +66,7 @@ impl<'v> AccessContext<'v> {
             for row in vault.store.type_index.prefix_iter(txn, &[kind])? {
                 let (key, _) = row?;
                 let id = crate::vault::entity_id_from_type_index_key(&key)?;
-                let raw = vault
-                    .store
-                    .entities
-                    .get(txn, id.as_bytes())?
+                let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                     .ok_or(Error::CorruptedIndex("access context row"))?;
                 let header = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("access context header"))?;
@@ -95,14 +92,13 @@ impl<'v> AccessContext<'v> {
                         && let ClaimSubject::Entity(space) = body.subject
                     {
                         // A member binding is only a relationship membership when its subject really is one.
-                        if vault
-                            .store
-                            .entities
-                            .get(txn, space.as_bytes())?
-                            .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                            .is_some_and(|h| {
-                                h.entity_type == crate::registry::ENTITY_TYPE_RELATIONSHIP
-                            })
+                        if crate::ports::EntityStoreRead::port_entity_raw(
+                            &vault.store,
+                            txn,
+                            &space,
+                        )?
+                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                        .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_RELATIONSHIP)
                         {
                             context.relationships.insert(space);
                         }
@@ -302,12 +298,16 @@ mod tests {
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = reader.get_entity_parts_with_receipt(&message, None)?;
+        } = reader
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single();
         assert!(value.is_some());
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = reader.get_entity_parts_with_receipt(&summary, None)?;
+        } = reader
+            .read(&[crate::claim::PointRead::id(summary)], None)?
+            .single();
         assert!(value.is_none());
         let fs = reader.graph_fs(crate::graph_fs::GraphFsOptions::default());
         let found = fs.find("/entities", Some(0), None)?;
@@ -335,7 +335,8 @@ mod tests {
             // Corrupt/legacy payloads cannot enter through today's witness door.
             // Seed only this read fixture, preserving the valid MESSAGE header.
             let mut txn = vault.store.env.write_txn()?;
-            let raw = vault.store.entities.get(&txn, message.as_bytes())?.unwrap();
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &message)?
+                .unwrap();
             let mut malformed_raw = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
             malformed_raw.extend_from_slice(&bytes);
             vault
@@ -355,7 +356,9 @@ mod tests {
             let crate::claim::ScopedReadResult {
                 value,
                 receipt: _receipt,
-            } = reader.get_entity_parts_with_receipt(&malformed, None)?;
+            } = reader
+                .read(&[crate::claim::PointRead::id(malformed)], None)?
+                .single();
             assert!(value.is_none());
         }
         grant.expires_at = Some(2);
@@ -363,7 +366,9 @@ mod tests {
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = reader.get_entity_parts_with_receipt(&message, None)?;
+        } = reader
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single();
         assert!(value.is_none());
         let unbound = vault.scoped_read(
             ScopedReadActorKey::new("unbound")
@@ -373,7 +378,9 @@ mod tests {
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = unbound.get_entity_parts_with_receipt(&message, None)?;
+        } = unbound
+            .read(&[crate::claim::PointRead::id(message)], None)?
+            .single();
         assert!(value.is_none());
         Ok(())
     }
@@ -411,7 +418,8 @@ mod tests {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .unwrap();
             body.rel = Some(space);
             body.scope_project = project;
             vault.put_claim(&id, &body, when, 1)?;
@@ -438,13 +446,15 @@ mod tests {
         let broad = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
         assert!(
             broad
-                .get_entity_parts_with_receipt(&permitted, None)?
+                .read(&[crate::claim::PointRead::id(permitted)], None)?
+                .single()
                 .value
                 .is_some()
         );
         assert!(
             broad
-                .get_entity_parts_with_receipt(&outside, None)?
+                .read(&[crate::claim::PointRead::id(outside)], None)?
+                .single()
                 .value
                 .is_some()
         );
@@ -455,13 +465,15 @@ mod tests {
         );
         assert!(
             reader
-                .get_entity_parts_with_receipt(&permitted, None)?
+                .read(&[crate::claim::PointRead::id(permitted)], None)?
+                .single()
                 .value
                 .is_some()
         );
         assert!(
             reader
-                .get_entity_parts_with_receipt(&outside, None)?
+                .read(&[crate::claim::PointRead::id(outside)], None)?
+                .single()
                 .value
                 .is_none()
         );

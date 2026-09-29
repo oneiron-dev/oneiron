@@ -152,7 +152,7 @@ fn lexical_hint_claim_of_edges_do_not_dilute_ppr_claim_neighbors() -> Result<()>
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     seed_raw_claim_record(&vault, &real_neighbor, real_neighbor_body)?;
     seed_claim_of_edge(&vault, &real_neighbor, &claim)?;
 
@@ -304,7 +304,7 @@ fn local_raw_claim_put_removes_lexical_hint_side_records() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     replacement.scope_facet = vault.get_claim(&claim)?.expect("stored claim").scope_facet;
     vault.put_claim(&claim, &replacement, test_time_range(12, 12), 13)?;
 
@@ -384,7 +384,7 @@ fn plain_overwrite_removes_orphan_lexical_hint_without_claim_of() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     orphan_body.stale = true;
     seed_raw_claim_record(&vault, &orphan_hint, orphan_body)?;
     vault
@@ -431,7 +431,7 @@ fn raw_claim_put_rejects_malformed_lexical_hint_claim() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let data = crate::claim::encode_claim_body(&body)?;
 
     let err = vault
@@ -463,7 +463,7 @@ fn raw_lexical_hint_put_rejects_non_lh_prefixed_id() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     seed_raw_claim_record(&vault, &target, target_body)?;
 
     let mut raw = [0x44; ENTITY_ID_LEN];
@@ -482,7 +482,7 @@ fn raw_lexical_hint_put_rejects_non_lh_prefixed_id() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.stale = true;
     let data = crate::claim::encode_claim_body(&body)?;
 
@@ -508,7 +508,7 @@ fn legacy_cyclic_lexical_hints_delete_without_recursive_cleanup() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body_a.stale = true;
     let mut body_b = ClaimBody::new(
         crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
@@ -517,7 +517,7 @@ fn legacy_cyclic_lexical_hints_delete_without_recursive_cleanup() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body_b.stale = true;
     seed_raw_claim_record(&vault, &hint_a, body_a)?;
     seed_raw_claim_record(&vault, &hint_b, body_b)?;
@@ -537,7 +537,7 @@ fn legacy_cyclic_lexical_hints_delete_without_recursive_cleanup() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     self_body.stale = true;
     seed_raw_claim_record(&vault, &self_hint, self_body)?;
     seed_claim_of_edge(&vault, &self_hint, &self_hint)?;
@@ -674,6 +674,102 @@ fn claim_candidate_lexical_hint_ids_are_order_stable() -> Result<()> {
             .iter()
             .any(|hit| reordered_hint_claims.contains(&hit.id)),
         "reordered lexical hint docs must collapse to the source claim"
+    );
+    Ok(())
+}
+
+#[test]
+fn parent_delete_redacts_lexical_hint_claim_decisions_and_bundle_refs() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let subject = EntityId::now();
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"actor",
+    )?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    let claim = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(subject),
+                Value::from("sencha"),
+                0.9,
+            ),
+            &test_write_envelope(actor)?,
+            test_time_range(10, 10),
+            11,
+            &["nested erasure fixture"],
+        )
+        .commit()?;
+    let hint = lexical_query_hint_claim_id(&claim, "nested erasure fixture")?;
+    assert!(vault.get_claim(&hint)?.is_some());
+    let decision = crate::store::GateDecisionRecord {
+        version: crate::store::GATE_DECISION_LEDGER_VERSION,
+        decision_id: crate::store::GateDecisionId::now(),
+        created_at: 11,
+        outcome: "approved".to_owned(),
+        reason_codes: vec!["gate.allow".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "agent".to_owned(),
+        actor_ref: Some("sensitive actor".to_owned()),
+        content_kind: "claim".to_owned(),
+        policy_manifest_version: "v0".to_owned(),
+        claim_id: Some(*hint.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![0xAA],
+        read_frontier_hash: [0; 32],
+        redacted_at: None,
+    };
+    let bundle = crate::store::GateDecisionRecord {
+        decision_id: crate::store::GateDecisionId::now(),
+        claim_id: None,
+        content_kind: "inbox_bundle".to_owned(),
+        ..decision.clone()
+    };
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        vault.store.append_gate_decision_with_claim_refs_in_txn(
+            wtxn,
+            &bundle,
+            &[*hint.as_bytes(), *claim.as_bytes()],
+        )
+    })?;
+    vault.batch().delete(&claim).commit()?;
+    assert!(vault.get_claim(&hint)?.is_none());
+    let rtxn = vault.store.env.read_txn()?;
+    for decision_id in [decision.decision_id, bundle.decision_id] {
+        let row = vault
+            .store
+            .gate_decision_in_txn(&rtxn, decision_id)?
+            .expect("redacted decision skeleton");
+        assert!(row.redacted_at.is_some());
+        assert!(row.diff_handle.is_empty());
+    }
+    assert!(
+        vault
+            .store
+            .bundle_gate_decisions_for_claim_in_txn(&rtxn, claim.as_bytes())?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, hint.as_bytes())?
+            .is_empty()
     );
     Ok(())
 }

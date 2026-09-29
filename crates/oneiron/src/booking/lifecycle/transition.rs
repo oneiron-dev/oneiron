@@ -9,21 +9,20 @@ use super::occurrence::{confirm_solve_window, inclusive_occurrence, offers_slot}
 use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbound_passport};
 use super::public_authority::booking_writer_with_publication;
 use super::storage::{
-    calendar_wrap, confirm_receipt_key, decode_row, delete_meta, encode_claim_value, encode_row,
-    engine_failure, hold_key, put_meta, read_meta, read_meta_bytes, read_receipt, read_txn,
-    refused, revision_receipt_key, write_receipt,
+    HOLD, calendar_wrap, confirm_receipt_key, encode_claim_value, engine_failure, read_receipt,
+    read_txn, refused, revision_receipt_key, write_receipt,
 };
 use super::token::{
-    HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, lease_digest, mint_raw_token,
+    HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, hold_digest, lease_digest, mint_raw_token,
     resolve_token_event, revision_token, session_digest, token_digest, write_revision_tokens,
 };
 use super::types::{
-    BOOKING_STATUS_PREDICATE, BOOKING_TOKEN_META_PREFIX, BookingLifecycleAttempt, BookingStatus,
-    BookingStatusValue, BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec,
-    ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
+    BOOKING_STATUS_PREDICATE, BookingLifecycleAttempt, BookingStatus, BookingStatusValue,
+    BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec, ConfirmReceipt,
+    ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
     MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
 };
-use super::{BookingContent, CheckoutLeaseRow, LifecycleReceiptRow};
+use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
 use crate::booking::invite_grant::dispatch_confirm_booking_invite;
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};
@@ -103,9 +102,10 @@ fn resolve_hold_expiry(
         } => {
             let digest = lease_digest(server_issued_lease);
             let rtxn = read_txn(vault)?;
-            let row: CheckoutLeaseRow =
-                read_meta(vault, &rtxn, BOOKING_TOKEN_META_PREFIX, &digest)?
-                    .ok_or_else(|| refused("checkout extension names no server-issued lease"))?;
+            let row: CheckoutLeaseRow = CHECKOUT_LEASE
+                .get(&vault.store, &rtxn, &digest)
+                .map_err(|error| engine_failure("meta read", error))?
+                .ok_or_else(|| refused("checkout extension names no server-issued lease"))?;
             if row.session_hash != session_digest(session_key) {
                 return Err(refused("checkout lease is bound to another session"));
             }
@@ -144,14 +144,16 @@ pub(crate) fn execute_hold(
         expires_at,
         checkout_lease_hash,
     };
-    let key = hold_key(&spec.session_key);
-    let encoded = encode_row(&row)?;
+    let digest = hold_digest(&spec.session_key);
     booking_writer_with_publication(
         vault,
         public_authority,
         &BookingVerbRequest::Hold(spec.clone()),
         now_utc,
-        |wtxn| put_meta(vault, wtxn, &key, &encoded),
+        |wtxn| {
+            HOLD.put(&vault.store, wtxn, &digest, &row)
+                .map_err(|error| engine_failure("meta write", error))
+        },
     )?;
     Ok(HoldReceipt {
         token,
@@ -243,6 +245,21 @@ fn confirm_in_writer(
     wtxn: &mut heed::RwTxn<'_>,
     now_utc: u64,
 ) -> Result<ConfirmOutcome, BookingError> {
+    if spec.intake.len() > 32 {
+        return Err(refused("booking confirm carries too many intake answers"));
+    }
+    let mut intake_keys = std::collections::BTreeSet::new();
+    for answer in &spec.intake {
+        if answer.field_key.trim().is_empty()
+            || answer.field_key.len() > 64
+            || answer.value.len() > 4096
+            || !intake_keys.insert(&answer.field_key)
+        {
+            return Err(refused(
+                "booking confirm intake answer is malformed or duplicated",
+            ));
+        }
+    }
     let hold_hash = token_digest(&spec.hold_token);
     let session_hash = session_digest(&spec.session_key);
     let receipt_key = confirm_receipt_key(&hold_hash);
@@ -269,15 +286,18 @@ fn confirm_in_writer(
 
     // (2) Holds are session-keyed, so a token stolen from another session finds
     // no row at all.
-    let hold_row_key = hold_key(&spec.session_key);
-    let Some(raw) = read_meta_bytes(vault, &*wtxn, &hold_row_key)? else {
+    let digest = hold_digest(&spec.session_key);
+    let Some(hold): Option<SoftHoldRow> = HOLD
+        .get(&vault.store, &*wtxn, &digest)
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
         return Err(refused("no hold exists for this session"));
     };
-    let hold: SoftHoldRow = decode_row(&raw)?;
     if !hold.is_live_at(now_utc) {
         // Opportunistic cleanup, not a scheduler: correctness already came from
         // the liveness test above.
-        delete_meta(vault, wtxn, &hold_row_key)?;
+        HOLD.delete(&vault.store, wtxn, &digest)
+            .map_err(|error| engine_failure("meta delete", error))?;
         return Err(refused("hold has expired"));
     }
     if hold.token_hash != hold_hash {
@@ -309,12 +329,16 @@ fn confirm_in_writer(
         .host_bindings
         .iter()
         .filter(|binding| binding.start_utc == hold.slot.start && binding.end_utc == hold.slot.end);
-    let owner_refs = bindings
+    let chosen = bindings
         .next()
-        .ok_or_else(|| refused("oracle did not bind the selected slot's hosts"))?
-        .host_refs
-        .clone();
+        .ok_or_else(|| refused("oracle did not bind the selected slot's hosts"))?;
+    let owner_refs = chosen.host_refs.clone();
+    let host_zones = chosen.host_zones.clone();
     if owner_refs.is_empty()
+        || host_zones.len() != owner_refs.len()
+        || host_zones
+            .iter()
+            .any(|zone| crate::calendar::tz::utc_to_wall(hold.slot.start, zone).is_err())
         || bindings.next().is_some()
         || owner_refs.windows(2).any(|pair| pair[0] >= pair[1])
         || owner_refs
@@ -327,9 +351,11 @@ fn confirm_in_writer(
     }
     let context = BookingConfirmationContext {
         owner_refs,
+        host_zones,
         booker_ref: spec.booker_contact.to_hex(),
         visitor_tz: hold.visitor_tz.clone(),
         constraint: hold.constraint.clone(),
+        intake: spec.intake.clone(),
     };
     write_booking_event(vault, wtxn, &event_ref, &hold, spec.booker_contact, now_utc)?;
     write_outbound_passport(vault, wtxn, &event_ref, &uid, &hold, now_utc)?;
@@ -353,7 +379,8 @@ fn confirm_in_writer(
             invite_identity: None,
         },
     )?;
-    delete_meta(vault, wtxn, &hold_row_key)?;
+    HOLD.delete(&vault.store, wtxn, &digest)
+        .map_err(|error| engine_failure("meta delete", error))?;
     Ok(ConfirmOutcome::Booked(ConfirmReceipt {
         calendar: revision,
         reschedule_token,

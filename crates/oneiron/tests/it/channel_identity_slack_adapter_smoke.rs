@@ -4,7 +4,7 @@ use std::env;
 use oneiron::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EntityId, Error,
     InboundSurfaceRouteOutcome, Result, Vault, VaultConfig,
-    channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityState,
+    channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityStep,
     channel_identity_lifecycle::ChannelIdentityLifecycleActor,
     channel_identity_lifecycle::ProvisionIntent, channel_identity_provider::SLACK_CHANNEL,
     channel_identity_provider::SlackOutboundMessage,
@@ -188,20 +188,13 @@ fn run_two_agent_smoke(case: SlackSmokeCase) -> Result<()> {
 
     vault.create_channel_identity(&identity_a_id, &identity_a)?;
     vault.create_channel_identity(&identity_b_id, &identity_b)?;
-    vault.transition_channel_identity(
-        &identity_a_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
-        1_800_000_001,
-        None,
-    )?;
-    vault.transition_channel_identity(
-        &identity_b_id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
-        1_800_000_001,
-        None,
-    )?;
+    for id in [identity_a_id, identity_b_id] {
+        vault.step_channel_identity(
+            &id,
+            ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+            1_800_000_001,
+        )?;
+    }
 
     let provision_a = adapter.provision(
         &ProvisionIntent {

@@ -181,6 +181,8 @@ pub(super) fn dispatch_item_effect(
                 } else {
                     None
                 },
+                read_receipt: None,
+                policy_denial: None,
             },
         )));
     }

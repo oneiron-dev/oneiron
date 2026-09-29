@@ -705,16 +705,15 @@ async fn mcp_registry_cannot_lend_host_authority_or_replace_the_paired_holder() 
         .insert("x-oneiron-mcp-credential", "old-opaque".parse().unwrap());
     let (_, denied) = route_json(server.clone(), request).await;
     assert_mcp_structured_error(&denied, "mcp_auth_required");
-    // A genuine configured host credential can use its own logged root proof.
+    // Registry lookup cannot promote a configured issuer secret into a slip.
     server
         .mcp_registry
         .lock()
         .await
         .register("secret", record(actor))
         .unwrap();
-    let (_, admitted) =
-        route_json(server.clone(), mcp_list_request("/mcp", "secret", "root")).await;
-    assert!(admitted.get("error").is_none(), "{admitted}");
+    let (_, denied) = route_json(server.clone(), mcp_list_request("/mcp", "secret", "root")).await;
+    assert_mcp_structured_error(&denied, "mcp_auth_required");
     let token = mcp_registered_credential(&server, "paired-a");
     {
         let mut registry = server.mcp_registry.lock().await;

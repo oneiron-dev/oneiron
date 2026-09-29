@@ -7,14 +7,14 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimSource, ClaimSubject, decode_claim_body, encode_claim_body,
 };
-use crate::edge::{EdgeKind, parse_strict_edge_record};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::ExportBody;
-use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
@@ -78,7 +78,7 @@ impl Vault {
             .classify_vault_import_manifest(&document.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
-        let omitted: BTreeSet<_> = document
+        let mut omitted: BTreeSet<_> = document
             .manifest
             .import_omissions
             .iter()
@@ -88,6 +88,8 @@ impl Vault {
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
         }
+        withhold_unborn_projects(self, &wtxn, &document, &mut omitted)?;
+        map_project_root(self, &wtxn, &mut document, &mut omitted)?;
         for row in &mut document.evidence_ledger.entities {
             if let ExportBody::Pack(value) = &row.body {
                 let (handle, envelope) = self
@@ -126,7 +128,7 @@ impl Vault {
             if self.store.off_record_sessions.contains_entity(&id)? {
                 return Err(invalid("import ID belongs to an off-record overlay"));
             }
-            let existing = self.store.entities.get(&wtxn, id.as_bytes())?;
+            let existing = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &wtxn, &id)?;
             if let Some(existing) = existing {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
@@ -368,6 +370,143 @@ fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault import: {reason}"))
 }
 
+/// An archived PROJECT row, which the archive marks as needing its owning
+/// adapter, goes through the generic door only where this vault derives its
+/// depth birth. Elsewhere, as in an owner-rooted vault that never knew it, the
+/// row and its home room are withheld instead of stranding the import.
+fn withhold_unborn_projects(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: &WholeVaultDocument,
+    omitted: &mut BTreeSet<EntityId>,
+) -> Result<()> {
+    let Ok(project_kind) = vault.project_type_byte() else {
+        return Ok(());
+    };
+    let mut withheld = BTreeSet::new();
+    for refusal in &document.manifest.import_refusals {
+        let super::ExportImportRefusal::Entity {
+            entity_id,
+            reason: super::ImportRefusalReason::OwningEntityAdapterRequired,
+        } = refusal
+        else {
+            continue;
+        };
+        let id = parse_id(entity_id)?;
+        if document
+            .entities()
+            .any(|row| row.id == *entity_id && row.entity_type == project_kind)
+            && crate::gate::project_depth::birth_for_project(&vault.store, txn, id)?.is_none()
+            && !crate::gate::project_depth::implicit_birth_applies(
+                &vault.store,
+                txn,
+                vault.privacy_posture(),
+                id,
+            )?
+        {
+            withheld.insert(id.to_hex());
+            omitted.insert(id);
+        }
+    }
+    for row in document.entities() {
+        if row.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+            && let Ok(room) =
+                rmp_serde::from_slice::<crate::workspace_roster::ProjectRoom>(&row.body.to_bytes()?)
+            && withheld.contains(&room.project_id)
+        {
+            omitted.insert(parse_id(&row.id)?);
+        }
+    }
+    Ok(())
+}
+
+/// This vault is its own root project: the source root maps onto it instead
+/// of landing as a second parentless root. A signed project's slip authority
+/// lives in the source vault's log, which never becomes local rights here,
+/// so signed rows and their descendants stay archive data in the document.
+fn map_project_root(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: &mut WholeVaultDocument,
+    omitted: &mut BTreeSet<EntityId>,
+) -> Result<()> {
+    let Ok(kind) = vault.project_type_byte() else {
+        return Ok(());
+    };
+    let Some(target) = crate::workspace_roster::root_project_in(&vault.store, txn)? else {
+        return Ok(());
+    };
+    let mut projects = BTreeMap::new();
+    for row in document.entities() {
+        let id = parse_id(&row.id)?;
+        if row.entity_type == kind && !omitted.contains(&id) {
+            let body: crate::workspace_roster::ProjectRecord =
+                rmp_serde::from_slice(&row.body.to_bytes()?)
+                    .map_err(|_| invalid("project row body"))?;
+            projects.insert(id, body);
+        }
+    }
+    let Some(source) = projects
+        .iter()
+        .find(|(_, body)| body.parents.is_empty())
+        .map(|(id, _)| *id)
+    else {
+        return Ok(());
+    };
+    if source == target {
+        return Ok(());
+    }
+    let mut archived = BTreeSet::from([source.to_hex()]);
+    archived.extend(
+        projects
+            .iter()
+            .filter(|(_, body)| body.write_proof.is_some())
+            .map(|(id, _)| id.to_hex()),
+    );
+    // Descendants of a signed row keep it as their parent: archive them too.
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for (id, body) in &projects {
+            if !archived.contains(&id.to_hex())
+                && body
+                    .parents
+                    .iter()
+                    .any(|parent| *parent != source.to_hex() && archived.contains(parent))
+            {
+                archived.insert(id.to_hex());
+                grew = true;
+            }
+        }
+    }
+    for (id, body) in &projects {
+        if archived.contains(&id.to_hex()) {
+            omitted.insert(*id);
+            omitted.insert(parse_id(&body.home_room)?);
+        }
+    }
+    let (source, target) = (source.to_hex(), target.to_hex());
+    for row in &mut document.evidence_ledger.entities {
+        let id = parse_id(&row.id)?;
+        let Some(body) = projects.get(&id) else {
+            continue;
+        };
+        if omitted.contains(&id) {
+            continue;
+        }
+        let mut body = body.clone();
+        // Only the tree position moves; the claims scope id stays a label.
+        for parent in &mut body.parents {
+            if *parent == source {
+                parent.clone_from(&target);
+            }
+        }
+        let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
+        row.body = ExportBody::from_bytes(&bytes, row.entity_type);
+    }
+    Ok(())
+}
+
 pub(super) fn parse_id(text: &str) -> Result<EntityId> {
     let id = EntityId::from_hex(text)?;
     if id.to_hex() != text {
@@ -452,6 +591,9 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .forked_from
             .into_iter()
             .collect(),
+        ENTITY_TYPE_CONVERSATION => crate::workspace_roster::project_room_dependency(bytes)
+            .into_iter()
+            .collect(),
         ENTITY_TYPE_WORKFLOW => {
             let definition = crate::agent_def::workflow::decode_workflow(bytes)?;
             definition
@@ -473,27 +615,33 @@ pub(super) fn import_edge(
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
-    let key = Store::encode_edge_key(&source, kind, &target);
-    if let Some(raw) = vault.store.edges_out.get(wtxn, &key)? {
-        let existing = parse_strict_edge_record(&key, &raw)?;
-        let same = existing.decoded.weight == edge.weight
-            && existing.decoded.created_at == edge.created_at
+    if let Some(existing) =
+        crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
+    {
+        let same = existing.weight == edge.weight
+            && existing.created_at == edge.created_at
+            && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
             && existing
-                .decoded
-                .vad
-                .map(|v| [v.valence, v.arousal, v.dominance])
-                == edge.vad
-            && existing
-                .decoded
                 .provenance
                 .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
                 == edge.provenance;
         if same {
             return Ok(());
         }
-        // A newly imported claim's typed door creates its own ClaimOf link.
-        // Restoring this exported public link's original timestamp is safe.
-        if kind != EdgeKind::ClaimOf || !inserted.contains(&source) {
+        // A newly imported claim's typed door creates its own ClaimOf link, and
+        // a newly imported project's projector its damped parent membership.
+        // Restoring this exported link's original timestamp is safe.
+        let door_minted = inserted.contains(&source)
+            && match kind {
+                EdgeKind::ClaimOf => true,
+                EdgeKind::BelongsTo => {
+                    existing.weight == edge.weight
+                        && crate::workspace_roster::is_project_entity(&vault.store, wtxn, source)?
+                        && crate::workspace_roster::is_project_entity(&vault.store, wtxn, target)?
+                }
+                _ => false,
+            };
+        if !door_minted {
             return Err(invalid(
                 "import edge collides with different stored metadata",
             ));

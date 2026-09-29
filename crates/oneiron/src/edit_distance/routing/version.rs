@@ -3,11 +3,10 @@
 use std::sync::LazyLock;
 
 use super::keys::{
-    DRAFTING_ROLE, ROW_VERSION, SERVING_MODEL_KEY, SERVING_MODEL_ROW_LABEL, StoredModelVersion,
-    decode_row, encode_row,
+    DRAFTING_ROLE, ROW_VERSION, SERVING_MODEL, ServingModelVersion, StoredModelVersion,
 };
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::llm::ModelId;
 use crate::settings::{ModelStack, ModelStackRegistry, default_model_stack_registry};
 
@@ -57,17 +56,13 @@ fn stack_claims(stack: &ModelStack, model: &ModelId) -> bool {
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// Storage errors; [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn serving_model_version(vault: &Vault) -> Result<String> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, SERVING_MODEL_KEY)? else {
-        return Ok(model_version_token(&DRAFTING_ROLE.default_model_id()));
-    };
-    let row: StoredModelVersion = decode_row(&raw, SERVING_MODEL_ROW_LABEL)?;
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(SERVING_MODEL_ROW_LABEL));
-    }
-    Ok(row.model_version)
+    Ok(SERVING_MODEL.get(&vault.store, &rtxn, &())?.map_or_else(
+        || model_version_token(&DRAFTING_ROLE.default_model_id()),
+        |row| row.0.model_version,
+    ))
 }
 
 /// Declares which model is serving, and so which generation later folds belong
@@ -81,18 +76,9 @@ pub fn serving_model_version(vault: &Vault) -> Result<String> {
 ///
 /// Storage errors.
 pub fn set_serving_model(vault: &Vault, model: &ModelId) -> Result<()> {
-    let encoded = encode_row(
-        &StoredModelVersion {
-            v: ROW_VERSION,
-            model_version: model_version_token(model),
-        },
-        SERVING_MODEL_ROW_LABEL,
-    )?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, SERVING_MODEL_KEY, &encoded)?;
-        Ok(())
-    })
+    let row = ServingModelVersion(StoredModelVersion {
+        v: ROW_VERSION,
+        model_version: model_version_token(model),
+    });
+    vault.with_write_txn(|wtxn| SERVING_MODEL.put(&vault.store, wtxn, &(), &row))
 }

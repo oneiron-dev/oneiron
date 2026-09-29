@@ -1,25 +1,25 @@
 //! First-party library source: offline seeding, immutable Git ref, explicit import.
 
 use super::{
-    GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy, SkillHubKind, SkillHubRecord,
-    SkillHubTrustTier, encode_skill_hub_record,
+    ForeignSkillPublisher, GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy, SkillHubKind,
+    SkillHubRecord, SkillHubTrustTier, encode_skill_hub_record,
 };
+use crate::entity_id::derived_domains::FIRST_PARTY_SKILL_HUB;
 use crate::{EntityId, Vault, error::Result, temporal::TimeRange};
 
 /// Released oneiron-hub revision. Moving this pin requires a reviewed engine update;
 /// a floating branch or network lookup must never change an opened vault's source.
-const HUB_COMMIT: &str = "0614806577995b66f9a7b7638a581761c274076e";
+const HUB_COMMIT: &str = "72e737009fb798db8380613db7f8c28bdbdb953f";
 const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
-const HUB_ID_NAMESPACE: &[u8] = b"oneiron/first-party-skill-hub/v1";
+/// The model catalog has no authority; its exact file tree is pinned alongside the hub revision.
+pub(crate) const MODEL_PACK_SUBTREE: &str = "packs/model-catalog";
+pub(crate) const MODEL_PACK_NAME: &str = "oneiron.models";
+pub(crate) const MODEL_PACK_HASH: &str =
+    "9bb13193a0b203d2e04c43ca203051aba0c1c54963309c38bd03482eb9dc8d11";
 
 /// Stable identity of the first-party library hub in every vault.
 pub fn default_skill_hub_id() -> Result<EntityId> {
-    let hash = blake3::hash(HUB_ID_NAMESPACE);
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&hash.as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(FIRST_PARTY_SKILL_HUB, &[])
 }
 
 /// Immutable revision used for imports from the shipped library.
@@ -33,7 +33,7 @@ pub(crate) fn seed_default_skill_hub(vault: &Vault) -> Result<()> {
     let mut txn = vault.store.env.write_txn()?;
     // Reopens never revert an owner's endpoint, trust, or policy changes. Nor
     // does an erased default come back without an explicit restore decision.
-    if vault.store.entities.get(&txn, id.as_bytes())?.is_some()
+    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.is_some()
         || vault.local_hard_delete_marker_exists_in_txn(&txn, &id)?
     {
         return Ok(());
@@ -87,6 +87,38 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         self.import_default_hub_skill_at_commit(subtree, HUB_COMMIT, occurred, learned_at)
+    }
+
+    /// Fetch the shipped model data through the pinned Git transport and pack source door.
+    /// The caller must still qualify and explicitly install the pack.
+    pub fn fetch_default_model_pack(
+        &self,
+        publisher: &ForeignSkillPublisher,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<(EntityId, HubRef)> {
+        let id = default_skill_hub_id()?;
+        let row = self.skill_hub_record(&id)?;
+        if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
+            return Err(crate::error::Error::InvalidConfig(
+                "default model pack requires pinned Git configuration".to_owned(),
+            ));
+        }
+        let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, HUB_COMMIT)?;
+        let reference = HubRef::new(id, MODEL_PACK_SUBTREE, HubPin::Commit(HUB_COMMIT.into()))?;
+        let (source_id, pinned) =
+            self.fetch_pack_from_adapter(&adapter, &reference, publisher, occurred, learned_at)?;
+        let source = self.get_pack_source(&source_id)?.ok_or_else(|| {
+            crate::error::Error::InvalidConfig("fetched model pack is missing".into())
+        })?;
+        if source.manifest().name != MODEL_PACK_NAME
+            || source.content_hash().to_hex() != MODEL_PACK_HASH
+        {
+            return Err(crate::error::Error::InvalidConfig(
+                "pinned model pack content drift".into(),
+            ));
+        }
+        Ok((source_id, pinned))
     }
 
     fn import_default_hub_skill_at_commit(

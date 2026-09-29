@@ -10,11 +10,11 @@ use oneiron::commitment::{
     CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
 };
 use oneiron::commitment_schedule::{
-    CommitmentSchedulePayload, CommitmentSeriesWriteOutcome, Schedule, commitment_projection_actor,
+    CommitmentSchedulePayload, CommitmentSeriesWriteOutcome, Schedule,
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::entity_id::EntityId;
-use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
 use oneiron::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use oneiron::{
@@ -81,6 +81,8 @@ fn open_vault() -> (tempfile::TempDir, TimedVault) {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("vault");
+    // The Dreamer is a MACHINE writer: the host roots the vault and holds its key.
+    crate::provision_test_engine_machines(&vault);
     (dir, TimedVault { vault, clock })
 }
 
@@ -126,9 +128,10 @@ fn commitment_party(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("fixture entity id")
 }
 
-/// Seeds the parties a commitment write needs — including the projector's
-/// PINNED System actor, which the claim door resolves against a stored
-/// MACHINE entity before it will mint anything.
+/// Seeds the parties a commitment write needs. The projector's PINNED System
+/// actor is a MACHINE, so it mints only with the host-held key the host
+/// provisions at bootstrap (ONE-1634); [`open_vault`] already rooted the vault
+/// and provisioned the engine's MACHINE writers, the projector among them.
 fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
     let at = TimeRange { start: 1, end: 1 };
     for seed in [0x71_u8, 0x72] {
@@ -142,15 +145,6 @@ fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
             )
             .expect("seed commitment party");
     }
-    vault
-        .put_entity(
-            &commitment_projection_actor().entity_ref(),
-            ENTITY_TYPE_MACHINE,
-            at,
-            1,
-            b"commitment projector",
-        )
-        .expect("seed projection actor");
     WriteEnvelope::new(
         WriteActor::new(commitment_party(0x71), EdgeActorClass::Human),
         ClaimSource::UserStated,

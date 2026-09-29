@@ -39,6 +39,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::SurfaceEventCorrelationKindCollision
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::EntityTypeImmutable
+        | ErrorKind::DreamerActorImmutable
         | ErrorKind::StructuralKindZoneViolation
         | ErrorKind::StructuralKindCollision
         | ErrorKind::InvalidStructuralKindRegistration

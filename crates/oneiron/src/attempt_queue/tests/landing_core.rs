@@ -441,6 +441,8 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
         owned.id,
         ManifestEntry::new(ManifestKind::Skill, "skill.cancel", "v1", 12),
     )?;
+    queue.set_executor_model(owned.id, "worker-a", owned.attempt_count, "fixture/model@1")?;
+
     let ForceCancelOutcome::Cancelled(forced) = queue.force_cancel(ForceAttemptCancel {
         id: owned.id,
         authority: ForceCancelAuthority::owner("owner-1").expect("verified owner"),

@@ -6,7 +6,7 @@ use rmpv::Value;
 
 use super::config::{
     MAX_ARTIFACT_SCAN, MAX_SUBSTITUTION_TOKENS, MINER_K_DEFAULT, MINER_K_ROW_LABEL,
-    MINER_K_SETTINGS_KEY, PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid,
+    PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid,
 };
 use super::emission::emit_cluster;
 use super::model::{
@@ -16,15 +16,38 @@ use super::model::{
 use super::store::{advance_watermark_in_txn, miner_watermark};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
+use crate::edit_distance::FinalizedProposalText;
+use crate::edit_distance::PROPOSAL_ARTIFACT;
 use crate::edit_distance::attribution::{
     AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::{DeltaSource, amendment_delta};
-use crate::edit_distance::{
-    FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalized_proposal_text,
-};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+
+/// Dial: distinct-receipt count K needed before the substitution miner acts
+/// on a cluster.
+const MINER_K: SideTable<(), MinerK, Raw> = SideTable::new(&side_table::EDIT_DISTANCE_MINER_K);
+
+/// K, stored as decimal ASCII so the dial is readable in a `vault_meta` dump
+/// — the `InboxReviewDial` token convention, applied to a count.
+struct MinerK(u32);
+
+impl RawValue for MinerK {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_string().into_bytes())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| text.parse::<u32>().ok())
+            .filter(|k| *k > 0)
+            .map(Self)
+            .ok_or_else(|| CodecError::Value(Error::CorruptedIndex(MINER_K_ROW_LABEL)))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // The K dial
@@ -38,14 +61,9 @@ use crate::error::{Error, Result};
 /// positive decimal count.
 pub fn miner_k(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, MINER_K_SETTINGS_KEY)? else {
-        return Ok(MINER_K_DEFAULT);
-    };
-    std::str::from_utf8(&raw)
-        .ok()
-        .and_then(|text| text.parse::<u32>().ok())
-        .filter(|k| *k > 0)
-        .ok_or(Error::CorruptedIndex(MINER_K_ROW_LABEL))
+    Ok(MINER_K
+        .get(&vault.store, &rtxn, &())?
+        .map_or(MINER_K_DEFAULT, |dial| dial.0))
 }
 
 /// Persists K.
@@ -61,14 +79,7 @@ pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
     if k == 0 {
         return Err(invalid("the substitution miner's K must be at least 1"));
     }
-    let encoded = k.to_string();
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, MINER_K_SETTINGS_KEY, encoded.as_bytes())?;
-        Ok(())
-    })
+    vault.with_write_txn(|wtxn| MINER_K.put(&vault.store, wtxn, &(), &MinerK(k)))
 }
 
 // ---------------------------------------------------------------------------
@@ -108,13 +119,16 @@ pub fn run_substitution_miner_at(
     now: u64,
 ) -> Result<Vec<MinedOutcome>> {
     // Checked HERE, before any evidence is read, because the consequence is
-    // invisible at the write: a mined preference under the wrong actor class or
+    // invisible at the write: a mined preference under a wrong actor or
     // with no run id lands Proposed in a tray that has no group, so no surface
     // can ever show it and no decider can ever answer it. Refusing the pass is
     // the only outcome a caller can notice.
-    if run.agent.actor_class() != EdgeActorClass::Agent || run.run_id.trim().is_empty() {
+    if run.run_id.trim().is_empty()
+        || (run.agent.actor_class() != EdgeActorClass::Agent
+            && run.agent != vault.dreamer_authority()?)
+    {
         return Err(invalid(
-            "a miner pass needs an Agent-class actor and a run id, or its proposals are unreviewable",
+            "a miner pass needs a valid agent or Dreamer actor and a run id, or its proposals are unreviewable",
         ));
     }
     let judgments = amendment_judgments(vault)?;
@@ -179,6 +193,9 @@ pub fn miner_session_from_input(input: &Value) -> Result<EntityId> {
     let Value::Map(entries) = input else {
         return Err(malformed_payload());
     };
+    if entries.len() != 1 {
+        return Err(malformed_payload());
+    }
     let Some((_, Value::Binary(bytes))) = entries
         .iter()
         .find(|(entry, _)| entry.as_str() == Some(PAYLOAD_KEY_SESSION))
@@ -231,6 +248,17 @@ fn clusters_from(
     now: Option<u64>,
 ) -> Result<Vec<SubstitutionCluster>> {
     let artifacts = artifact_index(vault)?;
+    // Close the policy read transaction before any other vault read/write on
+    // this thread: heed does not allow a nested read slot for this environment.
+    let policies = {
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        if policy.diagnostics.is_fail_closed() {
+            Vec::new()
+        } else {
+            policy.compilation_policies
+        }
+    };
     let decisions = super::feedback::principal_decisions(vault)?;
     let decision_by_receipt = decisions
         .iter()
@@ -265,12 +293,18 @@ fn clusters_from(
             continue;
         }
         for substitution in substitutions(source.delta_source, source.artifact) {
+            let target = binding.as_ref().map_or_else(Default::default, |_| {
+                super::policy::infer_target(
+                    &policies,
+                    binding.expect("bound decision").principal,
+                    &judgment.scope,
+                    &substitution.from,
+                    &substitution.to,
+                )
+            });
             let key = ClusterKey {
                 principal: binding.as_ref().map(|row| row.principal),
-                target: binding
-                    .as_ref()
-                    .map(|row| row.target.clone())
-                    .unwrap_or_default(),
+                target,
                 scope: judgment.scope.clone(),
                 actor: source.actor,
                 from: substitution.from,
@@ -310,9 +344,14 @@ fn clusters_from(
             };
             pair
         };
+        let target = if row.target == super::target::CompilationTarget::Fallback {
+            super::policy::infer_target(&policies, row.principal, &row.scope, &pair.0, &pair.1)
+        } else {
+            row.target
+        };
         let key = ClusterKey {
             principal: Some(row.principal),
-            target: row.target,
+            target,
             scope: row.scope,
             actor: row.actor,
             from: pair.0,
@@ -379,14 +418,11 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
         records: Vec::new(),
         by_refs: BTreeMap::new(),
     };
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, PROPOSAL_ARTIFACT_KEY_PREFIX)?
+    for entry in PROPOSAL_ARTIFACT
+        .iter_from(&vault.store, &rtxn, &[])?
         .take(MAX_ARTIFACT_SCAN)
     {
-        let (_, raw) = entry?;
-        let record = decode_finalized_proposal_text(&raw)?;
+        let (_, record) = entry?;
         let position = index.records.len();
         index.by_refs.insert(
             (

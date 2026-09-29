@@ -193,6 +193,13 @@ pub(crate) struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Reaction signals on the reader's own messages since its last turn,
+    /// separate from retrieval.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) signals: Vec<CoreReactionSignal>,
+    /// Exclusive continuation when further signals remain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) signals_next: Option<String>,
     /// Separately budgeted turn-local capability discoveries.
     #[schema(value_type = Vec<Object>)]
     pub(crate) capabilities: Vec<oneiron::context_board::CapabilityHit>,
@@ -290,12 +297,20 @@ pub(crate) async fn run_context_pack_builder(
         core_engine_error("core context-pack failed", error)
     })?;
     let clamped_out = pack.clamped_out();
-    let narrowing = scoped_read
+    let mut narrowing = scoped_read
         .filter_context_pack(&mut pack.value)
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(error = %error, "core context-pack scoped read failed");
             core_engine_error("core context-pack scoped read failed", error)
+        })?;
+    // A MESSAGE carries its current reactions, read through the same scope.
+    scoped_read
+        .attach_reactions(&mut pack.value)
+        .map_err(|error| {
+            pack.discard_telemetry();
+            tracing::error!(error = %error, "core context-pack reactions failed");
+            core_engine_error("core context-pack reactions failed", error)
         })?;
     apply_context_pack_response_limits(&mut pack.value, response_limits);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
@@ -349,7 +364,7 @@ pub(crate) async fn run_context_pack_builder(
                         })?,
                 );
             }
-            let cursor = advance_memories_cursor(
+            let (cursor, observed) = advance_memories_cursor(
                 server,
                 &request.session_scope_id,
                 &request.session_id,
@@ -359,6 +374,7 @@ pub(crate) async fn run_context_pack_builder(
             )
             .await
             .map_err(|error| core_engine_error("context-pack observations failed", error))?;
+            narrowing.restrict_with(&observed);
             (section, Some(cursor))
         }
         None => (None, None),
@@ -418,6 +434,8 @@ pub(crate) fn core_context_pack_response(
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        signals: Vec::new(),
+        signals_next: None,
         capabilities: pack.capabilities,
         l2_base: pack.l2_base,
         pin_narrowing: Vec::new(),
@@ -638,8 +656,10 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
 }
 
 impl CoreContextPackResponse {
+    /// Records the served rows on the session, folding that read's receipt
+    /// into this response's `narrowing` and its withheld-data notice.
     pub(super) fn observe_rows(
-        &self,
+        &mut self,
         read: &oneiron::claim::ScopedRead<'_>,
         session: &mut oneiron::context_board::SessionReadSet,
     ) -> oneiron::Result<()> {
@@ -652,6 +672,28 @@ impl CoreContextPackResponse {
         if let Some(base) = &self.l2_base {
             ids.extend_from_slice(base.evidence_ids());
         }
-        session.observe_rows(read, &ids)
+        let observed = session.observe_rows(read, &ids)?;
+        self.narrowing.restrict_with(&observed);
+        self.access = oneiron::access_grant::GrantedData::new(
+            self.results
+                .iter()
+                .chain(&self.neighbors)
+                .map(|row| row.id.clone())
+                .collect(),
+            self.narrowing.suppressed_count,
+        );
+        Ok(())
     }
+}
+
+/// A `reaction.put` or `reaction.revoked` on one of the reader's messages.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreReactionSignal {
+    pub event: &'static str,
+    pub reaction: String,
+    pub message: String,
+    pub by: String,
+    pub glyph: String,
+    pub occurred_at: u64,
+    pub recorded_at: u64,
 }

@@ -12,7 +12,7 @@ mod vault_root_bind;
 
 pub(crate) use self::hnsw_model_gates::{
     ensure_model_id_for_vector_write, format_hnsw_distance_metric, format_hnsw_index_structure,
-    parse_utf8_bytes, read_hnsw_compatibility, read_vault_meta_u16, validate_embedding_model_id,
+    parse_utf8_bytes, read_hnsw_compatibility, validate_embedding_model_id,
 };
 pub(in crate::store) use self::manifest_storage_gates::RegisteredPath;
 pub(crate) use self::manifest_storage_gates::{
@@ -24,13 +24,13 @@ pub use self::open_version_keys::{
 };
 pub(crate) use self::open_version_keys::{
     DefaultPolicySeedMode, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HnswCompatibilityState,
-    MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
-    TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
-    TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY,
+    MODEL_ID_KEY, TEXT_INDEX_SCHEMA_VERSION, VECTOR_VERSION_KEY,
 };
 // Test-only seam (gate/mod.rs precedent): the store test suite names these
 // bare through `use super::*`, but no non-test code outside `open_gates/`
 // reaches them through the seam, so the re-exports live under `cfg(test)`.
+#[cfg(test)]
+pub(crate) use self::hnsw_model_gates::read_vault_meta_u16;
 #[cfg(test)]
 pub(in crate::store) use self::manifest_storage_gates::StorageAbiGate;
 #[cfg(test)]
@@ -44,4 +44,9 @@ pub(in crate::store) use self::open_version_keys::{
 #[cfg(test)]
 pub(crate) use self::open_version_keys::{
     HNSW_CONFIG_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+};
+#[cfg(test)]
+pub(crate) use self::open_version_keys::{
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY, TEXT_ANALYZER_MANIFEST_HASH_KEY,
+    TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
 };

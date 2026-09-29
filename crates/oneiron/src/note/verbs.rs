@@ -32,20 +32,23 @@ impl Vault {
             markdown: markdown.to_owned(),
         })?;
         self.memory(actor.entity_ref(), actor.actor_class())
-            .with_verified_actor_write_txn(|txn| {
-                self.batch_in()
-                    .put_authored_note(
-                        &id,
-                        &actor.entity_ref(),
-                        TimeRange { start: at, end: at },
-                        at,
-                        &body,
-                    )
-                    .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
-                    .apply(txn)?;
-                let doc = super::document_store::load(self, txn, id)?;
-                super::document_store::persist_authoritative(self, txn, &doc)?;
-                Ok(id)
+            .with_actor_content_write_txn_as(actor, |content| {
+                content.apply_batch(
+                    self.batch_in()
+                        .put_authored_note(
+                            &id,
+                            &actor.entity_ref(),
+                            TimeRange { start: at, end: at },
+                            at,
+                            &body,
+                        )
+                        .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0),
+                )?;
+                content.update_note(id, |txn| {
+                    let doc = super::document_store::load(self, txn, id)?;
+                    super::document_store::persist_authoritative(self, txn, &doc)?;
+                    Ok(id)
+                })
             })
     }
 
@@ -84,6 +87,7 @@ impl Vault {
                     .is_ok();
                 match kind {
                     ENTITY_TYPE_NOTE => {
+                        self.authorize_shared_note_write_in_txn(txn, origin, &actor)?;
                         let (_, core) = note_core(self, txn, origin)?;
                         if !owner && core.author_ref != actor.entity_ref() {
                             return Err(
@@ -105,7 +109,7 @@ impl Vault {
                             origin,
                             supersede,
                         )
-                        .apply(txn)?;
+                        .apply_actor(txn, &actor)?;
                         let doc = super::document_store::load(self, txn, fork)?;
                         super::document_store::persist_authoritative(self, txn, &doc)?;
                     }
@@ -128,7 +132,7 @@ impl Vault {
                             origin,
                             supersede,
                         )
-                        .apply(txn)?;
+                        .apply_actor(txn, &actor)?;
                     }
                     crate::registry::ENTITY_TYPE_CLAIM => {
                         if !owner {
@@ -174,7 +178,11 @@ impl Vault {
                     .into());
                 }
                 let origin_facet = match self.get_entity_type_in_txn(txn, &origin)? {
-                    Some(ENTITY_TYPE_NOTE | ENTITY_TYPE_ASSET) => {
+                    Some(ENTITY_TYPE_NOTE) => {
+                        self.authorize_shared_note_write_in_txn(txn, origin, &actor)?;
+                        crate::federation::record_scope::birth_facet(&self.store, txn, origin)?
+                    }
+                    Some(ENTITY_TYPE_ASSET) => {
                         crate::federation::record_scope::birth_facet(&self.store, txn, origin)?
                     }
                     Some(crate::registry::ENTITY_TYPE_CLAIM) => self
@@ -191,7 +199,7 @@ impl Vault {
                     1.0,
                     crate::claim::ClaimApprovalStatus::Proposed,
                     crate::claim::ClaimLifecycleStatus::Active,
-                );
+                )?;
                 body.source = Some(crate::claim::ClaimSource::Inferred);
                 body.scope_facet = origin_facet;
                 self.put_claim_in_txn(
@@ -215,68 +223,70 @@ impl Vault {
     ) -> MemoryResult<NoteEditOutcome> {
         let result = self
             .memory(actor.entity_ref(), actor.actor_class())
-            .with_verified_actor_write_txn(|txn| {
-                let existed = load_doc(self, txn, note)?.is_some();
-                if existed && matches!(edit, NoteEdit::WholeText { base: None, .. }) {
-                    return Err(invalid("whole-text edit requires its read version").into());
-                }
-                let doc = super::documents::live_doc(self, txn, note)?;
-                let semantic = doc.semantic_edit(edit)?;
-                let isolated_rewrite = if semantic.is_none() {
-                    match edit {
-                        NoteEdit::WholeText { text, .. } | NoteEdit::Rewrite { text } => {
-                            Some(NoteEdit::Rewrite { text: text.clone() })
-                        }
-                        _ => None,
+            .with_actor_content_write_txn_as(actor, |content| {
+                content.update_note(note, |txn| {
+                    let existed = load_doc(self, txn, note)?.is_some();
+                    if existed && matches!(edit, NoteEdit::WholeText { base: None, .. }) {
+                        return Err(invalid("whole-text edit requires its read version").into());
                     }
-                } else {
-                    None
-                };
-                let authorized = super::proposals::grant_allows(self, txn, note, actor)?;
-                if let Some((base, edits)) = semantic.filter(|_| authorized) {
-                    let operation = super::NoteOperation {
-                        request_id: self.store.clock.entity_id()?,
-                        change: super::NoteChange::Edit { base, edits },
+                    let doc = super::documents::live_doc(self, txn, note)?;
+                    let semantic = doc.semantic_edit(edit)?;
+                    let isolated_rewrite = if semantic.is_none() {
+                        match edit {
+                            NoteEdit::WholeText { text, .. } | NoteEdit::Rewrite { text } => {
+                                Some(NoteEdit::Rewrite { text: text.clone() })
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
                     };
-                    let receipt = self
-                        .memory(actor.entity_ref(), actor.actor_class())
-                        .apply_note_operation_in_txn(txn, note, &operation, None)?;
-                    return Ok(match receipt.outcome {
-                        super::NoteEditOutcome::Applied(_) => {
-                            NoteEditOutcome::Edited { head: doc.head }
-                        }
-                        super::NoteEditOutcome::Proposed(receipt) => {
-                            NoteEditOutcome::ReviewRequired { receipt }
-                        }
-                    });
-                }
-                let candidate = NoteDocument {
-                    note,
-                    head: note,
-                    doc: doc.doc.fork(),
-                };
-                let replacement = candidate.apply(
-                    &self.store.clock,
-                    isolated_rewrite.as_ref().unwrap_or(edit),
-                    actor.entity_ref(),
-                    self.store.clock.now_recorded_at(),
-                )?;
-                let rewrite = replacement.is_some();
-                let mut fork = replacement.unwrap_or(candidate);
-                fork.head = self.store.clock.entity_id()?;
-                store_doc(self, txn, &fork)?;
-                super::proposals::remember_fork(
-                    self,
-                    txn,
-                    &doc,
-                    &fork,
-                    actor.entity_ref(),
-                    rewrite,
-                )?;
-                Ok(if authorized {
-                    NoteEditOutcome::RewriteFork { fork: fork.head }
-                } else {
-                    NoteEditOutcome::ProposedFork { fork: fork.head }
+                    let authorized = super::proposals::grant_allows(self, txn, note, actor)?;
+                    if let Some((base, edits)) = semantic.filter(|_| authorized) {
+                        let operation = super::NoteOperation {
+                            request_id: self.store.clock.entity_id()?,
+                            change: super::NoteChange::Edit { base, edits },
+                        };
+                        let receipt = self
+                            .memory(actor.entity_ref(), actor.actor_class())
+                            .apply_note_operation_in_txn(txn, note, &operation, None)?;
+                        return Ok(match receipt.outcome {
+                            super::NoteEditOutcome::Applied(_) => {
+                                NoteEditOutcome::Edited { head: doc.head }
+                            }
+                            super::NoteEditOutcome::Proposed(receipt) => {
+                                NoteEditOutcome::ReviewRequired { receipt }
+                            }
+                        });
+                    }
+                    let candidate = NoteDocument {
+                        note,
+                        head: note,
+                        doc: doc.doc.fork(),
+                    };
+                    let replacement = candidate.apply(
+                        &self.store.clock,
+                        isolated_rewrite.as_ref().unwrap_or(edit),
+                        actor.entity_ref(),
+                        self.store.clock.now_recorded_at(),
+                    )?;
+                    let rewrite = replacement.is_some();
+                    let mut fork = replacement.unwrap_or(candidate);
+                    fork.head = self.store.clock.entity_id()?;
+                    store_doc(self, txn, &fork)?;
+                    super::proposals::remember_fork(
+                        self,
+                        txn,
+                        &doc,
+                        &fork,
+                        actor.entity_ref(),
+                        rewrite,
+                    )?;
+                    Ok(if authorized {
+                        NoteEditOutcome::RewriteFork { fork: fork.head }
+                    } else {
+                        NoteEditOutcome::ProposedFork { fork: fork.head }
+                    })
                 })
             })?;
         #[cfg(feature = "sync")]
@@ -294,19 +304,19 @@ impl Vault {
     ) -> MemoryResult<EntityId> {
         let kind = self.note_kind(kind)?;
         self.memory(actor.entity_ref(), actor.actor_class())
-            .with_verified_actor_write_txn(|txn| {
-                let header = live_header(self, txn, source)?;
+            .with_actor_content_write_txn_as(actor, |content| {
+                let header = live_header(self, content.read(), source)?;
                 let (text_source, citation) = if header.entity_type == ENTITY_TYPE_ASSET {
                     let mut newest = None;
                     for entry in self.store.port_edges(
-                        txn,
+                        content.read(),
                         &source,
                         crate::ports::EdgeDirection::In,
                         Some(EdgeKind::DerivedFrom),
                         None,
                     )? {
                         let id = entry?.target;
-                        let Some(candidate) = self.port_entity_get(txn, &id)? else {
+                        let Some(candidate) = self.port_entity_get(content.read(), &id)? else {
                             continue;
                         };
                         if candidate.entity_type == ENTITY_TYPE_ASSET_TEXT {
@@ -320,7 +330,7 @@ impl Vault {
                 } else {
                     (source, source)
                 };
-                create_from_text_in_txn(self, txn, text_source, citation, kind, actor)
+                create_from_text_in_txn(self, content, text_source, citation, kind, actor)
                     .map_err(Into::into)
             })
     }
@@ -357,22 +367,22 @@ fn live_header(
 }
 fn create_from_text_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
     source: EntityId,
     citation: EntityId,
     kind: super::NoteKind,
     actor: WriteActor,
 ) -> crate::error::Result<EntityId> {
-    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-    let header = live_header(vault, txn, source)?;
+    let mutation_recorded_at = content.recorded_at()?;
+    let header = live_header(vault, content.read(), source)?;
     let text = if header.entity_type == ENTITY_TYPE_NOTE {
-        match load_doc(vault, txn, source)? {
+        match load_doc(vault, content.read(), source)? {
             Some(doc) => doc.text(),
-            None => note_core(vault, txn, source)?.1.markdown,
+            None => note_core(vault, content.read(), source)?.1.markdown,
         }
     } else if header.entity_type == ENTITY_TYPE_ASSET_TEXT {
         let raw = vault
-            .get_raw_in(txn, &source)?
+            .get_raw_in(content.read(), &source)?
             .ok_or(invalid("source disappeared"))?;
         String::from_utf8(raw[ENTITY_METADATA_HEADER_LEN..].to_vec())
             .map_err(|_| invalid("source text is not UTF-8"))?
@@ -387,18 +397,19 @@ fn create_from_text_in_txn(
         author_ref: actor.entity_ref(),
         markdown: text,
     })?;
-    vault
-        .batch_in()
-        .put_authored_note(
-            &id,
-            &actor.entity_ref(),
-            TimeRange { start: at, end: at },
-            at,
-            &body,
-        )
-        .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
-        .edge(&id, EdgeKind::DerivedFrom, &citation, 1.0)
-        .apply(txn)?;
+    content.apply_batch(
+        vault
+            .batch_in()
+            .put_authored_note(
+                &id,
+                &actor.entity_ref(),
+                TimeRange { start: at, end: at },
+                at,
+                &body,
+            )
+            .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
+            .edge(&id, EdgeKind::DerivedFrom, &citation, 1.0),
+    )?;
     Ok(id)
 }
 
@@ -407,11 +418,11 @@ fn create_from_text_in_txn(
 const PREDICATE_FACET_FORK_SUGGESTED: &str = "facet.fork_suggested";
 
 fn fork_links(
-    batch: crate::batch::TxnBatchBuilder<'_>,
+    batch: crate::batch::BatchBuilder<'_>,
     fork: EntityId,
     origin: EntityId,
     supersede: bool,
-) -> crate::batch::TxnBatchBuilder<'_> {
+) -> crate::batch::BatchBuilder<'_> {
     let batch = batch.edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0);
     if supersede {
         batch.edge(&fork, EdgeKind::Supersedes, &origin, 1.0)

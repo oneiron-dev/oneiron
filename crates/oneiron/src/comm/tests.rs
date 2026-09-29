@@ -220,8 +220,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
     ];
     let accepted = well_formed
         .iter()
-        .map(CommClaimValue::claim_body)
-        .map(|body| validate_through_chokepoint(&body))
+        .map(|value| validate_through_chokepoint(&value.claim_body()?))
         .collect::<Result<Vec<_>>>()?;
     assert_eq!(accepted.len(), 4);
 
@@ -229,7 +228,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
     // head — every channel — and validates. It is the same body the contact
     // writer projects, and `well_formed[0]` above proves the channel-scoped
     // shape still validates unchanged beside it.
-    let mut missing_channel = well_formed[0].claim_body();
+    let mut missing_channel = well_formed[0].claim_body()?;
     let Value::Map(entries) = &mut missing_channel.value else {
         unreachable!("fixture value is a map")
     };
@@ -245,7 +244,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
         }
     );
     // Every OTHER family member still requires its channel class.
-    let mut missing_required_channel = well_formed[1].claim_body();
+    let mut missing_required_channel = well_formed[1].claim_body()?;
     let Value::Map(entries) = &mut missing_required_channel.value else {
         unreachable!("fixture value is a map")
     };
@@ -254,7 +253,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
         .expect_err("missing channel_class rejected");
     assert_eq!(missing_error.kind(), ErrorKind::InvalidClaimBody);
 
-    let mut wrong_shape = well_formed[1].claim_body();
+    let mut wrong_shape = well_formed[1].claim_body()?;
     wrong_shape.value = Value::from("email");
     let shape_error =
         validate_through_chokepoint(&wrong_shape).expect_err("non-map value rejected");
@@ -267,7 +266,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let predicate_error =
         validate_through_chokepoint(&one_segment).expect_err("one-segment predicate rejected");
     assert_eq!(predicate_error.kind(), ErrorKind::InvalidPredicate);
@@ -1349,10 +1348,11 @@ fn stale_non_person_cached_party_is_reminted_before_reuse() -> CommResult<()> {
     )?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.vault_meta.put(
+        PARTY_INDEX.put(
+            &vault.store,
             &mut wtxn,
-            &party_index_key("party-reuse"),
-            stale_id.as_bytes(),
+            &party_index_digest("party-reuse"),
+            &stale_id,
         )?;
         wtxn.commit()?;
     }
@@ -1619,10 +1619,10 @@ fn projected_claim_ids_are_derived_from_the_source_event_not_minted() -> CommRes
     });
     assert_ne!(split_left, split_right);
 
-    // The derived id carries the same v7 version/variant nibbles as the
-    // connector actor id, so it is a well-formed entity id.
+    // The derived id comes from the one derived-id rule: UUID version 8 and
+    // the RFC 9562 variant, like every other derived id.
     let bytes = base.as_bytes();
-    assert_eq!(bytes[6] & 0xf0, 0x70);
+    assert_eq!(bytes[6] & 0xf0, 0x80);
     assert_eq!(bytes[8] & 0xc0, 0x80);
     Ok(())
 }
@@ -1870,7 +1870,7 @@ fn derived_id_collision_with_a_rejected_twin_fails_closed() -> CommResult<()> {
     // Squat the derived id with a claim that decodes to the SAME
     // CommClaimValue on the SAME subject edge and differs only on the consent
     // axis. Typed equivalence cannot see that; byte identity must.
-    let mut rejected = value.claim_body();
+    let mut rejected = value.claim_body()?;
     rejected.approval = ClaimApprovalStatus::Rejected;
     vault.put_claim(&derived, &rejected, TimeRange { start: 10, end: 10 }, 10)?;
 
@@ -1959,20 +1959,14 @@ fn comm_event_is_projected(vault: &Vault, event_id: EntityId) -> CommResult<bool
 
 fn clear_party_index(vault: &Vault, party: &str) -> CommResult<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, &party_index_key(party))?;
+    PARTY_INDEX.delete(&vault.store, &mut wtxn, &party_index_digest(party))?;
     wtxn.commit()?;
     Ok(())
 }
 
 fn point_party_index(vault: &Vault, party: &str, id: EntityId) -> CommResult<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, &party_index_key(party), id.as_bytes())?;
+    PARTY_INDEX.put(&vault.store, &mut wtxn, &party_index_digest(party), &id)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -2140,18 +2134,39 @@ fn malformed_person_bodies_do_not_wedge_party_resolution() -> CommResult<()> {
     Ok(())
 }
 
-fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+/// Topology DECISION event ids. Each applied decision also stores a separate
+/// admission-disposition fact (and, when attributed, an attribution fact) in
+/// the same engine-owned family; those are not decisions.
+fn identity_topology_decision_ids(vault: &Vault) -> CommResult<Vec<EntityId>> {
+    use crate::identity_topology::StoredIdentityOpAction;
     let rtxn = vault.store.env.read_txn()?;
-    let mut count = 0;
+    let mut ids = Vec::new();
     for entry in vault
         .store
         .type_index
         .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
     {
-        entry?;
-        count += 1;
+        let (key, _) = entry?;
+        let id = entity_id_from_type_index_key(&key)?;
+        let is_decision = vault
+            .identity_topology_event_in_txn(&rtxn, &id)?
+            .is_some_and(|event| {
+                !matches!(
+                    event.action,
+                    StoredIdentityOpAction::AdmissionDisposition(_)
+                        | StoredIdentityOpAction::AuthorAttribution { .. }
+                        | StoredIdentityOpAction::AuthorRedaction { .. }
+                )
+            });
+        if is_decision {
+            ids.push(id);
+        }
     }
-    Ok(count)
+    Ok(ids)
+}
+
+fn count_identity_topology_events(vault: &Vault) -> CommResult<usize> {
+    Ok(identity_topology_decision_ids(vault)?.len())
 }
 
 #[test]
@@ -2207,16 +2222,7 @@ fn twin_merge_records_sorted_evidence_and_the_stable_rationale_token() -> CommRe
     run_comm_projector(&vault)?;
 
     let event_id = {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for entry in vault
-            .store
-            .type_index
-            .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-        {
-            let (key, _) = entry?;
-            ids.push(entity_id_from_type_index_key(&key)?);
-        }
+        let ids = identity_topology_decision_ids(&vault)?;
         assert_eq!(ids.len(), 1);
         ids[0]
     };
@@ -2360,8 +2366,7 @@ fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
         occurred_at: 10,
     }]
     .iter()
-    .map(CommClaimValue::claim_body)
-    .map(|body| validate_through_chokepoint(&body))
+    .map(|value| validate_through_chokepoint(&value.claim_body()?))
     .collect::<Result<Vec<_>>>()?;
     assert_eq!(accepted.len(), 1);
 
@@ -2371,7 +2376,7 @@ fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
         reason: "please stop".to_owned(),
         occurred_at: 11,
     }
-    .claim_body();
+    .claim_body()?;
     let error = validate_through_chokepoint(&invalid).expect_err("free-form reason rejected");
     assert_eq!(error.kind(), ErrorKind::InvalidClaimBody);
     Ok(())
@@ -3274,7 +3279,7 @@ fn opt_out_reason_tokens_use_receipt_vocabulary() -> CommResult<()> {
             occurred_at: 10 + index as u64,
         };
         assert!(matches!(
-            validate_comm_claim_structure(&rejected.claim_body()),
+            validate_comm_claim_structure(&rejected.claim_body()?),
             Err(Error::InvalidClaimBody(_))
         ));
         // And the receipt token validates, channel-scoped or party-wide.
@@ -3285,7 +3290,7 @@ fn opt_out_reason_tokens_use_receipt_vocabulary() -> CommResult<()> {
                 reason: token.to_owned(),
                 occurred_at: 10 + index as u64,
             };
-            validate_comm_claim_structure(&accepted.claim_body())?;
+            validate_comm_claim_structure(&accepted.claim_body()?)?;
         }
     }
     assert_eq!(CounterpartyOptOutReason::from_receipt_reason("stop"), None);
@@ -3553,20 +3558,14 @@ fn gate_holds_for_counterparty_opt_out(vault: &Vault, counterparty: &str) -> Com
 
 /// Seeds one email ChannelIdentity so a contact resolves to a channel class.
 fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<()> {
-    let identity = crate::channel_identity::ChannelIdentity {
-        auth_mode: crate::channel_identity::ChannelAuthMode::ApiKey,
-        channel: "email".to_owned(),
-        address_or_handle: address.to_owned(),
-        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
-        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
-        state: crate::channel_identity::ChannelIdentityState::Active,
-        pending_fulfillment: None,
-        state_changed_at: 1,
-        quarantine_until: None,
-        reputation_ref: None,
-        manifest_ref: None,
-        grant: None,
-    };
+    let identity = crate::test_util::self_held_identity_in_state(
+        "email",
+        address,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
     vault
         .create_channel_identity(&id, &identity)
         .map_err(CommError::Engine)
@@ -3760,7 +3759,7 @@ fn durable_receipt_replay_survives_party_deletion_and_remint() -> CommResult<()>
     let original = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
     assert!(vault.delete_entity_with_options(
         &original,
-        crate::deletion::DeleteEntityOptions { purge: true },
+        crate::deletion::DeleteEntityOptions { purge: true }
     )?);
     record_comm_inbound_stop(&vault, "independent-stop", "email", 41)?;
     run_comm_projector(&vault)?;

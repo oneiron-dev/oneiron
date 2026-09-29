@@ -1,6 +1,6 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
-use super::admission::verify_booking_effect;
+use super::admission::{enforce_step_failure_policy, verify_booking_effect};
 use super::types::{
     OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
 };
@@ -13,7 +13,7 @@ use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
     IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
     RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry, complete_record,
-    record_definite_non_delivery,
+    record_definite_non_delivery, record_possible_delivery,
 };
 
 pub(super) enum RecoveryGovernance {
@@ -48,6 +48,9 @@ pub(super) fn replay_record<T: OutboundTransport>(
             send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
+            // A previous node may have sent before crashing. The stop reason
+            // does not carry this delivery fact; store it independently.
+            record_possible_delivery(vault, record.id, now_ms)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -62,7 +65,19 @@ pub(super) fn replay_record<T: OutboundTransport>(
             ))
         }
         (IntentState::Pending, None) => {
-            send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
+            // A refused resume writes nothing. The row stays outcome-free
+            // Pending, which already resolves as unresolved delivery.
+            {
+                let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
+            }
+            // This row was committed before a prior transport attempt. A crash
+            // could have hidden a delivered response; persist that possibility
+            // BEFORE a resumed no-wire failure can replace its retry marker.
+            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            send_pending_with_gate(
+                vault, authority, uncertain, prepared, now_ms, true, transport,
+            )
         }
         _ => Err(IntentLedgerError::InvalidRecord(
             "outbound state has no canonical recorded outcome",
@@ -94,18 +109,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
     if record.resolved_endpoint.is_some() && record.capability_provenance().is_none() {
         // Endpoint-bound rows are scoped rows. Never downgrade a reconstructed
         // one to ordinary governance when its typed discriminator is missing.
-        let abandoned = abandon_record(
-            vault,
-            record.id,
-            IntentEscalationReason::BindingInvalid,
-            now_ms,
-        )?;
-        return Ok(effect_result(
-            &abandoned,
-            None,
-            replayed,
-            Some(IntentEscalationReason::BindingInvalid),
-        ));
+        let reason = IntentEscalationReason::BindingInvalid;
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
     // Scoped capability rows must always pass the frozen grant/binding/server/
     // tool/endpoint check. Ordinary rows retain their existing endpoint-bound
@@ -118,18 +124,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             FrozenCallValidation::Valid
         )
     {
-        let abandoned = abandon_record(
-            vault,
-            record.id,
-            IntentEscalationReason::BindingInvalid,
-            now_ms,
-        )?;
-        return Ok(effect_result(
-            &abandoned,
-            None,
-            replayed,
-            Some(IntentEscalationReason::BindingInvalid),
-        ));
+        let reason = IntentEscalationReason::BindingInvalid;
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
 
     match recovery_governance(vault, &record)? {
@@ -140,27 +137,35 @@ fn send_pending_with_gate<T: OutboundTransport>(
             return Ok(result);
         }
         RecoveryGovernance::Revoke => {
-            let abandoned = abandon_record(
-                vault,
-                record.id,
-                IntentEscalationReason::ConnectorRevoked,
-                now_ms,
-            )?;
-            return Ok(effect_result(
-                &abandoned,
-                None,
-                replayed,
-                Some(IntentEscalationReason::ConnectorRevoked),
-            ));
+            let reason = IntentEscalationReason::ConnectorRevoked;
+            let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+            return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
         }
     }
 
+    // A typed mail approval is valid only with the exact current Gate input.
+    // Hostless Resume has no such context: keep Pending instead of sending on
+    // yesterday's consent. Terminal dedup returned before this branch.
+    if replayed && prepared.is_none() && record.admitted_approval.is_some() {
+        let mut held = effect_result(&record, None, replayed, None);
+        held.gate_outcome = Some("pending".into());
+        held.gate_receipt_reasons
+            .push("mail_retry_requires_live_context".into());
+        return Ok(held);
+    }
     // A live retry keeps its frozen identity and paid admission, but today's
     // policy/authorization may still stop a Pending send. Do not charge, spend
     // approval, or record a second Allow. Terminal dedup never reaches here.
     if let Some(prepared) = prepared {
         let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+        enforce_step_failure_policy(
+            vault,
+            &wtxn,
+            &policy,
+            &prepared.payload,
+            prepared.gate.provenance.actor_entity_ref,
+        )?;
         let required_grant_id = match &prepared.authorization {
             PreparedAuthorization::None => None,
             PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
@@ -177,6 +182,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
                 PreparedAuthorization::None => None,
             },
+            record
+                .admitted_approval
+                .map_or(gate::ApprovalContext::Observe, gate::ApprovalContext::Retry),
         )?;
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =
@@ -187,6 +195,22 @@ fn send_pending_with_gate<T: OutboundTransport>(
             result.dispatch.replayed = replayed;
             return Ok(result);
         }
+    } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
+        // Engine-owned Resume has no PreparedEffect. Its frozen step identity
+        // still rechecks the resident restriction before a Pending live send.
+        let txn = vault.store.env.write_txn().map_err(Error::from)?;
+        let policy = gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let frozen: serde_json::Value = serde_json::from_slice(record.payload())
+            .map_err(|_| IntentLedgerError::InvalidRecord("invalid frozen outbound payload"))?;
+        let actor_hex = frozen
+            .get("actor_entity_ref")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(IntentLedgerError::InvalidRecord(
+                "step effect actor missing",
+            ))?;
+        let actor = crate::entity_id::EntityId::from_hex(actor_hex)
+            .map_err(|_| IntentLedgerError::InvalidRecord("step effect actor invalid"))?;
+        enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
     // F2 is checked again at the last in-process boundary before transport.
@@ -196,18 +220,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             FrozenCallValidation::Valid
         )
     {
-        let abandoned = abandon_record(
-            vault,
-            record.id,
-            IntentEscalationReason::BindingInvalid,
-            now_ms,
-        )?;
-        return Ok(effect_result(
-            &abandoned,
-            None,
-            replayed,
-            Some(IntentEscalationReason::BindingInvalid),
-        ));
+        let reason = IntentEscalationReason::BindingInvalid;
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
 
     {
@@ -253,9 +268,11 @@ fn send_pending_with_gate<T: OutboundTransport>(
             Ok(effect_result(&done, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
-            Ok(effect_result(&record, Some(outcome), replayed, None))
+            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous => {
+            record_possible_delivery(vault, record.id, now_ms)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -296,6 +313,36 @@ pub(super) fn recovery_governance(
         }
         ConnectorKeyStatus::Active => {}
     }
+    // A typed capability can never be charged to a different connector,
+    // regardless of whether that ordinary key has an approved manifest.
+    if record
+        .capability_provenance()
+        .is_some_and(|capability| capability.connector() != key.connector)
+    {
+        return Ok(RecoveryGovernance::Block("connector_key_unregistered"));
+    }
+    // Compare the frozen snapshot before per-tool drift classification. An
+    // approved removal/rename makes the tool unknown to the new manifest, but
+    // the prior row must report the stale snapshot and the new manifest hash,
+    // not hide that actionable fact behind generic tool drift.
+    if record.capability_provenance().is_some()
+        && let Some(manifest) = key.retained_manifest.as_ref()
+    {
+        let frozen = crate::outbound_consent::tool_call::frozen_manifest_binding(record.payload())?;
+        let current_hash = manifest.hash()?;
+        if frozen.is_none_or(|binding| {
+            binding.key_ref != key_ref.to_hex()
+                || current_hash != binding.manifest_hash
+                || Some(binding.protocol_revision.as_str()) != key.protocol_revision.as_deref()
+        }) {
+            return Ok(RecoveryGovernance::Block("connector_manifest_stale"));
+        }
+    }
+    if key.tool_requires_confirmation(&record.tool)
+        || (record.capability_provenance().is_some() && key.retained_manifest.is_none())
+    {
+        return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
+    }
     if let Some(charter) = key.charter.as_ref() {
         if connector_key::charter_block_drifted(charter)? {
             return Ok(RecoveryGovernance::Block("charter_drift"));
@@ -335,13 +382,17 @@ pub(super) fn recovery_governance(
     Ok(RecoveryGovernance::Allow)
 }
 
-fn effect_result(
+pub(super) fn effect_result(
     record: &crate::outbound_intent_ledger::IntentLedgerRecord,
     send_outcome: Option<OutboundSendOutcome>,
     replayed: bool,
     escalation_reason: Option<IntentEscalationReason>,
 ) -> OutboundEffectResult {
     OutboundEffectResult {
+        resolution: Some(
+            crate::outbound_intent_ledger::IntentResolution::from_record(record)
+                .expect("validated outbound intent has a resolution"),
+        ),
         dispatch: IntentDispatchResult {
             class: OutboundCallClass::Effectful,
             intent_id: Some(record.id),
@@ -369,6 +420,7 @@ pub(super) fn gate_rejection(
     decision: gate::GateDecision,
 ) -> OutboundEffectResult {
     OutboundEffectResult {
+        resolution: None,
         dispatch: IntentDispatchResult {
             class: OutboundCallClass::Effectful,
             intent_id: Some(intent_id),

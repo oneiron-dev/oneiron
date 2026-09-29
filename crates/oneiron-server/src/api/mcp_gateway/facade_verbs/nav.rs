@@ -49,15 +49,13 @@ pub(super) fn project_nav_results(
     results: oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>,
 ) -> Result<(Vec<Value>, oneiron::claim::ScopedReadReceipt), McpGatewayError> {
     let mut narrowing = results.receipt;
+    let reads = results
+        .value
+        .iter()
+        .map(|row| oneiron::claim::PointRead::id(row.id).at(oneiron::memory::ReadMode::Indexed))
+        .collect::<Vec<_>>();
     let projected = scoped_read
-        .get_entities_parts_with_modes_with_receipt(
-            &results
-                .value
-                .iter()
-                .map(|row| (row.id, oneiron::memory::ReadMode::Indexed))
-                .collect::<Vec<_>>(),
-            Some(&narrowing.applied.as_filter()),
-        )
+        .read(&reads, Some(&narrowing.applied.as_filter()))
         .map_err(|error| mcp_engine_error("mcp nav projection failed", error))?;
     narrowing.restrict_with(&projected.receipt);
     let items = results
@@ -65,12 +63,12 @@ pub(super) fn project_nav_results(
         .into_iter()
         .zip(projected.value)
         .filter_map(|(row, parts)| {
-            let (kind, learned_at, body) = parts?;
+            let parts = parts?;
             Some(projection::project_entity_parts(
                 &row.id,
-                kind,
-                learned_at,
-                &body,
+                parts.entity_type,
+                parts.learned_at,
+                &parts.body?,
                 View::Summary,
             ))
         })

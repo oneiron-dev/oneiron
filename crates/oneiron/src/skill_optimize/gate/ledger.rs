@@ -1,16 +1,63 @@
 //! The verdict ledger, and the `Gate` receipts projected from it.
 
 use super::*;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 // ---------------------------------------------------------------------------
 // The verdict ledger
 // ---------------------------------------------------------------------------
 
-fn verdict_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(VERDICT_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(VERDICT_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
+fn validate_tradeoff_verdict(
+    disposition: SkillEditDisposition,
+    axes: &BTreeMap<String, GoalAxisScore>,
+    resolution: Option<&TradeoffResolution>,
+    jev: Option<&JevTradeoffVerdict>,
+) -> Result<()> {
+    if let Some(jev) = jev {
+        jev.validate()?;
+        if floor_regressed(axes) || !is_tradeoff(axes) {
+            return Err(invalid("a Jev verdict binds only a pending tradeoff"));
+        }
+    }
+    // A Jev resolution is the bound verdict on this row, echoing its question.
+    if resolution.is_some_and(|resolution| {
+        resolution.rung == TradeoffRung::Jev
+            && jev.is_none_or(|jev| jev.question_digest != resolution.evidence)
+    }) {
+        return Err(invalid("a Jev resolution requires its bound verdict"));
+    }
+    if let Some(resolution) = resolution {
+        if !matches!(
+            disposition,
+            SkillEditDisposition::AcceptedTradeoff
+                | SkillEditDisposition::RejectedTradeoff
+                | SkillEditDisposition::RefusedStaleTarget
+                | SkillEditDisposition::RefusedProtectedTier
+                | SkillEditDisposition::RefusedBindingMismatch
+                | SkillEditDisposition::RefusedSourceLoss
+                | SkillEditDisposition::RefusedSourceMalformed
+        ) || resolution.authentication.is_empty()
+            || resolution.evidence.is_empty()
+            || resolution.evidence.len() > 256
+            || floor_regressed(axes)
+            || !is_tradeoff(axes)
+        {
+            return Err(invalid("invalid tradeoff decision or scored vector"));
+        }
+    } else if matches!(
+        disposition,
+        SkillEditDisposition::AcceptedTradeoff | SkillEditDisposition::RejectedTradeoff
+    ) {
+        return Err(invalid(
+            "resolved tradeoff requires authenticated decision evidence",
+        ));
+    }
+    if disposition == SkillEditDisposition::Accepted && !dominates(axes) {
+        return Err(invalid(
+            "an automatic acceptance must dominate on every goal axis",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn record_verdict_in_txn(
@@ -18,6 +65,28 @@ pub(super) fn record_verdict_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdict: &HeldOutVerdict,
 ) -> Result<()> {
+    if verdict.measurements.is_some() != verdict.judge_revision.is_some() {
+        return Err(invalid("judged verdict requires a judge revision"));
+    }
+    if verdict.measurements.is_some() {
+        if verdict.goal_revision.is_empty() || verdict.goal_id.is_none() {
+            return Err(invalid("judged verdict has no goal revision"));
+        }
+        validate_goal_vector(&verdict.goal_axes)?;
+        validate_tradeoff_verdict(
+            verdict.disposition,
+            &verdict.goal_axes,
+            verdict.tradeoff_resolution.as_ref(),
+            verdict.tradeoff_jev.as_ref(),
+        )?;
+    } else if !verdict.goal_axes.is_empty()
+        || !verdict.goal_revision.is_empty()
+        || verdict.goal_id.is_some()
+        || verdict.tradeoff_resolution.is_some()
+        || verdict.tradeoff_jev.is_some()
+    {
+        return Err(invalid("an unscored verdict cannot carry goal axes"));
+    }
     if let Some(measurements) = &verdict.measurements {
         validate_measurements(measurements, verdict.held_out_count)?;
     } else if verdict.disposition != SkillEditDisposition::RefusedStaleTarget
@@ -39,6 +108,43 @@ pub(super) fn record_verdict_in_txn(
         (Value::from(KEY_SKILL), Value::from(verdict.skill.to_hex())),
         (Value::from(KEY_BEFORE), Value::F32(verdict.before)),
         (Value::from(KEY_AFTER), Value::F32(verdict.after)),
+        (
+            Value::from(KEY_GOAL_REVISION),
+            Value::from(verdict.goal_revision.as_str()),
+        ),
+        (
+            Value::from(KEY_GOAL_ID),
+            verdict
+                .goal_id
+                .map_or(Value::Nil, |id| Value::from(id.to_hex())),
+        ),
+        (
+            Value::from(KEY_TRADEOFF_RESOLUTION),
+            match &verdict.tradeoff_resolution {
+                Some(resolution) => Value::from(
+                    serde_json::to_string(resolution)
+                        .map_err(|_| invalid("tradeoff decision encode failed"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
+        (
+            Value::from(KEY_TRADEOFF_JEV),
+            match &verdict.tradeoff_jev {
+                Some(jev) => Value::from(
+                    serde_json::to_string(jev)
+                        .map_err(|_| invalid("Jev tradeoff encoding failed"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
+        (
+            Value::from(KEY_GOAL_AXES),
+            Value::from(
+                serde_json::to_string(&verdict.goal_axes)
+                    .map_err(|_| invalid("goal vector encode failed"))?,
+            ),
+        ),
         (
             Value::from(KEY_DISPOSITION),
             Value::from(verdict.disposition.as_str()),
@@ -106,23 +212,23 @@ pub(super) fn record_verdict_in_txn(
                 None => Value::Nil,
             },
         ),
+        (
+            Value::from(KEY_JUDGE_REVISION),
+            verdict
+                .judge_revision
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
         (Value::from(KEY_AT), Value::from(verdict.at)),
     ]);
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &row)
         .map_err(|_| invalid("skill edit verdict MessagePack encode failed"))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &verdict_key(&verdict.id), &encoded)?;
+    VERDICTS.put(&vault.store, wtxn, &verdict.id, &encoded)?;
     Ok(())
 }
 
-fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
-    let id = key
-        .get(VERDICT_PREFIX.len()..)
-        .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))
-        .and_then(|tail| parse_entity_id(tail, VERDICT_ROW_LABEL))?;
+fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
         .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
     let Value::Map(entries) = &value else {
@@ -200,11 +306,101 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
     {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
+    let goal_axes: BTreeMap<String, GoalAxisScore> = serde_json::from_str(
+        field(KEY_GOAL_AXES)
+            .and_then(Value::as_str)
+            .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+    )
+    .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+    if measurements.is_some() {
+        if field(KEY_GOAL_REVISION)
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+        }
+        validate_goal_vector(&goal_axes).map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+        // The resolution is validated below, together with the vector.
+        let headline = goal_axes
+            .values()
+            .find(|axis| axis.kind == GoalAxisKind::Primary)
+            .expect("validated primary axis");
+        if score(KEY_BEFORE)? != headline.before || score(KEY_AFTER)? != headline.after {
+            return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+        }
+    } else if !goal_axes.is_empty() || field(KEY_GOAL_REVISION).and_then(Value::as_str) != Some("")
+    {
+        return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+    }
+    let goal_id = match field(KEY_GOAL_ID) {
+        Some(Value::Nil) if measurements.is_none() => None,
+        Some(value) if measurements.is_some() => Some(
+            value
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        ),
+        _ => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
+    let tradeoff_resolution: Option<TradeoffResolution> = match field(KEY_TRADEOFF_RESOLUTION) {
+        Some(Value::Nil) => None,
+        Some(value) => Some(
+            serde_json::from_str(
+                value
+                    .as_str()
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+            )
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        ),
+        None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
+    // Required even when Nil: a v6 row cannot say whether Jev ruled it.
+    let tradeoff_jev: Option<JevTradeoffVerdict> = match field(KEY_TRADEOFF_JEV) {
+        Some(Value::Nil) => None,
+        Some(value) => Some(
+            serde_json::from_str(
+                value
+                    .as_str()
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+            )
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        ),
+        None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
+    if measurements.is_some() {
+        validate_tradeoff_verdict(
+            disposition,
+            &goal_axes,
+            tradeoff_resolution.as_ref(),
+            tradeoff_jev.as_ref(),
+        )
+        .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+    } else if tradeoff_resolution.is_some() || tradeoff_jev.is_some() {
+        return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+    }
+    let scored = measurements.is_some();
     Ok(HeldOutVerdict {
+        goal_id,
+        tradeoff_resolution,
+        tradeoff_jev,
+        goal_axes,
+        goal_revision: text(KEY_GOAL_REVISION)?,
         before: score(KEY_BEFORE)?,
         after: score(KEY_AFTER)?,
         measurements,
         accepted: disposition.admits(),
+        judge_revision: match field(KEY_JUDGE_REVISION) {
+            Some(Value::Nil) if !scored => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?
+                    .to_owned(),
+            ),
+            None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+        },
+        displaced_by_revision: None,
         id,
         proposal: entity(KEY_PROPOSAL)?,
         skill: entity(KEY_SKILL)?,
@@ -259,16 +455,28 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
     })
 }
 
+fn decode_verdict_with_marker(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<HeldOutVerdict> {
+    let mut verdict = decode_verdict(id, raw)?;
+    verdict.displaced_by_revision = DISPLACED_VERDICT
+        .get(&vault.store, txn, &verdict.id)?
+        .map(|mark| mark.0);
+    Ok(verdict)
+}
+
 pub(super) fn verdict_rows_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<Vec<HeldOutVerdict>> {
-    let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(rtxn, VERDICT_PREFIX)? {
-        let (key, raw) = row?;
-        out.push(decode_verdict(&key, &raw)?);
-    }
-    Ok(out)
+    VERDICTS
+        .scan(&vault.store, rtxn)?
+        .into_iter()
+        .map(|(id, raw)| decode_verdict_with_marker(vault, rtxn, id, &raw))
+        .collect()
 }
 
 /// Every gate verdict this vault has ruled, in ruling order.
@@ -324,16 +532,6 @@ pub fn is_skill_edit_verdict_receipt(record: &ReceiptRecord) -> bool {
 
 /// The exclusive upper bound of the verdict keyspace.
 ///
-/// The prefix ends in `\0`, so incrementing its last byte names the first key
-/// past the family without touching any row inside it.
-fn verdict_key_range_end() -> Vec<u8> {
-    let mut end = VERDICT_PREFIX.to_vec();
-    if let Some(last) = end.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    end
-}
-
 /// Projects the verdict ledger as `Gate` receipts.
 ///
 /// A gate verdict IS a gate decision, so it mints no kind of its own — the
@@ -361,18 +559,11 @@ pub(crate) fn skill_edit_verdict_receipts(
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    let end = verdict_key_range_end();
-    let bounds = (
-        std::ops::Bound::Included(VERDICT_PREFIX),
-        std::ops::Bound::Excluded(&end[..]),
-    );
     let mut out = Vec::new();
     // One row PAST the cap is reached and never decoded: it is what separates a
     // ledger holding exactly the cap from one the cap truncated.
-    for (scanned, row) in vault
-        .store
-        .vault_meta
-        .rev_range(&rtxn, &bounds)?
+    for (scanned, row) in VERDICTS
+        .iter_rev_from(&vault.store, &rtxn, &[])?
         .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1)
         .enumerate()
     {
@@ -380,8 +571,9 @@ pub(crate) fn skill_edit_verdict_receipts(
             note_verdict_scan_capped();
             break;
         }
-        let (key, raw) = row?;
-        let record = skill_edit_verdict_receipt(&decode_verdict(&key, &raw)?);
+        let (id, raw) = row?;
+        let record =
+            skill_edit_verdict_receipt(&decode_verdict_with_marker(vault, &rtxn, id, &raw)?);
         if !query.matches(&record) {
             continue;
         }
@@ -442,6 +634,33 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
             verdict.held_out_digest.clone(),
         ),
     ]);
+    if let Some(resolution) = &verdict.tradeoff_resolution {
+        fields.insert(
+            FIELD_SKILL_EDIT_TRADEOFF_RESOLUTION.to_owned(),
+            serde_json::to_string(resolution).expect("validated tradeoff decision serializes"),
+        );
+    }
+    if let Some(jev) = &verdict.tradeoff_jev {
+        fields.insert(
+            FIELD_SKILL_EDIT_TRADEOFF_JEV.to_owned(),
+            serde_json::to_string(jev).expect("validated Jev verdict serializes"),
+        );
+    }
+    if !verdict.goal_axes.is_empty() {
+        fields.insert(
+            FIELD_SKILL_EDIT_GOAL_AXES.to_owned(),
+            serde_json::to_string(&verdict.goal_axes).expect("validated goal vector serializes"),
+        );
+    }
+    if let Some(judge) = &verdict.judge_revision {
+        fields.insert(FIELD_SKILL_EDIT_JUDGE_REVISION.to_owned(), judge.clone());
+    }
+    if let Some(replacement) = &verdict.displaced_by_revision {
+        fields.insert(
+            FIELD_SKILL_EDIT_JUDGE_DISPLACED_BY.to_owned(),
+            replacement.clone(),
+        );
+    }
     if let Some(measurements) = &verdict.measurements {
         fields.insert(
             FIELD_SKILL_EDIT_MEASUREMENTS.to_owned(),
@@ -504,4 +723,133 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
         )],
         fields,
     }
+}
+
+/// A candidate verdict retired with its judge: the replacement judge revision, keyed by the
+/// verdict id. The verdict row itself stays as ruled.
+const DISPLACED_VERDICT: SideTable<EntityId, VerdictDisplacement, Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_DISPLACED_JUDGE);
+
+/// The fence on a displaced candidate judge revision: the replacement revision, keyed by the
+/// displaced revision's text.
+const DISPLACED_REVISION: SideTable<String, JudgeDisplacement, Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_DISPLACED_REVISION);
+
+/// [`DISPLACED_VERDICT`]'s row: the replacement revision as UTF-8. A row that is not UTF-8 is
+/// verdict-ledger corruption, as it always read.
+struct VerdictDisplacement(String);
+
+impl RawValue for VerdictDisplacement {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        String::from_utf8(bytes.to_vec())
+            .map(Self)
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL).into())
+    }
+}
+
+/// [`DISPLACED_REVISION`]'s row: the replacement revision as UTF-8.
+struct JudgeDisplacement(String);
+
+impl RawValue for JudgeDisplacement {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        String::from_utf8(bytes.to_vec())
+            .map(Self)
+            .map_err(|_| Error::CorruptedIndex("candidate judge displacement").into())
+    }
+}
+
+pub(crate) fn validate_judge_revision(revision: &str) -> Result<()> {
+    if revision.is_empty() || revision.len() > 256 || revision.chars().any(char::is_control) {
+        return Err(invalid("invalid candidate judge revision"));
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_current_judge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<()> {
+    validate_judge_revision(revision)?;
+    if DISPLACED_REVISION.contains(&vault.store, txn, &revision.to_owned())? {
+        return Err(invalid("candidate judge revision was displaced"));
+    }
+    Ok(())
+}
+
+pub(crate) fn displaced_judge_revision_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<Option<String>> {
+    Ok(DISPLACED_REVISION
+        .get(&vault.store, txn, &revision.to_owned())?
+        .map(|mark| mark.0))
+}
+
+/// Retire candidate-scoring judgments by their immutable judge revision.
+/// Their scores and original verdict rows remain readable, while admissions
+/// and repeat deliveries no longer treat their acceptances as standing.
+pub fn supersede_skill_edit_judge(
+    vault: &Vault,
+    displaced: &str,
+    replacement: &str,
+) -> Result<Vec<EntityId>> {
+    if displaced == replacement
+        || displaced.is_empty()
+        || replacement.is_empty()
+        || displaced.len() > 256
+        || replacement.len() > 256
+        || displaced.chars().any(char::is_control)
+        || replacement.chars().any(char::is_control)
+    {
+        return Err(invalid("invalid candidate judge replacement"));
+    }
+    vault.with_write_txn(|txn| {
+        let revision_key = displaced.to_owned();
+        if let Some(held) = DISPLACED_REVISION.get(&vault.store, txn, &revision_key)? {
+            if held.0 != replacement {
+                return Err(invalid(
+                    "candidate judge revision already displaced by another judge",
+                ));
+            }
+        } else {
+            DISPLACED_REVISION.put(
+                &vault.store,
+                txn,
+                &revision_key,
+                &JudgeDisplacement(replacement.to_owned()),
+            )?;
+        }
+        let mut ids = Vec::new();
+        for verdict in verdict_rows_in_txn(vault, txn)? {
+            if verdict.judge_revision.as_deref() != Some(displaced) {
+                continue;
+            }
+            if let Some(held) = DISPLACED_VERDICT.get(&vault.store, txn, &verdict.id)? {
+                if held.0 != replacement {
+                    return Err(invalid(
+                        "candidate verdict already displaced by another judge",
+                    ));
+                }
+            } else {
+                DISPLACED_VERDICT.put(
+                    &vault.store,
+                    txn,
+                    &verdict.id,
+                    &VerdictDisplacement(replacement.to_owned()),
+                )?;
+            }
+            ids.push(verdict.id);
+        }
+        Ok(ids)
+    })
 }

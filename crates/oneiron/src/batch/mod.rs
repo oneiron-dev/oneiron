@@ -1,19 +1,23 @@
 pub mod export;
 pub(crate) mod secret_scan;
 
+mod actor_content;
 mod agent_definition_create;
 mod authority_log;
 mod base_apply;
 mod builder;
 mod child_of_overlay;
-mod claim_candidate_apply;
+pub(crate) mod claim_candidate_apply;
 mod claim_materialization;
+mod verified_claim_transition;
+pub(crate) use verified_claim_transition::VerifiedClaimTransition;
 mod deindex;
 mod edge_apply;
 mod facet_identity;
 mod facet_validation;
 mod gate_mode;
 mod gate_staging;
+mod leader_chat_admission;
 mod lexical_query_hints;
 mod ops_pipeline;
 mod person_substrate;
@@ -26,7 +30,6 @@ mod recovery_shell;
 pub(crate) use recovery_shell::restore_recovery_shell_in_txn;
 mod short_id;
 mod thread_claim_index;
-mod txn_builder;
 mod types;
 mod vad_postcommit;
 mod vector_apply;
@@ -35,27 +38,32 @@ mod vector_apply;
 mod tests;
 
 pub use self::builder::BatchBuilder;
-pub use self::txn_builder::TxnBatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
+#[cfg(feature = "sync")]
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 use self::base_apply::apply_ops_with_origin;
-pub(crate) use self::base_apply::apply_session_bundle_claim_puts;
+pub(crate) use self::base_apply::{
+    apply_session_bundle_claim_puts, apply_session_bundle_claim_puts_with_transitions,
+};
 pub(crate) use self::builder::BatchOp;
-#[cfg(feature = "sync")]
-pub(crate) use self::child_of_overlay::child_of_prefix;
 pub(crate) use self::claim_materialization::{
-    ClaimMaterialization, apply_owner_bound_claim_puts, authenticated_claim_author_in_txn,
+    ClaimMaterialization, apply_owner_bound_claim_puts,
+    apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::deindex::deindex_entity_for_test;
-pub(crate) use self::deindex::{deindex_entity, deindex_lexical_query_hints_for_target};
+pub(crate) use self::deindex::{
+    deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,
+    drop_seeded_actor_row,
+};
 pub(crate) use self::facet_validation::validate_facet_of_edge;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
+pub(crate) use self::actor_content::apply_actor_ops;
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,
@@ -81,10 +89,6 @@ pub(crate) use self::types::{
 // Private re-exports preserving the module's original flat namespace for
 // sibling files and the white-box test module (`tests.rs` uses `super::*`).
 use self::authority_log::*;
-// `builder`'s module-private items are reached cross-file only from sync-gated
-// code (`replicated_put_op`); its public items route via the re-exports above.
-#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
-use self::builder::*;
 use self::child_of_overlay::*;
 use self::claim_candidate_apply::*;
 use self::deindex::*;

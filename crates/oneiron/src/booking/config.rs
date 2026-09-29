@@ -25,6 +25,7 @@ use crate::booking::{BookingError, EventTypeKey};
 use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
 /// The one booking-page configuration predicate. Matching is exact everywhere:
@@ -389,15 +390,26 @@ pub(crate) fn validate_event_type_claim(body: &ClaimBody) -> Result<()> {
 /// shortcut, and it must key it exactly as the read side resolves it.
 #[must_use]
 pub fn event_type_index_key(page_ref: EntityId, key: &EventTypeKey) -> Vec<u8> {
+    let mut index_key = Vec::with_capacity(BOOKING_EVENT_TYPE_META_PREFIX.len() + 32);
+    index_key.extend_from_slice(BOOKING_EVENT_TYPE_META_PREFIX);
+    index_key.extend_from_slice(&event_type_index_digest(page_ref, key));
+    index_key
+}
+
+/// The digest [`event_type_index_key`] spells, for the typed
+/// [`EVENT_TYPE_SHORTCUT`] table's own key.
+fn event_type_index_digest(page_ref: EntityId, key: &EventTypeKey) -> [u8; 32] {
     let mut material = Vec::with_capacity(page_ref.as_bytes().len() + key.0.len());
     material.extend_from_slice(page_ref.as_bytes());
     material.extend_from_slice(key.0.as_bytes());
-    let digest = blake3::hash(&material);
-    let mut index_key = Vec::with_capacity(BOOKING_EVENT_TYPE_META_PREFIX.len() + 32);
-    index_key.extend_from_slice(BOOKING_EVENT_TYPE_META_PREFIX);
-    index_key.extend_from_slice(digest.as_bytes());
-    index_key
+    *blake3::hash(&material).as_bytes()
 }
+
+/// The node-local `(page_ref, key)` shortcut: the entity id of the live
+/// configuration claim last resolved for this pair. Key: hash32
+/// ([`event_type_index_digest`]).
+const EVENT_TYPE_SHORTCUT: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::BOOKING_EVENT_TYPE_CONFIG_SHORTCUT);
 
 /// Resolves the live configuration for `(page_ref, key)`.
 ///
@@ -430,13 +442,11 @@ pub(super) fn load_event_type_config_in_txn(
     page_ref: EntityId,
     key: &EventTypeKey,
 ) -> std::result::Result<EventTypeConfig, BookingError> {
-    let shortcut = vault
-        .store
-        .vault_meta
-        .get(rtxn, &event_type_index_key(page_ref, key))
-        .map_err(storage_failure)?
-        .and_then(|raw| <[u8; 16]>::try_from(raw.as_ref()).ok())
-        .and_then(|bytes| EntityId::from_bytes(bytes).ok());
+    // A malformed shortcut is a cache miss like any other: the scan below is
+    // always the authoritative fallback.
+    let shortcut = EVENT_TYPE_SHORTCUT
+        .get_lenient(&vault.store, rtxn, &event_type_index_digest(page_ref, key))
+        .map_err(storage_failure)?;
     if let Some(id) = shortcut
         && let Some(config) = live_config_in_txn(vault, rtxn, &id, page_ref, key)?
     {
@@ -597,6 +607,7 @@ mod tests {
             crate::claim::ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     }
 
     #[test]

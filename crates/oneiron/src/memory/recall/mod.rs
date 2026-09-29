@@ -6,9 +6,9 @@ use super::structural::*;
 use super::*;
 use crate::ports::EntityStoreRead;
 
-mod authority;
 mod items;
 mod presentation;
+mod scope_honesty;
 
 use self::presentation::{hedge_bucket_for, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::claim_surfaceable;
+use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, claim_surfaceable};
 fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
     let mut value = crate::companion::companion_value_to_json(value);
     crate::batch::export::redact_credentials(&mut value);
@@ -28,7 +28,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
 use crate::retrieval_depth::RecallExecution;
 use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
@@ -154,6 +154,10 @@ pub struct MemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f32>,
+    /// A conversation record's current reactions, one grouped line per
+    /// glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<String>,
 }
 
 /// Scope honesty (S6): what the scope excluded.
@@ -199,6 +203,8 @@ pub struct MemoryPack {
     pub pack_version: u32,
     /// Text rendering in the requested OF-096 format; `None` = typed only.
     pub rendered: Option<String>,
+    /// The bound actor's requested/ceiling/intersection receipt for every read in this pack.
+    pub narrowing: Box<ScopedReadReceipt>,
 }
 
 impl Memory<'_> {
@@ -246,6 +252,7 @@ impl Memory<'_> {
                 return Ok(false);
             };
             Ok(claim_surfaceable(&body)
+                && crate::claim::has_live_support_in_txn(store, txn, &body)?
                 && body.world == world
                 && predicate.is_none_or(|predicate| body.predicate == predicate))
         };
@@ -408,11 +415,8 @@ impl Memory<'_> {
             // and its `result_ids` into B's overlay, and derives B's PPR seeds
             // for A's pack: private telemetry cross-associated and results
             // contaminated, in both directions. The executor binding refuses
-            // the same mismatch by the same identity.
-            if !std::ptr::eq(
-                session.store_identity(),
-                std::ptr::from_ref(&self.vault.store),
-            ) {
+            // the same mismatch by the same vault identity.
+            if session.vault_id() != self.vault.vault_id() {
                 return Err(MemoryError::bad_request(
                     "off-record session belongs to a different vault than this memory facade",
                 ));
@@ -444,6 +448,18 @@ impl Memory<'_> {
                 ));
             }
         }
+        let canonical_lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let session_view = session
+            .map(crate::off_record::OffRecordSession::read_view)
+            .transpose()?;
+        let lane = match session_view.as_ref() {
+            Some(view) => self
+                .vault
+                .scoped_read_in_session(canonical_lane.actor_key().clone(), view),
+            None => canonical_lane,
+        };
+        let mut receipt = lane.read_receipt(None, 0)?;
+        let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
         let world_scope = match &scope.world_ref {
@@ -451,27 +467,28 @@ impl Memory<'_> {
             None => WorldScope::All,
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
-        let (authority, scoped_read) = self.bound_recall_authority()?;
-        // Retrieval ceilings do not replace the ordinary row-level scoped
-        // read predicate (relationship grants, worlds, facets, and privacy).
-        let readable = |store: &crate::store::Store,
-                        txn: &heed::RoTxn<'_>,
-                        id: &EntityId|
-         -> crate::Result<bool> {
-            if let Some(filter) = candidate_filter
-                && !filter(store, txn, id)?
-            {
+        if receipt.applied.deny_all {
+            return Ok(MemoryPack {
+                items: Vec::new(),
+                scope_honesty: ScopeHonesty::default(),
+                retrieval_meta: RetrievalMeta {
+                    sparse: Some(true),
+                    deep_pending,
+                    ..RetrievalMeta::default()
+                },
+                pack_version: MEMORY_PACK_VERSION,
+                rendered: None,
+                narrowing: Box::new(receipt),
+            });
+        }
+        // Admission runs in each candidate's retrieval transaction before ranking.
+        let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
+            // Reject irrelevant kind/predicate rows before the actor gate.
+            if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
                 return Ok(false);
             }
-            match &scoped_read {
-                Some(scoped) => {
-                    let current = crate::gate::resolve_policy_manifest(store, txn)?;
-                    scoped.is_entity_readable_with_policy_in(txn, &current, id)
-                }
-                None => Ok(true),
-            }
+            lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
         };
-        let use_readable = scoped_read.is_some() || candidate_filter.is_some();
 
         let seeds = if effective != Effort::Light
             && !execution
@@ -480,11 +497,30 @@ impl Memory<'_> {
         {
             let hits = match (session, route.as_ref()) {
                 (Some(session), Some(route)) => {
-                    session.search_text_routed(route, query, PPR_SEED_LIMIT)?
+                    let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
+                    let raw = session.search_text_routed(route, query, limit)?;
+                    let scored = lane.filter_scored_entities(raw)?;
+                    receipt.restrict_with(&scored.receipt);
+                    scored.value
                 }
-                _ => self.vault.search_text(query, PPR_SEED_LIMIT)?,
+                _ => {
+                    // A deadline's text-stage hook belongs to the principal
+                    // retrieval, not its preparatory seed lookup. Still
+                    // admit every seed through the actor's read lane.
+                    let scored = if execution.deadline.is_some() {
+                        let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
+                        lane.filter_scored_entities(self.vault.search_text(query, limit)?)?
+                    } else {
+                        lane.search_text(query, PPR_SEED_LIMIT, None)?
+                    };
+                    receipt.restrict_with(&scored.receipt);
+                    scored.value
+                }
             };
-            hits.into_iter().map(|hit| hit.id).collect::<Vec<_>>()
+            hits.into_iter()
+                .take(PPR_SEED_LIMIT)
+                .map(|hit| hit.id)
+                .collect::<Vec<_>>()
         } else {
             Vec::new()
         };
@@ -505,13 +541,12 @@ impl Memory<'_> {
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
-                    .authority_filter(authority);
-                if use_readable {
-                    pipeline = pipeline.filter_candidates(&readable);
-                }
+                    .authority_filter(plan_filter.clone());
+                pipeline = pipeline.filter_candidates(&admitted);
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
+
                 if let Some(deadline) = execution.deadline {
                     pipeline = pipeline.deadline(deadline);
                 }
@@ -535,28 +570,23 @@ impl Memory<'_> {
                     .boost_salience()
                     .boost_confidence();
                 let retrieval = pipeline.run_for_pack()?;
-                let hits = retrieval.scores;
-                let total = hits.len() as u64;
+                lane.end_recall_plan()?;
+                let scoped = lane.filter_scored_entities(retrieval.scores)?;
+                receipt.restrict_with(&scoped.receipt);
                 let mut items = Vec::new();
-                for hit in hits.into_iter().take(limit) {
+                for hit in scoped.value.into_iter().take(limit) {
                     let Some(revision) = retrieval.revisions.get(&hit.id) else {
                         continue;
                     };
                     let mode = crate::vault::ReadMode::Pinned(*revision);
-                    if let Some(reader) = scoped_read.as_ref()
-                        && reader
-                            .get_entity_parts_with_mode_with_receipt(&hit.id, mode, None)?
-                            .value
-                            .is_none()
-                    {
-                        continue;
-                    }
                     if let Some(item) =
-                        self.memory_item_for(&hit.id, Some(facet_id), mode, scoped_read.as_ref())?
+                        self.memory_item_for(&lane, &hit.id, Some(facet_id), mode, &mut receipt)?
                     {
                         items.push(item);
                     }
                 }
+                let total = items.len() as u64;
+
                 (
                     items,
                     total,
@@ -573,10 +603,9 @@ impl Memory<'_> {
                     .limit(limit)
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
-                    .authority_filter(authority);
-                if use_readable {
-                    builder = builder.filter_candidates(&readable);
-                }
+                    .authority_filter(plan_filter.clone());
+                builder = builder.filter_candidates(&admitted);
+
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
                 }
@@ -619,36 +648,11 @@ impl Memory<'_> {
                             .boost_confidence();
                     }
                 }
-                let (pack, vector_completed) = builder.run_with_vector_status()?;
-                let mut pack = pack.value;
-                if let Some(reader) = scoped_read.as_ref() {
-                    reader.filter_context_pack(&mut pack)?;
-                } else {
-                    // A context pack's auxiliary neighbors bypass the primary
-                    // candidate gate. Enforce the live owner type floor before
-                    // either rendering or constructing prompt-facing items.
-                    let txn = self
-                        .vault
-                        .store
-                        .env
-                        .read_txn()
-                        .map_err(crate::Error::from)?;
-                    let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
-                    let floor = policy.retrieval_floor_for_actor(None);
-                    let filter = crate::gate::narrow_retrieval_filter(&floor, None)?;
-                    drop(txn);
-                    let admits = |kind| {
-                        crate::pipeline::retrieval_type_allowed(
-                            &filter,
-                            None,
-                            &self.vault.store,
-                            kind,
-                        )
-                    };
-                    pack.results.retain(|entity| admits(entity.entity_type));
-                    pack.neighbors.retain(|entity| admits(entity.entity_type));
-                }
-                let total = pack.stats.candidates_considered as u64;
+                let (scoped, vector_completed) = builder.run_scoped_with_vector_status(&lane)?;
+                receipt.restrict_with(&scoped.receipt);
+                let mut pack = scoped.value;
+                lane.attach_reactions(&mut pack)?;
+
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {
                         format: fmt,
@@ -676,11 +680,13 @@ impl Memory<'_> {
                         },
                     );
                     if let Some(item) =
-                        self.memory_item_for(&entity.id, None, mode, scoped_read.as_ref())?
+                        self.memory_item_for(&lane, &entity.id, None, mode, &mut receipt)?
                     {
                         items.push(item);
                     }
                 }
+                let total = items.len() as u64;
+
                 (
                     items,
                     total,
@@ -694,8 +700,11 @@ impl Memory<'_> {
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         Ok(MemoryPack {
             scope_honesty: ScopeHonesty {
-                out_of_scope_worlds: self
-                    .out_of_scope_worlds(scope.world_ref.as_deref(), scoped_read.as_ref())?,
+                out_of_scope_worlds: self.out_of_scope_worlds(
+                    &lane,
+                    &mut receipt,
+                    scope.world_ref.as_deref(),
+                )?,
             },
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
@@ -712,56 +721,7 @@ impl Memory<'_> {
             items,
             pack_version: MEMORY_PACK_VERSION,
             rendered,
+            narrowing: Box::new(receipt),
         })
-    }
-
-    /// Scope honesty: worlds holding surfaceable claims outside the
-    /// requested world scope. Bounded scan (first
-    /// [`SCOPE_HONESTY_SCAN_CAP`] claims); unset scope excludes nothing.
-    pub(super) fn out_of_scope_worlds(
-        &self,
-        scope_world_ref: Option<&str>,
-        scoped_read: Option<&crate::claim::ScopedRead<'_>>,
-    ) -> MemoryResult<Vec<String>> {
-        let Some(world_ref) = scope_world_ref else {
-            return Ok(Vec::new());
-        };
-        let scope_world = self.resolve_ref(world_ref)?;
-        // Bounded page primitive, not `entities_by_type().take(cap)`: the
-        // latter materializes the whole CLAIM index and errors with
-        // IndexOverflow past MAX_TYPE_QUERY_RESULTS before `take` can run, so
-        // a large vault would hard-fail world-scoped recall.
-        let ids =
-            self.vault
-                .entities_by_type_page(ENTITY_TYPE_CLAIM, None, SCOPE_HONESTY_SCAN_CAP)?;
-        let mut worlds = BTreeSet::new();
-        for id in ids {
-            let body = match scoped_read {
-                Some(read) => {
-                    let Some((entity_type, _, bytes)) =
-                        read.get_entity_parts_with_receipt(&id, None)?.value
-                    else {
-                        continue;
-                    };
-                    if entity_type != ENTITY_TYPE_CLAIM {
-                        continue;
-                    }
-                    Some(crate::claim::decode_claim_body(&bytes, true)?)
-                }
-                None => self.vault.get_claim(&id)?,
-            };
-            let Some(body) = body else {
-                continue;
-            };
-            if !claim_surfaceable(&body) {
-                continue;
-            }
-            if let Some(world) = body.world
-                && world != scope_world
-            {
-                worlds.insert(world.to_hex());
-            }
-        }
-        Ok(worlds.into_iter().collect())
     }
 }

@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::ports::EntityStoreRead;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, StagedRow};
 
-/// `vault_meta` key prefix of the durable optimizer-BIRTH marker: this prefix ‖
-/// the entity id, exactly the [`optimizer_origin_marker_key`] key pattern.
+/// The durable optimizer-BIRTH marker, keyed by entity id.
 ///
 /// Written beside a LOCAL create whose record is optimizer-born, and never
 /// again for the life of that id. It is what makes optimizer origin survive
@@ -12,11 +12,13 @@ use crate::ports::EntityStoreRead;
 /// virgin create, the create door saw an ordinary candidate, and the record
 /// walked to `active` through the owner's door carrying an id whose gate
 /// history said "accepted". The row itself is inert to every other reader.
-const OPTIMIZER_ORIGIN_MARKER_PREFIX: &[u8] = b"skill_optimize/origin/v1\0";
+const ORIGIN_MARKER: SideTable<EntityId, Vec<Option<String>>, Raw> =
+    SideTable::new(&side_table::SKILL_OPTIMIZE_ORIGIN_MARKER);
 
 /// Schema version of one origin-marker row. Fail-closed like the verdict row:
-/// an unreadable marker refuses the create rather than admitting it.
-const ORIGIN_MARKER_SCHEMA_VERSION: u64 = 2;
+/// an unreadable marker refuses the create rather than admitting it. v3 adds
+/// the portable goal identity (ONE-2114) beside v2's resident provenance.
+const ORIGIN_MARKER_SCHEMA_VERSION: u64 = 3;
 
 const ORIGIN_MARKER_LABEL: &str = "skill optimizer origin marker";
 
@@ -60,6 +62,204 @@ pub fn admit_optimized_skill_revision(
     }
 }
 
+/// Apply an authenticated human decision to one exact, still-pending tradeoff.
+/// The host supplies its decision evidence reference; this door checks the
+/// owner handle, current scored basis and every admission clamp. An approval
+/// writes a distinct accepted-tradeoff permission, not automatic dominance.
+/// It learns no preference; an A/B pick through
+/// [`super::settle_skill_tradeoff_ask`] does.
+/// # Errors
+/// Invalid input, changed goal/evidence/body/tier, exhausted cycle cap, or
+/// storage failures. A stale decision writes no permission or closure.
+pub fn resolve_skill_edit_tradeoff(
+    vault: &Vault,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    owner: &crate::consent::AuthenticatedOwner,
+    evidence: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    resolve_skill_edit_tradeoff_with_cycle(
+        vault, proposal, pending_id, owner, evidence, choice, None, at,
+    )
+}
+
+/// Resolve a pending tradeoff in a later, proven Dreamer attempt. The new
+/// cycle is charged only when the approval is written; a retry returns the
+/// same ruling without spending another slot.
+/// # Errors
+/// Unknown attempt, stale scored basis, exhausted cycle cap, or storage errors.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the exact decision and proven attempt must both be supplied at the authority door"
+)]
+pub fn resolve_skill_edit_tradeoff_in_cycle(
+    vault: &Vault,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    owner: &crate::consent::AuthenticatedOwner,
+    evidence: &str,
+    choice: TradeoffChoice,
+    attempt: AttemptId,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    let cycle = proven_cycle(vault, attempt)?;
+    resolve_skill_edit_tradeoff_with_cycle(
+        vault,
+        proposal,
+        pending_id,
+        owner,
+        evidence,
+        choice,
+        Some(cycle),
+        at,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the decision binds proposal, owner, evidence, choice and proven cycle independently"
+)]
+fn resolve_skill_edit_tradeoff_with_cycle(
+    vault: &Vault,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    owner: &crate::consent::AuthenticatedOwner,
+    evidence: &str,
+    choice: TradeoffChoice,
+    cycle: Option<SkillEditCycle>,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    if evidence.trim().is_empty() || evidence.len() > 256 {
+        return Err(invalid(
+            "tradeoff decision requires a bounded evidence reference",
+        ));
+    }
+    vault.with_write_txn(|txn| {
+        owner.revalidate_in_txn(vault, txn)?;
+        let decision = TradeoffResolution {
+            pending: pending_id,
+            owner: owner.actor(),
+            authentication: format!("{:?}", owner.decision_id()),
+            evidence: evidence.to_owned(),
+            rung: TradeoffRung::Person,
+        };
+        let latest = standing_verdict_in_txn(vault, txn, proposal)?.ok_or(invalid(
+            "no scored tradeoff verdict stands for this proposal",
+        ))?;
+        if latest.tradeoff_resolution.as_ref() == Some(&decision)
+            && latest.disposition
+                == match choice {
+                    TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
+                    TradeoffChoice::Reject => SkillEditDisposition::RejectedTradeoff,
+                }
+        {
+            return Ok(latest); // exact redelivery, even after activation
+        }
+        let latest = open_pending_tradeoff_in_txn(vault, txn, proposal, pending_id, latest, at)?;
+        let granting_cycle = match &cycle {
+            Some(cycle) => cycle.clone(),
+            None => SkillEditCycle::new(latest.cycle.clone())?,
+        };
+        if matches!(choice, TradeoffChoice::Approve)
+            && accepted_in_cycle_in_txn(vault, txn, &granting_cycle, proposal)?
+                >= cycle_cap_in_txn(vault, txn)?
+        {
+            return Err(invalid("tradeoff approval exceeds the cycle admission cap"));
+        }
+        record_tradeoff_resolution_in_txn(vault, txn, latest, decision, choice, &granting_cycle, at)
+    })
+}
+
+/// The still-open pending tradeoff `pending_id` names, checked against the
+/// current goal, tier, bodies and evidence exactly as admission would check
+/// it. Every rung that settles a tradeoff outside the gate's own ruling
+/// transaction passes through here first.
+pub(super) fn open_pending_tradeoff_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    proposal: &EntityId,
+    pending_id: EntityId,
+    latest: HeldOutVerdict,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    if latest.id != pending_id || latest.disposition != SkillEditDisposition::NeedsTradeoffDecision
+    {
+        return Err(invalid(
+            "tradeoff decision is not for the standing pending verdict",
+        ));
+    }
+    // The resolved row copies the pending judge revision, but not the
+    // per-row displacement marker, so a retired judge's vector must not
+    // become a fresh permission here.
+    if latest.displaced_by_revision.is_some() {
+        return Err(invalid(
+            "tradeoff decision is for a displaced candidate judge",
+        ));
+    }
+    let staged = vault.read_skill_record_in_txn(txn, proposal)?;
+    require_open_optimizer_proposal(&staged)?;
+    let target = target_of(&staged)?;
+    let current = readable_target(vault.read_skill_record_in_txn(txn, &target).map(Some))?;
+    if admission_refusal_in_txn(
+        vault,
+        txn,
+        proposal,
+        &staged,
+        current.as_ref(),
+        &target,
+        &latest,
+        at,
+    )?
+    .is_some()
+    {
+        return Err(invalid(
+            "tradeoff decision is stale against the goal, tier, body or evidence",
+        ));
+    }
+    if floor_regressed(&latest.goal_axes) || !is_tradeoff(&latest.goal_axes) {
+        return Err(invalid("only a non-floor tradeoff may be resolved"));
+    }
+    Ok(latest)
+}
+
+/// The decision door's write: one resolution row that answers the pending
+/// row, charged to `cycle`. The caller has checked the cycle cap. The goal
+/// revision is re-read because an A/B pick learns a preference, and so moves
+/// the goal revision, in the same transaction. Any A/B ask about the proposal
+/// is answered by this row and is removed with it.
+pub(super) fn record_tradeoff_resolution_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pending: HeldOutVerdict,
+    resolution: TradeoffResolution,
+    choice: TradeoffChoice,
+    cycle: &SkillEditCycle,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    let disposition = match choice {
+        TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
+        TradeoffChoice::Reject => SkillEditDisposition::RejectedTradeoff,
+    };
+    let resolved = HeldOutVerdict {
+        id: vault.store.clock.entity_id()?,
+        disposition,
+        accepted: disposition.admits(),
+        tradeoff_resolution: Some(resolution),
+        goal_revision: goal_definition_in_txn(vault, txn, &pending.skill)?.revision,
+        cycle: cycle.as_str().to_owned(),
+        at,
+        ..pending
+    };
+    record_verdict_in_txn(vault, txn, &resolved)?;
+    if disposition.closes_proposal() {
+        close_answered_proposal_in_txn(vault, txn, &resolved.proposal, at)?;
+    }
+    tradeoff::clear_ask_in_txn(vault, txn, &resolved.proposal)?;
+    Ok(resolved)
+}
+
 pub(crate) fn with_optimized_skill_admission(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -85,7 +285,7 @@ pub(crate) fn with_optimized_skill_admission(
     // Exiting on a bare `EntityNotFound` instead left the acceptance
     // standing, the proposal open, and the real score pair unrecorded.
     let Some(accepted) = standing_verdict_in_txn(vault, &*wtxn, proposal)?
-        .filter(|verdict| verdict.disposition.admits())
+        .filter(|verdict| verdict.disposition.admits() && verdict.displaced_by_revision.is_none())
     else {
         return Err(invalid(
             "an optimizer-born candidate is admitted only on a standing accepted gate verdict",
@@ -183,7 +383,17 @@ fn admission_refusal_in_txn(
     // fact, which makes the strict gate a formality.
     let committed = held_out_receipts_in_txn(vault, wtxn, target)?;
     let outcomes = held_out_outcome_results_in_txn(vault, wtxn, target)?;
-    if !ScoredBasis::of(staged, current, &committed, &outcomes, proposal_tier)?.matches(accepted) {
+    if !ScoredBasis::of(
+        staged,
+        current,
+        &committed,
+        &outcomes,
+        proposal_tier,
+        goal_definition_in_txn(vault, wtxn, target)?.revision,
+        goal_definition_in_txn(vault, wtxn, target)?.goal_id,
+    )?
+    .matches(accepted)
+    {
         return Ok(refused(SkillEditDisposition::RefusedBindingMismatch));
     }
     // ONE-1447's gap, closed at the door that owns it: the stale sweep
@@ -231,29 +441,39 @@ fn record_refusal_in_txn(
 /// is what makes the admission floor apply at all, the target entity and
 /// version are what "this revises that revision" means, and the cycle is what
 /// the accept cap is counted against.
-const OPTIMIZER_ORIGIN_KEYS: [&str; 6] = [
+const OPTIMIZER_ORIGIN_KEYS: [&str; 7] = [
     PROVENANCE_BIRTH_KEY,
     PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY,
     PROVENANCE_OPTIMIZE_CYCLE_KEY,
+    GOAL_ID_KEY,
     crate::skill::resident::RESIDENT_PROVENANCE_KEY,
 ];
 
 /// The `vault_meta` key the optimizer-birth marker for one entity lives at.
+/// Test-only: production code reads and writes through [`ORIGIN_MARKER`].
+#[cfg(test)]
 pub(in crate::skill_optimize) fn optimizer_origin_marker_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OPTIMIZER_ORIGIN_MARKER_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(OPTIMIZER_ORIGIN_MARKER_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
+    ORIGIN_MARKER.key_bytes(id)
 }
 
-/// The six origin values a record carries, in the pinned key order.
+/// The seven origin values a record carries, in the pinned key order.
 fn optimizer_origin_values(record: &SkillRecord) -> Vec<Option<String>> {
     OPTIMIZER_ORIGIN_KEYS
         .iter()
         .map(|key| provenance_str(record, key))
         .collect()
+}
+
+impl RawValue for Vec<Option<String>> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_origin_marker(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_origin_marker(bytes)?)
+    }
 }
 
 fn encode_origin_marker(values: &[Option<String>]) -> Result<Vec<u8>> {
@@ -313,7 +533,7 @@ fn decode_origin_marker(raw: &[u8]) -> Result<Vec<Option<String>>> {
 /// create at that id must present byte-identical origin provenance. The answer
 /// is one of four:
 ///
-/// - marked, and the create carries the same six values → allowed, and the
+/// - marked, and the create carries the same seven values → allowed, and the
 ///   record is optimizer-born again, so every update-door rule applies to it
 ///   unchanged;
 /// - marked, and the create carries different or absent origin → refused: that
@@ -347,18 +567,13 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     created: &SkillRecord,
-) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-    let key = optimizer_origin_marker_key(id);
+    replicated: bool,
+) -> Result<Option<StagedRow>> {
+    validate_goal_birth_in_txn(store, txn, id, created, replicated)?;
     let origin = optimizer_origin_values(created);
-    let Some(marked) = store
-        .vault_meta
-        .get(txn, &key)?
-        .as_deref()
-        .map(decode_origin_marker)
-        .transpose()?
-    else {
+    let Some(marked) = ORIGIN_MARKER.get(store, txn, id)? else {
         return if born_on_optimize_road(created) {
-            Ok(Some((key, encode_origin_marker(&origin)?)))
+            ORIGIN_MARKER.stage(id, &origin).map(Some)
         } else {
             Ok(None)
         };
@@ -369,6 +584,30 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
         ));
     }
     Ok(None)
+}
+
+/// Read the immutable origin fact of an erased optimizer parent. This is not
+/// an ancestry walk: one exact parent id, one retained marker, no instruction
+/// body required. Missing marker means the receiver has no fact to compare.
+pub(in crate::skill_optimize) fn retained_optimizer_parent_goal_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    parent: &EntityId,
+) -> Result<Option<(SkillGoalId, String)>> {
+    let Some(values) = ORIGIN_MARKER.get(store, txn, parent)? else {
+        return Ok(None);
+    };
+    let corrupt = || Error::CorruptedIndex(ORIGIN_MARKER_LABEL);
+    if values[0].as_deref() != Some(SKILL_OPTIMIZE_BIRTH_PATH) {
+        return Err(corrupt());
+    }
+    let skill_id = values[1]
+        .clone()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(corrupt)?;
+    let hex = values[5].as_deref().ok_or_else(corrupt)?;
+    let goal = SkillGoalId::from_hex(hex).map_err(|_| corrupt())?;
+    Ok(Some((goal, skill_id)))
 }
 
 /// The chokepoint rule, in two halves: an optimizer-born candidate never
@@ -384,7 +623,7 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
 /// asks for changes, because the two roads can prove different things.
 ///
 /// - Origin immutability is absolute, whatever the road. A lawful peer never
-///   edits these five values (its own door forbids it, this same function),
+///   edits these seven values (its own door forbids it, this same function),
 ///   so refusing a row that does costs convergence nothing and closes the
 ///   laundering loop the create-side marker opens the other end of: strip the
 ///   birth path on one replica and the stripped body used to travel back and
@@ -445,6 +684,16 @@ pub(crate) fn check_optimizer_admission_in_txn(
     replicated: bool,
     proof: Option<&crate::skill_hub::HubAdmissionProof>,
 ) -> Result<()> {
+    // The portable identity is a birth fact, not a first-match text field.
+    // Parse both maps strictly so a duplicate `goal_id` cannot hide behind
+    // the older `provenance_str` origin comparison.
+    let prior_goal = SkillGoalId::of(id, prior)?;
+    let updated_goal = SkillGoalId::of(id, updated)?;
+    if prior_goal != updated_goal {
+        return Err(invalid(
+            "an optimizer goal identity cannot change on update",
+        ));
+    }
     if !born_on_optimize_road(prior) {
         return if born_on_optimize_road(updated) {
             Err(invalid(

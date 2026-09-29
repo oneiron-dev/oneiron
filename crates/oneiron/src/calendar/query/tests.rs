@@ -59,7 +59,8 @@ fn put_family_claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = world;
     vault
         .put_claim(&claim_id, &body, at(1, 1), 1)
@@ -202,9 +203,17 @@ fn scoped_lane_fails_closed_on_a_decisive_claim_it_may_not_read() {
     );
     assert_eq!(internal[0].source, busy);
     assert_eq!(
-        scoped, internal,
+        scoped.value, internal,
         "an actor's union is a subset of the internal one; a claim the \
              actor cannot read must never ADD an interval"
+    );
+    // The withheld decisive claims are named on the union's receipt.
+    assert_eq!(scoped.receipt.suppressed_count, 2);
+    assert!(
+        scoped
+            .receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
     );
 
     // The same rule at the projection: a decisive claim this lane cannot
@@ -216,6 +225,7 @@ fn scoped_lane_fails_closed_on_a_decisive_claim_it_may_not_read() {
         },
     )
     .expect("scoped read")
+    .value
     .expect("the readable family claim still projects the EVENT");
     assert!(
         !scoped_free.blocks_time,
@@ -454,7 +464,8 @@ fn calendar_windows_expand_series_and_honor_live_systems() {
                     1.0,
                     ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 TimeRange { start: 1, end: 1 },
                 1,
             )

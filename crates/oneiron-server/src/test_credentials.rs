@@ -10,6 +10,52 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RECIPE_PREFIX: &str = "OneironTestCredential ";
 
+/// A test-only stand-in for local Keychain custody: the stdio request carries
+/// NO bearer or holder id. The token and proof key come from this local source
+/// and cross the same `bind_slip_request` seam as remote holder credentials.
+pub(crate) struct TestKeychainCredentialSource {
+    token: zeroize::Zeroizing<String>,
+    holder_key: SigningKey,
+}
+
+impl TestKeychainCredentialSource {
+    pub(crate) fn from_recipe(server: &SyncServer, recipe: &str) -> Self {
+        let (slip, holder_key) = credential(server, recipe);
+        Self {
+            token: zeroize::Zeroizing::new(slip.to_token().unwrap()),
+            holder_key,
+        }
+    }
+
+    pub(crate) fn bind(&self, server: &SyncServer, request: Request<Body>) -> Request<Body> {
+        let slip = CapabilitySlip::from_token(&self.token).unwrap();
+        bind_slip_request(server, &slip, &self.holder_key, request)
+    }
+
+    pub(crate) fn verified_for_proposal(
+        &self,
+        server: &SyncServer,
+    ) -> oneiron::authority::VerifiedSlip {
+        let slip = CapabilitySlip::from_token(&self.token).unwrap();
+        let issuer =
+            HostSlipIssuer::from_secret(server.config.auth_secret.as_ref().unwrap().as_bytes())
+                .unwrap();
+        let challenge = b"local-stdio-proposal";
+        let signature = self
+            .holder_key
+            .sign(&slip.binding_transcript(challenge).unwrap());
+        server
+            .vault()
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                challenge,
+                &signature.to_bytes(),
+            )
+            .unwrap()
+    }
+}
+
 pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, SigningKey) {
     let fields: BTreeMap<_, _> = recipe
         .split(';')
@@ -107,7 +153,10 @@ pub(crate) fn bind_slip_request(
     key: &SigningKey,
     mut request: Request<Body>,
 ) -> Request<Body> {
-    let timestamp = server.vault().now_recorded_at();
+    // Freshness is judged on the authority plane's monotonic anchor, which a
+    // recording-clock step does not move; signing on the stepped recording
+    // clock would lock the holder out of a server whose wall clock jumped.
+    let timestamp = server.vault().capability_slip_now().unwrap();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature = hex(&key
@@ -128,6 +177,22 @@ pub(crate) fn bind_slip_request(
     );
     request
 }
+/// Signs a real top-scope slip for a WebSocket upgrade test.
+pub(crate) fn bind_ws_request(server: &SyncServer, request: &mut Request<()>, recipe: &str) {
+    let (slip, key) = credential(server, recipe);
+    let signed = bind_slip_request(
+        server,
+        &slip,
+        &key,
+        Request::builder().body(Body::empty()).unwrap(),
+    );
+    for name in ["authorization", "x-oneiron-binding"] {
+        request
+            .headers_mut()
+            .insert(name, signed.headers()[name].clone());
+    }
+}
+
 /// Engine-level reads carry the logged host root, as the authenticated server
 /// does. A plain actor key reads nothing until a trusted manifest grants it.
 pub(crate) fn host_reader(vault: &oneiron::Vault) -> oneiron::claim::ScopedReadActorKey {

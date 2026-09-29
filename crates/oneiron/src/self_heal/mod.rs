@@ -41,7 +41,9 @@
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
 mod admission;
-pub(crate) use admission::validate_diagnostic_event_admission;
+pub(crate) use admission::{
+    reject_off_record_diagnostic_sources, validate_diagnostic_event_admission,
+};
 mod centroid_evidence;
 mod consent_detector;
 pub mod tripwires;
@@ -54,11 +56,14 @@ pub mod distillation;
 mod event;
 mod invariant_canonical;
 pub mod scheduled;
+pub(crate) mod tier1_source;
 pub mod tiered;
 pub(crate) mod untrusted_text;
 
 pub mod healer_host;
-pub use crate::gate::proposal_observation::{ProposalSubmissionCheck, ProposalSubmissionReceipt};
+pub use crate::gate::proposal_observation::{
+    ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt,
+};
 mod receipt_serde;
 mod repair;
 

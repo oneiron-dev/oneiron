@@ -60,6 +60,12 @@ struct Search {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AgentPut {
+    id: String,
+    definition: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Speech {
     text: String,
 }
@@ -201,6 +207,14 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
+        "vault.agents.put" => {
+            let args: AgentPut = parse(input)?;
+            SelfCall::AgentsPut(Box::new(crate::code_run::parse_agent_put_request(
+                &args.id,
+                args.definition,
+                now,
+            )?))
+        }
         "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
         "self.memory.put_claim" => {
@@ -238,7 +252,8 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
         }
         "self.memory.put_edge" => {
             let args: Edge = parse(input)?;
-            let kind = edge_kind(&args.kind)?;
+            let kind =
+                EdgeKind::from_name(&args.kind).ok_or_else(|| failure("invalid edge kind"))?;
             let weight = args
                 .weight
                 .or_else(|| kind.default_weight())
@@ -284,6 +299,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(_) => json!({"failed":true}),
+        SelfDispatchOutcome::AgentDefinitionPut(value) => {
+            json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
+        }
         SelfDispatchOutcome::AgentSpawn(value) => match value {
             crate::code_run::SelfAgentSpawnResult::Queued { attempt_ref } => {
                 json!({"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())})
@@ -299,6 +317,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             crate::task_verb::TaskAskStatus::Pending { hold } => {
                 json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
             }
+            crate::task_verb::TaskAskStatus::Changed { voided, generation } => {
+                json!({"kind":"task_ask_status","state":"changed","voided":voided.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"generation":generation})
+            }
             crate::task_verb::TaskAskStatus::Settled(result) => {
                 json!({"kind":"task_ask_status","state":"settled","result":result})
             }
@@ -309,6 +330,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::ReportBlocked { receipt } => {
             json!({"receipt":receipt.to_hex()})
         }
+        SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }
@@ -379,39 +401,6 @@ pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStep
     })
 }
 
-pub(super) fn edge_kind(name: &str) -> Result<EdgeKind> {
-    Ok(match name {
-        "authored_by" => EdgeKind::AuthoredBy,
-        "scoped_to" => EdgeKind::ScopedTo,
-        "part_of" => EdgeKind::PartOf,
-        "supersedes" => EdgeKind::Supersedes,
-        "belongs_to" => EdgeKind::BelongsTo,
-        "claim_of" => EdgeKind::ClaimOf,
-        "child_of" => EdgeKind::ChildOf,
-        "assigned_to" => EdgeKind::AssignedTo,
-        "derived_from" => EdgeKind::DerivedFrom,
-        "mentions" => EdgeKind::Mentions,
-        "about" => EdgeKind::About,
-        "supports" => EdgeKind::Supports,
-        "opposes" => EdgeKind::Opposes,
-        "participates_in" => EdgeKind::ParticipatesIn,
-        "attached" => EdgeKind::Attached,
-        "employed_by" => EdgeKind::EmployedBy,
-        "has_facet" => EdgeKind::HasFacet,
-        "facet_of" => EdgeKind::FacetOf,
-        "in_world" => EdgeKind::InWorld,
-        "set_in" => EdgeKind::SetIn,
-        "same_as" => EdgeKind::SameAs,
-        "merged_into" => EdgeKind::MergedInto,
-        "split_into" => EdgeKind::SplitInto,
-        "blocked_by" => EdgeKind::BlockedBy,
-        "blocks" => EdgeKind::Blocks,
-        "fulfills" => EdgeKind::Fulfills,
-        "discharged_by" => EdgeKind::DischargedBy,
-        _ => return Err(failure("invalid edge kind")),
-    })
-}
-
 #[cfg(test)]
 #[test]
 fn ask_and_wait_bridge_decode_the_engine_spec_without_guest_host_fields() {
@@ -452,11 +441,17 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
     let reply = SelfDispatchResponse {
         outcome: SelfDispatchOutcome::WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy {
             wake_grain_turns: 1,
+            agent_cadence: serde_json::from_str::<crate::dreamer_wake::DreamerWakePolicy>(
+                include_str!("../../dreamer_wake/wake_policy_defaults.json"),
+            )
+            .expect("shipped wake policy")
+            .agent_cadence,
             new_records: 50,
             longest_wait_secs: 28_800,
             nightly_secs: 86_400,
             idle_secs: 1,
             quiet_weave_secs: 3_600,
+            weave_recipe_priority: crate::dreamer_wake::WeaveRecipePriority::BeforeConnectorEvent,
         }),
         budget: None,
     };

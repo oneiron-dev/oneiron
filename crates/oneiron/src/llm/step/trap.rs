@@ -94,7 +94,8 @@ pub(super) fn open_trap_in_txn(
         value,
         1.0,
     );
-    let envelope = dreamer_runtime_envelope(ctx)?;
+    let mut envelope = dreamer_runtime_envelope(ctx)?;
+    vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
     let occurred = TimeRange {
         start: ctx.now_ms,
         end: ctx.now_ms,
@@ -479,7 +480,7 @@ pub(super) fn append_trap_transition_in_txn(
     let head_body = vault
         .get_claim_in_txn(wtxn, head_id)?
         .ok_or(invalid_trap("dreamer trap record missing"))?;
-    let envelope = envelope_from_claim_body(&head_body)?;
+    let mut envelope = envelope_from_claim_body(&head_body)?;
     let subject = match head_body.subject {
         ClaimSubject::Entity(entity) => entity,
         ClaimSubject::Edge { .. } => {
@@ -506,6 +507,7 @@ pub(super) fn append_trap_transition_in_txn(
         start: now,
         end: now,
     };
+    vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
     vault
         .batch_in()
         .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
@@ -565,18 +567,20 @@ pub(super) fn supersedes_neighbor_in_txn(
     id: &EntityId,
     inbound: bool,
 ) -> Result<Option<EntityId>> {
-    let database = if inbound {
-        &vault.store.edges_in
+    let direction = if inbound {
+        crate::ports::EdgeDirection::In
     } else {
-        &vault.store.edges_out
+        crate::ports::EdgeDirection::Out
     };
-    let prefix = crate::vault::edge_kind_prefix(id, EdgeKind::Supersedes);
-    let mut edges = database.prefix_iter(rtxn, &prefix)?;
-    let neighbor = edges
-        .next()
-        .transpose()?
-        .map(|(key, value)| crate::vault::parse_edge_record(&key, &value).map(|edge| edge.target))
-        .transpose()?;
+    let mut edges = crate::ports::EdgeStoreRead::port_edges(
+        &vault.store,
+        rtxn,
+        id,
+        direction,
+        Some(EdgeKind::Supersedes),
+        None,
+    )?;
+    let neighbor = edges.next().transpose()?.map(|edge| edge.target);
     if edges.next().transpose()?.is_some() {
         return Err(invalid_trap("step-only trap supersession chain branches"));
     }

@@ -204,6 +204,7 @@ fn scoped_prefix_expansion_resolves_lexical_hint_target() -> Result<()> {
         Bm25SearchOptions {
             recency: None,
             exact_posting_matches_scope: &mut exact_posting_matches_scope,
+            private_note_ids: None,
         },
     )?;
 
@@ -244,7 +245,7 @@ fn scoped_prefix_expansion_ignores_dead_lexical_hint_exact_posting() -> Result<(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.stale = true;
     seed_raw_claim(&vault, &dead_hint, body)?;
     vault
@@ -264,6 +265,7 @@ fn scoped_prefix_expansion_ignores_dead_lexical_hint_exact_posting() -> Result<(
         Bm25SearchOptions {
             recency: None,
             exact_posting_matches_scope: &mut exact_posting_matches_scope,
+            private_note_ids: None,
         },
     )?;
 
@@ -322,7 +324,7 @@ fn non_stale_lexical_hint_claim_posting_does_not_collapse_to_target() -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     seed_raw_claim(&vault, &target, target_body)?;
 
     let body = ClaimBody::new(
@@ -332,7 +334,7 @@ fn non_stale_lexical_hint_claim_posting_does_not_collapse_to_target() -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     seed_raw_claim(&vault, &hint, body)?;
     vault
         .batch()

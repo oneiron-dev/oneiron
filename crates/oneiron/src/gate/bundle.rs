@@ -5,9 +5,7 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use sha2::Sha256;
 
-use crate::batch::{
-    BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_session_bundle_claim_puts,
-};
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, SessionClaimBundle,
     SessionClaimBundleClaim, decode_claim_body, encode_claim_body,
@@ -116,6 +114,7 @@ impl Vault {
             let mut merged = Vec::with_capacity(members.len());
             let mut ops = Vec::with_capacity(members.len());
             let mut recorded_decisions = Vec::with_capacity(members.len());
+            let mut transitions = Vec::with_capacity(members.len());
             for member in members {
                 let mut body = member.body;
                 body.approval = ClaimApprovalStatus::Approved;
@@ -140,6 +139,7 @@ impl Vault {
                         // agent-class Dreamer write; it never consults.
                         auto_checker: None,
                         defer_metrics_until_commit: true,
+                        transition: None,
                     },
                     &policy,
                     GateWriteMode {
@@ -170,14 +170,20 @@ impl Vault {
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
                 });
+                transitions.push(crate::batch::VerifiedClaimTransition::after_session_merge(
+                    &self.store,
+                    wtxn,
+                    ops.last().expect("session put"),
+                )?);
             }
 
-            apply_session_bundle_claim_puts(
+            crate::batch::apply_session_bundle_claim_puts_with_transitions(
                 &self.store,
                 &self.config,
                 &self.analyzer,
                 wtxn,
                 ops,
+                transitions,
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
             )?;
@@ -332,6 +338,7 @@ impl Vault {
             };
 
             let mut ops = Vec::with_capacity(members.len());
+            let mut transitions = Vec::with_capacity(members.len());
             let mut member_claim_ids = Vec::with_capacity(members.len());
             let mut recorded_decisions = Vec::with_capacity(members.len());
             let mut frontier = Sha256::new();
@@ -351,9 +358,20 @@ impl Vault {
                 }
 
                 let mut resolved = body.clone();
+                // A MACHINE claim changes only through its signed history,
+                // whose fold rejects without retracting.
+                let machine =
+                    crate::authority::machine_claim_needs_history(&self.store, &*wtxn, &body)?;
                 let occurred = match action {
                     GateConsentBundleAction::Approve => {
                         resolved.approval = ClaimApprovalStatus::Approved;
+                        TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        }
+                    }
+                    GateConsentBundleAction::Decline if machine => {
+                        resolved.approval = ClaimApprovalStatus::Rejected;
                         TimeRange {
                             start: header.occurred_start,
                             end: header.occurred_end,
@@ -391,7 +409,28 @@ impl Vault {
                     actor,
                     &mut recorded_decisions,
                 )?;
+                if machine {
+                    let approve = action == GateConsentBundleAction::Approve;
+                    resolved = crate::claim::transition::stage_consent_transition(
+                        self, wtxn, id, approve, actor, now,
+                    )?;
+                }
                 let data = encode_claim_body(&resolved)?;
+                let verified_put = BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred,
+                    learned_at: header.learned_at,
+                    data: data.clone(),
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                };
+                transitions.push(crate::batch::VerifiedClaimTransition::after_consent(
+                    &self.store,
+                    wtxn,
+                    &verified_put,
+                )?);
 
                 // Closed AFTER the gate replay and BEFORE the materialization,
                 // so every member leaves an explicit resolution receipt in the
@@ -425,12 +464,13 @@ impl Vault {
                 });
             }
 
-            apply_session_bundle_claim_puts(
+            crate::batch::apply_session_bundle_claim_puts_with_transitions(
                 &self.store,
                 &self.config,
                 &self.analyzer,
                 wtxn,
                 ops,
+                transitions,
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
             )?;
@@ -721,6 +761,7 @@ fn replay_gate_consent_bundle_member(
             // no fresh Auto verdict for a checker to weigh in on.
             auto_checker: None,
             defer_metrics_until_commit: true,
+            transition: None,
         },
         policy,
         GateWriteMode {

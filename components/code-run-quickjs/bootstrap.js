@@ -42,6 +42,7 @@
     set("self", freeze(sdk.self));
     set("ask", sdk.ask);
   }
+  if (sdk.vault) set("vault", freeze(sdk.vault));
   const randomDouble = () => {
     const bytes = random.bytes(7);
     let value = bytes[0] & 31;
@@ -64,6 +65,17 @@
       path = outputPath(path, true); bytes = Array.from(bytes);
       if (!bytes.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) throw new TypeError("invalid proposal bytes");
       charge(bytes.length); proposals.push({tag:"file-write", val:{path, bytes}});
+    },
+    delete(path) {
+      path = outputPath(path, true);
+      if (!startsWith(path, "/mnt/workspace/")) throw new TypeError("deletion must be in workspace");
+      charge(path.length); proposals.push({tag:"file-delete", val:{path}});
+    },
+    rename(from, to) {
+      from = outputPath(from, true); to = outputPath(to, true);
+      if (!startsWith(from, "/mnt/workspace/") || !startsWith(to, "/mnt/workspace/") || from === to)
+        throw new TypeError("rename must name distinct workspace files");
+      charge(from.length + to.length); proposals.push({tag:"file-rename", val:{origin:from, destination:to}});
     },
     claim(input) {
       const val = convert("claim-input", input, true);

@@ -9,8 +9,8 @@ use crate::llm::{DREAMER_TRAP_PREDICATE, DreamerTrapKind, TrapRef, send_trap_sig
 
 use super::model::{HumanResponseSignal, HumanTaskError, HumanTaskResult, HumanTaskWaitBinding};
 use super::storage::{
-    decode_wait_binding, put_wait_binding_in_txn, put_wait_signal_marker_in_txn, wait_binding_key,
-    wait_signal_key, wait_signal_marker,
+    WAIT_BINDINGS, WAIT_SIGNALS, put_wait_binding_in_txn, put_wait_signal_marker_in_txn,
+    wait_signal_marker,
 };
 
 // ── C9 wait binding + identity-bound response signal ────────────────────────
@@ -54,14 +54,7 @@ pub(super) fn stored_human_wait_binding(
     task_ref: EntityId,
 ) -> Result<Option<HumanTaskWaitBinding>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, wait_binding_key(task_ref).as_slice())?
-    else {
-        return Ok(None);
-    };
-    decode_wait_binding(raw.as_ref()).map(Some)
+    WAIT_BINDINGS.get(&vault.store, &rtxn, &task_ref)
 }
 
 /// Sends the resume signal for one identity-stamped human response.
@@ -162,10 +155,7 @@ pub fn release_human_wait(vault: &Vault, task_ref: EntityId) -> Result<bool> {
     };
     vault.with_write_txn(|wtxn| {
         put_wait_binding_in_txn(vault, wtxn, &retired)?;
-        vault
-            .store
-            .vault_meta
-            .delete(wtxn, wait_signal_key(binding.trap_claim_id).as_slice())?;
+        WAIT_SIGNALS.delete(&vault.store, wtxn, &binding.trap_claim_id)?;
         Ok(())
     })?;
     Ok(true)

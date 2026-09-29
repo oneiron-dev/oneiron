@@ -390,8 +390,9 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         )
         .commit()
         .unwrap();
-    // A non-claim record stamp binds only the current body, so row authority
-    // withholds the edited TURN's pinned revision instead of serving it.
+    // The record scope stamp binds to the TURN's id, not its body bytes: the
+    // edit keeps the birth scope, so row authority still admits the pinned
+    // revision.
     for path in ["/v1/core/hydrate", "/v1/core/batch/shortId/hydrate"] {
         let batch = path.contains("/batch/");
         let payload = if batch {
@@ -401,22 +402,15 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         };
         let (status, body) =
             route_json_auth(server.clone(), json_request("POST", path, payload)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body:?}");
         if batch {
-            assert_eq!(status, StatusCode::OK, "{path}: {body:?}");
-            assert_eq!(
+            assert_ne!(
                 body["results"][0]["result"],
                 Value::Null,
                 "{path}: {body:?}"
             );
-        } else {
-            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body:?}");
         }
-        assert_eq!(body["narrowing"]["suppressed_count"], 1, "{path}: {body:?}");
-        assert_eq!(
-            body["narrowing"]["narrowed_axes"],
-            json!(["row_authority"]),
-            "{path}: {body:?}"
-        );
+        assert_eq!(body["narrowing"]["suppressed_count"], 0, "{path}: {body:?}");
     }
 }
 

@@ -23,15 +23,12 @@ pub(crate) use self::lifecycle::{
     rematerialize_contact_cache_in_txn, rematerialize_party_contact_cache_in_txn,
     supersede_family_owned_claim_in_txn,
 };
-pub use self::storage::{
-    COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX_PREFIX, counterparty_contact_party_channel_index_key,
-    normalize_channel_class,
-};
 pub(crate) use self::storage::{
-    counterparty_contact_index_key, counterparty_contact_matches_channel_class,
+    counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,
     counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
-    decode_counterparty_contact_index_value, read_counterparty_contact_in_txn,
+    read_counterparty_contact_in_txn,
 };
+pub use self::storage::{counterparty_contact_party_channel_index_key, normalize_channel_class};
 pub use self::types::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
     COUNTERPARTY_CONTACT_SCHEMA_VERSION, CounterpartyContactRecord, CounterpartyContactStatus,

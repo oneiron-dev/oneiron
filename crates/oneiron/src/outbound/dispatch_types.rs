@@ -426,6 +426,7 @@ pub enum OutboundDispatchOutcome {
     Suppressed,
     LetGo,
     Failed,
+    Ambiguous,
 }
 
 impl OutboundDispatchOutcome {
@@ -438,6 +439,7 @@ impl OutboundDispatchOutcome {
             Self::Suppressed => "suppressed",
             Self::LetGo => "let_go",
             Self::Failed => "failed",
+            Self::Ambiguous => "ambiguous",
         }
     }
 }
@@ -450,6 +452,8 @@ pub struct OutboundDispatchResult {
     pub gate_outcome: String,
     pub gate_reason_codes: Vec<String>,
     pub receipt: ReceiptRecord,
+    /// Ledger-owned logical delivery result, independent of the attempt receipt.
+    pub(crate) resolution: Option<crate::outbound_intent_ledger::IntentResolution>,
     /// Echo of the post-debit effector meter when a connector key governed
     /// this dispatch (GOV-02, ONE-1418; A3: a host-call response may ECHO
     /// `self.budget()` — this is an echo of the meter read, not a second
@@ -462,10 +466,16 @@ pub struct OutboundDispatchResult {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OutboundDispatchError {
+    #[error("the ask confirmation is no longer active at this revision")]
+    ObsoleteAskConfirmation,
     #[error(transparent)]
     UnsupportedCapability(#[from] Box<UnsupportedOutboundCapability>),
     #[error("the facade-bound actor is no longer valid")]
     InvalidBoundActor,
+    #[error("the resident failure rule makes this step result ineligible for effects")]
+    FailureResultIneligible,
+    #[error(transparent)]
+    Step(#[from] crate::llm::DurableStepError),
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]

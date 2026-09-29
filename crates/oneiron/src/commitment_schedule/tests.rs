@@ -18,7 +18,7 @@ use crate::commitment::{
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::{
     COMMITMENT_DUE_INDEX_VERSION, commitment_due_primary_key, decode_commitment_due_row,
 };
@@ -110,23 +110,16 @@ fn span(now: u64) -> TimeRange {
 
 /// Seeds the two human parties AND the projector's pinned System actor.
 ///
-/// The last one is load-bearing rather than decorative: the claim-candidate
-/// door resolves `envelope.actor()` against a stored entity and validates its
-/// class, so a vault that expects the projector to mint anything must carry the
-/// derived actor as a MACHINE entity.
+/// The last one is load-bearing rather than decorative: the projector is a
+/// MACHINE, so it mints only with the host-held key the host provisions at
+/// bootstrap (ONE-1634).
 fn seed_world(vault: &Vault) -> Result<(EntityId, EntityId)> {
     let obligor = crate::test_util::entity(0x71);
     let beneficiary = crate::test_util::entity(0x72);
     for id in [obligor, beneficiary] {
         vault.put_entity(&id, ENTITY_TYPE_PERSON, time(1, 1), 1, b"person")?;
     }
-    vault.put_entity(
-        &commitment_projection_actor().entity_ref(),
-        ENTITY_TYPE_MACHINE,
-        time(1, 1),
-        1,
-        b"commitment projector",
-    )?;
+    crate::test_util::provision_engine_machines(vault);
     Ok((obligor, beneficiary))
 }
 
@@ -379,7 +372,7 @@ fn slot_ids(series: &EntityId, window: TimeRange, count: u32) -> Vec<EntityId> {
         .map(|ordinal| {
             let occurrence = CommitmentOccurrence::new(window.end, window, ordinal)
                 .expect("quota slot occurrence is well formed");
-            commitment_instance_id(series, &occurrence)
+            commitment_instance_id(series, &occurrence).unwrap()
         })
         .collect()
 }
@@ -435,7 +428,7 @@ fn once_due_is_single_use() -> Result<()> {
     let instance = first.minted_instances[0];
     assert_eq!(
         instance,
-        commitment_instance_id(&series, &CommitmentOccurrence::new(500, time(500, 500), 0)?),
+        commitment_instance_id(&series, &CommitmentOccurrence::new(500, time(500, 500), 0)?)?,
         "the minted id is derived from the series and the occurrence, nothing else"
     );
 
@@ -539,7 +532,7 @@ fn interval_retainer_cycle_anchors_successor_to_last_due() -> Result<()> {
                 time(1_000_000 + fortnight, 1_000_000 + fortnight),
                 0,
             )?,
-        );
+        )?;
         assert_eq!(
             successors[0], expected,
             "the successor is prior_due + period, never close_time + period"
@@ -1401,10 +1394,10 @@ fn instance_id_collision_requires_full_copied_identity() -> Result<()> {
 
     // Determinism: the same series and occurrence name the same id, always.
     let occurrence = CommitmentOccurrence::new(NY_SPRING_WEEK.end, NY_SPRING_WEEK, 0)?;
-    let derived = commitment_instance_id(&series, &occurrence);
-    assert_eq!(derived, commitment_instance_id(&series, &occurrence));
+    let derived = commitment_instance_id(&series, &occurrence)?;
+    assert_eq!(derived, commitment_instance_id(&series, &occurrence)?);
     let other = CommitmentOccurrence::new(NY_SPRING_WEEK.end, NY_SPRING_WEEK, 1)?;
-    assert_ne!(derived, commitment_instance_id(&series, &other));
+    assert_ne!(derived, commitment_instance_id(&series, &other)?);
 
     let minted = mint_quota_window(&vault, &parties, &series, 2, now)?;
     assert_eq!(minted[0], derived);
@@ -1417,7 +1410,7 @@ fn instance_id_collision_requires_full_copied_identity() -> Result<()> {
     assert_eq!(
         evidence_entry(evidence, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
         &Value::Binary(
-            commitment_projection_actor()
+            commitment_projection_actor()?
                 .entity_ref()
                 .as_bytes()
                 .to_vec()
@@ -1458,7 +1451,7 @@ fn instance_id_collision_requires_full_copied_identity() -> Result<()> {
     // a refusal, never a silent overwrite.
     let collided = crate::test_util::entity(0x94);
     let clash_occurrence = CommitmentOccurrence::new(NY_WEEK_2.end, NY_WEEK_2, 0)?;
-    let clash_id = commitment_instance_id(&collided, &clash_occurrence);
+    let clash_id = commitment_instance_id(&collided, &clash_occurrence)?;
     let impostor = record_with_text(
         parties.obligor,
         parties.beneficiary,

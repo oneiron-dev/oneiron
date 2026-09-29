@@ -621,12 +621,10 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     }
     let project = oneiron::EntityId::now();
     let root = server.vault.root_project().expect("root");
-    let mut record = ProjectRecord::new(project, Some(root), root, owner);
+    let mut record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
     record.roster.push(other.to_hex());
-    server
-        .vault
-        .put_project(project, &record, 1)
-        .expect("project");
+    bind_room_owner(&server, owner);
+    create_owned_project(&server, owner, project, &record);
     let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
     let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     let mut turns = Vec::new();
@@ -776,11 +774,8 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
         );
     }
     let second_project = oneiron::EntityId::now();
-    let second = ProjectRecord::new(second_project, Some(root), root, owner);
-    server
-        .vault
-        .put_project(second_project, &second, 1)
-        .expect("second project");
+    let second = ProjectRecord::new(second_project, Some(root), root, owner).unwrap();
+    create_owned_project(&server, owner, second_project, &second);
     let (_, rooms) = route_json(
         server.clone(),
         mcp_endpoint_call_request(
@@ -824,4 +819,56 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     assert_eq!(rest["output"].as_array().expect("remaining room").len(), 1);
     assert_eq!(rest["meta"]["end"], "Complete");
     assert_ne!(rooms["output"][0]["id"], rest["output"][0]["id"]);
+
+    // These calls are generated from the same SDK verb table, not Rust-only
+    // helpers that a tool-first consumer cannot reach.
+    let thread = oneiron::EntityId::now();
+    memory
+        .rooms_speak(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(thread.to_hex()),
+            messages: vec![WitnessMessage {
+                id: Some(oneiron::EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "thread".into(),
+                metadata: Some(json!({"room_thread_of": turns[0].to_hex()})),
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 1_000,
+        })
+        .expect("thread");
+    for (verb, args) in [
+        ("rooms.render", json!({"room_ref":room.to_hex()})),
+        ("rooms.find", json!({"room_ref":room.to_hex()})),
+        (
+            "rooms.get",
+            json!({"room_ref":room.to_hex(),"turn_ref":thread.to_hex()}),
+        ),
+        (
+            "rooms.trunk",
+            json!({"room_ref":room.to_hex(),"turn_ref":turns[0].to_hex()}),
+        ),
+    ] {
+        let (_, response) = route_json(
+            server.clone(),
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                "room-thread",
+                verb,
+                mcp_merge_args(
+                    mcp_endpoint_envelope(owner, "read_room"),
+                    json!({"arguments":args}),
+                ),
+            ),
+        )
+        .await;
+        assert!(response.get("error").is_none(), "{verb}: {response}");
+        assert!(
+            !response["result"]["structuredContent"]["output"].is_null(),
+            "{verb}"
+        );
+    }
 }

@@ -54,7 +54,9 @@ impl PolicyManifestResolution {
     /// Derive authority from the existing fail-closed scoped-grant projection.
     /// `Some` is the actual scoped-read actor context, with its existing exact
     /// matching rules. `None` is ONLY the trusted local owner/unscoped lane;
-    /// failed actor conversion must never be mapped to `None`.
+    /// failed actor conversion must never be mapped to `None`. The vault
+    /// owner's own key (`ScopedReadActorKey::vault_owner`) resolves to the same
+    /// full floor: the owner's Grant is un-narrowed (DEC-0005, ARCH-0057).
     ///
     /// `GateActor` describes writes and has an optional ref. It cannot by
     /// itself distinguish an owner read from an unkeyed scoped read, so this
@@ -65,6 +67,7 @@ impl PolicyManifestResolution {
     ) -> RetrievalPolicyFloor {
         match actor {
             None => RetrievalPolicyFloor::legacy(),
+            Some(actor) if actor.vault_owner_ref().is_some() => RetrievalPolicyFloor::legacy(),
             Some(_) if self.diagnostics().loaded_manifest_forces_fail_closed() => {
                 RetrievalPolicyFloor::deny_all()
             }

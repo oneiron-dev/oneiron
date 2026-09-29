@@ -7,13 +7,16 @@ use super::{
 };
 use crate::authority::VerifiedSlip;
 use crate::error::GateError;
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
-const PREFIX: &[u8] = b"consent.widen.v1:";
+/// Parked authority-widening request, keyed by its own hex64 reference.
+const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
+    SideTable::new(&side_table::CONSENT_WIDEN_PROPOSAL);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -102,7 +105,7 @@ fn decode_delta(bytes: &[u8]) -> Result<GrantBound> {
 }
 fn proposal_ref(delta: &[u8], proposer: &str, owner: &str, created: u64, expires: u64) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(PREFIX);
+    hasher.update(WIDEN_PROPOSALS.decl().prefix);
     for field in [
         delta,
         proposer.as_bytes(),
@@ -115,7 +118,12 @@ fn proposal_ref(delta: &[u8], proposer: &str, owner: &str, created: u64, expires
     }
     hasher.finalize().to_hex().to_string()
 }
-fn key(reference: &str) -> Result<Vec<u8>> {
+/// The hex64 reference shape every widen row has always been keyed by. Kept
+/// as a gate ahead of storage rather than folded into the key type, so a
+/// caller-supplied `reference` that fails the shape check is refused the
+/// SAME [`GateError::InvalidConsentBound`]-flavored `invalid_row()` it always
+/// was, before the key ever reaches the table.
+fn validate_reference_shape(reference: &str) -> Result<()> {
     if reference.len() != 64
         || !reference
             .bytes()
@@ -123,10 +131,9 @@ fn key(reference: &str) -> Result<Vec<u8>> {
     {
         return Err(invalid_row());
     }
-    Ok([PREFIX, reference.as_bytes()].concat())
+    Ok(())
 }
-fn decode_row(bytes: &[u8], reference: &str) -> Result<StoredProposal> {
-    let row: StoredProposal = serde_json::from_slice(bytes).map_err(|_| invalid_row())?;
+fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> {
     let p = &row.proposal;
     decode_delta(&p.canonical_delta)?;
     if row.version != 1
@@ -259,7 +266,7 @@ impl Vault {
         let canonical_delta = canonical_widen_delta(kind, &bound)?;
         let proposer = actor.entity_ref().to_hex();
         let reference = proposal_ref(&canonical_delta, &proposer, &owner_ref, now, expires_at);
-        let key = key(&reference)?;
+        validate_reference_shape(&reference)?;
         self.with_write_txn(|txn| {
             // Recheck in the committing transaction: a verified handle can be
             // revoked or expire between proof verification and this write.
@@ -268,16 +275,17 @@ impl Vault {
                     "agent credential is no longer live",
                 )));
             }
-            let raw = self
-                .store
-                .entities
-                .get(&*txn, actor.entity_ref().as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(
+                &self.store,
+                &*txn,
+                &actor.entity_ref(),
+            )?
+            .ok_or(Error::EntityNotFound)?;
             let header = crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("entity header"))?;
             crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
-            if let Some(raw) = self.store.vault_meta.get(&*txn, &key)? {
-                return Ok(decode_row(&raw, &reference)?.proposal);
+            if let Some(row) = WIDEN_PROPOSALS.get(&self.store, &*txn, &reference)? {
+                return Ok(validate_row(row, &reference)?.proposal);
             }
             let proposal = WidenProposal {
                 proposal_ref: reference,
@@ -312,11 +320,7 @@ impl Vault {
                 proposal: proposal.clone(),
                 resolved: false,
             };
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&row).map_err(|_| invalid_row())?,
-            )?;
+            WIDEN_PROPOSALS.put(&self.store, txn, &row.proposal.proposal_ref, &row)?;
             Ok(proposal)
         })
     }
@@ -328,42 +332,81 @@ impl Vault {
         reference: &str,
         expected_delta: &[u8],
     ) -> Result<ConsentReceipt> {
-        let key = key(reference)?;
+        self.accept_widen_checked(owner, None, reference, expected_delta)
+    }
+
+    /// The HTTP holder route passes its logged capability, rechecked in the
+    /// SAME transaction as grant minting. A revoked slip cannot win a race
+    /// between transport authentication and the actual approval.
+    pub fn accept_credential_widen(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: &VerifiedSlip,
+        reference: &str,
+        expected_delta: &[u8],
+    ) -> Result<ConsentReceipt> {
+        let claims = credential.claims();
+        if claims.single_use
+            || claims.holder_ref != owner.actor().to_hex()
+            || claims.actor_class.as_deref() != Some("human")
+            || !credential.allows_verb("core:auth")
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "holder credential does not authorize a widen",
+            )));
+        }
+        self.accept_widen_checked(owner, Some(credential), reference, expected_delta)
+    }
+
+    fn accept_widen_checked(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        reference: &str,
+        expected_delta: &[u8],
+    ) -> Result<ConsentReceipt> {
+        validate_reference_shape(reference)?;
+        let key = reference.to_owned();
         self.with_write_txn(|txn| {
-            let raw = self
-                .store
-                .vault_meta
-                .get(&*txn, &key)?
-                .ok_or_else(invalid_row)?;
-            let mut row = decode_row(&raw, reference)?;
-            let proposal = &row.proposal;
-            if row.resolved
-                || proposal.expires_at <= self.store.clock.now_recorded_at()
-                || proposal.owner_ref != owner.principal_ref()
-                || proposal.canonical_delta != expected_delta
+            owner.revalidate_in_txn(self, &*txn)?;
+            if let Some(credential) = credential
+                && !self.capability_slip_is_live_in_txn(&*txn, credential)?
             {
                 return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                    "widen proposal is stale, changed, resolved, or bound to another owner",
+                    "holder credential is no longer live",
+                )));
+            }
+            let row = WIDEN_PROPOSALS
+                .get(&self.store, &*txn, &key)?
+                .ok_or_else(invalid_row)?;
+            let mut row = validate_row(row, reference)?;
+            let proposal = &row.proposal;
+            if proposal.owner_ref != owner.principal_ref() {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "widen proposal belongs to another holder",
+                )));
+            }
+            if row.resolved
+                || proposal.expires_at <= self.store.clock.now_recorded_at()
+                || proposal.canonical_delta != expected_delta
+            {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "widen proposal is stale, changed, or resolved",
                 )));
             }
             let bound = decode_delta(&proposal.canonical_delta)?;
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
             row.resolved = true;
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&row).map_err(|_| invalid_row())?,
-            )?;
+            WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)?;
             Ok(receipt)
         })
     }
     pub fn widen_proposal(&self, reference: &str) -> Result<Option<WidenProposal>> {
-        let key = key(reference)?;
+        validate_reference_shape(reference)?;
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|raw| decode_row(&raw, reference).map(|row| row.proposal))
+        WIDEN_PROPOSALS
+            .get(&self.store, &txn, &reference.to_owned())?
+            .map(|row| validate_row(row, reference).map(|row| row.proposal))
             .transpose()
     }
 }

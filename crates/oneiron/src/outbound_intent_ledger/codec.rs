@@ -6,16 +6,35 @@ use rmpv::Value;
 
 use super::store::validate_record;
 use super::types::{
-    BudgetChargeMarker, BudgetClass, INTENT_LEDGER_SCHEMA_VERSION, IntentEscalationReason,
-    IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
+    AdmittedApproval, BudgetChargeMarker, BudgetClass, INTENT_LEDGER_SCHEMA_VERSION,
+    IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     OutboundAuthorizationBinding, RecordedOutboundOutcome,
 };
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::EntityId;
+use crate::error::Error;
+use crate::side_table::{CodecError, RawValue};
+
+/// The whole hand-rolled row codec, wrapped for the typed `outbound:intent_ledger:v2:` side
+/// table. Any validation failure collapses to one generic corruption marker: the specific
+/// [`IntentLedgerError::InvalidRecord`] reasons stay produced (and tested) through
+/// [`decode_record`] and [`validate_record`] directly; nothing here is pinned by a test.
+impl RawValue for IntentLedgerRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        encode_record(self)
+            .map_err(|_| Error::CorruptedIndex("outbound intent ledger record").into())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        decode_record_fields(bytes)
+            .and_then(|record| validate_record(&record).map(|()| record))
+            .map_err(|_| Error::CorruptedIndex("outbound intent ledger record").into())
+    }
+}
 
 /// Pinned MessagePack key set for device-local outbound intent rows.
-pub const INTENT_LEDGER_VALUE_KEYS: [&str; 20] = [
+pub const INTENT_LEDGER_VALUE_KEYS: [&str; 22] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -32,9 +51,11 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 20] = [
     "capability_provenance",
     "budget_accounting",
     "recorded_outcome",
+    "delivery_uncertain",
     "state",
     "created_ms",
     "updated_ms",
+    "admitted_approval",
     "content_digest",
 ];
 
@@ -85,17 +106,21 @@ pub(super) const KEY_BUDGET_ACCOUNTING: &str = INTENT_LEDGER_VALUE_KEYS[14];
 
 pub(super) const KEY_RECORDED_OUTCOME: &str = INTENT_LEDGER_VALUE_KEYS[15];
 
-pub(super) const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[16];
+pub(super) const KEY_DELIVERY_UNCERTAIN: &str = INTENT_LEDGER_VALUE_KEYS[16];
 
-pub(super) const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[17];
+pub(super) const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[17];
 
-pub(super) const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[18];
+pub(super) const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[18];
 
-pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[19];
+pub(super) const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[19];
+
+pub(super) const KEY_ADMITTED_APPROVAL: &str = INTENT_LEDGER_VALUE_KEYS[20];
+
+pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[21];
 
 /// The canonical intent body used as the digest preimage.
 ///
-/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..19]`, in that order, with
+/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..21]`, in that order, with
 /// `KEY_CONTENT_DIGEST` absent. This is the single source of every stored body
 /// value — raw payload, authorization binding, nested budget accounting, typed
 /// capability provenance, recorded outcome, state, and timestamps — so the
@@ -223,15 +248,34 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
         ),
         (Value::from(KEY_BUDGET_ACCOUNTING), budget_accounting),
         (Value::from(KEY_RECORDED_OUTCOME), recorded_outcome),
+        (
+            Value::from(KEY_DELIVERY_UNCERTAIN),
+            Value::Boolean(record.delivery_uncertain),
+        ),
         (Value::from(KEY_STATE), Value::from(record.state.as_str())),
         (Value::from(KEY_CREATED_MS), Value::from(record.created_ms)),
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
+        (
+            Value::from(KEY_ADMITTED_APPROVAL),
+            record.admitted_approval.map_or(Value::Nil, |proof| {
+                Value::Map(vec![
+                    (
+                        Value::from("intent_id"),
+                        Value::Binary(proof.intent_id().to_vec()),
+                    ),
+                    (
+                        Value::from("effect_digest"),
+                        Value::Binary(proof.effect_digest().as_bytes().to_vec()),
+                    ),
+                ])
+            }),
+        ),
     ]
 }
 
 /// Encodes `Value::Map(record_entries_without_digest(record))`.
 ///
-/// The 19-entry MessagePack map header is part of the preimage, and so are the
+/// The 21-entry MessagePack map header is part of the preimage, and so are the
 /// raw `payload` bytes: the preimage is definitionally the stored body minus
 /// the digest key, and carving `payload` out would reintroduce a second body
 /// representation. The O(payload) cost per encode/decode is accepted;
@@ -260,6 +304,10 @@ fn encode_messagepack_map(entries: Vec<(Value, Value)>) -> IntentLedgerResult<Ve
     Ok(encoded)
 }
 
+/// Reconstructs the full raw key a ledger row lives under. Production reads and writes now go
+/// through [`LEDGER`](super::store) by id alone; this stays for tests that plant or inspect rows
+/// through the raw `vault_meta` door directly.
+#[cfg(test)]
 pub(super) fn intent_ledger_key(id: &[u8; 32]) -> Vec<u8> {
     let mut key = Vec::with_capacity(INTENT_LEDGER_PRIVATE_PREFIX.len() + id.len());
     key.extend_from_slice(INTENT_LEDGER_PRIVATE_PREFIX);
@@ -276,7 +324,7 @@ pub(super) fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
     key[INTENT_LEDGER_PRIVATE_PREFIX.len()..].try_into().ok()
 }
 
-/// Encodes the canonical 20-entry row: the digest preimage body plus the
+/// Encodes the canonical 22-entry row: the digest preimage body plus the
 /// content digest computed over exactly those bytes, appended as the final
 /// `content_digest` entry.
 pub(super) fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
@@ -290,6 +338,21 @@ pub(super) fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<V
 }
 
 pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
+    let record = decode_record_fields(raw)?;
+    if id_from_ledger_key(key) != Some(record.id) {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent key does not match id",
+        ));
+    }
+    validate_record(&record)?;
+    Ok(record)
+}
+
+/// Parses and content-digest-checks one row's bytes, without the key-vs-id
+/// consistency check ([`decode_record`] adds that; the typed side table's
+/// value codec has no key to check against, so [`RawValue::from_raw`] below
+/// calls this directly and the caller checks the id itself).
+fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut cursor = Cursor::new(raw);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         IntentLedgerError::InvalidRecord("outbound intent MessagePack decode failed")
@@ -321,10 +384,12 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
     let mut capability_provenance = None;
     let mut budget_accounting = None;
     let mut recorded_outcome = None;
+    let mut delivery_uncertain = None;
     let mut state = None;
     let mut created_ms = None;
     let mut updated_ms = None;
     let mut content_digest = None;
+    let mut admitted_approval = None;
     let mut seen = [false; INTENT_LEDGER_VALUE_KEYS.len()];
 
     for (entry_key, value) in entries {
@@ -387,6 +452,12 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             KEY_RECORDED_OUTCOME => {
                 recorded_outcome = Some(decode_recorded_outcome(&value)?);
             }
+            KEY_DELIVERY_UNCERTAIN => {
+                delivery_uncertain =
+                    Some(value.as_bool().ok_or(IntentLedgerError::InvalidRecord(
+                        "outbound intent delivery_uncertain must be boolean",
+                    ))?);
+            }
             KEY_STATE => {
                 state = Some(
                     IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
@@ -399,6 +470,9 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             }
             KEY_CREATED_MS => created_ms = Some(expect_u64(&value)?),
             KEY_UPDATED_MS => updated_ms = Some(expect_u64(&value)?),
+            KEY_ADMITTED_APPROVAL => {
+                admitted_approval = Some(decode_admitted_approval(&value)?);
+            }
             KEY_CONTENT_DIGEST => content_digest = Some(expect_binary_array::<32>(&value)?),
             _ => {
                 return Err(IntentLedgerError::InvalidRecord(
@@ -431,6 +505,10 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             authorization_binding,
             "missing outbound intent authorization_binding",
         )?,
+        admitted_approval: required(
+            admitted_approval,
+            "missing outbound intent admitted_approval",
+        )?,
         binding_version: required(binding_version, "missing outbound intent binding_version")?,
         resolved_endpoint: required(
             resolved_endpoint,
@@ -445,6 +523,10 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             "missing outbound intent budget_accounting",
         )?,
         recorded_outcome: required(recorded_outcome, "missing outbound intent recorded_outcome")?,
+        delivery_uncertain: required(
+            delivery_uncertain,
+            "missing outbound intent delivery_uncertain",
+        )?,
         state: required(state, "missing outbound intent state")?,
         created_ms: required(created_ms, "missing outbound intent created_ms")?,
         updated_ms: required(updated_ms, "missing outbound intent updated_ms")?,
@@ -455,8 +537,32 @@ pub(super) fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<Intent
             "outbound intent content digest mismatch",
         ));
     }
-    validate_record(key, &record)?;
     Ok(record)
+}
+
+fn decode_admitted_approval(value: &Value) -> IntentLedgerResult<Option<AdmittedApproval>> {
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    let Value::Map(entries) = value else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "admitted approval must be a map",
+        ));
+    };
+    if entries.len() != 2
+        || entries[0].0.as_str() != Some("intent_id")
+        || entries[1].0.as_str() != Some("effect_digest")
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "admitted approval keys are not canonical",
+        ));
+    }
+    let intent_id = expect_binary_array::<32>(&entries[0].1)?;
+    let digest = expect_binary_array::<32>(&entries[1].1)?;
+    Ok(Some(AdmittedApproval::from_gate(
+        intent_id,
+        crate::consent::EffectDigest::from_bytes(digest),
+    )))
 }
 
 fn decode_budget_accounting(value: &Value) -> IntentLedgerResult<BudgetChargeMarker> {

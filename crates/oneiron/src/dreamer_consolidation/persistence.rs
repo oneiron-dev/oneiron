@@ -107,7 +107,7 @@ pub(super) fn open_marker(
         candidate = candidate.with_world(world);
     }
     Ok(PromotionCandidate {
-        claim_id: conflict_open_marker_id(conflict, attempt),
+        claim_id: conflict_open_marker_id(conflict, attempt)?,
         candidate,
         evidence_turn_refs: evidence.into_iter().collect(),
         provenance_chain: chain,
@@ -155,7 +155,7 @@ pub fn close_persistent_conflict(
         None,
         body.rel,
         super::conflict::topic_key(body.scope.as_ref())?.as_deref(),
-    );
+    )?;
     let meet = source_meet(
         ClaimSource::Generated,
         claim_evidence_taint(&body)

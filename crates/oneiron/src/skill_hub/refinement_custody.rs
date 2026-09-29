@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{ClaimRefinementMergeReceipt, SharedSkillMergeReceipt, package_codec::invalid};
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::{
     Vault,
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -18,23 +19,50 @@ use crate::{
 
 const MAGIC: &[u8] = b"oneiron.refinement-receipt.v1\0";
 const DOMAIN: &[u8] = b"oneiron.refinement-receipt.asset.v1\0";
-const OWNED: &[u8] = b"skill_hub/refinement-owned/v1\0";
-const BINDING: &[u8] = b"skill_hub/refinement-binding/v1\0";
-const LATEST: &[u8] = b"skill_hub/refinement-latest/v1\0";
-const RETIRED_HOLDER: &[u8] = b"skill_hub/refinement-holder-retired/v1\0";
-const RETIRED_SOURCE: &[u8] = b"skill_hub/refinement-source-retired/v1\0";
+/// Empty marker per (holder, carrier id) the holder currently owns.
+const OWNED: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_OWNED);
+/// Carrier id to the holder (candidate) it was indexed under.
+const BINDING: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_BINDING);
+/// The local gate's latest ruling for a holder.
+const LATEST: SideTable<EntityId, LatestRuling, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_LATEST);
+/// Empty marker that a holder's custody is permanently closed.
+const RETIRED_HOLDER: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_HOLDER_RETIRED);
+/// Empty marker that one carrier id is permanently retired.
+const RETIRED_SOURCE: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::SKILL_HUB_REFINEMENT_SOURCE_RETIRED);
+/// The ARCH-0023b global local hard-delete marker (owned by
+/// `crate::deletion::tombstone`); read-only here for the retired-holder check.
+const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 const ERASE_CHUNK: usize = 128;
 
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut out = prefix.to_vec();
-    out.extend_from_slice(id.as_bytes());
-    out
+/// Latest-ruling pointer: the ruling id, then the carrier id (32 bytes).
+struct LatestRuling {
+    ruling: [u8; 16],
+    carrier: [u8; 16],
 }
-fn owned_key(prefix: &[u8], candidate: &EntityId, receipt: &EntityId) -> Vec<u8> {
-    let mut out = key(prefix, candidate);
-    out.extend_from_slice(receipt.as_bytes());
-    out
+
+impl RawValue for LatestRuling {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok([self.ruling, self.carrier].concat())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if bytes.len() != 32 {
+            return Err(Error::CorruptedIndex("refinement latest pointer").into());
+        }
+        let mut ruling = [0; 16];
+        let mut carrier = [0; 16];
+        ruling.copy_from_slice(&bytes[..16]);
+        carrier.copy_from_slice(&bytes[16..]);
+        Ok(Self { ruling, carrier })
+    }
 }
+
 fn receipt_id(candidate: &EntityId, ruling: &EntityId) -> Result<EntityId> {
     let hash = Sha256::new()
         .chain_update(DOMAIN)
@@ -132,7 +160,7 @@ pub(crate) fn validate_refinement_carrier_put(
     } else {
         None
     };
-    if store.vault_meta.get(txn, &key(BINDING, id))?.is_some() && source.is_none() {
+    if BINDING.contains(store, txn, id)? && source.is_none() {
         return Err(invalid("refinement source id cannot change type"));
     }
     let Some((candidate, ruling, _)) = source else {
@@ -140,30 +168,21 @@ pub(crate) fn validate_refinement_carrier_put(
     };
     if *id == candidate
         || receipt_id(&candidate, &ruling)? != *id
-        || store
-            .vault_meta
-            .get(txn, &key(RETIRED_HOLDER, &candidate))?
-            .is_some()
+        || RETIRED_HOLDER.contains(store, txn, &candidate)?
         || super::refinement_admission::read_control(store, txn, &candidate)?.is_some_and(
             |control| control.state == super::refinement_admission::RefinementState::Erased,
         )
-        || store
-            .vault_meta
-            .get(txn, &key(RETIRED_SOURCE, id))?
-            .is_some()
-        || store
-            .sync_state
-            .get(txn, &format!("dt:{}", candidate.to_hex()))?
-            .is_some()
+        || RETIRED_SOURCE.contains(store, txn, id)?
+        || HARD_DELETE_MARKER.contains(store, txn, &HexId(candidate))?
     {
         return Err(invalid("retired or misbound refinement carrier"));
     }
-    if let Some(bound) = store.vault_meta.get(txn, &key(BINDING, id))?
-        && bound.as_ref() != candidate.as_bytes()
+    if let Some(bound) = BINDING.get(store, txn, id)?
+        && bound != candidate
     {
         return Err(Error::CorruptedIndex("refinement carrier binding"));
     }
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let head = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("refinement carrier header"))?;
         if head.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != *bytes {
@@ -183,12 +202,8 @@ pub(crate) fn stage_refinement_carrier_put(
     if kind == ENTITY_TYPE_ASSET
         && let Some((candidate, _, _)) = decode(bytes)?
     {
-        store
-            .vault_meta
-            .put(txn, &key(BINDING, id), candidate.as_bytes())?;
-        store
-            .vault_meta
-            .put(txn, &owned_key(OWNED, &candidate, id), &[])?;
+        BINDING.put(store, txn, id, &candidate)?;
+        OWNED.put(store, txn, &(candidate, *id), &())?;
         // Deliberately NO latest projection: a raw or replicated inert source
         // cannot claim to be the local gate's authoritative ruling.
     }
@@ -212,17 +227,15 @@ impl Vault {
         // Only this private same-transaction gate writer selects a latest
         // ruling. An imported ASSET still gets indexed for custody, never
         // promoted into the local decision ledger.
-        let latest_key = key(LATEST, &candidate);
-        let prior = self.store.vault_meta.get(txn, &latest_key)?;
-        let replace = match prior {
-            Some(ref prior) if prior.len() == 32 => ruling.as_bytes().as_slice() >= &prior[..16],
-            Some(_) => return Err(Error::CorruptedIndex("refinement latest pointer")),
-            None => true,
-        };
+        let replace = LATEST
+            .get(&self.store, txn, &candidate)?
+            .is_none_or(|prior| *ruling.as_bytes() >= prior.ruling);
         if replace {
-            let mut pointer = ruling.as_bytes().to_vec();
-            pointer.extend_from_slice(id.as_bytes());
-            self.store.vault_meta.put(txn, &latest_key, &pointer)?;
+            let pointer = LatestRuling {
+                ruling: *ruling.as_bytes(),
+                carrier: *id.as_bytes(),
+            };
+            LATEST.put(&self.store, txn, &candidate, &pointer)?;
         }
         Ok(())
     }
@@ -231,25 +244,14 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         candidate: EntityId,
     ) -> Result<Option<RefinementReceipt>> {
-        if self
-            .store
-            .vault_meta
-            .get(txn, &key(RETIRED_HOLDER, &candidate))?
-            .is_some()
-        {
+        if RETIRED_HOLDER.contains(&self.store, txn, &candidate)? {
             return Ok(None);
         }
-        let Some(id) = self.store.vault_meta.get(txn, &key(LATEST, &candidate))? else {
+        let Some(pointer) = LATEST.get(&self.store, txn, &candidate)? else {
             return Ok(None);
         };
-        if id.len() != 32 {
-            return Err(Error::CorruptedIndex("refinement latest pointer"));
-        }
-        let id = crate::entity_id::parse_entity_id(&id[16..], "refinement latest receipt")?;
-        let raw = self
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+        let id = crate::entity_id::parse_entity_id(&pointer.carrier, "refinement latest receipt")?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
             .ok_or(Error::CorruptedIndex("refinement latest source"))?;
         let head = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("refinement source header"))?;
@@ -272,12 +274,8 @@ pub(crate) fn refinement_custody_exists_in_txn(
     txn: &heed::RoTxn<'_>,
     candidate: &EntityId,
 ) -> Result<bool> {
-    let mut cursor = store.vault_meta.prefix_iter(txn, &key(OWNED, candidate))?;
-    Ok(cursor.next().transpose()?.is_some()
-        || store
-            .vault_meta
-            .get(txn, &key(LATEST, candidate))?
-            .is_some())
+    let mut owned = OWNED.iter_raw_from(store, txn, candidate.as_bytes())?;
+    Ok(owned.next().transpose()?.is_some() || LATEST.contains(store, txn, candidate)?)
 }
 
 /// Source-id deletion drops ownership and retains only a content-free ID fence.
@@ -286,21 +284,19 @@ pub(crate) fn remove_refinement_carrier_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let Some(holder_bytes) = store.vault_meta.get(txn, &key(BINDING, id))? else {
+    let Some(holder) = BINDING.get(store, txn, id)? else {
         return Ok(());
     };
-    let holder = crate::entity_id::parse_entity_id(&holder_bytes, "refinement source holder")?;
-    store
-        .vault_meta
-        .delete(txn, &owned_key(OWNED, &holder, id))?;
-    if store
-        .vault_meta
-        .get(txn, &key(LATEST, &holder))?
-        .is_some_and(|pointer| pointer.len() == 32 && &pointer[16..] == id.as_bytes())
+    OWNED.delete(store, txn, &(holder, *id))?;
+    // A malformed pointer is left in place, as before: only a well-formed
+    // pointer naming this carrier is dropped.
+    if LATEST
+        .get_lenient(store, txn, &holder)?
+        .is_some_and(|pointer| pointer.carrier == *id.as_bytes())
     {
-        store.vault_meta.delete(txn, &key(LATEST, &holder))?;
+        LATEST.delete(store, txn, &holder)?;
     }
-    store.vault_meta.put(txn, &key(RETIRED_SOURCE, id), &[])?;
+    RETIRED_SOURCE.put(store, txn, id, &())?;
     Ok(())
 }
 
@@ -311,9 +307,7 @@ pub(crate) fn retire_refinement_holder_in_txn(
     txn: &mut heed::RwTxn<'_>,
     candidate: &EntityId,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &key(RETIRED_HOLDER, candidate), &[])?;
+    RETIRED_HOLDER.put(store, txn, candidate, &())?;
     erase_refinement_custody_in_txn(store, txn, candidate)?;
     Ok(())
 }
@@ -329,34 +323,22 @@ pub(crate) fn erase_refinement_custody_in_txn(
     if !had_payload {
         return Ok(false);
     }
-    store
-        .vault_meta
-        .put(txn, &key(RETIRED_HOLDER, candidate), &[])?;
-    store.vault_meta.delete(txn, &key(LATEST, candidate))?;
+    RETIRED_HOLDER.put(store, txn, candidate, &())?;
+    LATEST.delete(store, txn, candidate)?;
     loop {
-        let prefix = key(OWNED, candidate);
-        let ids: Vec<EntityId> = store
-            .vault_meta
-            .prefix_iter(&*txn, &prefix)?
+        let ids: Vec<EntityId> = OWNED
+            .iter_from(store, &*txn, candidate.as_bytes())?
             .take(ERASE_CHUNK)
-            .map(|entry| {
-                let (row_key, _) = entry?;
-                crate::entity_id::parse_entity_id(
-                    &row_key[prefix.len()..],
-                    "refinement owned source",
-                )
-            })
+            .map(|entry| entry.map(|((_, id), ())| id))
             .collect::<Result<_>>()?;
         if ids.is_empty() {
             break;
         }
         for id in ids {
-            if store.vault_meta.get(txn, &key(BINDING, &id))?.as_deref()
-                != Some(candidate.as_bytes().as_slice())
-            {
+            if BINDING.get(store, txn, &id)? != Some(*candidate) {
                 return Err(Error::CorruptedIndex("refinement owned source binding"));
             }
-            if store.entities.get(txn, id.as_bytes())?.is_some() {
+            if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
                 let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &id)?;
                 crate::ppr::invalidate_ppr_for_delete(store, txn, &id, &neighbors)?;
                 if graph {
@@ -380,14 +362,9 @@ pub(crate) fn refinement_carriers_for_holder_in_txn(
     txn: &heed::RoTxn<'_>,
     candidate: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let prefix = key(OWNED, candidate);
-    store
-        .vault_meta
-        .prefix_iter(txn, &prefix)?
-        .map(|entry| {
-            let (row_key, _) = entry?;
-            crate::entity_id::parse_entity_id(&row_key[prefix.len()..], "refinement source id")
-        })
+    OWNED
+        .iter_from(store, txn, candidate.as_bytes())?
+        .map(|entry| entry.map(|((_, id), ())| id))
         .collect()
 }
 

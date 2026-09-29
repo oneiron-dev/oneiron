@@ -10,11 +10,13 @@ use crate::consent::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::GateError;
 use crate::genui::ConsentSurface;
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-const PREFIX: &[u8] = b"genui.voice_grant_offer.v1:";
+const OFFERS: SideTable<Vec<u8>, StoredVoiceOffer, LegacyJson> =
+    SideTable::new(&side_table::GENUI_VOICE_GRANT_OFFER);
 const OFFER_LIFETIME_SECONDS: u64 = 600;
 const MAX_PENDING_OFFERS: usize = 1024;
 
@@ -47,7 +49,14 @@ fn offer_key(nonce: &str) -> Result<Vec<u8>> {
     {
         return Err(invalid_offer());
     }
-    Ok([PREFIX, nonce.as_bytes()].concat())
+    Ok(nonce.as_bytes().to_vec())
+}
+
+fn row_error(error: Error) -> Error {
+    match error {
+        Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid_offer(),
+        other => other,
+    }
 }
 
 fn invalid_offer() -> Error {
@@ -104,8 +113,7 @@ impl Vault {
         self.prune_expired_voice_grant_offers()?;
         self.with_write_txn(|txn| {
             let mut pending = 0;
-            for entry in self.store.vault_meta.prefix_iter(&*txn, PREFIX)? {
-                entry?;
+            for _entry in OFFERS.scan_keys(&self.store, txn, &[])? {
                 pending += 1;
                 if pending >= MAX_PENDING_OFFERS {
                     return Err(Error::InvalidConfig(
@@ -113,14 +121,12 @@ impl Vault {
                     ));
                 }
             }
-            if self.store.vault_meta.get(&*txn, &key)?.is_some() {
+            if OFFERS.contains(&self.store, txn, &key)? {
                 return Err(invalid_offer());
             }
-            self.store.vault_meta.put(
-                txn,
-                &key,
-                &serde_json::to_vec(&row).map_err(|_| invalid_offer())?,
-            )?;
+            OFFERS
+                .put(&self.store, txn, &key, &row)
+                .map_err(row_error)?;
             Ok(())
         })?;
         Ok(VoiceGrantOffer {
@@ -140,10 +146,8 @@ impl Vault {
         let now = self.now_recorded_at();
         self.with_write_txn(|txn| {
             let mut expired = Vec::new();
-            for entry in self.store.vault_meta.prefix_iter(&*txn, PREFIX)? {
-                let (key, bytes) = entry?;
-                let row: StoredVoiceOffer =
-                    serde_json::from_slice(&bytes).map_err(|_| invalid_offer())?;
+            for entry in OFFERS.iter_from(&self.store, txn, &[])? {
+                let (key, row) = entry.map_err(row_error)?;
                 if row.version != 1 {
                     return Err(invalid_offer());
                 }
@@ -152,7 +156,7 @@ impl Vault {
                 }
             }
             for key in &expired {
-                self.store.vault_meta.delete(txn, key)?;
+                OFFERS.delete(&self.store, txn, key)?;
             }
             Ok(expired.len())
         })
@@ -176,13 +180,10 @@ impl Vault {
         }
         let key = offer_key(grant_offer_nonce)?;
         self.with_write_txn(|txn| {
-            let bytes = self
-                .store
-                .vault_meta
-                .get(&*txn, &key)?
+            let row = OFFERS
+                .get(&self.store, txn, &key)
+                .map_err(row_error)?
                 .ok_or_else(invalid_offer)?;
-            let row: StoredVoiceOffer =
-                serde_json::from_slice(&bytes).map_err(|_| invalid_offer())?;
             if row.version != 1
                 || row.owner_actor != owner.actor().to_hex()
                 || row.principal_ref != owner.principal_ref()
@@ -193,7 +194,7 @@ impl Vault {
             }
             owner.revalidate_in_txn(self, &*txn)?;
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
-            self.store.vault_meta.delete(txn, &key)?;
+            OFFERS.delete(&self.store, txn, &key)?;
             Ok(receipt)
         })
     }
@@ -234,12 +235,7 @@ mod tests {
 
     fn pending_count(vault: &Vault) -> Result<usize> {
         let rtxn = vault.store.env.read_txn()?;
-        let mut count = 0;
-        for row in vault.store.vault_meta.prefix_iter(&rtxn, PREFIX)? {
-            row?;
-            count += 1;
-        }
-        Ok(count)
+        Ok(OFFERS.scan_keys(&vault.store, &rtxn, &[])?.len())
     }
 
     #[test]

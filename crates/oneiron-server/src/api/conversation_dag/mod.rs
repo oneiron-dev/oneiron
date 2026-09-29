@@ -13,9 +13,10 @@ use crate::server::SyncServer;
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use oneiron::EntityId;
-use oneiron::conversation_dag::{AppendRecord, DagPageRequest};
-use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest};
+use oneiron::reaction::{ReactionExternalId, ReactionIngress, ReactionInput};
+use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use oneiron::{EdgeKind, EntityId};
 use std::sync::Arc;
 use types::parse_optional;
 pub(crate) use types::*;
@@ -50,6 +51,16 @@ fn append_input(
     Ok(AppendRecord {
         conversation,
         reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,
+        address: match req.addr.unwrap_or(DagAddressMode::Broadcast) {
+            DagAddressMode::Broadcast => AddressMode::Broadcast,
+            DagAddressMode::Direct => AddressMode::Direct,
+        },
+        recipients: req
+            .to
+            .unwrap_or_default()
+            .iter()
+            .map(|id| parse_entity_id_param(id, "to"))
+            .collect::<Result<Vec<_>, _>>()?,
         parent: parse_optional(req.parent.as_deref(), "parent")?,
         advance: req.advance,
         kind: ENTITY_TYPE_TURN,
@@ -93,6 +104,13 @@ pub(crate) async fn get_core_dag(
     auth.require(CoreScope::Read)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = query_params(query)?;
+    if req
+        .with
+        .as_deref()
+        .is_some_and(|with| with != "thread_meta" && with != "reactions")
+    {
+        return Err(ApiError::bad_request("unsupported records projection", None).into());
+    }
     let page = server
         .vault
         .main_line(
@@ -103,8 +121,39 @@ pub(crate) async fn get_core_dag(
             },
         )
         .map_err(|e| core_engine_error("DAG read failed", e))?;
+    let thread_meta = if req.with.as_deref() == Some("thread_meta") {
+        let mut meta = std::collections::BTreeMap::new();
+        for id in &page.main_line {
+            let value = server
+                .vault
+                .thread_meta(*id)
+                .map_err(|e| core_engine_error("thread metadata read failed", e))?
+                .map(|row| DagThreadMetaResponse {
+                    root: row.root.to_hex(),
+                    count: row.count,
+                    last_at: row.last_at,
+                });
+            meta.insert(id.to_hex(), value);
+        }
+        Some(meta)
+    } else {
+        None
+    };
+    let (records, reactions_outbound) = if req.with.as_deref() == Some("reactions") {
+        let viewer = req.viewer.as_deref().ok_or_else(|| {
+            ApiError::bad_request("viewer is required with reactions", Some("viewer"))
+        })?;
+        let (records, outbound) =
+            reaction_records(&server, &auth, conversation, &page.main_line, viewer)?;
+        (Some(records), Some(outbound))
+    } else {
+        (None, None)
+    };
     Ok(Json(DagPageResponse {
         head: page.head.map(|id| id.to_hex()),
+        thread_meta,
+        records,
+        reactions_outbound,
         root: page.root.map(|id| id.to_hex()),
         main_line: ids(page.main_line),
         page: DagPageCursor {
@@ -324,11 +373,47 @@ pub(crate) async fn get_thread(
     if thread.conversation != conversation {
         return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
     }
+    let roots = server
+        .vault
+        .thread_roots(record)
+        .map_err(|e| core_engine_error("thread roots read failed", e))?;
     Ok(Json(DagThreadResponse {
+        roots: ids(roots),
         root: thread.root.map(|id| id.to_hex()),
         replies: ids(thread.replies),
         count: thread.count,
         last_at: thread.last_at,
+    }))
+}
+
+#[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
+    params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagThreadSummaryRequest,
+    responses((status = 200, body = DagSummaryResponse), (status = 400, body = ApiErrorEnvelope)))]
+pub(crate) async fn summarize_thread(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((conversation_id, record)): Path<(String, String)>,
+    payload: Result<Json<DagThreadSummaryRequest>, JsonRejection>,
+) -> Result<Json<DagSummaryResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
+    let record = parse_entity_id_param(&record, "record")?;
+    let req = json_payload(payload)?;
+    let thread = server
+        .vault
+        .thread(record)
+        .map_err(|e| core_engine_error("thread read failed", e))?;
+    if thread.conversation != conversation {
+        return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
+    }
+    let (summary, landed) = server
+        .vault
+        .mint_and_land_thread_summary(record, &req.text, req.actor.parse(&auth)?)
+        .map_err(|e| core_engine_error("thread summary failed", e))?;
+    Ok(Json(DagSummaryResponse {
+        summary: summary.to_hex(),
+        claim: Some(landed.claim.to_hex()),
+        record: None,
     }))
 }
 
@@ -353,5 +438,155 @@ pub(crate) async fn get_canonical(
         .map_err(|e| core_engine_error("canonical read failed", e))?;
     Ok(Json(DagRecordsResponse {
         records: ids(resolved.records),
+    }))
+}
+
+/// Grouped pills for each listed TURN and the MESSAGEs beneath it, in one
+/// engine snapshot, for a viewer the credential may speak for.
+fn reaction_records(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    conversation: EntityId,
+    main_line: &[EntityId],
+    viewer: &str,
+) -> Result<(Vec<DagReactionRecord>, &'static str), EnvelopedApiError> {
+    auth.require_unrestricted_record_scope()?;
+    if !auth.is_owner_grade() && auth.principal_ref() != Some(viewer) {
+        return Err(ApiError::forbidden_scope("viewer").into());
+    }
+    let viewer = parse_entity_id_param(viewer, "viewer")?;
+    let mut pairs = Vec::new();
+    for turn in main_line {
+        let children = server
+            .vault
+            .sources(turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))
+            .map_err(|e| core_engine_error("message listing failed", e))?;
+        for target in std::iter::once(*turn).chain(children.iter().copied()) {
+            if auth
+                .can_read_entity(&server.vault, &target)
+                .map_err(|e| core_engine_error("record access failed", e))?
+            {
+                pairs.push((*turn, target, target == *turn && !children.is_empty()));
+            }
+        }
+    }
+    let targets: Vec<EntityId> = pairs.iter().map(|(_, target, _)| *target).collect();
+    let pills = server
+        .vault
+        .reaction_pills(&targets, viewer)
+        .map_err(|e| core_engine_error("reaction listing failed", e))?;
+    let records = pairs
+        .into_iter()
+        .filter_map(|(turn, target, groups_children)| {
+            let groups = pills.get(&target)?;
+            // A witnessed TURN groups MESSAGE children: list it only when it
+            // was reacted to itself. A first-party append is its own record.
+            if groups_children && groups.is_empty() {
+                return None;
+            }
+            Some(DagReactionRecord {
+                turn: turn.to_hex(),
+                id: target.to_hex(),
+                reactions: groups
+                    .iter()
+                    .map(|pill| DagReactionPill {
+                        glyph: pill.glyph.clone(),
+                        count: pill.count,
+                        by: pill.by.iter().map(EntityId::to_hex).collect(),
+                        mine: pill.mine,
+                    })
+                    .collect(),
+            })
+        })
+        .collect();
+    let outbound = server
+        .vault
+        .reactions_outbound(conversation)
+        .map_err(|e| core_engine_error("room reaction posture failed", e))?;
+    Ok((records, outbound))
+}
+
+/// Puts or removes one reaction on a MESSAGE or TURN. The actor binding is
+/// checked against the credential; the vault revalidates the person and the
+/// room audience in its write transaction.
+#[utoipa::path(post, path = "/v1/core/messages/{message}/reactions",
+    params(("message" = String, Path)), request_body = ReactionRequest,
+    responses((status = 200, body = ReactionResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 403, body = ApiErrorEnvelope)))]
+pub(crate) async fn react_core_message(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(message): Path<String>,
+    payload: Result<Json<ReactionRequest>, JsonRejection>,
+) -> Result<Json<ReactionResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let message = parse_entity_id_param(&message, "message")?;
+    let req = json_payload(payload)?;
+    let by = parse_entity_id_param(&req.by, "by")?;
+    let actor = req.actor.parse(&auth)?;
+    let change = if let Some(external) = req.external {
+        // Connector ingress: the host resolved the provider's identities, and
+        // the engine's mirror MACHINE writes the claim.
+        if !auth.is_owner_grade() {
+            return Err(ApiError::forbidden_scope("reaction_external").into());
+        }
+        let generation = ReactionExternalId {
+            connector: external.connector,
+            id: external.id,
+        };
+        let glyph = req.glyph;
+        let input = match (req.remove, external.origin, req.occurred_at) {
+            (true, None, _) => ReactionIngress::Remove {
+                message,
+                by,
+                glyph,
+                generation,
+            },
+            (false, Some(origin), _) => ReactionIngress::Echo {
+                original: parse_entity_id_param(&origin, "external.origin")?,
+                message,
+                by,
+                glyph,
+                generation,
+            },
+            (false, None, Some(occurred_at)) => ReactionIngress::ProviderAdd {
+                message,
+                by,
+                glyph,
+                occurred_at,
+                generation,
+            },
+            _ => {
+                return Err(ApiError::bad_request(
+                    "a provider add needs occurred_at, an echo origin, a removal neither",
+                    Some("external"),
+                )
+                .into());
+            }
+        };
+        server.vault.ingest_reaction(input)
+    } else {
+        if actor.entity_ref() != by {
+            return Err(ApiError::forbidden_scope("reaction_actor").into());
+        }
+        if req.remove {
+            server.vault.remove_reaction(message, by, &req.glyph, actor)
+        } else {
+            let occurred_at = req.occurred_at.ok_or_else(|| {
+                ApiError::bad_request("occurred_at is required", Some("occurred_at"))
+            })?;
+            server.vault.react(ReactionInput {
+                message,
+                by,
+                glyph: req.glyph,
+                occurred_at,
+                actor,
+            })
+        }
+    }
+    .map_err(|e| core_engine_error("reaction write failed", e))?;
+    Ok(Json(ReactionResponse {
+        id: change.id.to_hex(),
+        event: change.state.event(),
     }))
 }

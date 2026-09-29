@@ -77,6 +77,7 @@ use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_FACET,
     ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideKey, SideTable};
 use crate::subject_model::actor_subject_anchor;
 #[cfg(test)]
 use crate::subject_model::{PersonSubstrate, person_substrate};
@@ -98,29 +99,51 @@ pub use self::intent::{
     WorkspaceRosterPreset,
 };
 use self::records::{
-    MAX_NAME_BYTES, ONBOARDING_STEPS, OnboardingJournal, ROSTER_KEY_SEPARATOR, RosterMemberRow,
+    MAX_NAME_BYTES, MEMBER, ONBOARDING, ONBOARDING_STEPS, OnboardingJournal, OnboardingJournalRow,
+    PRESET, ROSTER_KEY_SEPARATOR, RosterMemberKey, RosterMemberRow,
 };
 pub use self::records::{
-    MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ONBOARDING_KEY_PREFIX,
-    WORKSPACE_ROSTER_MEMBER_KEY_PREFIX, WORKSPACE_ROSTER_PRESET_KEY_PREFIX,
-    WORKSPACE_ROSTER_SCHEMA_VERSION, WorkspaceRosterEntry, WorkspaceRosterRole,
+    MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
+    WorkspaceRosterEntry, WorkspaceRosterRole,
 };
 
 #[cfg(test)]
 mod tests;
 
 mod project;
-pub(crate) use project::{
-    HUB_BELONGS_TO_LAMBDA, deindex_project_room, is_project_entity, is_project_type,
-    reconcile_project_rooms, seed_root_project, validate_project_body,
-    validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
-    validate_project_transition, validate_room_body,
-};
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use project::create_project_signed_for_test;
+#[cfg(test)]
+pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
-    PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange,
-    ProjectWriteProof,
+    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
+    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchor,
+    ProjectAuthority, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectQuarantine,
+    ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange, ProjectVerdict, ProjectWidenAsk,
+    ProjectWidenAxis, ProjectWriteProof, RoomOriginCard,
+};
+pub(crate) use project::{
+    GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, ProjectReader, admit_leader_chat_turn,
+    admit_leader_chat_witness, deindex_project_room, guard_goal_claim_put, guard_goal_delete,
+    guard_goal_pointer_put, is_project_entity, is_project_type, leader_chat_record_permitted,
+    normalize_project_body, permit_leader_chat_record, precheck_goal_delete,
+    project_mint_gate_refs_in_txn, project_room_dependency, reconcile_project_rooms,
+    retire_goal_for_delete, root_project_in, seed_root_project, settle_leader_chat_record,
+    validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_project_transition,
+    validate_room_body, verify_existing_leader_chat_turn,
 };
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-pub use rooms::{RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTurn};
+pub use rooms::{
+    RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPage,
+    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTrunkItem,
+    RoomTurn, RoomWaitKind,
+};
+
+pub(crate) use rooms::RoomThreadTask;
+
+pub(crate) use rooms::project_room_audience_in;
+
+pub use crate::gate::RoomThreadFill;

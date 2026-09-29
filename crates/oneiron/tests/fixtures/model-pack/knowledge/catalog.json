@@ -1,0 +1,1939 @@
+{
+  "version": 1,
+  "rows": [
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "aion-labs/aion-3.0-mini@catalog-2026-09-19",
+        "display_name": "AionLabs: Aion-3.0-Mini",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 32768,
+        "cost": {
+          "input_per_million": "0.7000000",
+          "output_per_million": "1.4000000",
+          "cache_read_per_million": "0.18000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "aion-labs/aion-3.0-mini",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "aion-labs",
+          "description": {
+            "vendor_copy": {
+              "text": "Aion-3.0 Mini is a multi-model roleplaying and storytelling system from AionLabs, built on the DeepSeek family of models. It uses a collaborative generation process in which multiple specialized models each...",
+              "source": "https://openrouter.ai/api/v1/models#aion-labs/aion-3.0-mini"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "amazon/nova-2-lite-v1@catalog-2026-09-19",
+        "display_name": "Amazon: Nova 2 Lite",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 65535,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "2.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "amazon/nova-2-lite-v1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "amazon",
+          "description": {
+            "vendor_copy": {
+              "text": "Nova 2 Lite is a fast, cost-effective reasoning model for everyday workloads that can process text, images, and videos to generate text. Nova 2 Lite demonstrates standout capabilities in processing...",
+              "source": "https://openrouter.ai/api/v1/models#amazon/nova-2-lite-v1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "anthracite-org/magnum-v4-72b@catalog-2026-09-19",
+        "display_name": "Magnum v4 72B",
+        "locality": "third_party",
+        "context_window_tokens": 32768,
+        "max_output_tokens": 4096,
+        "cost": {
+          "input_per_million": "2.5000000",
+          "output_per_million": "5.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "anthracite-org/magnum-v4-72b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "anthracite-org",
+          "description": {
+            "vendor_copy": {
+              "text": "This is a series of models designed to replicate the prose quality of the Claude 3 models, specifically Sonnet(https://openrouter.ai/anthropic/claude-3.5-sonnet) and Opus(https://openrouter.ai/anthropic/claude-3-opus). The model is fine-tuned on top of [Qwen2.5 72B](https://openrouter.ai/qwen/qwen-2.5-72b-instruct).",
+              "source": "https://openrouter.ai/api/v1/models#anthracite-org/magnum-v4-72b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "anthropic/claude-fable-5.1@catalog-2026-09-19",
+        "display_name": "Anthropic: Claude Fable 5.1",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "10.00000",
+          "output_per_million": "50.00000",
+          "cache_read_per_million": "0.25000000",
+          "cache_write_per_million": "12.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "anthropic/claude-fable-5.1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "anthropic",
+          "description": {
+            "vendor_copy": {
+              "text": "Claude Fable 5.1 improves on Claude Fable 5 across the board, with the biggest gains in agentic coding, long-running agentic workflows, and knowledge work: long code refactors, front-end and visual...",
+              "source": "https://openrouter.ai/api/v1/models#anthropic/claude-fable-5.1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "arcee-ai/trinity-large-thinking@catalog-2026-09-19",
+        "display_name": "Arcee AI: Trinity Large Thinking",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 80000,
+        "cost": {
+          "input_per_million": "0.25000000",
+          "output_per_million": "0.8000000",
+          "cache_read_per_million": "0.06000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "arcee-ai/trinity-large-thinking",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "arcee-ai",
+          "description": {
+            "vendor_copy": {
+              "text": "Trinity Large Thinking is a powerful open source reasoning model from the team at Arcee AI. It shows strong performance in PinchBench, agentic workloads, and reasoning tasks. Launch video: https://youtu.be/Gc82AXLa0Rg?si=4RLn6WBz33qT--B7...",
+              "source": "https://openrouter.ai/api/v1/models#arcee-ai/trinity-large-thinking"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "baidu/ernie-4.5-vl-424b-a47b@catalog-2026-09-19",
+        "display_name": "Baidu: ERNIE 4.5 VL 424B A47B ",
+        "locality": "third_party",
+        "context_window_tokens": 123000,
+        "max_output_tokens": 16000,
+        "cost": {
+          "input_per_million": "0.42000000",
+          "output_per_million": "1.25000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "baidu/ernie-4.5-vl-424b-a47b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "baidu",
+          "description": {
+            "vendor_copy": {
+              "text": "ERNIE-4.5-VL-424B-A47B is a multimodal Mixture-of-Experts (MoE) model from Baidu’s ERNIE 4.5 series, featuring 424B total parameters with 47B active per token. It is trained jointly on text and image data...",
+              "source": "https://openrouter.ai/api/v1/models#baidu/ernie-4.5-vl-424b-a47b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "bytedance/ui-tars-1.5-7b@catalog-2026-09-19",
+        "display_name": "ByteDance: UI-TARS 7B ",
+        "locality": "third_party",
+        "context_window_tokens": 128000,
+        "max_output_tokens": 2048,
+        "cost": {
+          "input_per_million": "0.1000000",
+          "output_per_million": "0.2000000",
+          "cache_read_per_million": "0.1000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "bytedance/ui-tars-1.5-7b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "bytedance",
+          "description": {
+            "vendor_copy": {
+              "text": "UI-TARS-1.5 is a multimodal vision-language agent optimized for GUI-based environments, including desktop interfaces, web browsers, mobile systems, and games. Built by ByteDance, it builds upon the UI-TARS framework with reinforcement...",
+              "source": "https://openrouter.ai/api/v1/models#bytedance/ui-tars-1.5-7b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "bytedance-seed/seed-2-1-turbo@catalog-2026-09-19",
+        "display_name": "ByteDance Seed: Seed 2.1 Turbo",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0.5000000",
+          "output_per_million": "2.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "bytedance-seed/seed-2-1-turbo",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "bytedance-seed",
+          "description": {
+            "vendor_copy": {
+              "text": "Seed 2.1 Turbo is a multimodal model from ByteDance Seed for coding and long-horizon agent workflows. It is suited for end-to-end software delivery, multi-step task execution, and understanding visual and...",
+              "source": "https://openrouter.ai/api/v1/models#bytedance-seed/seed-2-1-turbo"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "cognitivecomputations/dolphin-mistral-24b-venice-edition@catalog-2026-09-19",
+        "display_name": "Venice: Uncensored",
+        "locality": "third_party",
+        "context_window_tokens": 128000,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.2000000",
+          "output_per_million": "0.9000000"
+        },
+        "capabilities": [
+          "streaming"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "cognitivecomputations",
+          "description": {
+            "vendor_copy": {
+              "text": "Venice Uncensored Dolphin Mistral 24B Venice Edition is a fine-tuned variant of Mistral-Small-24B-Instruct-2501, developed by dphn.ai in collaboration with Venice.ai. This model is designed as an “uncensored” instruct-tuned LLM, preserving...",
+              "source": "https://openrouter.ai/api/v1/models#cognitivecomputations/dolphin-mistral-24b-venice-edition"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "cohere/north-mini-code.free@catalog-2026-09-19",
+        "display_name": "Cohere: North Mini Code (free)",
+        "locality": "third_party",
+        "context_window_tokens": 256000,
+        "max_output_tokens": 64000,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "cohere/north-mini-code:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "cohere",
+          "description": {
+            "vendor_copy": {
+              "text": "North Mini Code is Cohere's first agentic coding model and the debut of its North family. A sparse mixture-of-experts model with 30B total parameters and 3B active, it is optimized...",
+              "source": "https://openrouter.ai/api/v1/models#cohere/north-mini-code:free"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "deepseek/deepseek-v4.1-flash@catalog-2026-09-19",
+        "display_name": "DeepSeek: DeepSeek V4.1 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 384000,
+        "cost": {
+          "input_per_million": "0.15000000",
+          "output_per_million": "0.6000000",
+          "cache_read_per_million": "0.003000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "deepseek/deepseek-v4.1-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "deepseek",
+          "description": {
+            "vendor_copy": {
+              "text": "DeepSeek V4.1 Flash is a sparse mixture-of-experts model from DeepSeek, and the first built on the company's Causal Encoder-Decoder (CED) architecture. It activates 8B parameters on input and 16B on...",
+              "source": "https://openrouter.ai/api/v1/models#deepseek/deepseek-v4.1-flash"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "dots-studio/dots-3-note-preview.free@catalog-2026-09-19",
+        "display_name": "Dots Studio: Dots3-Note Preview (free)",
+        "locality": "third_party",
+        "context_window_tokens": 512000,
+        "max_output_tokens": 460800,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "dots-studio/dots-3-note-preview:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "dots-studio",
+          "description": {
+            "vendor_copy": {
+              "text": "Dots3-Note Preview is an open-weight mixture-of-experts model from Dots Studio, with 16B active parameters out of 280B total. It is the lightest model in the Dots 3 family and is...",
+              "source": "https://openrouter.ai/api/v1/models#dots-studio/dots-3-note-preview:free"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "google/gemini-3.8-flash@catalog-2026-09-19",
+        "display_name": "Google: Gemini 3.8 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 65536,
+        "cost": {
+          "input_per_million": "0.75000000",
+          "output_per_million": "3.75000000",
+          "cache_read_per_million": "0.075000000",
+          "cache_write_per_million": "0.0416666666666667000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "google/gemini-3.8-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "google",
+          "description": {
+            "vendor_copy": {
+              "text": "Gemini 3.8 Flash is Google's most intelligent Flash model with significant gains from 3.7 Flash across software engineering, agentic tasks, and multi-step reasoning.",
+              "source": "https://openrouter.ai/api/v1/models#google/gemini-3.8-flash"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "gryphe/mythomax-l2-13b@catalog-2026-09-19",
+        "display_name": "MythoMax 13B",
+        "locality": "third_party",
+        "context_window_tokens": 8192,
+        "max_output_tokens": 3686,
+        "cost": {
+          "input_per_million": "0.08000000",
+          "output_per_million": "0.11000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "gryphe/mythomax-l2-13b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "gryphe",
+          "description": {
+            "vendor_copy": {
+              "text": "One of the highest performing and most popular fine-tunes of Llama 2 13B, with rich descriptions and roleplay. #merge",
+              "source": "https://openrouter.ai/api/v1/models#gryphe/mythomax-l2-13b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "ibm-granite/granite-4.2-8b@catalog-2026-09-19",
+        "display_name": "IBM: Granite 4.2 8B",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 117964,
+        "cost": {
+          "input_per_million": "0.06000000",
+          "output_per_million": "0.25000000",
+          "cache_read_per_million": "0.015000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "ibm-granite/granite-4.2-8b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "ibm-granite",
+          "description": {
+            "vendor_copy": {
+              "text": "Granite 4.2 8B is a dense reasoning model from IBM. It is suited for mathematics, code generation, multilingual dialogue, and agentic workflows that need multi-step reasoning. It supports full, low-effort,...",
+              "source": "https://openrouter.ai/api/v1/models#ibm-granite/granite-4.2-8b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "inception/mercury-2.5@catalog-2026-09-19",
+        "display_name": "Inception: Mercury 2.5",
+        "locality": "third_party",
+        "context_window_tokens": 260000,
+        "max_output_tokens": 65536,
+        "cost": {
+          "input_per_million": "0.04000000",
+          "output_per_million": "0.15000000",
+          "cache_read_per_million": "0.004000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "inception/mercury-2.5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "inception",
+          "description": {
+            "vendor_copy": {
+              "text": "Mercury 2.5 is the fastest reasoning LLM, and the latest diffusion LLM (dLLM) from Inception. Instead of generating tokens sequentially, Mercury 2.5 produces and refines multiple tokens in parallel, achieving...",
+              "source": "https://openrouter.ai/api/v1/models#inception/mercury-2.5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "inclusionai/ling-3.0-flash-vl@catalog-2026-09-19",
+        "display_name": "inclusionAI: Ling 3.0 Flash VL",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 32768,
+        "cost": {
+          "input_per_million": "0.06000000",
+          "output_per_million": "0.18000000",
+          "cache_read_per_million": "0.012000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "inclusionai/ling-3.0-flash-vl",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "inclusionai",
+          "description": {
+            "vendor_copy": {
+              "text": "Ling 3.0 Flash VL builds on Ling 3.0 Flash (124B total / 5.5B active MoE from InclusionAI), further strengthening its language capabilities while adding native visual perception and advanced visual...",
+              "source": "https://openrouter.ai/api/v1/models#inclusionai/ling-3.0-flash-vl"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "inference-net/schematron-v2-turbo@catalog-2026-09-19",
+        "display_name": "Inference.net: Schematron V2 Turbo",
+        "locality": "third_party",
+        "context_window_tokens": 128000,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.03000000",
+          "output_per_million": "0.15000000",
+          "cache_read_per_million": "0.03000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "inference-net/schematron-v2-turbo",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "inference-net",
+          "description": {
+            "vendor_copy": {
+              "text": "Schematron V2 Turbo is a 3B-parameter HTML-to-JSON extraction model from Inference.net. It prioritizes throughput for high-volume extraction workloads. Extraction instructions must be supplied through a JSON schema in response_format rather...",
+              "source": "https://openrouter.ai/api/v1/models#inference-net/schematron-v2-turbo"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "kwaipilot/kat-coder-pro-v2.5@catalog-2026-09-19",
+        "display_name": "Kwaipilot: KAT-Coder-Pro V2.5",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0.74000000",
+          "output_per_million": "2.96000000",
+          "cache_read_per_million": "0.15000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "kwaipilot/kat-coder-pro-v2.5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "kwaipilot",
+          "description": {
+            "vendor_copy": {
+              "text": "KAT-Coder-Pro V2.5 is a flagship-level Agentic Coding model that can directly hand over an entire issue or an entire business workflow to it, allowing it to autonomously locate and make...",
+              "source": "https://openrouter.ai/api/v1/models#kwaipilot/kat-coder-pro-v2.5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "liquid/lfm-2.5-2.6b.free@catalog-2026-09-19",
+        "display_name": "LiquidAI: LFM2.5-2.6B (free)",
+        "locality": "third_party",
+        "context_window_tokens": 65536,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "liquid/lfm-2.5-2.6b:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "liquid",
+          "description": {
+            "vendor_copy": {
+              "text": "LFM2.5-2.6B is a compact reasoning model from Liquid AI. It is suited for agent workflows, data extraction, RAG, and long-context processing. Liquid advises against using it for agentic coding or...",
+              "source": "https://openrouter.ai/api/v1/models#liquid/lfm-2.5-2.6b:free"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "mancer/weaver@catalog-2026-09-19",
+        "display_name": "Mancer: Weaver (alpha)",
+        "locality": "third_party",
+        "context_window_tokens": 8000,
+        "max_output_tokens": 6000,
+        "cost": {
+          "input_per_million": "0.4000000",
+          "output_per_million": "0.75000000"
+        },
+        "capabilities": [
+          "streaming"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "mancer/weaver",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "mancer",
+          "description": {
+            "vendor_copy": {
+              "text": "An attempt to recreate Claude-style verbosity, but don't expect the same level of coherence or memory. Meant for use in roleplay/narrative situations.",
+              "source": "https://openrouter.ai/api/v1/models#mancer/weaver"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "meituan/longcat-2.0@catalog-2026-09-19",
+        "display_name": "Meituan: LongCat 2.0",
+        "locality": "third_party",
+        "context_window_tokens": 1048756,
+        "max_output_tokens": 262144,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "1.2000000",
+          "cache_read_per_million": "0.006000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "meituan/longcat-2.0",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "meituan",
+          "description": {
+            "vendor_copy": {
+              "text": "LongCat 2.0 is a sparse mixture-of-experts language model from Meituan, with 48B active parameters out of 1.6T total. It is suited for coding, repository-level changes, long-horizon problem solving, and agentic...",
+              "source": "https://openrouter.ai/api/v1/models#meituan/longcat-2.0"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "meta/muse-spark-1.3-contributor@catalog-2026-09-19",
+        "display_name": "Meta: Muse Spark 1.3 Contributor",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 943718,
+        "cost": {
+          "input_per_million": "0.1000000",
+          "output_per_million": "0.2000000",
+          "cache_read_per_million": "0.002000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "meta/muse-spark-1.3-contributor",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "meta",
+          "description": {
+            "vendor_copy": {
+              "text": "Muse Spark 1.3 Contributor is the cost-efficient contributor tier of Meta’s multimodal reasoning model for experimentation, learning, and early-stage agentic, multi-agent, and coding workflows. It is designed to track information...",
+              "source": "https://openrouter.ai/api/v1/models#meta/muse-spark-1.3-contributor"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "meta-llama/llama-guard-4-12b@catalog-2026-09-19",
+        "display_name": "Meta: Llama Guard 4 12B",
+        "locality": "third_party",
+        "context_window_tokens": 163840,
+        "max_output_tokens": 16384,
+        "cost": {
+          "input_per_million": "0.18000000",
+          "output_per_million": "0.18000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "meta-llama/llama-guard-4-12b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "meta-llama",
+          "description": {
+            "vendor_copy": {
+              "text": "Llama Guard 4 is a Llama 4 Scout-derived multimodal pretrained model, fine-tuned for content safety classification. Similar to previous versions, it can be used to classify content in both LLM...",
+              "source": "https://openrouter.ai/api/v1/models#meta-llama/llama-guard-4-12b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "microsoft/phi-4@catalog-2026-09-19",
+        "display_name": "Microsoft: Phi 4",
+        "locality": "third_party",
+        "context_window_tokens": 16384,
+        "max_output_tokens": 14745,
+        "cost": {
+          "input_per_million": "0.07000000",
+          "output_per_million": "0.14000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "microsoft/phi-4",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "microsoft",
+          "description": {
+            "vendor_copy": {
+              "text": "[Microsoft Research](/microsoft) Phi-4 is designed to perform well in complex reasoning tasks and can operate efficiently in situations with limited memory or where quick responses are needed. At 14 billion...",
+              "source": "https://openrouter.ai/api/v1/models#microsoft/phi-4"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "minimax/minimax-m3@catalog-2026-09-19",
+        "display_name": "MiniMax: MiniMax M3",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 512000,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "1.2000000",
+          "cache_read_per_million": "0.06000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "minimax/minimax-m3",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "minimax",
+          "description": {
+            "vendor_copy": {
+              "text": "MiniMax-M3 is a multimodal foundation model from MiniMax. It supports text, image, and video inputs with text output, a 1M-token context window, and is suited for long-horizon agentic work, coding,...",
+              "source": "https://openrouter.ai/api/v1/models#minimax/minimax-m3"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "mistralai/mistral-medium-3-5@catalog-2026-09-19",
+        "display_name": "Mistral: Mistral Medium 3.5",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 209715,
+        "cost": {
+          "input_per_million": "1.5000000",
+          "output_per_million": "7.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "mistralai/mistral-medium-3-5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "mistralai",
+          "description": {
+            "vendor_copy": {
+              "text": "Mistral Medium 3.5 is a dense 128B instruction-following model from Mistral AI. It supports text and image inputs with text output, and is designed for agentic workflows, coding, and complex...",
+              "source": "https://openrouter.ai/api/v1/models#mistralai/mistral-medium-3-5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "moonshotai/kimi-k3@catalog-2026-09-19",
+        "display_name": "MoonshotAI: Kimi K3",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 943718,
+        "cost": {
+          "input_per_million": "2.1000000",
+          "output_per_million": "10.95000000",
+          "cache_read_per_million": "0.23000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "moonshotai/kimi-k3",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "moonshotai",
+          "description": {
+            "vendor_copy": {
+              "text": "Kimi K3 is a 2.8T parameter open-weight multimodal reasoning model from Moonshot AI. It is suited for complex coding, knowledge work, and long-horizon agentic workflows, and is particularly strong at...",
+              "source": "https://openrouter.ai/api/v1/models#moonshotai/kimi-k3"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "morph/morph-v3-large@catalog-2026-09-19",
+        "display_name": "Morph: Morph V3 Large",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.9000000",
+          "output_per_million": "1.9000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "morph/morph-v3-large",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "morph",
+          "description": {
+            "vendor_copy": {
+              "text": "Morph's high-accuracy apply model for complex code edits. ~4,500 tokens/sec with 98% accuracy for precise code transformations. The model requires the prompt to be in the following format: <instruction>{instruction}</instruction> <code>{initial_code}</code>...",
+              "source": "https://openrouter.ai/api/v1/models#morph/morph-v3-large"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "nex-agi/nex-n2.5-mini.free@catalog-2026-09-19",
+        "display_name": "Nex AGI: Nex-N2.5-Mini (free)",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "nex-agi/nex-n2.5-mini:free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "nex-agi",
+          "description": {}
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "nousresearch/hermes-4-405b@catalog-2026-09-19",
+        "display_name": "Nous: Hermes 4 405B",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 117964,
+        "cost": {
+          "input_per_million": "1.000000",
+          "output_per_million": "3.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "nousresearch/hermes-4-405b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "nousresearch",
+          "description": {
+            "vendor_copy": {
+              "text": "Hermes 4 is a large-scale reasoning model built on Meta-Llama-3.1-405B and released by Nous Research. It introduces a hybrid reasoning mode, where the model can choose to deliberate internally with...",
+              "source": "https://openrouter.ai/api/v1/models#nousresearch/hermes-4-405b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "nvidia/nemotron-3.5-lightning@catalog-2026-09-19",
+        "display_name": "NVIDIA: Nemotron 3.5 Lightning",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 235929,
+        "cost": {
+          "input_per_million": "0.07000000",
+          "output_per_million": "0.2000000",
+          "cache_read_per_million": "0.04000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "nvidia/nemotron-3.5-lightning",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "nvidia",
+          "description": {
+            "vendor_copy": {
+              "text": "NVIDIA Nemotron 3.5 Lightning is an open mixture-of-experts model from NVIDIA, with 3B active parameters out of 30B total. It is suited for high-throughput agentic workloads and specialized tasks that...",
+              "source": "https://openrouter.ai/api/v1/models#nvidia/nemotron-3.5-lightning"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "openai/gpt-6-astra@catalog-2026-09-19",
+        "display_name": "OpenAI: GPT-6 Astra",
+        "locality": "third_party",
+        "context_window_tokens": 1050000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "10.00000",
+          "output_per_million": "50.00000",
+          "cache_read_per_million": "1.000000",
+          "cache_write_per_million": "12.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "openai/gpt-6-astra",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "openai",
+          "description": {
+            "vendor_copy": {
+              "text": "GPT-6 Astra is OpenAI's flagship model for demanding end-to-end work. It is suited for advanced analysis, software engineering, deep research, scientific work, and document creation, with particular strengths in long-horizon...",
+              "source": "https://openrouter.ai/api/v1/models#openai/gpt-6-astra"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "openrouter/free@catalog-2026-09-19",
+        "display_name": "Free Models Router",
+        "locality": "third_party",
+        "context_window_tokens": 200000,
+        "max_output_tokens": null,
+        "cost": {
+          "input_per_million": "0",
+          "output_per_million": "0"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "openrouter/free",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "openrouter",
+          "description": {
+            "vendor_copy": {
+              "text": "The simplest way to get free inference. openrouter/free is a router that selects free models at random from the models available on OpenRouter. The router smartly filters for models that...",
+              "source": "https://openrouter.ai/api/v1/models#openrouter/free"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "perceptron/perceptron-mk1@catalog-2026-09-19",
+        "display_name": "Perceptron: Perceptron Mk1",
+        "locality": "third_party",
+        "context_window_tokens": 32768,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.15000000",
+          "output_per_million": "1.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "perceptron/perceptron-mk1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "perceptron",
+          "description": {
+            "vendor_copy": {
+              "text": "Perceptron Mk1 (Mark One) is Perceptron's highest-quality vision-language model for video and embodied reasoning.** It accepts image and video inputs paired with natural language queries, and produces detailed visual understanding...",
+              "source": "https://openrouter.ai/api/v1/models#perceptron/perceptron-mk1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "perplexity/sonar-pro-search@catalog-2026-09-19",
+        "display_name": "Perplexity: Sonar Pro Search",
+        "locality": "third_party",
+        "context_window_tokens": 200000,
+        "max_output_tokens": 8000,
+        "cost": {
+          "input_per_million": "3.000000",
+          "output_per_million": "15.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "perplexity/sonar-pro-search",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "perplexity",
+          "description": {
+            "vendor_copy": {
+              "text": "Exclusively available on the OpenRouter API, Sonar Pro's new Pro Search mode is Perplexity's most advanced agentic search system. It is designed for deeper reasoning and analysis. Pricing is based...",
+              "source": "https://openrouter.ai/api/v1/models#perplexity/sonar-pro-search"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "poolside/laguna-s-2.1@catalog-2026-09-19",
+        "display_name": "Poolside: Laguna S 2.1",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.09000000",
+          "output_per_million": "0.18000000",
+          "cache_read_per_million": "0.009000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "poolside/laguna-s-2.1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "poolside",
+          "description": {
+            "vendor_copy": {
+              "text": "Laguna S 2.1 is the latest coding agent model from [Poolside](<https://poolside.ai/>). Laguna S 2.1 is a 118B total parameter model with 8B active parameters, scoring 70.2% on Terminal-Bench 2.1 and...",
+              "source": "https://openrouter.ai/api/v1/models#poolside/laguna-s-2.1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "prism-ml/ternary-bonsai-2-27b@catalog-2026-09-19",
+        "display_name": "PrismML: Ternary Bonsai 2 27B",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 32768,
+        "cost": {
+          "input_per_million": "0.075000000",
+          "output_per_million": "0.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "prism-ml/ternary-bonsai-2-27b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "prism-ml",
+          "description": {
+            "vendor_copy": {
+              "text": "Bonsai 2 27B is a 27B-parameter reasoning model from PrismML derived from Qwen3.8-27B. It supports coding, mathematics, tool calling, and image understanding with a 262K-token context window. Ternary compression shrinks...",
+              "source": "https://openrouter.ai/api/v1/models#prism-ml/ternary-bonsai-2-27b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "qwen/qwen3.8-max-0902@catalog-2026-09-19",
+        "display_name": "Qwen: Qwen3.8 Max (0902)",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "2.000000",
+          "output_per_million": "6.000000",
+          "cache_read_per_million": "0.25000000",
+          "cache_write_per_million": "2.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "qwen/qwen3.8-max-0902",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "qwen",
+          "description": {
+            "vendor_copy": {
+              "text": "Qwen3.8 Max 0902 is an updated snapshot of Qwen3.8 Max from Alibaba's Qwen team. It is a 2.4-trillion-parameter mixture-of-experts model that accepts text, image, and video input and returns text,...",
+              "source": "https://openrouter.ai/api/v1/models#qwen/qwen3.8-max-0902"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "rekaai/reka-edge@catalog-2026-09-19",
+        "display_name": "Reka Edge",
+        "locality": "third_party",
+        "context_window_tokens": 16384,
+        "max_output_tokens": 14745,
+        "cost": {
+          "input_per_million": "0.1000000",
+          "output_per_million": "0.1000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "rekaai/reka-edge",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "rekaai",
+          "description": {
+            "vendor_copy": {
+              "text": "Reka Edge is an extremely efficient 7B multimodal vision-language model that accepts image/video+text inputs and generates text outputs. This model is optimized specifically to deliver industry-leading performance in image understanding,...",
+              "source": "https://openrouter.ai/api/v1/models#rekaai/reka-edge"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "relace/relace-search@catalog-2026-09-19",
+        "display_name": "Relace: Relace Search",
+        "locality": "third_party",
+        "context_window_tokens": 256000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "1.000000",
+          "output_per_million": "3.000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "relace/relace-search",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "relace",
+          "description": {
+            "vendor_copy": {
+              "text": "The relace-search model uses 4-12 `view_file` and `grep` tools in parallel to explore a codebase and return relevant files to the user request. In contrast to RAG, relace-search performs agentic...",
+              "source": "https://openrouter.ai/api/v1/models#relace/relace-search"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "sakana/fugu-ultra-v2@catalog-2026-09-19",
+        "display_name": "Sakana: Fugu Ultra v2",
+        "locality": "third_party",
+        "context_window_tokens": 1000000,
+        "max_output_tokens": 128000,
+        "cost": {
+          "input_per_million": "5.000000",
+          "output_per_million": "30.00000",
+          "cache_read_per_million": "0.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "sakana/fugu-ultra-v2",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "sakana",
+          "description": {
+            "vendor_copy": {
+              "text": "Fugu Ultra v2 is the higher-performance model in Sakana AI's Fugu family. Rather than a single monolithic model, Fugu is a learned multi-agent orchestration system: a language model trained to...",
+              "source": "https://openrouter.ai/api/v1/models#sakana/fugu-ultra-v2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "sao10k/l3.3-euryale-70b@catalog-2026-09-19",
+        "display_name": "Sao10K: Llama 3.3 Euryale 70B",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 16384,
+        "cost": {
+          "input_per_million": "0.65000000",
+          "output_per_million": "0.75000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "sao10k/l3.3-euryale-70b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "sao10k",
+          "description": {
+            "vendor_copy": {
+              "text": "Euryale L3.3 70B is a model focused on creative roleplay from [Sao10k](https://ko-fi.com/sao10k). It is the successor of [Euryale L3 70B v2.2](/models/sao10k/l3-euryale-70b).",
+              "source": "https://openrouter.ai/api/v1/models#sao10k/l3.3-euryale-70b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "stepfun/step-3.7-flash@catalog-2026-09-19",
+        "display_name": "StepFun: Step 3.7 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 230400,
+        "cost": {
+          "input_per_million": "0.2000000",
+          "output_per_million": "1.15000000",
+          "cache_read_per_million": "0.04000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "stepfun/step-3.7-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "stepfun",
+          "description": {
+            "vendor_copy": {
+              "text": "Step 3.7 Flash is StepFun's latest high-efficiency multimodal Mixture-of-Experts model. It pairs a 196B-parameter language backbone with a vision encoder for native image and video understanding, activating roughly 11B parameters...",
+              "source": "https://openrouter.ai/api/v1/models#stepfun/step-3.7-flash"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "tencent/hy4-preview@catalog-2026-09-19",
+        "display_name": "Tencent: Hy4 preview",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 64000,
+        "cost": {
+          "input_per_million": "0.834000000",
+          "output_per_million": "2.501000000",
+          "cache_read_per_million": "0.042000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "tencent/hy4-preview",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "tencent",
+          "description": {
+            "vendor_copy": {
+              "text": "Tencent: Hy4 preview is a mixture-of-experts model from Tencent, with 49B active parameters out of 770B total. It is designed for coding agents, complex tool-use workflows, and productivity tasks that...",
+              "source": "https://openrouter.ai/api/v1/models#tencent/hy4-preview"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "thedrummer/cydonia-24b-v4.1@catalog-2026-09-19",
+        "display_name": "TheDrummer: Cydonia 24B V4.1",
+        "locality": "third_party",
+        "context_window_tokens": 131072,
+        "max_output_tokens": 117964,
+        "cost": {
+          "input_per_million": "0.3000000",
+          "output_per_million": "0.5000000",
+          "cache_read_per_million": "0.15000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "thedrummer/cydonia-24b-v4.1",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "thedrummer",
+          "description": {
+            "vendor_copy": {
+              "text": "Uncensored and creative writing model based on Mistral Small 3.2 24B with good recall, prompt adherence, and intelligence.",
+              "source": "https://openrouter.ai/api/v1/models#thedrummer/cydonia-24b-v4.1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "thinkingmachines/inkling-small@catalog-2026-09-19",
+        "display_name": "Thinking Machines: Inkling Small",
+        "locality": "third_party",
+        "context_window_tokens": 1048576,
+        "max_output_tokens": 262144,
+        "cost": {
+          "input_per_million": "0.45000000",
+          "output_per_million": "1.2000000",
+          "cache_read_per_million": "0.1000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "thinkingmachines/inkling-small",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "thinkingmachines",
+          "description": {
+            "vendor_copy": {
+              "text": "Inkling Small is an open-weight multimodal mixture-of-experts model from Thinking Machines Lab, with 12B active parameters out of 276B total. It is positioned as the smaller, more efficient member of...",
+              "source": "https://openrouter.ai/api/v1/models#thinkingmachines/inkling-small"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "unbiased/pareto@catalog-2026-09-19",
+        "display_name": "Pareto",
+        "locality": "third_party",
+        "context_window_tokens": 262144,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "2.5000000",
+          "output_per_million": "7.5000000",
+          "cache_read_per_million": "0.25000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "unbiased/pareto",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "unbiased",
+          "description": {
+            "vendor_copy": {
+              "text": "Pareto is a multimodal composite model built for research, coding, and agentic workflows, while delivering frontier-level performance across a broad range of general-purpose tasks.",
+              "source": "https://openrouter.ai/api/v1/models#unbiased/pareto"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "undi95/remm-slerp-l2-13b@catalog-2026-09-19",
+        "display_name": "ReMM SLERP 13B",
+        "locality": "third_party",
+        "context_window_tokens": 6144,
+        "max_output_tokens": 5529,
+        "cost": {
+          "input_per_million": "0.35000000",
+          "output_per_million": "0.65000000"
+        },
+        "capabilities": [
+          "streaming",
+          "json_response"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "undi95/remm-slerp-l2-13b",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "undi95",
+          "description": {
+            "vendor_copy": {
+              "text": "A recreation trial of the original MythoMax-L2-B13 but with updated models. #merge",
+              "source": "https://openrouter.ai/api/v1/models#undi95/remm-slerp-l2-13b"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "upstage/solar-pro4@catalog-2026-09-19",
+        "display_name": "Upstage: Solar Pro 4",
+        "locality": "third_party",
+        "context_window_tokens": 524288,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.09000000",
+          "output_per_million": "0.36000000",
+          "cache_read_per_million": "0.018000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "upstage/solar-pro4",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "upstage",
+          "description": {
+            "vendor_copy": {
+              "text": "Solar Pro 4 is Upstage's cost-efficient large language model, featuring a 524K context window. It is built for long-horizon tasks and agentic workflows, with strong capabilities in office productivity, document-intensive...",
+              "source": "https://openrouter.ai/api/v1/models#upstage/solar-pro4"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "writer/palmyra-x5@catalog-2026-09-19",
+        "display_name": "Writer: Palmyra X5",
+        "locality": "third_party",
+        "context_window_tokens": 1040000,
+        "max_output_tokens": 8192,
+        "cost": {
+          "input_per_million": "0.6000000",
+          "output_per_million": "6.000000"
+        },
+        "capabilities": [
+          "streaming"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "writer/palmyra-x5",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "writer",
+          "description": {
+            "vendor_copy": {
+              "text": "Palmyra X5 is Writer's most advanced model, purpose-built for building and scaling AI agents across the enterprise. It delivers industry-leading speed and efficiency on context windows up to 1 million...",
+              "source": "https://openrouter.ai/api/v1/models#writer/palmyra-x5"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "x-ai/grok-4.6@catalog-2026-09-19",
+        "display_name": "SpaceXAI: Grok 4.6",
+        "locality": "third_party",
+        "context_window_tokens": 500000,
+        "max_output_tokens": 450000,
+        "cost": {
+          "input_per_million": "2.000000",
+          "output_per_million": "6.000000",
+          "cache_read_per_million": "0.5000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "x-ai/grok-4.6",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "x-ai",
+          "description": {
+            "vendor_copy": {
+              "text": "Grok 4.6 is a model from SpaceXAI with frontier performance on coding, knowledge work, and STEM. It is succeeded by [Grok 4.7](/x-ai/grok-4.7).",
+              "source": "https://openrouter.ai/api/v1/models#x-ai/grok-4.6"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "xiaomi/mimo-v2.5-pro@catalog-2026-09-19",
+        "display_name": "Xiaomi: MiMo-V2.5-Pro",
+        "locality": "third_party",
+        "context_window_tokens": 1050000,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.435000000",
+          "output_per_million": "0.87000000",
+          "cache_read_per_million": "0.0036000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "xiaomi/mimo-v2.5-pro",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "xiaomi",
+          "description": {
+            "vendor_copy": {
+              "text": "MiMo-V2.5-Pro is Xiaomi’s flagship model, delivering strong performance in general agentic capabilities, complex software engineering, and long-horizon tasks, with top rankings on benchmarks such as ClawEval, GDPVal, and SWE-bench Pro....",
+              "source": "https://openrouter.ai/api/v1/models#xiaomi/mimo-v2.5-pro"
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "wire": "openai-compat",
+      "catalog": {
+        "model": "z-ai/glm-5.3-flash@catalog-2026-09-19",
+        "display_name": "Z.ai: GLM 5.3 Flash",
+        "locality": "third_party",
+        "context_window_tokens": 1310720,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input_per_million": "0.09000000",
+          "output_per_million": "0.3000000",
+          "cache_read_per_million": "0.018000000"
+        },
+        "capabilities": [
+          "streaming",
+          "tool_calling",
+          "tool_results",
+          "image_input",
+          "json_response",
+          "reasoning"
+        ],
+        "metadata": {
+          "catalog_source": "https://openrouter.ai/api/v1/models",
+          "catalog_snapshot": "2026-09-19",
+          "revision_kind": "catalog_snapshot",
+          "wire_model": "z-ai/glm-5.3-flash",
+          "endpoint_base": "https://openrouter.ai/api/v1",
+          "vendor": "z-ai",
+          "description": {
+            "vendor_copy": {
+              "text": "GLM-5.3-Flash is a native multimodal model from Z.ai. It is suited for efficient coding and long-horizon agent tasks. Its hybrid sparse and linear attention architecture maintains accurate long-context behavior while...",
+              "source": "https://openrouter.ai/api/v1/models#z-ai/glm-5.3-flash"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

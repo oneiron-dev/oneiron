@@ -196,7 +196,8 @@ fn follow_up_request_gate_refusal_is_not_reported_as_pick_success() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(
             &id(0x7c),
@@ -221,7 +222,7 @@ fn follow_up_request_gate_refusal_is_not_reported_as_pick_success() {
 
 #[test]
 fn picked_request_admission_failure_resumes_saved_content_after_identity_returns() {
-    use crate::channel_identity::ChannelIdentityState;
+    use crate::channel_identity::ChannelIdentityStep;
     let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);
     let item = execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
     let (snapshot, index) = crate::booking::lifecycle::read_emergency_pick(
@@ -240,20 +241,14 @@ fn picked_request_admission_failure_resumes_saved_content_after_identity_returns
     )
     .unwrap();
     vault
-        .transition_channel_identity(
-            &id(0x79),
-            ChannelIdentityState::Rotating,
-            None,
-            NOW + 2,
-            None,
-        )
+        .step_channel_identity(&id(0x79), ChannelIdentityStep::Rotate, NOW + 2)
         .unwrap();
     let mut sink = spy(&vault, &plan);
     assert!(pick(&vault, &item, 0, &mut sink, NOW + 2).is_err());
     assert!(sink.calls.is_empty());
     assert_eq!(checkpoint(&vault, &plan).unwrap().picked.unwrap(), prepared);
     vault
-        .transition_channel_identity(&id(0x79), ChannelIdentityState::Active, None, NOW + 3, None)
+        .step_channel_identity(&id(0x79), ChannelIdentityStep::Fulfill, NOW + 3)
         .unwrap();
     assert_eq!(
         pick(&vault, &item, 0, &mut sink, NOW + 3).unwrap(),

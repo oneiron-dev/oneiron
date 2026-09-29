@@ -33,12 +33,8 @@ fn lifecycle_dag() -> LifecycleDag {
     let fixture = pact_fixture_with_scope(
         200,
         symmetric_scope(
-            crate::federation::FederationScopeFacets::Some(vec![
-                facet(0x21),
-                facet(0x22),
-                facet(0x23),
-            ]),
-            crate::federation::FederationScopeBands::All,
+            ScopeAxis::from_iter([facet(0x21), facet(0x22), facet(0x23)].map(ScopeId)),
+            ScopeAxis::All,
         ),
     );
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
@@ -54,12 +50,9 @@ fn lifecycle_dag() -> LifecycleDag {
             fixture.grant_ref,
             1,
             FederationDirectionScope {
-                worlds: crate::federation::FederationScopeWorlds::All,
-                facets: crate::federation::FederationScopeFacets::Some(vec![
-                    facet(0x21),
-                    facet(0x22),
-                ]),
-                bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet(0x21), facet(0x22)].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Semantic]),
             },
         ),
     );
@@ -73,12 +66,9 @@ fn lifecycle_dag() -> LifecycleDag {
             fixture.grant_ref,
             1,
             FederationDirectionScope {
-                worlds: crate::federation::FederationScopeWorlds::All,
-                facets: crate::federation::FederationScopeFacets::Some(vec![
-                    facet(0x22),
-                    facet(0x23),
-                ]),
-                bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Core]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet(0x22), facet(0x23)].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Core]),
             },
         ),
     );
@@ -93,10 +83,7 @@ fn lifecycle_dag() -> LifecycleDag {
 
     let pact_two = [0xB2; 32];
     let grant_two = scope_entity(0x32);
-    let scope_two = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let scope_two = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let connect_two = lifecycle_entry(
         &fixture,
         vec![connect_hash],
@@ -105,8 +92,8 @@ fn lifecycle_dag() -> LifecycleDag {
     );
     let connect_two_hash = authority_entry_hash(&connect_two).unwrap();
     let left_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![facet(0x21)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([facet(0x21)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let left_nonce = [0x72; 16];
     let repact_left = lifecycle_entry(
@@ -116,8 +103,8 @@ fn lifecycle_dag() -> LifecycleDag {
         repact_action_with(&fixture, pact_two, grant_two, 2, &left_scope, left_nonce),
     );
     let right_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![facet(0x22)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([facet(0x22)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let right_nonce = [0x73; 16];
     let repact_right = lifecycle_entry(
@@ -136,10 +123,7 @@ fn lifecycle_dag() -> LifecycleDag {
 
     let pact_three = [0xB3; 32];
     let grant_three = scope_entity(0x33);
-    let scope_three = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let scope_three = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let nonce_three = [0x74; 16];
     let connect_three = lifecycle_entry(
         &fixture,
@@ -158,8 +142,8 @@ fn lifecycle_dag() -> LifecycleDag {
             grant_three,
             2,
             &symmetric_scope(
-                crate::federation::FederationScopeFacets::Some(vec![facet(0x23)]),
-                crate::federation::FederationScopeBands::All,
+                ScopeAxis::from_iter([facet(0x23)].map(ScopeId)),
+                ScopeAxis::All,
             ),
             [0x75; 16],
         ),
@@ -182,10 +166,7 @@ fn lifecycle_dag() -> LifecycleDag {
     let pact_four = [0xB4; 32];
     let grant_four_a = scope_entity(0x34);
     let grant_four_b = scope_entity(0x35);
-    let scope_four = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let scope_four = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let nonce_four = [0x76; 16];
     let connect_four_a = lifecycle_entry(
         &fixture,
@@ -276,7 +257,7 @@ fn lifecycle_dag() -> LifecycleDag {
 #[test]
 fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     let dag = lifecycle_dag();
-    let fold = fold_authority_log_without_seen_time_delay(&dag.entries);
+    let fold = fold_legacy_authority_log(&dag.entries);
     assert!(
         fold.issues.is_empty(),
         "unexpected issues: {:?}",
@@ -296,9 +277,9 @@ fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     assert_eq!(
         p1.effective_scope,
         FederationDirectionScope {
-            worlds: crate::federation::FederationScopeWorlds::All,
-            facets: crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x22)]),
-            bands: crate::federation::FederationScopeBands::Bottom,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::from_iter([scope_entity(0x22)].map(ScopeId)),
+            bands: ScopeAxis::Bottom,
         }
     );
 
@@ -417,7 +398,7 @@ proptest! {
         perm in prop::collection::vec(0_usize..17, 17),
     ) {
         let dag = lifecycle_dag();
-        let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
+        let baseline = fold_legacy_authority_log(&dag.entries);
         prop_assert!(baseline.issues.is_empty());
 
         let mut permuted = Vec::new();
@@ -432,7 +413,7 @@ proptest! {
             }
         }
 
-        let folded = fold_authority_log_without_seen_time_delay(&permuted);
+        let folded = fold_legacy_authority_log(&permuted);
         // The HEAL TARGET (the grant_ref an epoch+1 repact must name) is
         // anchored to the GLOBAL tie-break winner under every permutation —
         // an absolute check, not just baseline equality, so a consistently
@@ -513,11 +494,7 @@ fn federation_divergent_grant_bindings_suspend_and_deny_both_grants() {
         ),
     );
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect_a,
-        connect_b,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b]);
     assert!(
         fold.issues.is_empty(),
         "both connects fold valid on their branches"
@@ -573,10 +550,7 @@ fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
     let loser = grant_a.max(grant_b);
 
     // A repact naming the DISCARDED binding must not heal.
-    let heal_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let heal_scope = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let bad_heal = lifecycle_entry(
         &fixture,
         vec![connect_a_hash, connect_b_hash],
@@ -584,7 +558,7 @@ fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
         repact_action_with(&fixture, fixture.pact_id, loser, 2, &heal_scope, [0x6E; 16]),
     );
     let bad_heal_hash = authority_entry_hash(&bad_heal).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         connect_a.clone(),
         connect_b.clone(),
@@ -623,13 +597,7 @@ fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
         connect_action_with(&fixture, [0xD4; 32], loser, &fixture.scope, [0x70; 16]),
     );
     let rebind_hash = authority_entry_hash(&rebind).unwrap();
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect_a,
-        connect_b,
-        heal,
-        rebind,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b, heal, rebind]);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 2);
@@ -700,7 +668,7 @@ fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
     let connect_p_g_hash = authority_entry_hash(&connect_p_g).unwrap();
     let connect_p_h_hash = authority_entry_hash(&connect_p_h).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis.clone(),
         connect_p_g.clone(),
         connect_p_h.clone(),
@@ -747,7 +715,7 @@ fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
             1,
         ),
     );
-    let fold = fold_authority_log_without_seen_time_delay(&[
+    let fold = fold_authority_log(&[
         fixture.genesis,
         connect_p_g,
         connect_p_h,
@@ -804,7 +772,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
 
     let mut entries = vec![fixture.genesis.clone()];
     entries.extend(connects.iter().cloned());
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Suspended);
     assert_eq!(pact.grant_ref, winner, "heal target = global lex-min grant");
@@ -817,10 +785,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
 
     // A heal naming a non-winner rejects; the winner heal restores exactly
     // the winner.
-    let heal_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let heal_scope = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let loser = grants.iter().copied().max().unwrap();
     let bad_heal = lifecycle_entry(
         &fixture,
@@ -831,7 +796,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
     let bad_heal_hash = authority_entry_hash(&bad_heal).unwrap();
     let mut with_bad_heal = entries.clone();
     with_bad_heal.push(bad_heal);
-    let fold = fold_authority_log_without_seen_time_delay(&with_bad_heal);
+    let fold = fold_authority_log(&with_bad_heal);
     assert_eq!(
         lifecycle_rejection(&fold, bad_heal_hash),
         Some(FederationLifecycleRejection::GrantAlreadyBound)
@@ -851,7 +816,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
         ),
     );
     entries.push(heal);
-    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let fold = fold_authority_log(&entries);
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 2);
@@ -912,11 +877,7 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
         },
     );
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect_a,
-        connect_b,
-    ]);
+    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b]);
     assert!(fold.issues.is_empty());
     let pact = &fold.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);

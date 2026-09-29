@@ -1,0 +1,318 @@
+{
+  "archive": "/Volumes/Cinema/archive/w7-evidence/W7-C14/",
+  "kept_branch": "w7/W7-C14",
+  "kept_commit": "1e76293d29e9610c51d25f9b184d338afa180f83",
+  "hash": "blake3",
+  "files": [
+    {
+      "path": "docx-corpus/native-report.json",
+      "bytes": 279497,
+      "blake3": "da46286cae9b879487a582f4e5aba467e78cde4574e07cbb6fb55fa5e3a32ec0"
+    },
+    {
+      "path": "docx-corpus/word-libreoffice-comparison.json",
+      "bytes": 47672,
+      "blake3": "7f0806d26963e8bd6405a7947e8d0224f739489c89e8fd5d6e9c608bfc6be6f4"
+    },
+    {
+      "path": "pptarena/receipt.json",
+      "bytes": 46401,
+      "blake3": "a625a9ea96807d56bf4f578212fbda1c7e1db2c9bac7b9a63e84c193a24d5442"
+    },
+    {
+      "path": "real-workbooks/README.md",
+      "bytes": 2312,
+      "blake3": "113065398d58a5df9464979d792f41c9cdd33f366f2c4840553201bb6cc8907c"
+    },
+    {
+      "path": "real-workbooks/engine-comparison-pins.json",
+      "bytes": 260,
+      "blake3": "74194d22e976009e3cf20e66d3b169494f784c08e0c278dee63c83b21c936db4"
+    },
+    {
+      "path": "real-workbooks/fuse-download-receipt.json",
+      "bytes": 223,
+      "blake3": "d34ad3165f4bfe218cac9d571b214faf0f781538d6465e6f16e39da261d4d213"
+    },
+    {
+      "path": "real-workbooks/fuse-extraction-receipt.json",
+      "bytes": 529,
+      "blake3": "e4e7a7601ee8cc6f3ab3b72f3101feab8ed2a91dfa9529143e3268c7554be263"
+    },
+    {
+      "path": "real-workbooks/fuse-libreoffice-classification.json",
+      "bytes": 884,
+      "blake3": "1fd2a56d98fd8dc51c9fcd91732e28a0084482d0eda08227a99b5e517ae612ad"
+    },
+    {
+      "path": "real-workbooks/fuse-libreoffice-rows.jsonl.gz",
+      "bytes": 1001144,
+      "blake3": "832c3e39110d85e235eeef1c2ed301141a93dcd17fafe74cc2ef7d2c1965164e"
+    },
+    {
+      "path": "real-workbooks/fuse-manifest.jsonl.gz",
+      "bytes": 775887,
+      "blake3": "0575b94e0eb2f39111f1a192f9cf0bdde84115dad1f927a71e1b8766c20baa00"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v1-classification.json",
+      "bytes": 2152,
+      "blake3": "851081110d66fd1715a52677a35bef15ffcd795634e6cc6de2077acdeb8c4574"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v1-rows.jsonl.gz",
+      "bytes": 702468,
+      "blake3": "a0c41938311f96ab979dd359cb1f9088ed8daa228128bc4244a9e6270eb231a3"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v1-saved-cache-diagnostic.json",
+      "bytes": 583,
+      "blake3": "69fcb8677a4d88626637c58b991fd87f6c3ed2d2b3b8d085322eaf18e98d82c7"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v2-classification.json",
+      "bytes": 2163,
+      "blake3": "d4f346bf33632f5062d7f42f1891c1d6ef8bbc43849e301785568809f3936911"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v2-rows.jsonl.gz",
+      "bytes": 702513,
+      "blake3": "5b95e0f54f8dae5a67b5c7f335c9b7d4b4d076b8fa5f6563109d67fa3bc5a871"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v2-saved-cache-diagnostic.json",
+      "bytes": 583,
+      "blake3": "83838e06ad3571f0bdf21f9bbd682df2e2e5f923ffa49f70f11a9c39f2d626d0"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v3-classification.json",
+      "bytes": 2141,
+      "blake3": "f95b8ff6da9d888b031fbbe7f7c20970c4ceb2f3291632c155c696476af02152"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v3-rows.jsonl.gz",
+      "bytes": 702142,
+      "blake3": "33ad169b4c59f989c6bd4cf2398a4a3279683388f41c4d1dce7fa19e45785feb"
+    },
+    {
+      "path": "real-workbooks/fuse-native-v3-saved-cache-diagnostic.json",
+      "bytes": 583,
+      "blake3": "4f1f23aec9bb368669ddf57137936cfa5afd9f364e7299355ceb9593e2e0c361"
+    },
+    {
+      "path": "real-workbooks/fuse-unchanged-classification.json",
+      "bytes": 2138,
+      "blake3": "c39d38f82a62f8817e655ebe5f4bdf460b4cefee2872d030a877164e320344e6"
+    },
+    {
+      "path": "real-workbooks/fuse-unchanged-rows.jsonl.gz",
+      "bytes": 658473,
+      "blake3": "f2d75963925991af6cb5652573056abd5675caea4bb6080bcebae0e97b4c7e0b"
+    },
+    {
+      "path": "real-workbooks/fuse-unchanged-saved-cache-diagnostic.json",
+      "bytes": 581,
+      "blake3": "a76623313be54a19939010b171c4e6c5b9f75f3061c373ca72d93381af2939bb"
+    },
+    {
+      "path": "real-workbooks/provenance.json",
+      "bytes": 2584,
+      "blake3": "6490fb18c924a1c5e9e0e0e4cb37582fec33f4812594bd26eb9c8196efd484aa"
+    },
+    {
+      "path": "real-workbooks/retained-native-v1-saved-cache-diagnostic.json",
+      "bytes": 582,
+      "blake3": "5345a66f317fcad7eec9cedface08381d221b1b2ec4246727bf36d61118a27fb"
+    },
+    {
+      "path": "real-workbooks/retained-native-v2-executable.json",
+      "bytes": 286,
+      "blake3": "11179cb2f0898172f7481c8b7b0983bd20076ec81bda82f964d6d6b0ebf8fed9"
+    },
+    {
+      "path": "real-workbooks/retained-native-v2-saved-cache-diagnostic.json",
+      "bytes": 582,
+      "blake3": "e136ed0b7f302e263caf80625f2c5925072a5f1ad6e7a7903c770f8e156764bf"
+    },
+    {
+      "path": "real-workbooks/retained-native-v3-executable.json",
+      "bytes": 1261,
+      "blake3": "8ae8ee18e2fc9d61ad4944399d0f108378283f9c1786aa70409aa750b87e83f5"
+    },
+    {
+      "path": "real-workbooks/retained-native-v3-saved-cache-diagnostic.json",
+      "bytes": 582,
+      "blake3": "5962e6181c0f8112863e23a11e77c67531649706478ffe21f2cbff5d4fb3dc82"
+    },
+    {
+      "path": "real-workbooks/saved-cache-classification.json",
+      "bytes": 2306,
+      "blake3": "c6c6108950262dd59b768b80036a17fb114a625307af5d8e9e1605b0265d56b2"
+    },
+    {
+      "path": "real-workbooks/saved-cache-diagnostic.json",
+      "bytes": 582,
+      "blake3": "f63861bb866d86f10f9d0d33d9f340d6ad2a1a09a45df37d7ec6a315bad2cda0"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-completed-lanes.json",
+      "bytes": 2385,
+      "blake3": "6dbf79da53b381c0552877d41997794b302a374cf78394387102ff20b02c3925"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-excel-complete.json",
+      "bytes": 1259,
+      "blake3": "ae1834cfdf58771c83068fe8c58b3ec94f9df0e7cbaac97186adcbfe6a49b01f"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-excel-recovery-1.json",
+      "bytes": 750,
+      "blake3": "48e7eb7501d4f6551a80f0fef62cba365d4049661ac494da06729caff668c8a2"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-excel-recovery-2.json",
+      "bytes": 1567,
+      "blake3": "b4ef539b315e8baf533256abc3cf561cf02758e186e8b347aeaad44a10f76512"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-excel-recovery-3.json",
+      "bytes": 1567,
+      "blake3": "a4dc388d15e7434e013dbdb7b537540ab7da97f8f2fdc9f667cf39d287b11204"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-excel-rows.jsonl.gz",
+      "bytes": 465726,
+      "blake3": "1f05b3ab534936e3e0c37206cd62a2f28bea0d130926189e3becf17024ba4885"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-fresh-decision.json",
+      "bytes": 1370,
+      "blake3": "7c59e3ac197ac9c58973ab953f56cef50a73e62f35a4db0a3fdd33f893cb1eda"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-fresh-excel/formualizer_unchanged-rows.jsonl.gz",
+      "bytes": 232888,
+      "blake3": "b05dfebf9e57279de882ca13c6c282a268b83d71319eca7c4bb477c62052058a"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-fresh-excel/formualizer_unchanged-summary.json",
+      "bytes": 1346,
+      "blake3": "8ab6d44d6bcef3a51d1105dd463908de4e0d4457543b6ee7ba3e7dc8c5e4e817"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-fresh-excel/libreoffice-rows.jsonl.gz",
+      "bytes": 228371,
+      "blake3": "d0f7ffc0e0f5c5861df93ba71d254c661555087892350008eba97ac033614ba1"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-fresh-excel/libreoffice-summary.json",
+      "bytes": 1322,
+      "blake3": "76b07af591f40e58d00c4e2866657ea6f485686891468ea9145702abc3496e5e"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-fresh-excel/native-rows.jsonl.gz",
+      "bytes": 232673,
+      "blake3": "912819eacc0c1c4282e4935ad030352cf0cfc8742b9c7d5b02d787d6eeca3b7b"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-fresh-excel/native-summary.json",
+      "bytes": 1346,
+      "blake3": "cdd366482bb2b057be1db1e6c40d32d12a62447086552873237995903cb53056"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-libreoffice-rows.jsonl.gz",
+      "bytes": 523595,
+      "blake3": "acde291486bcf48de3e9b192cc42401c292cffd482f5da99aad1866fcbbd61c1"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-manifest.jsonl.gz",
+      "bytes": 263696,
+      "blake3": "ecdf02ec3e1f6145d9c96ef233ae4ea8c49feb6d8b9bc59bdb7fec0a7748fea7"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-native-v2-classification.json",
+      "bytes": 1657,
+      "blake3": "1b82d031ccde8767a4372350c3c32e6d99eb8d7db50821e88c21f2cfa55585f5"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-native-v3-classification.json",
+      "bytes": 1657,
+      "blake3": "446f469cb5a593a2826c63f72fc2feaa4ed1571c59e1d20af2287c476f614683"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-retained-native-v1-rows.jsonl.gz",
+      "bytes": 361108,
+      "blake3": "8bd2e89a95db0df40e6eff8526411b02bf2953e421c7cf94fbe5652a162ca359"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-retained-native-v2-rows.jsonl.gz",
+      "bytes": 361476,
+      "blake3": "9bf7cf712830a78d6d51b18ce72e7b4c575cb6bcb1c3372549901ab1b250289e"
+    },
+    {
+      "path": "real-workbooks/spreadsheetbench-retained-native-v3-rows.jsonl.gz",
+      "bytes": 361668,
+      "blake3": "901666581350687024c2b77b83f593c78d2df5aec970b6bd1567c9a914cdab7b"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/STATUS.md",
+      "bytes": 1256,
+      "blake3": "2dd3471b3ccf508f34edd6660a3fda51fbe8307154fe8d223bee91fa9b20c337"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/comparison.json",
+      "bytes": 89201,
+      "blake3": "4aeca5cda23f37516bfde5eaea90ff31a035970d3bc14fb55468d108e360fbd8"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/formualizer-0.9.3-unchanged.json",
+      "bytes": 152457,
+      "blake3": "a8ccd95393c6b0838d34ad60fb0b8fb3e6a1dbc9d816e4e6db90d4850c863dd5"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/formualizer-fork-bounded-comparison.json",
+      "bytes": 88984,
+      "blake3": "e3c4c248b184d0e741c85255ebd71795fc04898f1d9fd5cb688c6ba4adeae11c"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/formualizer-fork-bounded.json",
+      "bytes": 152473,
+      "blake3": "ebebb226a5dc83edd54a457758f1e3ad0aff430695a6284e07e421b17002d09d"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/libreoffice-25.8.2.2.json",
+      "bytes": 268841,
+      "blake3": "afbb8772369c19b9c08b1196cd2c6488d842d67c7bccdea9caddecbad375f576"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/native-xlookup/README.md",
+      "bytes": 978,
+      "blake3": "f5622da90174021c25db8c579c09a4bb8826cf6ae058f13176c9cef6b679a95a"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/native-xlookup/excel-sheet.xml",
+      "bytes": 1387,
+      "blake3": "6cb9c5390bec85e7c2267029963cda8ef998e26a66cd37d24d1e3ba979e1d145"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/native-xlookup/input-sheet.xml",
+      "bytes": 1381,
+      "blake3": "81f93e45c13545d880e39999178cea73c0af19e4e79f5cd8cb53d7cfef7c0a5b"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/native-xlookup/native-sheet.xml",
+      "bytes": 1397,
+      "blake3": "8c254cb1d80936a3b66250edd57dcbb219236e90bab91c2c6a6e82f3f0f641d7"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/native-xlookup/observed-script.applescript",
+      "bytes": 1255,
+      "blake3": "d04101889bdb112fa96e0d3b504b1473d03977100d4eccd741fd69758ea47c62"
+    },
+    {
+      "path": "spreadsheet-compat/measurements/native-xlookup/receipt.json",
+      "bytes": 1412,
+      "blake3": "e8da165dabb69eb7e85a3c8581a29f2df5b85ff43904b2d613e55fe7e161a4c8"
+    }
+  ]
+}

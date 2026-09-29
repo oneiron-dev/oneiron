@@ -6,7 +6,7 @@ use axum::{
     extract::{DefaultBodyLimit, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use futures_util::StreamExt;
 use oneiron::{BudgetGuard, BudgetLease, LlmError, LlmRequest, LlmStreamEvent};
@@ -16,6 +16,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/generate", post(generate))
         .route("/stream", post(stream))
+        // Owner-grade credentials can hand an agent a real read/replace tool;
+        // scoped core tokens cannot edit vault policy.
+        .route(
+            "/defaults",
+            get(read_defaults)
+                .put(replace_defaults)
+                .layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
 fn refusal(status: StatusCode, code: &str) -> Response {
@@ -39,6 +47,46 @@ fn failure(error: LlmError) -> Response {
     )
         .into_response()
 }
+async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Response {
+    if !auth.is_owner_grade() {
+        return refusal(StatusCode::FORBIDDEN, "owner_required");
+    }
+    match server.vault.purpose_default_table() {
+        Ok(table) => Json(table).into_response(),
+        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
+    }
+}
+
+async fn replace_defaults(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Json(table): Json<oneiron::llm::PurposeDefaultTable>,
+) -> Response {
+    if !auth.is_owner_grade() {
+        return refusal(StatusCode::FORBIDDEN, "owner_required");
+    }
+    // A JSON body is only a DTO. Validate all rows before inspecting any key.
+    let table = match oneiron::llm::ValidatedPurposeDefaults::try_from(table) {
+        Ok(table) => table,
+        Err(_) => return refusal(StatusCode::BAD_REQUEST, "invalid_defaults"),
+    };
+    if table
+        .table()
+        .purpose(&oneiron::CallPurpose::Extraction)
+        .is_some_and(|row| row.locality != oneiron::ModelLocality::OnDevice)
+        && server.extraction_egress.is_none()
+    {
+        return refusal(StatusCode::BAD_REQUEST, "extraction_egress_unavailable");
+    }
+    match server.vault.set_purpose_default_table(table.table()) {
+        Ok(()) => Json(table.table()).into_response(),
+        Err(oneiron::Error::InvalidConfig(_)) => {
+            refusal(StatusCode::BAD_REQUEST, "invalid_defaults")
+        }
+        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
+    }
+}
+
 struct Reservation {
     guard: BudgetGuard,
     lease: BudgetLease,
@@ -78,17 +126,22 @@ fn admit(
             "llm_unavailable",
         )));
     };
-    let row = server
+    let original_purpose = request.envelope.purpose.clone();
+    let context = oneiron::llm::HostInferenceContext {
+        binding: oneiron::llm::HostInferenceBinding::Registered,
+        extraction_egress: server.extraction_egress.as_deref(),
+    };
+    let authorized = server
         .vault
-        .model_registry_row(&request.model)
+        .authorize_raw_inference(request.clone(), &context)
         .map_err(|_| {
-            Box::new(refusal(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "catalog_unavailable",
-            ))
-        })?
-        .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "unknown_model")))?;
-    request.envelope.locality = row.catalog.locality;
+            Box::new(if original_purpose == oneiron::CallPurpose::Extraction {
+                refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
+            } else {
+                refusal(StatusCode::BAD_REQUEST, "invalid_request")
+            })
+        })?;
+    *request = authorized.into_request();
     let admission = guard
         .admit_for_request(request)
         .map_err(|e| Box::new(failure(e.into())))?;

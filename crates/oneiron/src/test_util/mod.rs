@@ -8,9 +8,13 @@
 //! model, HNSW params); a copy that is value-identical to the shared
 //! helper is a drift hazard and must route through it.
 
+pub(crate) mod row_dump;
 /// Test-only-file classification for the source-scanning fences. The
 /// integration binaries mount the same file through `tests/common`.
 pub(crate) mod source_scan;
+
+mod channel_identity;
+pub(crate) use channel_identity::self_held_identity_in_state;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
@@ -154,6 +158,59 @@ pub(crate) fn put_policy_manifest_bytes(
     })
 }
 
+/// Pin a test model manifest with a passing teacher-probe receipt, the way
+/// the bench publishes one; a bare `set_model_manifest` refuses a new teacher.
+pub(crate) fn pin_model_manifest(
+    vault: &crate::Vault,
+    manifest: &crate::llm::manifest::ModelManifest,
+) -> crate::Result<()> {
+    let policy = vault.teacher_probe_policy(None)?;
+    let approval = crate::llm::manifest::TeacherProbeApproval::for_scored_checkpoint(
+        manifest, &policy, 1_000_000,
+    )?;
+    vault.set_model_manifest_with_teacher_approval(manifest, &approval)
+}
+
+/// Re-appends every live claim-bound gate decision as if created at
+/// `created_at`, so a test can age real receipts past a retention horizon.
+pub(crate) fn backdate_claim_gate_decisions(vault: &Vault, created_at: u64) -> crate::Result<()> {
+    vault.with_write_txn(|txn| {
+        let mut rows = Vec::new();
+        vault.store.for_each_gate_decision_in_txn(txn, |record| {
+            if record.claim_id.is_some() && record.redacted_at.is_none() {
+                rows.push(record);
+            }
+            Ok(())
+        })?;
+        for mut row in rows {
+            vault
+                .store
+                .delete_gate_decision_in_txn(txn, row.decision_id)?;
+            row.created_at = created_at;
+            vault.store.append_gate_decision_in_txn(txn, &row)?;
+        }
+        Ok(())
+    })
+}
+
+/// Copy the shipped teacher-probe policy row into a custom test policy. Tests
+/// that replace the seeded default must preserve this floor before pinning a
+/// teacher, without accidentally replacing their own Gate policy rows.
+pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, rmpv::Value)>) {
+    let default = crate::gate::default_policy_manifest().unwrap();
+    let rmpv::Value::Map(default_entries) =
+        rmpv::decode::read_value(&mut default.as_slice()).expect("seeded policy map")
+    else {
+        panic!("seeded policy map");
+    };
+    entries.push(
+        default_entries
+            .into_iter()
+            .find(|(key, _)| key.as_str() == Some("teacher_probe"))
+            .expect("seeded teacher probe row"),
+    );
+}
+
 /// Installs the shipped default policy manifest carrying one unrestricted
 /// schema-1.2 `core:read` grant per reader. A plain scoped-read key reads
 /// nothing until a trusted manifest grants it.
@@ -179,7 +236,7 @@ pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
             ])
         })
         .collect();
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
     else {
@@ -220,6 +277,49 @@ pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vaul
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
     clear_default_policy_manifest_for_legacy_tests(&vault);
     (dir, vault)
+}
+
+/// The unit-test host root. Each test vault is its own trust domain, so one
+/// fixed secret lets any fixture rebuild the issuer that rooted its vault.
+pub(crate) fn test_host_issuer() -> crate::authority::HostSlipIssuer {
+    crate::authority::HostSlipIssuer::from_secret(b"oneiron unit test host root")
+        .expect("host issuer")
+}
+
+/// Roots the vault under the test host and provisions the engine's MACHINE
+/// writers, as a host does at bootstrap. Returns the host issuer so a test can
+/// provision its own MACHINE actors with `provision_host_machine_identity`.
+pub(crate) fn provision_engine_machines(vault: &Vault) -> crate::authority::HostSlipIssuer {
+    let issuer = test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+    issuer
+}
+
+/// Signs a MACHINE writer's candidate with the signer the host retained for
+/// the envelope's actor, as an engine writer does before its write door.
+pub(crate) fn sign_machine_candidate(
+    vault: &Vault,
+    id: &EntityId,
+    candidate: &crate::ClaimCandidate,
+    envelope: &crate::WriteEnvelope,
+) -> crate::WriteEnvelope {
+    let mut envelope = envelope.clone();
+    let txn = vault.store.env.read_txn().expect("read txn");
+    vault
+        .sign_retained_machine_claim_in_txn(&txn, id, candidate, &mut envelope)
+        .expect("machine claim signature");
+    envelope
+}
+
+/// Binds `owner` as the rooted test vault's human owner, so owner verbs keep
+/// working after a fixture roots its vault.
+pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
+    vault
+        .bind_host_owner_for_test(&test_host_issuer(), owner)
+        .expect("owner binding");
 }
 
 /// First open seeds the bootstrap skills, whose activation edits wait for

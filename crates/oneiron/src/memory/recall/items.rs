@@ -1,25 +1,40 @@
-//! Builds typed recall items from the exact selected entity revision.
+//! Builds typed recall items from actor-admitted rows at the selected revision.
 use super::*;
+use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 
 impl Memory<'_> {
-    /// Builds one S6 memory item from an entity id. Returns `Ok(None)` for
-    /// missing entities and non-surfaceable claims (D19 admission).
+    /// No item or its provenance may be assembled before the actor's scoped read.
     pub(super) fn memory_item_for(
         &self,
+        lane: &ScopedRead<'_>,
         id: &EntityId,
         facet_hint: Option<EntityId>,
         mode: crate::vault::ReadMode,
-        scoped_read: Option<&crate::claim::ScopedRead<'_>>,
+        receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<Option<MemoryItem>> {
-        let Some(entity_type) = self.vault.get_entity_type(id)? else {
+        let ScopedReadResult {
+            value: admitted,
+            receipt: read,
+        } = lane.read_projected(&[PointRead::id(*id).at(mode)], None, |txn, rows| {
+            let Some(row) = rows.into_iter().next().flatten() else {
+                return Ok::<_, MemoryError>(None);
+            };
+            let entity_type = row.entity_type;
+            let body = row.body.clone();
+            let view = self.entity_view_of_in_txn(txn, row, mode)?;
+            Ok(Some((entity_type, body, view)))
+        })?;
+        receipt.restrict_with(&read);
+        let Some((entity_type, Some(body), Some(view))) = admitted else {
             return Ok(None);
         };
-        // The scored pack has already been filtered, but raw vault edges
-        // would reintroduce denied targets through provenance and facet hints.
-        let edges = match scoped_read {
-            Some(read) => read.edges_out(id)?.value.unwrap_or_default(),
-            None => self.vault.edges_out(id)?,
-        };
+        let ScopedReadResult {
+            value: edges,
+            receipt: graph,
+        } = lane.edges_out(id)?;
+        receipt.restrict_with(&graph);
+        let edges = edges.unwrap_or_default();
+
         let mut source_revision_ids = vec![id.to_hex()];
         source_revision_ids.extend(
             edges
@@ -33,30 +48,11 @@ impl Memory<'_> {
                 .find(|edge| edge.kind == EdgeKind::HasFacet)
                 .map(|edge| edge.target.to_hex())
         });
-        let Some(view) = self.entity_view_with_mode(id, mode)? else {
-            return Ok(None);
-        };
         let short_id = view.short_ref.clone().unwrap_or_else(|| id.to_hex());
         let kind = kind_string_for_type(entity_type);
 
         if entity_type == ENTITY_TYPE_CLAIM {
-            let Some(live_body) = self.vault.get_claim(id)? else {
-                return Ok(None);
-            };
-            if !claim_surfaceable(&live_body) {
-                return Ok(None);
-            }
-            let body = if mode == crate::vault::ReadMode::Live {
-                live_body
-            } else {
-                let Some(raw) = self.vault.get_raw_with_mode(id, mode)? else {
-                    return Ok(None);
-                };
-                crate::claim::decode_claim_body(
-                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                    true,
-                )?
-            };
+            let body = crate::claim::decode_claim_body(&body, true)?;
             if !claim_surfaceable(&body) {
                 return Ok(None);
             }
@@ -78,6 +74,7 @@ impl Memory<'_> {
                 world: body.world.map(|world| world.to_hex()),
                 facet,
                 salience: body.salience,
+                reactions: Vec::new(),
             }))
         } else {
             let value_text = view
@@ -94,6 +91,11 @@ impl Memory<'_> {
                     },
                     str::to_owned,
                 );
+            let reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
+                lane.reaction_lines(id)?
+            } else {
+                Vec::new()
+            };
             let evidence_turn_ids = if entity_type == ENTITY_TYPE_MESSAGE {
                 edges
                     .iter()
@@ -118,6 +120,7 @@ impl Memory<'_> {
                 world: None,
                 facet,
                 salience: None,
+                reactions,
             }))
         }
     }

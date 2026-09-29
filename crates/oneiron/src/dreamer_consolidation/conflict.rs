@@ -4,8 +4,8 @@ use rmpv::Value;
 
 use super::provenance::{PromotionCandidate, source_meet};
 use super::support::{
-    DREAMER_BUCKET_HASH_DOMAIN, DREAMER_CLAIM_ID_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN,
-    TURN_BODY_FACET_REF_KEY, encode_value, hash_optional_entity, invalid_consolidation,
+    DREAMER_BUCKET_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN, TURN_BODY_FACET_REF_KEY,
+    encode_value, hash_optional_entity, invalid_consolidation,
 };
 use super::watermark::entity_ref_from_value;
 use crate::claim::{
@@ -14,6 +14,7 @@ use crate::claim::{
 };
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_extraction_role_admissible};
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::DREAMER_CLAIM;
 use crate::error::Result;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -80,8 +81,8 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
     );
     let body = candidate.clone().into_claim_body(
         &envelope,
-        crate::claim::substrate_facet_id(candidate_probe_actor()),
-    );
+        crate::claim::substrate_facet_id(candidate_probe_actor())?,
+    )?;
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation(
             "consolidation candidates must have entity subjects",
@@ -158,73 +159,51 @@ pub fn plan_candidate_buckets(
 // Phase 3 — mechanical evidence collapse + deterministic conflict trigger
 // ---------------------------------------------------------------------------
 
-/// Swarm evidence reference — the HASH-ONLY boundary (GATE-05): a child
-/// return structurally cannot carry source bytes; identity is
-/// `(source_id, content_hash)` and comparisons use exactly those two
-/// fields (trust ties resolve to the most restrictive at collapse time).
-#[derive(Debug, Clone, Copy)]
+/// Child-supplied citation only. A TURN id by itself cites its entire stored body;
+/// a byte range narrows it, and a claim id names a stored CLAIM. Neither
+/// hashes nor trust labels cross this boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SwarmEvidenceRef {
+    pub source_id: EntityId,
+    pub claim_id: Option<EntityId>,
+    pub byte_range: Option<(usize, usize)>,
+}
+
+impl SwarmEvidenceRef {
+    #[must_use]
+    pub const fn whole_turn(source_id: EntityId) -> Self {
+        Self {
+            source_id,
+            claim_id: None,
+            byte_range: None,
+        }
+    }
+}
+
+/// A child's judgement and citations, never its own read pin or evidence
+/// classification. The parent owns the ledger snapshot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwarmChildReturn {
+    pub evidence: Vec<SwarmEvidenceRef>,
+    pub candidates: Vec<PromotionCandidate>,
+}
+
+/// Evidence verified by the parent from a single ledger snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedSwarmEvidence {
     pub source_id: EntityId,
     pub content_hash: [u8; 32],
     pub trust_class: ClaimSource,
 }
 
-impl SwarmEvidenceRef {
-    const fn identity(&self) -> (EntityId, [u8; 32]) {
-        (self.source_id, self.content_hash)
-    }
-}
-
-impl PartialEq for SwarmEvidenceRef {
-    fn eq(&self, other: &Self) -> bool {
-        self.identity() == other.identity()
-    }
-}
-
-impl Eq for SwarmEvidenceRef {}
-
-impl PartialOrd for SwarmEvidenceRef {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SwarmEvidenceRef {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.identity().cmp(&other.identity())
-    }
-}
-
-/// One swarm child's return: evidence hashes ONLY (raw content never
-/// crosses the boundary — no field can carry it), candidate claims AS
-/// DATA, and the weave's read pin.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SwarmChildReturn {
-    /// Evidence hashes as a `Vec`, deliberately NOT a set keyed on
-    /// identity: two refs sharing one `(source_id, content_hash)` but
-    /// differing in `trust_class` must BOTH reach
-    /// `collapse_sibling_evidence`, the single authority that melts a
-    /// same-identity tie to the most-restrictive class. A set would drop
-    /// the stricter tie at insertion (identity-only `Ord`), silently
-    /// inflating trust before the meet ever runs.
-    pub evidence: Vec<SwarmEvidenceRef>,
-    pub candidates: Vec<PromotionCandidate>,
-    /// The max `learned_at` watermark captured ONCE at weave start and
-    /// stamped into every child payload.
-    pub read_pin: u64,
-}
-
-/// Mechanically collapsed evidence: N siblings citing one
-/// `(source_id, content_hash)` are ONE independent signal.
+/// N siblings citing one stored `(source_id, content_hash)` are ONE signal.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CollapsedEvidence {
-    pub independent: Vec<SwarmEvidenceRef>,
+    pub independent: Vec<VerifiedSwarmEvidence>,
     pub duplicates_collapsed: u32,
 }
 
-/// Content hash over the entity's stored body bytes AFTER the metadata
-/// header (`raw[ENTITY_METADATA_HEADER_LEN..]`) — byte-identical across
-/// devices by storage construction. Domain-separated BLAKE3.
+/// Domain-separated hash over the bytes the orchestrator actually read.
 #[must_use]
 pub fn swarm_evidence_content_hash(entity_body_bytes: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
@@ -233,23 +212,30 @@ pub fn swarm_evidence_content_hash(entity_body_bytes: &[u8]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-/// BLAKE3 identity collapse across sibling children (GATE-05): dedupe by
-/// `(source_id, content_hash)`; trust ties on one identity resolve to the
-/// MOST restrictive class.
-pub fn collapse_sibling_evidence(children: &[SwarmChildReturn]) -> Result<CollapsedEvidence> {
-    let mut independent: BTreeMap<(EntityId, [u8; 32]), SwarmEvidenceRef> = BTreeMap::new();
+/// The parent rereads every citation through one actor-scoped ledger snapshot.
+/// No child-supplied value can change the hash, trust, or dedup identity.
+#[cfg(test)]
+pub(in crate::dreamer_consolidation) fn collapse_sibling_evidence(
+    resources: &super::resources::BranchResources<'_>,
+    children: &[SwarmChildReturn],
+) -> Result<CollapsedEvidence> {
+    let verified = resources.verify_evidence_refs(
+        &children
+            .iter()
+            .flat_map(|child| child.evidence.iter().copied())
+            .collect::<Vec<_>>(),
+    )?;
+    let mut independent: BTreeMap<(EntityId, [u8; 32]), VerifiedSwarmEvidence> = BTreeMap::new();
     let mut duplicates_collapsed = 0_u32;
-    for child in children {
-        for entry in &child.evidence {
-            match independent.entry(entry.identity()) {
-                std::collections::btree_map::Entry::Vacant(slot) => {
-                    slot.insert(*entry);
-                }
-                std::collections::btree_map::Entry::Occupied(mut slot) => {
-                    duplicates_collapsed += 1;
-                    let kept = slot.get_mut();
-                    kept.trust_class = source_meet(kept.trust_class, entry.trust_class);
-                }
+    for entry in verified {
+        match independent.entry((entry.source_id, entry.content_hash)) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(entry);
+            }
+            std::collections::btree_map::Entry::Occupied(mut slot) => {
+                duplicates_collapsed += 1;
+                let kept = slot.get_mut();
+                kept.trust_class = source_meet(kept.trust_class, entry.trust_class);
             }
         }
     }
@@ -259,27 +245,18 @@ pub fn collapse_sibling_evidence(children: &[SwarmChildReturn]) -> Result<Collap
     })
 }
 
-/// Most-restrictive trust meet over every source read (GATE-05). Lattice
-/// order, high→low: `UserStated > Observed > Inferred = Generated >
-/// ToolOutput > Imported`. Empty input = `Generated`, the Dreamer's own
-/// floor. Feeds `PromotionCandidate::evidence_meet` (ONE-1290 consumes:
-/// meet at/below ToolOutput forces Proposed + `scope.evidence_taint`).
-#[allow(single_use_lifetimes)] // pinned public signature (brief ONE-1385); anonymous impl-Trait lifetimes are unstable on this toolchain
-pub fn evidence_trust_meet<'a>(refs: impl Iterator<Item = &'a SwarmEvidenceRef>) -> ClaimSource {
+/// Most-restrictive trust meet over verified source classes. Generated is
+/// the Dreamer's own floor; only a stored source can lower it.
+#[allow(
+    single_use_lifetimes,
+    reason = "ONE-1385 pins the public signature; anonymous impl-Trait lifetimes are unstable"
+)]
+pub fn evidence_trust_meet<'a>(
+    refs: impl Iterator<Item = &'a VerifiedSwarmEvidence>,
+) -> ClaimSource {
     refs.fold(ClaimSource::Generated, |meet, entry| {
         source_meet(meet, entry.trust_class)
     })
-}
-
-/// Rejects a child return whose `read_pin` differs from the weave's pin —
-/// the result is discarded and counted by the caller, never merged.
-pub fn validate_child_read_pin(expected: u64, child: &SwarmChildReturn) -> Result<()> {
-    if child.read_pin != expected {
-        return Err(invalid_consolidation(
-            "dreamer swarm child read pin mismatch",
-        ));
-    }
-    Ok(())
 }
 
 /// Turn → trust_class derivation (DESIGN-PIN Part B1, ratified R4):
@@ -403,11 +380,10 @@ pub fn detect_conflicts(
 /// identity to surface under, not a queue row. The id is minted from the
 /// SAME `deterministic_claim_id` law every consolidation claim uses, so an
 /// at-least-once re-run re-mints the same marker instead of a second one.
-#[must_use]
 pub fn conflict_open_marker_id(
     conflict: &ConflictSet,
     attempt_id: crate::attempt_queue::AttemptId,
-) -> EntityId {
+) -> Result<EntityId> {
     deterministic_claim_id(
         attempt_id,
         conflict.identity.subject,
@@ -466,40 +442,26 @@ pub(super) fn deterministic_claim_id(
     facet: Option<EntityId>,
     rel: Option<EntityId>,
     topic: Option<&[u8]>,
-) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DREAMER_CLAIM_ID_HASH_DOMAIN);
-    hasher.update(attempt_id.as_bytes());
-    hasher.update(subject.as_bytes());
-    hasher.update(&(predicate.len() as u64).to_le_bytes());
-    hasher.update(predicate.as_bytes());
-    let value_bytes = canonical_value_bytes(value).unwrap_or_default();
-    hasher.update(&(value_bytes.len() as u64).to_le_bytes());
-    hasher.update(&value_bytes);
-    hasher.update(&[u8::from(world.is_some())]);
-    if let Some(world) = world {
-        hasher.update(world.as_bytes());
-    }
-    hasher.update(&[u8::from(facet.is_some())]);
-    if let Some(facet) = facet {
-        hasher.update(facet.as_bytes());
-    }
-    hash_optional_entity(&mut hasher, rel.as_ref());
-    hasher.update(&[u8::from(topic.is_some())]);
-    if let Some(topic) = topic {
-        hasher.update(&(topic.len() as u64).to_le_bytes());
-        hasher.update(topic);
-    }
-    let digest = hasher.finalize();
-    let mut raw = [0_u8; 16];
-    raw.copy_from_slice(&digest.as_bytes()[..16]);
-    // A blake3 prefix colliding with a reserved id is ~2^-120; perturb
-    // deterministically rather than fall back to a non-deterministic id.
-    EntityId::from_bytes(raw).unwrap_or_else(|_| {
-        raw[0] ^= 0x01;
-        raw[15] ^= 0x01;
-        EntityId::from_bytes(raw).expect("perturbed derived claim id is non-reserved")
-    })
+) -> Result<EntityId> {
+    let value_bytes = canonical_value_bytes(value)?;
+    let optional = |part: Option<&[u8]>| part.map(|bytes| [&[1][..], bytes].concat());
+    let world = optional(world.as_ref().map(|id| &id.as_bytes()[..]));
+    let facet = optional(facet.as_ref().map(|id| &id.as_bytes()[..]));
+    let rel = optional(rel.as_ref().map(|id| &id.as_bytes()[..]));
+    let topic = optional(topic);
+    EntityId::derive(
+        DREAMER_CLAIM,
+        &[
+            attempt_id.as_bytes(),
+            subject.as_bytes(),
+            predicate.as_bytes(),
+            &value_bytes,
+            world.as_deref().unwrap_or_default(),
+            facet.as_deref().unwrap_or_default(),
+            rel.as_deref().unwrap_or_default(),
+            topic.as_deref().unwrap_or_default(),
+        ],
+    )
 }
 
 /// Recursively sorts every `Value::Map`'s entries by their MessagePack-encoded

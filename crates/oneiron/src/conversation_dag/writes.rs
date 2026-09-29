@@ -1,11 +1,11 @@
 //! Atomic append, explicit HEAD moves and canonical-index repair.
 
 use super::graph::{
-    self, CANONICAL, HEAD, actor_in_txn, chain, edge_ids, invalid, key, read_id, require_member,
+    self, CANONICAL, HEAD, actor_in_txn, chain, edge_ids, invalid, read_id, require_member,
     require_type,
 };
 use super::migration::migrate_in_txn;
-use super::{AppendRecord, AppendedRecord, DagPage, DagPageRequest};
+use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
@@ -29,6 +29,7 @@ fn stamp_body(
     actor: crate::WriteActor,
     session: Option<EntityId>,
     thread: bool,
+    project_scope: Option<EntityId>,
 ) -> Result<Vec<u8>> {
     let mut input = body;
     let decoded = rmpv::decode::read_value(&mut input)
@@ -57,6 +58,7 @@ fn stamp_body(
                 | "summary"
                 | "dag_session_ref"
                 | "dag_kind"
+                | "scope_project_id"
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
@@ -79,6 +81,12 @@ fn stamp_body(
             Value::from(session.to_hex()),
         ));
     }
+    if let Some(project) = project_scope {
+        entries.push((
+            Value::from("scope_project_id"),
+            Value::from(project.to_hex()),
+        ));
+    }
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
         .map_err(|_| invalid("record encode failed"))?;
@@ -95,6 +103,14 @@ pub(crate) fn append_in_txn(
     thread: bool,
 ) -> Result<AppendedRecord> {
     actor_in_txn(&vault.store, txn, input.actor)?;
+    if !crate::conversation::room_person_write_allowed(
+        &vault.store,
+        txn,
+        input.conversation,
+        input.actor.entity_ref(),
+    )? {
+        return Err(invalid("erased person cannot append to this room"));
+    }
     if thread && input.advance {
         return Err(invalid("HEAD never enters a thread"));
     }
@@ -106,6 +122,13 @@ pub(crate) fn append_in_txn(
         txn,
         &input.conversation,
         ENTITY_TYPE_CONVERSATION,
+    )?;
+    let project_scope = crate::workspace_roster::admit_leader_chat_turn(
+        vault,
+        txn,
+        input.conversation,
+        input.actor.entity_ref(),
+        false,
     )?;
     migrate_in_txn(vault, txn, &input.conversation)?;
     let old_head = graph::canonical_chain(&vault.store, txn, &input.conversation)?
@@ -180,16 +203,50 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
-    let mut body = stamp_body(&input.body, input.actor, input.session, thread)?;
+    // Validate all recipients before minting the record. Addressing is never a
+    // room-membership or audience test: a non-member may be mentioned.
+    let mut seen = std::collections::HashSet::new();
+    if input.reply_to.is_some() {
+        if input.address != AddressMode::Broadcast {
+            return Err(invalid("reply cannot also use direct addressing"));
+        }
+    } else {
+        match input.address {
+            AddressMode::Broadcast if !input.recipients.is_empty() => {
+                return Err(invalid("broadcast cannot name recipients"));
+            }
+            AddressMode::Direct if input.recipients.is_empty() => {
+                return Err(invalid("direct addressing requires recipients"));
+            }
+            _ => {}
+        }
+    }
+    for recipient in &input.recipients {
+        if !seen.insert(*recipient) {
+            return Err(invalid("duplicate recipient"));
+        }
+        require_type(
+            &vault.store,
+            txn,
+            recipient,
+            crate::registry::ENTITY_TYPE_PERSON,
+        )?;
+    }
+    let mut body = stamp_body(
+        &input.body,
+        input.actor,
+        input.session,
+        thread,
+        project_scope,
+    )?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut body.as_slice())
+        .map_err(|_| invalid("record decode failed"))?
+    else {
+        return Err(invalid("record body must be a map"));
+    };
     if let Some(asking) = input.reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
-        let mut entries = match rmpv::decode::read_value(&mut body.as_slice())
-            .map_err(|_| invalid("record decode failed"))?
-        {
-            Value::Map(entries) => entries,
-            _ => return Err(invalid("record body must be a map")),
-        };
         entries.extend([
             (Value::from("addr"), Value::from("reply")),
             (
@@ -206,10 +263,29 @@ pub(crate) fn append_in_txn(
         if let Some(summary) = summary {
             entries.push((Value::from("summary"), Value::from(summary.to_hex())));
         }
-        body.clear();
-        rmpv::encode::write_value(&mut body, &Value::Map(entries))
-            .map_err(|_| invalid("record encode failed"))?;
+    } else {
+        entries.push((
+            Value::from("addr"),
+            Value::from(match input.address {
+                AddressMode::Broadcast => "broadcast",
+                AddressMode::Direct => "direct",
+            }),
+        ));
     }
+    // Addressing never limits audience, including on reply records.
+    entries.push((
+        Value::from("to"),
+        Value::Array(
+            input
+                .recipients
+                .iter()
+                .map(|id| Value::from(id.to_hex()))
+                .collect(),
+        ),
+    ));
+    body.clear();
+    rmpv::encode::write_value(&mut body, &Value::Map(entries))
+        .map_err(|_| invalid("record encode failed"))?;
     let id = vault.store.clock.entity_id()?;
     super::policy::check_append_policy(vault, txn, &id, input, &body)?;
     let fields: Vec<_> = input
@@ -228,6 +304,14 @@ pub(crate) fn append_in_txn(
         batch =
             batch.edge_with_value_fields(&id, EdgeKind::Parent, &parent, value(input.learned_at));
     }
+    for recipient in &input.recipients {
+        batch = batch.edge_with_value_fields(
+            &id,
+            EdgeKind::AddressedTo,
+            recipient,
+            value(input.learned_at),
+        );
+    }
     if let Some(asking) = input.reply_to {
         batch = batch.edge_with_value_fields(
             &id,
@@ -237,7 +321,25 @@ pub(crate) fn append_in_txn(
         );
     }
     super::admission::permit(&vault.store, txn, &id, &input.conversation)?;
+    if project_scope.is_some() {
+        crate::workspace_roster::permit_leader_chat_record(
+            &vault.store,
+            txn,
+            id,
+            input.conversation,
+        )?;
+    }
     batch.apply(txn)?;
+    if let Some(project) = project_scope {
+        crate::workspace_roster::settle_leader_chat_record(
+            vault,
+            txn,
+            id,
+            input.conversation,
+            input.actor.entity_ref(),
+            project,
+        )?;
+    }
     super::admission::finish(&vault.store, txn, &id)?;
     crate::compaction::record_turn_session_membership_in_txn(
         &vault.store,
@@ -246,15 +348,9 @@ pub(crate) fn append_in_txn(
         input.session,
     )?;
     if input.advance {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &key(HEAD, &input.conversation), id.as_bytes())?;
+        HEAD.put(&vault.store, txn, &input.conversation, &id)?;
         if let Some(parent) = input.parent {
-            vault
-                .store
-                .vault_meta
-                .put(txn, &key(CANONICAL, &parent), id.as_bytes())?;
+            CANONICAL.put(&vault.store, txn, &parent, &id)?;
         }
     }
     Ok(AppendedRecord {
@@ -270,6 +366,7 @@ pub(super) fn set_head_in_txn(
     conversation: &EntityId,
     record: EntityId,
 ) -> Result<()> {
+    require_type(&vault.store, txn, &record, ENTITY_TYPE_TURN)?;
     let path = chain(&vault.store, txn, conversation, record)?;
     for id in &path {
         if graph::is_thread_record(&vault.store, txn, id)? {
@@ -281,23 +378,17 @@ pub(super) fn set_head_in_txn(
     }
     if let Some(old) = read_id(&vault.store, txn, HEAD, conversation)? {
         for id in chain(&vault.store, txn, conversation, old)? {
-            vault.store.vault_meta.delete(txn, &key(CANONICAL, &id))?;
+            CANONICAL.delete(&vault.store, txn, &id)?;
         }
     }
     // Also clear a stale terminal mark on the new HEAD.
     for id in &path {
-        vault.store.vault_meta.delete(txn, &key(CANONICAL, id))?;
+        CANONICAL.delete(&vault.store, txn, id)?;
     }
     for pair in path.windows(2) {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &key(CANONICAL, &pair[0]), pair[1].as_bytes())?;
+        CANONICAL.put(&vault.store, txn, &pair[0], &pair[1])?;
     }
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key(HEAD, conversation), record.as_bytes())?;
+    HEAD.put(&vault.store, txn, conversation, &record)?;
     Ok(())
 }
 
@@ -334,6 +425,13 @@ impl Vault {
             migrate_in_txn(self, txn, conversation)?;
             let head = read_id(&self.store, txn, HEAD, conversation)?;
             let path = graph::canonical_chain(&self.store, txn, conversation)?;
+            let mut visible = Vec::new();
+            for id in path {
+                if crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
+                    visible.push(id);
+                }
+            }
+            let path = visible;
             let start = match page.after {
                 Some(after) => {
                     path.iter()
@@ -377,7 +475,7 @@ impl Vault {
                 crate::limits::MAX_ANCESTOR_DEPTH,
             )?;
             for id in records {
-                self.store.vault_meta.delete(txn, &key(CANONICAL, &id))?;
+                CANONICAL.delete(&self.store, txn, &id)?;
             }
             if let Some(head) = read_id(&self.store, txn, HEAD, conversation)? {
                 set_head_in_txn(self, txn, conversation, head)?;

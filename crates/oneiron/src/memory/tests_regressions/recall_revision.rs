@@ -122,3 +122,50 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
         serde_json::json!("revisionanchor original evidence")
     );
 }
+
+#[test]
+fn memory_view_short_ref_and_body_use_the_same_scoped_snapshot() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x7A);
+    let facade = facade_for(&vault, actor);
+    let id = EntityId::from_bytes([0x7B; 16]).unwrap();
+    let original = rmp_serde::to_vec_named(&serde_json::json!({"name": "before delete"})).unwrap();
+    vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_EVENT,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &original,
+        )
+        .unwrap();
+    let original_ref = facade
+        .get_entity(&id.to_hex())
+        .unwrap()
+        .value
+        .unwrap()
+        .short_ref
+        .unwrap();
+    let lane = facade
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .unwrap();
+    // A hard delete lands after the scoped row is admitted, before its facade
+    // view is projected. The old row and its short id must still agree.
+    let read = facade
+        .read_views_after(&lane, &[Some((id, crate::vault::ReadMode::Live))], || {
+            std::thread::scope(|scope| {
+                let writer = scope.spawn(|| vault.delete_entity(&id).unwrap());
+                assert!(writer.join().unwrap());
+            });
+        })
+        .unwrap()
+        .single();
+    let view = read.value.unwrap();
+    assert_eq!(
+        view.body,
+        Some(serde_json::json!({"name": "before delete"}))
+    );
+    assert_eq!(view.short_ref.as_deref(), Some(original_ref.as_str()));
+    assert_eq!(read.receipt.suppressed_count, 0);
+    assert!(facade.get_entity(&id.to_hex()).unwrap().value.is_none());
+}

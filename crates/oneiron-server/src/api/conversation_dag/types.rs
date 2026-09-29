@@ -49,10 +49,21 @@ impl DagActor {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DagAddressMode {
+    Broadcast,
+    Direct,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagAppendRequest {
     pub parent: Option<String>,
     pub reply_to: Option<String>,
+    /// Addressing is not access control. Omitted means broadcast.
+    pub addr: Option<DagAddressMode>,
+    /// PERSON ids named by direct addressing.
+    pub to: Option<Vec<String>>,
     pub advance: bool,
     pub body: Value,
     pub text: Option<Vec<CoreTextField>>,
@@ -68,13 +79,14 @@ pub(crate) struct DagAppendRequest {
 pub(crate) enum DagScopePath {
     Canonical,
     Branch(String),
+    BranchSpan { after: String, through: String },
     SubSession(String),
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagScopeRequest {
-    /// "canonical", {"branch": "id"}, or {"sub_session": "id"}.
+    /// "canonical", {"branch": "id"}, {"branch_span": {"after": "id", "through": "id"}}, or {"sub_session": "id"}.
     pub path: DagScopePath,
     #[serde(default)]
     pub include_forks: bool,
@@ -89,6 +101,10 @@ impl DagScopeRequest {
             path: match &self.path {
                 DagScopePath::Canonical => ScopePath::Canonical,
                 DagScopePath::Branch(id) => ScopePath::Branch(parse_entity_id_param(id, "branch")?),
+                DagScopePath::BranchSpan { after, through } => ScopePath::BranchSpan {
+                    after: parse_entity_id_param(after, "after")?,
+                    through: parse_entity_id_param(through, "through")?,
+                },
                 DagScopePath::SubSession(id) => {
                     ScopePath::SubSession(parse_entity_id_param(id, "sub_session")?)
                 }
@@ -133,6 +149,10 @@ pub(crate) struct DagSummaryRequest {
 pub(crate) struct DagPageQuery {
     pub after: Option<String>,
     pub limit: Option<usize>,
+    /// Optional per-record projection: thread_meta, or reactions (with viewer).
+    pub with: Option<String>,
+    /// The PERSON whose view `with=reactions` groups for.
+    pub viewer: Option<String>,
 }
 
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
@@ -156,6 +176,15 @@ pub(crate) struct DagPageResponse {
     pub head: Option<String>,
     pub root: Option<String>,
     pub main_line: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
+    pub thread_meta: Option<std::collections::BTreeMap<String, Option<DagThreadMetaResponse>>>,
+    /// `with=reactions`: grouped reaction pills per listed record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<DagReactionRecord>>,
+    /// `with=reactions`: `mirrored` or `first_party_only`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reactions_outbound: Option<&'static str>,
     pub page: DagPageCursor,
 }
 
@@ -202,9 +231,76 @@ pub(crate) struct DagCoversResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagThreadMetaResponse {
+    pub root: String,
+    pub count: u64,
+    pub last_at: u64,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DagThreadSummaryRequest {
+    pub text: String,
+    pub actor: DagActor,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DagThreadResponse {
+    pub roots: Vec<String>,
     pub root: Option<String>,
     pub replies: Vec<String>,
     pub count: u64,
     pub last_at: Option<u64>,
+}
+
+/// One listed record (a TURN, or a MESSAGE beneath it) with its pills.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagReactionRecord {
+    pub turn: String,
+    pub id: String,
+    pub reactions: Vec<DagReactionPill>,
+}
+
+/// One glyph's live reactions, contributors in first-put order.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagReactionPill {
+    pub glyph: String,
+    pub count: usize,
+    pub by: Vec<String>,
+    pub mine: bool,
+}
+
+/// Put or remove one reaction. With `external`, an owner-grade connector host
+/// reports a provider fact instead: a new add (with `occurred_at`), an echo of
+/// our own reaction (with `origin`), or a removal (`remove`).
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionRequest {
+    pub by: String,
+    pub glyph: String,
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
+    #[serde(default)]
+    pub remove: bool,
+    #[serde(default)]
+    pub external: Option<ReactionExternalPayload>,
+    pub actor: DagActor,
+}
+
+/// A connector's provider generation for one reaction add.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionExternalPayload {
+    pub connector: String,
+    pub id: String,
+    /// The original first-party reaction claim a provider echo acknowledges.
+    #[serde(default)]
+    pub origin: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ReactionResponse {
+    pub id: String,
+    /// `reaction.put`, `reaction.revoked` or `reaction.replayed`.
+    pub event: &'static str,
 }

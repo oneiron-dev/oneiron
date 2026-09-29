@@ -1,7 +1,6 @@
 //! ONE-1420 principal binding, durable default authorship, and authority reuse.
 
 use super::*;
-use crate::code_run::HostSelfDispatcher;
 use crate::edge::EdgeActorClass;
 use crate::pipeline::filters::apply_world_filter;
 use crate::pipeline::world_authority::resolve_world_authority;
@@ -78,19 +77,6 @@ fn active_set_rejects_missing_principal_and_forged_agent() -> Result<()> {
             .run()?
             .is_empty()
     );
-    Ok(())
-}
-
-#[test]
-fn world_query_rejects_foreign_execution_capability() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let (_other_dir, other_vault) = open_test_vault();
-    let actor = WriteActor::new(entity_id(0xA0), EdgeActorClass::Agent);
-    let execution = HostSelfDispatcher::new(&other_vault, actor, "foreign-world-query")?;
-    assert!(matches!(
-        vault.query_for_execution(&execution),
-        Err(Error::InvalidConfig(message)) if message.contains("different vault")
-    ));
     Ok(())
 }
 

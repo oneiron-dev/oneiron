@@ -85,6 +85,8 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -102,6 +104,8 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -119,6 +123,8 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -136,6 +142,8 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -153,6 +161,8 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self
@@ -170,6 +180,8 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -184,6 +196,8 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -223,6 +237,30 @@ impl NativeClient {
     pub fn rooms_messages(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("rooms.messages", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_render(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.render", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_find(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.find", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn rooms_trunk(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("rooms.trunk", input)
             .map_err(facade_error)
     }
     #[napi]

@@ -106,7 +106,7 @@ pub(crate) fn validate_workflow_put(
         if let Some(parent) = definition.forked_from {
             require_kind(store, txn, &parent, ENTITY_TYPE_WORKFLOW)?;
         }
-        if let Some(prior) = store.entities.get(txn, id.as_bytes())? {
+        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
             let header = EntityMetadataHeader::parse(&prior).ok_or_else(invalid)?;
             if header.entity_type != ENTITY_TYPE_WORKFLOW {
                 return Err(invalid());
@@ -172,10 +172,7 @@ impl Vault {
         let encoded = encode_workflow(definition)?;
         self.with_write_txn(|txn| {
             require_kind(&self.store, txn, id, ENTITY_TYPE_WORKFLOW)?;
-            let prior = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let prior = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;
             let prior = decode_workflow(&prior[ENTITY_METADATA_HEADER_LEN..])?;
             if prior.revision != expected_revision || definition.revision <= expected_revision {
@@ -201,13 +198,10 @@ impl Vault {
     ) -> Result<WorkflowDefinition> {
         self.with_write_txn(|txn| {
             require_kind(&self.store, txn, parent, ENTITY_TYPE_WORKFLOW)?;
-            if self.store.entities.get(txn, fork.as_bytes())?.is_some() {
+            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, fork)?.is_some() {
                 return Err(invalid());
             }
-            let raw = self
-                .store
-                .entities
-                .get(txn, parent.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, parent)?
                 .ok_or(Error::EntityNotFound)?;
             let mut definition = decode_workflow(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             definition.revision = 1;

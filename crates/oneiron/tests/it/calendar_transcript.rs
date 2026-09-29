@@ -475,6 +475,8 @@ fn note_fallback_uses_l1_note_identifier_without_registry_edit() {
 #[test]
 fn extracted_follow_ups_are_write_envelope_proposals_never_sends() {
     let (_dir, vault) = vault();
+    // The transcript importer is an engine MACHINE: it signs with a host-held key.
+    crate::common::provision_engine_machines(&vault);
     let actor = EntityId::from_bytes(
         sha2::Sha256::digest(b"oneiron:calendar:file-drop-import-machine:v1")[..16]
             .try_into()
@@ -668,4 +670,59 @@ fn transcript_lifecycle_hints_preserve_claimed_and_arrival_effective_timestamps(
     let record = vault.session_lifecycle_record(&id).unwrap().unwrap();
     assert_eq!(record.app_open_hints.first(), Some(&start));
     assert_eq!(record.explicit_end_hint, Some(end));
+}
+
+/// T48 pin (packet "Second read, added tests"): the file-drop fixture's
+/// policy manifest is written through `batch::apply_ops` — the batch entry —
+/// not a hand-packed raw store write (the defect `calendar/transcript.rs:
+/// 370-388` used to have). `seed_file_drop_machine_fixture` never returns the
+/// minted manifest's id, so it is found by diffing `entities_by_type` before
+/// and after seeding.
+///
+/// The packet also asks for a short-id row, but `ENTITY_TYPE_POLICY_MANIFEST`
+/// has no short-id prefix (`registry/registry_table.rs`), so the batch entry
+/// writes none for this entity type; the type_index row is asserted instead.
+/// `entities_by_type` is itself backed by the `type_index` table
+/// (`ports::EntityStoreRead::port_entity_ids_by_type`, `type_index()`), so
+/// the manifest appearing there after seeding (and not before) already is
+/// that assertion — it is repeated explicitly below so the intent reads
+/// standalone rather than riding on the id-finding diff.
+#[test]
+fn the_file_drop_fixture_writes_its_policy_manifest_through_the_batch_entry() {
+    let (_dir, vault) = vault();
+    let before = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .unwrap();
+    seed_file_drop_machine_fixture(&vault, 1_000).unwrap();
+    let after = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .unwrap();
+    let minted: Vec<EntityId> = after
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .collect();
+    assert_eq!(
+        minted.len(),
+        1,
+        "the fixture mints exactly one policy manifest"
+    );
+    let manifest_id = minted[0];
+
+    // The type_index row: no short-id row exists to check for this entity
+    // type, so this re-confirms what the diff above already proved.
+    assert!(
+        vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+            .unwrap()
+            .contains(&manifest_id),
+        "the batch entry's type_index row for the seeded policy manifest"
+    );
+
+    // The entity-put audit row: only the batch entry writes it
+    // (`crate::ports::audit_entity_put_in_txn`, called from
+    // `batch/put_apply/apply.rs`'s `apply_put`).
+    assert!(
+        vault.entity_put_audit_count_for_test(&manifest_id).unwrap() >= 1,
+        "the batch entry's entity-put audit row for the seeded policy manifest"
+    );
 }

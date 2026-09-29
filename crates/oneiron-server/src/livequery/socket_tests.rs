@@ -160,9 +160,7 @@ async fn app(socket: &mut Socket, tag: u8) -> Value {
 }
 async fn connect(f: &Fixture, actor: &str) -> Socket {
     let mut request = f.url.as_str().into_client_request().unwrap();
-    request
-        .headers_mut()
-        .insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
+    crate::test_credentials::bind_ws_request(&f._server, &mut request, "jti=livequery-upgrade");
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     socket
         .send(Message::Binary(
@@ -189,9 +187,7 @@ async fn connect(f: &Fixture, actor: &str) -> Socket {
 }
 async fn connect_classless(f: &Fixture, actor: &str) -> Socket {
     let mut request = f.url.as_str().into_client_request().unwrap();
-    request
-        .headers_mut()
-        .insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
+    crate::test_credentials::bind_ws_request(&f._server, &mut request, "jti=livequery-upgrade");
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     socket
         .send(Message::Binary(
@@ -251,6 +247,8 @@ async fn write(f: &Fixture, world: &str, value: u64) {
         &MaterializedDiffSummary {
             containers: vec![path.clone()],
             bytes: 1,
+
+            revision_events: Vec::new(),
         },
         &OriginMark::default(),
     );

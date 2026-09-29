@@ -208,6 +208,41 @@ impl Vault {
                 "scan receipt content hash does not match the skill",
             )));
         }
+        self.ingest_scan_verdict_for_hash_in_txn(wtxn, content_hash, receipt, occurred, learned_at)
+    }
+
+    /// Pack sources use the same content-global ledger, not a synthetic SKILL.
+    pub fn ingest_pack_scan_verdict(
+        &self,
+        source_id: &EntityId,
+        receipt: &SkillScanReceipt,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        validate_skill_scan_receipt(receipt)?;
+        let mut txn = self.store.env.write_txn()?;
+        let source = self
+            .pack_source_in_txn(&txn, source_id)?
+            .ok_or_else(|| Error::InvalidConfig("pack source missing for scan".into()))?;
+        let claim = self.ingest_scan_verdict_for_hash_in_txn(
+            &mut txn,
+            source.content_hash(),
+            receipt,
+            occurred,
+            learned_at,
+        )?;
+        txn.commit()?;
+        Ok(claim)
+    }
+
+    fn ingest_scan_verdict_for_hash_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        content_hash: SkillContentHash,
+        receipt: &SkillScanReceipt,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
         let hash_hex = content_hash.to_hex();
         // ONE-1741: verdicts hang off the deterministic content anchor, not the
         // submitting holder, so ensure it exists before the reserved put (the
@@ -267,7 +302,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Observed);
         self.put_reserved_claim_in_txn(wtxn, &claim_id, &body, occurred, learned_at)?;
 
@@ -336,6 +371,32 @@ impl Vault {
             occurred,
             learned_at,
         )?;
+        Ok(())
+    }
+
+    /// One bounded static pass per exact pack tree, knowledge-only facets
+    /// included. A refetch of identical bytes reuses the existing provider row;
+    /// a new hash starts with no evidence carried over from any older tree.
+    pub(super) fn scan_and_ingest_pack_source_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source: &super::pack_catalog::PackSource,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let hash = source.content_hash();
+        if self
+            .skill_scan_verdicts_for_content_hash_in_txn(&*txn, hash)?
+            .iter()
+            .any(|row| {
+                map_text(&row.value, "provider")
+                    == Some(crate::skill_scan::SCAN_PROVIDER_STATIC_PACK_V1)
+            })
+        {
+            return Ok(());
+        }
+        let receipt = crate::skill_scan::run_static_pack_scan(source, learned_at)?;
+        self.ingest_scan_verdict_for_hash_in_txn(txn, hash, &receipt, occurred, learned_at)?;
         Ok(())
     }
 

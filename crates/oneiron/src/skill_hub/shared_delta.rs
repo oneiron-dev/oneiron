@@ -1,8 +1,14 @@
 //! Submitted-byte federation merge-back and company PR staging. No personal-vault read door.
 use super::{HubPackage, package_codec::invalid};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault, entity_id::EntityId, error::Result, skill::SkillLifecycle, temporal::TimeRange,
 };
+
+/// Shared-skill merge delta computed for one candidate. `pub(super)` because
+/// retiring a skill refinement's control drops its offered delta row.
+pub(super) const SHARED_DELTA: SideTable<EntityId, SharedSkillDelta, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_SHARED_DELTA);
 
 /// Both lanes offer bytes to the receiving base. Neither grants access to the sender's vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -176,11 +182,7 @@ impl Vault {
                         .unwrap_or(0.2),
                 )
                 .apply(txn)?;
-            self.store.vault_meta.put(
-                txn,
-                &delta_key(&candidate),
-                &serde_json::to_vec(&delta).map_err(|_| invalid("shared delta encode failed"))?,
-            )?;
+            SHARED_DELTA.put(&self.store, txn, &candidate, &delta)?;
             super::refinement_admission::put_control(
                 &self.store,
                 txn,
@@ -215,8 +217,15 @@ impl Vault {
             }
             record.desc = parsed.record.desc;
             record.version = parsed.record.version;
+            record.role = parsed.record.role;
+            record.call = parsed.record.call;
             record.content_hash = parsed.record.content_hash;
             let saved = HubPackage::new(record.clone(), parsed.files, parsed.capabilities);
+            super::folder::package_from_source(
+                &record,
+                saved.files.clone(),
+                super::SkillPackageFormat::Folder,
+            )?;
             self.put_skill_record_in_txn(txn, fork, &record, occurred, learned_at)?;
             self.persist_hub_package_in_txn(txn, fork, &saved)?;
             self.scan_and_ingest_on_import_in_txn(
@@ -239,19 +248,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         candidate: &EntityId,
     ) -> Result<Option<SharedSkillDelta>> {
-        self.store
-            .vault_meta
-            .get(txn, &delta_key(candidate))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid shared delta row"))
-            })
-            .transpose()
+        SHARED_DELTA.get(&self.store, txn, candidate)
     }
-}
-pub(super) fn delta_key(candidate: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/shared-delta/v1\0".to_vec();
-    key.extend_from_slice(candidate.as_bytes());
-    key
 }
 
 /// Fork names differ from the upstream name by design. All other source bytes,

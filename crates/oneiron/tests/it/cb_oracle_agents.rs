@@ -654,9 +654,10 @@ mod cb_a {
             .collect();
         assert_eq!(branch_runs.iter().filter(|id| **id == run_id).count(), 3);
         // Depth decrements at every level and is persisted, not merely counted.
-        assert_eq!(fixture.persisted_depth(lead_attempt), Some(8));
-        assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(7));
-        assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(6));
+        // The root starts at the project's depth row, 10 by default (ARCH-0067 §7).
+        assert_eq!(fixture.persisted_depth(lead_attempt), Some(10));
+        assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(9));
+        assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(8));
 
         TeamLeadDelegation {
             preset_available,
@@ -1068,7 +1069,7 @@ mod cb_a {
     }
 
     /// The same valid candidate fails without the Generated lineage permit,
-    /// then lands when that permit names the unchanged Agent-class Dreamer.
+    /// then lands when that permit names the unchanged System-class Dreamer.
     #[test]
     fn peer_answer_requires_generated_permit_for_dreamer_actor() {
         use oneiron::dreamer_promotion::promote_consolidated_claims;
@@ -1077,7 +1078,7 @@ mod cb_a {
 
         let fixture = super::peer_fixture::PeerFixture::open_without_generated_permit();
         let run = fixture.run();
-        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
+        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::System);
         let answer = fixture.land_peer_answer("ACME");
         let candidate = fixture.public_peer_candidate(&answer, "ACME", 0.7);
         let claim_id = candidate.claim_id;
@@ -1123,7 +1124,7 @@ mod cb_a {
         let run = fixture.run();
         let wrong_actor = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
         assert_ne!(wrong_actor, run.agent_actor.entity_ref());
-        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
+        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::System);
         let fixture = fixture.with_generated_source_permit(wrong_actor);
         let answer = fixture.land_peer_answer("ACME");
         let candidate = fixture.public_peer_candidate(&answer, "ACME", 0.7);
@@ -1159,7 +1160,7 @@ mod cb_a {
         let fixture = super::peer_fixture::PeerFixture::open_without_generated_permit();
         let fixture = fixture.permit_generated_source();
         let run = fixture.run();
-        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
+        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::System);
         let answer = fixture.land_peer_answer("ACME");
         let candidate = fixture.public_peer_candidate(&answer, "I will check", 0.7);
         let claim_id = candidate.claim_id;
@@ -1518,6 +1519,9 @@ mod peer_fixture {
         let _closing_event = env.prepare_for_closing();
 
         let vault = Vault::open(path, config).expect("reopen the fixture vault");
+        // The Dreamer is a MACHINE writer: the host roots the vault and
+        // retains its key on this handle (ONE-2545).
+        crate::common::provision_engine_machines(&vault);
         assert_eq!(
             vault.get_raw(&manifest_id).expect("read fixture policy"),
             Some(raw),
@@ -1576,7 +1580,7 @@ mod peer_fixture {
                 panic!("ceiling rows")
             };
             ceilings.push(Value::Map(vec![
-                (Value::from("actor_class"), Value::from("agent")),
+                (Value::from("actor_class"), Value::from("system")),
                 (Value::from("actor_ref"), Value::from(dreamer.to_hex())),
                 (Value::from("ceiling"), Value::from("auto")),
             ]));
@@ -1881,9 +1885,9 @@ mod peer_fixture {
             };
             let conflicts = detect_conflicts(std::slice::from_ref(candidate), &[prior])
                 .expect("conflict detection runs");
-            let marker = conflicts
-                .first()
-                .map(|conflict| conflict_open_marker_id(conflict, self.attempt));
+            let marker = conflicts.first().map(|conflict| {
+                conflict_open_marker_id(conflict, self.attempt).expect("marker id derives")
+            });
             (conflicts.len(), marker)
         }
 
@@ -2049,7 +2053,8 @@ mod peer_fixture {
                 0.9,
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .expect("claim body");
             body.source = Some(ClaimSource::Generated);
             body.scope = Some(tool_output_lineage_scope());
             attempts.push(ForgeryAttempt {

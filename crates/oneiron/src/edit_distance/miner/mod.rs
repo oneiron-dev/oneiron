@@ -87,13 +87,13 @@ mod feedback;
 mod influence;
 mod mining;
 mod model;
+mod policy;
 mod store;
 mod target;
 mod win;
 
 pub use self::config::{
-    MINER_K_DEFAULT, MINER_K_SETTINGS_KEY, MINER_REJECTION_COOLDOWN_SECS,
-    PREDICATE_PREFERENCE_PHRASING,
+    MINER_K_DEFAULT, MINER_REJECTION_COOLDOWN_SECS, PREDICATE_PREFERENCE_PHRASING,
 };
 pub use self::feedback::bind_amendment_preference_principal;
 pub(crate) use self::feedback::record_inbox_learning_in_txn;
@@ -107,6 +107,7 @@ pub use self::model::{
     MinedOutcome, MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerRun,
     MinerWatermark, SubstitutionClass, SubstitutionCluster,
 };
+pub(crate) use self::policy::CompilationPolicy;
 pub use self::store::{
     mined_skill_edit, miner_watermark, pending_substitution_skill_edits, resolve_mined_skill_edit,
 };

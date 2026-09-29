@@ -5,6 +5,7 @@ use std::cmp::Ordering::{Equal, Less};
 use loro::VersionVector;
 
 use super::base::{SyncClient, load_root_doc};
+use super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
@@ -19,6 +20,7 @@ use crate::sync::transport::{
 };
 use crate::sync::types::WindowKey;
 use crate::sync::window::{LoadedWindow, apply_pending_window_updates, load_window_from_state};
+use crate::sync::window_rows::BULK_TRANSFER_MARKER;
 
 impl SyncClient {
     /// Handles an incoming wire message from the server.
@@ -98,6 +100,7 @@ impl SyncClient {
                     self.root_doc = restored;
                     return Err(TransportError::Storage(format!("persist root doc: {err}")));
                 }
+                responses.extend(self.newly_followed_window_requests()?);
             }
             TAG_EPHEMERAL => {
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
@@ -150,11 +153,29 @@ impl SyncClient {
                 responses.extend(self.handle_window_sync(window_key, sub_tag, inner)?);
             }
             TAG_BULK_TRANSFER => {
+                if self.config.residence_mode == SyncResidenceMode::Opened {
+                    return Err(TransportError::InvalidPayload(
+                        "full-window bulk transfer on opened-item lane",
+                    ));
+                }
                 let (window_key, compressed) = transport::decode_bulk_transfer(payload)?;
+                let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+                if !Self::follows_window(&key, &self.effective_worlds()?) {
+                    return Err(TransportError::InvalidPayload("unfollowed world window"));
+                }
                 self.handle_bulk_transfer(window_key, compressed)?;
             }
             TAG_BULK_TRANSFER_DONE => {
+                if self.config.residence_mode == SyncResidenceMode::Opened {
+                    return Err(TransportError::InvalidPayload(
+                        "full-window bulk transfer on opened-item lane",
+                    ));
+                }
                 let (window_key, doc_state) = transport::decode_bulk_transfer_done(payload)?;
+                let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+                if !Self::follows_window(&key, &self.effective_worlds()?) {
+                    return Err(TransportError::InvalidPayload("unfollowed world window"));
+                }
                 self.handle_bulk_transfer_done(window_key, doc_state)?;
             }
             _ => return Err(TransportError::UnknownTag(tag)),
@@ -177,6 +198,33 @@ impl SyncClient {
         sub_tag: u8,
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // A device syncs what it opened (ARCH-0023b): a window this device
+        // promoted is resident whether or not its world is followed.
+        if self.config.federation_peer.is_none()
+            && !Self::follows_window(&key, &self.effective_worlds()?)
+            && !self.opened_window_promoted(&key)?
+        {
+            return Err(TransportError::InvalidPayload("unfollowed world window"));
+        }
+        if self.config.residence_mode == SyncResidenceMode::Opened
+            && self.config.federation_peer.is_none()
+            && matches!(
+                sub_tag,
+                window_sub_tags::UPDATE
+                    | window_sub_tags::VV_REQUEST
+                    | window_sub_tags::VV_RESPONSE
+            )
+            && self
+                .vault
+                .sync_state_get(&format!("rp:w:{window_key}"))
+                .map_err(|e| TransportError::Storage(e.to_string()))?
+                .is_none()
+        {
+            return Err(TransportError::InvalidPayload(
+                "full-window exchange requires causal promotion",
+            ));
+        }
         if self.config.federation_peer.is_some()
             && matches!(
                 sub_tag,
@@ -188,6 +236,56 @@ impl SyncClient {
             ));
         }
         match sub_tag {
+            window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
+                if self.config.residence_mode == SyncResidenceMode::Opened =>
+            {
+                if !payload.is_empty()
+                    || self
+                        .vault
+                        .sync_state_get(&format!("rp:w:{window_key}"))
+                        .map_err(|e| TransportError::Storage(e.to_string()))?
+                        .is_none()
+                {
+                    return Err(TransportError::InvalidPayload("unpromoted window control"));
+                }
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                    return Ok(Vec::new());
+                }
+                let window = self.ensure_window(window_key)?;
+                Ok(vec![
+                    transport::encode_window_sync(
+                        window_key,
+                        window_sub_tags::VV_REQUEST,
+                        &doc_version_vector(&window.doc),
+                    )
+                    .into_result()?,
+                ])
+            }
+            window_sub_tags::RESIDENCE_ACK
+                if self.config.residence_mode == SyncResidenceMode::Opened =>
+            {
+                let (seq, digest) =
+                    payload
+                        .split_at_checked(8)
+                        .ok_or(TransportError::InvalidPayload(
+                            "short residence acknowledgment",
+                        ))?;
+                let seq = u64::from_be_bytes(seq.try_into().expect("length checked"));
+                let digest: [u8; 32] = digest.try_into().map_err(|_| {
+                    TransportError::InvalidPayload("invalid residence acknowledgment")
+                })?;
+                if seq == 0
+                    || self
+                        .residence_acks
+                        .insert(seq, digest)
+                        .is_some_and(|old| old != digest)
+                {
+                    return Err(TransportError::InvalidPayload(
+                        "conflicting residence acknowledgment",
+                    ));
+                }
+                Ok(Vec::new())
+            }
             window_sub_tags::SELECTOR_DEFERRED => {
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES || payload.len() <= 32 {
                     return Err(TransportError::InvalidPayload(
@@ -223,12 +321,23 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
                 let doc = &window.doc;
-                let delta = crate::sync::window::export_window_updates_since(
-                    &self.vault,
-                    &window.key,
-                    doc,
-                    payload,
-                )
+                let delta = if self.config.residence_mode == SyncResidenceMode::Opened
+                    && self.config.federation_peer.is_none()
+                {
+                    crate::sync::window::export_promoted_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                } else {
+                    crate::sync::window::export_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                }
                 .map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
@@ -270,12 +379,23 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
                 let doc = &window.doc;
-                let delta = crate::sync::window::export_window_updates_since(
-                    &self.vault,
-                    &window.key,
-                    doc,
-                    payload,
-                )
+                let delta = if self.config.residence_mode == SyncResidenceMode::Opened
+                    && self.config.federation_peer.is_none()
+                {
+                    crate::sync::window::export_promoted_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                } else {
+                    crate::sync::window::export_window_updates_since(
+                        &self.vault,
+                        &window.key,
+                        doc,
+                        payload,
+                    )
+                }
                 .map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
@@ -288,11 +408,156 @@ impl SyncClient {
         }
     }
 
+    fn staged_entity_evidence(
+        &self,
+    ) -> std::result::Result<
+        std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
+        TransportError,
+    > {
+        let mut evidence = std::collections::HashMap::new();
+        for (key, bytes) in &self.staged_world_updates {
+            let live = self.ensure_window(key.as_str())?;
+            let candidate = live.doc.fork();
+            let imported = candidate
+                .import(bytes)
+                .map_err(|_| TransportError::InvalidPayload("staged world update decode failed"))?;
+            if imported.pending.is_some() {
+                return Err(TransportError::InvalidPayload(
+                    "staged world update has missing causal history",
+                ));
+            }
+            let mut entities = Vec::new();
+            crate::sync::loro_support::map_for_each_value_bytes(
+                &candidate.get_map("entities"),
+                |raw, blob| {
+                    if let Some(blob) = blob {
+                        entities.push((raw.to_owned(), blob.to_vec()));
+                    }
+                },
+            );
+            for (raw, blob) in entities {
+                let id = crate::EntityId::from_hex(&raw)
+                    .map_err(|_| TransportError::InvalidPayload("invalid staged entity id"))?;
+                if id.to_hex() != raw {
+                    return Err(TransportError::InvalidPayload(
+                        "invalid staged entity alias",
+                    ));
+                }
+                if !crate::sync::types::entity_belongs_to_window(&blob, key) {
+                    let txn = self
+                        .vault
+                        .store
+                        .env
+                        .read_txn()
+                        .map_err(|e| TransportError::Storage(e.to_string()))?;
+                    let shell = crate::sync::types::retained_world_shell_belongs_to_window(
+                        &self.vault,
+                        &txn,
+                        &candidate,
+                        &id,
+                        &blob,
+                        key,
+                        false,
+                    )
+                    .map_err(|e| TransportError::Storage(e.to_string()))?;
+                    if !shell {
+                        return Err(TransportError::InvalidPayload(
+                            "staged entity outside world",
+                        ));
+                    }
+                    // A witnessed shell is valid local content, but it has no
+                    // claim body to prove another window's edge endpoint.
+                    continue;
+                }
+                if evidence.insert(id, (key.clone(), blob)).is_some() {
+                    return Err(TransportError::InvalidPayload("duplicate staged entity"));
+                }
+            }
+        }
+        Ok(evidence)
+    }
+
+    pub(super) fn drain_staged_world_updates(&mut self) -> std::result::Result<(), TransportError> {
+        let mut healed = Vec::new();
+        loop {
+            if self.staged_world_updates.is_empty() {
+                break;
+            }
+            let evidence = self.staged_entity_evidence()?;
+            let mut progressed = false;
+            let mut index = 0;
+            while index < self.staged_world_updates.len() {
+                let (key, bytes) = &self.staged_world_updates[index];
+                let live = self.ensure_window(key.as_str())?;
+                match crate::sync::window::validate_window_update_with_staged_worlds(
+                    &self.vault,
+                    &live.doc,
+                    bytes,
+                    key,
+                    &evidence,
+                ) {
+                    Ok(()) => {}
+                    Err(crate::Error::InvalidConfig(reason))
+                        if reason == "edge endpoint unresolved" =>
+                    {
+                        index += 1;
+                        continue;
+                    }
+                    Err(_) => {
+                        return Err(TransportError::InvalidPayload(
+                            "staged world residence denied",
+                        ));
+                    }
+                }
+                let (key, bytes) = self.staged_world_updates[index].clone();
+                self.import_accepted_window_update_with_evidence(
+                    key.as_str(),
+                    &live,
+                    &bytes,
+                    &evidence,
+                )?;
+                self.staged_world_updates.remove(index);
+                healed.push(key);
+                progressed = true;
+                break;
+            }
+            if !progressed {
+                break;
+            }
+        }
+        for key in healed {
+            let live = self.ensure_window(key.as_str())?;
+            crate::sync::window::forward_rematerialize(
+                &self.vault,
+                &live.doc,
+                self.manager.materializer(),
+                &key,
+            )
+            .map_err(|error| TransportError::Storage(format!("heal staged world edge: {error}")))?;
+        }
+        Ok(())
+    }
+
     pub(super) fn import_accepted_window_update(
         &mut self,
         window_key: &str,
         window: &LoadedWindow,
         payload: &[u8],
+    ) -> std::result::Result<(), TransportError> {
+        self.import_accepted_window_update_with_evidence(
+            window_key,
+            window,
+            payload,
+            &std::collections::HashMap::new(),
+        )
+    }
+
+    fn import_accepted_window_update_with_evidence(
+        &mut self,
+        window_key: &str,
+        window: &LoadedWindow,
+        payload: &[u8],
+        evidence: &std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
     ) -> std::result::Result<(), TransportError> {
         // Server sending Loro update bytes — import into the manager-owned
         // live doc. Observer B materializes the change to LMDB synchronously
@@ -302,12 +567,78 @@ impl SyncClient {
         // would durably append an unvalidated frame as a `u:w:` row, and
         // window load is fail-closed on pending updates — one malformed frame
         // would brick every future open of this window.
+        crate::sync::window::validate_window_update_with_staged_worlds(
+            &self.vault,
+            &window.doc,
+            payload,
+            &window.key,
+            evidence,
+        )
+        .map_err(|_| TransportError::InvalidPayload("entity outside window residence"))?;
+        // A retained world shell has no body to tell Observer B its address.
+        // The isolated pre-import validator proved its witness; persist that
+        // address BEFORE the observed import fires the tombstone and edge
+        // observers. This is not a new grant: it is exact peer-window state
+        // admitted by the same payload check above.
+        if window.key.world().is_some() {
+            let candidate = window.doc.fork();
+            candidate
+                .import(payload)
+                .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+            let witnesses = candidate.get_map("retained_claim_worlds");
+            let mut ids = Vec::new();
+            witnesses.for_each(|raw, _| ids.push(raw.to_owned()));
+            self.vault
+                .with_write_txn(|txn| {
+                    for raw in &ids {
+                        let id = crate::EntityId::from_hex(raw)?;
+                        if let Some(blob) = crate::sync::loro_support::map_get_bytes(
+                            &candidate.get_map("entities"),
+                            raw,
+                        ) && crate::sync::types::retained_world_shell_belongs_to_window(
+                            &self.vault,
+                            txn,
+                            &candidate,
+                            &id,
+                            &blob,
+                            &window.key,
+                            false,
+                        )? {
+                            self.vault.store.sync_state.put(
+                                txn,
+                                &format!("m:dw:{raw}"),
+                                window.key.as_str().as_bytes(),
+                            )?;
+                        }
+                    }
+                    Ok(())
+                })
+                .map_err(|error| TransportError::Storage(error.to_string()))?;
+        }
         let vv_before = window.doc.oplog_vv();
         window
             .doc
             .import(payload)
             .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
         let key = WindowKey::new(window_key);
+        if key.world().is_some() && !window.doc.get_map("retained_claim_worlds").is_empty() {
+            // Observer B cannot materialize a bodyless CLAIM on an entity-map
+            // callback: its paired witness/tombstone may arrive later in the
+            // same Loro import. The complete, validated document is now live;
+            // replay it through the ordinary forward recovery door before
+            // persisting or acknowledging the version vector.
+            if let Err(error) = crate::sync::window::forward_rematerialize(
+                &self.vault,
+                &window.doc,
+                self.manager.materializer(),
+                &key,
+            ) {
+                self.manager.discard_window(&key);
+                return Err(TransportError::Storage(format!(
+                    "restore retained world shell: {error}"
+                )));
+            }
+        }
         // A no-op import can still reveal a same-process durability gap:
         // compare the live doc with exactly what restart would load from
         // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
@@ -426,10 +757,10 @@ impl SyncClient {
         // Persist the in-progress marker (ARCH-0023b key table:
         // `bulk:w:{key}`, device only) so a crash between BulkTransfer and
         // BulkTransferDone is observable on restart.
-        let marker_key = format!("bulk:w:{window_key}");
+        let marker_key = window_key.to_owned();
         self.vault
             .with_write_txn(|wtxn| {
-                self.vault.store.sync_state.put(wtxn, &marker_key, &[1u8])?;
+                BULK_TRANSFER_MARKER.put(&self.vault.store, wtxn, &marker_key, &[1u8])?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(format!("persist bulk marker: {e}")))?;
@@ -448,12 +779,19 @@ impl SyncClient {
         window_key: &str,
         doc_state: &[u8],
     ) -> std::result::Result<(), TransportError> {
-        let marker_key = format!("bulk:w:{window_key}");
+        let marker_key = window_key.to_owned();
 
         if !doc_state.is_empty() {
             if let Some(window) = self.window(window_key) {
                 // Window is live: import through the observed doc so
                 // Observer B materializes, then persist the merged state.
+                crate::sync::window::validate_window_update_residence_with_vault(
+                    &self.vault,
+                    &window.doc,
+                    doc_state,
+                    &window.key,
+                )
+                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
                 window
                     .doc
                     .import(doc_state)
@@ -509,7 +847,32 @@ impl SyncClient {
                 // the just-opened window so RAM never runs ahead of
                 // durable state (same discipline as the live arm and the
                 // WindowSync UPDATE arm).
+                let key = WindowKey::new(window_key);
+                let candidate = match load_window_from_state(&self.vault, "local", &key) {
+                    Ok(doc) => doc,
+                    Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                        let doc = create_window_doc("local", &key);
+                        apply_pending_window_updates(&self.vault, &doc, &key)
+                            .map_err(|e| TransportError::Storage(e.to_string()))?;
+                        doc
+                    }
+                    Err(e) => return Err(TransportError::Storage(e.to_string())),
+                };
+                crate::sync::window::validate_window_update_residence_with_vault(
+                    &self.vault,
+                    &candidate,
+                    doc_state,
+                    &key,
+                )
+                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
                 let window = self.ensure_window(window_key)?;
+                crate::sync::window::validate_window_update_residence_with_vault(
+                    &self.vault,
+                    &window.doc,
+                    doc_state,
+                    &key,
+                )
+                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
                 if window.doc.import(doc_state).is_err() {
                     self.manager.discard_window(&WindowKey::new(window_key));
                     return Err(TransportError::InvalidPayload(
@@ -551,7 +914,7 @@ impl SyncClient {
         // (fail-closed: a failed persist leaves the marker set for retry).
         self.vault
             .with_write_txn(|wtxn| {
-                self.vault.store.sync_state.delete(wtxn, &marker_key)?;
+                BULK_TRANSFER_MARKER.delete(&self.vault.store, wtxn, &marker_key)?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(format!("clear bulk marker: {e}")))?;

@@ -194,6 +194,144 @@ pub fn encode_consolidation_evidence(evidence: &ConsolidationEvidenceEnvelope) -
     ])
 }
 
+/// Adds parent-computed source+range/claim hashes to the persisted evidence
+/// envelope without changing the established refs/chain/source-meet fields.
+#[must_use]
+pub(crate) fn encode_consolidation_evidence_with_locators(
+    evidence: &ConsolidationEvidenceEnvelope,
+    locators: &[(super::SwarmEvidenceRef, [u8; 32])],
+) -> Value {
+    let Value::Map(mut fields) = encode_consolidation_evidence(evidence) else {
+        unreachable!("evidence envelope is a map")
+    };
+    if !locators.is_empty() {
+        fields.push((
+            Value::from("locators"),
+            Value::Array(
+                locators
+                    .iter()
+                    .map(|(locator, hash)| {
+                        let mut row = vec![
+                            (
+                                Value::from("source_id"),
+                                Value::Binary(locator.source_id.as_bytes().to_vec()),
+                            ),
+                            (Value::from("content_hash"), Value::Binary(hash.to_vec())),
+                        ];
+                        if let Some(claim) = locator.claim_id {
+                            row.push((
+                                Value::from("claim_id"),
+                                Value::Binary(claim.as_bytes().to_vec()),
+                            ));
+                        }
+                        if let Some((start, end)) = locator.byte_range {
+                            row.push((
+                                Value::from("byte_range"),
+                                Value::Array(vec![
+                                    Value::from(start as u64),
+                                    Value::from(end as u64),
+                                ]),
+                            ));
+                        }
+                        Value::Map(row)
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    Value::Map(fields)
+}
+
+/// Strictly decodes the parent-verified locator set on an attachment. The
+/// ordinary evidence-envelope decoder ignores this additive key for readers.
+pub(crate) fn decode_verified_locators(
+    evidence: &Value,
+) -> Result<Vec<(super::SwarmEvidenceRef, [u8; 32])>> {
+    let Value::Map(fields) = evidence else {
+        return Err(invalid_consolidation("verified evidence must be a map"));
+    };
+    let Value::Array(items) = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("locators"))
+        .map(|(_, value)| value)
+        .ok_or_else(|| invalid_consolidation("attachment locators are missing"))?
+    else {
+        return Err(invalid_consolidation(
+            "attachment locators must be an array",
+        ));
+    };
+    if items.is_empty() {
+        return Err(invalid_consolidation("attachment locators are empty"));
+    }
+    items
+        .iter()
+        .map(|row| {
+            let Value::Map(fields) = row else {
+                return Err(invalid_consolidation("attachment locator must be a map"));
+            };
+            let mut source_id = None;
+            let mut claim_id = None;
+            let mut byte_range = None;
+            let mut hash = None;
+            for (key, value) in fields {
+                match key.as_str() {
+                    Some("source_id") if source_id.is_none() => {
+                        source_id = Some(
+                            entity_ref_from_value(value)
+                                .ok_or_else(|| invalid_consolidation("invalid locator source"))?,
+                        );
+                    }
+                    Some("claim_id") if claim_id.is_none() => {
+                        claim_id = Some(
+                            entity_ref_from_value(value)
+                                .ok_or_else(|| invalid_consolidation("invalid locator claim"))?,
+                        );
+                    }
+                    Some("byte_range") if byte_range.is_none() => {
+                        let Value::Array(pair) = value else {
+                            return Err(invalid_consolidation("invalid locator range"));
+                        };
+                        let [start, end] = pair.as_slice() else {
+                            return Err(invalid_consolidation("invalid locator range"));
+                        };
+                        byte_range = Some((
+                            usize::try_from(
+                                start.as_u64().ok_or_else(|| {
+                                    invalid_consolidation("invalid locator start")
+                                })?,
+                            )
+                            .map_err(|_| invalid_consolidation("locator start overflow"))?,
+                            usize::try_from(
+                                end.as_u64()
+                                    .ok_or_else(|| invalid_consolidation("invalid locator end"))?,
+                            )
+                            .map_err(|_| invalid_consolidation("locator end overflow"))?,
+                        ));
+                    }
+                    Some("content_hash") if hash.is_none() => {
+                        let Value::Binary(bytes) = value else {
+                            return Err(invalid_consolidation("invalid locator hash"));
+                        };
+                        hash = Some(bytes.as_slice().try_into().map_err(|_| {
+                            invalid_consolidation("locator hash must have 32 bytes")
+                        })?);
+                    }
+                    _ => return Err(invalid_consolidation("unknown or duplicate locator key")),
+                }
+            }
+            Ok((
+                super::SwarmEvidenceRef {
+                    source_id: source_id
+                        .ok_or_else(|| invalid_consolidation("missing locator source"))?,
+                    claim_id,
+                    byte_range,
+                },
+                hash.ok_or_else(|| invalid_consolidation("missing locator hash"))?,
+            ))
+        })
+        .collect()
+}
+
 /// Reads back a stored consolidation evidence envelope. `Ok(None)` when the
 /// payload is not one (a legacy bare-array evidence stamp, say); a structural
 /// break inside a well-keyed envelope is a typed error, never a silent drop.
@@ -325,6 +463,30 @@ pub fn peer_answer_provenance_chain(
     Ok(chain)
 }
 
+/// The one-row trust answer for bytes read under the caller's scoped snapshot.
+/// TURNs start at Generated; CLAIMs fold their stored source and transitive
+/// taint; anything else cannot supply recipe evidence.
+pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<ClaimSource> {
+    if entity_type == ENTITY_TYPE_TURN {
+        return Ok(ClaimSource::Generated);
+    }
+    if entity_type != ENTITY_TYPE_CLAIM {
+        return Err(invalid_consolidation(
+            "evidence is neither a TURN nor a CLAIM",
+        ));
+    }
+    let body = crate::claim::decode_claim_body(data, true)?;
+    Ok(source_meet(
+        ClaimSource::Generated,
+        evidence_source_from_claim(&body),
+    ))
+}
+
+fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {
+    let source = body.source.unwrap_or(ClaimSource::Imported);
+    claim_evidence_taint(body).map_or(source, |taint| source_meet(source, taint))
+}
+
 /// Folds a candidate's whole evidence surface into one D10 meet — the ONLY
 /// input to a consolidation claim's stored source (§3: callers never choose
 /// it).
@@ -366,10 +528,7 @@ pub fn evidence_chain_source(
                 meet = source_meet(meet, ClaimSource::Imported);
                 continue;
             };
-            meet = source_meet(meet, body.source.unwrap_or(ClaimSource::Imported));
-            if let Some(taint) = claim_evidence_taint(&body) {
-                meet = source_meet(meet, taint);
-            }
+            meet = source_meet(meet, evidence_source_from_claim(&body));
             continue;
         }
         if entity_type != ENTITY_TYPE_TURN {

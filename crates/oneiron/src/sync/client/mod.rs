@@ -47,14 +47,17 @@ mod federation_replay;
 mod inbound;
 mod lfs;
 mod note_session;
+mod residence;
 mod sync_frames;
 mod types;
 
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
+pub use self::residence::{ResidenceHit, ResidenceSearch, SearchSource, ThinItem};
 pub use self::sync_frames::next_backoff;
 pub use self::types::{
-    EphemeralChangeOrigin, NoteSyncSession, SyncClientConfig, SyncEvent, SyncStatus,
+    EphemeralChangeOrigin, NoteSyncSession, SyncClientConfig, SyncEvent, SyncResidenceMode,
+    SyncStatus, SyncTransportCredential,
 };
 
 #[cfg(test)]

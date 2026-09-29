@@ -247,13 +247,16 @@ fn records_failed_effect(effect: SelfEffect) -> bool {
     matches!(
         effect,
         SelfEffect::MemoryPutClaim
+            | SelfEffect::AgentsPut
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::ReportBlocked
+            | SelfEffect::InferenceDefaultsReplace
     ) || effect.is_speech()
 }
 
 pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
+    "vault.agents.put",
     "self.memory.search",
     "self.memory.put_claim",
     "self.memory.supersede_claim",

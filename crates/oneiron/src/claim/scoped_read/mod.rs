@@ -8,7 +8,7 @@ use std::{collections::HashSet, sync::Mutex};
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::context_pack::{ContextEntity, ContextPack, EmptyContext, EmptyReason};
+use crate::context_pack::ContextEntity;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -17,15 +17,28 @@ use crate::pipeline::ScoredEntity;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod claim_admission;
+mod context_pack_filter;
+mod diagnostic_reads;
 mod graph_reads;
 mod note_visibility;
 mod pinned_reads;
 mod point_reads;
+mod reactions;
 mod receipt;
 mod retrieval_visibility;
 mod versions;
+mod weave_digest;
+pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
+pub use weave_digest::{
+    StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule,
+};
+mod weave_correction;
 mod weave_report;
+pub(crate) use claim_admission::ClaimReadStatus;
+pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+pub use weave_correction::WeaveLinkCorrection;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
@@ -50,11 +63,13 @@ pub struct ScopedRead<'a> {
     /// this field is unchanged — the union widens what is VISIBLE, never what
     /// is permitted.
     session_view: Option<&'a crate::store::SessionStoreView<'a>>,
+    claim_status: ClaimReadStatus,
+    recall_authority: Mutex<Option<crate::authority::AuthorityFold>>,
 }
 
 mod admission;
-mod context_filter;
-mod diagnostics;
+mod edge_admission;
+pub(crate) use admission::ScopedDiaryCandidates;
 mod search;
 mod visibility;
 

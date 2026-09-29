@@ -15,14 +15,18 @@ impl DescribeArms for Memory<'_> {
     fn describe_section(&self) -> MemoryResult<TasksSection> {
         match self.describe(None)? {
             TaskDescription::Section(section) => Ok(section),
-            TaskDescription::Card { .. } => panic!("describe without a task returned a card"),
+            TaskDescription::Card { .. } | TaskDescription::SelfCard { .. } => {
+                panic!("describe without a task returned a card")
+            }
         }
     }
 
     fn describe_card(&self, task_ref: EntityId) -> MemoryResult<Vec<String>> {
         match self.describe(Some(task_ref))? {
             TaskDescription::Card { lines } => Ok(lines),
-            TaskDescription::Section(_) => panic!("describe with a task returned the section"),
+            TaskDescription::Section(_) | TaskDescription::SelfCard { .. } => {
+                panic!("describe with a task returned a different card")
+            }
         }
     }
 }
@@ -948,7 +952,7 @@ pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
     vault: &Vault,
     principal: EntityId,
 ) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
     manifest["scoped_grants"] = serde_json::json!([{
         "actor_ref": principal.to_hex(),

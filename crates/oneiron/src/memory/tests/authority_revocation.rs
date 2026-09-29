@@ -319,19 +319,16 @@ fn revoked_binding_forbids_owner_verbs() {
     assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 }
 
-/// ONE-1611: owner B deletes owner A after A's gate evaluation, before A's
-/// first deletion transaction. Revoking a key is not the only way the initial
-/// actor binding can disappear: the PERSON row itself can be hard-purged.
-/// The in-transaction authority check must see that purge before publishing
-/// A's tombstone (sync) or staging a replayable one (featureless).
-/// Dropping that first in-txn recheck makes this test fail in both tiers.
+/// ONE-1611: the owner's second request hard-deletes A's own PERSON row after
+/// A's gate evaluation, before A's first deletion transaction. Revoking a key is
+/// not the only way the initial actor binding can disappear: the PERSON row
+/// itself can be hard-purged. The in-transaction authority check must see that
+/// purge before publishing A's tombstone (sync) or staging a replayable one
+/// (featureless). Dropping that first in-txn recheck makes this test fail in
+/// both tiers.
 #[test]
 fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
-    use crate::authority::{
-        AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier,
-        DeviceAuthority, ROLE_ADMIN, ROLE_OWNER,
-    };
-    use ed25519_dalek::Signer;
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
 
     let clock = crate::ports::ManualClock::new(1_000);
     let config = VaultConfig {
@@ -348,113 +345,44 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
     let vault = std::sync::Arc::new(crate::Vault::open(_dir.path(), config).expect("open vault"));
 
     let actor_a = put_person(&vault, 0x31);
-    let actor_b = put_person(&vault, 0x32);
     let target = put_person(&vault, 0x33);
     let target_body = vault.get_raw(&target).expect("target body");
 
-    // One root, two independently bound owner keys. B must be an authorized
-    // owner, not a raw Vault delete or a revocation masquerading as deletion.
+    // One root with one bound owner. Client device keys are retired (OF-452
+    // D7/D10), so the purge below is that owner's second, fully gated facade
+    // request: an authorized owner delete, not a raw Vault delete or a
+    // revocation masquerading as deletion.
     let (genesis, signer_a) = authority_root(0xA4);
-    let signer_b = ed25519_dalek::SigningKey::from_bytes(&[0xA5; 32]);
     let key_a = AuthorityKey::Ed25519(signer_a.verifying_key().to_bytes());
-    let key_b = AuthorityKey::Ed25519(signer_b.verifying_key().to_bytes());
     let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
-    let mut parent = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
-    let entry = |seq, parent, op| AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(vault_id),
-        seq,
-        parent_hashes: vec![parent],
-        op,
-        signer: AuthoritySignature {
-            suite: key_a.suite(),
-            public_key: key_a.clone(),
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: 100 + seq,
-    };
     let bind_a = sign_authority(
-        entry(
-            1,
-            parent,
-            AuthorityOp::BindActor {
+        AuthorityLogEntry {
+            schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: 1,
+            parent_hashes: vec![crate::authority::authority_entry_hash(&genesis).expect("genesis")],
+            op: AuthorityOp::BindActor {
                 authority_key: key_a.clone(),
                 actor_ref: actor_a,
                 actor_class: "human".to_owned(),
                 epoch: 1,
             },
-        ),
-        &signer_a,
-    );
-    parent = crate::authority::authority_entry_hash(&bind_a).expect("A binding hash");
-    let enroll_b = sign_authority(
-        entry(
-            2,
-            parent,
-            AuthorityOp::EnrollDevice {
-                device: DeviceAuthority {
-                    key: key_b.clone(),
-                    transport_key_binding: [7; 32],
-                    attestation: crate::authority::AuthorityAttestation {
-                        kind: "SoftwareArgon2id".to_owned(),
-                        evidence: vec![1, 2, 3],
-                    },
-                    tier: AuthorityTier::Software,
-                    roles: ROLE_OWNER | ROLE_ADMIN,
-                },
+            signer: AuthoritySignature {
+                suite: key_a.suite(),
+                public_key: key_a,
+                signature: vec![0; 64],
             },
-        ),
+            cosigns: Vec::new(),
+            ts: 101,
+        },
         &signer_a,
     );
-    parent = crate::authority::authority_entry_hash(&enroll_b).expect("B enrollment hash");
     vault
-        .put_authority_log_entries(&[
-            (genesis, test_time(1), 1),
-            (bind_a, test_time(2), 2),
-            (enroll_b, test_time(3), 3),
-        ])
-        .expect("root A and enroll B");
-    // The authority clock uses a monotonic per-vault anchor, not the wall
-    // clock. Advance its persisted floor to model the elapsed veto window;
-    // the next fold rebases the anchor against this later local observation.
-    let matured_at = 1_000 + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    clock.set(matured_at);
-    vault
-        .with_write_txn(|txn| {
-            vault.store.sync_state.put(
-                txn,
-                crate::authority::authority_first_seen_clock_sync_key(),
-                &matured_at.to_be_bytes(),
-            )?;
-            Ok(())
-        })
-        .expect("advance local authority clock floor");
-    // With two live roster keys a new BindActor needs B's peer cosign.
-    let mut bind_b = entry(
-        3,
-        parent,
-        AuthorityOp::BindActor {
-            authority_key: key_b.clone(),
-            actor_ref: actor_b,
-            actor_class: "human".to_owned(),
-            epoch: 1,
-        },
-    );
-    bind_b.cosigns.push(AuthoritySignature {
-        suite: key_b.suite(),
-        public_key: key_b,
-        signature: vec![0; 64],
-    });
-    let transcript = crate::authority::authority_transcript(&bind_b).expect("bind transcript");
-    bind_b.signer.signature = signer_a.sign(&transcript).to_bytes().to_vec();
-    bind_b.cosigns[0].signature = signer_b.sign(&transcript).to_bytes().to_vec();
-    vault
-        .put_authority_log_entries(&[(bind_b, test_time(4), 4)])
-        .expect("bind second verified owner");
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind_a, test_time(2), 2)])
+        .expect("root A and bind its owner");
     assert!(crate::authority::actor_binding_is_active(
         &vault.authority_fold().expect("authority fold"),
-        &actor_b,
+        &actor_a,
         "human"
     ));
 
@@ -474,16 +402,16 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
         arrived_rx
             .recv()
             .expect("A reached pre-TXN1 after the gate");
-        let b_receipt = facade_for(&vault, actor_b)
+        let purge = facade_for(&vault, actor_a)
             .safe_delete(&actor_a.to_hex(), SafeDeleteReason::UserHardDelete)
-            .expect("B hard-deletes A through the owner facade");
-        assert!(b_receipt.existed, "B really purged A");
+            .expect("the owner's second request hard-deletes A through the facade");
+        assert!(purge.existed, "the second request really purged A");
         assert!(vault.get_raw(&actor_a).expect("actor A row").is_none());
 
-        let decisions_before = vault.gate_decisions(50).expect("decisions after B");
+        let decisions_before = vault.gate_decisions(50).expect("decisions after the purge");
         let receipts_before = vault
             .entities_by_type(crate::registry::ENTITY_TYPE_REDACTION_AUDIT)
-            .expect("receipts after B");
+            .expect("receipts after the purge");
         let sweep_before = {
             let txn = vault.store.env.read_txn().expect("read txn");
             vault
@@ -494,8 +422,10 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
                 .count()
         };
         #[cfg(feature = "sync")]
-        while harness.outbound.try_recv().is_ok() {} // B's authorized publication
-        resume_tx.send(()).expect("resume A after B commits");
+        while harness.outbound.try_recv().is_ok() {} // the purge's authorized publication
+        resume_tx
+            .send(())
+            .expect("resume A after the purge commits");
         let err = deleter
             .join()
             .expect("A's thread must not panic")
@@ -550,6 +480,79 @@ fn second_owner_hard_deletes_actor_before_target_delete_txn1() {
         #[cfg(feature = "sync")]
         harness.assert_nothing_published(&target, "A's refused deletion");
     });
+}
+
+/// An owner lane opened while the binding held and read after its revocation
+/// refuses with the binding's own code, not a generic bad request.
+#[test]
+fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    use crate::claim::{ClaimReadStatus, PointRead};
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x6B);
+    let subject = put_person(&vault, 0x6C);
+    let facade = facade_for(&vault, owner);
+
+    let (genesis, signing) = authority_root(0x74);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                parent_hashes: parents,
+                op,
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100 + seq,
+            },
+            &signing,
+        )
+    };
+    let bind = owner_entry(
+        1,
+        AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: owner,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        vec![genesis_hash],
+    );
+    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
+    vault
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
+        .expect("root + bind");
+    let lane = facade
+        .read_lane(ClaimReadStatus::Recorded)
+        .expect("the bound owner opens its lane");
+
+    let revoke = owner_entry(
+        2,
+        AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        },
+        vec![bind_hash],
+    );
+    vault
+        .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+        .expect("revoke binding");
+
+    let error = lane
+        .read(&[PointRead::id(subject)], None)
+        .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
 }
 
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
@@ -1301,12 +1304,10 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
 /// SIBLING `BindActor(retired_key, attacker, "human")` parented at genesis, and
 /// the gate hands them every owner verb.
 ///
-/// fix-3 closed that by synthesizing the migration's `learned_at.min(now)`.
-/// fix-leg 4 removes `learned_at` from the answer entirely — it is peer-written,
-/// so the long-past values in this fixture are the attacker's own claim — and
-/// the gate suspends instead: INVALID_STATE while the fold cannot date the
-/// rotation, cleared by one write-path fold, after which the rotation serves its
-/// delay from local observation. Either way the retired key never authorizes.
+/// With the delayed-widen ceremony dead (identity canon, "Device-key widen
+/// ceremony (dead 2026-08-05)") the rotation needs no date at all: it lands the
+/// moment its ancestry folds, sidecar or not, so the retired key is revoked in
+/// the merged roster and the squatting binding is dead on arrival.
 #[test]
 fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
@@ -1380,11 +1381,47 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
         },
         102,
     );
+    // Retired device-key ops fold only as verified pre-handoff ancestry, so
+    // the rotation's successor signs the host handoff that keeps it live.
+    let successor_key = AuthorityKey::Ed25519(successor.verifying_key().to_bytes());
+    let handoff = sign_authority(
+        AuthorityLogEntry {
+            schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: 1,
+            parent_hashes: vec![crate::authority::authority_entry_hash(&rotate).expect("rotation")],
+            op: AuthorityOp::ReRoot {
+                new_device: crate::authority::DeviceAuthority {
+                    key: AuthorityKey::Ed25519(
+                        ed25519_dalek::SigningKey::from_bytes(&[0x7F; 32])
+                            .verifying_key()
+                            .to_bytes(),
+                    ),
+                    transport_key_binding: [7; 32],
+                    attestation: crate::authority::AuthorityAttestation {
+                        kind: "SoftwareArgon2id".to_owned(),
+                        evidence: vec![1, 2, 3],
+                    },
+                    tier: crate::authority::AuthorityTier::Software,
+                    roles: crate::authority::ROLE_OWNER | crate::authority::ROLE_ADMIN,
+                },
+            },
+            signer: AuthoritySignature {
+                suite: successor_key.suite(),
+                public_key: successor_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: 103,
+        },
+        &successor,
+    );
     vault
         .put_authority_log_entries(&[
             (genesis, test_time(1), 1),
             (rotate, test_time(2), 2),
             (squat, test_time(3), 3),
+            (handoff, test_time(4), 4),
         ])
         .expect("legacy log rows are individually valid");
 
@@ -1393,9 +1430,8 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
     // elapsed ages ago — which fix-leg 4 refuses to act on.
     strip_authority_first_seen_state(&vault);
 
-    // Pre-migration the fold cannot date the rotation, so every owner verb is
-    // SUSPENDED — the gate refuses rather than reading maturity out of the
-    // attacker's own `learned_at`.
+    // Pre-migration: the rotation has already retired the key, so the squat
+    // holds no active owner binding.
     for err in [
         facade
             .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
@@ -1415,22 +1451,15 @@ fn sidecarless_rotation_denies_owner_verbs_through_the_facade() {
             .claim_retract(&claim.claim_short_id)
             .expect_err("retired key must not retract another actor's claim"),
     ] {
-        assert_eq!(err.code, MEMORY_CODE_INVALID_STATE, "{}", err.message);
-        assert!(
-            err.message.contains("owner verbs are suspended"),
+        assert_eq!(
+            err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED,
             "{}",
             err.message
         );
     }
 
-    // This fixture exercises an ordinary delayed key rotation, not ReRoot.
-    // First-seen migration starts its veto window now; peer timestamps cannot
-    // pretend that the delay has already elapsed.
     let full = vault.authority_fold().expect("fold");
-    assert!(
-        !full.pending_widens.is_empty(),
-        "the rotation is dated at migration time, so its delay has not elapsed"
-    );
+    assert!(full.roster[&retired].revoked, "the rotation lands at once");
     let rtxn = vault.store.env.read_txn().expect("read txn");
     assert_eq!(
         vault

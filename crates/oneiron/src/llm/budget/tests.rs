@@ -15,15 +15,14 @@ fn on_device_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("test/model@r1").expect("model id"),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
-            tier: TierPrecedence {
-                per_seat: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: ModelTierRef("default".to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::Consolidation,
+                ModelTierRef("default".into()),
+            ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OnDevice,
         },
@@ -330,15 +329,11 @@ fn request_for(purpose: CallPurpose, locality: ModelLocality) -> LlmRequest {
     LlmRequest {
         model: ModelId::new("test/model@r1").expect("model id"),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: crate::llm::Scope::default(),
-            purpose,
+            purpose: purpose.clone(),
             class: CallClass::BestEffort,
-            tier: TierPrecedence {
-                per_seat: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: ModelTierRef("default".to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(&purpose, ModelTierRef("default".into())),
             response_format: ResponseFormat::Text,
             locality,
         },

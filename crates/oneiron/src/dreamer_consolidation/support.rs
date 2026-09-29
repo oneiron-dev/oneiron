@@ -11,10 +11,6 @@ use crate::error::{Error, Result};
 pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
-/// Domain for deterministic, write-once promotion-candidate claim ids. A
-/// candidate's id is a pure function of its identity + the owning attempt so an
-/// at-least-once re-run of the same durable step re-mints the SAME id.
-pub const DREAMER_CLAIM_ID_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-claim-id:v1";
 /// Domain for swarm evidence content hashes (pinned, design D10).
 pub const DREAMER_EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-evidence:v1";
 /// A gap not re-observed within this window decays and is never re-surfaced
@@ -45,10 +41,6 @@ pub const DEFAULT_MESO_ROUND_TURN_CAP: usize = 500;
 /// a consolidation attempt's dedupe key (pinned; distinct from the phase-1/2
 /// bucket domain so a round hash can never collide with a partition hash).
 pub(super) const DREAMER_PARTITION_ROUND_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-partition-round:v1";
-
-pub(super) const DREAMER_PRIVATE_WATERMARK_PREFIX: &[u8] = b"dreamer:watermark:v1:"; // + scope byte
-pub(super) const DREAMER_PRIVATE_CURSOR_PREFIX: &[u8] = b"dreamer:cursor:v1:"; // + scope byte + partition_hash(32)
-pub(super) const DREAMER_PRIVATE_GAP_PREFIX: &[u8] = b"dreamer:gap:v1:"; // + gap_hash(32)
 
 /// Seconds-only watermark rows (`{schema_version, last_learned_at}`): decoded
 /// as the complete-second boundary `last_turn_id = None`, never re-encoded.

@@ -66,6 +66,9 @@ pub struct SharedSkillMergeReceipt {
     pub after: Option<f32>,
     pub held_out_digest: String,
     pub accepted: bool,
+    pub judge_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub displaced_by_revision: Option<String>,
     pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -166,11 +169,24 @@ impl Vault {
             &snapshot.delta,
         )?;
         let useful_upstream = checked_useful_decision(&ask.question, ask.resident, &decision)?;
+        let judge_revision = if useful_upstream {
+            let revision = scorer.judge_revision().to_owned();
+            crate::skill_optimize::validate_judge_revision(&revision)?;
+            Some(revision)
+        } else {
+            None
+        };
         let (before, after) = if useful_upstream {
             replay(scorer, &snapshot)?
         } else {
             (None, None)
         };
+        if judge_revision
+            .as_deref()
+            .is_some_and(|revision| scorer.judge_revision() != revision)
+        {
+            return Err(invalid("shared-merge judge revision moved during scoring"));
+        }
         let accepted = matches!((before, after), (Some(before), Some(after)) if after > before);
         let receipt = SharedSkillMergeReceipt {
             receipt_id: EntityId::now().to_hex(),
@@ -185,6 +201,8 @@ impl Vault {
             after,
             held_out_digest: crate::skill_optimize::held_out_receipt_set_digest(&snapshot.evidence),
             accepted,
+            judge_revision: judge_revision.clone(),
+            displaced_by_revision: None,
             at: learned_at,
         };
         // A host-supplied provider pin or question can contain secret-shaped
@@ -194,6 +212,9 @@ impl Vault {
             serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
         crate::batch::secret_scan::scan_staged_payload(&encoded_receipt)?;
         self.with_write_txn(|txn| {
+            if let Some(revision) = &judge_revision {
+                crate::skill_optimize::ensure_current_judge_in_txn(self, txn, revision)?;
+            }
             self.check_merge_ask(txn, ask)?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
@@ -252,11 +273,20 @@ impl Vault {
         candidate: &EntityId,
     ) -> Result<Option<SharedSkillMergeReceipt>> {
         let txn = self.store.env.read_txn()?;
-        match self.latest_refinement_receipt_in_txn(&txn, *candidate)? {
-            Some(RefinementReceipt::Skill(receipt)) => Ok(Some(receipt)),
-            Some(RefinementReceipt::Claim(_)) => Err(invalid("wrong refinement receipt target")),
-            None => Ok(None),
+        let mut receipt = match self.latest_refinement_receipt_in_txn(&txn, *candidate)? {
+            Some(RefinementReceipt::Skill(receipt)) => Some(receipt),
+            Some(RefinementReceipt::Claim(_)) => {
+                return Err(invalid("wrong refinement receipt target"));
+            }
+            None => None,
+        };
+        if let Some(row) = receipt.as_mut()
+            && let Some(revision) = &row.judge_revision
+        {
+            row.displaced_by_revision =
+                crate::skill_optimize::displaced_judge_revision_in_txn(self, &txn, revision)?;
         }
+        Ok(receipt)
     }
     fn check_merge_ask(
         &self,
@@ -264,12 +294,10 @@ impl Vault {
         ask: &SharedSkillMergeAsk,
     ) -> Result<MergeSnapshot> {
         let snapshot = self.shared_merge_snapshot(txn, &ask.candidate)?;
-        let resident_is_agent = self
-            .store
-            .entities
-            .get(txn, ask.resident.as_bytes())?
-            .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
-            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF);
+        let resident_is_agent =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &ask.resident)?
+                .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF);
         if !resident_is_agent {
             return Err(invalid("merge resident is no longer an agent"));
         }

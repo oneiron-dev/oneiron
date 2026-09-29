@@ -1,6 +1,7 @@
 use super::*;
+use crate::Error;
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
+    ChannelIdentityBinding, ChannelIdentityState, ChannelIdentityStep, SelfHeldShape,
 };
 use crate::code_sandbox::microvm::{
     CredentialEgressProxy, CredentialReadTransport, MicroVmExit, MicroVmHandle,
@@ -10,7 +11,10 @@ use crate::code_sandbox::{
     SandboxBoundaryContract, SandboxCredentialCall, SandboxCredentialHandle,
     SandboxCredentialOperation, SandboxProposalWrite,
 };
-use crate::connector_key::{ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeySpec};
+use crate::connector_key::{
+    ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeySpec, SlateDataClass, SlateToolManifest,
+    draft_connector_slate,
+};
 use crate::secret_custody::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
     SecretCustodyRecord, SecretCustodyStatus,
@@ -96,7 +100,36 @@ fn setup_with_secret(
     let mut config = VaultConfig::device();
     config.map_size = 32 * 1024 * 1024;
     config.dimensions = 4;
+    // Keep the fixture's established normal-criticality gate posture while
+    // supplying the seeded pack-install rows that local admission now reads.
     let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    let defaults = crate::gate::default_policy_manifest().unwrap();
+    let mut manifest = rmpv::decode::read_value(&mut defaults.as_slice())
+        .map_err(|_| crate::Error::InvariantViolation("decode test policy"))?;
+    let rmpv::Value::Map(entries) = &mut manifest else {
+        return Err(crate::Error::InvariantViolation("test policy map"));
+    };
+    let Some(rmpv::Value::Map(axes)) = entries
+        .iter_mut()
+        .find_map(|(key, value)| (key.as_str() == Some("defaults")).then_some(value))
+    else {
+        return Err(crate::Error::InvariantViolation("test policy defaults"));
+    };
+    let Some((_, criticality)) = axes
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("criticality"))
+    else {
+        return Err(crate::Error::InvariantViolation("test policy criticality"));
+    };
+    *criticality = rmpv::Value::from("normal");
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest)
+        .map_err(|_| crate::Error::InvariantViolation("encode test policy"))?;
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )?;
     let vault = Arc::new(vault);
     let owner_id = entity(0xB1);
     let agent = entity(0xB2);
@@ -134,6 +167,24 @@ fn setup_with_secret(
         declared_paths: Vec::new(),
         policy_floor_snapshot: SecretCustodyFloor::default(),
     })?;
+    let manifest = vec![SlateToolManifest {
+        name: "send".into(),
+        data_class: SlateDataClass::Personal,
+        header_parameters: Vec::new(),
+        resolved_input_schema: Some(serde_json::json!({"type":"object",
+            "properties":{"idempotency_key":{"type":"string"}}})),
+        trigger: None,
+        destroys: false,
+        spends: false,
+        sends_outward: true,
+        legacy_ask: false,
+    }];
+    let slate = vault.store_connector_slate(
+        &manifest,
+        &serde_json::to_string(&draft_connector_slate(&manifest))
+            .map_err(|_| Error::InvariantViolation("pack fixture slate encoding"))?,
+    )?;
+    vault.override_connector_slate(&owner, slate, 0, &std::collections::BTreeMap::new())?;
     let (key_id, _) = vault.register_connector(
         ConnectorCatalogEntry {
             name: "email".into(),
@@ -146,24 +197,41 @@ fn setup_with_secret(
         ConnectorKeySpec {
             secret_ref: Some(secret_ref.into()),
             actor_entity_ref: Some(agent),
+            slate_ref: Some(slate),
+            protocol_revision: Some("2026-09-01".into()),
             ..ConnectorKeySpec::new("email")
         },
         1,
     )?;
+    let (connector, plan, oracle) =
+        crate::connector_key::qualification::tests::support::passing_suite("send");
+    let (active, _) = vault
+        .qualify_connector_key(
+            &key_id,
+            "2026-09-01",
+            connector.as_ref(),
+            &plan,
+            oracle.as_ref(),
+            2,
+        )
+        .map_err(|_| Error::InvariantViolation("pack fixture connector qualification"))?;
+    assert_eq!(
+        active.status,
+        crate::connector_key::ConnectorKeyStatus::Active
+    );
     let grant = PackScriptGrant {
         requested: "email".into(),
         key_id,
         destination: CredentialDestination::new("https", "api.example.com")?,
     };
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "agent@example.com",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(agent),
+        ChannelIdentityState::Active,
         1_800_000_000,
     );
-    identity.state = ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     vault.create_channel_identity(&entity(0xB3), &identity)?;
     let hub = entity(0xB4);
     vault.configure_skill_hub(
@@ -330,6 +398,7 @@ impl MicroVmBackend for OutputBackend {
         .collect::<Result<Vec<_>>>()
         .map(|edits| edits.into_iter().flatten().collect())
     }
+    fn cleanup(&self, _: &MicroVmHandle) {}
     fn proxy_credentials(&self, _: &MicroVmHandle, _: &dyn CredentialResolver) -> Result<()> {
         Ok(())
     }
@@ -486,15 +555,14 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
         1,
         b"other agent",
     )?;
-    let mut identity = ChannelIdentity::requested(
+    let identity = crate::test_util::self_held_identity_in_state(
         "email",
         "other@example.com",
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(other),
+        ChannelIdentityState::Active,
         1_800_000_000,
     );
-    identity.state = ChannelIdentityState::Active;
-    identity.pending_fulfillment = None;
     vault.create_channel_identity(&entity(0xB6), &identity)?;
     let mut wrong: serde_json::Value = serde_json::from_slice(&output()).unwrap();
     wrong["inbound"][0]["receiving_address_or_handle"] = "other@example.com".into();
@@ -767,20 +835,12 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
         },
         1_800_000_000,
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &first,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         1_800_000_010,
-        None,
     )?;
-    vault.transition_channel_identity(
-        &first,
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_020,
-        None,
-    )?;
+    vault.step_channel_identity(&first, ChannelIdentityStep::Fulfill, 1_800_000_020)?;
     let other = entity(0xBA);
     vault.put_entity(
         &other,
@@ -808,13 +868,7 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
             seen_secret: Arc::new(Mutex::new(Vec::new())),
             after_run: Some(Box::new(move || {
                 change
-                    .transition_channel_identity(
-                        &first,
-                        ChannelIdentityState::Released,
-                        None,
-                        1_800_000_030,
-                        None,
-                    )
+                    .step_channel_identity(&first, ChannelIdentityStep::Release, 1_800_000_030)
                     .unwrap();
                 let second = entity(0xBB);
                 change
@@ -830,22 +884,14 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
                     )
                     .unwrap();
                 change
-                    .transition_channel_identity(
+                    .step_channel_identity(
                         &second,
-                        ChannelIdentityState::PendingFulfillment,
-                        Some(ChannelIdentityFulfillment::Api),
+                        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
                         1_800_000_050,
-                        None,
                     )
                     .unwrap();
                 change
-                    .transition_channel_identity(
-                        &second,
-                        ChannelIdentityState::Active,
-                        None,
-                        1_800_000_060,
-                        None,
-                    )
+                    .step_channel_identity(&second, ChannelIdentityStep::Fulfill, 1_800_000_060)
                     .unwrap();
             })),
         }),

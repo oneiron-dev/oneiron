@@ -19,7 +19,7 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             0.9,
             crate::ClaimApprovalStatus::Auto,
             crate::ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::UserStated);
         body.approval = ClaimApprovalStatus::Approved;
         vault
@@ -62,6 +62,7 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: Some(prior_scope(&vault, &admitted, &turns, head)?),
         };
         let mut ctx = WakeAttemptContext {
@@ -69,6 +70,8 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
         // A fatal judge runs the declared escalation fallback, so "down"
@@ -131,7 +134,7 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             0.9,
             crate::ClaimApprovalStatus::Auto,
             crate::ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(source);
         body.approval = ClaimApprovalStatus::Approved;
         vault
@@ -172,6 +175,7 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: Some(prior_scope(&vault, &admitted, &turns, head)?),
         };
         let mut ctx = WakeAttemptContext {
@@ -179,6 +183,8 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         if source == ClaimSource::Inferred {

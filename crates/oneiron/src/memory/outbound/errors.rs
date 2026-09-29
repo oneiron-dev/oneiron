@@ -57,10 +57,25 @@ pub(crate) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) ->
             "outbound effect durability failed",
             &["Retry after checking local storage health."],
         ),
+        OutboundDispatchError::ObsoleteAskConfirmation => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "ask confirmation was answered or settled before outbound dispatch",
+            &["Do not retry this obsolete notice."],
+        ),
         OutboundDispatchError::InvalidBoundActor => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "the bound actor is no longer authorized for outbound dispatch",
             &["Refresh the actor binding and retry."],
+        ),
+        OutboundDispatchError::FailureResultIneligible => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "the durable step failure is not eligible for an effect",
+            &[],
+        ),
+        OutboundDispatchError::Step(error) => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!("durable step verification failed: {error}"),
+            &[],
         ),
         OutboundDispatchError::UnsupportedCapability(capability) => MemoryError::bad_request_with(
             format!("unsupported outbound capability: {capability}"),
@@ -77,5 +92,6 @@ pub(super) const fn dispatch_outcome_str(outcome: &OutboundDispatchOutcome) -> &
         OutboundDispatchOutcome::Suppressed => "suppressed",
         OutboundDispatchOutcome::LetGo => "let_go",
         OutboundDispatchOutcome::Failed => "failed",
+        OutboundDispatchOutcome::Ambiguous => "ambiguous",
     }
 }

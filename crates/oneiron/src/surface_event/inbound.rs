@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
+use crate::channel_identity::{ChannelIdentityBinding, InboundDisposition};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -102,6 +102,22 @@ pub enum SurfaceInteractionKind {
     Tap,
 }
 
+/// The provider facts of one reaction interaction. The generation is the
+/// provider's identity for one add, never the delivery id; a new add carries
+/// its occurrence time, an echo of our own reaction names the original claim,
+/// and a removal carries only the generation it removes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceReaction {
+    pub glyph: String,
+    pub external_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
+}
+
 /// What the counterparty did on the surface.
 ///
 /// A message dispatches toward the addressed actor's `self.*` flow; every
@@ -115,6 +131,9 @@ pub enum SurfaceEventAction {
         interaction: SurfaceInteractionKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_ref: Option<String>,
+        /// Present on a reaction interaction a connector resolved.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reaction: Option<SurfaceReaction>,
     },
 }
 
@@ -157,6 +176,9 @@ pub enum SurfaceCounterpartyStamp {
     Known { counterparty_ref: String },
     /// A provider-native sender key not yet attached to a contact record.
     Unknown { counterparty_key: String },
+    /// Sender parsing did not project an address. The raw sender bytes are not
+    /// retained; the channel and digest form an opaque, stable counterparty key.
+    Unparsed { channel: String, raw_hash: [u8; 32] },
 }
 
 impl SurfaceCounterpartyStamp {
@@ -176,12 +198,24 @@ impl SurfaceCounterpartyStamp {
         }
     }
 
+    /// Builds a digest-only stamp when sender parsing cannot project an address.
+    #[must_use]
+    pub fn unparsed(channel: impl Into<String>, raw_hash: [u8; 32]) -> Self {
+        Self::Unparsed {
+            channel: channel.into(),
+            raw_hash,
+        }
+    }
+
     /// Provider-native user ref this stamp contributes when an adapter does
     /// not supply a richer one.
     fn default_user_ref(&self) -> String {
         match self {
             Self::Known { counterparty_ref } => counterparty_ref.clone(),
             Self::Unknown { counterparty_key } => counterparty_key.clone(),
+            Self::Unparsed { channel, raw_hash } => {
+                format!("unparsed:{channel}:{}", hash_hex(raw_hash))
+            }
         }
     }
 
@@ -195,8 +229,22 @@ impl SurfaceCounterpartyStamp {
                 counterparty_key,
                 "surface counterparty key must be non-empty",
             ),
+            Self::Unparsed { channel, .. } => validate_non_blank(
+                channel,
+                "surface unparsed counterparty channel must be non-empty",
+            ),
         }
     }
+}
+
+fn hash_hex(raw_hash: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(64);
+    for byte in raw_hash {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 /// Adapter-normalized inbound payload before identity routing.
@@ -526,7 +574,7 @@ pub(crate) fn route_inbound_surface_event_in_txn(
     // wire string `non_agent_bound_identity`: adapters branch on it and the
     // `/v1/core` schema enumerates it, so it is receipt-stable and is NOT
     // renamed to follow the actor vocabulary.
-    let (actor_ref, facet_ref) = match identity.binding {
+    let (actor_ref, facet_ref) = match identity.binding() {
         ChannelIdentityBinding::Actor {
             actor_ref,
             facet_ref,
@@ -545,22 +593,28 @@ pub(crate) fn route_inbound_surface_event_in_txn(
 
     // Subject eligibility follows the adapter event, not queue processing time.
     let at = input.received_at;
-    match identity.state {
-        ChannelIdentityState::Active | ChannelIdentityState::Rotating => routed_receipt(
+    // ONE projection, asked of the row, rather than this router's own match on
+    // the row's state. The delegated machine has no ROTATING and no QUARANTINE,
+    // so a `(shape, state)` match here had to name states one of the two
+    // machines cannot be in and silently agree with the lifecycle verb about
+    // which of them retire. `inbound()` is where that answer lives now, and
+    // both callers read it.
+    match identity.inbound() {
+        InboundDisposition::Deliver => routed_receipt(
             input,
             identity_ref,
             ActorStamps::resolve_in_txn(vault, txn, actor_ref, facet_ref, at)?,
             false,
             claims_not_instructions,
         ),
-        ChannelIdentityState::Released | ChannelIdentityState::Quarantine => routed_receipt(
+        InboundDisposition::DeliverRetiring => routed_receipt(
             input,
             identity_ref,
             ActorStamps::resolve_in_txn(vault, txn, actor_ref, facet_ref, at)?,
             true,
             claims_not_instructions,
         ),
-        ChannelIdentityState::Tombstone => Ok(rejected_receipt(
+        InboundDisposition::Closed => Ok(rejected_receipt(
             input,
             Some(identity_ref),
             Some(actor_ref),
@@ -568,16 +622,14 @@ pub(crate) fn route_inbound_surface_event_in_txn(
             claims_not_instructions,
             InboundSurfaceRejectionReason::TombstonedReceivingIdentity,
         )),
-        ChannelIdentityState::Requested | ChannelIdentityState::PendingFulfillment => {
-            Ok(rejected_receipt(
-                input,
-                Some(identity_ref),
-                Some(actor_ref),
-                false,
-                claims_not_instructions,
-                InboundSurfaceRejectionReason::InactiveReceivingIdentity,
-            ))
-        }
+        InboundDisposition::NotYetRoutable => Ok(rejected_receipt(
+            input,
+            Some(identity_ref),
+            Some(actor_ref),
+            false,
+            claims_not_instructions,
+            InboundSurfaceRejectionReason::InactiveReceivingIdentity,
+        )),
     }
 }
 

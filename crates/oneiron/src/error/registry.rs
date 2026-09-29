@@ -26,6 +26,9 @@ pub enum RegistryError {
         installed_pack: String,
         installing_pack: String,
     },
+    /// A pack install rule blocks approval. The card displays this exact diagnostic.
+    #[error("pack install blocked: {reason}")]
+    PackInstallRuleBlocked { reason: String },
     /// Only a locally installed exact identity may admit instances.
     #[error("pack kind is not installed locally: {0}")]
     PackKindNotInstalled(String),
@@ -134,6 +137,10 @@ pub enum RegistryError {
         existing: u8,
         attempted: u8,
     },
+    /// The one vault Dreamer principal is a fixed system entity. No ordinary
+    /// local or replicated operation may replace or erase it.
+    #[error("vault Dreamer actor is immutable")]
+    DreamerActorImmutable,
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -184,6 +191,7 @@ impl RegistryError {
         match self {
             Self::PackKindNameCollision(_) => ErrorKind::PackKindNameCollision,
             Self::PackPredicateNameCollision { .. } => ErrorKind::PackPredicateNameCollision,
+            Self::PackInstallRuleBlocked { .. } => ErrorKind::PackInstallRuleBlocked,
             Self::PackKindNotInstalled(_) => ErrorKind::PackKindNotInstalled,
             Self::InvalidPackByteMap(_) => ErrorKind::InvalidPackByteMap,
             // The structural ChildOf tree rejections are coarse-mapped onto
@@ -198,6 +206,7 @@ impl RegistryError {
             Self::InvalidFacetOfEdge { .. } => ErrorKind::InvalidFacetOfEdge,
             Self::FacetStampImmutable { .. } => ErrorKind::FacetStampImmutable,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
+            Self::DreamerActorImmutable => ErrorKind::DreamerActorImmutable,
             Self::StructuralKindZoneViolation { .. } => ErrorKind::StructuralKindZoneViolation,
             Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {
                 ErrorKind::StructuralKindCollision
