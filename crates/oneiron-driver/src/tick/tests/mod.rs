@@ -10,11 +10,11 @@ use oneiron::commitment::{
     CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
 };
 use oneiron::commitment_schedule::{
-    CommitmentSchedulePayload, CommitmentSeriesWriteOutcome, Schedule, commitment_projection_actor,
+    CommitmentSchedulePayload, CommitmentSeriesWriteOutcome, Schedule,
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::entity_id::EntityId;
-use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
 use oneiron::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use oneiron::{
@@ -129,8 +129,9 @@ fn commitment_party(seed: u8) -> EntityId {
 }
 
 /// Seeds the parties a commitment write needs — including the projector's
-/// PINNED System actor, which the claim door resolves against a stored
-/// MACHINE entity before it will mint anything.
+/// PINNED System actor. The projector is a MACHINE, so it mints only with the
+/// host-held key the host provisions at bootstrap (ONE-1634): the fixture roots
+/// the vault under a test host and provisions the engine's MACHINE writers.
 fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
     let at = TimeRange { start: 1, end: 1 };
     for seed in [0x71_u8, 0x72] {
@@ -144,15 +145,12 @@ fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
             )
             .expect("seed commitment party");
     }
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"oneiron driver test host")
+        .expect("host issuer");
+    vault.ensure_host_root_slip(&issuer).expect("host root");
     vault
-        .put_entity(
-            &commitment_projection_actor().unwrap().entity_ref(),
-            ENTITY_TYPE_MACHINE,
-            at,
-            1,
-            b"commitment projector",
-        )
-        .expect("seed projection actor");
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
     WriteEnvelope::new(
         WriteActor::new(commitment_party(0x71), EdgeActorClass::Human),
         ClaimSource::UserStated,
