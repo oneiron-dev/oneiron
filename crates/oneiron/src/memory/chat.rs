@@ -522,6 +522,7 @@ fn document_item(view: &EntityView) -> MemoryItem {
         world: None,
         facet: None,
         salience: None,
+        reactions: Vec::new(),
     }
 }
 

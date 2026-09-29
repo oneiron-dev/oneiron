@@ -693,6 +693,8 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::booking::config::validate_event_type_claim(&body)?;
     } else if crate::voice_segment::is_voice_segment_claim_predicate(&body.predicate) {
         crate::voice_segment::validate_voice_segment_claim_structure(&body)?;
+    } else if crate::reaction::is_reaction_claim_predicate(&body.predicate) {
+        crate::reaction::validate_reaction_claim_structure(&body)?;
     }
     Ok(body)
 }

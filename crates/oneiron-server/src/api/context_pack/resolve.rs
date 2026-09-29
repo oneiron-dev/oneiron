@@ -10,7 +10,8 @@ use super::controls::{
 };
 use super::resolve_core_interlocutor_set;
 use super::response::{
-    CoreContextPackResponse, context_pack_json_projection_config, run_context_pack_builder,
+    CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
+    run_context_pack_builder,
 };
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -236,6 +237,7 @@ pub(crate) async fn run_context_pack(
             *observed = staged;
         }
     }
+    read_reaction_signals(server, auth, &req, &scoped_read, &mut response)?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     Ok((response, memories, cursor))
 }
@@ -556,4 +558,94 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     } else {
         pack.empty = None;
     }
+}
+
+/// The agent signal feed rides the context pack of the agent's next turn:
+/// reactions to the reader's own messages since `signals_since`, paged, each
+/// admitted by the same scoped read as the pack.
+fn read_reaction_signals(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    req: &CoreContextPackRequest,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    response: &mut CoreContextPackResponse,
+) -> Result<(), ApiError> {
+    let Some(since) = req.signals_since else {
+        if req.signals_after.is_some()
+            || req.signals_limit.is_some()
+            || req.signals_person.is_some()
+        {
+            return Err(ApiError::bad_request(
+                "signals_since is required for reaction signals",
+                Some("signals_since"),
+            ));
+        }
+        return Ok(());
+    };
+    let person = req
+        .signals_person
+        .as_deref()
+        .or_else(|| auth.principal_ref())
+        .ok_or_else(|| {
+            ApiError::bad_request("signals_person is required", Some("signals_person"))
+        })?;
+    if !auth.is_owner_grade() && auth.principal_ref() != Some(person) {
+        return Err(ApiError::forbidden_scope("signals_person"));
+    }
+    let person = super::super::parse_entity_id_param(person, "signals_person")?;
+    let room = req
+        .conversation_id
+        .as_deref()
+        .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
+        .transpose()?;
+    let page = server
+        .vault
+        .reactions_since_page(
+            person,
+            since,
+            req.signals_after.as_deref(),
+            req.signals_limit
+                .unwrap_or(oneiron::reaction::MAX_REACTION_SIGNAL_PAGE),
+        )
+        .map_err(|e| core_engine_error("reaction signal read failed", e))?;
+    response.signals_next = page.next;
+    // An owner-grade feed of one person's messages keeps the owner's reach;
+    // a delegated, room-scoped or interlocutor-scoped read is filtered by
+    // the same scoped read as the pack.
+    let scoped =
+        !auth.is_owner_grade() || req.conversation_id.is_some() || req.interlocutors.is_some();
+    for signal in page.signals {
+        if scoped
+            && !scoped_read
+                .is_reaction_signal_readable(&signal)
+                .map_err(|e| core_engine_error("reaction signal scope failed", e))?
+        {
+            continue;
+        }
+        if let Some(room) = room {
+            let mut owners = server
+                .vault
+                .targets(&signal.message, oneiron::EdgeKind::BelongsTo, None)
+                .map_err(|e| core_engine_error("reaction signal room failed", e))?;
+            owners.extend(
+                server
+                    .vault
+                    .targets(&signal.message, oneiron::EdgeKind::ChildOf, None)
+                    .map_err(|e| core_engine_error("reaction signal room failed", e))?,
+            );
+            if !owners.contains(&room) {
+                continue;
+            }
+        }
+        response.signals.push(CoreReactionSignal {
+            event: signal.event(),
+            reaction: signal.reaction.to_hex(),
+            message: signal.message.to_hex(),
+            by: signal.by.to_hex(),
+            glyph: signal.glyph,
+            occurred_at: signal.occurred_at,
+            recorded_at: signal.recorded_at,
+        });
+    }
+    Ok(())
 }

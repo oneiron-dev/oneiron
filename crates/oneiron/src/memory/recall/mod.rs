@@ -28,7 +28,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
 use crate::retrieval_depth::RecallExecution;
 use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
@@ -154,6 +154,10 @@ pub struct MemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f32>,
+    /// A conversation record's current reactions, one grouped line per
+    /// glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<String>,
 }
 
 /// Scope honesty (S6): what the scope excluded.
@@ -646,7 +650,8 @@ impl Memory<'_> {
                 }
                 let (scoped, vector_completed) = builder.run_scoped_with_vector_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
-                let pack = scoped.value;
+                let mut pack = scoped.value;
+                lane.attach_reactions(&mut pack)?;
 
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {

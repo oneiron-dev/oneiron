@@ -51,6 +51,7 @@ impl Vault {
             self.ensure_commitment_projection_machine(seed)?,
             crate::calendar::ingest::ensure_ics_import_actor(self, seed)?,
             crate::calendar::transcript::file_drop_import_actor(self, seed)?,
+            crate::reaction::ensure_conversation_mirror_actor(self, seed)?,
             self.ensure_esign_artifact_machine(seed)?,
             self.dreamer_authority()?.entity_ref(),
         ];

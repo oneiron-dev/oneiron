@@ -140,6 +140,9 @@ pub fn access_factor_override_valid(factor: f32) -> bool {
 /// factor for a live claim (downward or upward within `[0, 1]`). An
 /// inadmissible value is a caller bug and fails closed with
 /// [`Error::InvalidConfig`].
+///
+/// A reaction-family claim's live factor is further scaled by its low
+/// standalone weight, override included.
 pub fn claim_access_factor(
     body: &ClaimBody,
     learned_at: u64,
@@ -164,12 +167,24 @@ pub fn claim_access_factor(
         0.0
     } else {
         override_factor.unwrap_or_else(|| decayed_access_factor(aging_class, learned_at, now))
+            * standalone_weight(&body.predicate)
     };
 
     Ok(ClaimRetrievability {
         access_factor,
         aging_class,
     })
+}
+
+/// A multiplier for claim families that ride along with another record and
+/// only weakly stand alone: a reaction is still findable by a direct query,
+/// but never outranks an ordinary memory of equal relevance.
+fn standalone_weight(predicate: &str) -> f32 {
+    if crate::reaction::is_reaction_claim_predicate(predicate) {
+        crate::reaction::REACTION_STANDALONE_WEIGHT
+    } else {
+        1.0
+    }
 }
 
 fn decayed_access_factor(aging_class: ClaimAgingClass, learned_at: u64, now: u64) -> f32 {

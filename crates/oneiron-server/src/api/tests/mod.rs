@@ -25,6 +25,7 @@ mod context_pack_disclosure;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
+mod conversation_reactions;
 mod conversation_rooms;
 mod core_memory_conversations;
 mod mcp_memory;

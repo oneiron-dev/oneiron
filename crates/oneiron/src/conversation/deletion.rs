@@ -543,14 +543,22 @@ impl Vault {
                 cursor = ids.last().copied();
             }
         }
+        // Reactions about the record go with it, under the same reason. Their
+        // ids are read first: a hard delete removes the claims' subject edges.
+        let reactions = {
+            let txn = self.store.env.read_txn()?;
+            crate::reaction::record_reaction_claims_in(self, &txn, record)?
+        };
         let reverify = |txn: &heed::RoTxn<'_>| {
             reverify_record_delete(self, txn, room, record, actor, reason, subject)
         };
-        self.delete_entity_with_reason_gated(
+        let outcome = self.delete_entity_with_reason_gated(
             &record,
             reason,
             GatedDeletion::new(context, &reverify),
-        )
+        )?;
+        crate::reaction::erase_reaction_claims(self, &reactions, reason)?;
+        Ok(outcome)
     }
 
     /// Deletes a room record as its author, or as a room owner/admin for policy.
@@ -702,6 +710,13 @@ impl Vault {
             }
             cursor = ids.last().copied();
         }
+        // Reactions this PERSON made on the room's remaining records.
+        let reactions = {
+            let txn = self.store.env.read_txn()?;
+            authorize_room_erasure(self, &txn, room, person, actor)?;
+            crate::reaction::person_reaction_claims_in(self, &txn, room, person)?
+        };
+        crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
         // The single writer closes the in-flight fence only after every
         // selected active row has completed its reason-aware deletion. A
         // failure above leaves phase 1 for a bounded retry, never free append.
