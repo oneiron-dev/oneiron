@@ -128,10 +128,10 @@ fn commitment_party(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("fixture entity id")
 }
 
-/// Seeds the parties a commitment write needs — including the projector's
-/// PINNED System actor. The projector is a MACHINE, so it mints only with the
-/// host-held key the host provisions at bootstrap (ONE-1634): the fixture roots
-/// the vault under a test host and provisions the engine's MACHINE writers.
+/// Seeds the parties a commitment write needs. The projector's PINNED System
+/// actor is a MACHINE, so it mints only with the host-held key the host
+/// provisions at bootstrap (ONE-1634); [`open_vault`] already rooted the vault
+/// and provisioned the engine's MACHINE writers, the projector among them.
 fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
     let at = TimeRange { start: 1, end: 1 };
     for seed in [0x71_u8, 0x72] {
@@ -145,12 +145,6 @@ fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
             )
             .expect("seed commitment party");
     }
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"oneiron driver test host")
-        .expect("host issuer");
-    vault.ensure_host_root_slip(&issuer).expect("host root");
-    vault
-        .provision_engine_machine_identities(&issuer)
-        .expect("engine machine identities");
     WriteEnvelope::new(
         WriteActor::new(commitment_party(0x71), EdgeActorClass::Human),
         ClaimSource::UserStated,

@@ -96,6 +96,19 @@ pub(super) fn register_mailbox_custody(
     })
 }
 
+/// A replay's authorization reads commit the clock floor whenever a
+/// wall-clock second passes mid-replay (`Store::authorization_now`). Hold the
+/// persisted floor ahead of the wall clock so a transaction-id check counts
+/// only the rows and receipts a replay must not write.
+fn hold_clock_floor(vault: &Vault) -> Result<()> {
+    vault
+        .store
+        .clock
+        .observe_floor(vault.now_recorded_at().saturating_add(10))?;
+    vault.store.authorization_now()?;
+    Ok(())
+}
+
 #[test]
 fn missing_custody_leaves_resumable_journal_and_no_identity() -> Result<()> {
     let (_dir, vault, mut intent) = fixture("Antevon");
@@ -496,6 +509,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
             type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
             1
         );
+        hold_clock_floor(&vault)?;
         let revision = vault.store.env.info().last_txn_id;
         assert_eq!(
             vault.onboard_workspace_member(intent, &writer(WRITER), Some(&owner))?,
@@ -520,6 +534,7 @@ fn every_autonomy_request_axis_is_digest_pinned_on_incomplete_and_complete_repla
             activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?;
         }
+        hold_clock_floor(&vault)?;
         let revision = vault.store.env.info().last_txn_id;
         for axis in 0..14 {
             let mut changed = intent.clone();
@@ -664,6 +679,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
                 .may_send()
         );
         assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 2);
+        hold_clock_floor(&vault)?;
         let revision = vault.store.env.info().last_txn_id;
         assert_eq!(
             vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?,
