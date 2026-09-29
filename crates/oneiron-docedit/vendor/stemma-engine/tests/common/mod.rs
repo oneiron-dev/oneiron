@@ -41,7 +41,7 @@ pub fn build_element_census(xml: &str) -> HashMap<String, usize> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 *census.entry(name).or_default() += 1;
             }
             Ok(Event::Eof) => break,
