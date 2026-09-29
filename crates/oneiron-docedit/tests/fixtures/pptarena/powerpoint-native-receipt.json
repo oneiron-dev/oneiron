@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "input_sha256": "b1b06b947356af7eb3d10fdbb4d74ea76698e391922f00a5b25917b88e92b4d1",
+  "script_sha256": "18a15b9895741869f74974b2431f4633b268ec42e7d5e5ac38374eb751c8a2c8",
+  "started_at": 1789797907.486943,
+  "app_version": "16.112.4",
+  "slides": 1,
+  "initial_presentations": 0,
+  "final_presentations": 0,
+  "output_sha256": "e17abd1f996ca5b24813fd7678d2aefa199af6eda2c654779af1ee342385d535",
+  "pdf_sha256": "d54a918af8e1c062792d34b6f030ff304d2bd933fcab1579ffd950d4b83693dd",
+  "lock_retained": false,
+  "finished_at": 1789797916.272432,
+  "input_generator": "scripts/office/create_ppt_fixture.applescript",
+  "scope": "native one-slide sample; not PPTArena Office validity"
+}

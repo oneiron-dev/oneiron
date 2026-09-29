@@ -1,0 +1,458 @@
+{
+  "dataset": "docx-corpus (native DOCX acceptance context)",
+  "status": "context only; no acceptance claimed; no oracle values fabricated",
+  "pins": {
+    "poi": {
+      "repo": "https://github.com/apache/poi",
+      "ref": "trunk",
+      "sha": "b66d71f85030b060df543702d8c0d64dfac922c3",
+      "date": "2026-09-18T19:29:03Z",
+      "license": "Apache-2.0",
+      "license_proof": "legal/LICENSE + legal/NOTICE in repo; test files carry ASL2 header",
+      "redistribution": "Apache-2.0 allows redistribution with license+notice; bytes kept in .w7 (uncommitted) pending root decision; manifest committed"
+    },
+    "docx4j": {
+      "repo": "https://github.com/plutext/docx4j",
+      "ref": "VERSION_17_1_1 (default branch)",
+      "sha": "7fba7a1507fc01fdd7f4dc2f79cdbd6988c044f7",
+      "date": "2026-09-19T02:36:56Z",
+      "license": "Apache-2.0",
+      "license_proof": "legals/LICENSE + legals/NOTICE; README 'open source (Apache v2)'; pom <license>Apache 2; test files carry ASL2 header",
+      "redistribution": "Apache-2.0 allows redistribution with license+notice; bytes kept in .w7 (uncommitted) pending root decision; manifest committed"
+    },
+    "stemma": {
+      "repo": "https://github.com/stemma-sh/stemma",
+      "ref": "v0.6.0",
+      "sha": "ad1e70deac0a828d5162ac3b3f2186c2bb0c075e",
+      "date": "2026-09-04",
+      "license": "MIT OR Apache-2.0, taken under Apache-2.0 per canon",
+      "license_proof": "LICENSE-APACHE/LICENSE-MIT at repo root; local .w7/stemma-upstream copy",
+      "redistribution": "Apache-2.0 allows redistribution with license+notice; bytes kept in .w7 (uncommitted) pending root decision; manifest committed"
+    }
+  },
+  "coverage": {
+    "insert": true,
+    "delete": true,
+    "replace": true,
+    "comment": true,
+    "paragraph_join": true,
+    "protection": true
+  },
+  "extraction_notes": {
+    "docx4j_accept": "AcceptTrackedChangesTest builds w:document XML strings inline (no .docx); extraction = copy the inline body XML from the .java file at pin, wrap in <w:document>, feed the accept path. No oracle values copied here.",
+    "docx4j_compare": "ParagraphDifferencerTest/GoldenOutputTest load single-paragraph XML files (t2R,t2RR,t3L,t3R,t4, no extension) via Differencer.loadParagraph; extraction = take stored diffx-para-*.xml as paragraph inputs or wrap in w:document/w:body. Golden outputs under golden/ are docx4j's current-behavior snapshots, NOT copied as oracles.",
+    "stemma_conformance": "~1,060-test suite is Rust assertions over input.docx/before.docx+after.docx pairs via import_docx()/SimpleRuntime; extraction = use before/input .docx as oracle inputs and metadata.json expected_behavior as the check description. Full-suite count is stemma's claim, not re-verified here."
+  },
+  "cases": [
+    {
+      "id": "poi-change-tracking-off",
+      "file": ".w7/docx-corpus/poi/bug56075-changeTracking_off.docx",
+      "source": "apache/poi trunk test-data/document/bug56075-changeTracking_off.docx",
+      "supports": "settings trackRevisions=false baseline; inspect/docx-census must not report tracked mode",
+      "note": "TestChangeTracking.detection/activateChangeTracking",
+      "sha256": "bfe651932119ad2472b943b726f8ea7559d8ff0fb9c100b63cc0c28f8227de78",
+      "bytes": 12617
+    },
+    {
+      "id": "poi-change-tracking-on",
+      "file": ".w7/docx-corpus/poi/bug56075-changeTracking_on.docx",
+      "source": "apache/poi trunk test-data/document/bug56075-changeTracking_on.docx",
+      "supports": "settings trackRevisions=true; inspect/docx-census tracked-mode flag",
+      "note": "TestChangeTracking.detection",
+      "sha256": "9c837e12aaf3deac10ac20ac1bc08dc6bebdec14b553698063742b9bc12f8920",
+      "bytes": 12606
+    },
+    {
+      "id": "poi-protection-comments",
+      "file": ".w7/docx-corpus/poi/documentProtection_comments_no_password.docx",
+      "source": "apache/poi trunk test-data/document/documentProtection_comments_no_password.docx",
+      "supports": "protection enforcement=comments; narrow verbs must refuse or gate protected docs (policy decision)",
+      "note": "TestDocumentProtection.testShouldReadEnforcementProperties",
+      "sha256": "d15cd04edecf3489c2028864e70736494a1c5259b6e92097e50457efd934d78c",
+      "bytes": 9868
+    },
+    {
+      "id": "poi-protection-forms",
+      "file": ".w7/docx-corpus/poi/documentProtection_forms_no_password.docx",
+      "source": "apache/poi trunk test-data/document/documentProtection_forms_no_password.docx",
+      "supports": "protection enforcement=forms; same gating case",
+      "note": "TestDocumentProtection",
+      "sha256": "5c299d134577cb3a752548e6891701d2b3447570bd2bb0b38bf16efc026ee0a2",
+      "bytes": 9924
+    },
+    {
+      "id": "poi-protection-none",
+      "file": ".w7/docx-corpus/poi/documentProtection_no_protection.docx",
+      "source": "apache/poi trunk test-data/document/documentProtection_no_protection.docx",
+      "supports": "no protection tag; edits allowed (control)",
+      "note": "TestDocumentProtection",
+      "sha256": "5d1cce05b576fc527981c56dd9844df3b6669967bcd9b981adfc043bd516f62c",
+      "bytes": 9884
+    },
+    {
+      "id": "poi-protection-tag-no-enforcement",
+      "file": ".w7/docx-corpus/poi/documentProtection_no_protection_tag_existing.docx",
+      "source": "apache/poi trunk test-data/document/documentProtection_no_protection_tag_existing.docx",
+      "supports": "protection tag present but unenforced; edits allowed (control)",
+      "note": "TestDocumentProtection",
+      "sha256": "1fb9592a737a350cad1a2a7d9136c7fa6106c5c18c88980251ee9273ddd4ec32",
+      "bytes": 9923
+    },
+    {
+      "id": "poi-protection-readonly",
+      "file": ".w7/docx-corpus/poi/documentProtection_readonly_no_password.docx",
+      "source": "apache/poi trunk test-data/document/documentProtection_readonly_no_password.docx",
+      "supports": "protection enforcement=readOnly; narrow verbs must refuse or gate",
+      "note": "TestDocumentProtection",
+      "sha256": "5d4c919f2e06b84fbe35cfaaa4012e8f469b811e1f643deb3e660b798bfe4544",
+      "bytes": 9856
+    },
+    {
+      "id": "poi-protection-tracked-changes",
+      "file": ".w7/docx-corpus/poi/documentProtection_trackedChanges_no_password.docx",
+      "source": "apache/poi trunk test-data/document/documentProtection_trackedChanges_no_password.docx",
+      "supports": "protection enforcement=trackedChanges; narrow verbs must refuse or gate",
+      "note": "TestDocumentProtection",
+      "sha256": "f57113d70213bf8d2fb739fc980662a84e3530f3d1b128ab92d00ab587cd3eb4",
+      "bytes": 9940
+    },
+    {
+      "id": "poi-protection-password-xor",
+      "file": ".w7/docx-corpus/poi/bug56076.docx",
+      "source": "apache/poi trunk test-data/document/bug56076.docx",
+      "supports": "legacy XOR-hashed write-protection password ('Example'); validateProtectionPassword oracle shape only, not our verb",
+      "note": "TestDocumentProtection.bug56076_read; expected hash 64CEED7E is POI's, not ours",
+      "sha256": "3abb05a4e76d5f92cf59eb818db7b03e8ff342d051f832a1bee196b1164b3b0d",
+      "bytes": 11033
+    },
+    {
+      "id": "poi-ins-del-extract",
+      "file": ".w7/docx-corpus/poi/delins.docx",
+      "source": "apache/poi trunk test-data/document/delins.docx",
+      "supports": "real-world w:ins/w:del mix (67 ins/28 del markers); extractor/inspect census; preexisting-revision refusal/gating input",
+      "note": "TestXWPFWordExtractor.testInsertedDeletedText expects 'pendant worn','extremely well' (POI oracle, not ours)",
+      "sha256": "7ecad102602586be7f1371f117fc567ea47f3ed0ca703b353e003002f1ff8d3f",
+      "bytes": 17720
+    },
+    {
+      "id": "poi-comment-single",
+      "file": ".w7/docx-corpus/poi/comment.docx",
+      "source": "apache/poi trunk test-data/document/comment.docx",
+      "supports": "single comment part + reference; AddComment anchor/linker shape",
+      "note": "TestXWPFComment.testText author 'Unbekannter Autor' (POI oracle)",
+      "sha256": "23bbfe33e1acf7073253bd87552cbee5be0a07cbd08a479a4bf139f09b1dd6dc",
+      "bytes": 4926
+    },
+    {
+      "id": "poi-comment-rich",
+      "file": ".w7/docx-corpus/poi/testComment.docx",
+      "source": "apache/poi trunk test-data/document/testComment.docx",
+      "supports": "richer comment part; comment add/remove round-trip shape",
+      "note": "TestXWPFComments",
+      "sha256": "06b63b13f0b78a7179151af52c2282557c1ed204899feee9fcef4ca575344f97",
+      "bytes": 65298
+    },
+    {
+      "id": "docx4j-tracked-math",
+      "file": ".w7/docx-corpus/docx4j/root/tracked-changes-equations.docx",
+      "source": "plutext/docx4j VERSION_17_1_1 docx4j-core-tests/.../tracked-changes-equations.docx",
+      "supports": "w:ins/w:del inside m:r (math runs); narrow writer must REFUSE math (out of scope), never silently drop",
+      "note": "MathTrackedChangesTest.sampleDocxRoundTrips; Word-produced sample",
+      "sha256": "bb9e7b6325ce5fa89fadb4b08b8849e05257c93d0d03a259c13a418f195e385b",
+      "bytes": 17241
+    },
+    {
+      "id": "docx4j-altered-comments-one",
+      "file": ".w7/docx-corpus/docx4j/altered/comments-one.docx",
+      "source": "plutext/docx4j AlteredParts/comments-one.docx",
+      "supports": "comment pair side A for before/after compare harness",
+      "note": "AlteredParts pair; compare input, no oracle values copied",
+      "sha256": "2c60ca60ac65fd746de4915edc41ce7412cae1852efb7909884fffbbe8a552b8",
+      "bytes": 4548
+    },
+    {
+      "id": "docx4j-altered-comments-two",
+      "file": ".w7/docx-corpus/docx4j/altered/comments-two.docx",
+      "source": "plutext/docx4j AlteredParts/comments-two.docx",
+      "supports": "comment pair side B for before/after compare harness",
+      "note": "AlteredParts pair",
+      "sha256": "08d1190c4eb81bdec3a3fcce0cfbf29ac1d9d5798f22594eb212420fb85a7699",
+      "bytes": 4589
+    },
+    {
+      "id": "docx4j-altered-para-one",
+      "file": ".w7/docx-corpus/docx4j/altered/paragraph-single.docx",
+      "source": "plutext/docx4j AlteredParts/paragraph-single.docx",
+      "supports": "paragraph pair side A for before/after compare harness",
+      "note": "AlteredParts pair",
+      "sha256": "e8bf2a3cc57961579f11aeea49f51fcc7fb758940533be495776a39319055215",
+      "bytes": 3555
+    },
+    {
+      "id": "docx4j-altered-para-two",
+      "file": ".w7/docx-corpus/docx4j/altered/paragraph-two.docx",
+      "source": "plutext/docx4j AlteredParts/paragraph-two.docx",
+      "supports": "paragraph pair side B for before/after compare harness",
+      "note": "AlteredParts pair",
+      "sha256": "184d534082a0e1ab4d661f0caa693182526f6a54734ae62f5ee53ec83ac6d502",
+      "bytes": 3563
+    },
+    {
+      "id": "docx4j-diffx-test",
+      "file": ".w7/docx-corpus/docx4j/diffx/test.docx",
+      "source": "plutext/docx4j docx4j-samples-docx-diffx/sample-docs/test.docx",
+      "supports": "diffx sample side A; compare-harness input only",
+      "note": "CompareDocuments sample input",
+      "sha256": "3f418838fa399e31d8a4d79d25f5c6520d074bd1d27d1de2f8864fe2a511cae9",
+      "bytes": 15908
+    },
+    {
+      "id": "docx4j-diffx-test2",
+      "file": ".w7/docx-corpus/docx4j/diffx/test2.docx",
+      "source": "plutext/docx4j docx4j-samples-docx-diffx/sample-docs/test2.docx",
+      "supports": "diffx sample side B; compare-harness input only",
+      "note": "CompareDocuments sample input",
+      "sha256": "d439c0bac46039094913353f31fe3646b68c218f99078a35d26b55976106784f",
+      "bytes": 15962
+    },
+    {
+      "id": "docx4j-diffx-para-t2R",
+      "file": ".w7/docx-corpus/docx4j/diffx-para-t2R.xml",
+      "source": "plutext/docx4j docx4j-diffx-tests/.../diff/t2R",
+      "supports": "NOT standalone docx: single-paragraph XML for Differencer.loadParagraph; extraction=wrap in w:document/w:body or feed paragraph differ directly",
+      "note": "ParagraphDifferencerTest/GoldenOutputTest input; no oracle values copied",
+      "not_docx": true,
+      "sha256": "4f9547f692d5c2f92150467e85910e75a6eced30c87e884f9c5915c400a6691b",
+      "bytes": 449
+    },
+    {
+      "id": "docx4j-diffx-para-t2RR",
+      "file": ".w7/docx-corpus/docx4j/diffx-para-t2RR.xml",
+      "source": "plutext/docx4j docx4j-diffx-tests/.../diff/t2RR",
+      "supports": "NOT standalone docx: paragraph XML fragment; same extraction",
+      "note": "ParagraphDifferencerTest input",
+      "not_docx": true,
+      "sha256": "ec8282a557195953cddca27fce7cb2df551affe2f265e290b636253597b4f9cd",
+      "bytes": 397
+    },
+    {
+      "id": "docx4j-diffx-para-t3L",
+      "file": ".w7/docx-corpus/docx4j/diffx-para-t3L.xml",
+      "source": "plutext/docx4j docx4j-diffx-tests/.../diff/t3L",
+      "supports": "NOT standalone docx: paragraph XML fragment; same extraction",
+      "note": "ParagraphDifferencerTest input",
+      "not_docx": true,
+      "sha256": "5be5a3f166fea753f8fc966256d03befed8bc6bea924961112f353db66175880",
+      "bytes": 232
+    },
+    {
+      "id": "docx4j-diffx-para-t3R",
+      "file": ".w7/docx-corpus/docx4j/diffx-para-t3R.xml",
+      "source": "plutext/docx4j docx4j-diffx-tests/.../diff/t3R",
+      "supports": "NOT standalone docx: paragraph XML fragment; same extraction",
+      "note": "ParagraphDifferencerTest input",
+      "not_docx": true,
+      "sha256": "e2d26e86c5b156052915df997732c65b8b072390c8e70f950336a19900757207",
+      "bytes": 399
+    },
+    {
+      "id": "docx4j-diffx-para-t4",
+      "file": ".w7/docx-corpus/docx4j/diffx-para-t4.xml",
+      "source": "plutext/docx4j docx4j-diffx-tests/.../diff/t4",
+      "supports": "NOT standalone docx: paragraph XML fragment; same extraction",
+      "note": "ParagraphDifferencerTest input",
+      "not_docx": true,
+      "sha256": "7ef75b769f4a127986bf67b7f010534ebea1bdde4d524d07777ab55140ba65b1",
+      "bytes": 421
+    },
+    {
+      "id": "stemma-preexisting-ins-del",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-changes__preexisting-ins-del.docx",
+      "source": "stemma-sh/stemma v0.6.0 stemma-engine/testdata/spec-compliance/tracked-changes/preexisting-ins-del/input.docx",
+      "supports": "preexisting w:ins+w:del in one para; InsertText/DeleteSpan refusal-or-carry gating",
+      "note": "spec_tracked_changes.rs",
+      "sha256": "1b1206abf1178ac2b056edecf8e53a43b4cc91319a21d2a28a735534afdb5e2a",
+      "bytes": 36704
+    },
+    {
+      "id": "stemma-multi-author",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-changes__multi-author.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-changes/multi-author/input.docx",
+      "supports": "two-author ins/del; author attribution preserved on passthrough",
+      "note": "redline_extract author check",
+      "sha256": "8790a6c9c9b74caa598cb7b3d72a123a341a40e9c95f51f0d669589690280713",
+      "bytes": 36700
+    },
+    {
+      "id": "stemma-para-mark-del",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-changes__para-mark-del.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-changes/para-mark-del/input.docx",
+      "supports": "PARAGRAPH JOIN reference: w:del on pPr mark; JoinParagraphs oracle shape",
+      "note": "para-mark join",
+      "sha256": "9a00200a2ba1c8dd9701ab430cfc9e93a575fcab06772f8a61c970acfc9a84b6",
+      "bytes": 36657
+    },
+    {
+      "id": "stemma-join-merge",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-accept-reject__para-mark-del-merge.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-accept-reject/para-mark-del-merge/input.docx",
+      "supports": "PARAGRAPH JOIN accept: deleted mark joins with next; accept-side oracle",
+      "note": "accept/reject suite",
+      "sha256": "0a6635291b1c7796ab8eb5e36dae90e244388b9242b4b1ef671c5134a90ac507",
+      "bytes": 36695
+    },
+    {
+      "id": "stemma-join-split",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-accept-reject__para-mark-ins-split.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-accept-reject/para-mark-ins-split/input.docx",
+      "supports": "join inverse (ins split); paragraph-split oracle shape",
+      "note": "accept/reject suite",
+      "sha256": "dddaab17d43f78d5d1f5ff4c7162788a557bc707ffe7fa6679de174efaaa46d0",
+      "bytes": 36688
+    },
+    {
+      "id": "stemma-ppr-reject",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-accept-reject__ppr-change-reject.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-accept-reject/ppr-change-reject/input.docx",
+      "supports": "pPrChange reject; formatting-revision refusal case",
+      "note": "blindspot_pprchange_reject.rs",
+      "sha256": "7fb300e4814b66d63c02f896b8707637df2f0453560b3e1e587a60e75a6b99bd",
+      "bytes": 36683
+    },
+    {
+      "id": "stemma-deltext-before",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-serialization__del-uses-deltext__before.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-serialization/del-uses-deltext/before.docx",
+      "supports": "DeleteSpan oracle input: 'Hello World' delete ' World' expects w:delText",
+      "note": "before/after pair; expected text from metadata, not fabricated",
+      "sha256": "98653b33480975b51122087c3fff2510eaee03fbfa264d8fb631a24cc7a85624",
+      "bytes": 36587
+    },
+    {
+      "id": "stemma-deltext-after",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-serialization__del-uses-deltext__after.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-serialization/del-uses-deltext/after.docx",
+      "supports": "DeleteSpan oracle output reference (stemma's own after); compare shape only",
+      "note": "before/after pair",
+      "sha256": "5aebd3ebc3e04bf5b74328a9b0499343e117b74397794662f83a7b42a7b6a20b",
+      "bytes": 36581
+    },
+    {
+      "id": "stemma-revids-before",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-serialization__revision-ids-unique__before.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-serialization/revision-ids-unique/before.docx",
+      "supports": "multi-edit input; next_revision_id uniqueness case",
+      "note": "before/after pair",
+      "sha256": "e0678ee0c6fb83097fec20b58315623ccbc6abf0bd4d0c12d160dee5cea07f5f",
+      "bytes": 36643
+    },
+    {
+      "id": "stemma-revids-after",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-serialization__revision-ids-unique__after.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-serialization/revision-ids-unique/after.docx",
+      "supports": "multi-edit output reference; id-uniqueness check",
+      "note": "before/after pair",
+      "sha256": "2fb9691eaa6080845688430ca68119a4f5095bade8a8b0469b9121bb3f8a58fc",
+      "bytes": 36644
+    },
+    {
+      "id": "stemma-nonnest-before",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-serialization__no-nested-ins-del__before.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-serialization/no-nested-ins-del/before.docx",
+      "supports": "multi-edit input; flat w:ins/w:del (no nesting) case",
+      "note": "before/after pair",
+      "sha256": "1c590264e5065d502d46eb20dbdc433578e128db3001fad8e14a4d9dabefbcd3",
+      "bytes": 36652
+    },
+    {
+      "id": "stemma-nonnest-after",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__tracked-change-serialization__no-nested-ins-del__after.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../tracked-change-serialization/no-nested-ins-del/after.docx",
+      "supports": "multi-edit output reference; flatness check",
+      "note": "before/after pair",
+      "sha256": "d9cf3539f03c04f628b52ef250ec12a91e5013b982184d9db524e7de4dcac512",
+      "bytes": 36633
+    },
+    {
+      "id": "stemma-comment-basic",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__comments__basic-comment.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../comments/basic-comment/input.docx",
+      "supports": "AddComment single-range shape; linker comment-id check",
+      "note": "spec_comments.rs",
+      "sha256": "cf3860871d11c2d40c16ddbc53c1330a1fc405451ebefea221d12b000dfdf7e7",
+      "bytes": 37036
+    },
+    {
+      "id": "stemma-comment-multipara",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__comments__multi-paragraph-comment.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../comments/multi-paragraph-comment/input.docx",
+      "supports": "AddComment multi-paragraph range; range-marker span case",
+      "note": "spec_comments.rs",
+      "sha256": "1a207e045996555022e1558861e9d98983b537a374ca4b119e07551610d1bb53",
+      "bytes": 37044
+    },
+    {
+      "id": "stemma-comments-multi",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__comments__multiple-comments.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../comments/multiple-comments/input.docx",
+      "supports": "AddComment second-comment id allocation (next_comment_id)",
+      "note": "spec_comments.rs",
+      "sha256": "ac9c704cbd9b5eaeb4991c79137a75509bc0413e1b159018bb13e02edb092977",
+      "bytes": 37065
+    },
+    {
+      "id": "stemma-normalize-ins-del",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__normalize__main-ins-del.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../normalize/main-ins-del/input.docx",
+      "supports": "minimal 1-para ins/del; smallest InsertText/DeleteSpan/ReplaceSpan oracle input (1.4KB)",
+      "note": "normalize suite",
+      "sha256": "bc6bd1717ada96981c7d60dad3193a6a1a8633d4a9f07a64fcf7a3a94554fdc5",
+      "bytes": 1366
+    },
+    {
+      "id": "stemma-normalize-comments",
+      "file": ".w7/docx-corpus/stemma/spec-compliance__normalize__comments-basic.docx",
+      "source": "stemma-sh/stemma v0.6.0 .../normalize/comments-basic/input.docx",
+      "supports": "minimal comment; smallest AddComment oracle input (1.8KB)",
+      "note": "normalize suite",
+      "sha256": "e487be9fd3518b3adfd2b758b60ddbb75fa4658a778d8149d0ecabb58d6eff9b",
+      "bytes": 1771
+    },
+    {
+      "id": "stemma-simple-before",
+      "file": ".w7/docx-corpus/stemma/simple-text__before.docx",
+      "source": "stemma-sh/stemma v0.6.0 testdata/simple-text/before.docx",
+      "supports": "ReplaceSpan oracle input side (basic text changes)",
+      "note": "index.json 'Simple Text'",
+      "sha256": "2cdfb8ecd1a27ef7132ebbaa1f718d6705ea6532bf3b155c09bfd7e87d410667",
+      "bytes": 11431
+    },
+    {
+      "id": "stemma-simple-after",
+      "file": ".w7/docx-corpus/stemma/simple-text__after.docx",
+      "source": "stemma-sh/stemma v0.6.0 testdata/simple-text/after.docx",
+      "supports": "ReplaceSpan oracle output reference side",
+      "note": "index.json 'Simple Text'",
+      "sha256": "cb45cfe94afd21e3689608b07ee5c23c8f15f0cba810b654d5b2b5c7e61ad4d7",
+      "bytes": 11482
+    },
+    {
+      "id": "stemma-paras-before",
+      "file": ".w7/docx-corpus/stemma/paragraphs__before.docx",
+      "source": "stemma-sh/stemma v0.6.0 testdata/paragraphs/before.docx",
+      "supports": "3-para modification input; multi-paragraph ReplaceSpan plan",
+      "note": "index.json 'Paragraphs'",
+      "sha256": "29ec5781bab9212323fee7b043e2e9a46b34adbacbaec7dbd8737e6ff5d3e27f",
+      "bytes": 11591
+    },
+    {
+      "id": "stemma-paras-after",
+      "file": ".w7/docx-corpus/stemma/paragraphs__after.docx",
+      "source": "stemma-sh/stemma v0.6.0 testdata/paragraphs/after.docx",
+      "supports": "3-para modification output reference",
+      "note": "index.json 'Paragraphs'",
+      "sha256": "5f7bec5b27191bc9b8adaadb75e0afcaa193a3ebb43c55d728161fe56f7a6583",
+      "bytes": 11509
+    }
+  ]
+}
