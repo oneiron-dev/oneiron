@@ -102,6 +102,22 @@ pub enum SurfaceInteractionKind {
     Tap,
 }
 
+/// The provider facts of one reaction interaction. The generation is the
+/// provider's identity for one add, never the delivery id; a new add carries
+/// its occurrence time, an echo of our own reaction names the original claim,
+/// and a removal carries only the generation it removes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceReaction {
+    pub glyph: String,
+    pub external_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
+}
+
 /// What the counterparty did on the surface.
 ///
 /// A message dispatches toward the addressed actor's `self.*` flow; every
@@ -115,6 +131,9 @@ pub enum SurfaceEventAction {
         interaction: SurfaceInteractionKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_ref: Option<String>,
+        /// Present on a reaction interaction a connector resolved.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reaction: Option<SurfaceReaction>,
     },
 }
 

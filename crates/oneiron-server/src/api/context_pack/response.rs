@@ -193,6 +193,13 @@ pub(crate) struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Reaction signals on the reader's own messages since its last turn,
+    /// separate from retrieval.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) signals: Vec<CoreReactionSignal>,
+    /// Exclusive continuation when further signals remain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) signals_next: Option<String>,
     /// Separately budgeted turn-local capability discoveries.
     #[schema(value_type = Vec<Object>)]
     pub(crate) capabilities: Vec<oneiron::context_board::CapabilityHit>,
@@ -296,6 +303,14 @@ pub(crate) async fn run_context_pack_builder(
             pack.discard_telemetry();
             tracing::error!(error = %error, "core context-pack scoped read failed");
             core_engine_error("core context-pack scoped read failed", error)
+        })?;
+    // A MESSAGE carries its current reactions, read through the same scope.
+    scoped_read
+        .attach_reactions(&mut pack.value)
+        .map_err(|error| {
+            pack.discard_telemetry();
+            tracing::error!(error = %error, "core context-pack reactions failed");
+            core_engine_error("core context-pack reactions failed", error)
         })?;
     apply_context_pack_response_limits(&mut pack.value, response_limits);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
@@ -419,6 +434,8 @@ pub(crate) fn core_context_pack_response(
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        signals: Vec::new(),
+        signals_next: None,
         capabilities: pack.capabilities,
         l2_base: pack.l2_base,
         pin_narrowing: Vec::new(),
@@ -667,4 +684,16 @@ impl CoreContextPackResponse {
         );
         Ok(())
     }
+}
+
+/// A `reaction.put` or `reaction.revoked` on one of the reader's messages.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreReactionSignal {
+    pub event: &'static str,
+    pub reaction: String,
+    pub message: String,
+    pub by: String,
+    pub glyph: String,
+    pub occurred_at: u64,
+    pub recorded_at: u64,
 }

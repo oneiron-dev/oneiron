@@ -24,7 +24,7 @@ pub use self::inbound::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
     InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
     SurfaceCounterpartyStamp, SurfaceEvent, SurfaceEventAction, SurfaceEventDispatchRoute,
-    SurfaceEventSource, SurfaceInteractionKind, SurfaceSourceApp,
+    SurfaceEventSource, SurfaceInteractionKind, SurfaceReaction, SurfaceSourceApp,
 };
 
 fn validate_non_blank(value: &str, reason: &'static str) -> Result<()> {

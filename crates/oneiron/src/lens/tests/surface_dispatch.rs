@@ -65,6 +65,7 @@ fn native_interaction_requires_the_frame_target_and_produces_only_a_mediated_wri
         action: SurfaceEventAction::Interaction {
             interaction: SurfaceInteractionKind::Tap,
             target_ref: Some(token.ref_id().as_str().into()),
+            reaction: None,
         },
         correlation_id: "click-1".into(),
         payload_ref: None,
@@ -94,6 +95,7 @@ fn native_interaction_requires_the_frame_target_and_produces_only_a_mediated_wri
     forged.action = SurfaceEventAction::Interaction {
         interaction: SurfaceInteractionKind::Tap,
         target_ref: Some("ref-forged".into()),
+        reaction: None,
     };
     assert!(dispatch(&forged, &event).is_err());
     forged = surface.clone();

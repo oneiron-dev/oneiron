@@ -137,6 +137,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     // behind the derivation ever moves, the row dangles and mints pend —
     // fail-closed, never silently re-aimed.
     let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
+    // The conversation-mirror MACHINE attests connector-observed reactions
+    // (OF-372). Derived the same way, so a moved domain fails closed too.
+    let conversation_mirror_actor_ref = crate::reaction::conversation_mirror_actor_id()?.to_hex();
     let policy_values: serde_json::Value =
         serde_json::from_str(include_str!("policy_value_defaults.json"))
             .expect("valid shipped policy values");
@@ -344,6 +347,37 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                         ]),
                     ),
                 ]),
+                // A reaction is a person's own lightweight act on a room
+                // record, and its echo binding is connector metadata; neither
+                // may strand at the critical-consent floor. Exact rules.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(crate::reaction::PREDICATE_CONVERSATION_REACTION),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(crate::reaction::PREDICATE_CONVERSATION_REACTION_ECHO),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
                 // A delivered-send receipt projects this non-restrictive
                 // standing fact. Keep the rule exact: comm.opt_out still
                 // inherits the critical floor and cannot auto-widen consent.
@@ -536,6 +570,20 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                     (
                         Value::from(ACTOR_REF_KEY),
                         Value::from(commitment_projection_actor_ref.clone()),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
+                // OF-372 (owner ruling 2026-09-29): a reaction is not
+                // gate-pending, and a mirrored one is written by the signed
+                // conversation-mirror MACHINE. The row is keyed to that ONE
+                // derived actor; class `system` as a whole keeps default-deny.
+                //
+                // Reversal: delete this row; mirrored reactions pend again.
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("system")),
+                    (
+                        Value::from(ACTOR_REF_KEY),
+                        Value::from(conversation_mirror_actor_ref),
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),

@@ -111,7 +111,25 @@ pub(crate) enum SurfaceEventActionPayload {
         #[serde(default)]
         #[schema(example = "slack:1735689600.000100")]
         target_ref: Option<String>,
+        /// Provider facts of a reaction interaction.
+        #[serde(default)]
+        reaction: Option<SurfaceReactionPayload>,
     },
+}
+
+/// A reaction's provider generation, plus its occurrence time (a new add),
+/// its original claim (an echo of our own reaction) or `removed`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SurfaceReactionPayload {
+    glyph: String,
+    external_id: String,
+    #[serde(default)]
+    occurred_at: Option<u64>,
+    #[serde(default)]
+    origin_ref: Option<String>,
+    #[serde(default)]
+    removed: bool,
 }
 
 impl SurfaceEventActionPayload {
@@ -121,9 +139,17 @@ impl SurfaceEventActionPayload {
             Self::Interaction {
                 interaction,
                 target_ref,
+                reaction,
             } => oneiron::SurfaceEventAction::Interaction {
                 interaction: interaction.to_engine(),
                 target_ref,
+                reaction: reaction.map(|reaction| oneiron::surface_event::SurfaceReaction {
+                    glyph: reaction.glyph,
+                    external_id: reaction.external_id,
+                    occurred_at: reaction.occurred_at,
+                    origin_ref: reaction.origin_ref,
+                    removed: reaction.removed,
+                }),
             },
         }
     }

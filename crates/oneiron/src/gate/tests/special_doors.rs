@@ -387,7 +387,7 @@ fn generated_source_trust_row_pends_one_band_above_the_cap() -> Result<()> {
 /// If `commitment_projection_actor()` ever moves, this fails loudly instead of
 /// leaving a dangling row that silently re-aims (or drops) the grant.
 #[test]
-fn default_manifest_system_row_pins_the_commitment_projection_actor() {
+fn default_manifest_system_rows_pin_the_derived_engine_actors() {
     let data = default_policy_manifest().unwrap();
     let mut cursor = Cursor::new(data.as_slice());
     let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
@@ -425,20 +425,24 @@ fn default_manifest_system_row_pins_the_commitment_projection_actor() {
         })
         .collect::<Vec<_>>();
 
-    assert!(
-        !granting_system_rows.is_empty(),
-        "the default manifest must grant the commitment projection actor authority",
+    let derived_actor_refs = [
+        crate::commitment_schedule::commitment_projection_actor()
+            .unwrap()
+            .entity_ref()
+            .to_hex(),
+        crate::reaction::conversation_mirror_actor_id()
+            .unwrap()
+            .to_hex(),
+    ];
+    let named = granting_system_rows
+        .iter()
+        .filter_map(|row| row_field(row, ACTOR_REF_KEY))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        named, derived_actor_refs,
+        "every granting system row must name one derived engine actor, each exactly once",
     );
-    let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()
-        .unwrap()
-        .entity_ref()
-        .to_hex();
     for row in granting_system_rows {
-        assert_eq!(
-            row_field(row, ACTOR_REF_KEY).as_deref(),
-            Some(derived_actor_ref.as_str()),
-            "every granting system row must name the derived commitment projection actor",
-        );
         assert_eq!(row_field(row, ACTOR_CEILING_KEY).as_deref(), Some("auto"));
     }
 }

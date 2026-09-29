@@ -53,6 +53,7 @@ pub(crate) mod ppr;
 pub mod ppr_community;
 pub mod prompt;
 pub mod query_expansion;
+pub mod reaction;
 pub mod rerank;
 pub mod retrieval_depth;
 pub mod retrieval_quality;

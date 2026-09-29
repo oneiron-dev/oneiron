@@ -329,6 +329,7 @@ fn interaction_actions_decode_and_route_to_observed_source_enrichment() {
         let action = SurfaceEventAction::Interaction {
             interaction: kind,
             target_ref: Some("msg-1".to_owned()),
+            reaction: None,
         };
         let encoded = serde_json::to_value(&action).expect("action serializes");
         assert_eq!(encoded["kind"], "interaction");
@@ -421,6 +422,7 @@ fn builders_override_the_defaults_new_derives() {
         .with_action(SurfaceEventAction::Interaction {
             interaction: SurfaceInteractionKind::Tap,
             target_ref: None,
+            reaction: None,
         })
         .with_correlation_id("provider-correlation-9");
     assert_eq!(overridden.source.app, SurfaceSourceApp::Telegram);
@@ -1080,6 +1082,7 @@ fn surface_event_interaction_never_creates_turn() -> Result<()> {
                 .with_action(SurfaceEventAction::Interaction {
                     interaction,
                     target_ref: Some("msg-1".to_owned()),
+                    reaction: None,
                 }),
                 1_800_004_000 + index as u64,
             )?,

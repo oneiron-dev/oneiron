@@ -203,6 +203,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/conversations/{conversation_id}/records/{record}/thread",
             post(reply_in_thread),
         )
+        .route("/messages/{message}/reactions", post(react_core_message))
         .route(
             "/conversations/{conversation_id}/records/{record}/thread/summary",
             post(summarize_thread),
