@@ -1015,10 +1015,18 @@ fn session_close_watermark_stops_at_the_first_unplanned_turn() {
     );
 }
 
-/// Millisecond clock that tracks tokio's (paused) time.
+/// Millisecond clock that tracks tokio's (paused) time on EVERY thread. The
+/// vault samples its store clock off the runtime too (the authority-fold
+/// cache probes on a scoped thread), where `tokio::time::Instant` falls back
+/// to the real clock; one such sample would raise the vault's recorded-at
+/// floor past paused time and stamp attempts in the test's future.
 fn tokio_clock(base_ms: u64) -> NowMillis {
+    let runtime = tokio::runtime::Handle::current();
     let start = tokio::time::Instant::now();
-    Arc::new(move || base_ms + u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX))
+    Arc::new(move || {
+        let _paused_clock = runtime.enter();
+        base_ms + u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+    })
 }
 
 #[tokio::test]
