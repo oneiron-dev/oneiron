@@ -1,15 +1,11 @@
-//! Actual XLSX in/out tests through the core's edit round-trip pipeline.
+//! Actual XLSX in/out tests of the retained engine. The core's edit round
+//! trip, which wraps host sessions in this engine by default, tests the
+//! session routing (`crates/oneiron/src/edit_roundtrip/native_recalc_tests.rs`).
 use std::io::{Cursor, Read, Write};
 
-use oneiron::blob_artifact::CalcEngineStamp;
-use oneiron::edit_roundtrip::{
-    AppliedEdit, CellRef, CellValue, EditOp, EditOutcome, EditPlan, EditProposal, EditSession,
-    OfficeDoc, OfficeFormat, RecalcStatus, run_edit_roundtrip,
-};
-use oneiron::error::{ArtifactError, Error, Result};
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
-use oneiron_xlsx_formula::{FormulaError, InProcessSession};
+use oneiron_xlsx_formula::{FormulaError, preserve_external_links};
 use proptest::prelude::*;
 
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -18,7 +14,6 @@ const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships"
 const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.2";
 
 fn limits() -> Limits {
     Limits {
@@ -93,146 +88,6 @@ fn part_text(bytes: &[u8], name: &str) -> String {
 fn recalc(bytes: &[u8]) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
     FormualizerEngine::new().recalculate_xlsx(bytes, limits())
 }
-fn stamp(proposal: &EditProposal) -> Option<String> {
-    proposal
-        .calc_engine
-        .as_deref()
-        .map(|stamp| format!("{}/{}", stamp.engine(), stamp.version()))
-}
-fn fallback_stamp() -> CalcEngineStamp {
-    CalcEngineStamp::new("libreoffice", "fixture-precision").expect("fixture stamp")
-}
-fn refusal(result: Result<EditOutcome>) -> &'static str {
-    match result {
-        Err(Error::Artifact(ArtifactError::EditRoundtripFailed(reason))) => reason,
-        other => panic!("expected an edit refusal, got {other:?}"),
-    }
-}
-
-struct FixtureSession {
-    edit: Option<(String, String)>,
-    fallback: Option<Vec<u8>>,
-    expected_fallback_input: Option<Vec<u8>>,
-}
-impl FixtureSession {
-    fn editor() -> Self {
-        Self {
-            edit: None,
-            fallback: None,
-            expected_fallback_input: None,
-        }
-    }
-}
-impl EditSession for FixtureSession {
-    fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
-        let mut bytes = doc.bytes.clone();
-        if let Some((before, after)) = &self.edit {
-            let input = part_text(&bytes, INPUT);
-            assert!(input.contains(before));
-            bytes = with_part(&bytes, INPUT, input.replace(before, after));
-        }
-        Ok(AppliedEdit {
-            bytes,
-            applied_ops: plan.ops.clone(),
-            warnings: Vec::new(),
-        })
-    }
-    fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
-        if let Some(expected) = &self.expected_fallback_input {
-            assert_eq!(&doc.bytes, expected);
-        }
-        self.fallback
-            .clone()
-            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "unexpected precision fallback",
-            )))
-    }
-    fn recalc_engine(&self) -> Option<CalcEngineStamp> {
-        Some(fallback_stamp())
-    }
-}
-
-fn recalc_plan() -> EditPlan {
-    EditPlan {
-        ops: Vec::new(),
-        request_recalc: Some(true),
-    }
-}
-
-#[test]
-fn edit_session_recalculates_cross_sheet_graph_and_stamps_proposal() {
-    let input = fixture(
-        r#"<c r="A1"><v>2</v></c>"#,
-        r#"<c r="A1"><f>B1+3</f><v>0</v></c><c r="B1"><f>Input!A1*2</f><v>0</v></c>"#,
-        false,
-    );
-    let session = InProcessSession::opt_in(
-        FixtureSession {
-            edit: Some(("<v>2</v>".into(), "<v>7</v>".into())),
-            ..FixtureSession::editor()
-        },
-        limits(),
-    );
-    let plan = EditPlan::new(vec![EditOp::SetCell {
-        sheet: "Input".into(),
-        cell: CellRef { row: 1, col: 1 },
-        before: Some(CellValue::Number(2.0)),
-        after: CellValue::Number(7.0),
-    }]);
-    let outcome = run_edit_roundtrip(&session, &input, OfficeFormat::Xlsx, &plan, "native-graph")
-        .expect("pipeline");
-    let EditOutcome::Proposed(proposal) = outcome else {
-        panic!("rejected XLSX");
-    };
-    assert!(proposal.validation.ok);
-    assert_eq!(proposal.recalc, RecalcStatus::Performed);
-    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
-    let xml = part_text(&proposal.new_bytes, OUTPUT);
-    assert!(xml.contains("<f>B1+3</f><v>17</v>"));
-    assert!(xml.contains("<f>Input!A1*2</f><v>14</v>"));
-    assert_eq!(
-        part_bytes(&proposal.new_bytes, "vendor/opaque.bin").as_deref(),
-        Some(UNKNOWN)
-    );
-    assert_eq!(
-        part_text(&input, "xl/workbook.xml"),
-        part_text(&proposal.new_bytes, "xl/workbook.xml")
-    );
-    assert!(part_text(&input, INPUT).contains("<v>2</v>"));
-}
-
-#[test]
-fn a_reused_session_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
-    let input = fixture("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#, false);
-    let session = InProcessSession::opt_in(FixtureSession::editor(), limits());
-    let first = run_edit_roundtrip(
-        &session,
-        &input,
-        OfficeFormat::Xlsx,
-        &recalc_plan(),
-        "first",
-    )
-    .expect("first recalc");
-    let EditOutcome::Proposed(first) = first else {
-        panic!("rejected first");
-    };
-    assert_eq!(stamp(&first).as_deref(), Some(NATIVE_STAMP));
-    let second = run_edit_roundtrip(
-        &session,
-        &first.new_bytes,
-        OfficeFormat::Xlsx,
-        &EditPlan::new(Vec::new()),
-        "second",
-    )
-    .expect("second proposal");
-    let EditOutcome::Proposed(second) = second else {
-        panic!("rejected second");
-    };
-    assert_eq!(second.calc_engine, None);
-    assert_eq!(second.recalc, RecalcStatus::NotNeeded);
-    assert_eq!(second.new_bytes, first.new_bytes);
-}
-
 #[test]
 fn scalar_cache_types_and_unknown_xml_survive_the_retained_writer() {
     let cells = r#"<c r="A1" t="str" s="4" u:cell="keep"><f u:f="keep">40+2</f><v u:v="keep">old</v><u:cellExt a="b"/></c><c r="B1"><f>&quot;東京 &amp; &lt;report&gt;&quot;</f><v/></c><c r="C1" t="str"><f>1/0</f><v>old</v></c><c r="D1"><f>TRUE()</f></c>"#;
@@ -338,33 +193,13 @@ fn external_workbook() -> Vec<u8> {
 }
 
 #[test]
-fn external_link_workbook_crosses_fallback_unchanged_and_never_gets_native_stamp() {
+fn external_link_workbook_is_refused_before_evaluation() {
     let input = external_workbook();
-    let session = InProcessSession::opt_in(
-        FixtureSession {
-            fallback: Some(input.clone()),
-            expected_fallback_input: Some(input.clone()),
-            ..FixtureSession::editor()
-        },
-        limits(),
-    );
-    let outcome = run_edit_roundtrip(
-        &session,
-        &input,
-        OfficeFormat::Xlsx,
-        &recalc_plan(),
-        "external-safe",
-    )
-    .expect("fallback");
-    let EditOutcome::Proposed(proposal) = outcome else {
-        panic!("rejected");
-    };
-    assert_eq!(proposal.new_bytes, input);
-    assert_eq!(proposal.calc_engine.as_deref(), Some(&fallback_stamp()));
     assert!(matches!(
         recalc(&input),
         Err(FormulaError::UnsupportedWorkbook("external-links-part"))
     ));
+    assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
 }
 
 #[test]
@@ -375,22 +210,18 @@ fn destructive_external_link_fallback_is_refused() {
         "xl/externalLinks/externalLink1.xml",
         b"<externalLink/>".to_vec(),
     );
-    let session = InProcessSession::opt_in(
-        FixtureSession {
-            fallback: Some(damaged),
-            ..FixtureSession::editor()
-        },
-        limits(),
+    assert_eq!(
+        preserve_external_links(&input, &damaged, limits()),
+        Err("fallback altered or dropped an external-link part")
+    );
+    let unlinked = with_part(
+        &input,
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+        format!(r#"<Relationships xmlns="{REL}"/>"#),
     );
     assert_eq!(
-        refusal(run_edit_roundtrip(
-            &session,
-            &input,
-            OfficeFormat::Xlsx,
-            &recalc_plan(),
-            "external-loss"
-        )),
-        "fallback altered or dropped an external-link part"
+        preserve_external_links(&input, &unlinked, limits()),
+        Err("fallback altered or dropped an external-link part")
     );
 }
 
@@ -401,54 +232,36 @@ fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
         r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>42</v></c>"#,
         false,
     );
+    assert!(matches!(
+        recalc(&input),
+        Err(FormulaError::UnsupportedWorkbook(
+            "external-formula-reference"
+        ))
+    ));
     let damaged = with_part(&input, OUTPUT, sheet(r#"<c r="A1"><v>42</v></c>"#));
-    let session = InProcessSession::opt_in(
-        FixtureSession {
-            fallback: Some(damaged),
-            ..FixtureSession::editor()
-        },
-        limits(),
-    );
     assert_eq!(
-        refusal(run_edit_roundtrip(
-            &session,
-            &input,
-            OfficeFormat::Xlsx,
-            &recalc_plan(),
-            "external-formula-loss"
-        )),
-        "fallback altered or dropped an external formula link"
+        preserve_external_links(&input, &damaged, limits()),
+        Err("fallback altered or dropped an external formula link")
     );
+    let recached = with_part(
+        &input,
+        OUTPUT,
+        sheet(r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>43</v></c>"#),
+    );
+    assert_eq!(preserve_external_links(&input, &recached, limits()), Ok(()));
 }
 
 #[test]
-fn unsupported_spills_and_shared_formulas_use_precision_fallback_not_partial_output() {
+fn unsupported_spills_and_shared_formulas_are_refused_not_partially_written() {
     for formula in [
         r#"<f t="shared" si="0" ref="A1:A2">1+2</f>"#,
         "<f>SEQUENCE(2,2)</f>",
     ] {
         let input = fixture("", &format!(r#"<c r="A1">{formula}<v>999</v></c>"#), false);
-        let session = InProcessSession::opt_in(
-            FixtureSession {
-                fallback: Some(input.clone()),
-                expected_fallback_input: Some(input.clone()),
-                ..FixtureSession::editor()
-            },
-            limits(),
-        );
-        let outcome = run_edit_roundtrip(
-            &session,
-            &input,
-            OfficeFormat::Xlsx,
-            &recalc_plan(),
-            "unsupported",
-        )
-        .expect("fallback");
-        let EditOutcome::Proposed(proposal) = outcome else {
-            panic!("rejected");
-        };
-        assert_eq!(proposal.new_bytes, input);
-        assert_eq!(proposal.calc_engine.as_deref(), Some(&fallback_stamp()));
+        assert!(matches!(
+            recalc(&input),
+            Err(FormulaError::UnsupportedWorkbook(_))
+        ));
     }
 }
 
@@ -525,7 +338,7 @@ proptest! {
 }
 
 #[test]
-fn contextual_formulas_use_precision_fallback_not_the_corpus_clock() {
+fn contextual_formulas_are_refused_not_evaluated_on_the_corpus_clock() {
     for formula in [
         "NOW()",
         "_xlfn.TODAY()",
@@ -537,26 +350,10 @@ fn contextual_formulas_use_precision_fallback_not_the_corpus_clock() {
             &format!(r#"<c r="A1"><f>{formula}</f><v>42</v></c>"#),
             false,
         );
-        let session = InProcessSession::opt_in(
-            FixtureSession {
-                fallback: Some(input.clone()),
-                expected_fallback_input: Some(input.clone()),
-                ..FixtureSession::editor()
-            },
-            limits(),
-        );
-        let EditOutcome::Proposed(proposal) = run_edit_roundtrip(
-            &session,
-            &input,
-            OfficeFormat::Xlsx,
-            &recalc_plan(),
-            "context-fallback",
-        )
-        .expect("precision route") else {
-            panic!("rejected precision route");
-        };
-        assert_eq!(proposal.new_bytes, input);
-        assert_eq!(proposal.calc_engine.as_deref(), Some(&fallback_stamp()));
+        assert!(matches!(
+            recalc(&input),
+            Err(FormulaError::UnsupportedWorkbook(_))
+        ));
     }
     let input = fixture(
         "",
@@ -569,7 +366,7 @@ fn contextual_formulas_use_precision_fallback_not_the_corpus_clock() {
 }
 
 #[test]
-fn windows_only_functions_return_name_errors_in_the_native_mac_session() {
+fn windows_only_functions_return_name_errors_in_the_native_mac_engine() {
     for formula in [
         r#"ENCODEURL("a b")"#,
         r#"FILTERXML("<root/>","/root")"#,
@@ -581,95 +378,17 @@ fn windows_only_functions_return_name_errors_in_the_native_mac_session() {
             &format!(r#"<c r="A1"><f>{xml_formula}</f><v>42</v></c>"#),
             false,
         );
-        let session = InProcessSession::opt_in(FixtureSession::editor(), limits());
-        let EditOutcome::Proposed(proposal) = run_edit_roundtrip(
-            &session,
-            &input,
-            OfficeFormat::Xlsx,
-            &recalc_plan(),
-            "mac-function-parity",
-        )
-        .expect("native session") else {
-            panic!("rejected native session")
-        };
-        let xml = part_text(&proposal.new_bytes, OUTPUT);
+        let output = recalc(&input).expect("native recalc");
+        let xml = part_text(&output.bytes, OUTPUT);
         assert!(
             xml.contains(r#"t="e""#) && xml.contains("<v>#NAME?</v>"),
             "{xml}"
         );
-        assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+        assert_eq!(
+            output.engine.stamp(),
+            "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.2"
+        );
     }
-}
-
-#[test]
-fn native_xlsx_session_settles_once_with_bound_engine_stamp() -> oneiron::Result<()> {
-    use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
-    use oneiron::edit_settle::SettleConsent;
-    use oneiron::write_envelope::WriteActor;
-    use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
-
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::device())?;
-    let at = TimeRange { start: 10, end: 10 };
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        oneiron::registry::ENTITY_TYPE_PERSON,
-        at,
-        10,
-        b"owner",
-    )?;
-    let actor = WriteActor::new(person, EdgeActorClass::Human);
-    let artifact = EntityId::now();
-    vault.put_blob_artifact(
-        &artifact,
-        &BlobArtifactBody::new(
-            "native.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ),
-        at,
-        10,
-    )?;
-    let input = fixture("", r#"<c r="A1"><f>40+2</f><v>0</v></c>"#, false);
-    vault.append_blob_artifact_version(
-        &artifact,
-        &input,
-        &BlobVersionProvenance::UserUpload,
-        actor,
-        at,
-        10,
-    )?;
-    // The host reads packages under the vault's resolved document ceilings.
-    let session =
-        InProcessSession::opt_in(FixtureSession::editor(), vault.docedit_package_limits()?);
-    let EditOutcome::Proposed(proposal) =
-        vault.propose_blob_artifact_edit(&artifact, &session, &recalc_plan(), "run:native-xlsx")?
-    else {
-        panic!("rejected native XLSX")
-    };
-    assert!(part_text(&proposal.new_bytes, OUTPUT).contains("<v>42</v>"));
-    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
-    let consent = SettleConsent::OwnerConsent { brief_ref: None };
-    vault.settle_select_edit_proposal(&artifact, &proposal, &consent, actor, at, 12)?;
-    assert_eq!(
-        vault
-            .blob_artifact_version_metadata(&artifact, 2)?
-            .expect("version")
-            .calc_engine
-            .as_ref(),
-        proposal.calc_engine.as_deref()
-    );
-    assert_eq!(
-        vault.read_blob_artifact_version(&artifact, 2)?,
-        Some(proposal.new_bytes.clone())
-    );
-    assert!(matches!(
-        vault.settle_select_edit_proposal(&artifact, &proposal, &consent, actor, at, 13),
-        Err(Error::Artifact(
-            ArtifactError::EditProposalAlreadySettled { .. }
-        ))
-    ));
-    Ok(())
 }
 
 #[test]
@@ -792,7 +511,7 @@ fn unsafe_formula_depth_refuses_before_recursive_evaluation_on_both_doors() {
 }
 
 #[test]
-fn bounded_formula_values_stay_native_and_over_limit_preserves_fallback_identity() {
+fn bounded_formula_values_stay_native_and_over_limit_is_refused() {
     use oneiron_xlsx_formula::engine::{CellValue as CalcValue, RecalcEngine};
     use std::collections::BTreeMap;
     let normal = std::iter::repeat_n("1", 24).collect::<Vec<_>>().join("+");
@@ -814,27 +533,10 @@ fn bounded_formula_values_stay_native_and_over_limit_preserves_fallback_identity
         ),
         false,
     );
-    let session = InProcessSession::opt_in(
-        FixtureSession {
-            fallback: Some(input.clone()),
-            expected_fallback_input: Some(input.clone()),
-            ..FixtureSession::editor()
-        },
-        limits(),
-    );
-    let result = run_edit_roundtrip(
-        &session,
-        &input,
-        OfficeFormat::Xlsx,
-        &recalc_plan(),
-        "bounded-formula",
-    )
-    .unwrap();
-    let EditOutcome::Proposed(proposal) = result else {
-        panic!("expected fallback proposal");
-    };
-    assert_eq!(proposal.new_bytes, input);
-    assert_eq!(proposal.calc_engine.as_deref(), Some(&fallback_stamp()));
+    assert!(matches!(
+        recalc(&input),
+        Err(FormulaError::UnsupportedWorkbook(_))
+    ));
 }
 
 #[test]
