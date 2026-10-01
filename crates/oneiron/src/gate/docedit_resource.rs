@@ -42,6 +42,12 @@ impl DoceditResourcePolicy {
     }
 }
 
+/// The shipped ceilings, for a document entry with no vault to resolve them
+/// (the raw xlsx edit round trip).
+pub(crate) fn shipped_docedit_package_limits() -> oneiron_docedit::retained_opc::Limits {
+    DoceditResourcePolicy::shipped().organ_limits()
+}
+
 pub(in crate::gate) fn row_values(row: DoceditResourcePolicy) -> [u64; 6] {
     [
         row.archive_bytes as u64,

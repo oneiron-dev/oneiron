@@ -27,10 +27,19 @@
 //!    session library is Python openpyxl (`keep_vba=True, keep_links=True,
 //!    data_only=False`);
 //!    umya-spreadsheet (Rust) and protobi/exceljs (JS) are recorded alternates.
-//! 3. **Recalc** — when inputs/formulas changed, [`EditSession::recalc`]
-//!    refreshes cached formula values. In production this is LibreOffice
-//!    headless (a session-image dependency); HyperFormula/`formulas` is the
-//!    recorded in-process fallback.
+//! 3. **Recalc** — when inputs/formulas changed, cached formula values are
+//!    refreshed. By default ([`RecalcPolicy::NativeFirst`]) the pipeline wraps
+//!    the session so the in-process formula engine (`oneiron-xlsx-formula`,
+//!    the owned formualizer fork) recalculates every workbook it admits. The
+//!    corpus rule is met at fork rev `57a7f6cb`: 2,700 of the 2,951
+//!    formula-bearing fresh-Excel SpreadsheetBench workbooks are fully
+//!    Excel-identical, against 2,648 for LibreOffice 25.8, and 809 of the 811
+//!    pinned goldens against LibreOffice's 753. [`EditSession::recalc`] —
+//!    LibreOffice headless in production, a session-image dependency — stays
+//!    the precision fallback for refused workbooks only (unsupported
+//!    features, formulas needing caller context) and keeps the link-preserving
+//!    route for external-link workbooks. A session opts out explicitly with
+//!    [`RecalcPolicy::SessionOnly`].
 //! 4. **Corruption-check validation** — the `validate` stage runs an automated
 //!    open/verify plus a passthrough diff. A failed check yields
 //!    [`EditOutcome::Rejected`] and never reaches the proposal stage.
@@ -62,6 +71,7 @@ mod inspect;
 mod judgment;
 pub(crate) mod judgment_cells;
 mod manifest;
+mod native_recalc;
 mod opc;
 mod ops;
 mod pipeline;
@@ -81,11 +91,13 @@ pub use self::manifest::{
 pub use self::ops::{AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift};
 pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_roundtrip};
 pub use self::session_validate::{
-    AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport,
+    AppliedEdit, EditPlan, EditSession, OfficeDoc, RecalcPolicy, ValidationCheck, ValidationReport,
 };
 
 #[cfg(test)]
 mod docx_tests;
+#[cfg(test)]
+mod native_recalc_tests;
 #[cfg(test)]
 mod tests;
 
