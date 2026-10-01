@@ -74,7 +74,7 @@ instruction is the model's own too: Harrier prepends
 `Instruct: Given a question, retrieve passages that answer it\nQuery: ` to a
 query, pplx-embed embeds queries raw, and `query_instruction` overrides either.
 A vault pinned to one model refuses to open under another
-(`EmbeddingModelChanged`).
+(`EmbeddingModelChanged`); see *Changing a vault's embedding model* below.
 
 On a CUDA toolkit host, build the same server with candle's dependency features
 explicitly enabled (not a `oneiron-server` feature):
@@ -125,6 +125,24 @@ lms load text-embedding-harrier-oss-v1-0.6b --context-length 4096 -y
 # Linux, llama-server
 llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096 --port 8089
 ```
+
+### Changing a vault's embedding model
+
+A server whose `model_id` differs from the one the vault holds stops at open
+with `embedding model changed: stored=…, requested=…` and leaves the vault
+untouched. Either keep the vault in its space by naming that `model_id` in its
+config, or move it. With the server stopped:
+
+```sh
+oneiron-server reembed --config <same config serve reads>
+# {"from":"microsoft/harrier-oss-v1-0.6b@f9b9dc8…","to":"perplexity-ai/pplx-embed-v1-0.6b@2c4d510…","migrated":true}
+```
+
+`reembed` repins the vault to the configured `model_id`, drops the vector
+graph and queues every claim. The next `serve` embeds them all again in the
+background; lexical and graph reads answer throughout, and semantic results
+fill in as vectors land. A vault already in the configured space is left as it
+is (`"migrated":false`).
 
 ## Linear mirror host bridge (opt-in)
 

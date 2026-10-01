@@ -40,6 +40,9 @@ pub enum Command {
     Init(InitArgs),
     /// Open a vault and print its doctor report.
     Doctor(VaultArgs),
+    /// Move a stopped vault to the configured embedding model: repin it and
+    /// queue every claim to be embedded again, which the next `serve` does.
+    Reembed(Box<ServeArgs>),
     /// Resolve repo commit provenance trailers against a vault claim.
     Provenance(Box<ProvenanceArgs>),
     /// Create pairing links and revoke slips.
@@ -365,6 +368,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
+        Command::Reembed(args) => commands::reembed(*args),
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),

@@ -68,6 +68,8 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
 
 mod init;
 pub use init::init;
+mod reembed;
+pub use reembed::reembed;
 
 pub fn doctor(args: VaultArgs) -> anyhow::Result<()> {
     let vault = open_vault_for_command(&args)?;
