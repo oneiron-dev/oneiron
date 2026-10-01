@@ -96,8 +96,8 @@ pub fn run_edit_roundtrip<S: EditSession>(
     })
 }
 
-/// Wrap the session in the in-process engine unless it opted out. `limits`
-/// resolves the document ceilings only when the wrap needs them.
+/// Wrap an xlsx session in the in-process engine unless it opted out.
+/// `limits` resolves the document ceilings only when the wrap needs them.
 fn run_with_recalc_policy<S: EditSession>(
     session: &S,
     input_bytes: &[u8],
@@ -106,12 +106,14 @@ fn run_with_recalc_policy<S: EditSession>(
     run_ref: &str,
     limits: impl FnOnce() -> Result<Limits>,
 ) -> Result<EditOutcome> {
-    match session.recalc_policy() {
-        RecalcPolicy::NativeFirst => {
+    // The wrap is an xlsx adapter: other formats take the plain route, where
+    // the pipeline refuses them as before, without resolving document ceilings.
+    match (format, session.recalc_policy()) {
+        (OfficeFormat::Xlsx, RecalcPolicy::NativeFirst) => {
             let session = NativeFirst::new(session, limits()?);
             run_pipeline(&session, input_bytes, format, plan, run_ref)
         }
-        RecalcPolicy::SessionOnly => run_pipeline(session, input_bytes, format, plan, run_ref),
+        _ => run_pipeline(session, input_bytes, format, plan, run_ref),
     }
 }
 

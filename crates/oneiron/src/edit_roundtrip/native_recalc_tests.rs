@@ -385,6 +385,22 @@ fn external_link_workbooks_keep_the_link_preserving_host_route() {
 }
 
 #[test]
+fn non_xlsx_formats_are_refused_before_the_default_wrap_applies() {
+    let input = workbook("", r#"<c r="A1"><f>40+2</f><v>0</v></c>"#);
+    let host = Host::default();
+    for format in [OfficeFormat::Docx, OfficeFormat::Pptx] {
+        let err = run_edit_roundtrip(&host, &input, format, &recalc_plan(), "run:doc")
+            .expect_err("non-spreadsheet formats are unsupported");
+        assert!(
+            matches!(err, Error::Artifact(ArtifactError::InvalidEditManifest(_))),
+            "expected InvalidEditManifest, got {err:?}"
+        );
+    }
+    // The wrap never ran: the host saw no document.
+    assert!(host.seen.borrow().is_empty());
+}
+
+#[test]
 fn explicit_opt_out_sends_every_recalc_to_the_host() {
     let input = workbook("", r#"<c r="A1"><f>40+2</f><v>0</v></c>"#);
     // The engine would cache 42; the host's own calculator answer proves the route.
