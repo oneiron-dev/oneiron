@@ -71,10 +71,12 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
                 *self.stamp.borrow_mut() = Some(stamp);
                 Ok(report.bytes)
             }
-            Err(FormulaError::UnsupportedWorkbook(_)) => self.host_recalc(doc),
             Err(FormulaError::Package(_)) => Err(failed("workbook package refused")),
             Err(FormulaError::InvalidWorkbook(reason)) => Err(failed(reason)),
-            Err(_) => Err(failed("in-process formula evaluation failed")),
+            // A refused workbook and an engine failure both mean "the engine
+            // cannot do this one": the host's recalc is the precision fallback
+            // for both. Only a malformed or over-limit package fails outright.
+            Err(_) => self.host_recalc(doc),
         }
     }
 
