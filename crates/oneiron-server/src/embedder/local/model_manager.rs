@@ -192,6 +192,22 @@ pub(crate) fn planned_files(raw_modules_json: &str) -> oneiron::Result<Vec<Cow<'
         .collect())
 }
 
+/// Whether the checkpoint's prompt file is read at all.
+///
+/// A shipped default's pins say whether its commit carries one. When they say
+/// it does not, a file by that name in the cache is not the checkpoint's —
+/// copied there, or left by another model — and it is never read: the model
+/// carries no prompt. Any other repository, and an operator's `model_dir`,
+/// read the file when it is there. The early door, the metadata-only door and
+/// the full load all read the spec through this one rule.
+pub(crate) fn reads_prompt_file(config: &LocalEmbedderConfig) -> bool {
+    config.model_dir.is_some()
+        || pinned_files(config).is_none_or(|pins| {
+            pins.iter()
+                .any(|pin| pin.file == super::prompts::PROMPT_FILE)
+        })
+}
+
 /// Beside an optional file its source answered `404` for: the file is
 /// confirmed absent at this commit, not merely not fetched yet.
 fn absent_marker(path: &Path) -> PathBuf {
@@ -231,8 +247,8 @@ pub(crate) fn verified_metadata_dir(config: &LocalEmbedderConfig) -> Option<Path
     }
     let prompt = Cow::Borrowed(super::prompts::PROMPT_FILE);
     let prompt_settled = match pins {
-        Some(pins) if pins.iter().any(|pin| pin.file == prompt) => checked(prompt),
-        Some(_) => true,
+        _ if !reads_prompt_file(config) => true,
+        Some(_) => checked(prompt),
         None => {
             let path = dir.join(prompt.as_ref());
             path.is_file() || absent_marker(&path).is_file()
@@ -326,16 +342,48 @@ fn absolute_env_dir(key: &str) -> Option<PathBuf> {
 }
 
 /// The directory the model's files sit in.
+///
+/// Under the models root, the repository and commit become path segments and
+/// URL segments, so they are checked here ([`check_cache_identity`]): every
+/// directory made, file fetched and marker written goes through this path
+/// first. An operator's `model_dir` is taken as it stands.
 pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
     if let Some(configured) = config.model_dir.as_ref() {
         return Ok(configured.clone());
     }
+    check_cache_identity(config)?;
     let mut dir = models_root(config)?;
     for segment in config.repo.split('/') {
         dir.push(segment);
     }
     dir.push(&config.revision);
     Ok(dir)
+}
+
+/// Refuses a repository or commit that is not a plain name: the repository
+/// exactly `org/name`, the commit one segment, each segment of ASCII letters,
+/// digits, `.`, `_` and `-` and none of them only dots. An absolute path, a
+/// `.` or `..` segment, an empty one, another separator or URL syntax would
+/// reach outside the models root or the repository's own URL.
+fn check_cache_identity(config: &LocalEmbedderConfig) -> oneiron::Result<()> {
+    let plain = |segment: &str| {
+        segment.bytes().any(|byte| byte != b'.')
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    };
+    let repo = config
+        .repo
+        .split_once('/')
+        .is_some_and(|(org, name)| plain(org) && plain(name));
+    if repo && plain(&config.revision) {
+        return Ok(());
+    }
+    Err(oneiron::Error::InvalidConfig(format!(
+        "embedder repo {:?} and revision {:?} must be a plain org/name and commit: letters, \
+         digits, '.', '_' and '-' only, no segment of only dots",
+        config.repo, config.revision
+    )))
 }
 
 /// Fetches and verifies the local model's files.
@@ -486,6 +534,7 @@ impl ModelManager {
                     fetched += 1;
                 }
             }
+            // A pinned commit without one: nothing is fetched, nothing read.
             Some(_) => {}
             None if !offline => self.fetch_optional(config, &dir, &artifact(None, prompt)?)?,
             None => {}

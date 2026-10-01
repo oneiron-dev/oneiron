@@ -40,22 +40,26 @@ pub(super) struct Prompts {
     pub(super) document: String,
 }
 
-/// Resolves both prompts for the checkpoint in `model_dir`.
+/// Resolves both prompts for the checkpoint in `model_dir`, or, given
+/// `None`, for a checkpoint whose prompt file is not read
+/// ([`super::model_manager::reads_prompt_file`]).
 ///
 /// A name that the file does not carry is refused, never skipped: the prompt
 /// decides where every query lands, and a silently missing one is a different
 /// space.
 pub(super) fn resolve(
-    model_dir: &Path,
+    model_dir: Option<&Path>,
     query_instruction: Option<&str>,
     query_prompt_name: Option<&str>,
 ) -> oneiron::Result<Prompts> {
-    let file = match std::fs::read_to_string(model_dir.join(PROMPT_FILE)) {
-        Ok(raw) => serde_json::from_str::<PromptFile>(&raw).map_err(|e| {
+    let read = model_dir.map(|dir| std::fs::read_to_string(dir.join(PROMPT_FILE)));
+    let file = match read {
+        None => PromptFile::default(),
+        Some(Ok(raw)) => serde_json::from_str::<PromptFile>(&raw).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model {PROMPT_FILE}: {e}"))
         })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => PromptFile::default(),
-        Err(error) => return Err(oneiron::Error::Io(error)),
+        Some(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => PromptFile::default(),
+        Some(Err(error)) => return Err(oneiron::Error::Io(error)),
     };
     let named = |name: &str| -> oneiron::Result<String> {
         file.prompts.get(name).cloned().ok_or_else(|| {

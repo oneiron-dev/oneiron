@@ -61,6 +61,9 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
         );
     };
     let target = embedder.model_id.clone();
+    // An id the vault would refuse is refused before anything is fetched or
+    // written for it.
+    oneiron::store::validate_embedding_model_id(&target)?;
     if !config.vault_path.join("data.mdb").is_file() {
         anyhow::bail!(
             "vault {} does not exist; refusing to create a new vault for reembed",

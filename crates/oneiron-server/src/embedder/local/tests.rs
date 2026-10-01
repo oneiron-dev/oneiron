@@ -969,13 +969,23 @@ fn spec_config() -> crate::config::EmbedderConfig {
     }
 }
 
+/// [`spec_config`] naming the earlier default, so its fixture reads as that
+/// checkpoint, prompt file and all.
+fn harrier_config() -> crate::config::EmbedderConfig {
+    let mut config = spec_config();
+    let harrier = &model_manager::PINNED_MODELS[1];
+    config.local.repo = harrier.repo.to_owned();
+    config.local.revision = harrier.revision.to_owned();
+    config
+}
+
 /// Both shipped models are read by the same code from their own files, with
 /// nothing in config but their repository: one causal, last-token pooled and
 /// normalised; the other bidirectional, mean pooled and int8-quantised;
 /// neither carrying a prompt by default.
 #[test]
 fn both_shipped_models_read_through_the_same_generic_path() {
-    let harrier = spec::LocalModelSpec::read(&model_fixture("harrier"), &spec_config())
+    let harrier = spec::LocalModelSpec::read(&model_fixture("harrier"), &harrier_config())
         .expect("the earlier default reads");
     assert!(harrier.body.causal());
     assert_eq!(
@@ -1006,13 +1016,13 @@ fn each_shipped_model_declares_its_transform_from_its_own_files() {
         "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024"
     );
     let harrier =
-        spec::LocalModelSpec::read(&model_fixture("harrier"), &spec_config()).expect("reads");
+        spec::LocalModelSpec::read(&model_fixture("harrier"), &harrier_config()).expect("reads");
     assert_eq!(
         harrier.transform(),
         "attn=causal;pool=lasttoken;include_prompt=true;doc_prompt=none;chain=normalize;dims=1024"
     );
 
-    let mut config = spec_config();
+    let mut config = harrier_config();
     config.query_instruction = Some("Represent this question: ".to_owned());
     config.query_prompt_name = Some("web_search_query".to_owned());
     config.batch_size = 1;
@@ -1117,7 +1127,7 @@ fn the_attention_and_quantizer_overrides_reach_the_read_model() {
 /// the names it has.
 #[test]
 fn a_query_prompt_comes_from_the_models_own_file_by_name() {
-    let mut config = spec_config();
+    let mut config = harrier_config();
     config.query_prompt_name = Some("web_search_query".to_owned());
     let named = spec::LocalModelSpec::read(&model_fixture("harrier"), &config).expect("reads");
     assert_eq!(
@@ -1140,6 +1150,7 @@ fn a_query_prompt_comes_from_the_models_own_file_by_name() {
         "{error:?}"
     );
     // The default model has no prompt file at all, so a name is refused there too.
+    config.local = spec_config().local;
     let error = spec::LocalModelSpec::read(&model_fixture("pplx"), &config).expect_err("no file");
     assert!(
         matches!(error, oneiron::Error::InvalidConfig(_)),
@@ -1172,7 +1183,7 @@ fn prompts_follow_the_sentence_transformers_names() {
     ] {
         let dir = tempfile::tempdir().expect("model dir");
         std::fs::write(dir.path().join(prompts::PROMPT_FILE), file).expect("write prompts");
-        let resolved = prompts::resolve(dir.path(), None, None).expect(file);
+        let resolved = prompts::resolve(Some(dir.path()), None, None).expect(file);
         assert_eq!(
             resolved,
             prompts::Prompts {
@@ -1188,7 +1199,7 @@ fn prompts_follow_the_sentence_transformers_names() {
         r#"{"prompts":{"query":"q: "},"default_prompt_name":"gone"}"#,
     )
     .expect("write prompts");
-    assert!(prompts::resolve(dangling.path(), None, None).is_err());
+    assert!(prompts::resolve(Some(dangling.path()), None, None).is_err());
 }
 
 // ─── device and precision ────────────────────────────────────────────────
@@ -1391,6 +1402,61 @@ fn an_incomplete_model_dir_names_the_missing_file_and_never_downloads() {
     );
 }
 
+/// The repository and commit name a directory under the models root and a
+/// path on the source, so each must be a plain name. One that climbs out of
+/// the root, an absolute one, or URL syntax is refused before any directory
+/// is made, any file fetched or any marker written.
+#[test]
+fn a_repository_or_commit_that_is_not_a_plain_name_is_refused_before_anything_is_written() {
+    let source = StubSource::start();
+    let outer = tempfile::tempdir().expect("models parent");
+    let manager = model_manager::ModelManager::with_base_url(&source.base);
+    let repo = crate::config::embedder::DEFAULT_LOCAL_REPO;
+    for (repo, revision) in [
+        (
+            repo,
+            "../../../perplexity-ai/pplx-embed-v1-0.6b/resolve/2c4d510dd4a732063c31a0f70193e35067b51fd8",
+        ),
+        (repo, "/tmp/escape"),
+        (repo, ".."),
+        (repo, "."),
+        (repo, ""),
+        (repo, "main?x=1"),
+        (repo, "main#frag"),
+        (repo, "ma%2Fin"),
+        (repo, "c:main"),
+        (repo, "ma\\in"),
+        ("/abs/name", "main"),
+        ("org/..", "main"),
+        ("org//name", "main"),
+        ("org/name/extra", "main"),
+        ("orgname", "main"),
+    ] {
+        let config = crate::config::LocalEmbedderConfig {
+            repo: repo.to_owned(),
+            revision: revision.to_owned(),
+            models_dir: Some(outer.path().join("models")),
+            ..crate::config::LocalEmbedderConfig::default()
+        };
+        for error in [
+            manager.ensure_metadata(&config).expect_err("refused"),
+            manager.ensure_all(&config).expect_err("refused"),
+        ] {
+            assert!(
+                matches!(error, oneiron::Error::InvalidConfig(ref message) if message.contains("plain")),
+                "{repo} {revision}: {error:?}"
+            );
+        }
+        assert_eq!(model_manager::verified_metadata_dir(&config), None);
+    }
+    assert!(source.paths().is_empty(), "nothing was fetched");
+    assert_eq!(
+        std::fs::read_dir(outer.path()).expect("parent").count(),
+        0,
+        "nothing was written, inside the root or out of it"
+    );
+}
+
 /// Each shipped default resolves to its own pins, each carrying a digest and
 /// a size. The files come from the same planner every checkpoint goes
 /// through: the pins name exactly what the default's own `modules.json`
@@ -1570,6 +1636,41 @@ fn an_early_transform_is_read_only_from_complete_verified_metadata() {
     copy_metadata("pplx", operator.path(), &METADATA);
     config.local.model_dir = Some(operator.path().to_path_buf());
     assert!(super::transform_on_disk(&config).is_some());
+}
+
+/// A shipped default whose commit has no prompt file carries no prompt. A
+/// stray file by that name in its cache — copied there, or left by another
+/// model — is never read: the early door, the metadata-only door and the
+/// spec the full load reads all describe the checkpoint as its pins do.
+#[test]
+fn a_stray_prompt_file_in_a_pinned_cache_is_never_read() {
+    let root = tempfile::tempdir().expect("models root");
+    let mut config = crate::config::EmbedderConfig {
+        dimensions: 1024,
+        ..crate::config::EmbedderConfig::default()
+    };
+    config.local.models_dir = Some(root.path().to_path_buf());
+    let dir = model_manager::model_dir(&config.local).expect("model dir");
+    copy_metadata(
+        "pplx",
+        &dir,
+        &["config.json", "modules.json", "1_Pooling/config.json"],
+    );
+    let pinned = super::transform_on_disk(&config).expect("verified metadata");
+    std::fs::write(
+        dir.join(prompts::PROMPT_FILE),
+        r#"{"prompts":{"query":"query: ","document":"passage: "}}"#,
+    )
+    .expect("stray prompt file");
+
+    assert_eq!(super::transform_on_disk(&config), Some(pinned.clone()));
+    assert_eq!(
+        super::resolve_transform(&config).expect("metadata resolves"),
+        pinned
+    );
+    let spec = spec::LocalModelSpec::read(&dir, &config).expect("reads");
+    assert_eq!(spec.prompts, prompts::Prompts::default());
+    assert_eq!(spec.transform(), pinned);
 }
 
 // ─── the artifact source, stubbed on loopback ────────────────────────────

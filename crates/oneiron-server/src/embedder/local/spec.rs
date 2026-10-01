@@ -36,7 +36,7 @@ impl LocalModelSpec {
         };
         let chain = Chain::read(model_dir, config.local.output_quantization)?;
         let prompts = prompts::resolve(
-            model_dir,
+            super::model_manager::reads_prompt_file(&config.local).then_some(model_dir),
             config.query_instruction.as_deref(),
             config.query_prompt_name.as_deref(),
         )?;

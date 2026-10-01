@@ -482,6 +482,46 @@ fn reembed_refuses_a_target_whose_transform_it_cannot_resolve() {
     );
 }
 
+/// A configured commit that is not a plain name — one that climbs out of the
+/// models root, or an absolute one — is refused before anything is fetched
+/// or written for it, and the vault is left as it was.
+#[test]
+fn reembed_refuses_a_commit_that_is_not_a_plain_name_before_writing_anything() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = serve_config(dir.path(), OLD);
+    drop(open(&own).expect("a vault"));
+    let outer = tempfile::tempdir().expect("models parent");
+    for revision in [
+        "../../../perplexity-ai/pplx-embed-v1-0.6b/resolve/2c4d510dd4a732063c31a0f70193e35067b51fd8",
+        "/tmp/escape",
+        "..",
+    ] {
+        let mut config = serve_config(dir.path(), &format!("test/new@{revision}"));
+        if let Some(embedder) = config.embedder.as_mut() {
+            embedder.local = LocalEmbedderConfig {
+                repo: "test/new".to_owned(),
+                revision: revision.to_owned(),
+                models_dir: Some(outer.path().join("models")),
+                ..LocalEmbedderConfig::default()
+            };
+        }
+        let error = reembed_with_config(&config, false).expect_err("refused");
+        assert_eq!(
+            error
+                .downcast_ref::<oneiron::Error>()
+                .map(oneiron::Error::kind),
+            Some(oneiron::ErrorKind::InvalidConfig),
+            "{revision}: {error:#}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_dir(outer.path()).expect("parent").count(),
+        0,
+        "nothing was written, inside the root or out of it"
+    );
+    open(&own).expect("the vault opens as it was");
+}
+
 /// What `serve` resolves for a vault served by an endpoint under the same
 /// model and width as [`local_config`].
 fn endpoint_config(path: &Path) -> ServeConfig {
