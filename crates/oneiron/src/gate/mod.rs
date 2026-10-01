@@ -21,6 +21,7 @@ mod decode;
 mod default_manifest;
 mod definition_ceiling;
 mod docedit_resource;
+pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;
 mod doors;
 mod dreamer_precommit;

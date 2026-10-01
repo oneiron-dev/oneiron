@@ -37,7 +37,7 @@ struct Cell {
 impl FormualizerEngine {
     /// Recalculate a real package in one multi-sheet dependency graph.
     ///
-    /// This is opt-in, not the default session. External links and unsupported
+    /// The edit round trip's default recalc. External links and unsupported
     /// workbook semantics return `UnsupportedWorkbook` before bytes are emitted.
     /// Only existing scalar formula caches and `_xlfn` spellings are patched.
     /// Shared/array/table formulas, defined names and spill serialization stay

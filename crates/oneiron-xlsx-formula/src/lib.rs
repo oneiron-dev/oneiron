@@ -1,19 +1,21 @@
-//! Opt-in in-process XLSX formula recalculation for the edit round trip.
+//! In-process XLSX formula recalculation, the default of the edit round trip.
 //!
-//! [`InProcessSession`] implements the core's `EditSession`: it keeps the
-//! caller's narrow editor and precision fallback, and recalculates supported
-//! local workbooks in one multi-sheet graph on the owned formualizer fork
-//! (default features off: no `xlsx-recalc`, no `system-clock`, no
-//! umya/calamine DOM). Only formula spellings and scalar cached values change;
-//! the retained OPC package keeps every other record.
+//! [`FormualizerEngine::recalculate_xlsx`](engine::FormualizerEngine)
+//! recalculates a supported local workbook in one multi-sheet graph on the
+//! owned formualizer fork (default features off: no `xlsx-recalc`, no
+//! `system-clock`, no umya/calamine DOM). Only formula spellings and scalar
+//! cached values change; the retained OPC package keeps every other record.
+//! The core's edit round trip wraps every host session in this engine unless
+//! the host opts out, so this crate does not depend on the core.
 //!
-//! The compatibility subset cleared its threshold, but the complete
-//! fresh-Excel SpreadsheetBench comparison did not reach parity, so native
-//! recalculation stays opt-in: hosts construct the session explicitly.
-//! Unsupported features and formulas needing caller context stay on the
-//! precision fallback; the corpus clock is never substituted for production
-//! time. External-link workbooks stay on their link-preserving route (see
-//! [`routing`]).
+//! The corpus rule is met at fork rev `57a7f6cb` (0.9.3-oneiron.2): 2,700 of
+//! the 2,951 formula-bearing fresh-Excel SpreadsheetBench workbooks are fully
+//! Excel-identical, against 2,648 for LibreOffice 25.8 on the same corpus,
+//! and 809 of the 811 pinned goldens against LibreOffice's 753. The host's
+//! LibreOffice recalc stays the precision fallback for refused workbooks
+//! only: unsupported features and formulas needing caller context; the corpus
+//! clock is never substituted for production time. External-link workbooks
+//! stay on their link-preserving route (see [`routing`]).
 
 mod cache;
 pub mod calc;
@@ -23,7 +25,6 @@ pub mod error;
 mod mac_parity;
 pub mod measure;
 pub mod routing;
-pub mod session;
 pub mod workbook;
 mod xml;
 
@@ -31,6 +32,5 @@ pub use engine::{CellValue, EngineId, RecalcEngine, RecalcReport};
 pub use error::{FormulaError, Result};
 pub use measure::{CaseResult, CorpusReport, MeasureOptions, evaluate_case, read_corpus_cases};
 pub use oneiron_docedit::xlfn::{storage_form, ui_form};
-pub use routing::{RouteDecision, route_workbook};
-pub use session::InProcessSession;
+pub use routing::{RouteDecision, preserve_external_links, route_workbook};
 pub use workbook::WorkbookRecalc;

@@ -67,10 +67,27 @@ pub struct AppliedEdit {
     pub warnings: Vec<EditWarning>,
 }
 
+/// Who refreshes an xlsx workbook's cached formula values at stage 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RecalcPolicy {
+    /// The default. The pipeline wraps the session so the in-process formula
+    /// engine recalculates every workbook it admits. Only refused workbooks
+    /// (unsupported features, formulas needing caller context) and
+    /// external-link workbooks reach [`EditSession::recalc`], whose output
+    /// must keep every external link.
+    #[default]
+    NativeFirst,
+    /// Explicit opt-out: every recalc runs the session's own
+    /// [`EditSession::recalc`], unwrapped.
+    SessionOnly,
+}
+
 /// The seam behind which the external session binaries live. In production:
 /// openpyxl (`keep_links=True`, `keep_vba=True`, `data_only=False`) for
 /// [`EditSession::apply_edits`] and LibreOffice headless for
-/// [`EditSession::recalc`], both inside a foreign-tier microVM. In CI: a
+/// [`EditSession::recalc`], both inside a foreign-tier microVM. Unless the
+/// session opts out ([`EditSession::recalc_policy`]), LibreOffice is only the
+/// precision fallback for workbooks the in-process engine refuses. In CI: a
 /// fixture implementation, so the full gate passes without either binary.
 pub trait EditSession {
     /// Stage 2: apply the plan to a copy and return the edited bytes.
@@ -86,9 +103,15 @@ pub trait EditSession {
         None
     }
 
-    /// Whether this session image can recalc (LibreOffice present).
+    /// Whether this session's own `recalc` works (LibreOffice present). A
+    /// session without it still gets in-process recalc by default.
     fn supports_recalc(&self) -> bool {
         true
+    }
+
+    /// Stage-3 routing. Override only to opt out of in-process recalc.
+    fn recalc_policy(&self) -> RecalcPolicy {
+        RecalcPolicy::NativeFirst
     }
 }
 

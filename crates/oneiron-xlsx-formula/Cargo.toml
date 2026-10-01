@@ -5,14 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Opt-in in-process XLSX formula recalculation for the edit round trip (owned formualizer 0.9.3-oneiron.2 fork)"
+description = "In-process XLSX formula recalculation, the edit round trip's default (owned formualizer 0.9.3-oneiron.2 fork)"
 
 [lib]
 # No doc-comment code fences in this crate; skip the doctest compile pass.
 doctest = false
 
 [dependencies]
-oneiron = { path = "../oneiron" }
 oneiron-docedit = { path = "../oneiron-docedit" }
 # Exact upstream releases; the root manifest patches all five to the org fork
 # by rev (docs/ops/forked-dependencies.md).
