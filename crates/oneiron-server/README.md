@@ -99,10 +99,26 @@ checkpoint whose files say less than they should:
 # query_instruction = "…"           # literal query prefix; wins over the file
 ```
 
-Harrier names its prompts by task, so it carries no query prompt by default.
-A vault kept on Harrier keeps the instruction it was queried with by adding
-`query_instruction = "Instruct: Given a question, retrieve passages that answer it\nQuery: "`.
-An `endpoint` provider reads no model files: its queries carry
+Harrier's `config_sentence_transformers.json` names its prompts by task
+(`web_search_query`, `sts_query`, `bitext_query`) and sets no default, so
+Harrier carries no query prompt unless its config names one. A vault kept on
+Harrier needs this section:
+
+```toml
+dimensions = 1024
+
+[embedder]
+provider = "local"
+model_id = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
+dimensions = 1024
+# The instruction Harrier vaults were queried with before the default moved:
+query_instruction = "Instruct: Given a question, retrieve passages that answer it\nQuery: "
+# Or the model card's own web-search prompt, from the model's file:
+# query_prompt_name = "web_search_query"
+```
+
+Documents need no line: Harrier has no document prompt, so they embed as
+before. An `endpoint` provider reads no model files: its queries carry
 `query_instruction` or nothing.
 
 On a CUDA toolkit host, build the same server with candle's dependency features
