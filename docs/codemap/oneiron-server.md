@@ -184,20 +184,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
-| `src/cli.rs` | src | m | 11 struct · 4 enum · 2 fn | ApiArgs, ApiCommand, Cli, Command, HostCommand, HostInitArgs, InitArgs, ProvenanceArgs +7 | — |
+| `src/cli.rs` | src | m | 12 struct · 4 enum · 2 fn | ApiArgs, ApiCommand, Cli, Command, HostCommand, HostInitArgs, InitArgs, ProvenanceArgs +8 | — |
 | `src/cli/tests.rs` | test | m | — | — | — |
-| `src/commands.rs` | src | m | 1 struct · 10 fn · 1 const · 3 re-export | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands.rs` | src | m | 1 struct · 10 fn · 1 const · 4 re-export | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | m | 1 fn · 15 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/host_init.rs` | src | s | 1 fn | — | Reference deployment scaffolding and explicit encryption provisioning |
 | `src/commands/host_runtime_tests.rs` | test | s | — | — | — |
 | `src/commands/init.rs` | src | m | 1 fn | — | First-run embedder choice, using the same config and provider as serve |
+| `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
+| `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
-| `src/config/embedder.rs` | src | m | 6 struct · 5 enum · 7 fn · 6 const · 2 crate-vis | AutoDevicePrecedence, EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant +3 | The `[embedder]` section: provider selection and the keys each provider reads |
+| `src/config/embedder.rs` | src | m | 6 struct · 5 enum · 7 fn · 4 const · 2 crate-vis | AutoDevicePrecedence, EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant +3 | The `[embedder]` section: provider selection and the keys each provider reads |
+| `src/config/embedder_shape.rs` | src | s | 2 enum · 2 fn · 2 crate-vis | EmbedderAttention, EmbedderOutputQuantization | Keys that override what a local checkpoint declares about its own shape |
+| `src/config/embedder_space.rs` | src | s | 3 crate-vis | — | The local provider's space id and the files that fill it, settled as one |
 | `src/config/embedder_tests.rs` | test | m | — | — | Resolution rows for the `[embedder]` section |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | m | 1 struct · 5 fn · 1 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/mod.rs` | src | s | 5 mod · 4 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 5 mod · 5 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/privacy_tests.rs` | test | m | — | — | — |
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
 | `src/config/remote_embedder.rs` | src | s | 2 struct · 2 crate-vis | EgressPolicy, RemoteEmbedderConfig | Host-configured remote rung and cached per-entity egress decisions |
@@ -209,15 +213,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/control_keys/tests.rs` | test | s | — | — | — |
 | `src/embedder/endpoint.rs` | src | m | 5 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
-| `src/embedder/local/batcher.rs` | src | s | 3 crate-vis | — | Tokenisation and no-padding batching |
+| `src/embedder/local/batcher.rs` | src | s | 5 crate-vis | — | Tokenisation and no-padding batching |
 | `src/embedder/local/device.rs` | src | s | 3 crate-vis | — | Which candle device the local provider runs on, and at what precision |
-| `src/embedder/local/isq.rs` | src | s | 4 crate-vis | — | Quantise-at-load, in one function |
-| `src/embedder/local/mod.rs` | src | s | 10 crate-vis | — | The `local` provider: the model runs in this process, on candle |
-| `src/embedder/local/model_manager.rs` | src | m | 13 crate-vis | — | Where the local model's files live, and how they get there |
-| `src/embedder/local/qwen3_embedding.rs` | src | m | 13 crate-vis | — | The embedding model body: a Qwen3 decoder stack with no language head |
-| `src/embedder/local/st_modules.rs` | src | s | 6 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
-| `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
-| `src/embedder/mod.rs` | src | s | 15 crate-vis | — | The embedder provider slot |
+| `src/embedder/local/isq.rs` | src | s | 6 crate-vis | — | Quantise-at-load, in one function |
+| `src/embedder/local/mod.rs` | src | m | 15 crate-vis | — | The `local` provider: the model runs in this process, on candle |
+| `src/embedder/local/model_manager.rs` | src | m | 20 crate-vis | — | Where the local model's files live, and how they get there |
+| `src/embedder/local/prompts.rs` | src | s | 3 crate-vis | — | What a query and a document carry before their text, read from the checkpoint's own… |
+| `src/embedder/local/qwen3_embedding.rs` | src | m | 16 crate-vis | — | The embedding model body: a Qwen3 decoder stack with no language head |
+| `src/embedder/local/spec.rs` | src | s | 3 crate-vis | — | What a local checkpoint declares about itself, read from its metadata files alone: the body, how it attends… |
+| `src/embedder/local/st_modules.rs` | src | m | 14 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
+| `src/embedder/local/tests.rs` | test | XL | — | — | Local-provider rows |
+| `src/embedder/mod.rs` | src | m | 17 crate-vis | — | The embedder provider slot |
 | `src/embedder/remote.rs` | src | s | 1 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
 | `src/embedder/tests.rs` | test | L | — | — | Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server |
 | `src/error/mod.rs` | src | m | 4 struct · 2 enum · 25 fn · 1 const · 1 re-export · 1 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
@@ -312,7 +318,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn · 1 crate-vis | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
 | `src/runtime/tests.rs` | test | m | — | — | — |
 | `src/server/core.rs` | src | m | 1 struct · 6 fn · 9 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
-| `src/server/embedding.rs` | src | m | 4 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
+| `src/server/embedding.rs` | src | s | 4 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | s | 12 crate-vis | — | Periodic lifecycle jobs: lease expiry and reassert-drain with debounce |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
