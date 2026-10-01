@@ -92,20 +92,66 @@ fn naming_a_space_selects_its_own_files() {
     );
 }
 
-/// Files named beside the space win over the ones the space id spells, in the
-/// same layer or a later one.
+/// Files named beside the space must be the space's own, in the same layer or
+/// a later one: a vault pinned to one model must never be filled from another
+/// model's files under the first one's name.
 #[test]
-fn explicit_files_win_over_what_the_space_implies() {
-    let (_dir, mut args) = config_file(&format!(
+fn files_that_disagree_with_the_named_space_are_refused() {
+    let in_config_error = |error: anyhow::Error| {
+        matches!(
+            error.downcast_ref::<oneiron::Error>(),
+            Some(oneiron::Error::InvalidConfig(_))
+        )
+    };
+    let (_dir, args) = config_file(&format!(
         "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\nrepo = \"mirror/harrier\"\n"
     ));
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .expect_err("a repository other than the space's is refused");
+    assert!(in_config_error(error));
+
+    // The default space, with another model's files named from argv.
+    let (_dir, mut args) = config_file("dimensions = 1024\n\n[embedder]\ndimensions = 1024\n");
+    args.embedder.embedder_model_id = Some(super::embedder::DEFAULT_MODEL_ID.to_owned());
+    args.embedder.embedder_repo = Some("microsoft/harrier-oss-v1-0.6b".to_owned());
+    args.embedder.embedder_revision = Some("f9b9dc8d367d443f2479d27aa5d8d2850c0774ee".to_owned());
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .expect_err("another model's files under the default space are refused");
+    assert!(in_config_error(error));
+
+    // A later layer's revision alone still has to match the space.
+    let (_dir, mut args) = config_file(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\n"
+    ));
     args.embedder.embedder_revision = Some("mirrored".to_owned());
-    let resolved =
-        resolve_serve_config_with_sources(&args, EnvConfig::default(), None).expect("resolves");
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .expect_err("another commit under the same space is refused");
+    assert!(in_config_error(error));
+}
+
+/// Files named without a space name the space they fill; files named with
+/// their own space resolve as named.
+#[test]
+fn named_files_name_their_own_space() {
+    let resolved = resolve(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nrepo = \"microsoft/harrier-oss-v1-0.6b\"\nrevision = \"f9b9dc8d367d443f2479d27aa5d8d2850c0774ee\"\n",
+    )
+    .expect("resolves");
     let embedder = resolved.embedder.as_ref().expect("a section is present");
     assert_eq!(embedder.model_id, HARRIER);
-    assert_eq!(embedder.local.repo, "mirror/harrier");
-    assert_eq!(embedder.local.revision, "mirrored");
+    assert_eq!(
+        resolved.vault_config().embedding_model.as_deref(),
+        Some(HARRIER)
+    );
+
+    let resolved = resolve(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\nrepo = \"microsoft/harrier-oss-v1-0.6b\"\nrevision = \"f9b9dc8d367d443f2479d27aa5d8d2850c0774ee\"\n"
+    ))
+    .expect("a space and its own files resolve");
+    assert_eq!(
+        resolved.embedder.as_ref().expect("section").model_id,
+        HARRIER
+    );
 }
 
 /// The keys that override a checkpoint's own declaration resolve from the
@@ -227,20 +273,6 @@ fn bf16_weights_on_a_cpu_device_are_refused() {
     .expect_err("bf16 on the CPU is refused")
     .to_string();
     assert!(error.contains("quant"), "{error}");
-}
-
-/// The model's rotary tables stop at its context window, so a cap above it is
-/// refused here rather than in the middle of a forward pass.
-#[test]
-fn an_input_cap_above_the_models_context_window_is_refused_with_both_numbers() {
-    let error =
-        resolve("dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmax_input_tokens = 40000\n")
-            .expect_err("a cap above the context window is refused")
-            .to_string();
-    assert!(error.contains("40000"), "{error}");
-    assert!(error.contains("32768"), "{error}");
-    resolve("dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmax_input_tokens = 32768\n")
-        .expect("a cap at the window resolves");
 }
 
 #[test]

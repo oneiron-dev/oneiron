@@ -8,6 +8,7 @@
 //! `model_id`. Every module this provider implements is named here once, by
 //! its sentence-transformers type; any other module is refused by name.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use candle_core::{DType, Device, Tensor};
@@ -38,47 +39,152 @@ enum Kind {
 }
 
 impl Kind {
+    /// The module a `type` names, by its exact import path.
+    ///
+    /// Exact, never by the class name alone: `custom.Pooling` is somebody
+    /// else's code, and running it with this provider's semantics would embed
+    /// into a space the checkpoint's files do not describe.
     fn parse(module_type: &str) -> oneiron::Result<Self> {
-        // `sentence_transformers.models.Pooling` and `Pooling` both name the
-        // same module; the upstream loader accepts either spelling and so does
-        // this one.
-        match module_type.rsplit('.').next().unwrap_or(module_type) {
-            "Transformer" => Ok(Self::Transformer),
-            "Pooling" => Ok(Self::Pooling),
-            "Dense" => Ok(Self::Dense),
-            "Normalize" => Ok(Self::Normalize),
-            "FlexibleQuantizer" => Ok(Self::FlexibleQuantizer),
+        match module_type {
+            "sentence_transformers.models.Transformer" => Ok(Self::Transformer),
+            "sentence_transformers.models.Pooling" => Ok(Self::Pooling),
+            "sentence_transformers.models.Dense" => Ok(Self::Dense),
+            "sentence_transformers.models.Normalize" => Ok(Self::Normalize),
+            // The quantizer a checkpoint ships beside its own weights, under
+            // the import path its `modules.json` declares for it.
+            "st_quantize.FlexibleQuantizer" => Ok(Self::FlexibleQuantizer),
             _ => Err(oneiron::Error::InvalidConfig(format!(
-                "embedder model module {module_type:?} is not supported (expected Transformer, Pooling, Dense, Normalize or FlexibleQuantizer)"
+                "embedder model module {module_type:?} is not supported (expected sentence_transformers.models.Transformer, Pooling, Dense or Normalize, or st_quantize.FlexibleQuantizer)"
             ))),
-        }
-    }
-
-    /// Files this module reads under its own directory.
-    const fn files(self) -> &'static [&'static str] {
-        match self {
-            Self::Pooling => &["config.json"],
-            Self::Dense => &["config.json", "model.safetensors"],
-            Self::Transformer | Self::Normalize | Self::FlexibleQuantizer => &[],
         }
     }
 }
 
-/// `modules.json`, parsed and checked for shape: a Transformer first, then
-/// only modules this provider implements.
-fn parse_entries(raw: &str) -> oneiron::Result<Vec<(Kind, String)>> {
+/// A module's directory within the model, checked once when `modules.json` is
+/// admitted and carried to every read and fetch after that.
+///
+/// Plain names only: no root, no prefix, no `.` or `..`, nothing a URL would
+/// read as something other than a path segment. A `modules.json` therefore
+/// cannot reach outside the directory the model's files live in, or pull
+/// another revision's file in under this one's name. Symlinks are not refused:
+/// a Hugging Face cache stores every file as one.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct ModulePath(String);
+
+impl ModulePath {
+    /// `""` and `"."` name the model directory itself.
+    fn parse(raw: &str) -> oneiron::Result<Self> {
+        if raw.is_empty() || raw == "." {
+            return Ok(Self::default());
+        }
+        let plain = |segment: &str| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment
+                    .chars()
+                    .all(|c| !c.is_control() && !matches!(c, '\\' | ':' | '?' | '#' | '%'))
+        };
+        if !raw.split('/').all(plain) {
+            return Err(oneiron::Error::InvalidConfig(format!(
+                "embedder model module path {raw:?} is not a relative path of plain names"
+            )));
+        }
+        Ok(Self(raw.to_owned()))
+    }
+
+    fn is_root(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// `file` under this module, as a path within the repository.
+    fn file(&self, file: &str) -> String {
+        if self.is_root() {
+            file.to_owned()
+        } else {
+            format!("{}/{file}", self.0)
+        }
+    }
+}
+
+/// A module after pooling, as `modules.json` declares it.
+enum Post {
+    Normalize,
+    FlexibleQuantizer,
+    Dense(ModulePath),
+}
+
+/// `modules.json`, admitted: a Transformer at the model directory itself, then
+/// exactly one Pooling, then only post-pooling modules this provider runs.
+///
+/// The runtime pools once and applies the rest in order, so a chain it would
+/// have to reorder to run — a second pool, a step before the pool — is refused
+/// rather than run as something other than what it declares.
+struct Declared {
+    pooling: ModulePath,
+    post: Vec<Post>,
+}
+
+fn parse_entries(raw: &str) -> oneiron::Result<Declared> {
     let entries: Vec<ModuleEntry> =
         serde_json::from_str(raw).map_err(|e| missing("modules.json", &e.to_string()))?;
-    let kinds = entries
-        .into_iter()
-        .map(|entry| Ok((Kind::parse(&entry.module_type)?, entry.path)))
-        .collect::<oneiron::Result<Vec<_>>>()?;
-    if kinds.first().map(|(kind, _)| *kind) != Some(Kind::Transformer) {
-        return Err(oneiron::Error::InvalidConfig(
-            "embedder model modules.json must start with a Transformer module".to_owned(),
-        ));
+    let mut entries = entries.into_iter().map(|entry| {
+        oneiron::Result::Ok((
+            Kind::parse(&entry.module_type)?,
+            ModulePath::parse(&entry.path)?,
+        ))
+    });
+    match entries.next().transpose()? {
+        // The body's files are read from the model directory itself.
+        Some((Kind::Transformer, path)) if path.is_root() => {}
+        Some((Kind::Transformer, path)) => {
+            return Err(oneiron::Error::InvalidConfig(format!(
+                "embedder model Transformer at {:?} is not supported; the body must sit at the model directory itself",
+                path.0
+            )));
+        }
+        _ => {
+            return Err(oneiron::Error::InvalidConfig(
+                "embedder model modules.json must start with a Transformer module".to_owned(),
+            ));
+        }
     }
-    Ok(kinds)
+    let mut pooling = None;
+    let mut post = Vec::new();
+    for entry in entries {
+        let (kind, path) = entry?;
+        let step = match (kind, &pooling) {
+            (Kind::Transformer, _) => {
+                return Err(oneiron::Error::InvalidConfig(
+                    "embedder model modules.json declares a second Transformer".to_owned(),
+                ));
+            }
+            (Kind::Pooling, None) => {
+                pooling = Some(path);
+                continue;
+            }
+            (Kind::Pooling, Some(_)) => {
+                return Err(oneiron::Error::InvalidConfig(
+                    "embedder model modules.json declares a second Pooling".to_owned(),
+                ));
+            }
+            (_, None) => {
+                return Err(oneiron::Error::InvalidConfig(format!(
+                    "embedder model modules.json declares {kind:?} before its Pooling"
+                )));
+            }
+            (Kind::Normalize, Some(_)) => Post::Normalize,
+            (Kind::FlexibleQuantizer, Some(_)) => Post::FlexibleQuantizer,
+            (Kind::Dense, Some(_)) => Post::Dense(path),
+        };
+        post.push(step);
+    }
+    let pooling = pooling.ok_or_else(|| {
+        oneiron::Error::InvalidConfig(
+            "embedder model modules.json declares no Pooling module".to_owned(),
+        )
+    })?;
+    Ok(Declared { pooling, post })
 }
 
 /// The files `modules.json` says the chain reads, relative to the model
@@ -86,32 +192,42 @@ fn parse_entries(raw: &str) -> oneiron::Result<Vec<(Kind, String)>> {
 /// own, so a checkpoint whose chain is refused is refused before its weights
 /// are downloaded.
 pub(super) fn module_files(raw_modules_json: &str) -> oneiron::Result<Vec<String>> {
-    Ok(parse_entries(raw_modules_json)?
-        .into_iter()
-        .flat_map(|(kind, path)| {
-            kind.files().iter().map(move |file| {
-                if path.is_empty() {
-                    (*file).to_owned()
-                } else {
-                    format!("{path}/{file}")
-                }
-            })
-        })
-        .collect())
+    let declared = parse_entries(raw_modules_json)?;
+    let mut files = vec![declared.pooling.file("config.json")];
+    for step in &declared.post {
+        if let Post::Dense(path) = step {
+            files.push(path.file("config.json"));
+            files.push(path.file("model.safetensors"));
+        }
+    }
+    Ok(files)
 }
 
-/// `1_Pooling/config.json`, field for field as sentence-transformers writes it.
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
-#[serde(default)]
+/// `1_Pooling/config.json`, field for field as sentence-transformers writes it,
+/// with its defaults for a key the file leaves out.
+#[derive(Clone, Debug, Deserialize)]
 struct PoolingConfig {
+    #[serde(default)]
     word_embedding_dimension: usize,
+    #[serde(default)]
     pooling_mode_cls_token: bool,
+    #[serde(default)]
     pooling_mode_mean_tokens: bool,
+    #[serde(default)]
     pooling_mode_max_tokens: bool,
+    #[serde(default)]
     pooling_mode_mean_sqrt_len_tokens: bool,
+    #[serde(default)]
     pooling_mode_weightedmean_tokens: bool,
+    #[serde(default)]
     pooling_mode_lasttoken: bool,
+    /// sentence-transformers keeps the prompt in the pool unless told not to.
+    #[serde(default = "default_true")]
     include_prompt: bool,
+    /// Every other key. A `pooling_mode_*` among them is a mode this provider
+    /// does not know, and is refused rather than dropped.
+    #[serde(flatten)]
+    other: BTreeMap<String, serde_json::Value>,
 }
 
 /// The pooling modes this provider implements.
@@ -142,7 +258,16 @@ impl PoolingConfig {
     ///
     /// Named, not silently defaulted: pooling decides where the vector lands in
     /// the space, so guessing it would corrupt a whole vault quietly.
-    fn resolve(self) -> oneiron::Result<Pooling> {
+    fn resolve(&self) -> oneiron::Result<Pooling> {
+        if let Some(unknown) = self
+            .other
+            .keys()
+            .find(|key| key.starts_with("pooling_mode_"))
+        {
+            return Err(oneiron::Error::InvalidConfig(format!(
+                "embedder model pooling mode {unknown} is not supported (expected lasttoken, mean_tokens or cls_token)"
+            )));
+        }
         let declared = [
             (
                 "lasttoken",
@@ -226,7 +351,7 @@ pub(super) enum Step {
     /// `Dense`: a linear projection read from `<path>/model.safetensors`, then
     /// `tanh` when the module declares it.
     Dense {
-        path: String,
+        path: ModulePath,
         in_features: usize,
         out_features: usize,
         bias: bool,
@@ -249,62 +374,48 @@ impl Chain {
     ) -> oneiron::Result<Self> {
         let raw = std::fs::read_to_string(model_dir.join("modules.json"))
             .map_err(|e| missing("modules.json", &e.to_string()))?;
-        let mut pooling: Option<Pooling> = None;
+        let declared = parse_entries(&raw)?;
+        let pooling =
+            read_json::<PoolingConfig>(model_dir, &declared.pooling, "Pooling")?.resolve()?;
+        // The width flowing between modules.
+        let mut width = pooling.width;
         let mut steps = Vec::new();
-        // The width flowing between modules, known once the pool declares it.
-        let mut width: Option<usize> = None;
-        for (kind, path) in parse_entries(&raw)?.into_iter().skip(1) {
-            match kind {
-                Kind::Transformer => {
-                    return Err(oneiron::Error::InvalidConfig(
-                        "embedder model modules.json declares a second Transformer".to_owned(),
-                    ));
-                }
-                Kind::Pooling => {
-                    let config: PoolingConfig = read_json(model_dir, &path, "Pooling")?;
-                    let resolved = config.resolve()?;
-                    width = Some(resolved.width);
-                    pooling = Some(resolved);
-                }
-                Kind::Normalize => steps.push(Step::Normalize),
-                Kind::FlexibleQuantizer => steps.push(match quantization {
+        for post in declared.post {
+            steps.push(match post {
+                Post::Normalize => Step::Normalize,
+                Post::FlexibleQuantizer => match quantization {
                     EmbedderOutputQuantization::Int8 => Step::Int8Tanh,
                     EmbedderOutputQuantization::Binary => Step::BinaryTanh,
-                }),
-                Kind::Dense => {
+                },
+                Post::Dense(path) => {
                     let config: DenseConfig = read_json(model_dir, &path, "Dense")?;
-                    let tanh = match config.activation_function.rsplit('.').next() {
-                        Some("Identity") => false,
-                        Some("Tanh") => true,
+                    let tanh = match config.activation_function.as_str() {
+                        "torch.nn.modules.linear.Identity" => false,
+                        "torch.nn.modules.activation.Tanh" => true,
                         _ => {
                             return Err(oneiron::Error::InvalidConfig(format!(
-                                "embedder model Dense activation {:?} is not supported (expected Identity or Tanh)",
+                                "embedder model Dense activation {:?} is not supported (expected torch.nn.modules.linear.Identity or torch.nn.modules.activation.Tanh)",
                                 config.activation_function
                             )));
                         }
                     };
-                    if width != Some(config.in_features) {
+                    if width != config.in_features {
                         return Err(oneiron::Error::InvalidConfig(format!(
-                            "embedder model Dense takes {} features, but the chain carries {width:?} to it",
+                            "embedder model Dense takes {} features, but the chain carries {width} to it",
                             config.in_features
                         )));
                     }
-                    width = Some(config.out_features);
-                    steps.push(Step::Dense {
+                    width = config.out_features;
+                    Step::Dense {
                         path,
                         in_features: config.in_features,
                         out_features: config.out_features,
                         bias: config.bias,
                         tanh,
-                    });
+                    }
                 }
-            }
+            });
         }
-        let pooling = pooling.ok_or_else(|| {
-            oneiron::Error::InvalidConfig(
-                "embedder model modules.json declares no Pooling module".to_owned(),
-            )
-        })?;
         Ok(Self { pooling, steps })
     }
 
@@ -353,7 +464,7 @@ impl StModules {
                         tanh,
                     } => Ready::Dense {
                         linear: load_dense(
-                            &model_dir.join(path).join("model.safetensors"),
+                            &model_dir.join(path.file("model.safetensors")),
                             (*out_features, *in_features),
                             *bias,
                             device,
@@ -403,9 +514,9 @@ impl StModules {
         for step in &self.ready {
             pooled = match step {
                 Ready::Normalize => l2_normalize(&pooled)?,
-                Ready::Int8Tanh => (pooled.tanh()? * INT8_TANH_SCALE)?
-                    .round()?
-                    .clamp(-128f32, 127f32)?,
+                Ready::Int8Tanh => {
+                    round_ties_even(&(pooled.tanh()? * INT8_TANH_SCALE)?)?.clamp(-128f32, 127f32)?
+                }
                 Ready::BinaryTanh => ((pooled.ge(0f64)?.to_dtype(DType::F32)? * 2.0)? - 1.0)?,
                 Ready::Dense { linear, tanh } => {
                     let projected = linear.forward(&pooled)?;
@@ -419,6 +530,22 @@ impl StModules {
 
 /// The scale a `FlexibleQuantizer` maps `tanh` onto at `int8`.
 const INT8_TANH_SCALE: f64 = 127.0;
+
+/// `torch.round`: to the nearest integer, a half to the even one.
+///
+/// candle's own `round` takes a half away from zero, so a component landing on
+/// `2.5` would become `3` where the checkpoint emits `2`, and normalising the
+/// vector afterwards does not undo a different integer. Done on the host: the
+/// pooled rows are one small row per input.
+fn round_ties_even(tensor: &Tensor) -> candle_core::Result<Tensor> {
+    let rounded: Vec<f32> = tensor
+        .flatten_all()?
+        .to_vec1::<f32>()?
+        .into_iter()
+        .map(f32::round_ties_even)
+        .collect();
+    Tensor::from_vec(rounded, tensor.shape(), tensor.device())
+}
 
 /// Reads `linear.weight` (and `linear.bias`) at f32 onto the run device.
 fn load_dense(
@@ -437,11 +564,11 @@ fn load_dense(
 
 fn read_json<T: serde::de::DeserializeOwned>(
     model_dir: &Path,
-    path: &str,
+    path: &ModulePath,
     module: &str,
 ) -> oneiron::Result<T> {
     let what = format!("{module} config.json");
-    let raw = std::fs::read_to_string(model_dir.join(path).join("config.json"))
+    let raw = std::fs::read_to_string(model_dir.join(path.file("config.json")))
         .map_err(|e| missing(&what, &e.to_string()))?;
     serde_json::from_str(&raw).map_err(|e| missing(&what, &e.to_string()))
 }

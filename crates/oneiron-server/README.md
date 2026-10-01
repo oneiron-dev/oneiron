@@ -69,9 +69,12 @@ files and no download is attempted at all — the offline-host door.
 `model_id` names the weights. A section that names a `model_id` and no
 `repo`/`revision` loads that space's own repository and commit, so a vault
 created under the earlier default, `microsoft/harrier-oss-v1-0.6b@f9b9dc8…`,
-keeps loading Harrier's pinned files after the default moved. A vault pinned to
-one model refuses to open under another (`EmbeddingModelChanged`); see
-*Changing a vault's embedding model* below.
+keeps loading Harrier's pinned files after the default moved. A section that
+names `repo`/`revision` and no `model_id` fills the space those files spell.
+Naming both is allowed only when they agree: a `model_id` beside another
+model's files is refused at startup. A vault pinned to one model refuses to
+open under another (`EmbeddingModelChanged`); see *Changing a vault's
+embedding model* below.
 
 The provider names no model in code. It reads everything about a checkpoint
 from the checkpoint's own files, so any model with a Qwen3 body runs from its
@@ -79,17 +82,23 @@ from the checkpoint's own files, so any model with a Qwen3 body runs from its
 
 - attention: `use_bidirectional_attention` or `is_causal` in `config.json`,
   causal when neither is set;
-- the module chain, in order, from `modules.json`: Pooling (`lasttoken`,
-  `mean_tokens` or `cls_token`, honouring `include_prompt`), `Dense`
-  (Identity or Tanh), `Normalize`, and `FlexibleQuantizer` (int8 or binary
-  tanh). Any other module or pooling mode is refused by name;
-- prompts from `config_sentence_transformers.json`: queries take the prompt
-  named `query`, documents the first of `document`, `passage` or `corpus`,
-  either falling back to `default_prompt_name`. No file means no prompt.
+- the module chain from `modules.json`: a Transformer at the repository root,
+  one Pooling (`lasttoken`, `mean_tokens` or `cls_token`, honouring
+  `include_prompt`, which defaults to true), then any of `Dense` (Identity or
+  Tanh), `Normalize` and `FlexibleQuantizer` (int8 or binary tanh) in their
+  declared order. Modules are matched by their exact import path
+  (`sentence_transformers.models.*`, `st_quantize.FlexibleQuantizer`); any
+  other module, pooling mode or order is refused by name, and so is a module
+  path that leaves the model directory;
+- prompts from `config_sentence_transformers.json`: a query takes
+  `query_instruction`, else the `query_prompt_name` prompt, else the prompt
+  named `query`, else `default_prompt_name`, else none; a document takes the
+  first of `document`, `passage` or `corpus`, else `default_prompt_name`. No
+  file means no prompt.
 
-The shipped defaults' files are pinned by sha256; any other repository runs
-unpinned and fetches exactly the files its `modules.json` names. Keys for a
-checkpoint whose files say less than they should:
+Every repository fetches exactly the files its `modules.json` names; the
+shipped defaults' files are also pinned by sha256, and any other repository
+runs unpinned. Keys for a checkpoint whose files say less than they should:
 
 ```toml
 [embedder]
@@ -98,6 +107,11 @@ checkpoint whose files say less than they should:
 # query_prompt_name = "web_search_query"   # a named prompt from the model's file
 # query_instruction = "…"           # literal query prefix; wins over the file
 ```
+
+`attention` and `output_quantization` change the vectors the model makes, and
+the `model_id` a vault pins does not record them. Changing either on a filled
+vault changes its vector space: run `oneiron-server reembed --force` (below)
+with the new setting.
 
 Harrier's `config_sentence_transformers.json` names its prompts by task
 (`web_search_query`, `sts_query`, `bitext_query`) and sets no default, so
@@ -175,9 +189,10 @@ llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096
 ### Changing a vault's embedding model
 
 A server whose `model_id` differs from the one the vault holds stops at open
-with `embedding model changed: stored=…, requested=…` and leaves the vault
-untouched. Either keep the vault in its space by naming that `model_id` in its
-config, or move it. With the server stopped:
+and leaves the vault untouched. The refusal names both ways forward: keep the
+vault in its space by setting `model_id` to the vault's model, with that
+model's query settings (`query_instruction` / `query_prompt_name`), or move it.
+With the server stopped:
 
 ```sh
 oneiron-server reembed --config <same config serve reads>
@@ -185,10 +200,14 @@ oneiron-server reembed --config <same config serve reads>
 ```
 
 `reembed` repins the vault to the configured `model_id`, drops the vector
-graph and queues every claim. The next `serve` embeds them all again in the
+graph and every staged vector, and queues every record that is embedded:
+claims and epoch summaries. The next `serve` embeds them all again in the
 background; lexical and graph reads answer throughout, and semantic results
 fill in as vectors land. A vault already in the configured space is left as it
-is (`"migrated":false`).
+is (`"migrated":false`), unless `--force` asks for the same swap under the pin
+it already holds, which is the remedy after changing `attention` or
+`output_quantization`. A vault's dimensions are fixed when it is created: a
+model of another width needs a new vault, and `reembed` says so.
 
 ## Linear mirror host bridge (opt-in)
 

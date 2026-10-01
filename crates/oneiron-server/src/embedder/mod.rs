@@ -73,10 +73,11 @@ impl EmbedderCommon {
     /// which reads the model's files, knows one.
     fn document_text(&self, input: &PendingEmbeddingInput) -> oneiron::Result<String> {
         let text = payload_text(&input.payload)?;
-        if text.trim().is_empty() {
-            // A pending row with no text has nothing to embed, and a zero
-            // vector would be a lie that retrieval would then rank. The write
-            // path is not supposed to mark such a row.
+        if text.chars().all(|c| c.is_whitespace() || c.is_control()) {
+            // A row of whitespace and control characters alone has nothing to
+            // embed, and a zero vector would be a lie that retrieval would then
+            // rank. The engine never leases such a row: it retires it as stale
+            // work, so the rest of its batch still fills.
             return Err(oneiron::Error::InvariantViolation(
                 "a pending embedding row projected to empty text",
             ));

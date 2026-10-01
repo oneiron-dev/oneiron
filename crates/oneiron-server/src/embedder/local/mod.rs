@@ -286,11 +286,9 @@ fn check_dimensions(config: &EmbedderConfig, body: &Config, chain: &Chain) -> on
 
 /// The input cap must fit the window the model itself declares.
 ///
-/// Config resolution already refuses a cap above the default model's window.
-/// This is the same refusal for a repository this build has never measured,
-/// read from the `config.json` that repository ships: without it the rotary
-/// tables come up short and the failure surfaces as an out-of-range narrow in
-/// the middle of a forward pass.
+/// Read from the `config.json` the checkpoint ships, for every checkpoint
+/// alike: without it the rotary tables come up short and the failure surfaces
+/// as an out-of-range narrow in the middle of a forward pass.
 fn check_input_window(config: &EmbedderConfig, model_config: &Config) -> oneiron::Result<()> {
     if config.max_input_tokens > model_config.max_position_embeddings {
         return Err(oneiron::Error::InvalidConfig(format!(

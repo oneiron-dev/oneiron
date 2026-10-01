@@ -41,8 +41,8 @@ pub enum Command {
     /// Open a vault and print its doctor report.
     Doctor(VaultArgs),
     /// Move a stopped vault to the configured embedding model: repin it and
-    /// queue every claim to be embedded again, which the next `serve` does.
-    Reembed(Box<ServeArgs>),
+    /// queue every record to be embedded again, which the next `serve` does.
+    Reembed(Box<ReembedArgs>),
     /// Resolve repo commit provenance trailers against a vault claim.
     Provenance(Box<ProvenanceArgs>),
     /// Create pairing links and revoke slips.
@@ -243,6 +243,19 @@ pub struct SkillsPackArgs {
     /// Print the repository-relative path to the committed skill pack artifact.
     #[arg(long)]
     pub path: bool,
+}
+
+#[derive(Args, Clone, Default)]
+pub struct ReembedArgs {
+    /// Drop every vector and queue every record again even when the vault
+    /// already holds the configured model. Needed after changing
+    /// `embedder.attention` or `embedder.output_quantization` on a filled
+    /// vault: both change the vectors the model makes, and the model id the
+    /// vault pins does not show it.
+    #[arg(long)]
+    pub force: bool,
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug, Default)]

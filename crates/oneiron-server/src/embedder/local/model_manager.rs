@@ -1,10 +1,11 @@
 //! Where the local model's files live, and how they get there.
 //!
-//! One repository, one commit. The shipped defaults' files carry a sha256 each,
-//! pinned in this file because the Hugging Face tree API exposes no LFS oid at
-//! a revision: the only way to know the bytes are the bytes we measured is to
-//! measure them once and refuse anything else afterwards. Any other repository
-//! runs unpinned, and its file list comes from its own `modules.json`.
+//! One repository, one commit. Every checkpoint's file list comes from its own
+//! `modules.json`, by the same planner. The shipped defaults' files carry a
+//! sha256 each, pinned in this file because the Hugging Face tree API exposes
+//! no LFS oid at a revision: the only way to know the bytes are the bytes we
+//! measured is to measure them once and refuse anything else afterwards. Any
+//! other repository runs unpinned.
 //!
 //! Nothing here runs at boot. The worker calls it on its first pass, so a vault
 //! whose model has never been fetched still opens and still answers BM25 while
@@ -41,8 +42,8 @@ pub(crate) struct PinnedArtifact {
     pub(crate) bytes: u64,
 }
 
-/// The earlier default local model's files at its pinned revision. Vaults
-/// pinned to it still fetch and verify exactly these.
+/// The earlier default local model's files at its pinned revision, by digest.
+/// Vaults pinned to it still verify exactly these.
 ///
 /// Digests measured on the first verified download, 2026-09-11. `model.safetensors`
 /// carries the official bf16 weights; the Q8_0 the provider runs is produced at
@@ -80,7 +81,7 @@ pub(crate) const HARRIER_06_FILES: [PinnedArtifact; 6] = [
     },
 ];
 
-/// The default local model's files at the pinned revision.
+/// The default local model's files at the pinned revision, by digest.
 ///
 /// Digests measured 2026-10-01 from the files at that commit; the two LFS
 /// files' digests equal their Hugging Face LFS object ids. `model.safetensors`
@@ -124,6 +125,8 @@ const TAIL_FILES: [&str; 2] = ["tokenizer.json", "model.safetensors"];
 pub(crate) struct PinnedModel {
     pub(crate) repo: &'static str,
     pub(crate) revision: &'static str,
+    /// A digest for every file the planner names at this commit, and for the
+    /// prompt file when the commit carries one.
     pub(crate) files: &'static [PinnedArtifact],
 }
 
@@ -142,7 +145,7 @@ pub(crate) const PINNED_MODELS: [PinnedModel; 2] = [
     },
 ];
 
-/// The pinned files of the configured repository and commit, when it is a
+/// The pinned digests of the configured repository and commit, when it is a
 /// shipped default.
 pub(crate) fn pinned_files(config: &LocalEmbedderConfig) -> Option<&'static [PinnedArtifact]> {
     PINNED_MODELS
@@ -151,31 +154,43 @@ pub(crate) fn pinned_files(config: &LocalEmbedderConfig) -> Option<&'static [Pin
         .map(|model| model.files)
 }
 
-/// The files an unpinned checkpoint needs: the body's own, plus what its
-/// `modules.json` says the chain reads. Digests are skipped rather than
-/// failed: a host that points `repo` at an unmeasured checkpoint is telling
-/// the server it knows better.
-pub(crate) fn unpinned_files(raw_modules_json: &str) -> oneiron::Result<Vec<PinnedArtifact>> {
+/// The files a checkpoint needs, from its own `modules.json`: the body's
+/// small files, what the chain reads, then the body's tokenizer and weights.
+/// The prompt file is optional and asked for separately.
+pub(crate) fn planned_files(raw_modules_json: &str) -> oneiron::Result<Vec<Cow<'static, str>>> {
     let chain = super::st_modules::module_files(raw_modules_json)?;
     Ok(HEAD_FILES
         .iter()
         .map(|file| Cow::Borrowed(*file))
         .chain(chain.into_iter().map(Cow::Owned))
         .chain(TAIL_FILES.iter().map(|file| Cow::Borrowed(*file)))
-        .map(|file| PinnedArtifact {
-            file,
-            sha256: UNPINNED,
-            bytes: 0,
-        })
         .collect())
 }
 
-fn unpinned(file: &'static str) -> PinnedArtifact {
-    PinnedArtifact {
-        file: Cow::Borrowed(file),
-        sha256: UNPINNED,
-        bytes: 0,
-    }
+/// One file, with its digest when the checkpoint is a shipped default.
+///
+/// An unmeasured checkpoint skips digests rather than failing them: a host
+/// that points `repo` at one is telling the server it knows better. A shipped
+/// default has a digest for every file its plan names; one without is refused.
+fn artifact(
+    pins: Option<&'static [PinnedArtifact]>,
+    file: Cow<'static, str>,
+) -> oneiron::Result<PinnedArtifact> {
+    let Some(pins) = pins else {
+        return Ok(PinnedArtifact {
+            file,
+            sha256: UNPINNED,
+            bytes: 0,
+        });
+    };
+    pins.iter()
+        .find(|pin| pin.file == file)
+        .cloned()
+        .ok_or_else(|| {
+            oneiron::Error::InvalidConfig(format!(
+                "embedder model file {file} has no pinned digest at this commit"
+            ))
+        })
 }
 
 /// Digest placeholder for a repository this build has never measured.
@@ -321,34 +336,42 @@ impl ModelManager {
     /// short-circuits the download entirely: the operator supplied the files,
     /// so the server checks they exist and nothing else.
     ///
-    /// A shipped default fetches its pinned list. Any other checkpoint fetches
-    /// `config.json` and `modules.json` first, then exactly the files its
-    /// chain names, then its tokenizer and weights, so a chain this provider
-    /// cannot run is refused before the weights are downloaded. Its prompt
-    /// file is optional: a repository without one carries no prompt.
+    /// Every checkpoint fetches `config.json` and `modules.json` first, then
+    /// exactly the files its chain names, then its tokenizer and weights, so a
+    /// chain this provider cannot run is refused before the weights are
+    /// downloaded. A shipped default verifies each against its digest. The
+    /// prompt file is optional: a repository without one carries no prompt,
+    /// and a shipped default's pins say whether its commit has one.
     pub(in crate::embedder) fn ensure_all(
         &self,
         config: &LocalEmbedderConfig,
     ) -> oneiron::Result<PathBuf> {
         let dir = model_dir(config)?;
         let offline = config.model_dir.is_some();
-        let files = match pinned_files(config) {
-            Some(pinned) => pinned.to_vec(),
-            None => {
-                for head in HEAD_FILES {
-                    self.require(config, &dir, &unpinned(head), offline)?;
-                }
-                let raw = std::fs::read_to_string(dir.join("modules.json"))
-                    .map_err(oneiron::Error::Io)?;
-                if !offline {
-                    self.fetch_optional(config, &dir, &unpinned(super::prompts::PROMPT_FILE))?;
-                }
-                unpinned_files(&raw)?
-            }
-        };
+        let pins = pinned_files(config);
         let mut fetched = 0usize;
-        for artifact in &files {
-            if self.require(config, &dir, artifact, offline)? {
+        for head in HEAD_FILES {
+            if self.require(config, &dir, &artifact(pins, Cow::Borrowed(head))?, offline)? {
+                fetched += 1;
+            }
+        }
+        let raw = std::fs::read_to_string(dir.join("modules.json")).map_err(oneiron::Error::Io)?;
+        let plan = planned_files(&raw)?;
+        let prompt = Cow::Borrowed(super::prompts::PROMPT_FILE);
+        match pins {
+            Some(pins) if pins.iter().any(|pin| pin.file == prompt) => {
+                if self.require(config, &dir, &artifact(Some(pins), prompt)?, offline)? {
+                    fetched += 1;
+                }
+            }
+            Some(_) => {}
+            None if !offline => self.fetch_optional(config, &dir, &artifact(None, prompt)?)?,
+            None => {}
+        }
+        // The head files again, already verified: a pass over them is a stamp
+        // check, and the plan stays one list.
+        for file in plan {
+            if self.require(config, &dir, &artifact(pins, file)?, offline)? {
                 fetched += 1;
             }
         }

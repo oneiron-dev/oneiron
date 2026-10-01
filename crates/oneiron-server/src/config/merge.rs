@@ -150,6 +150,11 @@ pub fn resolve_serve_config_with_sources(
         _ => PartialServeConfig::default(),
     };
 
+    let space_naming = super::embedder_space::SpaceNaming::of([
+        file_values.embedder.as_ref(),
+        env.values.embedder.as_ref(),
+        flag_values.embedder.as_ref(),
+    ]);
     let mut resolved = ServeConfig::default();
     let mut posture_source = None;
     let mut key_ref_source = None;
@@ -176,6 +181,9 @@ pub fn resolve_serve_config_with_sources(
         && key_ref_source < posture_source
     {
         resolved.hosted_kms_key_ref = None;
+    }
+    if let Some(embedder) = resolved.embedder.as_mut() {
+        super::embedder_space::settle_local_space(embedder, space_naming)?;
     }
     // Same-source or higher-precedence references remain for validation to
     // refuse rather than silently fixing a contradictory self-host request.
@@ -304,21 +312,9 @@ fn validate_endpoint_embedder(embedder: &EmbedderConfig) -> anyhow::Result<()> {
 }
 
 fn validate_local_embedder(embedder: &EmbedderConfig) -> anyhow::Result<()> {
-    // The rotary tables are built to the model's context window, so a cap above
-    // it fails inside the forward pass rather than at the door. Only the pinned
-    // default model's window is known here; a host that points `repo` somewhere
-    // else is telling the server it knows better, and its own `config.json` is
-    // checked when the model loads.
-    if embedder.local.repo == super::embedder::DEFAULT_LOCAL_REPO
-        && embedder.local.revision == super::embedder::DEFAULT_LOCAL_REVISION
-        && embedder.max_input_tokens > super::embedder::DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS
-    {
-        anyhow::bail!(
-            "embedder.max_input_tokens is {}, above the default local model's context window of {}; lower it (--embedder-max-input-tokens / ONEIRON_EMBEDDER_MAX_INPUT_TOKENS)",
-            embedder.max_input_tokens,
-            super::embedder::DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS
-        );
-    }
+    // The input cap is checked when the model loads, against the window its
+    // own `config.json` declares.
+    //
     // bf16 has no CPU matmul path in candle worth running, so the pairing is
     // refused while it is still a config error rather than a load failure ten
     // minutes into a download.

@@ -518,7 +518,8 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
 
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
-    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
+        .map_err(reembed::with_model_change_remedy)?;
 
     let server_config = config.sync_server_config();
     match server_config.auth_secret.as_deref() {

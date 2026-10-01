@@ -152,7 +152,7 @@ fn an_unsupported_module_is_refused_by_name() {
         "{error:?}"
     );
     // The same refusal comes before any file is fetched for the chain.
-    assert!(model_manager::unpinned_files(&modules).is_err());
+    assert!(model_manager::planned_files(&modules).is_err());
 }
 
 #[test]
@@ -227,6 +227,268 @@ fn an_unsupported_or_ambiguous_pooling_is_refused_by_name() {
     }
 }
 
+/// A `modules.json` path is a plain name under the model directory. One that
+/// climbs out of it, starts at a root, or reads as more than a path in a URL
+/// is refused when the file is admitted, before anything is read or fetched:
+/// here a sibling revision's valid pooling config sits where `..` would land.
+#[test]
+fn a_module_path_outside_the_model_directory_is_refused() {
+    let root = tempfile::tempdir().expect("models root");
+    let sibling = root.path().join("otherrev").join("1_Pooling");
+    std::fs::create_dir_all(&sibling).expect("sibling revision");
+    std::fs::write(
+        sibling.join("config.json"),
+        pooling_config("mean_tokens", true),
+    )
+    .expect("sibling pooling config");
+    let model = root.path().join("thisrev");
+    std::fs::create_dir_all(&model).expect("model dir");
+    for path in [
+        "../otherrev/1_Pooling",
+        "/etc/1_Pooling",
+        "1_Pooling/../../otherrev/1_Pooling",
+        "1_Pooling//x",
+        r"1_Pooling\x",
+        "1_Pooling?x=",
+    ] {
+        let modules = format!(
+            r#"[{TRANSFORMER},{{"idx":1,"name":"1","path":{},"type":"sentence_transformers.models.Pooling"}}]"#,
+            serde_json::to_string(path).expect("json string")
+        );
+        assert!(
+            matches!(
+                model_manager::planned_files(&modules),
+                Err(oneiron::Error::InvalidConfig(_))
+            ),
+            "{path}"
+        );
+        std::fs::write(model.join("modules.json"), &modules).expect("write modules.json");
+        assert!(
+            matches!(
+                chain_at(&model, EmbedderOutputQuantization::Int8),
+                Err(oneiron::Error::InvalidConfig(_))
+            ),
+            "{path}"
+        );
+    }
+}
+
+/// The body's files are read from the model directory itself, so a
+/// Transformer declared anywhere else is refused rather than ignored.
+#[test]
+fn a_transformer_outside_the_model_directory_is_refused() {
+    for (path, runnable) in [("", true), (".", true), ("0_Transformer", false)] {
+        let modules = format!(
+            r#"[{{"idx":0,"name":"0","path":"{path}","type":"sentence_transformers.models.Transformer"}},{POOLING}]"#
+        );
+        let dir = module_dir(
+            &modules,
+            &[(
+                "1_Pooling/config.json",
+                &pooling_config("mean_tokens", true),
+            )],
+        );
+        assert_eq!(
+            model_manager::planned_files(&modules).is_ok(),
+            runnable,
+            "{path:?}"
+        );
+        assert_eq!(
+            chain_at(dir.path(), EmbedderOutputQuantization::Int8).is_ok(),
+            runnable,
+            "{path:?}"
+        );
+    }
+}
+
+/// A module is the one its exact import path names. A class that only shares
+/// a supported class's name, or a short name, is somebody else's code, and
+/// so is an activation known only by its last segment.
+#[test]
+fn a_module_is_known_by_its_exact_import_path_only() {
+    let entry = |path: &str, module_type: &str| {
+        format!(r#"{{"idx":1,"name":"1","path":"{path}","type":"{module_type}"}}"#)
+    };
+    for modules in [
+        format!("[{TRANSFORMER},{}]", entry("1_Pooling", "custom.Pooling")),
+        format!("[{TRANSFORMER},{}]", entry("1_Pooling", "Pooling")),
+        format!(
+            "[{},{POOLING}]",
+            entry("", "custom.models.Transformer").replace(r#""idx":1"#, r#""idx":0"#)
+        ),
+        format!(
+            "[{TRANSFORMER},{POOLING},{}]",
+            entry("", "vendor_quantize.FlexibleQuantizer")
+        ),
+        format!(
+            "[{TRANSFORMER},{POOLING},{}]",
+            entry("2_Normalize", "custom.Normalize")
+        ),
+    ] {
+        let dir = module_dir(
+            &modules,
+            &[(
+                "1_Pooling/config.json",
+                &pooling_config("mean_tokens", true),
+            )],
+        );
+        assert!(
+            matches!(
+                model_manager::planned_files(&modules),
+                Err(oneiron::Error::InvalidConfig(_))
+            ),
+            "{modules}"
+        );
+        assert!(
+            matches!(
+                chain_at(dir.path(), EmbedderOutputQuantization::Int8),
+                Err(oneiron::Error::InvalidConfig(_))
+            ),
+            "{modules}"
+        );
+    }
+
+    let dense =
+        r#"{"idx":2,"name":"2","path":"2_Dense","type":"sentence_transformers.models.Dense"}"#;
+    let dir = module_dir(
+        &format!("[{TRANSFORMER},{POOLING},{dense}]"),
+        &[
+            ("1_Pooling/config.json", &pooling_config("cls_token", true)),
+            (
+                "2_Dense/config.json",
+                r#"{"in_features":4,"out_features":2,"activation_function":"custom.Tanh"}"#,
+            ),
+        ],
+    );
+    assert!(matches!(
+        st_modules::Chain::read(dir.path(), EmbedderOutputQuantization::Int8),
+        Err(oneiron::Error::InvalidConfig(_))
+    ));
+}
+
+/// A pooling mode this provider has never heard of is refused, never dropped
+/// beside one it knows.
+#[test]
+fn an_unknown_pooling_mode_is_refused_rather_than_dropped() {
+    let dir = module_dir(
+        &format!("[{TRANSFORMER},{POOLING}]"),
+        &[(
+            "1_Pooling/config.json",
+            r#"{"word_embedding_dimension":4,"pooling_mode_mean_tokens":true,"pooling_mode_attention_tokens":true}"#,
+        )],
+    );
+    assert!(matches!(
+        chain_at(dir.path(), EmbedderOutputQuantization::Int8),
+        Err(oneiron::Error::InvalidConfig(_))
+    ));
+}
+
+/// The runtime pools once and then applies each later module in order. A
+/// chain it could only run by reordering — a second pool, or a step declared
+/// before the pool — is refused.
+#[test]
+fn a_chain_that_would_run_out_of_its_declared_order_is_refused() {
+    let normalize = r#"{"idx":2,"name":"2","path":"2_Normalize","type":"sentence_transformers.models.Normalize"}"#;
+    let quantizer = r#"{"idx":2,"name":"2","path":"","type":"st_quantize.FlexibleQuantizer"}"#;
+    let second_pool =
+        r#"{"idx":3,"name":"3","path":"3_Pooling","type":"sentence_transformers.models.Pooling"}"#;
+    for modules in [
+        format!("[{TRANSFORMER},{POOLING},{normalize},{second_pool}]"),
+        format!("[{TRANSFORMER},{POOLING},{second_pool}]"),
+        format!("[{TRANSFORMER},{normalize},{POOLING}]"),
+        format!("[{TRANSFORMER},{quantizer},{POOLING}]"),
+    ] {
+        let dir = module_dir(
+            &modules,
+            &[
+                (
+                    "1_Pooling/config.json",
+                    &pooling_config("mean_tokens", true),
+                ),
+                ("3_Pooling/config.json", &pooling_config("cls_token", true)),
+            ],
+        );
+        assert!(
+            matches!(
+                model_manager::planned_files(&modules),
+                Err(oneiron::Error::InvalidConfig(_))
+            ),
+            "{modules}"
+        );
+        assert!(
+            matches!(
+                chain_at(dir.path(), EmbedderOutputQuantization::Int8),
+                Err(oneiron::Error::InvalidConfig(_))
+            ),
+            "{modules}"
+        );
+    }
+}
+
+/// sentence-transformers keeps the prompt in the pool unless the config says
+/// otherwise, so a config that leaves `include_prompt` out averages the
+/// prompt's rows with the text's.
+#[test]
+fn a_pooling_config_without_include_prompt_keeps_the_prompt_in_the_pool() {
+    let dir = module_dir(
+        &format!("[{TRANSFORMER},{POOLING}]"),
+        &[(
+            "1_Pooling/config.json",
+            r#"{"word_embedding_dimension":4,"pooling_mode_mean_tokens":true}"#,
+        )],
+    );
+    let modules = chain_at(dir.path(), EmbedderOutputQuantization::Int8).expect("parses");
+    assert!(modules.chain().pooling.include_prompt);
+    // One prompt row, kept: the first sequence's three rows average to 4..7.
+    assert_eq!(pooled(&modules, &ramp(), 1)[0], vec![4.0, 5.0, 6.0, 7.0]);
+}
+
+/// The f32 input near `atanh(tie / 127)` whose `tanh(x) · 127`, as candle
+/// computes it on this host, is exactly `tie`. The quantizer runs the same
+/// candle ops, so it sees the same product.
+fn input_landing_on(tie: f32) -> f32 {
+    let centre = (f64::from(tie) / 127.0).atanh() as f32;
+    let candidates: Vec<f32> = (-20_000i64..20_000)
+        .map(|step| f32::from_bits((i64::from(centre.to_bits()) + step) as u32))
+        .collect();
+    let scaled = (Tensor::from_vec(candidates.clone(), candidates.len(), &Device::Cpu)
+        .and_then(|inputs| inputs.tanh())
+        .expect("tanh")
+        * 127.0)
+        .and_then(|scaled| scaled.to_vec1::<f32>())
+        .expect("scaled");
+    candidates
+        .into_iter()
+        .zip(scaled)
+        .find_map(|(input, scaled)| (scaled == tie).then_some(input))
+        .expect("an f32 input lands exactly on the tie")
+}
+
+/// The int8 quantizer rounds a half to the even integer, as the checkpoint's
+/// `torch.round` does: `2.5` emits `2`, not `3`, and `-4.5` emits `-4`.
+#[test]
+fn the_int8_quantizer_rounds_a_half_to_the_even_integer() {
+    let dir = module_dir(
+        &format!(
+            r#"[{TRANSFORMER},{POOLING},{{"idx":2,"name":"2","path":"","type":"st_quantize.FlexibleQuantizer"}}]"#
+        ),
+        &[(
+            "1_Pooling/config.json",
+            &pooling_config("mean_tokens", true),
+        )],
+    );
+    let int8 = chain_at(dir.path(), EmbedderOutputQuantization::Int8).expect("int8 chain");
+    // One row per input, so the mean pool passes each value through as is.
+    let inputs = [
+        input_landing_on(2.5),
+        input_landing_on(4.5),
+        input_landing_on(-2.5),
+        input_landing_on(-4.5),
+    ];
+    let hidden = Tensor::from_vec(inputs.to_vec(), (1, 1, 4), &Device::Cpu).expect("hidden");
+    assert_eq!(pooled(&int8, &hidden, 0), vec![vec![2.0, 4.0, -2.0, -4.0]]);
+}
+
 /// A `FlexibleQuantizer` after mean pooling emits `round(tanh(x) · 127)`,
 /// clamped to the int8 range, or the sign at `binary`; the provider adds no
 /// Normalize the checkpoint did not declare.
@@ -256,7 +518,7 @@ fn the_tanh_quantizer_follows_mean_pooling_in_declared_order() {
     let expected = |means: [f32; 4]| -> Vec<f32> {
         means
             .iter()
-            .map(|m| (m.tanh() * 127.0).round().clamp(-128.0, 127.0))
+            .map(|m| (m.tanh() * 127.0).round_ties_even().clamp(-128.0, 127.0))
             .collect()
     };
     assert_eq!(rows[0], expected([0.0, 0.5, -0.5, 9.0]));
@@ -1027,10 +1289,15 @@ fn an_incomplete_model_dir_names_the_missing_file_and_never_downloads() {
 }
 
 /// Each shipped default resolves to its own pins, each carrying a digest and
-/// a size, and covering every file the provider reads.
+/// a size. The files come from the same planner every checkpoint goes
+/// through: the pins name exactly what the default's own `modules.json`
+/// plans, plus its prompt file when its commit has one.
 #[test]
 fn every_shipped_default_resolves_to_its_own_digest_pinned_files() {
-    for model in &model_manager::PINNED_MODELS {
+    for (model, fixture) in [
+        (&model_manager::PINNED_MODELS[0], "pplx"),
+        (&model_manager::PINNED_MODELS[1], "harrier"),
+    ] {
         let files = model_manager::pinned_files(&crate::config::LocalEmbedderConfig {
             repo: model.repo.to_owned(),
             revision: model.revision.to_owned(),
@@ -1047,19 +1314,31 @@ fn every_shipped_default_resolves_to_its_own_digest_pinned_files() {
             );
             assert!(artifact.bytes > 0, "{} has no pinned size", artifact.file);
         }
-        let names: Vec<&str> = files
+        let modules = model_fixture(fixture).join("modules.json");
+        let pinned_modules = files
+            .iter()
+            .find(|artifact| artifact.file == "modules.json")
+            .expect("modules.json is pinned");
+        model_manager::verify(&modules, pinned_modules)
+            .expect("the committed fixture is the pinned modules.json");
+        let plan = model_manager::planned_files(
+            &std::fs::read_to_string(&modules).expect("read modules.json"),
+        )
+        .expect("the default's chain is runnable");
+        let mut planned: Vec<&str> = plan.iter().map(AsRef::as_ref).collect();
+        if files
+            .iter()
+            .any(|artifact| artifact.file == prompts::PROMPT_FILE)
+        {
+            planned.push(prompts::PROMPT_FILE);
+        }
+        let mut pinned: Vec<&str> = files
             .iter()
             .map(|artifact| artifact.file.as_ref())
             .collect();
-        for required in [
-            "config.json",
-            "modules.json",
-            "1_Pooling/config.json",
-            "tokenizer.json",
-            "model.safetensors",
-        ] {
-            assert!(names.contains(&required), "{required} is not pinned");
-        }
+        planned.sort_unstable();
+        pinned.sort_unstable();
+        assert_eq!(planned, pinned, "{}", model.repo);
     }
     let default = model_manager::pinned_files(&crate::config::LocalEmbedderConfig::default())
         .expect("the default is pinned");
@@ -1085,11 +1364,8 @@ fn an_unpinned_repository_needs_the_files_its_modules_name() {
     let modules = format!(
         r#"[{TRANSFORMER},{POOLING},{{"idx":2,"name":"2","path":"2_Dense","type":"sentence_transformers.models.Dense"}},{{"idx":3,"name":"3","path":"3_Normalize","type":"sentence_transformers.models.Normalize"}}]"#
     );
-    let files = model_manager::unpinned_files(&modules).expect("a runnable chain");
-    let names: Vec<&str> = files
-        .iter()
-        .map(|artifact| artifact.file.as_ref())
-        .collect();
+    let files = model_manager::planned_files(&modules).expect("a runnable chain");
+    let names: Vec<&str> = files.iter().map(AsRef::as_ref).collect();
     assert_eq!(
         names,
         [
@@ -1101,11 +1377,6 @@ fn an_unpinned_repository_needs_the_files_its_modules_name() {
             "tokenizer.json",
             "model.safetensors"
         ]
-    );
-    assert!(
-        files
-            .iter()
-            .all(|artifact| artifact.sha256 == model_manager::UNPINNED)
     );
 }
 
@@ -1120,7 +1391,7 @@ const STUB_ARTIFACT: model_manager::PinnedArtifact = model_manager::PinnedArtifa
 };
 
 /// The `modules.json` the stub serves: a Transformer and a Pooling module.
-const STUB_MODULES: &str = r#"[{"idx":0,"name":"0","path":"","type":"Transformer"},{"idx":1,"name":"1","path":"1_Pooling","type":"Pooling"}]"#;
+const STUB_MODULES: &str = r#"[{"idx":0,"name":"0","path":"","type":"sentence_transformers.models.Transformer"},{"idx":1,"name":"1","path":"1_Pooling","type":"sentence_transformers.models.Pooling"}]"#;
 
 /// A one-file artifact source on loopback.
 ///

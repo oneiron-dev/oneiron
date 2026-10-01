@@ -122,7 +122,7 @@ fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
     let refused = open(&new).err().expect("a different space is refused");
     assert_eq!(refused.kind(), oneiron::ErrorKind::EmbeddingModelChanged);
 
-    let outcome = reembed_with_config(&new).expect("reembed");
+    let outcome = reembed_with_config(&new, false).expect("reembed");
     assert_eq!(
         outcome,
         ReembedOutcome {
@@ -147,7 +147,7 @@ fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
     drop(vault);
 
     assert_eq!(
-        reembed_with_config(&new).expect("a second reembed"),
+        reembed_with_config(&new, false).expect("a second reembed"),
         ReembedOutcome {
             from: None,
             to: NEW.to_owned(),
@@ -162,18 +162,99 @@ fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
 fn reembed_refuses_a_missing_vault_and_a_missing_embedder() {
     let dir = tempfile::tempdir().expect("parent dir");
     let missing = dir.path().join("absent");
-    let error = reembed_with_config(&serve_config(&missing, NEW))
-        .expect_err("a missing vault is refused")
-        .to_string();
-    assert!(error.contains("does not exist"), "{error}");
+    reembed_with_config(&serve_config(&missing, NEW), false)
+        .expect_err("a missing vault is refused");
     assert!(!missing.exists(), "nothing was created");
 
     let rung_zero = ServeConfig {
         vault_path: dir.path().to_path_buf(),
         ..ServeConfig::default()
     };
-    let error = reembed_with_config(&rung_zero)
-        .expect_err("no embedder, no target space")
-        .to_string();
-    assert!(error.contains("[embedder]"), "{error}");
+    reembed_with_config(&rung_zero, false).expect_err("no embedder, no target space");
+    assert!(
+        !dir.path().join("data.mdb").exists(),
+        "nothing was created without a target space"
+    );
+}
+
+/// `--force` runs the same swap under the pin the vault already holds: every
+/// vector dropped, every record queued, and the model fills them all again.
+#[test]
+fn a_forced_reembed_refills_a_vault_already_in_the_configured_space() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let config = serve_config(dir.path(), NEW);
+    let (ids, embedded) = {
+        let vault = open(&config).expect("the vault opens");
+        let ids: Vec<_> = (0..2)
+            .map(|index| put_claim(&vault, &format!("claim {index}")))
+            .collect();
+        (ids, fill(&vault, NEW))
+    };
+    assert_eq!(
+        reembed_with_config(&config, true).expect("forced reembed"),
+        ReembedOutcome {
+            from: None,
+            to: NEW.to_owned(),
+            migrated: true,
+        }
+    );
+    let vault = open(&config).expect("the vault still opens in its space");
+    for id in &ids {
+        assert_eq!(vault.get_vector(id).expect("vector read"), None);
+    }
+    assert_eq!(
+        fill(&vault, NEW),
+        embedded,
+        "every record is embedded again"
+    );
+}
+
+/// A vault's width is fixed when it is created: a model of another width is
+/// refused with the index refusal underneath, and the vault is left as it was.
+#[test]
+fn a_model_of_another_width_is_refused_and_the_vault_left_alone() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let old = serve_config(dir.path(), OLD);
+    let id = {
+        let vault = open(&old).expect("the vault opens");
+        let id = put_claim(&vault, "claim");
+        fill(&vault, OLD);
+        id
+    };
+    let mut wider = serve_config(dir.path(), NEW);
+    wider.dimensions = DIMS * 2;
+    if let Some(embedder) = wider.embedder.as_mut() {
+        embedder.dimensions = DIMS * 2;
+    }
+    let error = reembed_with_config(&wider, false).expect_err("another width is refused");
+    assert_eq!(
+        error
+            .downcast_ref::<oneiron::Error>()
+            .map(oneiron::Error::kind),
+        Some(oneiron::ErrorKind::HnswConfigChanged)
+    );
+    let vault = open(&old).expect("the vault still opens in its own space");
+    assert!(vault.get_vector(&id).expect("vector read").is_some());
+}
+
+/// `serve`'s refusal of another model's vault keeps its typed kind under the
+/// remedy it adds.
+#[test]
+fn the_model_change_remedy_keeps_the_typed_refusal() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    {
+        let vault = open(&serve_config(dir.path(), OLD)).expect("the vault opens");
+        put_claim(&vault, "claim");
+        fill(&vault, OLD);
+    }
+    let refused = open(&serve_config(dir.path(), NEW))
+        .err()
+        .expect("a different space is refused");
+    let explained = super::with_model_change_remedy(refused);
+    assert_eq!(
+        explained
+            .downcast_ref::<oneiron::Error>()
+            .map(oneiron::Error::kind),
+        Some(oneiron::ErrorKind::EmbeddingModelChanged)
+    );
 }

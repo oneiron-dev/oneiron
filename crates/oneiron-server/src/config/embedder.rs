@@ -30,10 +30,6 @@ pub const DEFAULT_LOCAL_REVISION: &str = "2c4d510dd4a732063c31a0f70193e35067b51f
 /// Dimensionality of the default local model. It is MRL-trained, but no
 /// `fast_dims` prefix has been measured, so the vault runs at full width.
 pub const DEFAULT_DIMENSIONS: usize = 1024;
-/// Context window of the default local model: `max_position_embeddings` in its
-/// `config.json` at the pinned revision. The rotary tables are built to it, so
-/// a longer input has no position to sit at.
-pub const DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS: usize = 32_768;
 
 const DEFAULT_BATCH_SIZE: usize = 32;
 const DEFAULT_LEASE_MS: u64 = 30_000;
@@ -261,8 +257,12 @@ pub struct LocalEmbedderConfig {
     /// parallelism is candle's own.
     pub threads: usize,
     /// Overrides the attention the checkpoint's `config.json` declares.
+    /// Changing it on a filled vault changes its vector space; run
+    /// `reembed --force`.
     pub attention: EmbedderAttention,
     /// What a `FlexibleQuantizer` module in the checkpoint's chain emits.
+    /// Changing it on a filled vault changes its vector space; run
+    /// `reembed --force`.
     pub output_quantization: EmbedderOutputQuantization,
 }
 
@@ -391,8 +391,8 @@ fn apply_common(config: &mut EmbedderConfig, over: &EmbedderConfigOverride) {
     }
     if let Some(value) = over.model_id.clone() {
         // The space id names the weights that fill it, so a layer naming a space
-        // and not its files means that space's own repository and commit. The
-        // same layer's `repo`/`revision`, applied after this, still win.
+        // and not its files means that space's own repository and commit. Files
+        // named as well must name the same ones (`embedder_space`).
         if let Some((repo, revision)) = value.split_once('@') {
             config.local.repo = repo.to_owned();
             config.local.revision = revision.to_owned();
@@ -656,9 +656,11 @@ pub struct EmbedderArgs {
     #[arg(long = "embedder-threads")]
     pub embedder_threads: Option<usize>,
     /// Local attention: `auto` (the model's own), `causal` or `bidirectional`.
+    /// Changing it on a filled vault changes its vectors: run `reembed --force`.
     #[arg(long = "embedder-attention", value_parser = parse_attention)]
     pub embedder_attention: Option<EmbedderAttention>,
     /// What a quantizer module in the chain emits: `int8` or `binary`.
+    /// Changing it on a filled vault changes its vectors: run `reembed --force`.
     #[arg(long = "embedder-output-quantization", value_parser = parse_output_quantization)]
     pub embedder_output_quantization: Option<EmbedderOutputQuantization>,
     /// Base URL of an OpenAI-compatible embeddings server.

@@ -2,6 +2,7 @@
 
 pub mod embedder;
 mod embedder_shape;
+mod embedder_space;
 mod lookup;
 pub mod merge;
 pub mod remote_embedder;

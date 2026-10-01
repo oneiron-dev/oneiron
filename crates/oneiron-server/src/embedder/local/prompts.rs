@@ -1,11 +1,18 @@
 //! What a query and a document carry before their text, read from the
 //! checkpoint's own `config_sentence_transformers.json`.
 //!
-//! sentence-transformers' own resolution, kept: a query takes the prompt named
-//! `query`, a document the first of `document`, `passage` or `corpus`, and
-//! either falls back to `default_prompt_name`. A checkpoint without the file
-//! carries no prompt at all. The host may name a different prompt for queries
-//! (`query_prompt_name`), or give the text outright (`query_instruction`).
+//! sentence-transformers' own resolution, kept (`encode_query` and
+//! `encode_document`). A query takes, first match wins:
+//!
+//! 1. `query_instruction`, the host's text outright;
+//! 2. `query_prompt_name`, a prompt the host names from the file;
+//! 3. the file's prompt named `query`;
+//! 4. the file's `default_prompt_name`;
+//! 5. no prompt.
+//!
+//! A document takes the first of `document`, `passage` or `corpus`, then
+//! `default_prompt_name`, then none. A checkpoint without the file carries no
+//! prompt at all.
 
 use std::collections::BTreeMap;
 use std::path::Path;
