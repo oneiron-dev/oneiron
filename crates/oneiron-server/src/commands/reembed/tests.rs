@@ -8,22 +8,25 @@ use oneiron::embed::{
 };
 
 use super::*;
-use crate::config::{EmbedderConfig, EmbedderProvider};
+use crate::config::{EmbedderAttention, EmbedderConfig, EmbedderProvider, LocalEmbedderConfig};
 
 const DIMS: usize = 4;
 const OLD: &str = "test/old@v1";
 const NEW: &str = "test/new@v2";
 
-/// Embeds every input as one unit vector, in one space.
-struct FixtureEmbedder(&'static str);
+/// Embeds every input as one unit vector of `dimensions`, in one space.
+struct FixtureEmbedder {
+    model: &'static str,
+    dimensions: usize,
+}
 
 impl Embedder for FixtureEmbedder {
     fn model_id(&self) -> &str {
-        self.0
+        self.model
     }
 
     fn dimensions(&self) -> usize {
-        DIMS
+        self.dimensions
     }
 
     fn locality(&self) -> EmbedderLocality {
@@ -31,7 +34,9 @@ impl Embedder for FixtureEmbedder {
     }
 
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> oneiron::Result<Vec<Vec<f32>>> {
-        Ok(vec![vec![1.0, 0.0, 0.0, 0.0]; inputs.len()])
+        let mut unit = vec![0.0; self.dimensions];
+        unit[0] = 1.0;
+        Ok(vec![unit; inputs.len()])
     }
 }
 
@@ -83,8 +88,14 @@ fn put_claim(vault: &oneiron::Vault, text: &str) -> oneiron::EntityId {
 
 /// Runs the engine's reconciler with `model` until nothing is leased.
 fn fill(vault: &Arc<oneiron::Vault>, model: &'static str) -> usize {
-    let reconciler =
-        PendingEmbeddingReconciler::new(Arc::clone(vault), Arc::new(FixtureEmbedder(model)));
+    fill_at(vault, model, DIMS)
+}
+
+fn fill_at(vault: &Arc<oneiron::Vault>, model: &'static str, dimensions: usize) -> usize {
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(vault),
+        Arc::new(FixtureEmbedder { model, dimensions }),
+    );
     let mut filled = 0;
     for _ in 0..10 {
         let report = reconciler.reconcile_once().expect("reconcile pass");
@@ -128,6 +139,7 @@ fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
         ReembedOutcome {
             from: Some(OLD.to_owned()),
             to: NEW.to_owned(),
+            transform: None,
             migrated: true,
         }
     );
@@ -151,6 +163,7 @@ fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
         ReembedOutcome {
             from: None,
             to: NEW.to_owned(),
+            transform: None,
             migrated: false,
         },
         "a vault already in the configured space is left as it is"
@@ -195,6 +208,7 @@ fn a_forced_reembed_refills_a_vault_already_in_the_configured_space() {
         ReembedOutcome {
             from: None,
             to: NEW.to_owned(),
+            transform: None,
             migrated: true,
         }
     );
@@ -256,5 +270,142 @@ fn the_model_change_remedy_keeps_the_typed_refusal() {
             .downcast_ref::<oneiron::Error>()
             .map(oneiron::Error::kind),
         Some(oneiron::ErrorKind::EmbeddingModelChanged)
+    );
+}
+
+// ─── the transform pin ───────────────────────────────────────────────────
+
+/// The committed metadata of a model whose files say: bidirectional, mean
+/// pooled, int8-quantised, 1024 wide.
+const MODEL_FILES: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/embed/models/pplx"
+);
+const WIDE: usize = 1024;
+
+/// What `serve` resolves for a vault whose local model's files are on this
+/// host, with the attention the section names.
+fn local_config(path: &Path, attention: EmbedderAttention) -> ServeConfig {
+    ServeConfig {
+        vault_path: path.to_path_buf(),
+        dimensions: WIDE,
+        embedder: Some(EmbedderConfig {
+            provider: EmbedderProvider::Local,
+            model_id: OLD.to_owned(),
+            dimensions: WIDE,
+            local: LocalEmbedderConfig {
+                model_dir: Some(MODEL_FILES.into()),
+                attention,
+                ..LocalEmbedderConfig::default()
+            },
+            ..EmbedderConfig::default()
+        }),
+        ..ServeConfig::default()
+    }
+}
+
+fn refusal_kind(config: &ServeConfig) -> Option<oneiron::ErrorKind> {
+    open(config).err().map(|error| error.kind())
+}
+
+/// Opens a vault under `config`, writes a claim and fills it.
+fn filled(config: &ServeConfig) {
+    let vault = open(config).expect("the vault opens");
+    put_claim(&vault, "claim");
+    assert!(fill_at(&vault, OLD, WIDE) >= 1);
+}
+
+/// Changing how the model's output becomes a vector, under the same model,
+/// is a different space: open refuses, and keeps refusing across restarts,
+/// until `reembed` repins the transform and queues every record again.
+#[test]
+fn a_changed_attention_refuses_open_until_reembed_moves_the_vault() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    let causal = local_config(dir.path(), EmbedderAttention::Causal);
+    filled(&own);
+
+    for _restart in 0..2 {
+        assert_eq!(
+            refusal_kind(&causal),
+            Some(oneiron::ErrorKind::EmbeddingTransformChanged)
+        );
+    }
+    assert_eq!(
+        refusal_kind(&own),
+        None,
+        "the vault's own transform still opens"
+    );
+    let refused = open(&causal).err().expect("refused");
+    assert_eq!(
+        super::with_model_change_remedy(refused)
+            .downcast_ref::<oneiron::Error>()
+            .map(oneiron::Error::kind),
+        Some(oneiron::ErrorKind::EmbeddingTransformChanged),
+        "serve's remedy keeps the typed refusal"
+    );
+
+    let outcome = reembed_with_config(&causal, false).expect("reembed");
+    assert_eq!(outcome.from, None, "the model did not change");
+    assert!(outcome.migrated);
+    assert_eq!(outcome.transform, causal.vault_config().embedding_transform);
+
+    let vault = open(&causal).expect("the vault opens in the new transform");
+    assert!(
+        fill_at(&vault, OLD, WIDE) >= 1,
+        "every record is embedded again"
+    );
+    drop(vault);
+    assert_eq!(
+        refusal_kind(&own),
+        Some(oneiron::ErrorKind::EmbeddingTransformChanged),
+        "the pin moved with the vectors"
+    );
+}
+
+/// Settings that never touch a stored vector leave the vault open: query
+/// prompts, weight precision, batch size.
+#[test]
+fn a_query_only_change_keeps_the_vault_open() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    filled(&own);
+    let mut queried = own.clone();
+    if let Some(embedder) = queried.embedder.as_mut() {
+        embedder.query_instruction = Some("Represent this question: ".to_owned());
+        embedder.batch_size = 4;
+        embedder.local.quant = crate::config::EmbedderQuant::None;
+    }
+    assert_eq!(
+        queried.vault_config().embedding_transform,
+        own.vault_config().embedding_transform
+    );
+    assert_eq!(refusal_kind(&queried), None);
+}
+
+/// A vault filled before the transform was pinned holds the model's own
+/// transform. The first open under a declared transform adopts it, and from
+/// then on another transform is refused.
+#[test]
+fn a_vault_without_a_pinned_transform_adopts_the_configured_one() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    {
+        let mut unpinned = own.vault_config();
+        unpinned.embedding_transform = None;
+        let vault = oneiron::Vault::open_owned(dir.path(), unpinned)
+            .map(Arc::new)
+            .expect("the vault opens without a transform");
+        put_claim(&vault, "claim");
+        assert!(fill_at(&vault, OLD, WIDE) >= 1);
+    }
+    assert_eq!(
+        refusal_kind(&own),
+        None,
+        "the first declared transform is adopted"
+    );
+    assert_eq!(
+        refusal_kind(&local_config(dir.path(), EmbedderAttention::Causal)),
+        Some(oneiron::ErrorKind::EmbeddingTransformChanged)
     );
 }

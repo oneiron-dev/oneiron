@@ -726,7 +726,9 @@ fn attaching_a_provider_to_a_populated_vault_backfills_every_row() {
     let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
         .expect("slot resolves")
         .expect("an endpoint slot exists");
-    let embedder = slot.ensure_ready().expect("endpoint is ready at once");
+    let embedder = slot
+        .ensure_ready(|_| Ok(()))
+        .expect("endpoint is ready at once");
     let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
         Arc::clone(&vault),
         embedder as Arc<dyn oneiron::embed::Embedder>,
@@ -1134,7 +1136,7 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
     let slot = EmbedderSlot::from_config(embedder).unwrap().unwrap();
     let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
         Arc::clone(&vault),
-        slot.ensure_ready().unwrap() as Arc<dyn oneiron::embed::Embedder>,
+        slot.ensure_ready(|_| Ok(())).unwrap() as Arc<dyn oneiron::embed::Embedder>,
     )
     .with_remote_rung(build_remote_rung(embedder).unwrap().unwrap())
     .unwrap();
@@ -1168,7 +1170,7 @@ fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
     let mut config = endpoint_config(&mock.base);
     config.batch_size = 1;
     let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
-    slot.ensure_ready().unwrap();
+    slot.ensure_ready(|_| Ok(())).unwrap();
     vault.set_indexed_idle_delay_ms(0).unwrap();
     let document = oneiron::EntityId::now();
     let vector = mock_vector("staged revision", DIMS);

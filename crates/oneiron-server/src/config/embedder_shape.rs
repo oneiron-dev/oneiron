@@ -5,17 +5,17 @@
 //! less than they should, or that offers a choice; a model whose files are
 //! complete needs none of them.
 //!
-//! Both keys here change the vectors the model makes, and the model id a vault
-//! pins does not record them. Changing either on a filled vault changes its
-//! vector space: run `oneiron-server reembed --force` with the new setting so
-//! every vector is made again in the new one.
+//! Both keys here change the vectors the model makes. A vault pins them in its
+//! embedding transform beside the model id, so changing either on a filled
+//! vault is refused at open until `oneiron-server reembed`, run with the new
+//! setting, makes every vector again the new way.
 
 use std::str::FromStr;
 
 use serde::Deserialize;
 
 /// How the body attends. Changing it on a filled vault changes the vector
-/// space; the remedy is `reembed --force`.
+/// space; the remedy is `reembed`.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderAttention {
@@ -55,7 +55,7 @@ impl FromStr for EmbedderAttention {
 }
 
 /// What a `FlexibleQuantizer` module in the chain emits. Changing it on a
-/// filled vault changes the vector space; the remedy is `reembed --force`.
+/// filled vault changes the vector space; the remedy is `reembed`.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderOutputQuantization {

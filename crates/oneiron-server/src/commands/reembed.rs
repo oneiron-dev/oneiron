@@ -1,16 +1,16 @@
 //! `reembed`: moves a stopped vault to the configured embedding space.
 //!
-//! One vault holds one embedding space, so a server configured for a model the
-//! vault was not filled with refuses to open it (`EmbeddingModelChanged`). This
-//! is the operator's door across that refusal. The engine's migration repins the
-//! vault to the configured model, drops the vector graph and marks every
-//! embeddable record pending; the next `serve` fills them in the background
-//! while lexical and graph reads keep answering. It runs with the server
-//! stopped: the vault's writer lease admits one process.
+//! One vault holds one embedding space: a model, and how the embedder turns
+//! that model's output into stored vectors (the transform). A server
+//! configured for a model or a transform the vault was not filled with refuses
+//! to open it (`EmbeddingModelChanged`, `EmbeddingTransformChanged`). This is
+//! the operator's door across that refusal. The engine's migration repins both
+//! in one transaction, drops the vector graph and marks every embeddable record
+//! pending; the next `serve` fills them in the background while lexical and
+//! graph reads keep answering. It runs with the server stopped: the vault's
+//! writer lease admits one process.
 //!
-//! `--force` runs the same swap under the pin the vault already holds, for a
-//! change the pin does not name: `embedder.attention` or
-//! `embedder.output_quantization` on a filled vault.
+//! `--force` runs the same swap under the pins the vault already holds.
 
 use oneiron::error::StoreError;
 use serde::Serialize;
@@ -26,6 +26,9 @@ struct ReembedOutcome {
     from: Option<String>,
     /// The configured space the vault holds now.
     to: String,
+    /// The transform the vault holds now, when the configured embedder
+    /// declares one before it loads.
+    transform: Option<String>,
     /// Whether every embeddable record was queued to be embedded again.
     migrated: bool,
 }
@@ -62,7 +65,8 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths =
         super::resolve_dict_search_paths(&config.dict_search_paths).paths;
-    let stored = match oneiron::Vault::open_owned(&config.vault_path, vault_config.clone()) {
+    let transform = vault_config.embedding_transform.clone();
+    let from = match oneiron::Vault::open_owned(&config.vault_path, vault_config.clone()) {
         Ok(mut already) => {
             if force {
                 already.refill_embedding_space()?;
@@ -70,19 +74,30 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
             return Ok(ReembedOutcome {
                 from: None,
                 to: target,
+                transform,
                 migrated: force,
             });
         }
-        Err(oneiron::Error::Store(StoreError::EmbeddingModelChanged { stored, .. })) => stored,
+        Err(oneiron::Error::Store(StoreError::EmbeddingModelChanged { stored, .. })) => {
+            Some(stored)
+        }
+        Err(oneiron::Error::Store(StoreError::EmbeddingTransformChanged { .. })) => None,
         Err(error) => return Err(open_refusal(config, error)),
     };
-    vault_config.embedding_model = Some(stored.clone());
+    // Reopened under what the vault holds, so the open admits it; the
+    // migration then repins the model and the transform together.
+    vault_config.embedding_model = Some(from.clone().unwrap_or_else(|| target.clone()));
+    vault_config.embedding_transform = None;
     let mut vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(|error| open_refusal(config, error))?;
-    vault.begin_embedding_migration(&target)?;
+    match transform.as_deref() {
+        Some(transform) => vault.migrate_embedding_space(&target, transform)?,
+        None => vault.begin_embedding_migration(&target)?,
+    }
     Ok(ReembedOutcome {
-        from: Some(stored),
+        from,
         to: target,
+        transform,
         migrated: true,
     })
 }
@@ -112,19 +127,27 @@ fn open_refusal(config: &ServeConfig, error: oneiron::Error) -> anyhow::Error {
     anyhow::Error::from(error).context(context)
 }
 
-/// What `serve` says when the vault holds another model's vectors: both ways
-/// forward, with the typed refusal kept underneath.
+/// What `serve` says when the vault holds vectors from another model, or made
+/// another way: both ways forward, with the typed refusal kept underneath.
 pub(super) fn with_model_change_remedy(error: oneiron::Error) -> anyhow::Error {
-    let oneiron::Error::Store(StoreError::EmbeddingModelChanged { stored, requested }) = &error
-    else {
-        return error.into();
+    let remedy = match &error {
+        oneiron::Error::Store(StoreError::EmbeddingModelChanged { stored, requested }) => format!(
+            "the vault holds vectors from {stored}, but the configured embedder is {requested}. \
+             To move the vault to the configured model, run `oneiron-server reembed` with this \
+             configuration. To keep the vault's model, set embedder.model_id to {stored} and \
+             that model's query settings (embedder.query_instruction or \
+             embedder.query_prompt_name)"
+        ),
+        oneiron::Error::Store(StoreError::EmbeddingTransformChanged { stored, requested }) => {
+            format!(
+                "the vault's vectors were made as {stored}, but the configured embedder makes \
+                 {requested}. To re-embed the vault the new way, run `oneiron-server reembed` \
+                 with this configuration. To keep the vault's vectors, restore the settings \
+                 that made them (embedder.attention, embedder.output_quantization)"
+            )
+        }
+        _ => return error.into(),
     };
-    let remedy = format!(
-        "the vault holds vectors from {stored}, but the configured embedder is {requested}. \
-         To move the vault to the configured model, run `oneiron-server reembed` with this \
-         configuration. To keep the vault's model, set embedder.model_id to {stored} and that \
-         model's query settings (embedder.query_instruction or embedder.query_prompt_name)"
-    );
     anyhow::Error::from(error).context(remedy)
 }
 

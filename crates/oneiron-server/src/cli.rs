@@ -248,10 +248,7 @@ pub struct SkillsPackArgs {
 #[derive(Args, Clone, Default)]
 pub struct ReembedArgs {
     /// Drop every vector and queue every record again even when the vault
-    /// already holds the configured model. Needed after changing
-    /// `embedder.attention` or `embedder.output_quantization` on a filled
-    /// vault: both change the vectors the model makes, and the model id the
-    /// vault pins does not show it.
+    /// already holds the configured model and embedding transform.
     #[arg(long)]
     pub force: bool,
     #[command(flatten)]

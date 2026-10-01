@@ -154,6 +154,30 @@ fn named_files_name_their_own_space() {
     );
 }
 
+/// An endpoint makes whatever its server makes, so the vault pins only its
+/// width beside the model; `none` pins nothing, and a local model whose files
+/// are not on this host yet is checked once they arrive.
+#[test]
+fn the_vault_pins_a_transform_for_what_the_section_can_declare() {
+    let endpoint = resolve(
+        "dimensions = 1024\n\n[embedder]\nprovider = \"endpoint\"\ndimensions = 1024\nendpoint = \"http://127.0.0.1:1234/v1\"\nmodel_key = \"k\"\nmodel_id = \"test/remote@v1\"\n",
+    )
+    .expect("resolves");
+    assert_eq!(
+        endpoint.vault_config().embedding_transform.as_deref(),
+        Some("endpoint;dims=1024")
+    );
+    let none = resolve("dimensions = 1024\n\n[embedder]\nprovider = \"none\"\n").expect("resolves");
+    assert_eq!(none.vault_config().embedding_transform, None);
+    let dir = tempfile::tempdir().expect("models root");
+    let local = resolve(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodels_dir = {:?}\n",
+        dir.path()
+    ))
+    .expect("resolves");
+    assert_eq!(local.vault_config().embedding_transform, None);
+}
+
 /// The keys that override a checkpoint's own declaration resolve from the
 /// file, the environment and argv like every other key.
 #[test]

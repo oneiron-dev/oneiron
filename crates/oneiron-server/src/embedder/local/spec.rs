@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::prompts::{self, Prompts};
 use super::qwen3_embedding::Config;
-use super::st_modules::Chain;
+use super::st_modules::{Chain, PoolingMode, Step};
 use crate::config::{EmbedderAttention, EmbedderConfig};
 
 /// A checkpoint, as its files and the host's overrides describe it.
@@ -47,5 +47,57 @@ impl LocalModelSpec {
             chain,
             prompts,
         })
+    }
+
+    /// The embedding-transform descriptor the vault pins beside the model id:
+    /// everything the files and the host's overrides say that moves a stored
+    /// document vector — attention, pooling, the steps after it, the document
+    /// prompt and the width. Query-only settings, weight precision, device and
+    /// batch size move no stored vector and are left out.
+    pub(super) fn transform(&self) -> String {
+        let attention = if self.body.causal() {
+            "causal"
+        } else {
+            "bidirectional"
+        };
+        let pool = match self.chain.pooling.mode {
+            PoolingMode::LastToken => "lasttoken",
+            PoolingMode::Mean => "mean",
+            PoolingMode::Cls => "cls",
+        };
+        let document_prompt = if self.prompts.document.is_empty() {
+            "none".to_owned()
+        } else {
+            serde_json::Value::from(self.prompts.document.as_str()).to_string()
+        };
+        let steps: Vec<String> = self
+            .chain
+            .steps
+            .iter()
+            .map(|step| match step {
+                Step::Normalize => "normalize".to_owned(),
+                Step::Int8Tanh => "quantize:int8".to_owned(),
+                Step::BinaryTanh => "quantize:binary".to_owned(),
+                Step::Dense {
+                    in_features,
+                    out_features,
+                    tanh,
+                    ..
+                } => format!(
+                    "dense:{in_features}>{out_features}:{}",
+                    if *tanh { "tanh" } else { "identity" }
+                ),
+            })
+            .collect();
+        let chain = if steps.is_empty() {
+            "none".to_owned()
+        } else {
+            steps.join(",")
+        };
+        format!(
+            "attn={attention};pool={pool};include_prompt={};doc_prompt={document_prompt};chain={chain};dims={}",
+            self.chain.pooling.include_prompt,
+            self.chain.dimensions()
+        )
     }
 }

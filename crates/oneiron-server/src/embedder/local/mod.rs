@@ -54,8 +54,23 @@ pub(crate) struct LocalEmbedder {
     document_prompt_tokens: usize,
     /// The model's tokenizer, truncating at the input cap and never padding.
     tokenizer: Tokenizer,
+    /// How this model turns text into stored vectors ([`LocalModelSpec::transform`]).
+    transform: String,
     batch_size: usize,
     truncations: AtomicU64,
+}
+
+/// The transform descriptor of the local model as its files on this host
+/// describe it, or `None` when they are not here yet or do not read: the
+/// worker checks the loaded model's once the files arrive.
+pub(crate) fn transform_on_disk(config: &EmbedderConfig) -> Option<String> {
+    let dir = model_manager::model_dir(&config.local).ok()?;
+    if !dir.join("modules.json").is_file() {
+        return None;
+    }
+    LocalModelSpec::read(&dir, config)
+        .ok()
+        .map(|spec| spec.transform())
 }
 
 pub(crate) fn prepare(config: &EmbedderConfig) -> oneiron::Result<&'static str> {
@@ -109,6 +124,7 @@ impl LocalEmbedder {
         };
         let query_prompt_tokens = prompt_tokens(&spec.prompts.query)?;
         let document_prompt_tokens = prompt_tokens(&spec.prompts.document)?;
+        let transform = spec.transform();
         let started = Instant::now();
         let model = load_body(&dir, &spec.body, config, &run_device, dtype)?;
         let modules = StModules::load(spec.chain, &dir, &run_device)?;
@@ -133,9 +149,15 @@ impl LocalEmbedder {
             query_prompt_tokens,
             document_prompt_tokens,
             tokenizer,
+            transform,
             batch_size: config.batch_size.max(1),
             truncations: AtomicU64::new(0),
         }))
+    }
+
+    /// How this model turns text into stored vectors.
+    pub(super) fn transform(&self) -> &str {
+        &self.transform
     }
 
     /// Embeds document texts in input order, each behind the model's own

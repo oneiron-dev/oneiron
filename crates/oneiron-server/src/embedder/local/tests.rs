@@ -995,6 +995,41 @@ fn both_shipped_models_read_through_the_same_generic_path() {
     assert_eq!(pplx.chain.dimensions(), 1024);
 }
 
+/// The transform the vault pins is read from the same files by the same code:
+/// it names how each shipped model turns its output into stored vectors, moves
+/// with an override that changes them, and ignores query-only settings.
+#[test]
+fn each_shipped_model_declares_its_transform_from_its_own_files() {
+    let pplx = spec::LocalModelSpec::read(&model_fixture("pplx"), &spec_config()).expect("reads");
+    assert_eq!(
+        pplx.transform(),
+        "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024"
+    );
+    let harrier =
+        spec::LocalModelSpec::read(&model_fixture("harrier"), &spec_config()).expect("reads");
+    assert_eq!(
+        harrier.transform(),
+        "attn=causal;pool=lasttoken;include_prompt=true;doc_prompt=none;chain=normalize;dims=1024"
+    );
+
+    let mut config = spec_config();
+    config.query_instruction = Some("Represent this question: ".to_owned());
+    config.query_prompt_name = Some("web_search_query".to_owned());
+    config.batch_size = 1;
+    config.local.quant = EmbedderQuant::None;
+    let queried = spec::LocalModelSpec::read(&model_fixture("harrier"), &config).expect("reads");
+    assert_eq!(queried.transform(), harrier.transform());
+
+    config.local.attention = crate::config::EmbedderAttention::Bidirectional;
+    let bidirectional =
+        spec::LocalModelSpec::read(&model_fixture("harrier"), &config).expect("reads");
+    assert_ne!(bidirectional.transform(), harrier.transform());
+    let mut config = spec_config();
+    config.local.output_quantization = EmbedderOutputQuantization::Binary;
+    let binary = spec::LocalModelSpec::read(&model_fixture("pplx"), &config).expect("reads");
+    assert_ne!(binary.transform(), pplx.transform());
+}
+
 /// The host override reaches the body; config says what the files do not.
 #[test]
 fn the_attention_and_quantizer_overrides_reach_the_read_model() {

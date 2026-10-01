@@ -211,12 +211,21 @@ impl EmbedderSlot {
     /// verification and the load-plus-quantise, so this blocks for seconds to
     /// minutes and belongs on a blocking thread. Idempotent: once ready, it
     /// returns the same provider.
-    pub(crate) fn ensure_ready(&self) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
+    ///
+    /// `admit` sees the loaded model's transform descriptor before the
+    /// provider serves anything, and its refusal leaves the slot not ready: a
+    /// model whose files only arrived after the vault opened is checked
+    /// against the vault's pinned transform here rather than at open.
+    pub(crate) fn ensure_ready(
+        &self,
+        admit: impl FnOnce(&str) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
             return Ok(Arc::clone(ready));
         }
-        let embedder =
-            local::LocalEmbedder::load(&self.config, &self.models)? as Arc<dyn QueryEmbedder>;
+        let local = local::LocalEmbedder::load(&self.config, &self.models)?;
+        admit(local.transform())?;
+        let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
         // `set` loses a race; the winner is the one every caller must see.
         Ok(self.ready.get().map_or(embedder, Arc::clone))
@@ -231,6 +240,21 @@ impl EmbedderSlot {
             tracing::warn!(?error, "query embedding failed");
             EmbedQueryRefusal::Failed
         })
+    }
+}
+
+/// The embedding-transform descriptor a vault pins for this section, when it
+/// is known before the provider loads.
+///
+/// `none` pins nothing. An endpoint makes whatever its server makes, and the
+/// host can say only how wide. The local provider's comes from the model's
+/// files when they are on this host, and from the loaded model otherwise
+/// ([`EmbedderSlot::ensure_ready`]).
+pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
+    match config.provider {
+        EmbedderProvider::None => None,
+        EmbedderProvider::Endpoint => Some(format!("endpoint;dims={}", config.dimensions)),
+        EmbedderProvider::Local => local::transform_on_disk(config),
     }
 }
 

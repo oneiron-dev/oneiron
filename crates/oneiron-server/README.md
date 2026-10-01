@@ -108,10 +108,17 @@ runs unpinned. Keys for a checkpoint whose files say less than they should:
 # query_instruction = "…"           # literal query prefix; wins over the file
 ```
 
-`attention` and `output_quantization` change the vectors the model makes, and
-the `model_id` a vault pins does not record them. Changing either on a filled
-vault changes its vector space: run `oneiron-server reembed --force` (below)
-with the new setting.
+Beside the `model_id`, a vault pins its embedding transform: a descriptor of
+everything that moves a stored vector under the same model. For a local model
+it is read from the model's files and these keys, e.g. the default's
+`attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024`;
+an endpoint's is `endpoint;dims=<n>`; `none` pins nothing. Query settings,
+weight precision, device and batch size are not part of it. Changing
+`attention` or `output_quantization` on a filled vault therefore stops the
+next open (`EmbeddingTransformChanged`) until `oneiron-server reembed` (below)
+re-embeds the vault the new way. A vault from before the pin adopts the
+transform it is first opened with; a local model whose files arrive after
+open is checked once they load.
 
 Harrier's `config_sentence_transformers.json` names its prompts by task
 (`web_search_query`, `sts_query`, `bitext_query`) and sets no default, so
@@ -188,26 +195,27 @@ llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096
 
 ### Changing a vault's embedding model
 
-A server whose `model_id` differs from the one the vault holds stops at open
-and leaves the vault untouched. The refusal names both ways forward: keep the
-vault in its space by setting `model_id` to the vault's model, with that
-model's query settings (`query_instruction` / `query_prompt_name`), or move it.
-With the server stopped:
+A server whose `model_id` or embedding transform differs from the one the
+vault holds stops at open and leaves the vault untouched. The refusal names
+both ways forward: keep the vault in its space (the vault's `model_id` with
+that model's query settings, `query_instruction` / `query_prompt_name`, or the
+`attention` / `output_quantization` that made it), or move it. With the
+server stopped:
 
 ```sh
 oneiron-server reembed --config <same config serve reads>
-# {"from":"microsoft/harrier-oss-v1-0.6b@f9b9dc8…","to":"perplexity-ai/pplx-embed-v1-0.6b@2c4d510…","migrated":true}
+# {"from":"microsoft/harrier-oss-v1-0.6b@f9b9dc8…","to":"perplexity-ai/pplx-embed-v1-0.6b@2c4d510…","transform":"attn=bidirectional;…","migrated":true}
 ```
 
-`reembed` repins the vault to the configured `model_id`, drops the vector
-graph and every staged vector, and queues every record that is embedded:
-claims and epoch summaries. The next `serve` embeds them all again in the
-background; lexical and graph reads answer throughout, and semantic results
-fill in as vectors land. A vault already in the configured space is left as it
-is (`"migrated":false`), unless `--force` asks for the same swap under the pin
-it already holds, which is the remedy after changing `attention` or
-`output_quantization`. A vault's dimensions are fixed when it is created: a
-model of another width needs a new vault, and `reembed` says so.
+`reembed` repins the vault to the configured `model_id` and transform in one
+transaction, drops the vector graph and every staged vector, and queues every
+record that is embedded: claims and epoch summaries. The next `serve` embeds
+them all again in the background; lexical and graph reads answer throughout,
+and semantic results fill in as vectors land. A vault already in the
+configured space is left as it is (`"migrated":false`), unless `--force` asks
+for the same swap under the pins it already holds. A vault's dimensions are
+fixed when it is created: a model of another width needs a new vault, and
+`reembed` says so.
 
 ## Linear mirror host bridge (opt-in)
 

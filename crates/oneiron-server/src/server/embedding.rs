@@ -100,10 +100,17 @@ impl SyncServer {
                 }
                 Err(error) => {
                     if !complained {
-                        tracing::warn!(
-                            ?error,
-                            "embedder is not ready; the vault serves lexical and graph reads and the worker keeps retrying"
-                        );
+                        if error.kind() == oneiron::ErrorKind::EmbeddingTransformChanged {
+                            tracing::error!(
+                                ?error,
+                                "the loaded model makes vectors another way than the vault's were made; it fills and answers nothing. Stop the server and run `oneiron-server reembed`, or restore the settings that made the vault"
+                            );
+                        } else {
+                            tracing::warn!(
+                                ?error,
+                                "embedder is not ready; the vault serves lexical and graph reads and the worker keeps retrying"
+                            );
+                        }
                         complained = true;
                     }
                     tokio::time::sleep(backoff).await;
@@ -124,7 +131,8 @@ impl SyncServer {
                 .ok_or(oneiron::Error::InvariantViolation(
                     "embedding worker started without an embedder",
                 ))?;
-            let embedder: Arc<dyn QueryEmbedder> = slot.ensure_ready()?;
+            let embedder: Arc<dyn QueryEmbedder> =
+                slot.ensure_ready(|transform| server.vault().adopt_embedding_transform(transform))?;
             let config = slot.config();
             server.vault.cold_attach_embedder()?;
             server
@@ -279,7 +287,8 @@ impl SyncServer {
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
             server: self,
-            provider: slot.ensure_ready()?,
+            provider: slot
+                .ensure_ready(|transform| self.vault().adopt_embedding_transform(transform))?,
         };
         if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
             return Err(oneiron::Error::InvalidConfig(
