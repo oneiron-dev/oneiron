@@ -14,8 +14,8 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
-/// How the body attends. Changing it on a filled vault changes the vector
-/// space; the remedy is `reembed`.
+/// How the body attends. On a filled vault a change is refused at open
+/// (`EmbeddingTransformChanged`); `reembed` migrates the vault to it.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderAttention {
@@ -54,8 +54,9 @@ impl FromStr for EmbedderAttention {
     }
 }
 
-/// What a `FlexibleQuantizer` module in the chain emits. Changing it on a
-/// filled vault changes the vector space; the remedy is `reembed`.
+/// What a `FlexibleQuantizer` module in the chain emits. On a filled vault a
+/// change is refused at open (`EmbeddingTransformChanged`); `reembed` migrates
+/// the vault to it.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderOutputQuantization {

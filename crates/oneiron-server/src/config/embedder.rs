@@ -257,12 +257,12 @@ pub struct LocalEmbedderConfig {
     /// parallelism is candle's own.
     pub threads: usize,
     /// Overrides the attention the checkpoint's `config.json` declares.
-    /// Changing it on a filled vault changes its vector space: open refuses
-    /// until `reembed` moves the vault.
+    /// On a filled vault a change is refused at open; `reembed` migrates
+    /// the vault to it.
     pub attention: EmbedderAttention,
     /// What a `FlexibleQuantizer` module in the checkpoint's chain emits.
-    /// Changing it on a filled vault changes its vector space: open refuses
-    /// until `reembed` moves the vault.
+    /// On a filled vault a change is refused at open; `reembed` migrates
+    /// the vault to it.
     pub output_quantization: EmbedderOutputQuantization,
 }
 
@@ -656,11 +656,11 @@ pub struct EmbedderArgs {
     #[arg(long = "embedder-threads")]
     pub embedder_threads: Option<usize>,
     /// Local attention: `auto` (the model's own), `causal` or `bidirectional`.
-    /// Changing it on a filled vault changes its vectors: run `reembed`.
+    /// On a filled vault a change is refused at open; `reembed` migrates it.
     #[arg(long = "embedder-attention", value_parser = parse_attention)]
     pub embedder_attention: Option<EmbedderAttention>,
     /// What a quantizer module in the chain emits: `int8` or `binary`.
-    /// Changing it on a filled vault changes its vectors: run `reembed`.
+    /// On a filled vault a change is refused at open; `reembed` migrates it.
     #[arg(long = "embedder-output-quantization", value_parser = parse_output_quantization)]
     pub embedder_output_quantization: Option<EmbedderOutputQuantization>,
     /// Base URL of an OpenAI-compatible embeddings server.
