@@ -16419,6 +16419,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/native_recalc.rs",
+     "purpose": "Stage-3 default: in-process xlsx recalculation over the host session",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/native_recalc_tests.rs",
+     "purpose": "The default stage-3 route ([`RecalcPolicy::NativeFirst`]) on real XLSX",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -16455,7 +16473,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EditOutcome",
@@ -16611,6 +16629,7 @@
       "EditPlan",
       "EditSession",
       "OfficeDoc",
+      "RecalcPolicy",
       "ValidationCheck",
       "ValidationReport"
      ],
@@ -16618,6 +16637,7 @@
      "purpose": "Edit session seam and validation",
      "surface": {
       "crate-vis": 6,
+      "enum": 1,
       "fn": 2,
       "struct": 5,
       "trait": 1
@@ -18519,7 +18539,7 @@
      "path": "src/gate/docedit_resource.rs",
      "purpose": "Vault-wide document resource ceilings, decoded from policy manifest data",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -18734,7 +18754,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 52,
+      "crate-vis": 53,
       "re-export": 7
      }
     },
@@ -39955,7 +39975,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 29,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40755,8 +40775,8 @@
    },
    "over_bar": 21,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2422,
-   "test_files": 846
+   "source_files": 2423,
+   "test_files": 847
   },
   "oneiron-android": {
    "files": [
@@ -49307,10 +49327,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
-     "purpose": "Opt-in in-process XLSX formula recalculation for the edit round trip",
+     "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
      "surface": {
-      "mod": 7,
-      "re-export": 7
+      "mod": 6,
+      "re-export": 6
      }
     },
     {
@@ -49347,21 +49367,8 @@
      "path": "src/routing.rs",
      "purpose": "External-link routing (step 25): linked workbooks stay off this engine",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "re-export": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "InProcessSession"
-     ],
-     "path": "src/session.rs",
-     "purpose": "Explicit opt-in recalc adapter for the core's edit round-trip seam",
-     "surface": {
-      "fn": 1,
-      "struct": 1
      }
     },
     {
@@ -49405,11 +49412,11 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
-     "path": "tests/session.rs",
-     "purpose": "Actual XLSX in/out tests through the core's edit round-trip pipeline",
+     "path": "tests/workbook.rs",
+     "purpose": "Actual XLSX in/out tests of the retained engine",
      "surface": {}
     }
    ],
@@ -49470,13 +49477,6 @@
      "layout": "file",
      "purpose": "External-link routing (step 25): linked workbooks stay off this engine"
     },
-    "session": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Explicit opt-in recalc adapter for the core's edit round-trip seam"
-    },
     "workbook": {
      "files": 1,
      "impl_vault": false,
@@ -49493,8 +49493,8 @@
     }
    },
    "over_bar": 0,
-   "purpose": "Opt-in in-process XLSX formula recalculation for the edit round trip",
-   "source_files": 14,
+   "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
+   "source_files": 13,
    "test_files": 3
   }
  }
