@@ -940,3 +940,199 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 
     Ok(())
 }
+
+/// Drains `vault` with the new model until nothing is leased. Every pass must
+/// succeed: a job the worker can only fail on would surface here.
+#[cfg(feature = "sync")]
+fn drain_with_new_model(vault: &Arc<Vault>) -> Result<()> {
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(vault),
+        Arc::new(MigrationEmbedder {
+            model_id: "test/new@v2".to_owned(),
+        }),
+    )
+    .with_batch_size(256);
+    for _ in 0..64 {
+        if reconciler.reconcile_once()?.leased == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// An epoch SUMMARY is embedded like a claim, so a migration that drops its
+/// vector must queue it again: the new model fills it on the next drain.
+#[cfg(feature = "sync")]
+#[test]
+fn embedding_migration_requeues_epoch_summaries() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
+    let summary = EntityId::now();
+    let body =
+        crate::compaction::encode_epoch_summary_body(&crate::compaction::EpochSummaryBody {
+            v: crate::compaction::EPOCH_SUMMARY_BODY_VERSION,
+            session: seeded_entity_id(0x5E55).to_hex(),
+            epoch: 1,
+            turn_start: 1,
+            turn_end: 3,
+            level: crate::compaction::EPOCH_SUMMARY_LEVEL,
+            text: "the epoch prose".to_owned(),
+            actor: seeded_entity_id(0xAC70).to_hex(),
+        })?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            test_time_range(1, 1),
+            1,
+            &body,
+        )
+        .commit()?;
+    // Filled under the old model: a vector, no marker, no job.
+    vault.put_vector(&summary, &[1.0, 0.0, 0.0, 0.0])?;
+
+    vault.begin_embedding_migration("test/new@v2")?;
+    assert_eq!(vault.get_vector(&summary)?, None);
+    let vault = Arc::new(vault);
+    drain_with_new_model(&vault)?;
+    assert_eq!(vault.get_vector(&summary)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    Ok(())
+}
+
+/// Lexical query hints are lexical-only claims. A migration queues none of
+/// them, and drops the marker and job one still carries, so the drain finishes
+/// with every real claim refilled and no job left behind.
+#[cfg(feature = "sync")]
+#[test]
+fn embedding_migration_leaves_no_work_for_lexical_hint_claims() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open(temp_dir.path(), cfg)?;
+    let actor = EntityId::now();
+    let subject = EntityId::now();
+    for id in [&actor, &subject] {
+        vault.put_entity(id, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, b"person")?;
+    }
+    let claim = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            crate::ClaimCandidate::new(
+                "profile.preference",
+                crate::claim::ClaimSubject::Entity(subject),
+                rmpv::Value::from("sencha"),
+                0.9,
+            ),
+            &crate::WriteEnvelope::new(
+                crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
+                crate::claim::ClaimSource::UserStated,
+                crate::WriteProvenance::new(rmpv::Value::from("fixture"))?,
+                crate::claim::ClaimApprovalStatus::Approved,
+            ),
+            test_time_range(10, 10),
+            11,
+            &["which tea", "favourite drink"],
+        )
+        .commit()?;
+    let hints: Vec<EntityId> = vault
+        .entities_by_type(ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .filter(|id| {
+            vault
+                .get_raw(id)
+                .ok()
+                .flatten()
+                .and_then(|raw| {
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+                })
+                .is_some_and(|body| body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT)
+        })
+        .collect();
+    assert!(!hints.is_empty(), "the write produced hint claims");
+    // Work an earlier sweep left on the hints: a marker and a queued job each.
+    vault.with_write_txn(|wtxn| {
+        for hint in &hints {
+            let raw = vault
+                .store
+                .entities
+                .get(&*wtxn, hint.as_bytes())?
+                .map(|raw| raw.to_vec())
+                .expect("hint row");
+            vault
+                .store
+                .mark_pending_embedding(wtxn, hint, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+            crate::sync::queue::push_embed_job_in_txn(
+                &vault.store,
+                wtxn,
+                hint,
+                crate::embed::EMBED_PRIORITY_BACKFILL,
+            )?;
+        }
+        Ok(())
+    })?;
+
+    vault.begin_embedding_migration("test/new@v2")?;
+    let vault = Arc::new(vault);
+    drain_with_new_model(&vault)?;
+    assert!(
+        vault.get_vector(&claim)?.is_some(),
+        "the real claim refills"
+    );
+    for hint in &hints {
+        assert_eq!(vault.get_vector(hint)?, None);
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(vault.store.pending_embedding_token(&rtxn, hint)?, None);
+    }
+    assert!(
+        SyncQueue::new(Arc::clone(&vault))?
+            .drain_embed_jobs()?
+            .is_empty(),
+        "no job is left behind"
+    );
+    Ok(())
+}
+
+/// The refill runs the migration's swap under the pin the vault already
+/// holds: every vector dropped, every record queued and filled again.
+#[cfg(feature = "sync")]
+#[test]
+fn refilling_the_embedding_space_keeps_the_pin_and_refills_every_record() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/new@v2".to_owned());
+    let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+                "test.refill",
+                crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+                rmpv::Value::from("needle"),
+                0.9,
+                crate::claim::ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Active,
+            )?))?,
+        )
+        .commit()?;
+    vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+    let epoch = read_hnsw_meta_u64(&vault, EMBEDDING_MODEL_EPOCH_KEY)?;
+
+    vault.refill_embedding_space()?;
+    assert_eq!(read_model_id(&vault)?, Some("test/new@v2".to_owned()));
+    assert!(read_hnsw_meta_u64(&vault, EMBEDDING_MODEL_EPOCH_KEY)? > epoch);
+    assert_eq!(vault.get_vector(&id)?, None);
+    let vault = Arc::new(vault);
+    drain_with_new_model(&vault)?;
+    assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    Ok(())
+}

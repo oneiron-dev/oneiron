@@ -509,6 +509,49 @@ fn staged_text_and_vector_survive_reopen_and_publish_without_embedder() {
     );
 }
 
+/// A vector staged for an unpublished revision carries no record of the model
+/// that made it, and idle publication prefers it over the embedder. The
+/// embedding-space swap drops it and keeps the staged text, so the idle pass
+/// embeds that revision with the new model and never publishes the old vector.
+#[test]
+fn an_embedding_space_swap_drops_staged_vectors_and_keeps_staged_text() {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let id = EntityId::now();
+    put(&vault, &id, "alpha");
+    put(&vault, &id, "beta");
+    let revision = vault.pin_entity_revision(&id).unwrap();
+    // The old model's vector for the new revision, staged without a token.
+    vault
+        .batch()
+        .text(&id, &[("content", "callerindex")])
+        .vector(&id, &[0.0, 0.0, 1.0, 0.0])
+        .commit()
+        .unwrap();
+    drop(vault);
+
+    let mut vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    vault.begin_embedding_migration("test/new@v2").unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let report = vault
+        .refresh_indexed_at_idle(
+            u64::MAX,
+            &Embed {
+                expected: revision,
+                expected_body: body("beta"),
+            },
+        )
+        .unwrap();
+    assert_eq!(report.refreshed, vec![(id, revision)]);
+    assert_eq!(
+        vault.get_vector(&id).unwrap().unwrap(),
+        vec![0.0, 1.0, 0.0, 0.0],
+        "the new model's vector, not the staged one"
+    );
+    assert_eq!(vault.search_text("callerindex", 10).unwrap()[0].id, id);
+}
+
 #[test]
 fn staged_text_only_idle_does_not_need_an_embedding_model() {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());

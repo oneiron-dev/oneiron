@@ -148,16 +148,36 @@ impl Vault {
         Ok(ids)
     }
 
-    /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every persisted claim for refill.
+    /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every embeddable record for refill.
+    ///
+    /// A vault already pinned to `new_model` is left as it is.
     pub fn begin_embedding_migration(&mut self, new_model: &str) -> Result<()> {
+        self.swap_embedding_space(new_model, false)
+    }
+
+    /// The same atomic swap under the pin the vault already holds: every
+    /// vector dropped and every embeddable record scheduled again.
+    ///
+    /// For a host whose embedding output changed in a way the model pin does
+    /// not name. Requires the vault's configured embedding model.
+    pub fn refill_embedding_space(&mut self) -> Result<()> {
+        let model = self.config.embedding_model.clone().ok_or_else(|| {
+            Error::InvalidConfig("refilling the embedding space requires an embedding model".into())
+        })?;
+        self.swap_embedding_space(&model, true)
+    }
+
+    /// `refill` swaps even when the vault already holds `new_model`.
+    fn swap_embedding_space(&mut self, new_model: &str, refill: bool) -> Result<()> {
         validate_embedding_model_id(new_model)?;
         let new_model = new_model.to_owned();
         let changed = self.with_write_txn(|wtxn| {
             match self.store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
                 Some(raw)
-                    if std::str::from_utf8(&raw)
-                        .map_err(|_| Error::CorruptedIndex("model id"))?
-                        == new_model =>
+                    if !refill
+                        && std::str::from_utf8(&raw)
+                            .map_err(|_| Error::CorruptedIndex("model id"))?
+                            == new_model =>
                 {
                     return Ok(false);
                 }
@@ -172,7 +192,8 @@ impl Vault {
             self.store
                 .hnsw_meta
                 .delete(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY)?;
-            crate::embed::remark_all_claims_pending_in_txn(
+            crate::vault::entity_revision::drop_staged_vectors(&self.store, wtxn)?;
+            crate::embed::remark_all_embeddable_pending_in_txn(
                 self,
                 wtxn,
                 crate::embed::EMBED_PRIORITY_BACKFILL,

@@ -967,4 +967,66 @@ fn partial_remote_completion_is_logged_when_local_batch_fails() -> Result<()> {
     Ok(())
 }
 
+/// Fails its whole batch when any input has no text, as a provider must: it
+/// has no truthful vector for one.
+struct TextOnlyEmbedder {
+    inner: RecordingEmbedder,
+}
+
+impl Embedder for TextOnlyEmbedder {
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn dimensions(&self) -> usize {
+        self.inner.dimensions()
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        self.inner.locality()
+    }
+
+    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
+        for input in inputs {
+            if payload_text(&input.payload)?
+                .chars()
+                .all(|c| c.is_whitespace() || c.is_control())
+            {
+                return Err(Error::InvariantViolation("an input with no text"));
+            }
+        }
+        self.inner.embed(inputs)
+    }
+}
+
+/// A claim whose text is only separators and whitespace has nothing to embed.
+/// The worker retires it for good — no vector, no job left to lease again —
+/// and the rest of its batch still fills.
+#[test]
+fn a_record_with_no_text_is_retired_and_its_batch_still_fills() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let blank = entity_id(0x71);
+    let real = entity_id(0x72);
+    put_claim(&vault, blank, "\u{1c}\u{1d} \u{1e}\u{1f}\n")?;
+    put_claim(&vault, real, "a real claim")?;
+    let embedder = Arc::new(TextOnlyEmbedder {
+        inner: RecordingEmbedder::new("test/embedder@v1", 4),
+    });
+    let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), embedder.clone());
+
+    let report = reconciler.reconcile_once()?;
+    assert_eq!(report.filled, 1);
+    assert_eq!(embedder.inner.seen(), vec![real]);
+    assert!(vault.get_vector(&real)?.is_some());
+    assert_eq!(vault.get_vector(&blank)?, None);
+
+    let queue = SyncQueue::new(Arc::clone(&vault))?;
+    assert!(
+        queue.drain_embed_jobs()?.is_empty(),
+        "no job is left to retry"
+    );
+    assert_eq!(reconciler.reconcile_once()?.leased, 0);
+    Ok(())
+}
+
 mod payload;
