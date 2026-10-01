@@ -3,15 +3,17 @@
 use super::address::validate_ops;
 use super::formula::serialize_plan;
 use super::inspect::{inspect, mutation_mode_for};
+use super::native_recalc::NativeFirst;
 use super::opc;
 use super::session_validate::{diff_parts, validate};
 use super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
-    OfficeDoc, OfficeFormat, SheetAnswerBundle, StructureSummary, ValidationReport,
+    OfficeDoc, OfficeFormat, RecalcPolicy, SheetAnswerBundle, StructureSummary, ValidationReport,
 };
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use oneiron_docedit::retained_opc::Limits;
 use serde::{Deserialize, Serialize};
 
 /// Whether a recalc stage ran, and why not when it did not.
@@ -79,7 +81,41 @@ pub enum EditOutcome {
 ///
 /// The input bytes are never mutated. On success the returned
 /// [`EditProposal`] is a retained output — nothing is written to any store.
+/// Stage 3 recalculates in process unless the session opted out
+/// ([`EditSession::recalc_policy`]); this raw entry reads packages under the
+/// shipped document ceilings, the vault entry under its resolved ones.
 pub fn run_edit_roundtrip<S: EditSession>(
+    session: &S,
+    input_bytes: &[u8],
+    format: OfficeFormat,
+    plan: &EditPlan,
+    run_ref: &str,
+) -> Result<EditOutcome> {
+    run_with_recalc_policy(session, input_bytes, format, plan, run_ref, || {
+        Ok(crate::gate::shipped_docedit_package_limits())
+    })
+}
+
+/// Wrap the session in the in-process engine unless it opted out. `limits`
+/// resolves the document ceilings only when the wrap needs them.
+fn run_with_recalc_policy<S: EditSession>(
+    session: &S,
+    input_bytes: &[u8],
+    format: OfficeFormat,
+    plan: &EditPlan,
+    run_ref: &str,
+    limits: impl FnOnce() -> Result<Limits>,
+) -> Result<EditOutcome> {
+    match session.recalc_policy() {
+        RecalcPolicy::NativeFirst => {
+            let session = NativeFirst::new(session, limits()?);
+            run_pipeline(&session, input_bytes, format, plan, run_ref)
+        }
+        RecalcPolicy::SessionOnly => run_pipeline(session, input_bytes, format, plan, run_ref),
+    }
+}
+
+fn run_pipeline<S: EditSession>(
     session: &S,
     input_bytes: &[u8],
     format: OfficeFormat,
@@ -227,7 +263,9 @@ impl crate::Vault {
     ///
     /// This commits nothing: the version append (with
     /// [`BlobVersionProvenance::AgentRun`]) and the receipt are ARTL-4's
-    /// settlement, driven from the returned [`EditProposal`].
+    /// settlement, driven from the returned [`EditProposal`]. Unless the
+    /// session opted out, stage 3 recalculates in process under the vault's
+    /// document ceilings ([`Self::docedit_package_limits`]).
     pub fn propose_blob_artifact_edit<S: EditSession>(
         &self,
         artifact_id: &EntityId,
@@ -245,7 +283,9 @@ impl crate::Vault {
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
         let format = OfficeFormat::from_media_type(&body.media_type)?;
-        let mut outcome = run_edit_roundtrip(session, &bytes, format, plan, run_ref)?;
+        let mut outcome = run_with_recalc_policy(session, &bytes, format, plan, run_ref, || {
+            self.docedit_package_limits()
+        })?;
         // Bind the proposal to the head it was produced from, so ARTL-4 settle
         // can refuse it if an intervening edit has moved the head since.
         if let EditOutcome::Proposed(proposal) = &mut outcome {

@@ -1,5 +1,8 @@
 //! ARTL-3 pipeline tests. The [`FixtureSession`] stands in for the microVM
 //! openpyxl/LibreOffice binaries so the full gate runs in CI without them.
+//! Every session here models the host's own calculator over stand-in
+//! packages, so each opts out of the in-process default
+//! ([`RecalcPolicy::SessionOnly`]); `native_recalc_tests` covers the default.
 
 use super::opc::{self, OpcPackage, OpcPart};
 use super::*;
@@ -78,6 +81,10 @@ impl FixtureSession {
 }
 
 impl EditSession for FixtureSession {
+    fn recalc_policy(&self) -> RecalcPolicy {
+        RecalcPolicy::SessionOnly
+    }
+
     fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
         let mut pkg = opc::read(&doc.bytes).expect("fixture input parses");
         let mut sheet = pkg.part(SHEET_PART).unwrap_or(b"<worksheet/>").to_vec();
@@ -229,6 +236,10 @@ fn recalc_stage_updates_cached_values_via_seam() {
     struct FormulaSession;
 
     impl EditSession for FormulaSession {
+        fn recalc_policy(&self) -> RecalcPolicy {
+            RecalcPolicy::SessionOnly
+        }
+
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
             FixtureSession::faithful().apply_edits(doc, plan)
         }
@@ -366,6 +377,10 @@ fn corruption_gate_blocks_broken_output_from_proposal() {
 fn xlookup_write_is_prefixed_before_the_session_serializes_it() {
     struct FormulaWriteSession;
     impl EditSession for FormulaWriteSession {
+        fn recalc_policy(&self) -> RecalcPolicy {
+            RecalcPolicy::SessionOnly
+        }
+
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
             let EditOp::SetCell {
                 after: CellValue::Formula { expr, .. },
@@ -423,6 +438,10 @@ fn xlookup_write_is_prefixed_before_the_session_serializes_it() {
 fn recalculation_without_engine_identity_cannot_be_proposed() {
     struct UnstampedSession;
     impl EditSession for UnstampedSession {
+        fn recalc_policy(&self) -> RecalcPolicy {
+            RecalcPolicy::SessionOnly
+        }
+
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
             FixtureSession::faithful().apply_edits(doc, plan)
         }
@@ -1345,6 +1364,10 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
     }
     struct TextSession;
     impl EditSession for TextSession {
+        fn recalc_policy(&self) -> RecalcPolicy {
+            RecalcPolicy::SessionOnly
+        }
+
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
             let EditOp::SetCell {
                 after: CellValue::Text(text),
@@ -1372,6 +1395,10 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         mode: u8,
     }
     impl EditSession for DishonestSession {
+        fn recalc_policy(&self) -> RecalcPolicy {
+            RecalcPolicy::SessionOnly
+        }
+
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
             let bytes = if self.mode == 0 {
                 doc.bytes.clone()
@@ -1404,6 +1431,10 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
     }
     struct CellSession;
     impl EditSession for CellSession {
+        fn recalc_policy(&self) -> RecalcPolicy {
+            RecalcPolicy::SessionOnly
+        }
+
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
             let mut pkg = opc::read(&doc.bytes)?;
             let mut writes = String::new();

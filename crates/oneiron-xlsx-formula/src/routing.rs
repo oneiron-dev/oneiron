@@ -15,12 +15,62 @@
 //!
 //! The router only reads; it never rewrites parts and never discards unknown
 //! XML. Detection failures fail closed toward openpyxl.
+//! [`preserve_external_links`] checks the fallback's output the same way.
 
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
-use oneiron_docedit::retained_opc::XmlLimits;
+use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 
 pub use crate::calc::RouteDecision;
+
+/// Check that a fallback round trip kept every external link of `before`:
+/// `xl/externalLinks/` parts and `.rels` parts naming an external target stay
+/// byte-identical, and every external formula keeps its cell and text.
+///
+/// `Err` carries the reason the output is refused, including when either
+/// package cannot be inspected under `limits`. Pure: it only reads.
+pub fn preserve_external_links(
+    before: &[u8],
+    after: &[u8],
+    limits: Limits,
+) -> std::result::Result<(), &'static str> {
+    let before = Package::open(before, limits).map_err(|_| "unreadable input package")?;
+    let after = Package::open(after, limits).map_err(|_| "unreadable output package")?;
+    for name in before.names() {
+        let link_part = name.starts_with("xl/externalLinks/");
+        if !link_part && !name.ends_with(".rels") {
+            continue;
+        }
+        let part = before
+            .part(name)
+            .map_err(|_| "unreadable input part")?
+            .ok_or("missing external-link input part")?;
+        let protected =
+            link_part || !route_workbook([], [part.as_slice()], [], limits.xml).is_in_process();
+        if protected
+            && after
+                .part(name)
+                .map_err(|_| "unreadable output part")?
+                .as_ref()
+                != Some(&part)
+        {
+            return Err("fallback altered or dropped an external-link part");
+        }
+    }
+    let before_formulas = crate::workbook::external_formulas(&before)
+        .map_err(|_| "cannot inspect external formula links")?;
+    if !before_formulas.is_empty() {
+        let after_formulas = crate::workbook::external_formulas(&after)
+            .map_err(|_| "cannot inspect output external formula links")?;
+        if before_formulas
+            .iter()
+            .any(|(cell, formula)| after_formulas.get(cell) != Some(formula))
+        {
+            return Err("fallback altered or dropped an external formula link");
+        }
+    }
+    Ok(())
+}
 
 /// Decide the recalc route for a workbook from its part names, relationship
 /// XML, and parsed formulas.
