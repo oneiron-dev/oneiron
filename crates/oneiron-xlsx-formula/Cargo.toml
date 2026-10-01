@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Opt-in in-process XLSX formula recalculation for the edit round trip (owned formualizer 0.9.3-oneiron.1 fork)"
+description = "Opt-in in-process XLSX formula recalculation for the edit round trip (owned formualizer 0.9.3-oneiron.2 fork)"
 
 [lib]
 # No doc-comment code fences in this crate; skip the doctest compile pass.
