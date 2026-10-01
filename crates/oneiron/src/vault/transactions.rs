@@ -150,6 +150,11 @@ impl Vault {
 
     /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every embeddable record for refill.
     ///
+    /// Claims and epoch summaries are queued for the embedding worker. Every
+    /// other record that held a vector is embedded again at idle from its
+    /// published revision, which stays as it is
+    /// ([`Self::refresh_indexed_at_idle`]).
+    ///
     /// A vault already pinned to `new_model` is left as it is. A move to
     /// another model drops the stored embedding transform with the old
     /// model's vectors.
@@ -233,12 +238,25 @@ impl Vault {
                     None
                 }
             };
+            // What the worker does not refill is refilled at idle from its
+            // published revision; marked while the vectors still say who had one.
+            crate::vault::entity_revision::schedule_vector_refills(self, wtxn)?;
             hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
             hnsw::increment_vector_version(&self.store, wtxn)?;
             hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
-            self.store
-                .hnsw_meta
-                .delete(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY)?;
+            // The sweep below queues the work where the build has a queue. A
+            // build without one marks the records only, and leaves the queueing
+            // to the next serving open, which runs it from this marker (cold
+            // attach).
+            if cfg!(feature = "sync") {
+                self.store
+                    .hnsw_meta
+                    .delete(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY)?;
+            } else {
+                self.store
+                    .hnsw_meta
+                    .put(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+            }
             crate::vault::entity_revision::drop_staged_vectors(&self.store, wtxn)?;
             crate::embed::remark_all_embeddable_pending_in_txn(
                 self,

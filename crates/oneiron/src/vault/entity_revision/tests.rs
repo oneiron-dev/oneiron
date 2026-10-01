@@ -846,3 +846,154 @@ fn a_rejected_revision_does_not_starve_later_idle_candidates() {
         Err(crate::Error::CorruptedIndex(_))
     ));
 }
+
+/// Embeds every revision as one fixed vector, and fails the whole pass if it
+/// is ever asked for one of `blank`, as a provider with no truthful vector for
+/// an empty text does.
+struct RefusesBlank {
+    blank: Vec<EntityId>,
+    vector: Vec<f32>,
+}
+impl IndexedRevisionEmbedder for RefusesBlank {
+    fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+        if self.blank.contains(&input.entity) {
+            return Err(crate::Error::InvariantViolation(
+                "asked to embed a revision with no text",
+            ));
+        }
+        Ok(self.vector.clone())
+    }
+}
+
+/// A revision whose text is only separators and whitespace publishes with no
+/// vector, dropping the one it had: the embedder is never asked for it, and
+/// the pass goes on to publish the real work behind it. A claim's text is its
+/// value; an asset's is every text field, so a title beside an empty body
+/// still embeds.
+#[test]
+fn a_blank_revision_publishes_without_a_vector_and_the_pass_goes_on() {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let asset = EntityId::now();
+    put(&vault, &asset, "alpha");
+    put(&vault, &asset, "\u{1c}\u{1d} \n");
+    let claim = EntityId::now();
+    let claim_body = |value: &str| {
+        ClaimBody::new(
+            "core.fact",
+            ClaimSubject::Entity(asset),
+            rmpv::Value::from(value),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap()
+    };
+    let span = TimeRange { start: 1, end: 1 };
+    vault
+        .put_claim(&claim, &claim_body("a fact"), span, 1)
+        .unwrap();
+    vault.put_vector(&claim, &[0.0, 0.0, 1.0, 0.0]).unwrap();
+    vault
+        .put_claim(&claim, &claim_body("\u{1c}"), span, 2)
+        .unwrap();
+    let titled = EntityId::now();
+    let titled_body = |title: &str| {
+        rmp_serde::to_vec_named(&serde_json::json!({"title": title, "content": " "})).unwrap()
+    };
+    for title in ["draft", "the title"] {
+        vault
+            .batch()
+            .put(
+                &titled,
+                ENTITY_TYPE_ASSET_TEXT,
+                span,
+                1,
+                &titled_body(title),
+            )
+            .commit()
+            .unwrap();
+    }
+    let later = EntityId::now();
+    put(&vault, &later, "first");
+    put(&vault, &later, "second prose");
+
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let embedder = RefusesBlank {
+        blank: vec![asset, claim],
+        vector: vec![0.0, 1.0, 0.0, 0.0],
+    };
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    let published: Vec<EntityId> = report.refreshed.iter().map(|(id, _)| *id).collect();
+    assert_eq!(published, vec![asset, claim, titled, later]);
+    assert_eq!(vault.get_vector(&asset).unwrap(), None);
+    assert_eq!(vault.get_vector(&claim).unwrap(), None);
+    for id in [titled, later] {
+        assert_eq!(
+            vault.get_vector(&id).unwrap(),
+            Some(vec![0.0, 1.0, 0.0, 0.0])
+        );
+    }
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert_eq!(
+        vault.store.pending_embedding_token(&rtxn, &claim).unwrap(),
+        None,
+        "nothing is left for the worker either"
+    );
+}
+
+/// An embedding-space swap drops every vector. A published record no edit is
+/// waiting on gets its vector back at idle, embedded by the new model from
+/// its published revision; that revision, its text and its citations stay as
+/// they were. The same-pin refill does the same.
+#[test]
+fn a_swap_refills_a_published_record_at_idle_without_a_new_revision() {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let id = EntityId::now();
+    put(&vault, &id, "alpha");
+    put(&vault, &id, "beta prose");
+    let revision = vault.pin_entity_revision(&id).unwrap();
+    let embedder = Embed {
+        expected: revision,
+        expected_body: body("beta prose"),
+    };
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    assert_eq!(report.refreshed, vec![(id, revision)]);
+    let citation = vault.cite_entity_text(&id, "content", 0, 4).unwrap();
+    drop(vault);
+
+    let mut vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    for swap in ["migration", "refill"] {
+        if swap == "migration" {
+            vault.begin_embedding_migration("test/new@v2").unwrap();
+        } else {
+            vault.refill_embedding_space().unwrap();
+        }
+        assert_eq!(vault.get_vector(&id).unwrap(), None, "{swap}");
+        let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+        assert_eq!(report.refreshed, vec![(id, revision)], "{swap}");
+        assert_eq!(
+            vault.get_vector(&id).unwrap(),
+            Some(vec![0.0, 1.0, 0.0, 0.0]),
+            "{swap}"
+        );
+        assert_eq!(vault.indexed_revision(&id).unwrap(), Some(revision));
+        assert_eq!(vault.pin_entity_revision(&id).unwrap(), revision);
+        let resolved = vault.resolve_citation(&citation).unwrap();
+        assert_eq!((resolved.quote.as_str(), resolved.drifted), ("beta", false));
+        assert_eq!(vault.search_text("beta", 10).unwrap()[0].id, id);
+        assert!(
+            vault
+                .refresh_indexed_at_idle(u64::MAX, &embedder)
+                .unwrap()
+                .refreshed
+                .is_empty(),
+            "nothing is left to refill"
+        );
+    }
+}

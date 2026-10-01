@@ -405,6 +405,7 @@ pub(crate) fn remove_entity_revisions(
     }
     super::phonetic::clear_phonetic(store, txn, id)?;
     super::pending_index::clear(store, txn, id)?;
+    super::vector_refill::clear(store, txn, id)?;
     STATE.delete(store, txn, id)?;
     DOC.delete(store, txn, id)?;
     let revisions: Vec<[u8; 16]> = FRONTIER

@@ -206,7 +206,7 @@ pub(super) fn rebuild_hnsw_from_current_snapshot(
     write_rebuilt_hnsw(store, wtxn, &rebuilt, LinkDiscipline::Legacy)
 }
 
-pub(super) fn collect_vector_ids(
+pub(crate) fn collect_vector_ids(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
 ) -> Result<Vec<EntityId>> {

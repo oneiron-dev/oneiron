@@ -34,6 +34,29 @@ pub(crate) fn embeddable_payload(entity_type: u8, body: &[u8]) -> Option<Pending
     }
 }
 
+/// What idle publication embeds for a text revision, or `None` when it has
+/// nothing to embed and publishes with no vector.
+///
+/// A CLAIM by the rule above, so a claim never gets a vector at idle that the
+/// worker would not give it. Any other record as its text fields joined by
+/// newlines, all of them: one field with something in it — a title beside an
+/// empty body — is enough.
+pub(crate) fn indexed_payload(
+    entity_type: u8,
+    body: &[u8],
+    fields: &[(String, String)],
+) -> Option<PendingEmbeddingPayload> {
+    if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        return embeddable_payload(entity_type, body);
+    }
+    let text = fields
+        .iter()
+        .map(|(_, value)| value.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    has_content(&text).then_some(PendingEmbeddingPayload::SummaryText(text))
+}
+
 fn has_content(text: &str) -> bool {
     text.chars().any(|c| !c.is_whitespace() && !c.is_control())
 }

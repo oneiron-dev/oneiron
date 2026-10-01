@@ -1,9 +1,10 @@
 //! Idle debounce and atomic BM25/vector/frontier publication.
 
 use super::storage::{STATE, put_state, read_entity_revision_in_txn, state, text_fields};
+use super::vector_refill::{self, REFILL};
 use super::{
     IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput,
-    ReadMode,
+    ReadMode, RevisionRef,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 use crate::error::{Error, Result};
@@ -34,7 +35,12 @@ impl Vault {
 
     /// Re-reads dirty live documents at idle, then embeds that exact revision.
     /// A concurrent edit discards the stale work rather than publishing a
-    /// vector for one revision beside the text/frontier of another.
+    /// vector for one revision beside the text/frontier of another. A revision
+    /// with nothing in its text ([`IndexedRevisionInput::payload`]) publishes
+    /// with no vector.
+    ///
+    /// Then embeds again, at their published revision, the records an
+    /// embedding-space swap left without a vector, writing the vector alone.
     pub fn refresh_indexed_at_idle(
         &self,
         now_ms: u64,
@@ -45,6 +51,7 @@ impl Vault {
 
     /// Reports each successful indexed transaction as soon as it commits. A
     /// later provider failure cannot erase earlier publication notifications.
+    /// A vector refill moves no frontier and is not reported here.
     /// The callback must not write to this vault or re-enter the indexer.
     pub fn refresh_indexed_at_idle_with_publication(
         &self,
@@ -94,6 +101,7 @@ impl Vault {
                 }
                 candidates.push(IndexedRevisionInput {
                     entity: id,
+                    entity_type: raw[0],
                     source_revision_ref: current.live,
                     fields: text_fields(&body),
                     body,
@@ -103,6 +111,8 @@ impl Vault {
         };
         let mut report = IndexedRefreshReport::default();
         for input in candidates {
+            // A revision with nothing in its text publishes with no vector.
+            let embeddable = input.payload().is_some();
             let staged = {
                 let txn = self.store.env.read_txn()?;
                 super::pending_index::load(
@@ -114,6 +124,7 @@ impl Vault {
             };
             let vector = match staged.vector {
                 Some(vector) => Some(vector),
+                None if !embeddable => None,
                 None => match embedder {
                     Some(embedder) => match embedder.embed_revision(&input) {
                         Ok(vector) => Some(vector),
@@ -226,7 +237,15 @@ impl Vault {
                 self.store
                     .clear_pending_embedding(&mut txn, &input.entity)?;
             }
+            if !wrote_vector && !embeddable {
+                drop_vector_state(self, &mut txn, &input.entity)?;
+            }
             super::pending_index::clear(&self.store, &mut txn, &input.entity)?;
+            // The published revision settled its own vector, so a refill a
+            // swap left for the revision before it has nothing left to do.
+            if wrote_vector || !embeddable {
+                vector_refill::clear(&self.store, &mut txn, &input.entity)?;
+            }
             txn.commit()?;
             published(IndexedPublication {
                 entity: input.entity,
@@ -237,7 +256,134 @@ impl Vault {
                 .refreshed
                 .push((input.entity, input.source_revision_ref));
         }
+        if let Some(embedder) = embedder {
+            self.refill_vectors(embedder, &mut report)?;
+        }
         Ok(report)
+    }
+
+    /// Embeds again the published revisions an embedding-space swap left
+    /// without a vector ([`vector_refill`]), and writes the vector alone: the
+    /// revision, its text and its citations stay exactly as they were.
+    ///
+    /// A revision waiting to publish is left to that publication, which
+    /// settles its vector. An edit between the embedding and the write
+    /// supersedes the work, as it does for a publication.
+    fn refill_vectors(
+        &self,
+        embedder: &dyn IndexedRevisionEmbedder,
+        report: &mut IndexedRefreshReport,
+    ) -> Result<()> {
+        let mut gone = Vec::new();
+        let candidates = {
+            let txn = self.store.env.read_txn()?;
+            let mut candidates = Vec::new();
+            for (id, ()) in REFILL.scan(&self.store, &txn)? {
+                if state(&self.store, &txn, &id)?.is_some_and(|s| s.live != s.indexed) {
+                    continue;
+                }
+                let (Some(revision), Some(raw)) = (
+                    self.indexed_revision_in_txn(&txn, &id)?,
+                    read_entity_revision_in_txn(self, &txn, &id, ReadMode::Indexed)?,
+                ) else {
+                    gone.push(id);
+                    continue;
+                };
+                let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+                candidates.push(IndexedRevisionInput {
+                    entity: id,
+                    entity_type: raw[0],
+                    source_revision_ref: revision,
+                    fields: text_fields(&body),
+                    body,
+                });
+            }
+            candidates
+        };
+        if !gone.is_empty() {
+            // Nothing readable is left to embed.
+            let mut txn = self.store.env.write_txn()?;
+            for id in &gone {
+                vector_refill::clear(&self.store, &mut txn, id)?;
+            }
+            txn.commit()?;
+        }
+        for input in candidates {
+            let vector = match input.payload() {
+                None => None,
+                Some(_) => match embedder.embed_revision(&input) {
+                    Ok(vector) => Some(vector),
+                    Err(
+                        error @ (Error::InvalidConfig(_)
+                        | Error::DimensionMismatch { .. }
+                        | Error::InvalidVector { .. }),
+                    ) => {
+                        report
+                            .failed
+                            .push((input.entity, input.source_revision_ref, error.kind()));
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                },
+            };
+            let mut txn = self.store.env.write_txn()?;
+            if !self.refill_still_due(&txn, &input.entity, input.source_revision_ref)? {
+                report.superseded.push(input.entity);
+                continue;
+            }
+            match vector {
+                Some(vector) => {
+                    if let Err(error) = apply_ops(
+                        &self.store,
+                        &self.config,
+                        &self.analyzer,
+                        &mut txn,
+                        vec![BatchOp::Vector {
+                            id: input.entity,
+                            vector,
+                            pending_embedding_token: None,
+                        }],
+                        self.text_index_trusted
+                            .load(std::sync::atomic::Ordering::Acquire),
+                        false,
+                        false,
+                    ) {
+                        if matches!(
+                            error,
+                            Error::DimensionMismatch { .. } | Error::InvalidVector { .. }
+                        ) {
+                            report.failed.push((
+                                input.entity,
+                                input.source_revision_ref,
+                                error.kind(),
+                            ));
+                            continue;
+                        }
+                        return Err(error);
+                    }
+                }
+                None => drop_vector_state(self, &mut txn, &input.entity)?,
+            }
+            vector_refill::clear(&self.store, &mut txn, &input.entity)?;
+            txn.commit()?;
+            report
+                .refreshed
+                .push((input.entity, input.source_revision_ref));
+        }
+        Ok(())
+    }
+
+    /// Whether the refill embedded for `revision` is still the one to write:
+    /// still marked, still published as that revision, nothing waiting.
+    fn refill_still_due(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        revision: RevisionRef,
+    ) -> Result<bool> {
+        Ok(REFILL.contains(&self.store, txn, id)?
+            && state(&self.store, txn, id)?.is_none_or(|s| s.live == s.indexed)
+            && self.indexed_revision_in_txn(txn, id)? == Some(revision))
     }
 
     /// Exact index revision currently available, including unedited births.
@@ -259,4 +405,28 @@ impl Vault {
             |value| value.indexed,
         )))
     }
+}
+
+/// Drops what a revision with nothing to embed must not keep: its vector and
+/// graph node, and the pending marker, job and lease a worker would lease it
+/// by.
+fn drop_vector_state(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let had_node = vault
+        .store
+        .hnsw_neighbors
+        .get(txn, id.as_bytes())?
+        .is_some();
+    let had_vector = vault.store.vectors.delete(txn, id.as_bytes())?;
+    if had_vector || had_node {
+        crate::hnsw::hnsw_deindex(&vault.store, txn, id)?;
+        crate::hnsw::increment_vector_version(&vault.store, txn)?;
+    }
+    crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
+    vault.store.clear_pending_embedding(txn, id)?;
+    #[cfg(feature = "sync")]
+    {
+        crate::sync::queue::delete_embed_job_in_txn(&vault.store, txn, id)?;
+        crate::embed::clear_pending_embedding_lease_if_any(vault, txn, id)?;
+    }
+    Ok(())
 }

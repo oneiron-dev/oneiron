@@ -10,6 +10,8 @@ pub(crate) use pending_index::{defer_index_inputs, drop_staged_vectors};
 pub(crate) use phonetic::defer_phonetic;
 mod storage;
 mod types;
+mod vector_refill;
+pub(crate) use vector_refill::schedule_vector_refills;
 
 #[cfg(feature = "sync")]
 pub(crate) use storage::entity_has_pending_revision;

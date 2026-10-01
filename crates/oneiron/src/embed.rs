@@ -2,7 +2,7 @@ mod cold_attach;
 mod eligibility;
 mod locality;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
-use eligibility::embeddable_payload;
+pub(crate) use eligibility::{embeddable_payload, indexed_payload};
 pub(crate) use locality::clear_embedding_locality_in_txn;
 
 #[cfg(feature = "sync")]
@@ -497,6 +497,7 @@ impl PendingEmbeddingReconciler {
                         &job.entity_id,
                     )?;
                     clear_pending_embedding_lease_if_any(&self.vault, wtxn, &job.entity_id)?;
+                    retire_excluded_marker_in_txn(&self.vault, wtxn, &job.entity_id)?;
                     batch.stale_jobs += 1;
                     continue;
                 };
@@ -687,6 +688,28 @@ fn pending_input_in_txn(
     }))
 }
 
+/// Drops the pending marker of a stored record the shared rule never embeds.
+///
+/// Retrieval reads a marker as a pending vector and queues the record again,
+/// so a record retired as stale work must not keep one. The rule is checked
+/// against the record in the caller's transaction, beside the removal: an edit
+/// that makes the record embeddable commits before it (and is leased) or after
+/// it (and marks the record anew), never between.
+#[cfg(feature = "sync")]
+fn retire_excluded_marker_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(record) = vault.store.port_entity_record(wtxn, id)? else {
+        return Ok(());
+    };
+    if embeddable_payload(record.entity_type, &record.body).is_none() {
+        vault.store.clear_pending_embedding(wtxn, id)?;
+    }
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 fn encode_pending_embedding_lease(expires_at_ms: u64, token: &[u8]) -> Vec<u8> {
     let mut value = Vec::with_capacity(1 + 8 + token.len());
@@ -709,7 +732,7 @@ fn decode_pending_embedding_lease(value: &[u8]) -> Option<PendingEmbeddingLease>
 }
 
 #[cfg(feature = "sync")]
-fn clear_pending_embedding_lease_if_any(
+pub(crate) fn clear_pending_embedding_lease_if_any(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,

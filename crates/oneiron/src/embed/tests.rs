@@ -1029,4 +1029,43 @@ fn a_record_with_no_text_is_retired_and_its_batch_still_fills() -> Result<()> {
     Ok(())
 }
 
+/// A record retired as stale work keeps no pending marker. Retrieval reads a
+/// marker as a pending vector and queues the record again, so one left behind
+/// would be reported and requeued on every query that surfaces it.
+#[test]
+fn a_retired_record_is_never_reported_pending_or_queued_again() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let blank = entity_id(0x73);
+    put_claim_with_text(&vault, blank, "\u{1c}", "blankneedle")?;
+    assert!(
+        pending_token(&vault, &blank)?.is_some(),
+        "the write marks it"
+    );
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::new(RecordingEmbedder::new("test/embedder@v1", 4)),
+    );
+    let report = reconciler.reconcile_once()?;
+    assert_eq!((report.leased, report.stale_jobs), (0, 1));
+    assert_eq!(pending_token(&vault, &blank)?, None);
+
+    let surfaced = vault
+        .query()
+        .search_text("blankneedle", 10)
+        .run_with_pending_vectors()?;
+    assert!(
+        surfaced.value.iter().any(|scored| scored.id == blank),
+        "retrieval surfaces the record"
+    );
+    assert!(surfaced.pending_vector_ids.is_empty());
+    assert!(
+        SyncQueue::new(Arc::clone(&vault))?
+            .drain_embed_jobs()?
+            .is_empty(),
+        "and queues nothing for it"
+    );
+    assert_eq!(reconciler.reconcile_once()?.leased, 0);
+    Ok(())
+}
+
 mod payload;
