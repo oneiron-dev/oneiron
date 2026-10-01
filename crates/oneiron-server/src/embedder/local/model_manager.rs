@@ -1,6 +1,6 @@
 //! Where the local model's files live, and how they get there.
 //!
-//! Six files, one repository, one commit, one sha256 each. The digests are
+//! One repository, one commit, one sha256 per file. The digests are
 //! pinned in this file because the Hugging Face tree API exposes no LFS oid at
 //! a revision: the only way to know the bytes are the bytes we measured is to
 //! measure them once and refuse anything else afterwards.
@@ -39,7 +39,8 @@ pub(crate) struct PinnedArtifact {
     pub(crate) bytes: u64,
 }
 
-/// The default local model's files at the pinned revision.
+/// The earlier default local model's files at its pinned revision. Vaults
+/// pinned to it still fetch and verify exactly these.
 ///
 /// Digests measured on the first verified download, 2026-09-11. `model.safetensors`
 /// carries the official bf16 weights; the Q8_0 the provider runs is produced at
@@ -77,26 +78,85 @@ pub(crate) const HARRIER_06_FILES: [PinnedArtifact; 6] = [
     },
 ];
 
+/// The default local model's files at the pinned revision.
+///
+/// Digests measured 2026-10-01 from the files at that commit; the two LFS
+/// files' digests equal their Hugging Face LFS object ids. `model.safetensors`
+/// carries the official f32 weights. There is no
+/// `config_sentence_transformers.json` at this commit: the model asks for no
+/// prompt, so nothing is read from one.
+pub(crate) const PPLX_EMBED_V1_06_FILES: [PinnedArtifact; 5] = [
+    PinnedArtifact {
+        file: "config.json",
+        sha256: "f7865547ecc1c077c5b1f83913fb9816a6586c676ccf3e0f7f00105a1b0c1c6c",
+        bytes: 1_782,
+    },
+    PinnedArtifact {
+        file: "modules.json",
+        sha256: "26a5eb7ef28ba520882a6be1d24b3c52b69d7267fdde3a31cff8fa5692b4c830",
+        bytes: 361,
+    },
+    PinnedArtifact {
+        file: "1_Pooling/config.json",
+        sha256: "a30548e8bc4255aafe5e5c638f6b15712eebbc8e84ea5988a5835f976c412907",
+        bytes: 313,
+    },
+    PinnedArtifact {
+        file: "tokenizer.json",
+        sha256: "c6fb5c5bbba5fa5f8332edfb6d8aa67bd7fb3d75365b1765f108201698eaebf5",
+        bytes: 11_422_837,
+    },
+    PinnedArtifact {
+        file: "model.safetensors",
+        sha256: "2c8d2f64f8268ccd5383b7f9bea8e660349aa6a151bd68a5a47f4c129f2a4974",
+        bytes: 2_384_233_112,
+    },
+];
+
+/// The files the provider itself reads. A repository this build has never
+/// measured must carry these, and nothing else is fetched for it.
+const PROVIDER_FILES: [&str; 5] = [
+    "config.json",
+    "modules.json",
+    "1_Pooling/config.json",
+    "tokenizer.json",
+    "model.safetensors",
+];
+
 /// The files the local provider needs, for the configured repository.
 ///
-/// Only the default repository has pinned digests. A host that points `repo` at
-/// something else is telling the server it knows better, so the same six names
-/// are required and the digest check is skipped rather than failed.
+/// A measured repository at its measured commit gets its own pins, so a vault
+/// pinned to an earlier default still fetches and verifies that model's files.
+/// A host that points `repo` at anything else is telling the server it knows
+/// better, so the files the provider reads are required and the digest check
+/// is skipped rather than failed.
 pub(crate) fn model_files(config: &LocalEmbedderConfig) -> Vec<PinnedArtifact> {
-    if config.repo == crate::config::embedder::DEFAULT_LOCAL_REPO
-        && config.revision == crate::config::embedder::DEFAULT_LOCAL_REVISION
-    {
-        return HARRIER_06_FILES.to_vec();
+    let space = format!("{}@{}", config.repo, config.revision);
+    if let Some((_, files)) = PINNED.iter().find(|(model_id, _)| *model_id == space) {
+        return files.to_vec();
     }
-    HARRIER_06_FILES
+    PROVIDER_FILES
         .iter()
-        .map(|artifact| PinnedArtifact {
-            file: artifact.file,
+        .map(|file| PinnedArtifact {
+            file,
             sha256: UNPINNED,
             bytes: 0,
         })
         .collect()
 }
+
+/// Every measured model's pins, by the space id its repository and commit
+/// spell.
+const PINNED: [(&str, &[PinnedArtifact]); 2] = [
+    (
+        crate::config::embedder_models::PPLX_EMBED_V1_06.model_id,
+        &PPLX_EMBED_V1_06_FILES,
+    ),
+    (
+        crate::config::embedder_models::HARRIER_06.model_id,
+        &HARRIER_06_FILES,
+    ),
+];
 
 /// Digest placeholder for a repository this build has never measured.
 pub(crate) const UNPINNED: &str = "unpinned";
@@ -156,7 +216,7 @@ fn absolute_env_dir(key: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-/// The directory the six files sit in.
+/// The directory the model's files sit in.
 pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
     if let Some(configured) = config.model_dir.as_ref() {
         return Ok(configured.clone());

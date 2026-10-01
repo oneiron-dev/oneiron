@@ -38,8 +38,8 @@ pub(crate) struct LocalEmbedder {
     /// not, and the reconciler calls `embed` from one worker thread anyway.
     model: Mutex<Model>,
     modules: StModules,
+    /// The model's tokenizer, truncating at the input cap and never padding.
     tokenizer: Tokenizer,
-    max_input_tokens: usize,
     batch_size: usize,
     truncations: AtomicU64,
 }
@@ -69,6 +69,17 @@ impl LocalEmbedder {
         config: &EmbedderConfig,
         models: &model_manager::ModelManager,
     ) -> oneiron::Result<std::sync::Arc<Self>> {
+        Self::load_at(config, models, device::run_dtype(config.local.quant))
+    }
+
+    /// [`Self::load`] with the activation precision named rather than derived
+    /// from `quant`. The parity rows use it to run unquantised f32, the one
+    /// precision that separates a port error from rounding.
+    fn load_at(
+        config: &EmbedderConfig,
+        models: &model_manager::ModelManager,
+        dtype: DType,
+    ) -> oneiron::Result<std::sync::Arc<Self>> {
         let run_device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
         let dir = models.ensure_all(&config.local)?;
         let raw_config = std::fs::read_to_string(dir.join("config.json")).map_err(|e| {
@@ -81,7 +92,7 @@ impl LocalEmbedder {
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model tokenizer.json: {e}"))
         })?;
-        let dtype = device::run_dtype(config.local.quant);
+        let tokenizer = batcher::for_provider(tokenizer, config.max_input_tokens)?;
         let started = Instant::now();
         let model = load_body(&dir, &model_config, config, &run_device, dtype)?;
         tracing::info!(
@@ -97,7 +108,6 @@ impl LocalEmbedder {
             model: Mutex::new(model),
             modules,
             tokenizer,
-            max_input_tokens: config.max_input_tokens,
             batch_size: config.batch_size.max(1),
             truncations: AtomicU64::new(0),
         }))
@@ -108,7 +118,7 @@ impl LocalEmbedder {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let tokenized = batcher::tokenize(&self.tokenizer, texts, self.max_input_tokens)?;
+        let tokenized = batcher::tokenize(&self.tokenizer, texts)?;
         let truncated = tokenized.iter().filter(|item| item.truncated).count() as u64;
         if truncated > 0 {
             self.truncations.fetch_add(truncated, Ordering::Relaxed);
@@ -174,12 +184,17 @@ fn load_body(
     dtype: DType,
 ) -> oneiron::Result<Model> {
     let weights = dir.join("model.safetensors");
+    // Read at f32, which holds every checkpoint's own precision exactly — bf16
+    // for one model, f32 for another — so the quantiser starts from the
+    // official values rather than from a bf16 rounding of them. Each load door
+    // narrows to what it stores.
+    //
     // SAFETY: the file is memory-mapped read-only for the lifetime of the
     // builder, and nothing in this process writes it: the artifact manager only
     // ever renames a freshly downloaded file INTO place, and it verified this
     // file's digest before we got here.
     let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(&[&weights], DType::BF16, &Device::Cpu)
+        VarBuilder::from_mmaped_safetensors(&[&weights], DType::F32, &Device::Cpu)
             .map_err(candle_failed)?
     };
     Model::load(

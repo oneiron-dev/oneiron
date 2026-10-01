@@ -37,7 +37,7 @@ dimensions = 1024
 
 [embedder]
 provider = "local"                  # local | endpoint | none
-model_id = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
+model_id = "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8"
 dimensions = 1024
 # quant = "q8_0"                    # q8_0 | none (none = bf16, GPU only)
 # device = "auto"                   # auto | cpu | metal | cuda
@@ -58,12 +58,23 @@ lease_ms = 30000                    # 120000 is a better fit on a CPU-only host
 ```
 
 `provider = "local"` runs the model in-process on candle. On first use it
-downloads six files (1.19 GB) to
+downloads the model's files (five, 2.38 GB, for the default
+`perplexity-ai/pplx-embed-v1-0.6b`) to
 `$XDG_DATA_HOME/oneiron/models/<org>/<name>/<revision>/`, verifies each against
 a pinned sha256, and quantises the projections to Q8_0 at load. Nothing is
 downloaded at boot: the vault serves at rung 0 until the artifacts are verified,
-then starts filling. Point `model_dir` at a directory already holding those six
+then starts filling. Point `model_dir` at a directory already holding those
 files and no download is attempted at all — the offline-host door.
+
+`model_id` names the weights. A section that names a `model_id` and no
+`repo`/`revision` loads that space's own repository and commit, so a vault
+created under the earlier default, `microsoft/harrier-oss-v1-0.6b@f9b9dc8…`,
+keeps loading Harrier's pinned files after the default moved. The query
+instruction is the model's own too: Harrier prepends
+`Instruct: Given a question, retrieve passages that answer it\nQuery: ` to a
+query, pplx-embed embeds queries raw, and `query_instruction` overrides either.
+A vault pinned to one model refuses to open under another
+(`EmbeddingModelChanged`).
 
 On a CUDA toolkit host, build the same server with candle's dependency features
 explicitly enabled (not a `oneiron-server` feature):

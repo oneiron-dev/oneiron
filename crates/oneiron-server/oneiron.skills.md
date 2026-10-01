@@ -792,7 +792,7 @@ Example response:
   "meta": { "total": 1, "countMode": "estimate" },
   "embedder": {
     "provider": "local",
-    "modelId": "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+    "modelId": "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8",
     "dimensions": 1024
   }
 }
@@ -1453,7 +1453,7 @@ Closed code catalog currently emitted by server API code:
 ## First-run self-hosted embedder onboarding
 
 Ask once whether the user wants `local`, `endpoint`, or `none`.
-Local downloads the pinned Harrier model (~1.2 GB) and uses ~0.7 GB steady memory.
+Local downloads the pinned pplx-embed-v1-0.6b model (~2.4 GB) and uses ~0.7 GB steady memory.
 Use `oneiron-server init <vault-path> --config <config-path> --embedder local`.
 For an existing OpenAI-compatible server, add `--embedder endpoint --embedder-endpoint <url>`
 and its `--embedder-model-key <served-key>`. A non-default model also needs

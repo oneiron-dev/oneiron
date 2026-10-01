@@ -5,7 +5,7 @@
 //! named in the PR body with their measured numbers: a gate that downloads a
 //! gigabyte from the internet is not a gate.
 
-use candle_core::{DType, Device, Tensor};
+use candle_core::{DType, Device, IndexOp, Tensor};
 
 use super::*;
 use crate::config::{EmbedderDevice, EmbedderQuant};
@@ -134,6 +134,56 @@ fn mean_pooling_equals_the_hand_computed_mean() {
     assert_eq!(pooled[1], vec![16.0, 17.0, 18.0, 19.0]);
 }
 
+/// A `FlexibleQuantizer` after mean pooling emits `round(tanh(x) · 127)`,
+/// clamped to the int8 range, and the provider never adds a Normalize the
+/// checkpoint did not declare.
+#[test]
+fn the_int8_tanh_quantizer_follows_mean_pooling_in_declared_order() {
+    let dir = tempfile::tempdir().expect("fixture dir");
+    std::fs::write(
+        dir.path().join("modules.json"),
+        br#"[{"idx":0,"name":"0","path":"","type":"sentence_transformers.models.Transformer"},
+             {"idx":1,"name":"1","path":"1_Pooling","type":"sentence_transformers.models.Pooling"},
+             {"idx":2,"name":"2","path":"","type":"st_quantize.FlexibleQuantizer","kwargs":["quantization"]}]"#,
+    )
+    .expect("write modules.json");
+    std::fs::create_dir_all(dir.path().join("1_Pooling")).expect("pool dir");
+    std::fs::write(
+        dir.path().join("1_Pooling").join("config.json"),
+        br#"{"word_embedding_dimension":4,"pooling_mode_mean_tokens":true,"include_prompt":true}"#,
+    )
+    .expect("write pooling config");
+    let modules = st_modules::StModules::load(dir.path()).expect("the chain parses");
+
+    // Two rows whose means are [0, 0.5, -0.5, 9] and [0.01, -0.01, 2, -9].
+    let hidden = Tensor::from_vec(
+        vec![
+            0.0f32, 0.0, -1.0, 8.0, 0.0, 1.0, 0.0, 10.0, //
+            0.02, 0.0, 2.0, -8.0, 0.0, -0.02, 2.0, -10.0,
+        ],
+        (2, 2, 4),
+        &Device::Cpu,
+    )
+    .expect("hidden states");
+    let pooled: Vec<Vec<f32>> = modules
+        .apply(&hidden)
+        .and_then(|pooled| pooled.to_vec2())
+        .expect("pooled");
+    let expected = |means: [f32; 4]| -> Vec<f32> {
+        means
+            .iter()
+            .map(|m| (m.tanh() * 127.0).round().clamp(-128.0, 127.0))
+            .collect()
+    };
+    assert_eq!(pooled[0], expected([0.0, 0.5, -0.5, 9.0]));
+    assert_eq!(pooled[1], expected([0.01, -0.01, 2.0, -9.0]));
+    assert_eq!(pooled[0], vec![0.0, 59.0, -59.0, 127.0]);
+    assert!(
+        pooled.iter().flatten().all(|v| v.fract() == 0.0),
+        "the quantizer emits integers, not a unit vector"
+    );
+}
+
 // ─── quantise at load ────────────────────────────────────────────────────
 
 /// Q8_0 is a lossy format, so the row that matters is how lossy: a quantised
@@ -212,7 +262,8 @@ fn the_cpu_q8_projection_and_eager_attention_report_timings() {
     // Warm both paths, then compare one intermediate MLP projection with one
     // grouped-query attention pass at the same sequence length.
     candle_core::Module::forward(&q8, &inputs).expect("projection warmup");
-    attention::eager_attention(&q, &k, &v, &mask, 1.0 / 128f32.sqrt()).expect("attention warmup");
+    attention::eager_attention(&q, &k, &v, Some(&mask), 1.0 / 128f32.sqrt())
+        .expect("attention warmup");
     let started = std::time::Instant::now();
     for _ in 0..5 {
         std::hint::black_box(
@@ -223,7 +274,7 @@ fn the_cpu_q8_projection_and_eager_attention_report_timings() {
     let started = std::time::Instant::now();
     for _ in 0..5 {
         std::hint::black_box(
-            attention::eager_attention(&q, &k, &v, &mask, 1.0 / 128f32.sqrt())
+            attention::eager_attention(&q, &k, &v, Some(&mask), 1.0 / 128f32.sqrt())
                 .expect("attention forward"),
         );
     }
@@ -262,31 +313,79 @@ fn the_fused_and_eager_attention_branches_agree() {
         make(kv_heads, 0.019),
     );
     let mask = attention::causal_mask(seq, &Device::Cpu).expect("mask");
-    let eager: Vec<f32> =
-        attention::eager_attention(&q, &k, &v, &mask, 1.0 / (head_dim as f32).sqrt())
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let to_metal = |tensor: &Tensor| tensor.to_device(&metal).expect("to metal");
+    // Causal: the eager branch takes the mask, the fused kernel masks itself
+    // and the model builds no mask for it. Bidirectional: neither takes one.
+    for (causal, eager_mask) in [(true, Some(&mask)), (false, None)] {
+        let eager: Vec<f32> = attention::eager_attention(&q, &k, &v, eager_mask, scale)
             .and_then(|out| out.flatten_all()?.to_vec1())
             .expect("eager attention");
+        let fused: Vec<f32> = attention::grouped_attention(
+            &to_metal(&q),
+            &to_metal(&k),
+            &to_metal(&v),
+            None,
+            causal,
+            scale,
+        )
+        .and_then(|out| out.flatten_all()?.to_vec1())
+        .expect("fused attention");
 
-    let to_metal = |tensor: &Tensor| tensor.to_device(&metal).expect("to metal");
-    let fused: Vec<f32> = attention::grouped_causal_attention(
-        &to_metal(&q),
-        &to_metal(&k),
-        &to_metal(&v),
-        // The fused kernel masks causally itself, and the model builds no mask
-        // for this path at all.
-        None,
-        1.0 / (head_dim as f32).sqrt(),
-    )
-    .and_then(|out| out.flatten_all()?.to_vec1())
-    .expect("fused attention");
+        assert_eq!(eager.len(), fused.len());
+        let worst = eager
+            .iter()
+            .zip(&fused)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        assert!(
+            worst < 1e-2,
+            "causal={causal}: branches disagree by {worst}"
+        );
+    }
+}
 
-    assert_eq!(eager.len(), fused.len());
-    let worst = eager
-        .iter()
-        .zip(&fused)
-        .map(|(a, b)| (a - b).abs())
-        .fold(0f32, f32::max);
-    assert!(worst < 1e-2, "branches disagree by {worst}");
+/// Bidirectional attention lets the FIRST position read the last one; causal
+/// attention does not. The same inputs through both shapes must therefore
+/// agree on the final row, which sees everything either way, and differ on the
+/// first.
+#[test]
+fn bidirectional_attention_reads_later_positions_and_causal_does_not() {
+    let (batch, heads, kv_heads, seq, head_dim) = (1usize, 2usize, 1usize, 4usize, 8usize);
+    let make = |count: usize, seed: f32| {
+        let values: Vec<f32> = (0..batch * count * seq * head_dim)
+            .map(|n| ((n as f32 * seed).sin()) * 0.5)
+            .collect();
+        Tensor::from_vec(values, (batch, count, seq, head_dim), &Device::Cpu).expect("tensor")
+    };
+    let (q, k, v) = (
+        make(heads, 0.31),
+        make(kv_heads, 0.17),
+        make(kv_heads, 0.23),
+    );
+    let mask = attention::causal_mask(seq, &Device::Cpu).expect("mask");
+    let causal =
+        attention::grouped_attention(&q, &k, &v, Some(&mask), true, 0.5).expect("causal attention");
+    let bidirectional =
+        attention::grouped_attention(&q, &k, &v, None, false, 0.5).expect("bidirectional");
+    let row = |tensor: &Tensor, position: usize| -> Vec<f32> {
+        tensor
+            .i((0, 0, position))
+            .and_then(|row| row.to_vec1())
+            .expect("row")
+    };
+    let gap = |a: &[f32], b: &[f32]| {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0f32, f32::max)
+    };
+    assert!(gap(&row(&causal, seq - 1), &row(&bidirectional, seq - 1)) < 1e-6);
+    assert!(gap(&row(&causal, 0), &row(&bidirectional, 0)) > 1e-3);
+    assert!(
+        attention::grouped_attention(&q, &k, &v, None, true, 0.5).is_err(),
+        "eager causal attention without its mask is refused, not run unmasked"
+    );
 }
 
 /// The cache is bounded and first-in-first-out, so a long-lived process holds
@@ -348,12 +447,28 @@ fn config_json(architecture: &str) -> String {
 }
 
 #[test]
-fn both_body_and_causal_lm_class_names_are_accepted() {
-    for architecture in ["Qwen3Model", "Qwen3ForCausalLM"] {
+fn every_qwen3_body_class_name_is_accepted() {
+    for architecture in ["Qwen3Model", "Qwen3ForCausalLM", "PPLXQwen3Model"] {
         let config = qwen3_embedding::Config::parse(&config_json(architecture))
             .expect("an accepted class parses");
         assert_eq!(config.hidden_size, 1024);
         assert_eq!(config.head_dim(), 128);
+    }
+}
+
+/// The attention shape is the checkpoint's declaration, not a class name: the
+/// key absent means causal, and `true` means bidirectional for any class.
+#[test]
+fn bidirectional_attention_is_read_from_the_config_and_defaults_to_causal() {
+    let causal = qwen3_embedding::Config::parse(&config_json("PPLXQwen3Model")).expect("parses");
+    assert!(!causal.use_bidirectional_attention);
+    for architecture in ["PPLXQwen3Model", "Qwen3Model"] {
+        let raw = config_json(architecture).replace(
+            "\"head_dim\":128",
+            "\"head_dim\":128,\"use_bidirectional_attention\":true",
+        );
+        let bidirectional = qwen3_embedding::Config::parse(&raw).expect("parses");
+        assert!(bidirectional.use_bidirectional_attention, "{architecture}");
     }
 }
 
@@ -483,8 +598,8 @@ fn the_model_directory_is_root_org_name_revision() {
     assert_eq!(
         path,
         dir.path()
-            .join("microsoft")
-            .join("harrier-oss-v1-0.6b")
+            .join("perplexity-ai")
+            .join("pplx-embed-v1-0.6b")
             .join(crate::config::embedder::DEFAULT_LOCAL_REVISION)
     );
 }
@@ -602,35 +717,55 @@ fn an_incomplete_model_dir_names_the_missing_file_and_never_downloads() {
     );
 }
 
+/// Every measured model resolves to its own pins, each carrying a digest and a
+/// size, and covering every file the provider reads.
 #[test]
-fn every_pinned_artifact_carries_a_digest_and_a_size() {
-    assert_eq!(model_manager::HARRIER_06_FILES.len(), 6);
-    for artifact in &model_manager::HARRIER_06_FILES {
-        assert_eq!(
-            artifact.sha256.len(),
-            64,
-            "{} has no sha256 digest",
-            artifact.file
-        );
-        assert!(artifact.bytes > 0, "{} has no pinned size", artifact.file);
+fn every_measured_model_resolves_to_its_own_digest_pinned_files() {
+    use crate::config::embedder_models::{HARRIER_06, KNOWN_MODELS, PPLX_EMBED_V1_06};
+    for model in KNOWN_MODELS {
+        let files = model_manager::model_files(&crate::config::LocalEmbedderConfig {
+            repo: model.repo.to_owned(),
+            revision: model.revision.to_owned(),
+            ..crate::config::LocalEmbedderConfig::default()
+        });
+        for artifact in &files {
+            assert_eq!(
+                artifact.sha256.len(),
+                64,
+                "{}: {} has no sha256 digest",
+                model.model_id,
+                artifact.file
+            );
+            assert!(artifact.bytes > 0, "{} has no pinned size", artifact.file);
+        }
+        let names: Vec<&str> = files.iter().map(|artifact| artifact.file).collect();
+        for required in [
+            "config.json",
+            "modules.json",
+            "1_Pooling/config.json",
+            "tokenizer.json",
+            "model.safetensors",
+        ] {
+            assert!(names.contains(&required), "{required} is not pinned");
+        }
     }
-    let names: Vec<&str> = model_manager::HARRIER_06_FILES
-        .iter()
-        .map(|artifact| artifact.file)
-        .collect();
-    for required in [
-        "config.json",
-        "modules.json",
-        "1_Pooling/config.json",
-        "tokenizer.json",
-        "model.safetensors",
-    ] {
-        assert!(names.contains(&required), "{required} is not pinned");
-    }
+    let default = model_manager::model_files(&crate::config::LocalEmbedderConfig::default());
+    assert_eq!(default, model_manager::PPLX_EMBED_V1_06_FILES.to_vec());
+    assert_eq!(
+        model_manager::model_files(&crate::config::LocalEmbedderConfig {
+            repo: HARRIER_06.repo.to_owned(),
+            revision: HARRIER_06.revision.to_owned(),
+            ..crate::config::LocalEmbedderConfig::default()
+        }),
+        model_manager::HARRIER_06_FILES.to_vec(),
+        "a vault pinned to the earlier default still verifies that model's files"
+    );
+    assert_ne!(PPLX_EMBED_V1_06.model_id, HARRIER_06.model_id);
 }
 
-/// A repository this build has never measured keeps the file list and drops the
-/// digest pins rather than failing every download against the wrong digest.
+/// A repository this build has never measured needs the files the provider
+/// reads, and drops the digest pins rather than failing every download
+/// against the wrong digest.
 #[test]
 fn an_unpinned_repository_keeps_the_file_list_without_digests() {
     let config = crate::config::LocalEmbedderConfig {
@@ -638,7 +773,17 @@ fn an_unpinned_repository_keeps_the_file_list_without_digests() {
         ..crate::config::LocalEmbedderConfig::default()
     };
     let files = model_manager::model_files(&config);
-    assert_eq!(files.len(), 6);
+    let names: Vec<&str> = files.iter().map(|artifact| artifact.file).collect();
+    assert_eq!(
+        names,
+        [
+            "config.json",
+            "modules.json",
+            "1_Pooling/config.json",
+            "tokenizer.json",
+            "model.safetensors"
+        ]
+    );
     assert!(
         files
             .iter()
@@ -780,7 +925,10 @@ fn auto_fallback_can_prepare_an_uncached_model() {
         std::fs::read_to_string(model_dir.join("config.json")).expect("first artifact"),
         STUB_BODY
     );
-    assert_eq!(source.paths().len(), model_manager::HARRIER_06_FILES.len());
+    assert_eq!(
+        source.paths().len(),
+        model_manager::model_files(&config.local).len()
+    );
 }
 
 /// A vault that removes CPU from auto must not silently use it when its only
@@ -930,23 +1078,38 @@ fn a_verified_artifact_is_not_hashed_again_until_it_changes() {
 mod with_model {
     use super::*;
     use crate::config::EmbedderConfig;
+    use crate::config::embedder_models::{HARRIER_06, KnownModel, PPLX_EMBED_V1_06};
 
-    /// The model config as shipped, reachable only when the artifacts are on
-    /// this host.
-    fn ready_config(device: EmbedderDevice) -> EmbedderConfig {
+    /// A measured model's config as shipped, reachable only when its artifacts
+    /// are on this host. Offline GPU hosts can name a directory already holding
+    /// the verified checkpoint in `dir_env` without downloading it again or
+    /// changing the test fixture.
+    fn model_config(model: &KnownModel, dir_env: &str, device: EmbedderDevice) -> EmbedderConfig {
         EmbedderConfig {
-            dimensions: 1024,
+            model_id: model.model_id.to_owned(),
+            dimensions: model.dimensions,
             batch_size: 16,
             local: crate::config::LocalEmbedderConfig {
+                repo: model.repo.to_owned(),
+                revision: model.revision.to_owned(),
                 device,
-                // Offline GPU hosts can point at the already-verified checkpoint
-                // without downloading it again or changing the test fixture.
-                model_dir: std::env::var_os("ONEIRON_EMBED_TEST_MODEL_DIR")
-                    .map(std::path::PathBuf::from),
+                model_dir: std::env::var_os(dir_env).map(std::path::PathBuf::from),
                 ..crate::config::LocalEmbedderConfig::default()
             },
             ..EmbedderConfig::default()
         }
+    }
+
+    fn harrier_config(device: EmbedderDevice) -> EmbedderConfig {
+        model_config(&HARRIER_06, "ONEIRON_EMBED_TEST_MODEL_DIR", device)
+    }
+
+    fn pplx_config(device: EmbedderDevice) -> EmbedderConfig {
+        model_config(
+            &PPLX_EMBED_V1_06,
+            "ONEIRON_EMBED_TEST_PPLX_MODEL_DIR",
+            device,
+        )
     }
 
     /// Artifacts are already on this host for every row here, so the manager
@@ -966,16 +1129,41 @@ mod with_model {
             .collect()
     }
 
-    fn reference_chunks() -> Vec<String> {
-        std::fs::read_to_string(std::path::Path::new(FIXTURES).join("spec_chunks_64.jsonl"))
-            .expect("the committed chunk subset")
+    fn jsonl_texts(file: &str) -> Vec<String> {
+        std::fs::read_to_string(std::path::Path::new(FIXTURES).join(file))
+            .expect("the committed text fixture")
             .lines()
             .map(|line| {
-                serde_json::from_str::<serde_json::Value>(line).expect("chunk json")["text"]
+                serde_json::from_str::<serde_json::Value>(line).expect("text json")["text"]
                     .as_str()
-                    .expect("chunk text")
+                    .expect("text")
                     .to_owned()
             })
+            .collect()
+    }
+
+    fn reference_chunks() -> Vec<String> {
+        jsonl_texts("spec_chunks_64.jsonl")
+    }
+
+    /// Twenty fixed inputs: English, Japanese, Chinese and mixed text, one-token
+    /// inputs, ~2k-token inputs, and one long enough to be truncated at the
+    /// default input cap.
+    fn pplx_parity_texts() -> Vec<String> {
+        jsonl_texts("pplx_parity_20.jsonl")
+    }
+
+    /// sentence-transformers' own output for [`pplx_parity_texts`]: fp32 on the
+    /// CPU, the model's whole module chain, `max_seq_length` 4096, run as
+    /// padded batches of uneven lengths. Int8, as the model emits it.
+    fn pplx_reference_vectors() -> Vec<Vec<f32>> {
+        std::fs::read(std::path::Path::new(FIXTURES).join("pplx_reference_20.i8"))
+            .expect("the committed reference vectors")
+            .into_iter()
+            .map(|byte| f32::from(byte as i8))
+            .collect::<Vec<f32>>()
+            .chunks_exact(1024)
+            .map(<[f32]>::to_vec)
             .collect()
     }
 
@@ -986,61 +1174,106 @@ mod with_model {
         dot / (na * nb)
     }
 
+    /// Every input's cosine against its reference, at least `floor`; returns
+    /// the worst and the mean.
+    fn agreement(ours: &[Vec<f32>], theirs: &[Vec<f32>], floor: f32) -> (f32, f32) {
+        assert_eq!(ours.len(), theirs.len());
+        let scores: Vec<f32> = ours.iter().zip(theirs).map(|(a, b)| cosine(a, b)).collect();
+        println!("per-input cosine: {scores:?}");
+        for (index, score) in scores.iter().enumerate() {
+            assert!(
+                *score >= floor,
+                "input {index} agrees to only {score} with the reference"
+            );
+        }
+        let worst = scores.iter().copied().fold(1.0f32, f32::min);
+        (worst, scores.iter().sum::<f32>() / scores.len() as f32)
+    }
+
     /// The load-bearing row: our rebuilt stack must land in the same place in
     /// the space as the reference runtime's Q8_0 of the same weights.
     #[test]
     #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
     fn the_committed_subset_matches_the_reference_runtime() {
-        let embedder = LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager())
+        let embedder = LocalEmbedder::load(&harrier_config(EmbedderDevice::Auto), &manager())
             .expect("model loads");
-        let chunks = reference_chunks();
-        let reference = reference_vectors();
-        assert_eq!(chunks.len(), reference.len());
-        let measured = embedder.embed_texts(&chunks).expect("embedded");
-        let mut worst = 1.0f32;
-        for (index, (ours, theirs)) in measured.iter().zip(&reference).enumerate() {
-            let score = cosine(ours, theirs);
-            assert!(
-                score >= 0.99,
-                "chunk {index} agrees to only {score} with the reference"
-            );
-            worst = worst.min(score);
-        }
-        println!("worst cosine against the reference runtime: {worst}");
+        let measured = embedder.embed_texts(&reference_chunks()).expect("embedded");
+        let (worst, mean) = agreement(&measured, &reference_vectors(), 0.99);
+        println!("worst cosine against the reference runtime: {worst} (mean {mean})");
     }
 
-    /// The same batch, one at a time and together, must produce the same
-    /// vectors: the no-padding grouping is only correct if it is.
+    /// The default model's port, unquantised, against sentence-transformers'
+    /// fp32 output. At f32 only rounding separates the two, so this is where a
+    /// port error would show; bf16 is what `quant = "none"` runs, and the
+    /// precision the model card warns fp16 overflows at.
     #[test]
-    #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
-    fn a_batched_input_embeds_exactly_as_it_does_alone() {
-        let embedder = LocalEmbedder::load(&ready_config(EmbedderDevice::Auto), &manager())
-            .expect("model loads");
-        let texts: Vec<String> = reference_chunks().into_iter().take(8).collect();
-        let batched = embedder.embed_texts(&texts).expect("batched");
-        for (index, text) in texts.iter().enumerate() {
-            let alone = embedder
-                .embed_texts(std::slice::from_ref(text))
-                .expect("single");
-            let score = cosine(&batched[index], &alone[0]);
-            assert!(
-                score >= 0.9999,
-                "input {index} differs batched vs alone: cosine {score}"
-            );
+    #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
+    fn pplx_unquantised_matches_sentence_transformers() {
+        let mut config = pplx_config(EmbedderDevice::Auto);
+        config.local.quant = EmbedderQuant::None;
+        for (dtype, floor) in [(DType::F32, 0.999), (DType::BF16, 0.99)] {
+            let embedder = LocalEmbedder::load_at(&config, &manager(), dtype).expect("model loads");
+            let measured = embedder
+                .embed_texts(&pplx_parity_texts())
+                .expect("embedded");
+            let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), floor);
+            println!("pplx {dtype:?} vs sentence-transformers: worst cosine {worst}, mean {mean}");
         }
     }
 
-    /// The tokenizer's own post-processor appends the end-of-text token. A
+    /// The default model as it ships: Q8_0 projections, f32 activations.
+    #[test]
+    #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
+    fn pplx_q8_0_matches_sentence_transformers() {
+        let embedder = LocalEmbedder::load(&pplx_config(EmbedderDevice::Auto), &manager())
+            .expect("model loads");
+        let measured = embedder
+            .embed_texts(&pplx_parity_texts())
+            .expect("embedded");
+        let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), 0.99);
+        println!("pplx Q8_0 vs sentence-transformers: worst cosine {worst}, mean {mean}");
+    }
+
+    /// The same inputs, one at a time and together, must produce the same
+    /// vectors: the no-padding grouping is only correct if it is. The default
+    /// model's inputs here have uneven lengths, which the reference ran as
+    /// padded, masked batches.
+    #[test]
+    #[ignore = "needs both checkpoints; run with --run-ignored=all"]
+    fn a_batched_input_embeds_exactly_as_it_does_alone() {
+        for (config, texts) in [
+            (
+                harrier_config(EmbedderDevice::Auto),
+                reference_chunks().into_iter().take(8).collect::<Vec<_>>(),
+            ),
+            (
+                pplx_config(EmbedderDevice::Auto),
+                pplx_parity_texts().into_iter().take(18).collect(),
+            ),
+        ] {
+            let embedder = LocalEmbedder::load(&config, &manager()).expect("model loads");
+            let batched = embedder.embed_texts(&texts).expect("batched");
+            for (index, text) in texts.iter().enumerate() {
+                let alone = embedder
+                    .embed_texts(std::slice::from_ref(text))
+                    .expect("single");
+                let score = cosine(&batched[index], &alone[0]);
+                assert!(
+                    score >= 0.9999,
+                    "{}: input {index} differs batched vs alone: cosine {score}",
+                    config.model_id
+                );
+            }
+        }
+    }
+
+    /// The earlier default's post-processor appends the end-of-text token. A
     /// truncated input keeps it, because last-token pooling reads that row.
     #[test]
     #[ignore = "needs the 1.19 GB checkpoint; run with --run-ignored=all"]
     fn the_tokenizer_appends_one_end_of_text_token_and_truncation_keeps_it() {
-        let dir = manager()
-            .ensure_all(&ready_config(EmbedderDevice::Auto).local)
-            .expect("artifacts present");
-        let tokenizer =
-            tokenizers::Tokenizer::from_file(dir.join("tokenizer.json")).expect("tokenizer loads");
-        let short = batcher::tokenize(&tokenizer, &["hello".to_owned()], 4096).expect("tokenized");
+        let tokenizer = provider_tokenizer(&harrier_config(EmbedderDevice::Auto), 4096);
+        let short = batcher::tokenize(&tokenizer, &["hello".to_owned()]).expect("tokenized");
         let ids = &short[0].ids;
         assert_eq!(*ids.last().expect("a final token"), 151_643);
         assert_eq!(
@@ -1050,8 +1283,8 @@ mod with_model {
         );
         assert!(!short[0].truncated);
 
-        let long = "word ".repeat(4000);
-        let cut = batcher::tokenize(&tokenizer, &[long], 64).expect("tokenized");
+        let tokenizer = provider_tokenizer(&harrier_config(EmbedderDevice::Auto), 64);
+        let cut = batcher::tokenize(&tokenizer, &["word ".repeat(4000)]).expect("tokenized");
         assert!(cut[0].truncated, "an over-long input is truncated");
         assert_eq!(cut[0].ids.len(), 64);
         assert_eq!(
@@ -1061,52 +1294,104 @@ mod with_model {
         );
     }
 
+    /// The default model's tokenizer adds nothing around the text, so a
+    /// truncated input is exactly the head of the full one. Keeping the final
+    /// token, as the earlier default needs, would splice the text's end onto
+    /// its start.
+    #[test]
+    #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
+    fn the_default_tokenizer_appends_nothing_and_truncation_keeps_the_head() {
+        let long = "word ".repeat(3999) + "ending";
+        let full = batcher::tokenize(
+            &provider_tokenizer(&pplx_config(EmbedderDevice::Auto), 32_768),
+            &[
+                "hello".to_owned(),
+                long.clone(),
+                " \n hello\t\u{3000}".to_owned(),
+            ],
+        )
+        .expect("tokenized");
+        assert_eq!(full[0].ids.len(), 1, "a one-word input is one token");
+        assert!(!full[1].truncated);
+        assert_eq!(
+            full[2].ids, full[0].ids,
+            "surrounding whitespace is stripped, as sentence-transformers strips it"
+        );
+
+        let cut = batcher::tokenize(
+            &provider_tokenizer(&pplx_config(EmbedderDevice::Auto), 64),
+            &[long],
+        )
+        .expect("tokenized");
+        assert!(cut[0].truncated, "an over-long input is truncated");
+        assert_eq!(cut[0].ids, full[1].ids[..64]);
+    }
+
+    fn provider_tokenizer(config: &EmbedderConfig, cap: usize) -> tokenizers::Tokenizer {
+        let dir = manager()
+            .ensure_all(&config.local)
+            .expect("artifacts present");
+        let tokenizer =
+            tokenizers::Tokenizer::from_file(dir.join("tokenizer.json")).expect("tokenizer loads");
+        batcher::for_provider(tokenizer, cap).expect("the cap fits")
+    }
+
     /// Metal and CPU must agree: a vault filled on one host and queried from
     /// another is one space only if they do.
     #[test]
-    #[ignore = "needs the 1.19 GB checkpoint and is slow on CPU"]
+    #[ignore = "needs both checkpoints and is slow on CPU"]
     fn the_cpu_and_metal_devices_agree_on_the_same_input() {
         if Device::new_metal(0).is_err() {
             return;
         }
-        let texts: Vec<String> = reference_chunks().into_iter().take(4).collect();
-        let on_metal = LocalEmbedder::load(&ready_config(EmbedderDevice::Metal), &manager())
-            .expect("metal model")
-            .embed_texts(&texts)
-            .expect("metal vectors");
-        let on_cpu = LocalEmbedder::load(&ready_config(EmbedderDevice::Cpu), &manager())
-            .expect("cpu model")
-            .embed_texts(&texts)
-            .expect("cpu vectors");
-        for (index, (metal, cpu)) in on_metal.iter().zip(&on_cpu).enumerate() {
-            let score = cosine(metal, cpu);
-            assert!(score >= 0.999, "input {index} differs by device: {score}");
+        for (config, texts) in [
+            (
+                harrier_config as fn(EmbedderDevice) -> EmbedderConfig,
+                reference_chunks().into_iter().take(4).collect::<Vec<_>>(),
+            ),
+            (
+                pplx_config,
+                pplx_parity_texts().into_iter().take(17).collect(),
+            ),
+        ] {
+            let on_metal = LocalEmbedder::load(&config(EmbedderDevice::Metal), &manager())
+                .expect("metal model")
+                .embed_texts(&texts)
+                .expect("metal vectors");
+            let on_cpu = LocalEmbedder::load(&config(EmbedderDevice::Cpu), &manager())
+                .expect("cpu model")
+                .embed_texts(&texts)
+                .expect("cpu vectors");
+            for (index, (metal, cpu)) in on_metal.iter().zip(&on_cpu).enumerate() {
+                let score = cosine(metal, cpu);
+                assert!(score >= 0.999, "input {index} differs by device: {score}");
+            }
         }
     }
 
     /// A named CUDA build must really load Q8_0 projections onto CUDA and
     /// produce the same embedding space as the featureless CPU build.
     #[test]
-    #[ignore = "needs the 1.19 GB checkpoint and a CUDA-enabled NVIDIA host"]
+    #[ignore = "needs the default checkpoint and a CUDA-enabled NVIDIA host"]
     fn the_cpu_and_cuda_devices_agree_on_the_committed_subset() {
         Device::new_cuda(0).expect("build candle-core/cuda + candle-nn/cuda on an NVIDIA host");
-        let texts = reference_chunks();
-        let on_cuda = LocalEmbedder::load(&ready_config(EmbedderDevice::Cuda), &manager())
+        let texts = pplx_parity_texts();
+        let on_cuda = LocalEmbedder::load(&pplx_config(EmbedderDevice::Cuda), &manager())
             .expect("CUDA Q8_0 model loads")
             .embed_texts(&texts)
             .expect("CUDA Q8_0 vectors");
-        let on_cpu = LocalEmbedder::load(&ready_config(EmbedderDevice::Cpu), &manager())
+        let on_cpu = LocalEmbedder::load(&pplx_config(EmbedderDevice::Cpu), &manager())
             .expect("CPU Q8_0 model loads")
             .embed_texts(&texts)
             .expect("CPU Q8_0 vectors");
         let mut worst = 1.0f32;
         for (index, (cuda, cpu)) in on_cuda.iter().zip(&on_cpu).enumerate() {
             let score = cosine(cuda, cpu);
-            assert!(score >= 0.999, "chunk {index} differs by device: {score}");
+            assert!(score >= 0.999, "input {index} differs by device: {score}");
             worst = worst.min(score);
         }
         println!(
-            "CUDA vs CPU worst cosine on {} chunks: {worst}",
+            "CUDA vs CPU worst cosine on {} inputs: {worst}",
             texts.len()
         );
     }
@@ -1114,15 +1399,12 @@ mod with_model {
     /// Small committed subset for hosts without the out-of-tree full spec
     /// corpus; report both load and forward throughput with an explicit device.
     #[test]
-    #[ignore = "needs the 1.19 GB checkpoint; choose ONEIRON_EMBED_BENCH_DEVICE"]
+    #[ignore = "needs the default checkpoint; choose ONEIRON_EMBED_BENCH_DEVICE"]
     fn the_committed_subset_reports_load_and_throughput() {
-        let device = std::env::var("ONEIRON_EMBED_BENCH_DEVICE")
-            .unwrap_or_else(|_| "auto".to_owned())
-            .parse::<EmbedderDevice>()
-            .expect("ONEIRON_EMBED_BENCH_DEVICE: auto, cpu, metal or cuda");
+        let device = bench_device();
         let texts = reference_chunks();
         let start = std::time::Instant::now();
-        let embedder = LocalEmbedder::load(&ready_config(device), &manager()).expect("model loads");
+        let embedder = LocalEmbedder::load(&pplx_config(device), &manager()).expect("model loads");
         let load_secs = start.elapsed().as_secs_f64();
         let start = std::time::Instant::now();
         let vectors = embedder.embed_texts(&texts).expect("vectors");
@@ -1138,22 +1420,48 @@ mod with_model {
         );
     }
 
+    fn bench_device() -> EmbedderDevice {
+        std::env::var("ONEIRON_EMBED_BENCH_DEVICE")
+            .unwrap_or_else(|_| "auto".to_owned())
+            .parse::<EmbedderDevice>()
+            .expect("ONEIRON_EMBED_BENCH_DEVICE: auto, cpu, metal or cuda")
+    }
+
     /// The full spec corpus, its three query sets, and the throughput numbers
-    /// the PR body reports.
+    /// the PR body reports, for the earlier default. The pins are its R@10 on
+    /// the 2026-09-07 harness.
+    #[test]
+    #[ignore = "needs the checkpoint and ONEIRON_EMBED_BENCH_DIR; reported in the PR body"]
+    fn the_full_corpus_reproduces_the_recall_the_blueprint_pins() {
+        full_corpus_recall(&harrier_config(bench_device()), [0.9811, 0.8775, 0.9700]);
+    }
+
+    /// The same corpus through the default model. The pins are its R@10 on the
+    /// 2026-10-01 retest, which scored sentence-transformers' bf16 output.
+    #[test]
+    #[ignore = "needs the checkpoint and ONEIRON_EMBED_BENCH_DIR; reported in the PR body"]
+    fn the_full_corpus_reproduces_the_default_models_retest_recall() {
+        full_corpus_recall(&pplx_config(bench_device()), [0.9717, 0.8475, 0.9550]);
+    }
+
+    /// Embeds the corpus held in `ONEIRON_EMBED_BENCH_DIR` and checks R@10 on
+    /// each query set against `pinned`.
     ///
     /// The corpus is 13 MB of measurement data that has no business in the
     /// repository, so the directory holding it is named by
     /// `ONEIRON_EMBED_BENCH_DIR` and the row says so rather than silently
-    /// passing when it is unset.
-    #[test]
-    #[ignore = "needs the checkpoint and ONEIRON_EMBED_BENCH_DIR; reported in the PR body"]
-    fn the_full_corpus_reproduces_the_recall_the_blueprint_pins() {
+    /// passing when it is unset. With `ONEIRON_EMBED_RUN_DIR` also set, every
+    /// query's top 100 is written there in the retest's run format
+    /// (`S0__q1__card.json`: query id to `[[doc id, score], …]`), so the
+    /// retest's own scorer can grade the provider's rankings.
+    fn full_corpus_recall(config: &EmbedderConfig, pinned: [f32; 3]) {
         let Some(bench) = std::env::var_os("ONEIRON_EMBED_BENCH_DIR").map(std::path::PathBuf::from)
         else {
             panic!(
                 "set ONEIRON_EMBED_BENCH_DIR to the directory holding chunks.jsonl and q1..q3.json"
             );
         };
+        let run_dir = std::env::var_os("ONEIRON_EMBED_RUN_DIR").map(std::path::PathBuf::from);
         let chunks: Vec<serde_json::Value> = std::fs::read_to_string(bench.join("chunks.jsonl"))
             .expect("chunks.jsonl")
             .lines()
@@ -1164,34 +1472,42 @@ mod with_model {
             .map(|chunk| chunk["text"].as_str().expect("chunk text").to_owned())
             .collect();
 
-        let device = std::env::var("ONEIRON_EMBED_BENCH_DEVICE")
-            .unwrap_or_else(|_| "auto".to_owned())
-            .parse::<EmbedderDevice>()
-            .expect("ONEIRON_EMBED_BENCH_DEVICE: auto, cpu, metal or cuda");
         let load_started = std::time::Instant::now();
-        let embedder = LocalEmbedder::load(&ready_config(device), &manager()).expect("model loads");
+        let embedder = LocalEmbedder::load(config, &manager()).expect("model loads");
         let load_ms = load_started.elapsed().as_millis();
 
         let embed_started = std::time::Instant::now();
         let documents = embedder.embed_texts(&texts).expect("documents embedded");
         let embed_secs = embed_started.elapsed().as_secs_f64();
         println!(
-            "device {}: load+quantise {load_ms} ms; {} chunks in {embed_secs:.1} s = {:.2} chunks/s",
-            device.as_str(),
+            "{} on {}: load+quantise {load_ms} ms; {} chunks in {embed_secs:.1} s = {:.2} chunks/s",
+            config.model_id,
+            config.local.device.as_str(),
             texts.len(),
             texts.len() as f64 / embed_secs
         );
 
-        for (name, file, pinned) in [
-            ("Q1", "q1.json", 0.9811f32),
-            ("Q2", "q2.json", 0.8775),
-            ("Q3", "q3.json", 0.9700),
-        ] {
+        for ((name, file), pinned) in [("q1", "q1.json"), ("q2", "q2.json"), ("q3", "q3.json")]
+            .into_iter()
+            .zip(pinned)
+        {
             let queries: Vec<serde_json::Value> =
                 serde_json::from_str(&std::fs::read_to_string(bench.join(file)).expect(file))
                     .expect("query json");
-            let recall = recall_at_10(&embedder, &queries, &chunks, &documents);
+            let ranked: Vec<Vec<(f32, usize)>> = queries
+                .iter()
+                .map(|query| {
+                    let probe = embedder
+                        .embed_query(query["query"].as_str().expect("query text"))
+                        .expect("query embedded");
+                    rank(&probe, &documents)
+                })
+                .collect();
+            let recall = recall_at_10(&queries, &chunks, &ranked);
             println!("{name} R@10 {recall:.4} (pinned {pinned:.4})");
+            if let Some(dir) = run_dir.as_ref() {
+                write_run(dir, name, &queries, &ranked);
+            }
             assert!(
                 (recall - pinned).abs() <= 0.005,
                 "{name} R@10 {recall} is more than 0.005 from the pinned {pinned}"
@@ -1199,36 +1515,67 @@ mod with_model {
         }
     }
 
+    /// Every document by cosine to the probe, best first.
+    fn rank(probe: &[f32], documents: &[Vec<f32>]) -> Vec<(f32, usize)> {
+        let mut scored: Vec<(f32, usize)> = documents
+            .iter()
+            .enumerate()
+            .map(|(index, doc)| (cosine(probe, doc), index))
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored
+    }
+
     /// Recall@10 over one query set, scored exactly as the bench scored it:
-    /// cosine against every document, relevance by page for Q1 and Q3 and by
-    /// chunk index for Q2.
+    /// a hit when any relevant chunk ranks in the top ten, relevance by page
+    /// for Q1 and Q3 and by chunk index for Q2.
     fn recall_at_10(
-        embedder: &LocalEmbedder,
         queries: &[serde_json::Value],
         chunks: &[serde_json::Value],
-        documents: &[Vec<f32>],
+        ranked: &[Vec<(f32, usize)>],
     ) -> f32 {
-        let mut hits = 0usize;
-        for query in queries {
-            let relevant = relevant_indices(query, chunks);
-            let probe = embedder
-                .embed_query(query["query"].as_str().expect("query text"))
-                .expect("query embedded");
-            let mut scored: Vec<(f32, usize)> = documents
-                .iter()
-                .enumerate()
-                .map(|(index, doc)| (cosine(&probe, doc), index))
-                .collect();
-            scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-            if scored
-                .iter()
-                .take(10)
-                .any(|(_, index)| relevant.contains(index))
-            {
-                hits += 1;
-            }
-        }
+        let hits = queries
+            .iter()
+            .zip(ranked)
+            .filter(|(query, ranking)| {
+                let relevant = relevant_indices(query, chunks);
+                ranking
+                    .iter()
+                    .take(10)
+                    .any(|(_, index)| relevant.contains(index))
+            })
+            .count();
         hits as f32 / queries.len() as f32
+    }
+
+    /// One query set's top 100 per query, in the retest's run format.
+    fn write_run(
+        dir: &std::path::Path,
+        name: &str,
+        queries: &[serde_json::Value],
+        ranked: &[Vec<(f32, usize)>],
+    ) {
+        let run: serde_json::Map<String, serde_json::Value> = queries
+            .iter()
+            .zip(ranked)
+            .map(|(query, ranking)| {
+                let top: Vec<serde_json::Value> = ranking
+                    .iter()
+                    .take(100)
+                    .map(|(score, index)| serde_json::json!([index.to_string(), score]))
+                    .collect();
+                (
+                    format!("{name}-{}", query["qid"]),
+                    serde_json::Value::from(top),
+                )
+            })
+            .collect();
+        std::fs::create_dir_all(dir).expect("run dir");
+        std::fs::write(
+            dir.join(format!("S0__{name}__card.json")),
+            serde_json::to_vec(&run).expect("run json"),
+        )
+        .expect("run written");
     }
 
     /// The chunk indices a query counts as relevant.

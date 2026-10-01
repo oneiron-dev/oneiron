@@ -1,6 +1,7 @@
 //! Server configuration: resolved types, CLI flags, and the file/env/argv merge.
 
 pub mod embedder;
+pub(crate) mod embedder_models;
 mod lookup;
 pub mod merge;
 pub mod remote_embedder;

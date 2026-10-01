@@ -327,22 +327,41 @@ fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
     );
 }
 
+/// What a query carries is the space's model's: the earlier default's
+/// instruction for a space pinned to it, nothing for the default model or for
+/// a model this build has never measured, and exactly the configured text when
+/// one is configured.
 #[test]
-fn a_query_carries_exactly_the_instruction_prefix() {
+fn a_query_carries_exactly_its_models_instruction_prefix() {
+    use crate::config::embedder_models::{HARRIER_06, PPLX_EMBED_V1_06};
     let mock = MockEndpoint::start(MockBehaviour::Ok);
-    let embedder = mock.embedder();
-    embedder
-        .embed_query("what did we decide")
-        .expect("embedded");
-    let requests = mock.requests();
-    assert_eq!(
-        requests[0]["input"],
-        json!([format!(
-            "{}what did we decide",
-            crate::config::embedder::DEFAULT_QUERY_INSTRUCTION
-        )]),
-        "a query carries exactly the configured instruction and nothing else"
-    );
+    let cases = [
+        (HARRIER_06.model_id, None, HARRIER_06.query_instruction),
+        (PPLX_EMBED_V1_06.model_id, None, ""),
+        ("test/model@rev", None, ""),
+        (
+            HARRIER_06.model_id,
+            Some("Represent this question: "),
+            "Represent this question: ",
+        ),
+    ];
+    for (model_id, configured, prefix) in cases {
+        let config = EmbedderConfig {
+            model_id: model_id.to_owned(),
+            query_instruction: configured.map(str::to_owned),
+            ..endpoint_config(&mock.base)
+        };
+        endpoint::HttpEmbedder::from_config(&config)
+            .expect("http embedder")
+            .embed_query("what did we decide")
+            .expect("embedded");
+        assert_eq!(
+            mock.requests().last().expect("a request")["input"],
+            json!([format!("{prefix}what did we decide")]),
+            "{model_id}: a query carries exactly its instruction and nothing else"
+        );
+    }
+    assert!(!HARRIER_06.query_instruction.is_empty());
 }
 
 #[test]

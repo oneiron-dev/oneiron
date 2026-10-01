@@ -7,7 +7,7 @@
 //! would otherwise be embedded into a different space while reporting the same
 //! `model_id`.
 
-use candle_core::Tensor;
+use candle_core::{DType, Tensor};
 use serde::Deserialize;
 
 use super::attention::l2_normalize;
@@ -38,11 +38,28 @@ pub(super) struct Pooling {
 /// The pooling modes this provider implements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PoolingMode {
-    /// The hidden state of the final token. What the default local model uses.
+    /// The hidden state of the final token.
     LastToken,
-    /// The mean over tokens.
+    /// The mean over tokens. Exact over every row, because the provider never
+    /// pads a group: there is no pad row for a mask to exclude.
     Mean,
 }
+
+/// A module after pooling, applied in the order `modules.json` declares it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Step {
+    /// `Normalize`: every row to unit length.
+    Normalize,
+    /// `FlexibleQuantizer` at its default `int8`: `tanh`, scaled by 127,
+    /// rounded and clamped to `[-128, 127]`. The integers are the model's
+    /// output, compared by cosine; the provider's own normalisation turns them
+    /// into the unit vector every provider returns.
+    Int8Tanh,
+}
+
+/// The one quantisation a `FlexibleQuantizer` applies when the caller passes
+/// none, which is what `encode` does unless it is told otherwise.
+const INT8_TANH_SCALE: f64 = 127.0;
 
 impl Pooling {
     fn mode(self) -> oneiron::Result<PoolingMode> {
@@ -64,7 +81,7 @@ impl Pooling {
 #[derive(Debug)]
 pub(super) struct StModules {
     mode: PoolingMode,
-    normalize: bool,
+    steps: Vec<Step>,
     dimensions: usize,
 }
 
@@ -84,11 +101,12 @@ impl StModules {
             ));
         };
         let mut pooling: Option<Pooling> = None;
-        let mut normalize = false;
+        let mut steps = Vec::new();
         for (kind, entry) in chain {
             match kind {
                 "Pooling" => pooling = Some(read_pooling(model_dir, &entry.path)?),
-                "Normalize" => normalize = true,
+                "Normalize" => steps.push(Step::Normalize),
+                "FlexibleQuantizer" => steps.push(Step::Int8Tanh),
                 // A Dense head would project into a different width, so it is
                 // refused rather than ignored. No identity-Dense checkpoint is
                 // in play today; one would arrive as a new accepted case with
@@ -107,7 +125,7 @@ impl StModules {
         })?;
         Ok(Self {
             mode: pooling.mode()?,
-            normalize,
+            steps,
             dimensions: pooling.word_embedding_dimension,
         })
     }
@@ -118,13 +136,23 @@ impl StModules {
     }
 
     /// `[batch, seq, hidden]` hidden states to `[batch, hidden]` vectors.
+    ///
+    /// Runs in f32 whatever the forward pass ran in: a mean over thousands of
+    /// rows, or a rounding to integers, done in bf16 would move the vector by
+    /// more than the weights' own precision does.
     pub(super) fn apply(&self, hidden: &Tensor) -> candle_core::Result<Tensor> {
-        let pooled = match self.mode {
-            PoolingMode::LastToken => Model::last_rows(hidden)?,
+        let hidden = hidden.to_dtype(DType::F32)?;
+        let mut pooled = match self.mode {
+            PoolingMode::LastToken => Model::last_rows(&hidden)?,
             PoolingMode::Mean => hidden.mean(1)?,
         };
-        if self.normalize {
-            return l2_normalize(&pooled);
+        for step in &self.steps {
+            pooled = match step {
+                Step::Normalize => l2_normalize(&pooled)?,
+                Step::Int8Tanh => (pooled.tanh()? * INT8_TANH_SCALE)?
+                    .round()?
+                    .clamp(-128f32, 127f32)?,
+            };
         }
         Ok(pooled)
     }

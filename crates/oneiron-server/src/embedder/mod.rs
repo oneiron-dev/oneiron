@@ -57,7 +57,7 @@ impl EmbedderCommon {
         Self {
             model_id: config.model_id.clone(),
             dimensions: config.dimensions,
-            query_instruction: config.query_instruction.clone(),
+            query_instruction: config.effective_query_instruction().to_owned(),
         }
     }
 

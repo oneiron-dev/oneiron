@@ -53,17 +53,18 @@ pub(super) fn load_proj(
             Ok(Proj::Q8(QMatMul::from_qtensor(quantised)?))
         }
         EmbedderQuant::None => Ok(Proj::Dense(Linear::new(
-            weight.to_device(device)?.to_dtype(dtype)?,
+            weight.to_dtype(dtype)?.to_device(device)?,
             None,
         ))),
     }
 }
 
-/// Loads a plain tensor onto the run device at the run precision.
+/// Loads a plain tensor onto the run device at `dtype`.
 ///
 /// Norm weights and the embedding table take this door: an embedding lookup is
 /// a gather, not a matmul, and quantising a norm would cost accuracy for a
-/// vector of a thousand values.
+/// vector of a thousand values. The tensor is narrowed to `dtype` on the host,
+/// so the largest one never reaches the device wider than it is kept.
 pub(super) fn load_plain(
     vb: &VarBuilder<'_>,
     name: &str,
@@ -71,5 +72,6 @@ pub(super) fn load_plain(
     device: &Device,
     dtype: DType,
 ) -> candle_core::Result<Tensor> {
-    vb.get(shape, name)?.to_device(device)?.to_dtype(dtype)
+    vb.get_with_hints_dtype(shape, name, Default::default(), dtype)?
+        .to_device(device)
 }

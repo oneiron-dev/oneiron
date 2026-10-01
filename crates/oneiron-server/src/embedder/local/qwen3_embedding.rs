@@ -3,23 +3,29 @@
 //! Rebuilt from mistral.rs's `embedding_models/qwen3_embedding.rs` — see
 //! `NOTICE-mistralrs.md`. Structure and tensor names are the source's:
 //! `embed_tokens` → N decoder layers (q/k/v/o projections, per-head q and k
-//! norms, RoPE, causal attention, SwiGLU MLP) → a final norm → per-token hidden
+//! norms, RoPE, attention, SwiGLU MLP) → a final norm → per-token hidden
 //! states. No `lm_head` is loaded, because none is used.
+//!
+//! Attention is causal unless the checkpoint's `config.json` declares
+//! `use_bidirectional_attention`: an encoder trained bidirectionally on the same
+//! Qwen3 weights layout differs from a causal one in its mask and nothing else.
 
 use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
 use candle_nn::{RmsNorm, VarBuilder};
 use serde::Deserialize;
 
-use super::attention::{causal_mask, grouped_causal_attention};
+use super::attention::{causal_mask, grouped_attention};
 use super::isq::{Proj, load_plain, load_proj};
 use crate::config::EmbedderQuant;
 
 /// Model classes this provider accepts.
 ///
 /// The upstream runtime mapped only `Qwen3ForCausalLM` and so refused the
-/// body-only checkpoint outright. Both names describe the same decoder stack —
-/// the difference is a head this code never loads — so both are accepted.
-const ACCEPTED_ARCHITECTURES: [&str; 2] = ["Qwen3Model", "Qwen3ForCausalLM"];
+/// body-only checkpoint outright. Every name here describes the same stack —
+/// the differences are a head this code never loads, and, for
+/// `PPLXQwen3Model`, an attention mask the config declares on its own — so all
+/// are accepted.
+const ACCEPTED_ARCHITECTURES: [&str; 3] = ["Qwen3Model", "Qwen3ForCausalLM", "PPLXQwen3Model"];
 
 /// `config.json` as the model ships it. Unknown keys are ignored on purpose:
 /// the file carries inference knobs (`use_cache`, `layer_types`) that do not
@@ -39,6 +45,10 @@ pub(super) struct Config {
     /// Absent in some Qwen3 configs, where it is `hidden_size / heads`.
     #[serde(default)]
     head_dim: Option<usize>,
+    /// Every position attends to every other. Absent means causal, which is
+    /// what a Qwen3 checkpoint without the key was trained as.
+    #[serde(default)]
+    pub(super) use_bidirectional_attention: bool,
 }
 
 impl Config {
@@ -173,6 +183,7 @@ impl Attention {
         xs: &Tensor,
         rotary: &Rotary,
         mask: Option<&Tensor>,
+        causal: bool,
     ) -> candle_core::Result<Tensor> {
         let (batch, seq, _) = xs.dims3()?;
         // Per-HEAD q/k norms, as the source applies them: reshape to heads
@@ -187,7 +198,7 @@ impl Attention {
         let v = split(self.v_proj.forward(xs)?, self.kv_heads)?;
         let q = rotary.apply(&self.q_norm.forward(&q.contiguous()?)?, seq)?;
         let k = rotary.apply(&self.k_norm.forward(&k.contiguous()?)?, seq)?;
-        let attended = grouped_causal_attention(&q, &k, &v.contiguous()?, mask, self.scale)?;
+        let attended = grouped_attention(&q, &k, &v.contiguous()?, mask, causal, self.scale)?;
         let merged = attended
             .transpose(1, 2)?
             .reshape((batch, seq, self.heads * self.head_dim))?;
@@ -247,10 +258,11 @@ impl DecoderLayer {
         xs: &Tensor,
         rotary: &Rotary,
         mask: Option<&Tensor>,
+        causal: bool,
     ) -> candle_core::Result<Tensor> {
-        let attended = self
-            .self_attn
-            .forward(&self.input_layernorm.forward(xs)?, rotary, mask)?;
+        let attended =
+            self.self_attn
+                .forward(&self.input_layernorm.forward(xs)?, rotary, mask, causal)?;
         let xs = (xs + attended)?;
         let fed = self
             .mlp
@@ -416,8 +428,11 @@ pub(super) struct Model {
     rotary: Rotary,
     /// One additive mask per distinct sequence length, bounded. Rebuilding an
     /// `s × s` mask per batch is the one avoidable cost in the eager path;
-    /// keeping every length ever seen is the other.
+    /// keeping every length ever seen is the other. Never touched by a
+    /// bidirectional body, which masks nothing.
     mask_cache: MaskCache,
+    /// Whether attention hides future positions: the checkpoint's declaration.
+    causal: bool,
     device: Device,
     dtype: DType,
     hidden_size: usize,
@@ -426,8 +441,9 @@ pub(super) struct Model {
 impl Model {
     /// Loads the body from a safetensors file already on disk.
     ///
-    /// `vb` must be a CPU builder over the official bf16 weights; the run
-    /// device and precision come from `device` and `quant`.
+    /// `vb` must be a CPU builder over the official weights, at a precision
+    /// that holds them exactly; the run device and precision come from
+    /// `device` and `quant`.
     pub(super) fn load(
         cfg: &Config,
         vb: &VarBuilder<'_>,
@@ -468,6 +484,7 @@ impl Model {
             norm,
             rotary,
             mask_cache: MaskCache::new(),
+            causal: !cfg.use_bidirectional_attention,
             device: device.clone(),
             dtype,
             hidden_size: cfg.hidden_size,
@@ -487,8 +504,9 @@ impl Model {
     pub(super) fn forward(&mut self, ids: &Tensor) -> candle_core::Result<Tensor> {
         let seq = ids.dim(D::Minus1)?;
         // The fused Metal kernel masks causally on its own, so that path builds
-        // and caches nothing: an `s × s` tensor no kernel reads is pure cost.
-        let mask = if matches!(self.device, Device::Metal(_)) {
+        // and caches nothing: an `s × s` tensor no kernel reads is pure cost. A
+        // bidirectional body over an unpadded group has nothing to mask at all.
+        let mask = if !self.causal || matches!(self.device, Device::Metal(_)) {
             None
         } else {
             Some(self.mask_cache.get_or_build(seq, &self.device)?)
@@ -499,7 +517,7 @@ impl Model {
             .reshape((ids.dim(0)?, seq, self.hidden_size))?
             .to_dtype(self.dtype)?;
         for layer in &self.layers {
-            xs = layer.forward(&xs, &self.rotary, mask.as_ref())?;
+            xs = layer.forward(&xs, &self.rotary, mask.as_ref(), self.causal)?;
         }
         self.norm.forward(&xs)
     }

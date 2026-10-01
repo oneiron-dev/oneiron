@@ -245,7 +245,7 @@ fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow
     if choice == EmbedderProvider::Local
         && (dims != defaults.dimensions || args.embedder_model_id.is_some())
     {
-        anyhow::bail!("local init uses the pinned Harrier model and its 1024 dimensions");
+        anyhow::bail!("local init uses the pinned default model and its 1024 dimensions");
     }
     let mut embedder = toml::Table::new();
     embedder.insert("provider".into(), choice.as_str().into());

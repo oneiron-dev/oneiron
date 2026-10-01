@@ -18,22 +18,14 @@ use super::lookup::{lookup_parse, lookup_path};
 /// Embedding SPACE id of the default local model: the upstream weights and the
 /// HF commit they were read at. Satisfies the vault's `org/name@revision`
 /// grammar, so it is what `vault_meta` pins.
-pub const DEFAULT_MODEL_ID: &str =
-    "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee";
+pub const DEFAULT_MODEL_ID: &str = super::embedder_models::PPLX_EMBED_V1_06.model_id;
 /// Repository holding the default local model's official files.
-pub const DEFAULT_LOCAL_REPO: &str = "microsoft/harrier-oss-v1-0.6b";
+pub const DEFAULT_LOCAL_REPO: &str = super::embedder_models::PPLX_EMBED_V1_06.repo;
 /// Commit the default local artifacts are pinned to.
-pub const DEFAULT_LOCAL_REVISION: &str = "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee";
-/// Dimensionality of the default local model. No MRL, so no `fast_dims`.
-pub const DEFAULT_DIMENSIONS: usize = 1024;
-/// Context window of the default local model: `max_position_embeddings` in its
-/// `config.json` at the pinned revision. The rotary tables are built to it, so
-/// a longer input has no position to sit at.
-pub const DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS: usize = 32_768;
-/// Instruction prepended to a QUERY and never to a document. The model's own
-/// asymmetry: documents are embedded raw.
-pub const DEFAULT_QUERY_INSTRUCTION: &str =
-    "Instruct: Given a question, retrieve passages that answer it\nQuery: ";
+pub const DEFAULT_LOCAL_REVISION: &str = super::embedder_models::PPLX_EMBED_V1_06.revision;
+/// Dimensionality of the default local model. It is MRL-trained, but no
+/// `fast_dims` prefix has been measured, so the vault runs at full width.
+pub const DEFAULT_DIMENSIONS: usize = super::embedder_models::PPLX_EMBED_V1_06.dimensions;
 
 const DEFAULT_BATCH_SIZE: usize = 32;
 const DEFAULT_LEASE_MS: u64 = 30_000;
@@ -323,7 +315,9 @@ pub struct EmbedderConfig {
     /// The vault's embedding space id. Every provider reports exactly this.
     pub model_id: String,
     pub dimensions: usize,
-    pub query_instruction: String,
+    /// Instruction prepended to query text only. `None` means the one the
+    /// model itself asks for: see [`EmbedderConfig::effective_query_instruction`].
+    pub query_instruction: Option<String>,
     pub batch_size: usize,
     pub lease_ms: u64,
     pub max_input_tokens: usize,
@@ -339,7 +333,7 @@ impl Default for EmbedderConfig {
             remote: None,
             model_id: DEFAULT_MODEL_ID.to_owned(),
             dimensions: DEFAULT_DIMENSIONS,
-            query_instruction: DEFAULT_QUERY_INSTRUCTION.to_owned(),
+            query_instruction: None,
             batch_size: DEFAULT_BATCH_SIZE,
             lease_ms: DEFAULT_LEASE_MS,
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
@@ -354,6 +348,17 @@ impl EmbedderConfig {
     /// Whether this section asks for a worker at all.
     pub const fn is_active(&self) -> bool {
         !matches!(self.provider, EmbedderProvider::None)
+    }
+
+    /// The instruction a query carries: the configured one, else the one the
+    /// space's model asks for. A model this build has never measured asks for
+    /// none, because an instruction the model was not trained on moves every
+    /// query to a place no document is.
+    pub fn effective_query_instruction(&self) -> &str {
+        self.query_instruction.as_deref().unwrap_or_else(|| {
+            super::embedder_models::by_model_id(&self.model_id)
+                .map_or("", |model| model.query_instruction)
+        })
     }
 
     pub(super) fn apply_override(
@@ -376,13 +381,22 @@ fn apply_common(config: &mut EmbedderConfig, over: &EmbedderConfigOverride) {
         config.provider = value;
     }
     if let Some(value) = over.model_id.clone() {
+        // The space id names the weights that fill it. A layer that names a
+        // space and not where its files live means that space's own repository
+        // and commit; the local keys the same layer names are applied after
+        // this and win. Without it, a vault pinned to one model would be
+        // filled by the default model's weights under the pinned model's name.
+        if let Some((repo, revision)) = value.split_once('@') {
+            config.local.repo = repo.to_owned();
+            config.local.revision = revision.to_owned();
+        }
         config.model_id = value;
     }
     if let Some(value) = over.dimensions {
         config.dimensions = value;
     }
     if let Some(value) = over.query_instruction.clone() {
-        config.query_instruction = value;
+        config.query_instruction = Some(value);
     }
     if let Some(value) = over.batch_size {
         config.batch_size = value;

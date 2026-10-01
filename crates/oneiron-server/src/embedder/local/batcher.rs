@@ -5,10 +5,11 @@
 //! only reason its right-padding with no attention mask was ever correct, since
 //! padding never actually happened. This keeps the correct half at the provider
 //! level: sort by token length, group equal lengths, restore the input order
-//! afterwards. No padding, no padding mask, no position shifts, and the model
-//! keeps its pure causal mask.
+//! afterwards. No padding, no padding mask, no position shifts: a causal model
+//! keeps its pure causal mask, a bidirectional one needs no mask, and a mean
+//! pool averages exactly the input's own rows.
 
-use tokenizers::Tokenizer;
+use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
 /// One input's tokens.
 pub(super) struct Tokenized {
@@ -16,51 +17,83 @@ pub(super) struct Tokenized {
     pub(super) truncated: bool,
 }
 
+/// Readies the model's own tokenizer for this provider: no padding, and its
+/// own truncation at the input cap.
+///
+/// Truncation is the tokenizer's rather than a cut of the encoded ids because
+/// only the tokenizer knows what its post-processor adds. One model's appends
+/// an end-of-text token, which must survive a cut because last-token pooling
+/// reads it; another's adds nothing, and keeping the final token there would
+/// splice the end of the text onto its start. The tokenizer reserves room for
+/// whatever it adds and cuts the text to fit, which is also what
+/// sentence-transformers does with the same file.
+///
+/// Padding is switched off whatever the file says: a padded group would need a
+/// key mask and a masked pool, and grouping equal lengths is what makes both
+/// unnecessary.
+pub(super) fn for_provider(
+    mut tokenizer: Tokenizer,
+    max_input_tokens: usize,
+) -> oneiron::Result<Tokenizer> {
+    tokenizer.with_padding(None);
+    tokenizer
+        .with_truncation(Some(TruncationParams {
+            max_length: max_input_tokens.max(1),
+            strategy: TruncationStrategy::LongestFirst,
+            stride: 0,
+            direction: TruncationDirection::Right,
+        }))
+        .map_err(|e| {
+            oneiron::Error::InvalidConfig(format!(
+                "embedder max_input_tokens {max_input_tokens} does not fit the tokenizer: {e}"
+            ))
+        })?;
+    Ok(tokenizer)
+}
+
 /// Encodes every text, dropping tokens from the END of an over-long one.
 ///
+/// Each text is stripped first, as the sentence-transformers `Transformer`
+/// module strips it: leading and trailing whitespace is not part of what the
+/// model embeds, and keeping it moves a padded text away from the same text
+/// unpadded.
+///
 /// `add_special_tokens` is left on: the model's own `tokenizer.json`
-/// post-processor appends its end-of-text token to every input, and
-/// hand-rolling that here would put a different token sequence through the
-/// model than every bench measured.
-pub(super) fn tokenize(
-    tokenizer: &Tokenizer,
-    texts: &[String],
-    max_input_tokens: usize,
-) -> oneiron::Result<Vec<Tokenized>> {
+/// post-processor decides what surrounds the text, and hand-rolling that here
+/// would put a different token sequence through the model than every bench
+/// measured. `tokenizer` must come from [`for_provider`].
+///
+/// An input left with no tokens at all is refused: there is no row to pool.
+pub(super) fn tokenize(tokenizer: &Tokenizer, texts: &[String]) -> oneiron::Result<Vec<Tokenized>> {
     let encodings = tokenizer
-        .encode_batch(texts.iter().map(String::as_str).collect::<Vec<_>>(), true)
+        .encode_batch(
+            texts.iter().map(|text| strip(text)).collect::<Vec<_>>(),
+            true,
+        )
         .map_err(|e| oneiron::Error::UpstreamToolFailure {
             tool: "embedder-tokenizer",
             code: e.to_string(),
         })?;
-    Ok(encodings
+    encodings
         .into_iter()
-        .map(|encoding| truncate_tail(encoding.get_ids().to_vec(), max_input_tokens))
-        .collect())
+        .map(|encoding| {
+            if encoding.get_ids().is_empty() {
+                return Err(oneiron::Error::InvariantViolation(
+                    "an embedder input tokenized to no tokens",
+                ));
+            }
+            Ok(Tokenized {
+                truncated: !encoding.get_overflowing().is_empty(),
+                ids: encoding.get_ids().to_vec(),
+            })
+        })
+        .collect()
 }
 
-/// Drops tokens from the end, keeping the final token in place.
-///
-/// The post-processor's end-of-text token is what last-token pooling reads, so
-/// a truncation that simply cut the tail would pool a mid-sentence token and
-/// land the vector somewhere else in the space.
-fn truncate_tail(mut ids: Vec<u32>, max_input_tokens: usize) -> Tokenized {
-    let cap = max_input_tokens.max(1);
-    if ids.len() <= cap {
-        return Tokenized {
-            ids,
-            truncated: false,
-        };
-    }
-    let last = ids[ids.len() - 1];
-    ids.truncate(cap);
-    if let Some(slot) = ids.last_mut() {
-        *slot = last;
-    }
-    Tokenized {
-        ids,
-        truncated: true,
-    }
+/// Python's `str.strip()`: Unicode whitespace plus the four ASCII separators
+/// (`\x1c`–`\x1f`) Python also counts as space.
+fn strip(text: &str) -> &str {
+    text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
 }
 
 /// Groups input indices by identical token length, in first-appearance order,

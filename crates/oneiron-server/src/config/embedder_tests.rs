@@ -46,6 +46,72 @@ fn an_empty_section_selects_the_local_provider_and_pins_the_space() {
     );
 }
 
+/// The default space is the default model's, end to end: its weights, its
+/// width, and no query instruction, because it embeds queries raw.
+#[test]
+fn the_default_space_is_the_default_models_files_and_asks_for_no_instruction() {
+    use super::embedder_models::PPLX_EMBED_V1_06;
+    let resolved = resolve("dimensions = 1024\n\n[embedder]\n").expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.model_id, PPLX_EMBED_V1_06.model_id);
+    assert_eq!(embedder.local.repo, PPLX_EMBED_V1_06.repo);
+    assert_eq!(embedder.local.revision, PPLX_EMBED_V1_06.revision);
+    assert_eq!(embedder.dimensions, PPLX_EMBED_V1_06.dimensions);
+    assert_eq!(embedder.effective_query_instruction(), "");
+    for model in super::embedder_models::KNOWN_MODELS {
+        assert_eq!(
+            model.model_id,
+            format!("{}@{}", model.repo, model.revision),
+            "a measured model's space id spells its repository and commit"
+        );
+    }
+}
+
+/// A config that names a space and not its files means that space's own
+/// files, and that model's own query instruction. This is the shape `init`
+/// writes, so a vault created under the earlier default keeps being filled by
+/// the earlier default's weights after the default moves.
+#[test]
+fn naming_a_space_selects_its_own_files_and_its_own_instruction() {
+    use super::embedder_models::HARRIER_06;
+    let resolved = resolve(&format!(
+        "dimensions = 1024\n\n[embedder]\nprovider = \"local\"\ndimensions = 1024\nmodel_id = \"{}\"\n",
+        HARRIER_06.model_id
+    ))
+    .expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.local.repo, HARRIER_06.repo);
+    assert_eq!(embedder.local.revision, HARRIER_06.revision);
+    assert_eq!(
+        embedder.effective_query_instruction(),
+        HARRIER_06.query_instruction
+    );
+    assert_eq!(
+        resolved.vault_config().embedding_model.as_deref(),
+        Some(HARRIER_06.model_id)
+    );
+}
+
+/// Files named beside the space win over the ones the space id spells, in the
+/// same layer or a later one, and a configured instruction — even an empty
+/// one — wins over the model's own.
+#[test]
+fn explicit_files_and_an_explicit_instruction_win_over_what_the_space_implies() {
+    use super::embedder_models::HARRIER_06;
+    let (_dir, mut args) = config_file(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{}\"\nrepo = \"mirror/harrier\"\nquery_instruction = \"\"\n",
+        HARRIER_06.model_id
+    ));
+    args.embedder.embedder_revision = Some("mirrored".to_owned());
+    let resolved =
+        resolve_serve_config_with_sources(&args, EnvConfig::default(), None).expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.model_id, HARRIER_06.model_id);
+    assert_eq!(embedder.local.repo, "mirror/harrier");
+    assert_eq!(embedder.local.revision, "mirrored");
+    assert_eq!(embedder.effective_query_instruction(), "");
+}
+
 /// `provider = "none"` is the section stated rather than absent: it resolves,
 /// and it pins no space.
 #[test]

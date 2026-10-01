@@ -305,18 +305,18 @@ fn validate_endpoint_embedder(embedder: &EmbedderConfig) -> anyhow::Result<()> {
 
 fn validate_local_embedder(embedder: &EmbedderConfig) -> anyhow::Result<()> {
     // The rotary tables are built to the model's context window, so a cap above
-    // it fails inside the forward pass rather than at the door. Only the pinned
-    // default model's window is known here; a host that points `repo` somewhere
-    // else is telling the server it knows better, and its own `config.json` is
-    // checked when the model loads.
-    if embedder.local.repo == super::embedder::DEFAULT_LOCAL_REPO
-        && embedder.local.revision == super::embedder::DEFAULT_LOCAL_REVISION
-        && embedder.max_input_tokens > super::embedder::DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS
+    // it fails inside the forward pass rather than at the door. Only a measured
+    // model's window is known here; a host that points `repo` somewhere else is
+    // telling the server it knows better, and its own `config.json` is checked
+    // when the model loads.
+    if let Some(model) =
+        super::embedder_models::by_repo(&embedder.local.repo, &embedder.local.revision)
+        && embedder.max_input_tokens > model.max_position_embeddings
     {
         anyhow::bail!(
-            "embedder.max_input_tokens is {}, above the default local model's context window of {}; lower it (--embedder-max-input-tokens / ONEIRON_EMBEDDER_MAX_INPUT_TOKENS)",
+            "embedder.max_input_tokens is {}, above the local model's context window of {}; lower it (--embedder-max-input-tokens / ONEIRON_EMBEDDER_MAX_INPUT_TOKENS)",
             embedder.max_input_tokens,
-            super::embedder::DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS
+            model.max_position_embeddings
         );
     }
     // bf16 has no CPU matmul path in candle worth running, so the pairing is
