@@ -3,6 +3,7 @@
 //! ABI/schema gates, HNSW config and embedding-model gates, and open-time
 //! migrations. The exact gate order is documented on [`crate::store`].
 
+mod embedding_transform_gates;
 mod hnsw_model_gates;
 mod manifest_storage_gates;
 mod open_create_door;
@@ -10,6 +11,9 @@ mod open_existing_door;
 mod open_version_keys;
 mod vault_root_bind;
 
+pub(crate) use self::embedding_transform_gates::{
+    EMBEDDING_TRANSFORM_KEY, admit_embedding_transform_in_txn,
+};
 pub(crate) use self::hnsw_model_gates::{
     ensure_model_id_for_vector_write, format_hnsw_distance_metric, format_hnsw_index_structure,
     parse_utf8_bytes, read_hnsw_compatibility, validate_embedding_model_id,

@@ -1136,3 +1136,125 @@ fn refilling_the_embedding_space_keeps_the_pin_and_refills_every_record() -> Res
     assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
     Ok(())
 }
+
+const TRANSFORM_A: &str = "attn=bidirectional;pool=mean;dims=4";
+const TRANSFORM_B: &str = "attn=causal;pool=mean;dims=4";
+
+fn stored_transform(vault: &Vault) -> Result<Option<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .hnsw_meta
+        .get(&rtxn, crate::store::EMBEDDING_TRANSFORM_KEY)?
+        .map(|raw| String::from_utf8_lossy(&raw).into_owned()))
+}
+
+fn transform_config(transform: Option<&str>) -> VaultConfig {
+    let mut cfg = test_config();
+    cfg.embedding_transform = transform.map(str::to_owned);
+    cfg
+}
+
+/// The transform is pinned beside the model on first open. Another one is a
+/// typed refusal that writes nothing, so it refuses again after a restart; a
+/// host that declares none is not checked.
+#[test]
+fn an_embedding_transform_is_pinned_and_another_is_refused() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    drop(vault);
+
+    for _restart in 0..2 {
+        assert_matches!(
+            Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_B))).err(),
+            Some(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+        );
+    }
+    let vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    drop(vault);
+    Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    Ok(())
+}
+
+/// A vault filled before the pin existed has none, and adopts the first one
+/// it is opened with, populated or not.
+#[test]
+fn a_vault_without_a_pinned_transform_adopts_the_first_one_declared() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert_eq!(stored_transform(&vault)?, None);
+    drop(vault);
+
+    let vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    assert!(
+        vault.get_vector(&id)?.is_some(),
+        "adopting keeps the vectors"
+    );
+    drop(vault);
+    assert_matches!(
+        Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_B))).err(),
+        Some(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+    );
+    Ok(())
+}
+
+/// A transform declared only after open — a model whose files arrived later —
+/// is adopted where none is pinned and refused where another is.
+#[test]
+fn a_transform_learned_after_open_is_adopted_or_refused() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    vault.adopt_embedding_transform(TRANSFORM_A)?;
+    vault.adopt_embedding_transform(TRANSFORM_A)?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    assert_matches!(
+        vault.adopt_embedding_transform(TRANSFORM_B),
+        Err(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+    );
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    Ok(())
+}
+
+/// A transform change under the same model is a migration: the vectors go,
+/// both pins move in one transaction, and the new transform opens.
+#[test]
+fn a_transform_change_under_the_same_model_migrates_the_space() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    let version = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
+
+    vault.migrate_embedding_space("test/model@v1", TRANSFORM_A)?;
+    assert!(
+        vault.get_vector(&id)?.is_some(),
+        "the same pins are left alone"
+    );
+    vault.migrate_embedding_space("test/model@v1", TRANSFORM_B)?;
+    assert_eq!(vault.get_vector(&id)?, None);
+    assert!(read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)? > version);
+    assert_eq!(read_model_id(&vault)?.as_deref(), Some("test/model@v1"));
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_B));
+    drop(vault);
+    Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_B)))?;
+    assert_matches!(
+        Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A))).err(),
+        Some(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+    );
+
+    // A move to another model without a declared transform drops the old one.
+    let mut vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    vault.begin_embedding_migration("test/other@v2")?;
+    assert_eq!(stored_transform(&vault)?, None);
+    Ok(())
+}

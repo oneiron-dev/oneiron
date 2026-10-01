@@ -116,6 +116,10 @@ pub enum StoreError {
     /// Persisted HNSW config differs from the requested runtime config.
     #[error("hnsw config changed: stored={stored}, requested={requested}")]
     HnswConfigChanged { stored: String, requested: String },
+    /// The vault's vectors were made with a different embedding transform
+    /// than the host now declares, under the same model.
+    #[error("embedding transform changed: stored={stored}, requested={requested}")]
+    EmbeddingTransformChanged { stored: String, requested: String },
     /// The vault was created with a different storage ABI. This gates
     /// on-disk edge-kind discriminants, edge value layouts, and entity type
     /// bytes before callers can silently decode them incorrectly.
@@ -260,6 +264,7 @@ impl StoreError {
         match self {
             Self::EmbeddingModelChanged { .. } => ErrorKind::EmbeddingModelChanged,
             Self::HnswConfigChanged { .. } => ErrorKind::HnswConfigChanged,
+            Self::EmbeddingTransformChanged { .. } => ErrorKind::EmbeddingTransformChanged,
             Self::StorageAbiVersionChanged { .. } => ErrorKind::StorageAbiVersionChanged,
             Self::StorageSchemaVersionChanged { .. } => ErrorKind::StorageSchemaVersionChanged,
             Self::DbManifestMismatch { .. } => ErrorKind::DbManifestMismatch,

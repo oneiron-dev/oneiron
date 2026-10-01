@@ -10,7 +10,7 @@ use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::store::{MODEL_ID_KEY, validate_embedding_model_id};
+use crate::store::{EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, validate_embedding_model_id};
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -150,42 +150,89 @@ impl Vault {
 
     /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every embeddable record for refill.
     ///
-    /// A vault already pinned to `new_model` is left as it is.
+    /// A vault already pinned to `new_model` is left as it is. A move to
+    /// another model drops the stored embedding transform with the old
+    /// model's vectors.
     pub fn begin_embedding_migration(&mut self, new_model: &str) -> Result<()> {
-        self.swap_embedding_space(new_model, false)
+        self.swap_embedding_space(new_model, None, false)
     }
 
-    /// The same atomic swap under the pin the vault already holds: every
+    /// [`Self::begin_embedding_migration`] to a model and the embedding
+    /// transform the host now declares, both repinned in the same
+    /// transaction. Swaps when either differs from what the vault holds.
+    pub fn migrate_embedding_space(&mut self, new_model: &str, transform: &str) -> Result<()> {
+        self.swap_embedding_space(new_model, Some(transform), false)
+    }
+
+    /// The same atomic swap under the pins the vault already holds: every
     /// vector dropped and every embeddable record scheduled again.
     ///
-    /// For a host whose embedding output changed in a way the model pin does
-    /// not name. Requires the vault's configured embedding model.
+    /// For a host whose embedding output changed in a way neither pin names.
+    /// Requires the vault's configured embedding model.
     pub fn refill_embedding_space(&mut self) -> Result<()> {
         let model = self.config.embedding_model.clone().ok_or_else(|| {
             Error::InvalidConfig("refilling the embedding space requires an embedding model".into())
         })?;
-        self.swap_embedding_space(&model, true)
+        let transform = self.config.embedding_transform.clone();
+        self.swap_embedding_space(&model, transform.as_deref(), true)
     }
 
-    /// `refill` swaps even when the vault already holds `new_model`.
-    fn swap_embedding_space(&mut self, new_model: &str, refill: bool) -> Result<()> {
+    /// Checks a transform the host only learns after open — a local model
+    /// whose files arrive after the vault opened — against the pinned one:
+    /// adopted where none is pinned, refused (`EmbeddingTransformChanged`)
+    /// where another is.
+    pub fn adopt_embedding_transform(&self, transform: &str) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            crate::store::admit_embedding_transform_in_txn(&self.store, wtxn, transform)
+        })
+    }
+
+    /// `transform: None` keeps the stored transform under the same model and
+    /// drops it under another. `refill` swaps even when nothing differs.
+    fn swap_embedding_space(
+        &mut self,
+        new_model: &str,
+        transform: Option<&str>,
+        refill: bool,
+    ) -> Result<()> {
         validate_embedding_model_id(new_model)?;
         let new_model = new_model.to_owned();
-        let changed = self.with_write_txn(|wtxn| {
-            match self.store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
-                Some(raw)
-                    if !refill
-                        && std::str::from_utf8(&raw)
-                            .map_err(|_| Error::CorruptedIndex("model id"))?
-                            == new_model =>
-                {
-                    return Ok(false);
-                }
-                Some(_) | None => {}
+        let pinned = self.with_write_txn(|wtxn| {
+            let stored_utf8 = |key: &[u8], what: &'static str| -> Result<Option<String>> {
+                self.store
+                    .hnsw_meta
+                    .get(&*wtxn, key)?
+                    .map(|raw| {
+                        std::str::from_utf8(&raw)
+                            .map(str::to_owned)
+                            .map_err(|_| Error::CorruptedIndex(what))
+                    })
+                    .transpose()
+            };
+            let same_model = stored_utf8(MODEL_ID_KEY, "model id")?.as_deref() == Some(&new_model);
+            let stored_transform = stored_utf8(EMBEDDING_TRANSFORM_KEY, "embedding transform")?;
+            let same_transform = transform.is_none() || stored_transform.as_deref() == transform;
+            if same_model && same_transform && !refill {
+                return Ok(None);
             }
             self.store
                 .hnsw_meta
                 .put(wtxn, MODEL_ID_KEY, new_model.as_bytes())?;
+            let pinned_transform = match transform {
+                Some(transform) => {
+                    self.store.hnsw_meta.put(
+                        wtxn,
+                        EMBEDDING_TRANSFORM_KEY,
+                        transform.as_bytes(),
+                    )?;
+                    Some(transform.to_owned())
+                }
+                None if same_model => stored_transform,
+                None => {
+                    self.store.hnsw_meta.delete(wtxn, EMBEDDING_TRANSFORM_KEY)?;
+                    None
+                }
+            };
             hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
             hnsw::increment_vector_version(&self.store, wtxn)?;
             hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
@@ -198,10 +245,11 @@ impl Vault {
                 wtxn,
                 crate::embed::EMBED_PRIORITY_BACKFILL,
             )?;
-            Ok(true)
+            Ok(Some(pinned_transform))
         })?;
-        if changed {
+        if let Some(transform) = pinned {
             self.config.embedding_model = Some(new_model);
+            self.config.embedding_transform = transform;
         }
         Ok(())
     }
