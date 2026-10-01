@@ -37,7 +37,7 @@ dimensions = 1024
 
 [embedder]
 provider = "local"                  # local | endpoint | none
-model_id = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
+model_id = "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8"
 dimensions = 1024
 # quant = "q8_0"                    # q8_0 | none (none = bf16, GPU only)
 # device = "auto"                   # auto | cpu | metal | cuda
@@ -58,12 +58,96 @@ lease_ms = 30000                    # 120000 is a better fit on a CPU-only host
 ```
 
 `provider = "local"` runs the model in-process on candle. On first use it
-downloads six files (1.19 GB) to
+downloads the model's files (five, 2.38 GB, for the default
+`perplexity-ai/pplx-embed-v1-0.6b`) to
 `$XDG_DATA_HOME/oneiron/models/<org>/<name>/<revision>/`, verifies each against
 a pinned sha256, and quantises the projections to Q8_0 at load. Nothing is
 downloaded at boot: the vault serves at rung 0 until the artifacts are verified,
-then starts filling. Point `model_dir` at a directory already holding those six
+then starts filling. Point `model_dir` at a directory already holding those
 files and no download is attempted at all — the offline-host door.
+
+`model_id` names the weights. A section that names a `model_id` and no
+`repo`/`revision` loads that space's own repository and commit, so a vault
+created under the earlier default, `microsoft/harrier-oss-v1-0.6b@f9b9dc8…`,
+keeps loading Harrier's pinned files after the default moved. A section that
+names `repo`/`revision` and no `model_id` fills the space those files spell.
+Naming both is allowed only when they agree: a `model_id` beside another
+model's files is refused at startup. A vault pinned to one model refuses to
+open under another (`EmbeddingModelChanged`); see *Changing a vault's
+embedding model* below.
+
+The provider names no model in code. It reads everything about a checkpoint
+from the checkpoint's own files, so any model with a Qwen3 body runs from its
+`repo` and `revision` alone:
+
+- attention: `use_bidirectional_attention` or `is_causal` in `config.json`,
+  causal when neither is set;
+- the module chain from `modules.json`: a Transformer at the repository root,
+  one Pooling (`lasttoken`, `mean_tokens` or `cls_token`, honouring
+  `include_prompt`, which defaults to true), then any of `Dense` (Identity or
+  Tanh), `Normalize` and `FlexibleQuantizer` (int8 or binary tanh) in their
+  declared order. Modules are matched by their exact import path
+  (`sentence_transformers.models.*`, `st_quantize.FlexibleQuantizer`); any
+  other module, pooling mode or order is refused by name, and so is a module
+  path that leaves the model directory;
+- prompts from `config_sentence_transformers.json`: a query takes
+  `query_instruction`, else the `query_prompt_name` prompt, else the prompt
+  named `query`, else `default_prompt_name`, else none; a document takes the
+  first of `document`, `passage` or `corpus`, else `default_prompt_name`. No
+  file means no prompt.
+
+Every repository fetches exactly the files its `modules.json` names; the
+shipped defaults' files are also pinned by sha256, and any other repository
+runs unpinned. Keys for a checkpoint whose files say less than they should:
+
+```toml
+[embedder]
+# attention = "auto"                # auto | causal | bidirectional
+# output_quantization = "int8"      # int8 | binary, for a FlexibleQuantizer
+# query_prompt_name = "web_search_query"   # a named prompt from the model's file
+# query_instruction = "…"           # literal query prefix; wins over the file
+```
+
+Beside the `model_id`, a vault pins its embedding transform: a descriptor of
+everything that moves a stored vector under the same model. A local model's is
+read from the model's files and these keys, e.g. the default's
+`attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024`.
+Query settings, weight precision, device, batch size and `max_input_tokens`
+are not part of it. Changing `attention` or `output_quantization` on a filled
+vault therefore stops the next open (`EmbeddingTransformChanged`) until
+`oneiron-server reembed` (below) re-embeds the vault the new way. A vault from
+before the pin adopts the transform it is first opened with. The descriptor is
+read at open only from model files that are complete and verified; a model
+whose files arrive after open is checked once they load.
+
+An `endpoint` provider pins and checks no transform, and `none` pins nothing. A
+vault moves between `local` and an endpoint serving the same `model_id`
+without a reembed, and keeps the local descriptor for its return. The
+endpoint's `model_id` is therefore a promise about its whole document
+embedding function — attention, pooling, quantisation, document prompt and
+input cap as well as the weights — that nothing on the wire checks.
+
+Harrier's `config_sentence_transformers.json` names its prompts by task
+(`web_search_query`, `sts_query`, `bitext_query`) and sets no default, so
+Harrier carries no query prompt unless its config names one. A vault kept on
+Harrier needs this section:
+
+```toml
+dimensions = 1024
+
+[embedder]
+provider = "local"
+model_id = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
+dimensions = 1024
+# The instruction Harrier vaults were queried with before the default moved:
+query_instruction = "Instruct: Given a question, retrieve passages that answer it\nQuery: "
+# Or the model card's own web-search prompt, from the model's file:
+# query_prompt_name = "web_search_query"
+```
+
+Documents need no line: Harrier has no document prompt, so they embed as
+before. An `endpoint` provider reads no model files: its queries carry
+`query_instruction` or nothing.
 
 On a CUDA toolkit host, build the same server with candle's dependency features
 explicitly enabled (not a `oneiron-server` feature):
@@ -93,6 +177,7 @@ model_id = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774
 dimensions = 1024
 endpoint = "http://127.0.0.1:1234/v1"
 model_key = "text-embedding-harrier-oss-v1-0.6b"
+query_instruction = "Instruct: Given a question, retrieve passages that answer it\nQuery: "
 locality = "on-device"              # on-device | owner-server
 ```
 
@@ -114,6 +199,34 @@ lms load text-embedding-harrier-oss-v1-0.6b --context-length 4096 -y
 # Linux, llama-server
 llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096 --port 8089
 ```
+
+### Changing a vault's embedding model
+
+A server whose `model_id` or embedding transform differs from the one the
+vault holds stops at open and leaves the vault untouched. The refusal names
+both ways forward: keep the vault in its space (the vault's `model_id` with
+that model's query settings, `query_instruction` / `query_prompt_name`, or the
+`attention` / `output_quantization` that made it), or move it. With the
+server stopped:
+
+```sh
+oneiron-server reembed --config <same config serve reads>
+# {"from":"microsoft/harrier-oss-v1-0.6b@f9b9dc8…","to":"perplexity-ai/pplx-embed-v1-0.6b@2c4d510…","transform":"attn=bidirectional;…","migrated":true}
+```
+
+`reembed` first resolves the transform the configured local model makes from
+its metadata files, fetching and verifying those small files (never the
+weights) when they are not on the host; when they cannot be resolved it stops
+and changes nothing. It then repins the vault to the configured `model_id` and
+transform in one transaction, drops the vector graph and every staged vector,
+and schedules everything that held a vector: claims and epoch summaries are
+queued, and other text records are re-embedded at idle from their published
+revision, which stays as it is. The next `serve` embeds them all again in the
+background; lexical and graph reads answer throughout, and semantic results
+fill in as vectors land. A vault already in the configured space is left as it
+is (`"migrated":false`), unless `--force` asks for the same swap under the
+pins it already holds. A vault's dimensions are fixed when it is created: a
+model of another width needs a new vault, and `reembed` says so.
 
 ## Linear mirror host bridge (opt-in)
 

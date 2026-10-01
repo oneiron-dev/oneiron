@@ -1,14 +1,19 @@
 //! Where the local model's files live, and how they get there.
 //!
-//! Six files, one repository, one commit, one sha256 each. The digests are
-//! pinned in this file because the Hugging Face tree API exposes no LFS oid at
-//! a revision: the only way to know the bytes are the bytes we measured is to
-//! measure them once and refuse anything else afterwards.
+//! One repository, one commit. Every checkpoint's file list comes from its own
+//! `modules.json`, by the same planner. The shipped defaults' files carry a
+//! sha256 each, pinned in this file because the Hugging Face tree API exposes
+//! no LFS oid at a revision: the only way to know the bytes are the bytes we
+//! measured is to measure them once and refuse anything else afterwards. Any
+//! other repository runs unpinned.
 //!
-//! Nothing here runs at boot. The worker calls it on its first pass, so a vault
-//! whose model has never been fetched still opens and still answers BM25 while
-//! the download runs (OF-022, the two-tier write rule).
+//! Nothing here fetches at boot. The worker calls it on its first pass, so a
+//! vault whose model has never been fetched still opens and still answers BM25
+//! while the download runs (OF-022, the two-tier write rule). Open only reads
+//! what is already on the host ([`verified_metadata_dir`]); `reembed` fetches
+//! the metadata alone ([`ModelManager::ensure_metadata`]).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -29,73 +34,253 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MAX_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// One file of the model, with the digest that makes it that file.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PinnedArtifact {
     /// Path within the repository, also the path under the model directory.
-    pub(crate) file: &'static str,
+    pub(crate) file: Cow<'static, str>,
     pub(crate) sha256: &'static str,
     /// Size in bytes at the pinned revision, checked before the digest so an
     /// obviously wrong download fails without hashing a gigabyte.
     pub(crate) bytes: u64,
 }
 
-/// The default local model's files at the pinned revision.
+/// The earlier default local model's files at its pinned revision, by digest.
+/// Vaults pinned to it still verify exactly these.
 ///
 /// Digests measured on the first verified download, 2026-09-11. `model.safetensors`
 /// carries the official bf16 weights; the Q8_0 the provider runs is produced at
 /// load time and never stored.
 pub(crate) const HARRIER_06_FILES: [PinnedArtifact; 6] = [
     PinnedArtifact {
-        file: "config.json",
+        file: Cow::Borrowed("config.json"),
         sha256: "eb15983a1c7f53ecf3d3f1880e676a56967650b0c3c4ed2387c3851133f2d7ef",
         bytes: 1_355,
     },
     PinnedArtifact {
-        file: "modules.json",
+        file: Cow::Borrowed("modules.json"),
         sha256: "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf",
         bytes: 349,
     },
     PinnedArtifact {
-        file: "config_sentence_transformers.json",
+        file: Cow::Borrowed("config_sentence_transformers.json"),
         sha256: "ad2096929147368b5d0ba5322ea394d50911be4d348091c9f3b0ad06c3763d91",
         bytes: 351,
     },
     PinnedArtifact {
-        file: "1_Pooling/config.json",
+        file: Cow::Borrowed("1_Pooling/config.json"),
         sha256: "7652a48b1c8ceb3f7d1c96e4b53d50b79231be6876f40e37534ecccdffbd5551",
         bytes: 297,
     },
     PinnedArtifact {
-        file: "tokenizer.json",
+        file: Cow::Borrowed("tokenizer.json"),
         sha256: "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
         bytes: 11_423_705,
     },
     PinnedArtifact {
-        file: "model.safetensors",
+        file: Cow::Borrowed("model.safetensors"),
         sha256: "6bb124227f33c3dbf7fbbd38119b2afa8be959e93666d3c9be7142b66708b66c",
         bytes: 1_192_133_232,
     },
 ];
 
-/// The files the local provider needs, for the configured repository.
+/// The default local model's files at the pinned revision, by digest.
 ///
-/// Only the default repository has pinned digests. A host that points `repo` at
-/// something else is telling the server it knows better, so the same six names
-/// are required and the digest check is skipped rather than failed.
-pub(crate) fn model_files(config: &LocalEmbedderConfig) -> Vec<PinnedArtifact> {
-    if config.repo == crate::config::embedder::DEFAULT_LOCAL_REPO
-        && config.revision == crate::config::embedder::DEFAULT_LOCAL_REVISION
-    {
-        return HARRIER_06_FILES.to_vec();
-    }
-    HARRIER_06_FILES
+/// Digests measured 2026-10-01 from the files at that commit; the two LFS
+/// files' digests equal their Hugging Face LFS object ids. `model.safetensors`
+/// carries the official f32 weights. There is no
+/// `config_sentence_transformers.json` at this commit: the model asks for no
+/// prompt, so nothing is read from one.
+pub(crate) const PPLX_EMBED_V1_06_FILES: [PinnedArtifact; 5] = [
+    PinnedArtifact {
+        file: Cow::Borrowed("config.json"),
+        sha256: "f7865547ecc1c077c5b1f83913fb9816a6586c676ccf3e0f7f00105a1b0c1c6c",
+        bytes: 1_782,
+    },
+    PinnedArtifact {
+        file: Cow::Borrowed("modules.json"),
+        sha256: "26a5eb7ef28ba520882a6be1d24b3c52b69d7267fdde3a31cff8fa5692b4c830",
+        bytes: 361,
+    },
+    PinnedArtifact {
+        file: Cow::Borrowed("1_Pooling/config.json"),
+        sha256: "a30548e8bc4255aafe5e5c638f6b15712eebbc8e84ea5988a5835f976c412907",
+        bytes: 313,
+    },
+    PinnedArtifact {
+        file: Cow::Borrowed("tokenizer.json"),
+        sha256: "c6fb5c5bbba5fa5f8332edfb6d8aa67bd7fb3d75365b1765f108201698eaebf5",
+        bytes: 11_422_837,
+    },
+    PinnedArtifact {
+        file: Cow::Borrowed("model.safetensors"),
+        sha256: "2c8d2f64f8268ccd5383b7f9bea8e660349aa6a151bd68a5a47f4c129f2a4974",
+        bytes: 2_384_233_112,
+    },
+];
+
+/// The body's own small files, fetched before the chain's.
+const HEAD_FILES: [&str; 2] = ["config.json", "modules.json"];
+/// The body's large files, fetched once the chain is known to be runnable.
+const TAIL_FILES: [&str; 2] = ["tokenizer.json", "model.safetensors"];
+
+/// A shipped default this build measured, with its files' digests.
+pub(crate) struct PinnedModel {
+    pub(crate) repo: &'static str,
+    pub(crate) revision: &'static str,
+    /// A digest for every file the planner names at this commit, and for the
+    /// prompt file when the commit carries one.
+    pub(crate) files: &'static [PinnedArtifact],
+}
+
+/// The shipped defaults: the current one first, then the earlier one, which
+/// vaults pinned to it still fetch and verify.
+pub(crate) const PINNED_MODELS: [PinnedModel; 2] = [
+    PinnedModel {
+        repo: crate::config::embedder::DEFAULT_LOCAL_REPO,
+        revision: crate::config::embedder::DEFAULT_LOCAL_REVISION,
+        files: &PPLX_EMBED_V1_06_FILES,
+    },
+    PinnedModel {
+        repo: "microsoft/harrier-oss-v1-0.6b",
+        revision: "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+        files: &HARRIER_06_FILES,
+    },
+];
+
+/// The pinned digests of the configured repository and commit, when it is a
+/// shipped default.
+pub(crate) fn pinned_files(config: &LocalEmbedderConfig) -> Option<&'static [PinnedArtifact]> {
+    PINNED_MODELS
         .iter()
-        .map(|artifact| PinnedArtifact {
-            file: artifact.file,
+        .find(|model| model.repo == config.repo && model.revision == config.revision)
+        .map(|model| model.files)
+}
+
+/// What a checkpoint's own `modules.json` says to fetch after the body's
+/// small files, split by what reads it: the module configs the spec is read
+/// from, then what only the loader reads — the module weights, the body's
+/// tokenizer and weights. The prompt file is optional and asked for
+/// separately.
+struct Plan {
+    configs: Vec<Cow<'static, str>>,
+    weights: Vec<Cow<'static, str>>,
+}
+
+fn plan(raw_modules_json: &str) -> oneiron::Result<Plan> {
+    let chain = super::st_modules::module_files(raw_modules_json)?;
+    Ok(Plan {
+        configs: chain.configs.into_iter().map(Cow::Owned).collect(),
+        weights: chain
+            .weights
+            .into_iter()
+            .map(Cow::Owned)
+            .chain(TAIL_FILES.iter().map(|file| Cow::Borrowed(*file)))
+            .collect(),
+    })
+}
+
+/// Every file a checkpoint needs, in fetch order: the body's small files,
+/// then the [`Plan`]. The prompt file is optional and asked for separately.
+#[cfg(test)]
+pub(crate) fn planned_files(raw_modules_json: &str) -> oneiron::Result<Vec<Cow<'static, str>>> {
+    let plan = plan(raw_modules_json)?;
+    Ok(HEAD_FILES
+        .iter()
+        .map(|file| Cow::Borrowed(*file))
+        .chain(plan.configs)
+        .chain(plan.weights)
+        .collect())
+}
+
+/// Whether the checkpoint's prompt file is read at all.
+///
+/// A shipped default's pins say whether its commit carries one. When they say
+/// it does not, a file by that name in the cache is not the checkpoint's —
+/// copied there, or left by another model — and it is never read: the model
+/// carries no prompt. Any other repository, and an operator's `model_dir`,
+/// read the file when it is there. The early door, the metadata-only door and
+/// the full load all read the spec through this one rule.
+pub(crate) fn reads_prompt_file(config: &LocalEmbedderConfig) -> bool {
+    config.model_dir.is_some()
+        || pinned_files(config).is_none_or(|pins| {
+            pins.iter()
+                .any(|pin| pin.file == super::prompts::PROMPT_FILE)
+        })
+}
+
+/// Beside an optional file its source answered `404` for: the file is
+/// confirmed absent at this commit, not merely not fetched yet.
+fn absent_marker(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".absent");
+    path.with_file_name(name)
+}
+
+/// The directory holding every metadata file the model's spec is read from —
+/// `config.json`, `modules.json`, each module's config, and the prompt file or
+/// the knowledge that there is none — when all of it is on this host and
+/// passes the checks a fetch applies. `None` otherwise: nothing is fetched
+/// here, and the caller learns the spec once the files have been fetched.
+///
+/// A shipped default's files must match their digests, and its pins say
+/// whether its commit has a prompt file. Any other repository has no digests:
+/// every file must be present, and its prompt file present or confirmed absent
+/// upstream. An operator's `model_dir` is taken as it stands.
+pub(crate) fn verified_metadata_dir(config: &LocalEmbedderConfig) -> Option<PathBuf> {
+    let dir = model_dir(config).ok()?;
+    if config.model_dir.is_some() {
+        return dir.join("modules.json").is_file().then_some(dir);
+    }
+    let pins = pinned_files(config);
+    let checked = |file: Cow<'static, str>| {
+        artifact(pins, file).is_ok_and(|artifact| {
+            let path = dir.join(artifact.file.as_ref());
+            path.is_file() && verify(&path, &artifact).is_ok()
+        })
+    };
+    if !HEAD_FILES.iter().all(|file| checked(Cow::Borrowed(*file))) {
+        return None;
+    }
+    let raw = std::fs::read_to_string(dir.join("modules.json")).ok()?;
+    if !plan(&raw).ok()?.configs.into_iter().all(checked) {
+        return None;
+    }
+    let prompt = Cow::Borrowed(super::prompts::PROMPT_FILE);
+    let prompt_settled = match pins {
+        _ if !reads_prompt_file(config) => true,
+        Some(_) => checked(prompt),
+        None => {
+            let path = dir.join(prompt.as_ref());
+            path.is_file() || absent_marker(&path).is_file()
+        }
+    };
+    prompt_settled.then_some(dir)
+}
+
+/// One file, with its digest when the checkpoint is a shipped default.
+///
+/// An unmeasured checkpoint skips digests rather than failing them: a host
+/// that points `repo` at one is telling the server it knows better. A shipped
+/// default has a digest for every file its plan names; one without is refused.
+fn artifact(
+    pins: Option<&'static [PinnedArtifact]>,
+    file: Cow<'static, str>,
+) -> oneiron::Result<PinnedArtifact> {
+    let Some(pins) = pins else {
+        return Ok(PinnedArtifact {
+            file,
             sha256: UNPINNED,
             bytes: 0,
+        });
+    };
+    pins.iter()
+        .find(|pin| pin.file == file)
+        .cloned()
+        .ok_or_else(|| {
+            oneiron::Error::InvalidConfig(format!(
+                "embedder model file {file} has no pinned digest at this commit"
+            ))
         })
-        .collect()
 }
 
 /// Digest placeholder for a repository this build has never measured.
@@ -117,7 +302,7 @@ pub(crate) fn models_root(config: &LocalEmbedderConfig) -> oneiron::Result<PathB
 /// The root resolution itself, with the environment passed in.
 ///
 /// A host with neither variable set has no data directory to write to, and a
-/// relative fallback would scatter a 1.19 GB checkpoint through whatever
+/// relative fallback would scatter a 2.4 GB checkpoint through whatever
 /// directory the process happened to start in — and then download it again
 /// from the next one. So the resolution fails and says which three settings
 /// would fix it.
@@ -156,17 +341,49 @@ fn absolute_env_dir(key: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-/// The directory the six files sit in.
+/// The directory the model's files sit in.
+///
+/// Under the models root, the repository and commit become path segments and
+/// URL segments, so they are checked here ([`check_cache_identity`]): every
+/// directory made, file fetched and marker written goes through this path
+/// first. An operator's `model_dir` is taken as it stands.
 pub(crate) fn model_dir(config: &LocalEmbedderConfig) -> oneiron::Result<PathBuf> {
     if let Some(configured) = config.model_dir.as_ref() {
         return Ok(configured.clone());
     }
+    check_cache_identity(config)?;
     let mut dir = models_root(config)?;
     for segment in config.repo.split('/') {
         dir.push(segment);
     }
     dir.push(&config.revision);
     Ok(dir)
+}
+
+/// Refuses a repository or commit that is not a plain name: the repository
+/// exactly `org/name`, the commit one segment, each segment of ASCII letters,
+/// digits, `.`, `_` and `-` and none of them only dots. An absolute path, a
+/// `.` or `..` segment, an empty one, another separator or URL syntax would
+/// reach outside the models root or the repository's own URL.
+fn check_cache_identity(config: &LocalEmbedderConfig) -> oneiron::Result<()> {
+    let plain = |segment: &str| {
+        segment.bytes().any(|byte| byte != b'.')
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    };
+    let repo = config
+        .repo
+        .split_once('/')
+        .is_some_and(|(org, name)| plain(org) && plain(name));
+    if repo && plain(&config.revision) {
+        return Ok(());
+    }
+    Err(oneiron::Error::InvalidConfig(format!(
+        "embedder repo {:?} and revision {:?} must be a plain org/name and commit: letters, \
+         digits, '.', '_' and '-' only, no segment of only dots",
+        config.repo, config.revision
+    )))
 }
 
 /// Fetches and verifies the local model's files.
@@ -182,7 +399,7 @@ pub(in crate::embedder) struct ModelManager {
     /// A load that fails for a reason that is not the artifacts — a device this
     /// build cannot reach, a width the vault disagrees with — sends the worker
     /// round a backoff that tops out at a minute, and every pass used to hash
-    /// 1.19 GB again before reaching the same failure. A file that has not
+    /// 2.4 GB again before reaching the same failure. A file that has not
     /// changed since it was verified is not hashed again.
     ///
     /// A field on the manager the slot owns, never a process static: two vaults
@@ -199,6 +416,15 @@ impl Default for ModelManager {
             verified: Mutex::new(HashMap::new()),
         }
     }
+}
+
+/// The metadata a fetch made present, and the rest of the [`Plan`] it left
+/// for the caller.
+struct FetchedMetadata {
+    dir: PathBuf,
+    weights: Vec<Cow<'static, str>>,
+    /// Files downloaded rather than found.
+    fetched: usize,
 }
 
 /// What a file looked like when it was verified.
@@ -240,31 +466,147 @@ impl ModelManager {
     /// Returns the directory holding them. `model_dir` set in config
     /// short-circuits the download entirely: the operator supplied the files,
     /// so the server checks they exist and nothing else.
+    ///
+    /// Every checkpoint fetches `config.json` and `modules.json` first, then
+    /// exactly the files its chain names, then its tokenizer and weights, so a
+    /// chain this provider cannot run is refused before the weights are
+    /// downloaded. A shipped default verifies each against its digest. The
+    /// prompt file is optional: a repository without one carries no prompt,
+    /// and a shipped default's pins say whether its commit has one.
     pub(in crate::embedder) fn ensure_all(
         &self,
         config: &LocalEmbedderConfig,
     ) -> oneiron::Result<PathBuf> {
-        let dir = model_dir(config)?;
-        let files = model_files(config);
-        if config.model_dir.is_some() {
-            for artifact in &files {
-                let path = dir.join(artifact.file);
-                if !path.is_file() {
-                    return Err(missing_file(&path));
-                }
-            }
-            return Ok(dir);
-        }
-        let mut fetched = 0usize;
-        for artifact in &files {
-            if self.ensure_one(config, &dir, artifact)? {
+        let metadata = self.fetch_metadata(config)?;
+        let pins = pinned_files(config);
+        let offline = config.model_dir.is_some();
+        let mut fetched = metadata.fetched;
+        for file in metadata.weights {
+            if self.require(config, &metadata.dir, &artifact(pins, file)?, offline)? {
                 fetched += 1;
             }
         }
         if fetched > 0 {
-            tracing::info!(dir = %dir.display(), fetched, "embedder model artifacts ready");
+            tracing::info!(dir = %metadata.dir.display(), fetched, "embedder model artifacts ready");
         }
-        Ok(dir)
+        Ok(metadata.dir)
+    }
+
+    /// Makes the metadata files present and verified — everything the
+    /// model's spec is read from — and fetches no weights.
+    ///
+    /// `reembed` reads the spec through this before it repins a vault, so it
+    /// never moves a vault to a transform it has not resolved, and never pays
+    /// for a gigabyte it does not need.
+    pub(in crate::embedder) fn ensure_metadata(
+        &self,
+        config: &LocalEmbedderConfig,
+    ) -> oneiron::Result<PathBuf> {
+        let metadata = self.fetch_metadata(config)?;
+        if metadata.fetched > 0 {
+            tracing::info!(
+                dir = %metadata.dir.display(),
+                fetched = metadata.fetched,
+                "embedder model metadata ready"
+            );
+        }
+        Ok(metadata.dir)
+    }
+
+    /// The head files, the prompt file and each module's config, in that
+    /// order; the weights are named for the caller to fetch.
+    fn fetch_metadata(&self, config: &LocalEmbedderConfig) -> oneiron::Result<FetchedMetadata> {
+        let dir = model_dir(config)?;
+        let offline = config.model_dir.is_some();
+        let pins = pinned_files(config);
+        let mut fetched = 0usize;
+        for head in HEAD_FILES {
+            if self.require(config, &dir, &artifact(pins, Cow::Borrowed(head))?, offline)? {
+                fetched += 1;
+            }
+        }
+        let raw = std::fs::read_to_string(dir.join("modules.json")).map_err(oneiron::Error::Io)?;
+        let plan = plan(&raw)?;
+        let prompt = Cow::Borrowed(super::prompts::PROMPT_FILE);
+        match pins {
+            Some(pins) if pins.iter().any(|pin| pin.file == prompt) => {
+                if self.require(config, &dir, &artifact(Some(pins), prompt)?, offline)? {
+                    fetched += 1;
+                }
+            }
+            // A pinned commit without one: nothing is fetched, nothing read.
+            Some(_) => {}
+            None if !offline => self.fetch_optional(config, &dir, &artifact(None, prompt)?)?,
+            None => {}
+        }
+        for file in plan.configs {
+            if self.require(config, &dir, &artifact(pins, file)?, offline)? {
+                fetched += 1;
+            }
+        }
+        Ok(FetchedMetadata {
+            dir,
+            weights: plan.weights,
+            fetched,
+        })
+    }
+
+    /// One file that must be there: checked when the operator supplied the
+    /// directory, fetched and verified otherwise. Returns whether it was
+    /// downloaded.
+    fn require(
+        &self,
+        config: &LocalEmbedderConfig,
+        dir: &Path,
+        artifact: &PinnedArtifact,
+        offline: bool,
+    ) -> oneiron::Result<bool> {
+        if offline {
+            let path = dir.join(artifact.file.as_ref());
+            if !path.is_file() {
+                return Err(missing_file(&path));
+            }
+            return Ok(false);
+        }
+        self.ensure_one(config, dir, artifact)
+    }
+
+    /// A file the checkpoint may not carry. Absent upstream (`404`) leaves it
+    /// absent, with a marker beside it saying so: a commit never gains a file,
+    /// so the answer is not asked for again, and a reader can tell a file
+    /// confirmed absent from one not fetched yet. Any other failure is an
+    /// error, because a prompt file that exists but did not arrive would put
+    /// every query in a different place.
+    fn fetch_optional(
+        &self,
+        config: &LocalEmbedderConfig,
+        dir: &Path,
+        artifact: &PinnedArtifact,
+    ) -> oneiron::Result<()> {
+        let path = dir.join(artifact.file.as_ref());
+        if path.is_file() || absent_marker(&path).is_file() {
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
+        }
+        let fetched = download(&self.url(config, artifact), &path, artifact)?;
+        if !fetched {
+            std::fs::write(absent_marker(&path), b"").map_err(oneiron::Error::Io)?;
+        }
+        tracing::info!(
+            file = %artifact.file,
+            present = fetched,
+            "embedder model optional artifact checked"
+        );
+        Ok(())
+    }
+
+    fn url(&self, config: &LocalEmbedderConfig, artifact: &PinnedArtifact) -> String {
+        format!(
+            "{}/{}/resolve/{}/{}",
+            self.base_url, config.repo, config.revision, artifact.file
+        )
     }
 
     /// Returns whether the file had to be downloaded.
@@ -274,7 +616,7 @@ impl ModelManager {
         dir: &Path,
         artifact: &PinnedArtifact,
     ) -> oneiron::Result<bool> {
-        let path = dir.join(artifact.file);
+        let path = dir.join(artifact.file.as_ref());
         if path.is_file() {
             match self.verify_unless_unchanged(&path, artifact) {
                 Ok(()) => return Ok(false),
@@ -291,12 +633,10 @@ impl ModelManager {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
         }
-        let url = format!(
-            "{}/{}/resolve/{}/{}",
-            self.base_url, config.repo, config.revision, artifact.file
-        );
-        tracing::info!(file = artifact.file, "downloading embedder model artifact");
-        download(&url, &path, artifact)?;
+        tracing::info!(file = %artifact.file, "downloading embedder model artifact");
+        if !download(&self.url(config, artifact), &path, artifact)? {
+            return Err(download_failed(&artifact.file, "HTTP 404 Not Found"));
+        }
         self.verify_unless_unchanged(&path, artifact)
             .inspect_err(|_| {
                 // Never leave a bad artifact on disk: the next start would load it.
@@ -339,11 +679,12 @@ impl ModelManager {
 }
 
 /// Fetches one file to a temporary sibling, then renames it into place.
+/// Returns `false`, writing nothing, when the source has no such file.
 ///
 /// The rename is what makes a killed download safe: a partial file never
 /// carries the final name, so the next start refetches rather than loading a
 /// truncated tensor file.
-fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Result<()> {
+fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Result<bool> {
     // Redirects ARE followed here, unlike the rest of this crate's transports:
     // Hugging Face answers a large-file `resolve` URL with a redirect to its
     // CDN, and the digest check below is what makes following one safe.
@@ -351,14 +692,17 @@ fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Resul
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(DOWNLOAD_TIMEOUT)
         .build()
-        .map_err(|e| download_failed(artifact.file, &format!("client: {e}")))?;
+        .map_err(|e| download_failed(&artifact.file, &format!("client: {e}")))?;
     let response = client
         .get(url)
         .send()
-        .map_err(|e| download_failed(artifact.file, &transport_class(&e)))?;
+        .map_err(|e| download_failed(&artifact.file, &transport_class(&e)))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
     if !response.status().is_success() {
         return Err(download_failed(
-            artifact.file,
+            &artifact.file,
             &format!("HTTP {}", response.status()),
         ));
     }
@@ -366,7 +710,7 @@ fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Resul
         .content_length()
         .is_some_and(|n| n > MAX_ARTIFACT_BYTES)
     {
-        return Err(download_failed(artifact.file, "exceeds the artifact cap"));
+        return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
     }
     let temp = path.with_extension("partial");
     let mut file = std::fs::File::create(&temp).map_err(oneiron::Error::Io)?;
@@ -375,9 +719,10 @@ fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Resul
     drop(file);
     if written > MAX_ARTIFACT_BYTES {
         let _ = std::fs::remove_file(&temp);
-        return Err(download_failed(artifact.file, "exceeds the artifact cap"));
+        return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
     }
-    std::fs::rename(&temp, path).map_err(oneiron::Error::Io)
+    std::fs::rename(&temp, path).map_err(oneiron::Error::Io)?;
+    Ok(true)
 }
 
 /// Size first, then digest.

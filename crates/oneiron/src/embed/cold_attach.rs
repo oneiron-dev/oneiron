@@ -7,7 +7,7 @@ use crate::{Error, Result};
 pub(crate) const COLD_ATTACH_PENDING_KEY: &[u8] = b"cold_attach_pending";
 
 impl crate::Vault {
-    /// Requeues pre-embedder claims at priority 3 after the first model is attached.
+    /// Requeues pre-embedder records at priority 3 after the first model is attached.
     /// Open with the provider's pinned model identity first. This is idempotent,
     /// preserves hotter work, and never changes the model epoch or vector graph.
     pub fn cold_attach_embedder(&self) -> Result<usize> {
@@ -25,7 +25,7 @@ impl crate::Vault {
             {
                 return Ok(0);
             }
-            let count = remark_claims_pending_in_txn(self, wtxn, EMBED_PRIORITY_BACKFILL, false)?;
+            let count = remark_pending_in_txn(self, wtxn, EMBED_PRIORITY_BACKFILL, false)?;
             // Featureless callers can mark pending rows but cannot populate
             // the sync worker queue. Preserve the marker for the serving build.
             #[cfg(feature = "sync")]
@@ -35,37 +35,59 @@ impl crate::Vault {
     }
 }
 
-/// Re-marks every persisted claim after an embedding-space replacement.
+/// Re-marks every embeddable record after an embedding-space replacement.
 /// Queue replacement deliberately deletes an old row first: queue insertion otherwise
 /// preserves a hotter priority that belonged to the old model.
 ///
 /// `priority` is consumed by the sync embed-queue re-push below; the signature
 /// stays feature-independent because the base caller (`vault.rs`) supplies it
 /// either way.
-pub(crate) fn remark_all_claims_pending_in_txn(
+pub(crate) fn remark_all_embeddable_pending_in_txn(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     priority: u8,
 ) -> Result<usize> {
-    remark_claims_pending_in_txn(vault, wtxn, priority, true)
+    remark_pending_in_txn(vault, wtxn, priority, true)
 }
 
-fn remark_claims_pending_in_txn(
+/// Queues every record the worker embeds ([`super::embeddable_payload`]): the
+/// same rule the worker leases by, so nothing queued here is work it can only
+/// fail on, and nothing it can embed is left out.
+///
+/// A replacement (`replace_priority`) also drops what a record the rule does
+/// not embed still carries — a marker, a job, a lease — so none of it is left
+/// for a worker in the new space to trip over.
+fn remark_pending_in_txn(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     priority: u8,
     replace_priority: bool,
 ) -> Result<usize> {
     #[cfg(not(feature = "sync"))]
-    let _ = (priority, replace_priority);
-    let mut claims = Vec::new();
+    let _ = priority;
+    let mut embeddable = Vec::new();
+    let mut retired = Vec::new();
     for row in vault.store.port_entity_records(wtxn)? {
         let (id, row) = row?;
-        if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            claims.push((id, row.body));
+        if super::embeddable_payload(row.entity_type, &row.body).is_some() {
+            embeddable.push((id, row.body));
+        } else if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+            || row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        {
+            retired.push(id);
         }
     }
-    for (id, body) in &claims {
+    if replace_priority {
+        for id in &retired {
+            vault.store.clear_pending_embedding(wtxn, id)?;
+            #[cfg(feature = "sync")]
+            {
+                crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, id)?;
+                super::clear_pending_embedding_lease_if_any(vault, wtxn, id)?;
+            }
+        }
+    }
+    for (id, body) in &embeddable {
         vault.store.mark_pending_embedding(wtxn, id, body)?;
         #[cfg(feature = "sync")]
         {
@@ -76,7 +98,7 @@ fn remark_claims_pending_in_txn(
             super::clear_pending_embedding_lease_if_any(vault, wtxn, id)?;
         }
     }
-    Ok(claims.len())
+    Ok(embeddable.len())
 }
 
 #[cfg(test)]

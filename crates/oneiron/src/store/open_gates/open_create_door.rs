@@ -13,6 +13,9 @@ use crate::overlay_db::OverlayDb;
 use crate::store::test_hooks;
 use crate::store::{RawDatabases, Store, VaultWriterLease, seed_default_policy_manifest_in_txn};
 
+use super::embedding_transform_gates::{
+    persist_embedding_transform_if_missing, preflight_embedding_transform,
+};
 use super::hnsw_model_gates::{
     migrate_temporal_long_intervals_if_needed, persist_hnsw_config_if_missing,
     persist_model_id_if_missing, preflight_embedding_model, preflight_hnsw_config,
@@ -371,6 +374,13 @@ impl Store {
             &store.hnsw_neighbors,
             config.embedding_model.as_deref(),
         )?;
+        // After the model: a transform is only compared under the model the
+        // vault already holds, or is stamping now.
+        let should_persist_transform = preflight_embedding_transform(
+            &store.env,
+            &store.hnsw_meta,
+            config.embedding_transform.as_deref(),
+        )?;
         migrate_temporal_long_intervals_if_needed(
             &store.env,
             &store.hnsw_meta,
@@ -399,6 +409,10 @@ impl Store {
                 &store.hnsw_neighbors,
                 requested,
             )?;
+        }
+
+        if should_persist_transform && let Some(requested) = config.embedding_transform.as_deref() {
+            persist_embedding_transform_if_missing(&store.env, &store.hnsw_meta, requested)?;
         }
 
         store.ensure_receipt_family_indexes_on_open()?;

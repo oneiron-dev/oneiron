@@ -40,6 +40,9 @@ pub enum Command {
     Init(InitArgs),
     /// Open a vault and print its doctor report.
     Doctor(VaultArgs),
+    /// Move a stopped vault to the configured embedding model: repin it and
+    /// queue every record to be embedded again, which the next `serve` does.
+    Reembed(Box<ReembedArgs>),
     /// Resolve repo commit provenance trailers against a vault claim.
     Provenance(Box<ProvenanceArgs>),
     /// Create pairing links and revoke slips.
@@ -242,6 +245,16 @@ pub struct SkillsPackArgs {
     pub path: bool,
 }
 
+#[derive(Args, Clone, Default)]
+pub struct ReembedArgs {
+    /// Drop every vector and queue every record again even when the vault
+    /// already holds the configured model and embedding transform.
+    #[arg(long)]
+    pub force: bool,
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
 #[derive(Args, Clone, Debug, Default)]
 pub struct InitArgs {
     /// Vault directory to create.
@@ -365,6 +378,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
+        Command::Reembed(args) => commands::reembed(*args),
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),

@@ -587,7 +587,7 @@ pub(crate) struct SemanticSearchRequest {
                 },
                 "embedder": {
                     "provider": "local",
-                    "modelId": "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+                    "modelId": "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8",
                     "dimensions": 1024
                 }
             })

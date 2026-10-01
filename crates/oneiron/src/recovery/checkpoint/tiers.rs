@@ -73,6 +73,7 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
         "hnsw_meta" => {
             if [
                 b"model_id".as_slice(),
+                b"embedding_transform",
                 b"hnsw_config",
                 b"embedding_model_epoch",
                 b"vector_version",

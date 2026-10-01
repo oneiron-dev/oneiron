@@ -1,6 +1,8 @@
 //! Server configuration: resolved types, CLI flags, and the file/env/argv merge.
 
 pub mod embedder;
+mod embedder_shape;
+mod embedder_space;
 mod lookup;
 pub mod merge;
 pub mod remote_embedder;
@@ -11,6 +13,7 @@ pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
 };
+pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
 pub use merge::{
     EnvConfig, default_config_path, resolve_serve_config, resolve_serve_config_with_sources,
 };

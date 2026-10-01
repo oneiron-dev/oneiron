@@ -109,7 +109,7 @@ fn ask_choice(
     let default = if local_default { "local" } else { "none" };
     writeln!(
         output,
-        "Local: ~1.2 GB download, ~0.7 GB steady memory. Endpoint: a server you configure. None: lexical search only."
+        "Local: ~2.4 GB download, ~1.4 GB steady memory. Endpoint: a server you configure. None: lexical search only."
     )?;
     write!(output, "Embedder local | endpoint | none [{default}]: ")?;
     output.flush()?;
@@ -245,7 +245,7 @@ fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow
     if choice == EmbedderProvider::Local
         && (dims != defaults.dimensions || args.embedder_model_id.is_some())
     {
-        anyhow::bail!("local init uses the pinned Harrier model and its 1024 dimensions");
+        anyhow::bail!("local init uses the pinned default model and its 1024 dimensions");
     }
     let mut embedder = toml::Table::new();
     embedder.insert("provider".into(), choice.as_str().into());

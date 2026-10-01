@@ -25,6 +25,7 @@ fn test_config() -> VaultConfig {
         dimensions: 4,
         fast_dims: None,
         embedding_model: None,
+        embedding_transform: None,
         max_readers: 16,
         hnsw: HnswConfig {
             m_max_0: 64,

@@ -54,6 +54,29 @@ pub(crate) fn defer_index_inputs(
     Ok(true)
 }
 
+/// Drops every staged vector, with the token it was staged under, and keeps
+/// the staged text and the revision it belongs to.
+///
+/// Runs inside the embedding-space swap. A staged vector carries no record of
+/// the model that made it, and idle publication prefers one over calling the
+/// embedder, so one left behind would be published into the new space; without
+/// it the idle pass embeds the revision with the new model.
+pub(crate) fn drop_staged_vectors(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    for (id, mut pending) in PENDING.scan(store, txn)? {
+        if pending.inputs.vector.is_none() && pending.inputs.pending_embedding_token.is_none() {
+            continue;
+        }
+        pending.inputs.vector = None;
+        pending.inputs.pending_embedding_token = None;
+        if pending.inputs.fields.is_none() {
+            PENDING.delete(store, txn, &id)?;
+        } else {
+            PENDING.put(store, txn, &id, &pending)?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn load(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
