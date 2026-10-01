@@ -46,70 +46,108 @@ fn an_empty_section_selects_the_local_provider_and_pins_the_space() {
     );
 }
 
-/// The default space is the default model's, end to end: its weights, its
-/// width, and no query instruction, because it embeds queries raw.
+/// The default space is the default model's files, end to end, and nothing is
+/// said about a query instruction: the model's own files decide it.
 #[test]
-fn the_default_space_is_the_default_models_files_and_asks_for_no_instruction() {
-    use super::embedder_models::PPLX_EMBED_V1_06;
+fn the_default_space_is_the_default_models_files() {
     let resolved = resolve("dimensions = 1024\n\n[embedder]\n").expect("resolves");
     let embedder = resolved.embedder.as_ref().expect("a section is present");
-    assert_eq!(embedder.model_id, PPLX_EMBED_V1_06.model_id);
-    assert_eq!(embedder.local.repo, PPLX_EMBED_V1_06.repo);
-    assert_eq!(embedder.local.revision, PPLX_EMBED_V1_06.revision);
-    assert_eq!(embedder.dimensions, PPLX_EMBED_V1_06.dimensions);
-    assert_eq!(embedder.effective_query_instruction(), "");
-    for model in super::embedder_models::KNOWN_MODELS {
-        assert_eq!(
-            model.model_id,
-            format!("{}@{}", model.repo, model.revision),
-            "a measured model's space id spells its repository and commit"
-        );
-    }
+    assert_eq!(embedder.model_id, super::embedder::DEFAULT_MODEL_ID);
+    assert_eq!(
+        embedder.model_id,
+        format!("{}@{}", embedder.local.repo, embedder.local.revision),
+        "the default space id spells its repository and commit"
+    );
+    assert_eq!(embedder.dimensions, super::embedder::DEFAULT_DIMENSIONS);
+    assert_eq!(embedder.query_instruction, None);
+    assert_eq!(embedder.query_prompt_name, None);
+    assert_eq!(embedder.local.attention, super::EmbedderAttention::Auto);
+    assert_eq!(
+        embedder.local.output_quantization,
+        super::EmbedderOutputQuantization::Int8
+    );
 }
 
+const HARRIER: &str = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee";
+
 /// A config that names a space and not its files means that space's own
-/// files, and that model's own query instruction. This is the shape `init`
-/// writes, so a vault created under the earlier default keeps being filled by
-/// the earlier default's weights after the default moves.
+/// files. This is the shape `init` writes, so a vault created under the
+/// earlier default keeps being filled by the earlier default's weights after
+/// the default moves.
 #[test]
-fn naming_a_space_selects_its_own_files_and_its_own_instruction() {
-    use super::embedder_models::HARRIER_06;
+fn naming_a_space_selects_its_own_files() {
     let resolved = resolve(&format!(
-        "dimensions = 1024\n\n[embedder]\nprovider = \"local\"\ndimensions = 1024\nmodel_id = \"{}\"\n",
-        HARRIER_06.model_id
+        "dimensions = 1024\n\n[embedder]\nprovider = \"local\"\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\n"
     ))
     .expect("resolves");
     let embedder = resolved.embedder.as_ref().expect("a section is present");
-    assert_eq!(embedder.local.repo, HARRIER_06.repo);
-    assert_eq!(embedder.local.revision, HARRIER_06.revision);
+    assert_eq!(embedder.local.repo, "microsoft/harrier-oss-v1-0.6b");
     assert_eq!(
-        embedder.effective_query_instruction(),
-        HARRIER_06.query_instruction
+        embedder.local.revision,
+        "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
     );
     assert_eq!(
         resolved.vault_config().embedding_model.as_deref(),
-        Some(HARRIER_06.model_id)
+        Some(HARRIER)
     );
 }
 
 /// Files named beside the space win over the ones the space id spells, in the
-/// same layer or a later one, and a configured instruction — even an empty
-/// one — wins over the model's own.
+/// same layer or a later one.
 #[test]
-fn explicit_files_and_an_explicit_instruction_win_over_what_the_space_implies() {
-    use super::embedder_models::HARRIER_06;
+fn explicit_files_win_over_what_the_space_implies() {
     let (_dir, mut args) = config_file(&format!(
-        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{}\"\nrepo = \"mirror/harrier\"\nquery_instruction = \"\"\n",
-        HARRIER_06.model_id
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\nrepo = \"mirror/harrier\"\n"
     ));
     args.embedder.embedder_revision = Some("mirrored".to_owned());
     let resolved =
         resolve_serve_config_with_sources(&args, EnvConfig::default(), None).expect("resolves");
     let embedder = resolved.embedder.as_ref().expect("a section is present");
-    assert_eq!(embedder.model_id, HARRIER_06.model_id);
+    assert_eq!(embedder.model_id, HARRIER);
     assert_eq!(embedder.local.repo, "mirror/harrier");
     assert_eq!(embedder.local.revision, "mirrored");
-    assert_eq!(embedder.effective_query_instruction(), "");
+}
+
+/// The keys that override a checkpoint's own declaration resolve from the
+/// file, the environment and argv like every other key.
+#[test]
+fn the_model_shape_overrides_resolve_through_every_layer() {
+    let resolved = resolve(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nattention = \"bidirectional\"\noutput_quantization = \"binary\"\nquery_prompt_name = \"web_search_query\"\nquery_instruction = \"\"\n",
+    )
+    .expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(
+        embedder.local.attention,
+        super::EmbedderAttention::Bidirectional
+    );
+    assert_eq!(
+        embedder.local.output_quantization,
+        super::EmbedderOutputQuantization::Binary
+    );
+    assert_eq!(
+        embedder.query_prompt_name.as_deref(),
+        Some("web_search_query")
+    );
+    assert_eq!(embedder.query_instruction.as_deref(), Some(""));
+
+    let (_dir, mut args) =
+        config_file("dimensions = 1024\n\n[embedder]\nattention = \"bidirectional\"\n");
+    let env = EnvConfig::from_pairs([
+        ("ONEIRON_EMBEDDER_ATTENTION", "causal"),
+        ("ONEIRON_EMBEDDER_QUERY_PROMPT_NAME", "query"),
+    ])
+    .expect("env");
+    args.embedder.embedder_output_quantization = Some(super::EmbedderOutputQuantization::Binary);
+    let resolved = resolve_serve_config_with_sources(&args, env, None).expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.local.attention, super::EmbedderAttention::Causal);
+    assert_eq!(embedder.query_prompt_name.as_deref(), Some("query"));
+    assert_eq!(
+        embedder.local.output_quantization,
+        super::EmbedderOutputQuantization::Binary
+    );
+    assert!(resolve("dimensions = 1024\n\n[embedder]\nattention = \"sideways\"\n").is_err());
 }
 
 /// `provider = "none"` is the section stated rather than absent: it resolves,

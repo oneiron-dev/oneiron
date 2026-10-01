@@ -6,9 +6,12 @@
 //! norms, RoPE, attention, SwiGLU MLP) → a final norm → per-token hidden
 //! states. No `lm_head` is loaded, because none is used.
 //!
-//! Attention is causal unless the checkpoint's `config.json` declares
-//! `use_bidirectional_attention`: an encoder trained bidirectionally on the same
-//! Qwen3 weights layout differs from a causal one in its mask and nothing else.
+//! Nothing here names a model. Any checkpoint whose `config.json` carries the
+//! Qwen3 fields and whose weights carry the Qwen3 tensor names loads; one that
+//! does not is refused by the first field or tensor it lacks. Whether it
+//! attends causally or bidirectionally is its own `config.json`'s declaration:
+//! an encoder trained bidirectionally on this layout differs from a causal one
+//! in its mask and nothing else.
 
 use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
 use candle_nn::{RmsNorm, VarBuilder};
@@ -18,21 +21,12 @@ use super::attention::{causal_mask, grouped_attention};
 use super::isq::{Proj, load_plain, load_proj};
 use crate::config::EmbedderQuant;
 
-/// Model classes this provider accepts.
-///
-/// The upstream runtime mapped only `Qwen3ForCausalLM` and so refused the
-/// body-only checkpoint outright. Every name here describes the same stack —
-/// the differences are a head this code never loads, and, for
-/// `PPLXQwen3Model`, an attention mask the config declares on its own — so all
-/// are accepted.
-const ACCEPTED_ARCHITECTURES: [&str; 3] = ["Qwen3Model", "Qwen3ForCausalLM", "PPLXQwen3Model"];
-
 /// `config.json` as the model ships it. Unknown keys are ignored on purpose:
 /// the file carries inference knobs (`use_cache`, `layer_types`) that do not
-/// apply to a single forward pass over an unpadded batch.
+/// apply to a single forward pass over an unpadded batch, and a class name
+/// (`architectures`) that says nothing the fields below do not.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct Config {
-    pub(super) architectures: Vec<String>,
     pub(super) hidden_size: usize,
     pub(super) num_hidden_layers: usize,
     pub(super) num_attention_heads: usize,
@@ -45,28 +39,25 @@ pub(super) struct Config {
     /// Absent in some Qwen3 configs, where it is `hidden_size / heads`.
     #[serde(default)]
     head_dim: Option<usize>,
-    /// Every position attends to every other. Absent means causal, which is
-    /// what a Qwen3 checkpoint without the key was trained as.
+    /// `true`: every position attends to every other.
     #[serde(default)]
-    pub(super) use_bidirectional_attention: bool,
+    use_bidirectional_attention: Option<bool>,
+    /// The same declaration, the other way round, as some configs spell it.
+    #[serde(default)]
+    is_causal: Option<bool>,
+    /// The attention the body runs with: the declaration above, resolved at
+    /// parse, unless the host overrides it with [`Config::attending`].
+    #[serde(skip)]
+    causal: bool,
 }
 
 impl Config {
-    /// Parses and accepts, or names the class it refuses.
+    /// Parses, or names the field that is missing or inconsistent.
     pub(super) fn parse(raw: &str) -> oneiron::Result<Self> {
-        let config: Self = serde_json::from_str(raw).map_err(|e| {
+        let mut config: Self = serde_json::from_str(raw).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model config.json: {e}"))
         })?;
-        let accepted = config
-            .architectures
-            .iter()
-            .any(|name| ACCEPTED_ARCHITECTURES.contains(&name.as_str()));
-        if !accepted {
-            return Err(oneiron::Error::InvalidConfig(format!(
-                "embedder model class {:?} is not supported (expected one of {ACCEPTED_ARCHITECTURES:?})",
-                config.architectures
-            )));
-        }
+        config.causal = config.declared_causal()?;
         if config.num_key_value_heads == 0
             || !config
                 .num_attention_heads
@@ -78,6 +69,32 @@ impl Config {
             )));
         }
         Ok(config)
+    }
+
+    /// Whether the body attends causally.
+    pub(super) const fn causal(&self) -> bool {
+        self.causal
+    }
+
+    /// The same body, attending as the host says rather than as declared.
+    pub(super) const fn attending(mut self, causal: bool) -> Self {
+        self.causal = causal;
+        self
+    }
+
+    /// Whether the checkpoint declares causal attention. Declaring neither key
+    /// means causal, which is what a Qwen3 body was trained as.
+    fn declared_causal(&self) -> oneiron::Result<bool> {
+        match (self.use_bidirectional_attention, self.is_causal) {
+            (Some(bidirectional), Some(causal)) if bidirectional == causal => {
+                Err(oneiron::Error::InvalidConfig(format!(
+                    "embedder model config.json declares use_bidirectional_attention = {bidirectional} and is_causal = {causal}"
+                )))
+            }
+            (Some(bidirectional), _) => Ok(!bidirectional),
+            (None, Some(causal)) => Ok(causal),
+            (None, None) => Ok(true),
+        }
     }
 
     pub(super) fn head_dim(&self) -> usize {
@@ -443,7 +460,7 @@ impl Model {
     ///
     /// `vb` must be a CPU builder over the official weights, at a precision
     /// that holds them exactly; the run device and precision come from
-    /// `device` and `quant`.
+    /// `device` and `quant`, and the attention from [`Config::causal`].
     pub(super) fn load(
         cfg: &Config,
         vb: &VarBuilder<'_>,
@@ -484,7 +501,7 @@ impl Model {
             norm,
             rotary,
             mask_cache: MaskCache::new(),
-            causal: !cfg.use_bidirectional_attention,
+            causal: cfg.causal(),
             device: device.clone(),
             dtype,
             hidden_size: cfg.hidden_size,
@@ -520,6 +537,11 @@ impl Model {
             xs = layer.forward(&xs, &self.rotary, mask.as_ref(), self.causal)?;
         }
         self.norm.forward(&xs)
+    }
+
+    /// The first row of every sequence, which is what CLS pooling reads.
+    pub(super) fn first_rows(hidden: &Tensor) -> candle_core::Result<Tensor> {
+        hidden.i((.., 0, ..))
     }
 
     /// The last row of every sequence, which is what last-token pooling reads.

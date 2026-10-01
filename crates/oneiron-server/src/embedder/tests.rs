@@ -327,25 +327,20 @@ fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
     );
 }
 
-/// What a query carries is the space's model's: the earlier default's
-/// instruction for a space pinned to it, nothing for the default model or for
-/// a model this build has never measured, and exactly the configured text when
-/// one is configured.
+/// An endpoint has no model files to read a prompt from: a query carries
+/// exactly the configured instruction, and nothing when none is configured,
+/// whichever model the space names.
 #[test]
-fn a_query_carries_exactly_its_models_instruction_prefix() {
-    use crate::config::embedder_models::{HARRIER_06, PPLX_EMBED_V1_06};
+fn a_query_carries_exactly_the_configured_instruction() {
     let mock = MockEndpoint::start(MockBehaviour::Ok);
-    let cases = [
-        (HARRIER_06.model_id, None, HARRIER_06.query_instruction),
-        (PPLX_EMBED_V1_06.model_id, None, ""),
-        ("test/model@rev", None, ""),
+    for (model_id, configured) in [
         (
-            HARRIER_06.model_id,
-            Some("Represent this question: "),
-            "Represent this question: ",
+            "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+            None,
         ),
-    ];
-    for (model_id, configured, prefix) in cases {
+        (crate::config::embedder::DEFAULT_MODEL_ID, None),
+        ("test/model@rev", Some("Represent this question: ")),
+    ] {
         let config = EmbedderConfig {
             model_id: model_id.to_owned(),
             query_instruction: configured.map(str::to_owned),
@@ -357,11 +352,13 @@ fn a_query_carries_exactly_its_models_instruction_prefix() {
             .expect("embedded");
         assert_eq!(
             mock.requests().last().expect("a request")["input"],
-            json!([format!("{prefix}what did we decide")]),
+            json!([format!(
+                "{}what did we decide",
+                configured.unwrap_or_default()
+            )]),
             "{model_id}: a query carries exactly its instruction and nothing else"
         );
     }
-    assert!(!HARRIER_06.query_instruction.is_empty());
 }
 
 #[test]

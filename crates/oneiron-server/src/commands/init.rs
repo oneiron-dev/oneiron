@@ -109,7 +109,7 @@ fn ask_choice(
     let default = if local_default { "local" } else { "none" };
     writeln!(
         output,
-        "Local: ~1.2 GB download, ~0.7 GB steady memory. Endpoint: a server you configure. None: lexical search only."
+        "Local: ~2.4 GB download, ~1.4 GB steady memory. Endpoint: a server you configure. None: lexical search only."
     )?;
     write!(output, "Embedder local | endpoint | none [{default}]: ")?;
     output.flush()?;

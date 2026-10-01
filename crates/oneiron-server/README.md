@@ -69,12 +69,41 @@ files and no download is attempted at all — the offline-host door.
 `model_id` names the weights. A section that names a `model_id` and no
 `repo`/`revision` loads that space's own repository and commit, so a vault
 created under the earlier default, `microsoft/harrier-oss-v1-0.6b@f9b9dc8…`,
-keeps loading Harrier's pinned files after the default moved. The query
-instruction is the model's own too: Harrier prepends
-`Instruct: Given a question, retrieve passages that answer it\nQuery: ` to a
-query, pplx-embed embeds queries raw, and `query_instruction` overrides either.
-A vault pinned to one model refuses to open under another
-(`EmbeddingModelChanged`); see *Changing a vault's embedding model* below.
+keeps loading Harrier's pinned files after the default moved. A vault pinned to
+one model refuses to open under another (`EmbeddingModelChanged`); see
+*Changing a vault's embedding model* below.
+
+The provider names no model in code. It reads everything about a checkpoint
+from the checkpoint's own files, so any model with a Qwen3 body runs from its
+`repo` and `revision` alone:
+
+- attention: `use_bidirectional_attention` or `is_causal` in `config.json`,
+  causal when neither is set;
+- the module chain, in order, from `modules.json`: Pooling (`lasttoken`,
+  `mean_tokens` or `cls_token`, honouring `include_prompt`), `Dense`
+  (Identity or Tanh), `Normalize`, and `FlexibleQuantizer` (int8 or binary
+  tanh). Any other module or pooling mode is refused by name;
+- prompts from `config_sentence_transformers.json`: queries take the prompt
+  named `query`, documents the first of `document`, `passage` or `corpus`,
+  either falling back to `default_prompt_name`. No file means no prompt.
+
+The shipped defaults' files are pinned by sha256; any other repository runs
+unpinned and fetches exactly the files its `modules.json` names. Keys for a
+checkpoint whose files say less than they should:
+
+```toml
+[embedder]
+# attention = "auto"                # auto | causal | bidirectional
+# output_quantization = "int8"      # int8 | binary, for a FlexibleQuantizer
+# query_prompt_name = "web_search_query"   # a named prompt from the model's file
+# query_instruction = "…"           # literal query prefix; wins over the file
+```
+
+Harrier names its prompts by task, so it carries no query prompt by default.
+A vault kept on Harrier keeps the instruction it was queried with by adding
+`query_instruction = "Instruct: Given a question, retrieve passages that answer it\nQuery: "`.
+An `endpoint` provider reads no model files: its queries carry
+`query_instruction` or nothing.
 
 On a CUDA toolkit host, build the same server with candle's dependency features
 explicitly enabled (not a `oneiron-server` feature):
@@ -104,6 +133,7 @@ model_id = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774
 dimensions = 1024
 endpoint = "http://127.0.0.1:1234/v1"
 model_key = "text-embedding-harrier-oss-v1-0.6b"
+query_instruction = "Instruct: Given a question, retrieve passages that answer it\nQuery: "
 locality = "on-device"              # on-device | owner-server
 ```
 

@@ -90,6 +90,19 @@ pub(super) fn tokenize(tokenizer: &Tokenizer, texts: &[String]) -> oneiron::Resu
         .collect()
 }
 
+/// How many leading tokens a prompt takes, as sentence-transformers counts
+/// them for a pool that excludes the prompt: the prompt tokenized on its own,
+/// less one for the token the post-processor closes a sequence with.
+pub(super) fn prompt_tokens(tokenizer: &Tokenizer, prompt: &str) -> oneiron::Result<usize> {
+    if strip(prompt).is_empty() {
+        return Ok(0);
+    }
+    let encoded = tokenize(tokenizer, &[prompt.to_owned()])?;
+    Ok(encoded
+        .first()
+        .map_or(0, |item| item.ids.len().saturating_sub(1)))
+}
+
 /// Python's `str.strip()`: Unicode whitespace plus the four ASCII separators
 /// (`\x1c`–`\x1f`) Python also counts as space.
 fn strip(text: &str) -> &str {

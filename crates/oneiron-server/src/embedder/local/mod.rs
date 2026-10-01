@@ -9,13 +9,20 @@
 //! Zero setup for the operator: the pinned artifacts are fetched on first use,
 //! verified by digest, quantised at load, and the vault serves at rung 0 until
 //! that finishes.
+//!
+//! Configuration, not code, says which model runs: the repository and commit
+//! name the files, and the files say the rest — the attention in
+//! `config.json`, the module chain in `modules.json`, the prompts in
+//! `config_sentence_transformers.json` ([`spec`]).
 
 pub(super) mod attention;
 pub(super) mod batcher;
 pub(super) mod device;
 pub(super) mod isq;
 pub(crate) mod model_manager;
+pub(super) mod prompts;
 pub(super) mod qwen3_embedding;
+pub(super) mod spec;
 pub(super) mod st_modules;
 
 use std::sync::Mutex;
@@ -27,8 +34,10 @@ use candle_nn::VarBuilder;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
 use tokenizers::Tokenizer;
 
+use self::prompts::Prompts;
 use self::qwen3_embedding::{Config, Model};
-use self::st_modules::StModules;
+use self::spec::LocalModelSpec;
+use self::st_modules::{Chain, StModules};
 use super::{EmbedderCommon, QueryEmbedder};
 use crate::config::EmbedderConfig;
 
@@ -38,6 +47,11 @@ pub(crate) struct LocalEmbedder {
     /// not, and the reconciler calls `embed` from one worker thread anyway.
     model: Mutex<Model>,
     modules: StModules,
+    /// What each side carries before its text.
+    prompts: Prompts,
+    /// Leading prompt rows a pool that excludes the prompt skips, per side.
+    query_prompt_tokens: usize,
+    document_prompt_tokens: usize,
     /// The model's tokenizer, truncating at the input cap and never padding.
     tokenizer: Tokenizer,
     batch_size: usize,
@@ -62,7 +76,7 @@ fn prepare_with_manager(
 impl LocalEmbedder {
     /// Fetches what is missing, loads the model, and quantises it.
     ///
-    /// Blocking and slow by nature: a first run downloads over a gigabyte and
+    /// Blocking and slow by nature: a first run downloads gigabytes and
     /// every run quantises the projections. The caller runs it off the async
     /// runtime.
     pub(super) fn load(
@@ -82,39 +96,65 @@ impl LocalEmbedder {
     ) -> oneiron::Result<std::sync::Arc<Self>> {
         let run_device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
         let dir = models.ensure_all(&config.local)?;
-        let raw_config = std::fs::read_to_string(dir.join("config.json")).map_err(|e| {
-            oneiron::Error::InvalidConfig(format!("embedder model config.json: {e}"))
-        })?;
-        let model_config = Config::parse(&raw_config)?;
-        let modules = StModules::load(&dir)?;
-        check_dimensions(config, &model_config, &modules)?;
-        check_input_window(config, &model_config)?;
+        let spec = LocalModelSpec::read(&dir, config)?;
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model tokenizer.json: {e}"))
         })?;
         let tokenizer = batcher::for_provider(tokenizer, config.max_input_tokens)?;
+        let prompt_tokens = |prompt: &str| {
+            if spec.chain.pooling.include_prompt {
+                return Ok(0);
+            }
+            batcher::prompt_tokens(&tokenizer, prompt)
+        };
+        let query_prompt_tokens = prompt_tokens(&spec.prompts.query)?;
+        let document_prompt_tokens = prompt_tokens(&spec.prompts.document)?;
         let started = Instant::now();
-        let model = load_body(&dir, &model_config, config, &run_device, dtype)?;
+        let model = load_body(&dir, &spec.body, config, &run_device, dtype)?;
+        let modules = StModules::load(spec.chain, &dir, &run_device)?;
         tracing::info!(
             device = device::device_label(&run_device),
             quant = config.local.quant.as_str(),
             threads = load_threads(config.local.threads),
             load_ms = started.elapsed().as_millis(),
-            dimensions = modules.dimensions(),
+            causal = spec.body.causal(),
+            pooling = ?modules.chain().pooling.mode,
+            steps = modules.chain().steps.len(),
+            query_prompt_chars = spec.prompts.query.chars().count(),
+            document_prompt_chars = spec.prompts.document.chars().count(),
+            dimensions = modules.chain().dimensions(),
             "local embedder ready"
         );
         Ok(std::sync::Arc::new(Self {
             common: EmbedderCommon::from_config(config),
             model: Mutex::new(model),
             modules,
+            prompts: spec.prompts,
+            query_prompt_tokens,
+            document_prompt_tokens,
             tokenizer,
             batch_size: config.batch_size.max(1),
             truncations: AtomicU64::new(0),
         }))
     }
 
-    /// Embeds already-projected texts in input order.
-    fn embed_texts(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
+    /// Embeds document texts in input order, each behind the model's own
+    /// document prompt.
+    fn embed_documents(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
+        let prompted: Vec<String> = texts
+            .iter()
+            .map(|text| format!("{}{text}", self.prompts.document))
+            .collect();
+        self.embed_texts(&prompted, self.document_prompt_tokens)
+    }
+
+    /// Embeds already-prompted texts in input order. `prompt_tokens` leading
+    /// rows of each are the prompt's, for a pool that excludes it.
+    fn embed_texts(
+        &self,
+        texts: &[String],
+        prompt_tokens: usize,
+    ) -> oneiron::Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -134,7 +174,7 @@ impl LocalEmbedder {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for group in &groups {
-            let rows = self.embed_group(&mut model, &tokenized, group)?;
+            let rows = self.embed_group(&mut model, &tokenized, group, prompt_tokens)?;
             for (index, row) in group.iter().zip(rows) {
                 vectors[*index] = Some(row);
             }
@@ -156,6 +196,7 @@ impl LocalEmbedder {
         model: &mut Model,
         tokenized: &[batcher::Tokenized],
         group: &[usize],
+        prompt_tokens: usize,
     ) -> oneiron::Result<Vec<Vec<f32>>> {
         let ids: Vec<u32> = group
             .iter()
@@ -165,7 +206,10 @@ impl LocalEmbedder {
         let shape = (group.len(), seq);
         let ids = Tensor::from_vec(ids, shape, model.device()).map_err(candle_failed)?;
         let hidden = model.forward(&ids).map_err(candle_failed)?;
-        let pooled = self.modules.apply(&hidden).map_err(candle_failed)?;
+        let pooled = self
+            .modules
+            .apply(&hidden, prompt_tokens)
+            .map_err(candle_failed)?;
         let rows: Vec<Vec<f32>> = pooled
             .to_dtype(DType::F32)
             .and_then(|pooled| pooled.to_vec2())
@@ -193,10 +237,8 @@ fn load_body(
     // builder, and nothing in this process writes it: the artifact manager only
     // ever renames a freshly downloaded file INTO place, and it verified this
     // file's digest before we got here.
-    let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(&[&weights], DType::F32, &Device::Cpu)
-            .map_err(candle_failed)?
-    };
+    let backend = unsafe { isq::NarrowingSafetensors::new(&weights).map_err(candle_failed)? };
+    let vb = VarBuilder::from_backend(Box::new(backend), DType::F32, Device::Cpu);
     Model::load(
         model_config,
         &vb,
@@ -223,22 +265,21 @@ fn load_threads(configured: usize) -> usize {
         .min(8)
 }
 
-/// The model must produce exactly the width the vault was opened with.
-fn check_dimensions(
-    config: &EmbedderConfig,
-    model_config: &Config,
-    modules: &StModules,
-) -> oneiron::Result<()> {
-    for (what, got) in [
-        ("hidden_size", model_config.hidden_size),
-        ("pooling width", modules.dimensions()),
-    ] {
-        if got != config.dimensions {
-            return Err(oneiron::Error::InvalidConfig(format!(
-                "embedder model {what} is {got}, configured dimensions is {}",
-                config.dimensions
-            )));
-        }
+/// The pool must read the body's width, and the chain must emit exactly the
+/// width the vault was opened with.
+fn check_dimensions(config: &EmbedderConfig, body: &Config, chain: &Chain) -> oneiron::Result<()> {
+    if chain.pooling.width != body.hidden_size {
+        return Err(oneiron::Error::InvalidConfig(format!(
+            "embedder model pooling width is {}, hidden_size is {}",
+            chain.pooling.width, body.hidden_size
+        )));
+    }
+    let got = chain.dimensions();
+    if got != config.dimensions {
+        return Err(oneiron::Error::InvalidConfig(format!(
+            "embedder model output width is {got}, configured dimensions is {}",
+            config.dimensions
+        )));
     }
     Ok(())
 }
@@ -285,7 +326,7 @@ impl Embedder for LocalEmbedder {
             .iter()
             .map(|input| self.common.document_text(input))
             .collect::<oneiron::Result<_>>()?;
-        self.embed_texts(&texts)
+        self.embed_documents(&texts)
     }
 }
 
@@ -295,7 +336,10 @@ impl QueryEmbedder for LocalEmbedder {
     }
 
     fn embed_query(&self, text: &str) -> oneiron::Result<Vec<f32>> {
-        let mut vectors = self.embed_texts(&[self.common.query_text(text)])?;
+        let mut vectors = self.embed_texts(
+            &[format!("{}{text}", self.prompts.query)],
+            self.query_prompt_tokens,
+        )?;
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
             "embedder answered a single query with no row",
         ))

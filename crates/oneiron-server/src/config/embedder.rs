@@ -13,19 +13,27 @@ use std::str::FromStr;
 use clap::Args;
 use serde::Deserialize;
 
+use super::embedder_shape::{
+    EmbedderAttention, EmbedderOutputQuantization, parse_attention, parse_output_quantization,
+};
 use super::lookup::{lookup_parse, lookup_path};
 
 /// Embedding SPACE id of the default local model: the upstream weights and the
 /// HF commit they were read at. Satisfies the vault's `org/name@revision`
 /// grammar, so it is what `vault_meta` pins.
-pub const DEFAULT_MODEL_ID: &str = super::embedder_models::PPLX_EMBED_V1_06.model_id;
+pub const DEFAULT_MODEL_ID: &str =
+    "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8";
 /// Repository holding the default local model's official files.
-pub const DEFAULT_LOCAL_REPO: &str = super::embedder_models::PPLX_EMBED_V1_06.repo;
+pub const DEFAULT_LOCAL_REPO: &str = "perplexity-ai/pplx-embed-v1-0.6b";
 /// Commit the default local artifacts are pinned to.
-pub const DEFAULT_LOCAL_REVISION: &str = super::embedder_models::PPLX_EMBED_V1_06.revision;
+pub const DEFAULT_LOCAL_REVISION: &str = "2c4d510dd4a732063c31a0f70193e35067b51fd8";
 /// Dimensionality of the default local model. It is MRL-trained, but no
 /// `fast_dims` prefix has been measured, so the vault runs at full width.
-pub const DEFAULT_DIMENSIONS: usize = super::embedder_models::PPLX_EMBED_V1_06.dimensions;
+pub const DEFAULT_DIMENSIONS: usize = 1024;
+/// Context window of the default local model: `max_position_embeddings` in its
+/// `config.json` at the pinned revision. The rotary tables are built to it, so
+/// a longer input has no position to sit at.
+pub const DEFAULT_LOCAL_MAX_POSITION_EMBEDDINGS: usize = 32_768;
 
 const DEFAULT_BATCH_SIZE: usize = 32;
 const DEFAULT_LEASE_MS: u64 = 30_000;
@@ -252,6 +260,10 @@ pub struct LocalEmbedderConfig {
     /// this machine has cores". It does not change the forward pass, whose
     /// parallelism is candle's own.
     pub threads: usize,
+    /// Overrides the attention the checkpoint's `config.json` declares.
+    pub attention: EmbedderAttention,
+    /// What a `FlexibleQuantizer` module in the checkpoint's chain emits.
+    pub output_quantization: EmbedderOutputQuantization,
 }
 
 impl Default for LocalEmbedderConfig {
@@ -271,6 +283,8 @@ impl Default for LocalEmbedderConfig {
             auto_devices,
             auto_device_precedence: policy.precedence.expect("shipped precedence row exists"),
             threads: 0,
+            attention: EmbedderAttention::default(),
+            output_quantization: EmbedderOutputQuantization::default(),
         }
     }
 }
@@ -315,9 +329,14 @@ pub struct EmbedderConfig {
     /// The vault's embedding space id. Every provider reports exactly this.
     pub model_id: String,
     pub dimensions: usize,
-    /// Instruction prepended to query text only. `None` means the one the
-    /// model itself asks for: see [`EmbedderConfig::effective_query_instruction`].
+    /// Text prepended to a query and never to a document. Unset, the local
+    /// provider takes the query prompt from the model's own
+    /// `config_sentence_transformers.json`, and an endpoint sends queries raw.
     pub query_instruction: Option<String>,
+    /// Names the prompt in the model's `config_sentence_transformers.json`
+    /// that queries carry, for a model whose prompts are named by task rather
+    /// than `query`. Local provider only; `query_instruction` wins over it.
+    pub query_prompt_name: Option<String>,
     pub batch_size: usize,
     pub lease_ms: u64,
     pub max_input_tokens: usize,
@@ -334,6 +353,7 @@ impl Default for EmbedderConfig {
             model_id: DEFAULT_MODEL_ID.to_owned(),
             dimensions: DEFAULT_DIMENSIONS,
             query_instruction: None,
+            query_prompt_name: None,
             batch_size: DEFAULT_BATCH_SIZE,
             lease_ms: DEFAULT_LEASE_MS,
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
@@ -348,17 +368,6 @@ impl EmbedderConfig {
     /// Whether this section asks for a worker at all.
     pub const fn is_active(&self) -> bool {
         !matches!(self.provider, EmbedderProvider::None)
-    }
-
-    /// The instruction a query carries: the configured one, else the one the
-    /// space's model asks for. A model this build has never measured asks for
-    /// none, because an instruction the model was not trained on moves every
-    /// query to a place no document is.
-    pub fn effective_query_instruction(&self) -> &str {
-        self.query_instruction.as_deref().unwrap_or_else(|| {
-            super::embedder_models::by_model_id(&self.model_id)
-                .map_or("", |model| model.query_instruction)
-        })
     }
 
     pub(super) fn apply_override(
@@ -381,11 +390,9 @@ fn apply_common(config: &mut EmbedderConfig, over: &EmbedderConfigOverride) {
         config.provider = value;
     }
     if let Some(value) = over.model_id.clone() {
-        // The space id names the weights that fill it. A layer that names a
-        // space and not where its files live means that space's own repository
-        // and commit; the local keys the same layer names are applied after
-        // this and win. Without it, a vault pinned to one model would be
-        // filled by the default model's weights under the pinned model's name.
+        // The space id names the weights that fill it, so a layer naming a space
+        // and not its files means that space's own repository and commit. The
+        // same layer's `repo`/`revision`, applied after this, still win.
         if let Some((repo, revision)) = value.split_once('@') {
             config.local.repo = repo.to_owned();
             config.local.revision = revision.to_owned();
@@ -397,6 +404,9 @@ fn apply_common(config: &mut EmbedderConfig, over: &EmbedderConfigOverride) {
     }
     if let Some(value) = over.query_instruction.clone() {
         config.query_instruction = Some(value);
+    }
+    if let Some(value) = over.query_prompt_name.clone() {
+        config.query_prompt_name = Some(value);
     }
     if let Some(value) = over.batch_size {
         config.batch_size = value;
@@ -437,6 +447,12 @@ fn apply_local(
     }
     if let Some(value) = over.threads {
         local.threads = value;
+    }
+    if let Some(value) = over.attention {
+        local.attention = value;
+    }
+    if let Some(value) = over.output_quantization {
+        local.output_quantization = value;
     }
     if let Some(precedence) = over.policy.as_ref().and_then(|policy| policy.precedence) {
         if source != super::merge::ConfigLayer::Vault {
@@ -510,6 +526,7 @@ pub struct EmbedderConfigOverride {
     pub model_id: Option<String>,
     pub dimensions: Option<usize>,
     pub query_instruction: Option<String>,
+    pub query_prompt_name: Option<String>,
     pub batch_size: Option<usize>,
     pub lease_ms: Option<u64>,
     pub max_input_tokens: Option<usize>,
@@ -522,6 +539,8 @@ pub struct EmbedderConfigOverride {
     pub device: Option<EmbedderDevice>,
     pub policy: Option<LocalDevicePolicy>,
     pub threads: Option<usize>,
+    pub attention: Option<EmbedderAttention>,
+    pub output_quantization: Option<EmbedderOutputQuantization>,
     pub endpoint: Option<String>,
     pub model_key: Option<String>,
     pub artifact: Option<String>,
@@ -551,6 +570,7 @@ impl EmbedderConfigOverride {
             model_id,
             dimensions,
             query_instruction,
+            query_prompt_name,
             batch_size,
             lease_ms,
             max_input_tokens,
@@ -563,6 +583,8 @@ impl EmbedderConfigOverride {
             device,
             policy,
             threads,
+            attention,
+            output_quantization,
             endpoint,
             model_key,
             artifact,
@@ -590,9 +612,12 @@ pub struct EmbedderArgs {
     /// Embedding dimensionality. Must equal the vault's `--dimensions`.
     #[arg(long = "embedder-dimensions")]
     pub embedder_dimensions: Option<usize>,
-    /// Instruction prepended to query text only.
+    /// Text prepended to query text only; overrides the model's own prompt.
     #[arg(long = "embedder-query-instruction")]
     pub embedder_query_instruction: Option<String>,
+    /// Name of the model's own prompt that queries carry.
+    #[arg(long = "embedder-query-prompt-name")]
+    pub embedder_query_prompt_name: Option<String>,
     /// Rows embedded per reconciler pass.
     #[arg(long = "embedder-batch-size")]
     pub embedder_batch_size: Option<usize>,
@@ -630,6 +655,12 @@ pub struct EmbedderArgs {
     /// Threads the load-time quantisation spreads over; `0` means all cores.
     #[arg(long = "embedder-threads")]
     pub embedder_threads: Option<usize>,
+    /// Local attention: `auto` (the model's own), `causal` or `bidirectional`.
+    #[arg(long = "embedder-attention", value_parser = parse_attention)]
+    pub embedder_attention: Option<EmbedderAttention>,
+    /// What a quantizer module in the chain emits: `int8` or `binary`.
+    #[arg(long = "embedder-output-quantization", value_parser = parse_output_quantization)]
+    pub embedder_output_quantization: Option<EmbedderOutputQuantization>,
     /// Base URL of an OpenAI-compatible embeddings server.
     #[arg(long = "embedder-endpoint")]
     pub embedder_endpoint: Option<String>,
@@ -680,6 +711,7 @@ impl From<&EmbedderArgs> for EmbedderConfigOverride {
             model_id: args.embedder_model_id.clone(),
             dimensions: args.embedder_dimensions,
             query_instruction: args.embedder_query_instruction.clone(),
+            query_prompt_name: args.embedder_query_prompt_name.clone(),
             batch_size: args.embedder_batch_size,
             lease_ms: args.embedder_lease_ms,
             max_input_tokens: args.embedder_max_input_tokens,
@@ -695,6 +727,8 @@ impl From<&EmbedderArgs> for EmbedderConfigOverride {
                 precedence: None,
             }),
             threads: args.embedder_threads,
+            attention: args.embedder_attention,
+            output_quantization: args.embedder_output_quantization,
             endpoint: args.embedder_endpoint.clone(),
             model_key: args.embedder_model_key.clone(),
             artifact: args.embedder_artifact.clone(),
@@ -727,6 +761,7 @@ pub(super) fn lookup_embedder_override(
         model_id: lookup("ONEIRON_EMBEDDER_MODEL_ID"),
         dimensions: lookup_parse(lookup, "ONEIRON_EMBEDDER_DIMENSIONS")?,
         query_instruction: lookup("ONEIRON_EMBEDDER_QUERY_INSTRUCTION"),
+        query_prompt_name: lookup("ONEIRON_EMBEDDER_QUERY_PROMPT_NAME"),
         batch_size: lookup_parse(lookup, "ONEIRON_EMBEDDER_BATCH_SIZE")?,
         lease_ms: lookup_parse(lookup, "ONEIRON_EMBEDDER_LEASE_MS")?,
         max_input_tokens: lookup_parse(lookup, "ONEIRON_EMBEDDER_MAX_INPUT_TOKENS")?,
@@ -749,6 +784,8 @@ pub(super) fn lookup_embedder_override(
             })
         },
         threads: lookup_parse(lookup, "ONEIRON_EMBEDDER_THREADS")?,
+        attention: lookup_parse(lookup, "ONEIRON_EMBEDDER_ATTENTION")?,
+        output_quantization: lookup_parse(lookup, "ONEIRON_EMBEDDER_OUTPUT_QUANTIZATION")?,
         endpoint: lookup("ONEIRON_EMBEDDER_ENDPOINT"),
         model_key: lookup("ONEIRON_EMBEDDER_MODEL_KEY"),
         artifact: lookup("ONEIRON_EMBEDDER_ARTIFACT"),

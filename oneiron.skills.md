@@ -1453,7 +1453,7 @@ Closed code catalog currently emitted by server API code:
 ## First-run self-hosted embedder onboarding
 
 Ask once whether the user wants `local`, `endpoint`, or `none`.
-Local downloads the pinned pplx-embed-v1-0.6b model (~2.4 GB) and uses ~0.7 GB steady memory.
+Local downloads the pinned pplx-embed-v1-0.6b model (~2.4 GB) and uses ~1.4 GB steady memory.
 Use `oneiron-server init <vault-path> --config <config-path> --embedder local`.
 For an existing OpenAI-compatible server, add `--embedder endpoint --embedder-endpoint <url>`
 and its `--embedder-model-key <served-key>`. A non-default model also needs

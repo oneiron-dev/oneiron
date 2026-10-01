@@ -57,19 +57,20 @@ impl EmbedderCommon {
         Self {
             model_id: config.model_id.clone(),
             dimensions: config.dimensions,
-            query_instruction: config.effective_query_instruction().to_owned(),
+            query_instruction: config.query_instruction.clone().unwrap_or_default(),
         }
     }
 
-    /// The query text a provider actually embeds.
+    /// The query text an endpoint embeds: the configured instruction, if any,
+    /// then the query.
     fn query_text(&self, text: &str) -> String {
         format!("{}{text}", self.query_instruction)
     }
 
-    /// The document text a provider actually embeds: the engine's canonical
-    /// projection, with no instruction prefix. The model's instruction is a
-    /// query-side asymmetry, and prefixing a document would put the corpus in
-    /// a different place in the space than every bench measured.
+    /// The document text a provider embeds: the engine's canonical projection,
+    /// with no instruction of the server's own. Only a prompt the model itself
+    /// declares for documents goes in front of it, and only the local provider,
+    /// which reads the model's files, knows one.
     fn document_text(&self, input: &PendingEmbeddingInput) -> oneiron::Result<String> {
         let text = payload_text(&input.payload)?;
         if text.trim().is_empty() {
