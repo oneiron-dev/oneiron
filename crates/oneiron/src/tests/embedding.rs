@@ -1312,6 +1312,47 @@ fn a_vector_write_rechecks_the_declared_transform() -> Result<()> {
     Ok(())
 }
 
+/// A migration to the pins the vault already holds succeeds without a swap,
+/// and leaves the handle that asked on those pins: a handle another process
+/// migrated past writes again, with no vector dropped and no epoch advanced
+/// for it. Asking for the same model with no transform keeps the stored one.
+#[test]
+fn a_migration_already_done_brings_a_stale_handle_up_to_the_vault() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    let model = read_model_id(&vault)?.expect("a pinned model");
+    let epoch_key = crate::store::EMBEDDING_MODEL_EPOCH_KEY;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+    let restamp = |vault: &Vault, transform: &str| {
+        // What another process's migration to `transform` leaves in the vault.
+        vault.with_write_txn(|wtxn| {
+            vault.store.hnsw_meta.put(
+                wtxn,
+                crate::store::EMBEDDING_TRANSFORM_KEY,
+                transform.as_bytes(),
+            )?;
+            Ok(())
+        })
+    };
+
+    restamp(&vault, TRANSFORM_B)?;
+    let epoch = read_hnsw_meta_u64(&vault, epoch_key)?;
+    vault.migrate_embedding_space(&model, TRANSFORM_B)?;
+    assert_eq!(read_hnsw_meta_u64(&vault, epoch_key)?, epoch);
+    assert_eq!(vault.get_vector(&id)?, Some(vec![1.0, 0.0, 0.0, 0.0]));
+    vault.put_vector(&id, &[0.0, 1.0, 0.0, 0.0])?;
+
+    restamp(&vault, TRANSFORM_A)?;
+    vault.begin_embedding_migration(&model)?;
+    assert_eq!(read_hnsw_meta_u64(&vault, epoch_key)?, epoch);
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    vault.put_vector(&id, &[0.0, 0.0, 1.0, 0.0])?;
+    assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 0.0, 1.0, 0.0]));
+    Ok(())
+}
+
 /// A migration in a build without the sync queue marks every claim but can
 /// queue none, so it leaves the deferred-backfill marker set, and the first
 /// serving open queues them from it (cold attach). A serving build queues

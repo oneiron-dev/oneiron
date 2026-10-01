@@ -997,3 +997,183 @@ fn a_swap_refills_a_published_record_at_idle_without_a_new_revision() {
         );
     }
 }
+
+/// Runs a same-pin refill swap the first time it is asked to embed, as
+/// another process may while the provider runs, and returns the vector the
+/// space before the swap would have got.
+struct SwapsMidEmbed<'a> {
+    vault: &'a Vault,
+    swapped: std::cell::Cell<bool>,
+}
+impl IndexedRevisionEmbedder for SwapsMidEmbed<'_> {
+    fn embed_revision(&self, _input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+        if !self.swapped.replace(true) {
+            let model = self.vault.config.embedding_model.clone().unwrap();
+            self.vault.with_write_txn(|wtxn| {
+                self.vault
+                    .swap_embedding_space_in_txn(wtxn, &model, None, true)
+                    .map(drop)
+            })?;
+        }
+        Ok(vec![0.0, 0.0, 1.0, 0.0])
+    }
+}
+
+fn refill_marked(vault: &Vault, id: &EntityId) -> bool {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    super::vector_refill::REFILL
+        .contains(&vault.store, &rtxn, id)
+        .unwrap()
+}
+
+/// A swap while the provider runs makes its vector one from the space
+/// before: it is not written, neither by a publication nor by a refill. The
+/// publication's revision stays dirty and the refill's marker stays, so the
+/// next pass embeds both in the new space.
+#[test]
+fn a_swap_while_the_provider_runs_drops_the_old_spaces_vector() {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let refilled = EntityId::now();
+    put(&vault, &refilled, "alpha");
+    put(&vault, &refilled, "beta prose");
+    let refilled_revision = vault.pin_entity_revision(&refilled).unwrap();
+    let embedder = Embed {
+        expected: refilled_revision,
+        expected_body: body("beta prose"),
+    };
+    vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    drop(vault);
+
+    // The vector-only refill.
+    let mut vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    vault.refill_embedding_space().unwrap();
+    let report = vault
+        .refresh_indexed_at_idle(
+            u64::MAX,
+            &SwapsMidEmbed {
+                vault: &vault,
+                swapped: std::cell::Cell::new(false),
+            },
+        )
+        .unwrap();
+    assert_eq!(report.superseded, vec![refilled]);
+    assert!(report.refreshed.is_empty());
+    assert_eq!(vault.get_vector(&refilled).unwrap(), None);
+    assert!(refill_marked(&vault, &refilled), "the new space's refill");
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    assert_eq!(report.refreshed, vec![(refilled, refilled_revision)]);
+    assert_eq!(
+        vault.get_vector(&refilled).unwrap(),
+        Some(vec![0.0, 1.0, 0.0, 0.0])
+    );
+    assert!(!refill_marked(&vault, &refilled));
+
+    // The dirty publication.
+    let published = EntityId::now();
+    put(&vault, &published, "gamma");
+    let before = vault.indexed_revision(&published).unwrap();
+    put(&vault, &published, "delta prose");
+    let revision = vault.pin_entity_revision(&published).unwrap();
+    let report = vault
+        .refresh_indexed_at_idle(
+            u64::MAX,
+            &SwapsMidEmbed {
+                vault: &vault,
+                swapped: std::cell::Cell::new(false),
+            },
+        )
+        .unwrap();
+    assert_eq!(report.superseded, vec![published]);
+    assert_eq!(vault.indexed_revision(&published).unwrap(), before);
+    assert_eq!(vault.get_vector(&published).unwrap(), None);
+    assert!(refill_marked(&vault, &published), "the new space's refill");
+    let report = vault
+        .refresh_indexed_at_idle(
+            u64::MAX,
+            &Embed {
+                expected: revision,
+                expected_body: body("delta prose"),
+            },
+        )
+        .unwrap();
+    assert!(report.refreshed.contains(&(published, revision)));
+    assert_eq!(
+        vault.get_vector(&published).unwrap(),
+        Some(vec![0.0, 1.0, 0.0, 0.0])
+    );
+    assert!(!refill_marked(&vault, &published));
+}
+
+/// Archiving a record hides it and keeps its body and indexes for a
+/// restore. A swap while it is archived leaves it a refill that waits for
+/// the restore rather than being dropped as gone; restored, it gets the new
+/// space's vector, and its revision and citations are as they were.
+#[test]
+fn an_archived_record_keeps_its_refill_until_it_is_restored() {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let span = TimeRange { start: 1, end: 1 };
+    let summary = |text: &str| rmp_serde::to_vec_named(&serde_json::json!({"text": text})).unwrap();
+    let id = EntityId::now();
+    for text in ["alpha", "beta summary"] {
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                span,
+                1,
+                &summary(text),
+            )
+            .commit()
+            .unwrap();
+    }
+    let revision = vault.pin_entity_revision(&id).unwrap();
+    let embedder = Embed {
+        expected: revision,
+        expected_body: summary("beta summary"),
+    };
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    assert_eq!(report.refreshed, vec![(id, revision)]);
+    assert!(vault.get_vector(&id).unwrap().is_some());
+    let citation = vault.cite_entity_text(&id, "text", 0, 4).unwrap();
+    assert!(
+        vault
+            .with_write_txn(|txn| {
+                vault.archive_cleanup_candidate_in_txn(
+                    txn,
+                    &id,
+                    &crate::deletion::TombstoneValueV2 {
+                        reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
+                        deleted_at: 2,
+                        request_id: uuid::Uuid::now_v7().into_bytes(),
+                    },
+                )
+            })
+            .unwrap(),
+        "archived"
+    );
+    drop(vault);
+
+    let mut vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    vault.begin_embedding_migration("test/new@v2").unwrap();
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    assert!(report.refreshed.is_empty());
+    assert!(refill_marked(&vault, &id), "kept while archived");
+
+    vault.restore_archived(&id).unwrap();
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
+    assert_eq!(report.refreshed, vec![(id, revision)]);
+    assert_eq!(
+        vault.get_vector(&id).unwrap(),
+        Some(vec![0.0, 1.0, 0.0, 0.0])
+    );
+    assert_eq!(vault.indexed_revision(&id).unwrap(), Some(revision));
+    assert_eq!(vault.pin_entity_revision(&id).unwrap(), revision);
+    let resolved = vault.resolve_citation(&citation).unwrap();
+    assert_eq!((resolved.quote.as_str(), resolved.drifted), ("beta", false));
+    assert!(!refill_marked(&vault, &id));
+}

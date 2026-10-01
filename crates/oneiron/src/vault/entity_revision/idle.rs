@@ -35,9 +35,10 @@ impl Vault {
 
     /// Re-reads dirty live documents at idle, then embeds that exact revision.
     /// A concurrent edit discards the stale work rather than publishing a
-    /// vector for one revision beside the text/frontier of another. A revision
-    /// with nothing in its text ([`IndexedRevisionInput::payload`]) publishes
-    /// with no vector.
+    /// vector for one revision beside the text/frontier of another, and so
+    /// does an embedding-space swap: the revision stays dirty, to be embedded
+    /// in the new space. A revision with nothing in its text
+    /// ([`IndexedRevisionInput::payload`]) publishes with no vector.
     ///
     /// Then embeds again, at their published revision, the records an
     /// embedding-space swap left without a vector, writing the vector alone.
@@ -113,17 +114,24 @@ impl Vault {
         for input in candidates {
             // A revision with nothing in its text publishes with no vector.
             let embeddable = input.payload().is_some();
-            let staged = {
+            // The embedding space this work is done in, read with the staged
+            // inputs it starts from.
+            let (staged, epoch) = {
                 let txn = self.store.env.read_txn()?;
-                super::pending_index::load(
-                    &self.store,
-                    &txn,
-                    &input.entity,
-                    input.source_revision_ref,
-                )?
+                (
+                    super::pending_index::load(
+                        &self.store,
+                        &txn,
+                        &input.entity,
+                        input.source_revision_ref,
+                    )?,
+                    crate::hnsw::read_embedding_model_epoch(&self.store, &txn)?,
+                )
             };
-            let vector = match staged.vector {
-                Some(vector) => Some(vector),
+            let snapshot_staged = staged.vector.is_some();
+            // The provider's vector, when nothing was staged.
+            let generated = match staged.vector {
+                Some(_) => None,
                 None if !embeddable => None,
                 None => match embedder {
                     Some(embedder) => match embedder.embed_revision(&input) {
@@ -160,6 +168,7 @@ impl Vault {
             };
             if current.live != input.source_revision_ref
                 || read_entity_revision_in_txn(self, &txn, &input.entity, ReadMode::Live)?.is_none()
+                || crate::hnsw::read_embedding_model_epoch(&self.store, &txn)? != epoch
             {
                 report.superseded.push(input.entity);
                 continue;
@@ -178,6 +187,17 @@ impl Vault {
                 report.superseded.push(input.entity);
                 continue;
             }
+            let generated_vector = staged.vector.is_none() && embedder.is_some();
+            let vector = match staged.vector {
+                Some(vector) => Some(vector),
+                // The staged vector the work started from is gone, and the copy
+                // read before is not written in its place.
+                None if snapshot_staged => {
+                    report.superseded.push(input.entity);
+                    continue;
+                }
+                None => generated,
+            };
             let codes = super::phonetic::take_phonetic(
                 &self.store,
                 &mut txn,
@@ -191,8 +211,6 @@ impl Vault {
             current.indexed = current.live;
             let indexed = current.indexed;
             put_state(&self.store, &mut txn, &input.entity, &current)?;
-            let generated_vector = staged.vector.is_none() && embedder.is_some();
-            let vector = staged.vector.or(vector);
             let mut ops = vec![
                 BatchOp::Phonetic {
                     id: input.entity,
@@ -267,19 +285,23 @@ impl Vault {
     /// revision, its text and its citations stay exactly as they were.
     ///
     /// A revision waiting to publish is left to that publication, which
-    /// settles its vector. An edit between the embedding and the write
-    /// supersedes the work, as it does for a publication.
+    /// settles its vector. An archived record is hidden, not gone: it keeps
+    /// its marker and is refilled once restored. An edit or another swap
+    /// between the embedding and the write supersedes the work, as it does
+    /// for a publication, and the marker stays for the next pass.
     fn refill_vectors(
         &self,
         embedder: &dyn IndexedRevisionEmbedder,
         report: &mut IndexedRefreshReport,
     ) -> Result<()> {
         let mut gone = Vec::new();
-        let candidates = {
+        let (candidates, epoch) = {
             let txn = self.store.env.read_txn()?;
             let mut candidates = Vec::new();
             for (id, ()) in REFILL.scan(&self.store, &txn)? {
-                if state(&self.store, &txn, &id)?.is_some_and(|s| s.live != s.indexed) {
+                if state(&self.store, &txn, &id)?.is_some_and(|s| s.live != s.indexed)
+                    || self.archive_tombstone_in_txn(&txn, &id)?.is_some()
+                {
                     continue;
                 }
                 let (Some(revision), Some(raw)) = (
@@ -298,13 +320,19 @@ impl Vault {
                     body,
                 });
             }
-            candidates
+            let epoch = crate::hnsw::read_embedding_model_epoch(&self.store, &txn)?;
+            (candidates, epoch)
         };
         if !gone.is_empty() {
-            // Nothing readable is left to embed.
+            // Nothing readable is left to embed, as this transaction sees it:
+            // a record archived or readable again since keeps its marker.
             let mut txn = self.store.env.write_txn()?;
             for id in &gone {
-                vector_refill::clear(&self.store, &mut txn, id)?;
+                if self.archive_tombstone_in_txn(&txn, id)?.is_none()
+                    && self.indexed_revision_in_txn(&txn, id)?.is_none()
+                {
+                    vector_refill::clear(&self.store, &mut txn, id)?;
+                }
             }
             txn.commit()?;
         }
@@ -327,7 +355,7 @@ impl Vault {
                 },
             };
             let mut txn = self.store.env.write_txn()?;
-            if !self.refill_still_due(&txn, &input.entity, input.source_revision_ref)? {
+            if !self.refill_still_due(&txn, &input.entity, input.source_revision_ref, epoch)? {
                 report.superseded.push(input.entity);
                 continue;
             }
@@ -373,17 +401,20 @@ impl Vault {
         Ok(())
     }
 
-    /// Whether the refill embedded for `revision` is still the one to write:
-    /// still marked, still published as that revision, nothing waiting.
+    /// Whether the refill embedded for `revision` in the space of `epoch` is
+    /// still the one to write: still marked, still published as that
+    /// revision, nothing waiting, and no swap since.
     fn refill_still_due(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         revision: RevisionRef,
+        epoch: u64,
     ) -> Result<bool> {
         Ok(REFILL.contains(&self.store, txn, id)?
             && state(&self.store, txn, id)?.is_none_or(|s| s.live == s.indexed)
-            && self.indexed_revision_in_txn(txn, id)? == Some(revision))
+            && self.indexed_revision_in_txn(txn, id)? == Some(revision)
+            && crate::hnsw::read_embedding_model_epoch(&self.store, txn)? == epoch)
     }
 
     /// Exact index revision currently available, including unedited births.

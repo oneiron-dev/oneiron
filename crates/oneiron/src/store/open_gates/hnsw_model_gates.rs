@@ -34,7 +34,11 @@ pub(crate) fn read_vault_meta_u16(
     Ok(Some(u16::from_le_bytes(bytes)))
 }
 
-pub(crate) fn validate_embedding_model_id(model_id: &str) -> Result<()> {
+/// Checks an embedding space id's grammar, `org/name@revision`, each part of
+/// ASCII letters, digits, `.`, `_` and `-`, without touching a vault: the
+/// same check every open and migration applies, for a host that must refuse
+/// an id before it does anything else for it.
+pub fn validate_embedding_model_id(model_id: &str) -> Result<()> {
     let invalid =
         || Error::InvalidConfig("embedding model id must be org/name@revision".to_owned());
     // Preserve delimiter order as part of the grammar; split(['/', '@'])
