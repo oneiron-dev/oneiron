@@ -309,6 +309,7 @@ pub enum ErrorKind {
     SideTableRow,
     SideTableKeyUndeclared,
     ScopedReadOwnerNotLive,
+    EmbeddingTransformChanged,
 }
 
 /// Crate error type.

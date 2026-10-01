@@ -71,9 +71,24 @@ pub enum ReadMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedRevisionInput {
     pub entity: EntityId,
+    /// The record's type byte at this revision.
+    pub entity_type: u8,
     pub source_revision_ref: RevisionRef,
     pub body: Vec<u8>,
     pub fields: Vec<(String, String)>,
+}
+
+impl IndexedRevisionInput {
+    /// What the embedder embeds for this revision: a CLAIM by the rule the
+    /// pending worker leases by, any other record as its text fields joined
+    /// by newlines.
+    ///
+    /// Idle publication asks the embedder only when this is `Some`. `None` —
+    /// a text of whitespace and control characters alone — publishes the
+    /// revision with no vector and drops the one it had.
+    pub fn payload(&self) -> Option<crate::embed::PendingEmbeddingPayload> {
+        crate::embed::indexed_payload(self.entity_type, &self.body, &self.fields)
+    }
 }
 
 /// Caller-owned embedding provider. It runs outside the LMDB transaction.

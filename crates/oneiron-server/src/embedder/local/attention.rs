@@ -2,8 +2,9 @@
 //!
 //! Rebuilt from mistral.rs's no-flash attention dispatch — see
 //! `NOTICE-mistralrs.md`. Two branches, taken from a 736-line file, and nothing
-//! else: the model is a pure-causal encoder with no cache, no paging and no
-//! padding, so there is no third case.
+//! else: the model is an encoder with no cache, no paging and no padding, so
+//! there is no third case. Whether it attends causally or bidirectionally is
+//! the checkpoint's own declaration, read from its `config.json`.
 
 use candle_core::{D, Device, Tensor};
 
@@ -14,34 +15,43 @@ use candle_core::{D, Device, Tensor};
 /// kernel does the grouping itself, and the eager branch tiles only when it
 /// reaches the matmul.
 ///
-/// `mask` is the additive causal mask the eager branch needs, shaped
-/// `[1, 1, seq, seq]`. The Metal branch asks the kernel for causal masking
-/// instead — the same mask without materialising `heads × seq × seq` values —
-/// so it takes `None` and the caller builds nothing for it.
-pub(super) fn grouped_causal_attention(
+/// A causal body hides future positions. `mask` is then the additive causal
+/// mask the eager branch needs, shaped `[1, 1, seq, seq]`; the Metal branch
+/// asks the kernel for causal masking instead — the same mask without
+/// materialising `heads × seq × seq` values — so it takes `None` and the
+/// caller builds nothing for it.
+///
+/// A bidirectional body lets every position see every other. The provider
+/// never pads a group (`batcher` groups equal lengths), so there is no pad key
+/// to hide either, and neither branch takes a mask at all.
+pub(super) fn grouped_attention(
     q: &Tensor,
     k: &Tensor,
     v: &Tensor,
     mask: Option<&Tensor>,
+    causal: bool,
     scale: f32,
 ) -> candle_core::Result<Tensor> {
     if matches!(q.device(), Device::Metal(_)) {
-        return candle_nn::ops::sdpa(q, k, v, None, true, scale, 1.0);
+        return candle_nn::ops::sdpa(q, k, v, None, causal, scale, 1.0);
     }
-    let Some(mask) = mask else {
+    if causal && mask.is_none() {
         return Err(candle_core::Error::msg(
-            "eager attention needs an explicit causal mask",
+            "eager causal attention needs an explicit causal mask",
         ));
-    };
+    }
     eager_attention(q, k, v, mask, scale)
 }
 
 /// The source's tail path: tile the KV heads, score, mask, softmax, weight.
+///
+/// `mask` is additive and broadcast over the scores; `None` attends to every
+/// position.
 pub(super) fn eager_attention(
     q: &Tensor,
     k: &Tensor,
     v: &Tensor,
-    mask: &Tensor,
+    mask: Option<&Tensor>,
     scale: f32,
 ) -> candle_core::Result<Tensor> {
     let heads = q.dim(1)?;
@@ -50,7 +60,10 @@ pub(super) fn eager_attention(
     let k = repeat_kv(k.clone(), groups)?;
     let v = repeat_kv(v.clone(), groups)?;
     let scores = (q.contiguous()?.matmul(&k.transpose(2, 3)?.contiguous()?)? * f64::from(scale))?;
-    let scores = scores.broadcast_add(&mask.to_dtype(scores.dtype())?)?;
+    let scores = match mask {
+        Some(mask) => scores.broadcast_add(&mask.to_dtype(scores.dtype())?)?,
+        None => scores,
+    };
     let weights = candle_nn::ops::softmax_last_dim(&scores)?;
     weights.matmul(&v.contiguous()?)
 }

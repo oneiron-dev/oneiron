@@ -3,30 +3,30 @@
 //! Rebuilt from mistral.rs's `embedding_models/qwen3_embedding.rs` — see
 //! `NOTICE-mistralrs.md`. Structure and tensor names are the source's:
 //! `embed_tokens` → N decoder layers (q/k/v/o projections, per-head q and k
-//! norms, RoPE, causal attention, SwiGLU MLP) → a final norm → per-token hidden
+//! norms, RoPE, attention, SwiGLU MLP) → a final norm → per-token hidden
 //! states. No `lm_head` is loaded, because none is used.
+//!
+//! Nothing here names a model. Any checkpoint whose `config.json` carries the
+//! Qwen3 fields and whose weights carry the Qwen3 tensor names loads; one that
+//! does not is refused by the first field or tensor it lacks. Whether it
+//! attends causally or bidirectionally is its own `config.json`'s declaration:
+//! an encoder trained bidirectionally on this layout differs from a causal one
+//! in its mask and nothing else.
 
 use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
 use candle_nn::{RmsNorm, VarBuilder};
 use serde::Deserialize;
 
-use super::attention::{causal_mask, grouped_causal_attention};
+use super::attention::{causal_mask, grouped_attention};
 use super::isq::{Proj, load_plain, load_proj};
 use crate::config::EmbedderQuant;
 
-/// Model classes this provider accepts.
-///
-/// The upstream runtime mapped only `Qwen3ForCausalLM` and so refused the
-/// body-only checkpoint outright. Both names describe the same decoder stack —
-/// the difference is a head this code never loads — so both are accepted.
-const ACCEPTED_ARCHITECTURES: [&str; 2] = ["Qwen3Model", "Qwen3ForCausalLM"];
-
 /// `config.json` as the model ships it. Unknown keys are ignored on purpose:
 /// the file carries inference knobs (`use_cache`, `layer_types`) that do not
-/// apply to a single forward pass over an unpadded batch.
+/// apply to a single forward pass over an unpadded batch, and a class name
+/// (`architectures`) that says nothing the fields below do not.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct Config {
-    pub(super) architectures: Vec<String>,
     pub(super) hidden_size: usize,
     pub(super) num_hidden_layers: usize,
     pub(super) num_attention_heads: usize,
@@ -39,24 +39,25 @@ pub(super) struct Config {
     /// Absent in some Qwen3 configs, where it is `hidden_size / heads`.
     #[serde(default)]
     head_dim: Option<usize>,
+    /// `true`: every position attends to every other.
+    #[serde(default)]
+    use_bidirectional_attention: Option<bool>,
+    /// The same declaration, the other way round, as some configs spell it.
+    #[serde(default)]
+    is_causal: Option<bool>,
+    /// The attention the body runs with: the declaration above, resolved at
+    /// parse, unless the host overrides it with [`Config::attending`].
+    #[serde(skip)]
+    causal: bool,
 }
 
 impl Config {
-    /// Parses and accepts, or names the class it refuses.
+    /// Parses, or names the field that is missing or inconsistent.
     pub(super) fn parse(raw: &str) -> oneiron::Result<Self> {
-        let config: Self = serde_json::from_str(raw).map_err(|e| {
+        let mut config: Self = serde_json::from_str(raw).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model config.json: {e}"))
         })?;
-        let accepted = config
-            .architectures
-            .iter()
-            .any(|name| ACCEPTED_ARCHITECTURES.contains(&name.as_str()));
-        if !accepted {
-            return Err(oneiron::Error::InvalidConfig(format!(
-                "embedder model class {:?} is not supported (expected one of {ACCEPTED_ARCHITECTURES:?})",
-                config.architectures
-            )));
-        }
+        config.causal = config.declared_causal()?;
         if config.num_key_value_heads == 0
             || !config
                 .num_attention_heads
@@ -68,6 +69,32 @@ impl Config {
             )));
         }
         Ok(config)
+    }
+
+    /// Whether the body attends causally.
+    pub(super) const fn causal(&self) -> bool {
+        self.causal
+    }
+
+    /// The same body, attending as the host says rather than as declared.
+    pub(super) const fn attending(mut self, causal: bool) -> Self {
+        self.causal = causal;
+        self
+    }
+
+    /// Whether the checkpoint declares causal attention. Declaring neither key
+    /// means causal, which is what a Qwen3 body was trained as.
+    fn declared_causal(&self) -> oneiron::Result<bool> {
+        match (self.use_bidirectional_attention, self.is_causal) {
+            (Some(bidirectional), Some(causal)) if bidirectional == causal => {
+                Err(oneiron::Error::InvalidConfig(format!(
+                    "embedder model config.json declares use_bidirectional_attention = {bidirectional} and is_causal = {causal}"
+                )))
+            }
+            (Some(bidirectional), _) => Ok(!bidirectional),
+            (None, Some(causal)) => Ok(causal),
+            (None, None) => Ok(true),
+        }
     }
 
     pub(super) fn head_dim(&self) -> usize {
@@ -173,6 +200,7 @@ impl Attention {
         xs: &Tensor,
         rotary: &Rotary,
         mask: Option<&Tensor>,
+        causal: bool,
     ) -> candle_core::Result<Tensor> {
         let (batch, seq, _) = xs.dims3()?;
         // Per-HEAD q/k norms, as the source applies them: reshape to heads
@@ -187,7 +215,7 @@ impl Attention {
         let v = split(self.v_proj.forward(xs)?, self.kv_heads)?;
         let q = rotary.apply(&self.q_norm.forward(&q.contiguous()?)?, seq)?;
         let k = rotary.apply(&self.k_norm.forward(&k.contiguous()?)?, seq)?;
-        let attended = grouped_causal_attention(&q, &k, &v.contiguous()?, mask, self.scale)?;
+        let attended = grouped_attention(&q, &k, &v.contiguous()?, mask, causal, self.scale)?;
         let merged = attended
             .transpose(1, 2)?
             .reshape((batch, seq, self.heads * self.head_dim))?;
@@ -247,10 +275,11 @@ impl DecoderLayer {
         xs: &Tensor,
         rotary: &Rotary,
         mask: Option<&Tensor>,
+        causal: bool,
     ) -> candle_core::Result<Tensor> {
-        let attended = self
-            .self_attn
-            .forward(&self.input_layernorm.forward(xs)?, rotary, mask)?;
+        let attended =
+            self.self_attn
+                .forward(&self.input_layernorm.forward(xs)?, rotary, mask, causal)?;
         let xs = (xs + attended)?;
         let fed = self
             .mlp
@@ -416,8 +445,11 @@ pub(super) struct Model {
     rotary: Rotary,
     /// One additive mask per distinct sequence length, bounded. Rebuilding an
     /// `s × s` mask per batch is the one avoidable cost in the eager path;
-    /// keeping every length ever seen is the other.
+    /// keeping every length ever seen is the other. Never touched by a
+    /// bidirectional body, which masks nothing.
     mask_cache: MaskCache,
+    /// Whether attention hides future positions: the checkpoint's declaration.
+    causal: bool,
     device: Device,
     dtype: DType,
     hidden_size: usize,
@@ -426,8 +458,9 @@ pub(super) struct Model {
 impl Model {
     /// Loads the body from a safetensors file already on disk.
     ///
-    /// `vb` must be a CPU builder over the official bf16 weights; the run
-    /// device and precision come from `device` and `quant`.
+    /// `vb` must be a CPU builder over the official weights, at a precision
+    /// that holds them exactly; the run device and precision come from
+    /// `device` and `quant`, and the attention from [`Config::causal`].
     pub(super) fn load(
         cfg: &Config,
         vb: &VarBuilder<'_>,
@@ -468,6 +501,7 @@ impl Model {
             norm,
             rotary,
             mask_cache: MaskCache::new(),
+            causal: cfg.causal(),
             device: device.clone(),
             dtype,
             hidden_size: cfg.hidden_size,
@@ -487,8 +521,9 @@ impl Model {
     pub(super) fn forward(&mut self, ids: &Tensor) -> candle_core::Result<Tensor> {
         let seq = ids.dim(D::Minus1)?;
         // The fused Metal kernel masks causally on its own, so that path builds
-        // and caches nothing: an `s × s` tensor no kernel reads is pure cost.
-        let mask = if matches!(self.device, Device::Metal(_)) {
+        // and caches nothing: an `s × s` tensor no kernel reads is pure cost. A
+        // bidirectional body over an unpadded group has nothing to mask at all.
+        let mask = if !self.causal || matches!(self.device, Device::Metal(_)) {
             None
         } else {
             Some(self.mask_cache.get_or_build(seq, &self.device)?)
@@ -499,9 +534,14 @@ impl Model {
             .reshape((ids.dim(0)?, seq, self.hidden_size))?
             .to_dtype(self.dtype)?;
         for layer in &self.layers {
-            xs = layer.forward(&xs, &self.rotary, mask.as_ref())?;
+            xs = layer.forward(&xs, &self.rotary, mask.as_ref(), self.causal)?;
         }
         self.norm.forward(&xs)
+    }
+
+    /// The first row of every sequence, which is what CLS pooling reads.
+    pub(super) fn first_rows(hidden: &Tensor) -> candle_core::Result<Tensor> {
+        hidden.i((.., 0, ..))
     }
 
     /// The last row of every sequence, which is what last-token pooling reads.

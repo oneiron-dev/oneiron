@@ -1,0 +1,9 @@
+{
+  "prompts": {
+    "web_search_query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ",
+    "sts_query": "Instruct: Retrieve semantically similar text\nQuery: ",
+    "bitext_query": "Instruct: Retrieve parallel sentences\nQuery: "
+  },
+  "default_prompt_name": null,
+  "similarity_fn_name": "cosine"
+}

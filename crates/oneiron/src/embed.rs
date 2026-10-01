@@ -1,6 +1,8 @@
 mod cold_attach;
+mod eligibility;
 mod locality;
-pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_claims_pending_in_txn};
+pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
+pub(crate) use eligibility::{embeddable_payload, indexed_payload};
 pub(crate) use locality::clear_embedding_locality_in_txn;
 
 #[cfg(feature = "sync")]
@@ -151,15 +153,17 @@ pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
 pub fn payload_text(payload: &PendingEmbeddingPayload) -> Result<Cow<'_, str>> {
     match payload {
         PendingEmbeddingPayload::SummaryText(text) => Ok(Cow::Borrowed(text)),
-        PendingEmbeddingPayload::ClaimBody(bytes) => {
-            let body = crate::claim::decode_claim_body(bytes, true)?;
-            Ok(Cow::Owned(
-                body.value
-                    .as_str()
-                    .map_or_else(|| body.value.to_string(), str::to_owned),
-            ))
-        }
+        PendingEmbeddingPayload::ClaimBody(bytes) => Ok(Cow::Owned(claim_text(
+            &crate::claim::decode_claim_body(bytes, true)?,
+        ))),
     }
+}
+
+/// A decoded claim's text, as [`payload_text`] projects it.
+fn claim_text(body: &crate::claim::ClaimBody) -> String {
+    body.value
+        .as_str()
+        .map_or_else(|| body.value.to_string(), str::to_owned)
 }
 
 #[cfg(feature = "sync")]
@@ -493,6 +497,7 @@ impl PendingEmbeddingReconciler {
                         &job.entity_id,
                     )?;
                     clear_pending_embedding_lease_if_any(&self.vault, wtxn, &job.entity_id)?;
+                    retire_excluded_marker_in_txn(&self.vault, wtxn, &job.entity_id)?;
                     batch.stale_jobs += 1;
                     continue;
                 };
@@ -666,29 +671,43 @@ fn pending_input_in_txn(
         return Ok(None);
     };
 
-    let body = &raw.body;
     // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
     // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
     // record's framing keys carry no retrievable meaning. The pending-embedding
     // token still commits to the whole record, so a re-mint invalidates it.
-    let payload = match raw.entity_type {
-        crate::registry::ENTITY_TYPE_CLAIM => PendingEmbeddingPayload::ClaimBody(body.to_vec()),
-        crate::registry::ENTITY_TYPE_SUMMARY => {
-            // An ordinary witness SUMMARY shares the type byte and is not an
-            // epoch record. SKIP it — the same `None` this arm returned for
-            // every SUMMARY before RT-05 — which the caller retires as stale.
-            let Ok(summary) = crate::compaction::decode_epoch_summary_body(body) else {
-                return Ok(None);
-            };
-            PendingEmbeddingPayload::SummaryText(summary.text)
-        }
-        _ => return Ok(None),
+    // A record the shared rule does not embed — an ordinary witness SUMMARY, a
+    // lexical hint, a text with nothing in it — is `None`, which the caller
+    // retires as stale rather than failing the whole leased batch on it.
+    let Some(payload) = embeddable_payload(raw.entity_type, &raw.body) else {
+        return Ok(None);
     };
     Ok(Some(PendingEmbeddingInput {
         entity_id: *id,
         payload,
         pending_embedding_token: token,
     }))
+}
+
+/// Drops the pending marker of a stored record the shared rule never embeds.
+///
+/// Retrieval reads a marker as a pending vector and queues the record again,
+/// so a record retired as stale work must not keep one. The rule is checked
+/// against the record in the caller's transaction, beside the removal: an edit
+/// that makes the record embeddable commits before it (and is leased) or after
+/// it (and marks the record anew), never between.
+#[cfg(feature = "sync")]
+fn retire_excluded_marker_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(record) = vault.store.port_entity_record(wtxn, id)? else {
+        return Ok(());
+    };
+    if embeddable_payload(record.entity_type, &record.body).is_none() {
+        vault.store.clear_pending_embedding(wtxn, id)?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "sync")]
@@ -713,7 +732,7 @@ fn decode_pending_embedding_lease(value: &[u8]) -> Option<PendingEmbeddingLease>
 }
 
 #[cfg(feature = "sync")]
-fn clear_pending_embedding_lease_if_any(
+pub(crate) fn clear_pending_embedding_lease_if_any(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,

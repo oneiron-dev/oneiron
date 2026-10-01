@@ -394,6 +394,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "EMERGENCY_ITEM",
         "EMERGENCY_PLAN",
         "ENTITY_REVISION_PENDING_PHONETIC",
+        "ENTITY_REVISION_VECTOR_REFILL",
         "ESIGN_CAPABILITY_TOKEN",
         "ESIGN_PUBLIC_CHECK",
         "ESIGN_PUBLIC_RATE_V2",

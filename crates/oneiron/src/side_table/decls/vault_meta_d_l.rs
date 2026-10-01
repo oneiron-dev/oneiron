@@ -210,6 +210,9 @@ side_tables! {
     ENTITY_REVISION_PENDING_PHONETIC: VaultMeta b"entity_revision:phonetic:" Named;
     /// Live vs indexed revision pointers. Key: id16.
     ENTITY_REVISION_STATE: VaultMeta b"entity_revision:state:" Named;
+    /// A published revision whose vector an embedding-space swap dropped, to be embedded again at
+    /// idle. Key: id16.
+    ENTITY_REVISION_VECTOR_REFILL: VaultMeta b"entity_revision:vector_refill:" Raw;
     /// Esign machine actor id. Key: ().
     ESIGN_ARTIFACT_ACTOR: VaultMeta b"esign.artifact_actor.v1" Raw;
     /// Esign document audit event. Key: id16 + u64be.

@@ -21,6 +21,7 @@ use crate::store::{
     seed_default_policy_manifest_in_txn,
 };
 
+use super::embedding_transform_gates::verify_existing_embedding_transform;
 use super::hnsw_model_gates::migrate_temporal_long_intervals_if_needed;
 use super::manifest_storage_gates::{
     OwnedEnv, RegisteredPath, gate_existing_storage_versions, lmdb_database_open_guard,
@@ -92,6 +93,7 @@ impl Store {
 
         verify_existing_hnsw_config(&store, config)?;
         verify_existing_embedding_model(&store, config.embedding_model.as_deref())?;
+        verify_existing_embedding_transform(&store, config.embedding_transform.as_deref())?;
         crate::vault::verify_text_index_manifest(&store, analyzer)?;
 
         store.reconcile_existing_open()?;

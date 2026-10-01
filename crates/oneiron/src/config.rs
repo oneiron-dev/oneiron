@@ -308,6 +308,12 @@ pub struct VaultConfig {
     /// model identifier stored on disk, and vector writes require a stamped
     /// model identity before the first vector is committed.
     pub embedding_model: Option<String>,
+    /// How the host's embedder turns the model's output into stored vectors:
+    /// an opaque descriptor of every setting that moves them under the same
+    /// model. Pinned beside the model at open; a different descriptor is
+    /// refused (`EmbeddingTransformChanged`), and a vault that has none
+    /// adopts it. `None` checks nothing.
+    pub embedding_transform: Option<String>,
     /// LMDB map size in bytes.
     pub map_size: usize,
     /// Maximum LMDB reader slots.
@@ -551,6 +557,7 @@ impl VaultConfig {
             dimensions: 1024,
             fast_dims: None,
             embedding_model: None,
+            embedding_transform: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
             max_readers: 126,
@@ -576,6 +583,7 @@ impl VaultConfig {
             dimensions: 4096,
             fast_dims: None,
             embedding_model: None,
+            embedding_transform: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.
             privacy: VaultPrivacyConfig::default(),

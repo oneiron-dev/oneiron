@@ -940,3 +940,489 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 
     Ok(())
 }
+
+/// Drains `vault` with the new model until nothing is leased. Every pass must
+/// succeed: a job the worker can only fail on would surface here.
+#[cfg(feature = "sync")]
+fn drain_with_new_model(vault: &Arc<Vault>) -> Result<()> {
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(vault),
+        Arc::new(MigrationEmbedder {
+            model_id: "test/new@v2".to_owned(),
+        }),
+    )
+    .with_batch_size(256);
+    for _ in 0..64 {
+        if reconciler.reconcile_once()?.leased == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// An epoch SUMMARY is embedded like a claim, so a migration that drops its
+/// vector must queue it again: the new model fills it on the next drain.
+#[cfg(feature = "sync")]
+#[test]
+fn embedding_migration_requeues_epoch_summaries() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
+    let summary = EntityId::now();
+    let body =
+        crate::compaction::encode_epoch_summary_body(&crate::compaction::EpochSummaryBody {
+            v: crate::compaction::EPOCH_SUMMARY_BODY_VERSION,
+            session: seeded_entity_id(0x5E55).to_hex(),
+            epoch: 1,
+            turn_start: 1,
+            turn_end: 3,
+            level: crate::compaction::EPOCH_SUMMARY_LEVEL,
+            text: "the epoch prose".to_owned(),
+            actor: seeded_entity_id(0xAC70).to_hex(),
+        })?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            test_time_range(1, 1),
+            1,
+            &body,
+        )
+        .commit()?;
+    // Filled under the old model: a vector, no marker, no job.
+    vault.put_vector(&summary, &[1.0, 0.0, 0.0, 0.0])?;
+
+    vault.begin_embedding_migration("test/new@v2")?;
+    assert_eq!(vault.get_vector(&summary)?, None);
+    let vault = Arc::new(vault);
+    drain_with_new_model(&vault)?;
+    assert_eq!(vault.get_vector(&summary)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    Ok(())
+}
+
+/// Lexical query hints are lexical-only claims. A migration queues none of
+/// them, and drops the marker and job one still carries, so the drain finishes
+/// with every real claim refilled and no job left behind.
+#[cfg(feature = "sync")]
+#[test]
+fn embedding_migration_leaves_no_work_for_lexical_hint_claims() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open(temp_dir.path(), cfg)?;
+    let actor = EntityId::now();
+    let subject = EntityId::now();
+    for id in [&actor, &subject] {
+        vault.put_entity(id, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, b"person")?;
+    }
+    let claim = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            crate::ClaimCandidate::new(
+                "profile.preference",
+                crate::claim::ClaimSubject::Entity(subject),
+                rmpv::Value::from("sencha"),
+                0.9,
+            ),
+            &crate::WriteEnvelope::new(
+                crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
+                crate::claim::ClaimSource::UserStated,
+                crate::WriteProvenance::new(rmpv::Value::from("fixture"))?,
+                crate::claim::ClaimApprovalStatus::Approved,
+            ),
+            test_time_range(10, 10),
+            11,
+            &["which tea", "favourite drink"],
+        )
+        .commit()?;
+    let hints: Vec<EntityId> = vault
+        .entities_by_type(ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .filter(|id| {
+            vault
+                .get_raw(id)
+                .ok()
+                .flatten()
+                .and_then(|raw| {
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok()
+                })
+                .is_some_and(|body| body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT)
+        })
+        .collect();
+    assert!(!hints.is_empty(), "the write produced hint claims");
+    // Work an earlier sweep left on the hints: a marker and a queued job each.
+    vault.with_write_txn(|wtxn| {
+        for hint in &hints {
+            let raw = vault
+                .store
+                .entities
+                .get(&*wtxn, hint.as_bytes())?
+                .map(|raw| raw.to_vec())
+                .expect("hint row");
+            vault
+                .store
+                .mark_pending_embedding(wtxn, hint, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+            crate::sync::queue::push_embed_job_in_txn(
+                &vault.store,
+                wtxn,
+                hint,
+                crate::embed::EMBED_PRIORITY_BACKFILL,
+            )?;
+        }
+        Ok(())
+    })?;
+
+    vault.begin_embedding_migration("test/new@v2")?;
+    let vault = Arc::new(vault);
+    drain_with_new_model(&vault)?;
+    assert!(
+        vault.get_vector(&claim)?.is_some(),
+        "the real claim refills"
+    );
+    for hint in &hints {
+        assert_eq!(vault.get_vector(hint)?, None);
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(vault.store.pending_embedding_token(&rtxn, hint)?, None);
+    }
+    assert!(
+        SyncQueue::new(Arc::clone(&vault))?
+            .drain_embed_jobs()?
+            .is_empty(),
+        "no job is left behind"
+    );
+    Ok(())
+}
+
+/// The refill runs the migration's swap under the pin the vault already
+/// holds: every vector dropped, every record queued and filled again.
+#[cfg(feature = "sync")]
+#[test]
+fn refilling_the_embedding_space_keeps_the_pin_and_refills_every_record() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/new@v2".to_owned());
+    let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+                "test.refill",
+                crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+                rmpv::Value::from("needle"),
+                0.9,
+                crate::claim::ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Active,
+            )?))?,
+        )
+        .commit()?;
+    vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+    let epoch = read_hnsw_meta_u64(&vault, EMBEDDING_MODEL_EPOCH_KEY)?;
+
+    vault.refill_embedding_space()?;
+    assert_eq!(read_model_id(&vault)?, Some("test/new@v2".to_owned()));
+    assert!(read_hnsw_meta_u64(&vault, EMBEDDING_MODEL_EPOCH_KEY)? > epoch);
+    assert_eq!(vault.get_vector(&id)?, None);
+    let vault = Arc::new(vault);
+    drain_with_new_model(&vault)?;
+    assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    Ok(())
+}
+
+const TRANSFORM_A: &str = "attn=bidirectional;pool=mean;dims=4";
+const TRANSFORM_B: &str = "attn=causal;pool=mean;dims=4";
+
+fn stored_transform(vault: &Vault) -> Result<Option<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .hnsw_meta
+        .get(&rtxn, crate::store::EMBEDDING_TRANSFORM_KEY)?
+        .map(|raw| String::from_utf8_lossy(&raw).into_owned()))
+}
+
+fn transform_config(transform: Option<&str>) -> VaultConfig {
+    let mut cfg = test_config();
+    cfg.embedding_transform = transform.map(str::to_owned);
+    cfg
+}
+
+/// The transform is pinned beside the model on first open. Another one is a
+/// typed refusal that writes nothing, so it refuses again after a restart; a
+/// host that declares none is not checked.
+#[test]
+fn an_embedding_transform_is_pinned_and_another_is_refused() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    drop(vault);
+
+    for _restart in 0..2 {
+        assert_matches!(
+            Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_B))).err(),
+            Some(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+        );
+    }
+    let vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    drop(vault);
+    Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    Ok(())
+}
+
+/// A vault filled before the pin existed has none, and adopts the first one
+/// it is opened with, populated or not.
+#[test]
+fn a_vault_without_a_pinned_transform_adopts_the_first_one_declared() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert_eq!(stored_transform(&vault)?, None);
+    drop(vault);
+
+    let vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    assert!(
+        vault.get_vector(&id)?.is_some(),
+        "adopting keeps the vectors"
+    );
+    drop(vault);
+    assert_matches!(
+        Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_B))).err(),
+        Some(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+    );
+    Ok(())
+}
+
+/// A transform declared only after open — a model whose files arrived later —
+/// is adopted where none is pinned and refused where another is.
+#[test]
+fn a_transform_learned_after_open_is_adopted_or_refused() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    vault.adopt_embedding_transform(TRANSFORM_A)?;
+    vault.adopt_embedding_transform(TRANSFORM_A)?;
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    assert_matches!(
+        vault.adopt_embedding_transform(TRANSFORM_B),
+        Err(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+    );
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    Ok(())
+}
+
+/// A transform change under the same model is a migration: the vectors go,
+/// both pins move in one transaction, and the new transform opens.
+#[test]
+fn a_transform_change_under_the_same_model_migrates_the_space() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    let version = read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?;
+
+    vault.migrate_embedding_space("test/model@v1", TRANSFORM_A)?;
+    assert!(
+        vault.get_vector(&id)?.is_some(),
+        "the same pins are left alone"
+    );
+    vault.migrate_embedding_space("test/model@v1", TRANSFORM_B)?;
+    assert_eq!(vault.get_vector(&id)?, None);
+    assert!(read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)? > version);
+    assert_eq!(read_model_id(&vault)?.as_deref(), Some("test/model@v1"));
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_B));
+    drop(vault);
+    Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_B)))?;
+    assert_matches!(
+        Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A))).err(),
+        Some(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+    );
+
+    // A move to another model without a declared transform drops the old one.
+    let mut vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    vault.begin_embedding_migration("test/other@v2")?;
+    assert_eq!(stored_transform(&vault)?, None);
+    Ok(())
+}
+
+/// A write checks the transform its handle declares against the vault's pin
+/// as the write's own transaction sees it, beside the model. A handle another
+/// process migrated past is stale, and its vectors are refused — written or
+/// staged — rather than filed under the other transform. A handle that
+/// declares none is not checked.
+#[test]
+fn a_vector_write_rechecks_the_declared_transform() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    let clean = EntityId::now();
+    vault.put_entity(&clean, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&clean, &[1.0, 0.0, 0.0, 0.0])?;
+    let text = |content: &str| rmp_serde::to_vec_named(&serde_json::json!({ "content": content }));
+    let edited = EntityId::now();
+    for content in ["first", "second"] {
+        vault
+            .batch()
+            .put(
+                &edited,
+                crate::registry::ENTITY_TYPE_ASSET_TEXT,
+                test_time_range(1, 1),
+                1,
+                &text(content).expect("body"),
+            )
+            .commit()?;
+    }
+
+    // What another process's migration to transform B leaves in the vault.
+    vault.with_write_txn(|wtxn| {
+        vault.store.hnsw_meta.put(
+            wtxn,
+            crate::store::EMBEDDING_TRANSFORM_KEY,
+            TRANSFORM_B.as_bytes(),
+        )?;
+        Ok(())
+    })?;
+    assert_matches!(
+        vault.put_vector(&clean, &[0.0, 1.0, 0.0, 0.0]),
+        Err(Error::Store(StoreError::EmbeddingTransformChanged { .. }))
+    );
+    assert_matches!(
+        vault.put_vector(&edited, &[0.0, 1.0, 0.0, 0.0]),
+        Err(Error::Store(StoreError::EmbeddingTransformChanged { .. })),
+        "a vector staged for an unpublished revision is checked too"
+    );
+    assert_eq!(vault.get_vector(&clean)?, Some(vec![1.0, 0.0, 0.0, 0.0]));
+    drop(vault);
+
+    let vault = Vault::open(temp_dir.path(), transform_config(None))?;
+    vault.put_vector(&clean, &[0.0, 1.0, 0.0, 0.0])?;
+    Ok(())
+}
+
+/// A migration to the pins the vault already holds succeeds without a swap,
+/// and leaves the handle that asked on those pins: a handle another process
+/// migrated past writes again, with no vector dropped and no epoch advanced
+/// for it. Asking for the same model with no transform keeps the stored one.
+#[test]
+fn a_migration_already_done_brings_a_stale_handle_up_to_the_vault() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut vault = Vault::open(temp_dir.path(), transform_config(Some(TRANSFORM_A)))?;
+    let model = read_model_id(&vault)?.expect("a pinned model");
+    let epoch_key = crate::store::EMBEDDING_MODEL_EPOCH_KEY;
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+    let restamp = |vault: &Vault, transform: &str| {
+        // What another process's migration to `transform` leaves in the vault.
+        vault.with_write_txn(|wtxn| {
+            vault.store.hnsw_meta.put(
+                wtxn,
+                crate::store::EMBEDDING_TRANSFORM_KEY,
+                transform.as_bytes(),
+            )?;
+            Ok(())
+        })
+    };
+
+    restamp(&vault, TRANSFORM_B)?;
+    let epoch = read_hnsw_meta_u64(&vault, epoch_key)?;
+    vault.migrate_embedding_space(&model, TRANSFORM_B)?;
+    assert_eq!(read_hnsw_meta_u64(&vault, epoch_key)?, epoch);
+    assert_eq!(vault.get_vector(&id)?, Some(vec![1.0, 0.0, 0.0, 0.0]));
+    vault.put_vector(&id, &[0.0, 1.0, 0.0, 0.0])?;
+
+    restamp(&vault, TRANSFORM_A)?;
+    vault.begin_embedding_migration(&model)?;
+    assert_eq!(read_hnsw_meta_u64(&vault, epoch_key)?, epoch);
+    assert_eq!(stored_transform(&vault)?.as_deref(), Some(TRANSFORM_A));
+    vault.put_vector(&id, &[0.0, 0.0, 1.0, 0.0])?;
+    assert_eq!(vault.get_vector(&id)?, Some(vec![0.0, 0.0, 1.0, 0.0]));
+    Ok(())
+}
+
+/// A migration in a build without the sync queue marks every claim but can
+/// queue none, so it leaves the deferred-backfill marker set, and the first
+/// serving open queues them from it (cold attach). A serving build queues
+/// them in the swap itself and needs no marker.
+#[test]
+fn a_migration_that_cannot_queue_leaves_the_backfill_to_the_next_serving_open() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("test/old@v1".to_owned());
+    let mut vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg.clone())?;
+    let claim = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &claim,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            1,
+            &crate::claim::encode_claim_body(&public_stamped(crate::claim::ClaimBody::new(
+                "test.backfill",
+                crate::claim::ClaimSubject::Entity(seeded_entity_id(0xBAC1)),
+                rmpv::Value::from("needle"),
+                0.9,
+                crate::claim::ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Active,
+            )?))?,
+        )
+        .commit()?;
+    vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+
+    vault.begin_embedding_migration("test/new@v2")?;
+    let marked = |vault: &Vault| -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, crate::embed::COLD_ATTACH_PENDING_KEY)?
+            .is_some())
+    };
+    assert_eq!(marked(&vault)?, !cfg!(feature = "sync"));
+    cfg.embedding_model = Some("test/new@v2".to_owned());
+
+    #[cfg(not(feature = "sync"))]
+    {
+        drop(vault);
+        let vault = Vault::open_unseeded_for_test(temp_dir.path(), cfg)?;
+        assert!(
+            vault.cold_attach_embedder()? >= 1,
+            "the claim is marked again"
+        );
+        assert!(marked(&vault)?, "and the marker waits for a serving open");
+    }
+    #[cfg(feature = "sync")]
+    {
+        // What the same swap leaves in a build without the queue: the claim
+        // marked, no job, the marker set.
+        vault.with_write_txn(|wtxn| {
+            crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, &claim)?;
+            vault
+                .store
+                .hnsw_meta
+                .put(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+            Ok(())
+        })?;
+        drop(vault);
+        let vault = Arc::new(Vault::open_unseeded_for_test(temp_dir.path(), cfg)?);
+        assert!(vault.cold_attach_embedder()? >= 1);
+        assert!(!marked(&vault)?, "the serving open consumed it");
+        drain_with_new_model(&vault)?;
+        assert_eq!(vault.get_vector(&claim)?, Some(vec![0.0, 1.0, 0.0, 0.0]));
+    }
+    Ok(())
+}

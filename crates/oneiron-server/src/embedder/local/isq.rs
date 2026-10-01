@@ -8,8 +8,10 @@
 //! third-party GGUF: the quantiser is ours and runs in about three seconds.
 
 use candle_core::quantized::{GgmlDType, QMatMul, QTensor};
-use candle_core::{DType, Device, Module, Tensor};
-use candle_nn::{Linear, VarBuilder};
+use candle_core::safetensors::MmapedSafetensors;
+use candle_core::{DType, Device, Module, Shape, Tensor};
+use candle_nn::var_builder::SimpleBackend;
+use candle_nn::{Init, Linear, VarBuilder};
 
 use crate::config::EmbedderQuant;
 
@@ -53,17 +55,18 @@ pub(super) fn load_proj(
             Ok(Proj::Q8(QMatMul::from_qtensor(quantised)?))
         }
         EmbedderQuant::None => Ok(Proj::Dense(Linear::new(
-            weight.to_device(device)?.to_dtype(dtype)?,
+            weight.to_dtype(dtype)?.to_device(device)?,
             None,
         ))),
     }
 }
 
-/// Loads a plain tensor onto the run device at the run precision.
+/// Loads a plain tensor onto the run device at `dtype`.
 ///
 /// Norm weights and the embedding table take this door: an embedding lookup is
 /// a gather, not a matmul, and quantising a norm would cost accuracy for a
-/// vector of a thousand values.
+/// vector of a thousand values. The tensor is narrowed to `dtype` on the host,
+/// so the largest one never reaches the device wider than it is kept.
 pub(super) fn load_plain(
     vb: &VarBuilder<'_>,
     name: &str,
@@ -71,5 +74,73 @@ pub(super) fn load_plain(
     device: &Device,
     dtype: DType,
 ) -> candle_core::Result<Tensor> {
-    vb.get(shape, name)?.to_device(device)?.to_dtype(dtype)
+    vb.get_with_hints_dtype(shape, name, Default::default(), dtype)?
+        .to_device(device)
+}
+
+/// The checkpoint's safetensors, read so that narrowing a tensor never holds
+/// a wide copy of it.
+///
+/// candle's own backend loads a tensor at its stored precision and converts it
+/// afterwards, so narrowing an f32 checkpoint's embedding table to bf16 first
+/// allocates the whole table at f32 — over half a gigabyte that macOS's
+/// allocator keeps after it is freed, for the life of the process. This reads
+/// an f32 tensor asked for at bf16 element by element straight out of the
+/// mapping, with the same rounding candle's conversion uses, and hands every
+/// other read to candle unchanged.
+pub(super) struct NarrowingSafetensors(MmapedSafetensors);
+
+impl NarrowingSafetensors {
+    /// Maps the file and reads its header.
+    ///
+    /// # Safety
+    ///
+    /// As [`MmapedSafetensors::new`]: the file must not change while mapped.
+    pub(super) unsafe fn new(path: &std::path::Path) -> candle_core::Result<Self> {
+        // SAFETY: the caller's promise is the one the mapping needs.
+        Ok(Self(unsafe { MmapedSafetensors::new(path)? }))
+    }
+}
+
+impl SimpleBackend for NarrowingSafetensors {
+    fn get(
+        &self,
+        shape: Shape,
+        name: &str,
+        init: Init,
+        dtype: DType,
+        device: &Device,
+    ) -> candle_core::Result<Tensor> {
+        let view = self.0.get(name)?;
+        if dtype != DType::BF16 || DType::try_from(view.dtype())? != DType::F32 {
+            return SimpleBackend::get(&self.0, shape, name, init, dtype, device);
+        }
+        if view.shape() != shape.dims() {
+            candle_core::bail!(
+                "shape mismatch for {name}: expected {shape:?}, got {:?}",
+                view.shape()
+            );
+        }
+        let narrowed: Vec<half::bf16> = view
+            .data()
+            .chunks_exact(4)
+            .map(|bytes| {
+                half::bf16::from_f32(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            })
+            .collect();
+        Tensor::from_vec(narrowed, shape, &Device::Cpu)?.to_device(device)
+    }
+
+    fn get_unchecked(
+        &self,
+        name: &str,
+        dtype: DType,
+        device: &Device,
+    ) -> candle_core::Result<Tensor> {
+        SimpleBackend::get_unchecked(&self.0, name, dtype, device)
+    }
+
+    fn contains_tensor(&self, name: &str) -> bool {
+        SimpleBackend::contains_tensor(&self.0, name)
+    }
 }

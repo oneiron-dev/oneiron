@@ -386,11 +386,14 @@ impl ServeConfig {
         // refuses any embedder whose `model_id` disagrees with what the vault
         // already holds, which is the door that keeps one vault to one space.
         // No `fast_dims`: the default local model has no MRL to truncate to.
-        config.embedding_model = self
+        let embedder = self
             .embedder
             .as_ref()
-            .filter(|embedder| embedder.is_active())
-            .map(|embedder| embedder.model_id.clone());
+            .filter(|embedder| embedder.is_active());
+        config.embedding_model = embedder.map(|embedder| embedder.model_id.clone());
+        // Beside it, how the embedder turns that model's output into stored
+        // vectors, when the section says so before the provider loads.
+        config.embedding_transform = embedder.and_then(crate::embedder::declared_transform);
         config
     }
 

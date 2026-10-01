@@ -10,7 +10,7 @@ use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::store::{MODEL_ID_KEY, validate_embedding_model_id};
+use crate::store::{EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, validate_embedding_model_id};
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -148,41 +148,139 @@ impl Vault {
         Ok(ids)
     }
 
-    /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every persisted claim for refill.
+    /// Atomically switches embedding spaces, invalidates in-flight async-fill tokens, and schedules every embeddable record for refill.
+    ///
+    /// Claims and epoch summaries are queued for the embedding worker. Every
+    /// other record that held a vector is embedded again at idle from its
+    /// published revision, which stays as it is
+    /// ([`Self::refresh_indexed_at_idle`]).
+    ///
+    /// A vault already pinned to `new_model` is left as it is. A move to
+    /// another model drops the stored embedding transform with the old
+    /// model's vectors.
     pub fn begin_embedding_migration(&mut self, new_model: &str) -> Result<()> {
+        self.swap_embedding_space(new_model, None, false)
+    }
+
+    /// [`Self::begin_embedding_migration`] to a model and the embedding
+    /// transform the host now declares, both repinned in the same
+    /// transaction. Swaps when either differs from what the vault holds.
+    pub fn migrate_embedding_space(&mut self, new_model: &str, transform: &str) -> Result<()> {
+        self.swap_embedding_space(new_model, Some(transform), false)
+    }
+
+    /// The same atomic swap under the pins the vault already holds: every
+    /// vector dropped and every embeddable record scheduled again.
+    ///
+    /// For a host whose embedding output changed in a way neither pin names.
+    /// Requires the vault's configured embedding model.
+    pub fn refill_embedding_space(&mut self) -> Result<()> {
+        let model = self.config.embedding_model.clone().ok_or_else(|| {
+            Error::InvalidConfig("refilling the embedding space requires an embedding model".into())
+        })?;
+        let transform = self.config.embedding_transform.clone();
+        self.swap_embedding_space(&model, transform.as_deref(), true)
+    }
+
+    /// Checks a transform the host only learns after open — a local model
+    /// whose files arrive after the vault opened — against the pinned one:
+    /// adopted where none is pinned, refused (`EmbeddingTransformChanged`)
+    /// where another is.
+    pub fn adopt_embedding_transform(&self, transform: &str) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            crate::store::admit_embedding_transform_in_txn(&self.store, wtxn, transform)
+        })
+    }
+
+    /// `transform: None` keeps the stored transform under the same model and
+    /// drops it under another. `refill` swaps even when nothing differs.
+    ///
+    /// Every success leaves this handle on the pins the vault holds, a vault
+    /// already there included: a handle another process migrated past is
+    /// current again, and no vector is dropped for it.
+    fn swap_embedding_space(
+        &mut self,
+        new_model: &str,
+        transform: Option<&str>,
+        refill: bool,
+    ) -> Result<()> {
+        let held = self.with_write_txn(|wtxn| {
+            self.swap_embedding_space_in_txn(wtxn, new_model, transform, refill)
+        })?;
+        self.config.embedding_model = Some(new_model.to_owned());
+        self.config.embedding_transform = held;
+        Ok(())
+    }
+
+    /// The swap itself, in the caller's transaction. Returns the transform the
+    /// vault holds after it.
+    pub(crate) fn swap_embedding_space_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_model: &str,
+        transform: Option<&str>,
+        refill: bool,
+    ) -> Result<Option<String>> {
         validate_embedding_model_id(new_model)?;
-        let new_model = new_model.to_owned();
-        let changed = self.with_write_txn(|wtxn| {
-            match self.store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
-                Some(raw)
-                    if std::str::from_utf8(&raw)
-                        .map_err(|_| Error::CorruptedIndex("model id"))?
-                        == new_model =>
-                {
-                    return Ok(false);
-                }
-                Some(_) | None => {}
-            }
+        let stored_utf8 = |key: &[u8], what: &'static str| -> Result<Option<String>> {
             self.store
                 .hnsw_meta
-                .put(wtxn, MODEL_ID_KEY, new_model.as_bytes())?;
-            hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
-            hnsw::increment_vector_version(&self.store, wtxn)?;
-            hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
+                .get(&*wtxn, key)?
+                .map(|raw| {
+                    std::str::from_utf8(&raw)
+                        .map(str::to_owned)
+                        .map_err(|_| Error::CorruptedIndex(what))
+                })
+                .transpose()
+        };
+        let same_model = stored_utf8(MODEL_ID_KEY, "model id")?.as_deref() == Some(new_model);
+        let stored_transform = stored_utf8(EMBEDDING_TRANSFORM_KEY, "embedding transform")?;
+        let same_transform = transform.is_none() || stored_transform.as_deref() == transform;
+        if same_model && same_transform && !refill {
+            return Ok(stored_transform);
+        }
+        self.store
+            .hnsw_meta
+            .put(wtxn, MODEL_ID_KEY, new_model.as_bytes())?;
+        let pinned_transform = match transform {
+            Some(transform) => {
+                self.store
+                    .hnsw_meta
+                    .put(wtxn, EMBEDDING_TRANSFORM_KEY, transform.as_bytes())?;
+                Some(transform.to_owned())
+            }
+            None if same_model => stored_transform,
+            None => {
+                self.store.hnsw_meta.delete(wtxn, EMBEDDING_TRANSFORM_KEY)?;
+                None
+            }
+        };
+        // What the worker does not refill is refilled at idle from its
+        // published revision; marked while the vectors still say who had one.
+        crate::vault::entity_revision::schedule_vector_refills(self, wtxn)?;
+        hnsw::clear_hnsw_graph_in_txn(&self.store, wtxn)?;
+        hnsw::increment_vector_version(&self.store, wtxn)?;
+        hnsw::increment_embedding_model_epoch(&self.store, wtxn)?;
+        // The sweep below queues the work where the build has a queue. A
+        // build without one marks the records only, and leaves the queueing
+        // to the next serving open, which runs it from this marker (cold
+        // attach).
+        if cfg!(feature = "sync") {
             self.store
                 .hnsw_meta
                 .delete(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY)?;
-            crate::embed::remark_all_claims_pending_in_txn(
-                self,
-                wtxn,
-                crate::embed::EMBED_PRIORITY_BACKFILL,
-            )?;
-            Ok(true)
-        })?;
-        if changed {
-            self.config.embedding_model = Some(new_model);
+        } else {
+            self.store
+                .hnsw_meta
+                .put(wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
         }
-        Ok(())
+        crate::vault::entity_revision::drop_staged_vectors(&self.store, wtxn)?;
+        crate::embed::remark_all_embeddable_pending_in_txn(
+            self,
+            wtxn,
+            crate::embed::EMBED_PRIORITY_BACKFILL,
+        )?;
+        Ok(pinned_transform)
     }
 
     /// Executes a closure within a single LMDB write transaction.

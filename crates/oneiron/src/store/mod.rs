@@ -48,7 +48,10 @@
 //! 6. **`preflight_embedding_model`** — `hnsw_meta["model_id"]` (UTF-8).
 //!    Stored ≠ requested → [`EmbeddingModelChanged`]; a populated vault whose
 //!    stored id is missing, or a populated vault opened without a requested
-//!    model → [`InvalidConfig`].
+//!    model → [`InvalidConfig`]. Then **`preflight_embedding_transform`** —
+//!    `hnsw_meta["embedding_transform"]` (UTF-8), only when a transform is
+//!    requested: stored ≠ requested → `EmbeddingTransformChanged`; none
+//!    stored → the requested one is written.
 //! 7. `migrate_temporal_long_intervals_if_needed`
 //!    (`hnsw_meta["temporal_long_intervals_schema_version"]`), then the
 //!    persist-if-missing writes for the HNSW config / model id validated above

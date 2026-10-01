@@ -46,6 +46,177 @@ fn an_empty_section_selects_the_local_provider_and_pins_the_space() {
     );
 }
 
+/// The default space is the default model's files, end to end, and nothing is
+/// said about a query instruction: the model's own files decide it.
+#[test]
+fn the_default_space_is_the_default_models_files() {
+    let resolved = resolve("dimensions = 1024\n\n[embedder]\n").expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.model_id, super::embedder::DEFAULT_MODEL_ID);
+    assert_eq!(
+        embedder.model_id,
+        format!("{}@{}", embedder.local.repo, embedder.local.revision),
+        "the default space id spells its repository and commit"
+    );
+    assert_eq!(embedder.dimensions, super::embedder::DEFAULT_DIMENSIONS);
+    assert_eq!(embedder.query_instruction, None);
+    assert_eq!(embedder.query_prompt_name, None);
+    assert_eq!(embedder.local.attention, super::EmbedderAttention::Auto);
+    assert_eq!(
+        embedder.local.output_quantization,
+        super::EmbedderOutputQuantization::Int8
+    );
+}
+
+const HARRIER: &str = "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee";
+
+/// A config that names a space and not its files means that space's own
+/// files. This is the shape `init` writes, so a vault created under the
+/// earlier default keeps being filled by the earlier default's weights after
+/// the default moves.
+#[test]
+fn naming_a_space_selects_its_own_files() {
+    let resolved = resolve(&format!(
+        "dimensions = 1024\n\n[embedder]\nprovider = \"local\"\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\n"
+    ))
+    .expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.local.repo, "microsoft/harrier-oss-v1-0.6b");
+    assert_eq!(
+        embedder.local.revision,
+        "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
+    );
+    assert_eq!(
+        resolved.vault_config().embedding_model.as_deref(),
+        Some(HARRIER)
+    );
+}
+
+/// Files named beside the space must be the space's own, in the same layer or
+/// a later one: a vault pinned to one model must never be filled from another
+/// model's files under the first one's name.
+#[test]
+fn files_that_disagree_with_the_named_space_are_refused() {
+    let in_config_error = |error: anyhow::Error| {
+        matches!(
+            error.downcast_ref::<oneiron::Error>(),
+            Some(oneiron::Error::InvalidConfig(_))
+        )
+    };
+    let (_dir, args) = config_file(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\nrepo = \"mirror/harrier\"\n"
+    ));
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .expect_err("a repository other than the space's is refused");
+    assert!(in_config_error(error));
+
+    // The default space, with another model's files named from argv.
+    let (_dir, mut args) = config_file("dimensions = 1024\n\n[embedder]\ndimensions = 1024\n");
+    args.embedder.embedder_model_id = Some(super::embedder::DEFAULT_MODEL_ID.to_owned());
+    args.embedder.embedder_repo = Some("microsoft/harrier-oss-v1-0.6b".to_owned());
+    args.embedder.embedder_revision = Some("f9b9dc8d367d443f2479d27aa5d8d2850c0774ee".to_owned());
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .expect_err("another model's files under the default space are refused");
+    assert!(in_config_error(error));
+
+    // A later layer's revision alone still has to match the space.
+    let (_dir, mut args) = config_file(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\n"
+    ));
+    args.embedder.embedder_revision = Some("mirrored".to_owned());
+    let error = resolve_serve_config_with_sources(&args, EnvConfig::default(), None)
+        .expect_err("another commit under the same space is refused");
+    assert!(in_config_error(error));
+}
+
+/// Files named without a space name the space they fill; files named with
+/// their own space resolve as named.
+#[test]
+fn named_files_name_their_own_space() {
+    let resolved = resolve(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nrepo = \"microsoft/harrier-oss-v1-0.6b\"\nrevision = \"f9b9dc8d367d443f2479d27aa5d8d2850c0774ee\"\n",
+    )
+    .expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.model_id, HARRIER);
+    assert_eq!(
+        resolved.vault_config().embedding_model.as_deref(),
+        Some(HARRIER)
+    );
+
+    let resolved = resolve(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodel_id = \"{HARRIER}\"\nrepo = \"microsoft/harrier-oss-v1-0.6b\"\nrevision = \"f9b9dc8d367d443f2479d27aa5d8d2850c0774ee\"\n"
+    ))
+    .expect("a space and its own files resolve");
+    assert_eq!(
+        resolved.embedder.as_ref().expect("section").model_id,
+        HARRIER
+    );
+}
+
+/// Only the local provider declares a transform. An endpoint declares none —
+/// its `model_id` is the whole promise — and `none` pins nothing; a local
+/// model whose files are not on this host yet is checked once they arrive.
+#[test]
+fn the_vault_pins_a_transform_for_what_the_section_can_declare() {
+    let endpoint = resolve(
+        "dimensions = 1024\n\n[embedder]\nprovider = \"endpoint\"\ndimensions = 1024\nendpoint = \"http://127.0.0.1:1234/v1\"\nmodel_key = \"k\"\nmodel_id = \"test/remote@v1\"\n",
+    )
+    .expect("resolves");
+    assert_eq!(endpoint.vault_config().embedding_transform, None);
+    let none = resolve("dimensions = 1024\n\n[embedder]\nprovider = \"none\"\n").expect("resolves");
+    assert_eq!(none.vault_config().embedding_transform, None);
+    let dir = tempfile::tempdir().expect("models root");
+    let local = resolve(&format!(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmodels_dir = {:?}\n",
+        dir.path()
+    ))
+    .expect("resolves");
+    assert_eq!(local.vault_config().embedding_transform, None);
+}
+
+/// The keys that override a checkpoint's own declaration resolve from the
+/// file, the environment and argv like every other key.
+#[test]
+fn the_model_shape_overrides_resolve_through_every_layer() {
+    let resolved = resolve(
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\nattention = \"bidirectional\"\noutput_quantization = \"binary\"\nquery_prompt_name = \"web_search_query\"\nquery_instruction = \"\"\n",
+    )
+    .expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(
+        embedder.local.attention,
+        super::EmbedderAttention::Bidirectional
+    );
+    assert_eq!(
+        embedder.local.output_quantization,
+        super::EmbedderOutputQuantization::Binary
+    );
+    assert_eq!(
+        embedder.query_prompt_name.as_deref(),
+        Some("web_search_query")
+    );
+    assert_eq!(embedder.query_instruction.as_deref(), Some(""));
+
+    let (_dir, mut args) =
+        config_file("dimensions = 1024\n\n[embedder]\nattention = \"bidirectional\"\n");
+    let env = EnvConfig::from_pairs([
+        ("ONEIRON_EMBEDDER_ATTENTION", "causal"),
+        ("ONEIRON_EMBEDDER_QUERY_PROMPT_NAME", "query"),
+    ])
+    .expect("env");
+    args.embedder.embedder_output_quantization = Some(super::EmbedderOutputQuantization::Binary);
+    let resolved = resolve_serve_config_with_sources(&args, env, None).expect("resolves");
+    let embedder = resolved.embedder.as_ref().expect("a section is present");
+    assert_eq!(embedder.local.attention, super::EmbedderAttention::Causal);
+    assert_eq!(embedder.query_prompt_name.as_deref(), Some("query"));
+    assert_eq!(
+        embedder.local.output_quantization,
+        super::EmbedderOutputQuantization::Binary
+    );
+    assert!(resolve("dimensions = 1024\n\n[embedder]\nattention = \"sideways\"\n").is_err());
+}
+
 /// `provider = "none"` is the section stated rather than absent: it resolves,
 /// and it pins no space.
 #[test]
@@ -123,20 +294,6 @@ fn bf16_weights_on_a_cpu_device_are_refused() {
     .expect_err("bf16 on the CPU is refused")
     .to_string();
     assert!(error.contains("quant"), "{error}");
-}
-
-/// The model's rotary tables stop at its context window, so a cap above it is
-/// refused here rather than in the middle of a forward pass.
-#[test]
-fn an_input_cap_above_the_models_context_window_is_refused_with_both_numbers() {
-    let error =
-        resolve("dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmax_input_tokens = 40000\n")
-            .expect_err("a cap above the context window is refused")
-            .to_string();
-    assert!(error.contains("40000"), "{error}");
-    assert!(error.contains("32768"), "{error}");
-    resolve("dimensions = 1024\n\n[embedder]\ndimensions = 1024\nmax_input_tokens = 32768\n")
-        .expect("a cap at the window resolves");
 }
 
 #[test]

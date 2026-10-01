@@ -84,6 +84,12 @@ fn validate_vector(
     vector: &[f32],
 ) -> Result<()> {
     crate::store::ensure_model_id_for_vector_write(store, wtxn, config.embedding_model.as_deref())?;
+    // The transform this handle was opened with, against the vault's pin as
+    // this transaction sees it: another process may have migrated the vault
+    // since. `None` declares nothing and is not checked.
+    if let Some(transform) = config.embedding_transform.as_deref() {
+        crate::store::admit_embedding_transform_in_txn(store, wtxn, transform)?;
+    }
     if vector.len() != config.dimensions {
         return Err(Error::DimensionMismatch {
             expected: config.dimensions,

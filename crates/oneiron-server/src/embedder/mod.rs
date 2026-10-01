@@ -57,25 +57,27 @@ impl EmbedderCommon {
         Self {
             model_id: config.model_id.clone(),
             dimensions: config.dimensions,
-            query_instruction: config.query_instruction.clone(),
+            query_instruction: config.query_instruction.clone().unwrap_or_default(),
         }
     }
 
-    /// The query text a provider actually embeds.
+    /// The query text an endpoint embeds: the configured instruction, if any,
+    /// then the query.
     fn query_text(&self, text: &str) -> String {
         format!("{}{text}", self.query_instruction)
     }
 
-    /// The document text a provider actually embeds: the engine's canonical
-    /// projection, with no instruction prefix. The model's instruction is a
-    /// query-side asymmetry, and prefixing a document would put the corpus in
-    /// a different place in the space than every bench measured.
+    /// The document text a provider embeds: the engine's canonical projection,
+    /// with no instruction of the server's own. Only a prompt the model itself
+    /// declares for documents goes in front of it, and only the local provider,
+    /// which reads the model's files, knows one.
     fn document_text(&self, input: &PendingEmbeddingInput) -> oneiron::Result<String> {
         let text = payload_text(&input.payload)?;
-        if text.trim().is_empty() {
-            // A pending row with no text has nothing to embed, and a zero
-            // vector would be a lie that retrieval would then rank. The write
-            // path is not supposed to mark such a row.
+        if text.chars().all(|c| c.is_whitespace() || c.is_control()) {
+            // A row of whitespace and control characters alone has nothing to
+            // embed, and a zero vector would be a lie that retrieval would then
+            // rank. The engine never leases such a row: it retires it as stale
+            // work, so the rest of its batch still fills.
             return Err(oneiron::Error::InvariantViolation(
                 "a pending embedding row projected to empty text",
             ));
@@ -209,12 +211,21 @@ impl EmbedderSlot {
     /// verification and the load-plus-quantise, so this blocks for seconds to
     /// minutes and belongs on a blocking thread. Idempotent: once ready, it
     /// returns the same provider.
-    pub(crate) fn ensure_ready(&self) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
+    ///
+    /// `admit` sees the loaded model's transform descriptor before the
+    /// provider serves anything, and its refusal leaves the slot not ready: a
+    /// model whose files only arrived after the vault opened is checked
+    /// against the vault's pinned transform here rather than at open.
+    pub(crate) fn ensure_ready(
+        &self,
+        admit: impl FnOnce(&str) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
             return Ok(Arc::clone(ready));
         }
-        let embedder =
-            local::LocalEmbedder::load(&self.config, &self.models)? as Arc<dyn QueryEmbedder>;
+        let local = local::LocalEmbedder::load(&self.config, &self.models)?;
+        admit(local.transform())?;
+        let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
         // `set` loses a race; the winner is the one every caller must see.
         Ok(self.ready.get().map_or(embedder, Arc::clone))
@@ -229,6 +240,41 @@ impl EmbedderSlot {
             tracing::warn!(?error, "query embedding failed");
             EmbedQueryRefusal::Failed
         })
+    }
+}
+
+/// The embedding-transform descriptor a vault pins for this section, when it
+/// is known before the provider loads.
+///
+/// Only the local provider declares one: read from the model's files when
+/// they are on this host, complete and verified, and from the loaded model
+/// otherwise ([`EmbedderSlot::ensure_ready`]).
+///
+/// An endpoint declares none, and so neither writes nor checks one: a vault
+/// moves between the local provider and an endpoint serving the same
+/// `model_id` without a reembed, and the descriptor the local provider pinned
+/// stays in the vault for its return. The endpoint's `model_id` is the promise
+/// that it makes the same vectors — the same document embedding function, not
+/// only the same weights — which nothing on the wire can check. `none` pins
+/// nothing either.
+pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
+    match config.provider {
+        EmbedderProvider::None | EmbedderProvider::Endpoint => None,
+        EmbedderProvider::Local => local::transform_on_disk(config),
+    }
+}
+
+/// The descriptor a vault moves to under this section, resolved now: the
+/// local provider's from its model's verified metadata, fetching those small
+/// files when they are not on this host (never the weights); `None` for an
+/// endpoint and for `none`, which declare none.
+///
+/// An error means the local model's metadata could not be fetched, verified
+/// or read, and the transform it makes is unknown.
+pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
+    match config.provider {
+        EmbedderProvider::None | EmbedderProvider::Endpoint => Ok(None),
+        EmbedderProvider::Local => local::resolve_transform(config).map(Some),
     }
 }
 

@@ -327,22 +327,38 @@ fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
     );
 }
 
+/// An endpoint has no model files to read a prompt from: a query carries
+/// exactly the configured instruction, and nothing when none is configured,
+/// whichever model the space names.
 #[test]
-fn a_query_carries_exactly_the_instruction_prefix() {
+fn a_query_carries_exactly_the_configured_instruction() {
     let mock = MockEndpoint::start(MockBehaviour::Ok);
-    let embedder = mock.embedder();
-    embedder
-        .embed_query("what did we decide")
-        .expect("embedded");
-    let requests = mock.requests();
-    assert_eq!(
-        requests[0]["input"],
-        json!([format!(
-            "{}what did we decide",
-            crate::config::embedder::DEFAULT_QUERY_INSTRUCTION
-        )]),
-        "a query carries exactly the configured instruction and nothing else"
-    );
+    for (model_id, configured) in [
+        (
+            "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+            None,
+        ),
+        (crate::config::embedder::DEFAULT_MODEL_ID, None),
+        ("test/model@rev", Some("Represent this question: ")),
+    ] {
+        let config = EmbedderConfig {
+            model_id: model_id.to_owned(),
+            query_instruction: configured.map(str::to_owned),
+            ..endpoint_config(&mock.base)
+        };
+        endpoint::HttpEmbedder::from_config(&config)
+            .expect("http embedder")
+            .embed_query("what did we decide")
+            .expect("embedded");
+        assert_eq!(
+            mock.requests().last().expect("a request")["input"],
+            json!([format!(
+                "{}what did we decide",
+                configured.unwrap_or_default()
+            )]),
+            "{model_id}: a query carries exactly its instruction and nothing else"
+        );
+    }
 }
 
 #[test]
@@ -710,7 +726,9 @@ fn attaching_a_provider_to_a_populated_vault_backfills_every_row() {
     let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
         .expect("slot resolves")
         .expect("an endpoint slot exists");
-    let embedder = slot.ensure_ready().expect("endpoint is ready at once");
+    let embedder = slot
+        .ensure_ready(|_| Ok(()))
+        .expect("endpoint is ready at once");
     let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
         Arc::clone(&vault),
         embedder as Arc<dyn oneiron::embed::Embedder>,
@@ -1118,7 +1136,7 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
     let slot = EmbedderSlot::from_config(embedder).unwrap().unwrap();
     let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
         Arc::clone(&vault),
-        slot.ensure_ready().unwrap() as Arc<dyn oneiron::embed::Embedder>,
+        slot.ensure_ready(|_| Ok(())).unwrap() as Arc<dyn oneiron::embed::Embedder>,
     )
     .with_remote_rung(build_remote_rung(embedder).unwrap().unwrap())
     .unwrap();
@@ -1152,7 +1170,7 @@ fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
     let mut config = endpoint_config(&mock.base);
     config.batch_size = 1;
     let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
-    slot.ensure_ready().unwrap();
+    slot.ensure_ready(|_| Ok(())).unwrap();
     vault.set_indexed_idle_delay_ms(0).unwrap();
     let document = oneiron::EntityId::now();
     let vector = mock_vector("staged revision", DIMS);
