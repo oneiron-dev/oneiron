@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/0.9.3`](https://github.com/oneiron-dev/formualizer/tree/oneiron/0.9.3) | `adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `57a7f6cbabdde4057ea37e6d2180bfe93739d6eb` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,24 +51,33 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "adc4743f909ccbe54a6a590fe1a0b0f1bdad9e95" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
 ```
 
-Fork commit on `oneiron/0.9.3`, over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.2), over `362becff`:
 
-- `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1": `formualizer-eval/src/interpreter.rs`
-  propagates a typed error on either side of `&`, in both the AST and the arena paths, before
-  text coercion. Literal text `"#N/A"` stays text. `crates/oneiron-xlsx-formula/tests/error_concat.rs`
-  pins it.
+- `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
+  `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
+  the AST and the arena paths, before text coercion. Literal text `"#N/A"` stays text.
+  `crates/oneiron-xlsx-formula/tests/error_concat.rs` pins it.
+- `adc4743f..57a7f6cb`, 68 commits (ONE-2700 part 1, the Excel parity loop, September 2026):
+  Excel semantics in general, never a per-case answer, each kept only when neither score
+  dropped. At `57a7f6cb` the fork matches Excel 16.112 on 809 of the 811 pinned cases (754 at
+  `adc4743f`) and on 2,700 of the 2,951 SpreadsheetBench workbooks (753 at `adc4743f`, where
+  xlsx admission refused most of the corpus: Office growth-hint ZIP extras, single-cell array
+  and dynamic-array formulas). The two pinned misses are recording artifacts (DOLLAR carries
+  the recording Mac's yen locale; a FILTER `#CALC!` cached as `#VALUE!` in the xlsx). Examples:
+  UNIQUE by column, CELL("filename"), trimmed text criteria, ROUND on 15-digit decimals,
+  HYPERLINK numeric friendly names, TREND/GROWTH result shapes.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.1`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.2`.
 
 ## Licences and attribution
 
