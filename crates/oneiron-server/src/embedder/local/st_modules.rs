@@ -97,6 +97,11 @@ impl ModulePath {
         self.0.is_empty()
     }
 
+    /// The path as `modules.json` names it, `""` for the model directory.
+    pub(super) fn as_str(&self) -> &str {
+        &self.0
+    }
+
     /// `file` under this module, as a path within the repository.
     fn file(&self, file: &str) -> String {
         if self.is_root() {
@@ -188,19 +193,29 @@ fn parse_entries(raw: &str) -> oneiron::Result<Declared> {
 }
 
 /// The files `modules.json` says the chain reads, relative to the model
-/// directory. The artifact manager fetches exactly these beside the body's
-/// own, so a checkpoint whose chain is refused is refused before its weights
-/// are downloaded.
-pub(super) fn module_files(raw_modules_json: &str) -> oneiron::Result<Vec<String>> {
+/// directory: each module's config, then each module's weights. The artifact
+/// manager fetches exactly these beside the body's own, so a checkpoint whose
+/// chain is refused is refused before its weights are downloaded.
+pub(super) fn module_files(raw_modules_json: &str) -> oneiron::Result<ModuleFiles> {
     let declared = parse_entries(raw_modules_json)?;
-    let mut files = vec![declared.pooling.file("config.json")];
+    let mut files = ModuleFiles {
+        configs: vec![declared.pooling.file("config.json")],
+        weights: Vec::new(),
+    };
     for step in &declared.post {
         if let Post::Dense(path) = step {
-            files.push(path.file("config.json"));
-            files.push(path.file("model.safetensors"));
+            files.configs.push(path.file("config.json"));
+            files.weights.push(path.file("model.safetensors"));
         }
     }
     Ok(files)
+}
+
+/// What the chain reads, split by what it decides: the configs say how the
+/// chain runs, the weights only what it multiplies by.
+pub(super) struct ModuleFiles {
+    pub(super) configs: Vec<String>,
+    pub(super) weights: Vec<String>,
 }
 
 /// `1_Pooling/config.json`, field for field as sentence-transformers writes it,

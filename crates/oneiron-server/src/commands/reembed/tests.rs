@@ -14,6 +14,16 @@ const DIMS: usize = 4;
 const OLD: &str = "test/old@v1";
 const NEW: &str = "test/new@v2";
 
+/// The committed metadata of a four-wide model: bidirectional, mean pooled,
+/// normalised. Read in place, as an operator's `model_dir` is.
+const TINY_FILES: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/embed/models/tiny"
+);
+/// The transform those files declare.
+const TINY: &str =
+    "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=normalize;dims=4";
+
 /// Embeds every input as one unit vector of `dimensions`, in one space.
 struct FixtureEmbedder {
     model: &'static str,
@@ -40,7 +50,8 @@ impl Embedder for FixtureEmbedder {
     }
 }
 
-/// What `serve` resolves for a vault at `path` whose embedder names `model`.
+/// What `serve` resolves for a vault at `path` whose embedder names `model`,
+/// read from the four-wide model's files.
 fn serve_config(path: &Path, model: &str) -> ServeConfig {
     ServeConfig {
         vault_path: path.to_path_buf(),
@@ -49,6 +60,10 @@ fn serve_config(path: &Path, model: &str) -> ServeConfig {
             provider: EmbedderProvider::Local,
             model_id: model.to_owned(),
             dimensions: DIMS,
+            local: LocalEmbedderConfig {
+                model_dir: Some(TINY_FILES.into()),
+                ..LocalEmbedderConfig::default()
+            },
             ..EmbedderConfig::default()
         }),
         ..ServeConfig::default()
@@ -139,7 +154,7 @@ fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
         ReembedOutcome {
             from: Some(OLD.to_owned()),
             to: NEW.to_owned(),
-            transform: None,
+            transform: Some(TINY.to_owned()),
             migrated: true,
         }
     );
@@ -163,7 +178,7 @@ fn a_vault_filled_in_one_space_moves_to_the_configured_one_and_refills() {
         ReembedOutcome {
             from: None,
             to: NEW.to_owned(),
-            transform: None,
+            transform: Some(TINY.to_owned()),
             migrated: false,
         },
         "a vault already in the configured space is left as it is"
@@ -208,7 +223,7 @@ fn a_forced_reembed_refills_a_vault_already_in_the_configured_space() {
         ReembedOutcome {
             from: None,
             to: NEW.to_owned(),
-            transform: None,
+            transform: Some(TINY.to_owned()),
             migrated: true,
         }
     );
@@ -235,10 +250,27 @@ fn a_model_of_another_width_is_refused_and_the_vault_left_alone() {
         fill(&vault, OLD);
         id
     };
+    // The four-wide model's files, twice as wide.
+    let wide_files = tempfile::tempdir().expect("model dir");
+    for file in ["config.json", "modules.json", "1_Pooling/config.json"] {
+        let raw = std::fs::read_to_string(Path::new(TINY_FILES).join(file)).expect("read");
+        let target = wide_files.path().join(file);
+        std::fs::create_dir_all(target.parent().expect("parent")).expect("module dir");
+        std::fs::write(
+            target,
+            raw.replace("\"hidden_size\": 4", "\"hidden_size\": 8")
+                .replace(
+                    "\"word_embedding_dimension\": 4",
+                    "\"word_embedding_dimension\": 8",
+                ),
+        )
+        .expect("write");
+    }
     let mut wider = serve_config(dir.path(), NEW);
     wider.dimensions = DIMS * 2;
     if let Some(embedder) = wider.embedder.as_mut() {
         embedder.dimensions = DIMS * 2;
+        embedder.local.model_dir = Some(wide_files.path().to_path_buf());
     }
     let error = reembed_with_config(&wider, false).expect_err("another width is refused");
     assert_eq!(
@@ -309,10 +341,11 @@ fn refusal_kind(config: &ServeConfig) -> Option<oneiron::ErrorKind> {
 }
 
 /// Opens a vault under `config`, writes a claim and fills it.
-fn filled(config: &ServeConfig) {
+fn filled(config: &ServeConfig) -> oneiron::EntityId {
     let vault = open(config).expect("the vault opens");
-    put_claim(&vault, "claim");
+    let id = put_claim(&vault, "claim");
     assert!(fill_at(&vault, OLD, WIDE) >= 1);
+    id
 }
 
 /// Changing how the model's output becomes a vector, under the same model,
@@ -407,5 +440,100 @@ fn a_vault_without_a_pinned_transform_adopts_the_configured_one() {
     assert_eq!(
         refusal_kind(&local_config(dir.path(), EmbedderAttention::Causal)),
         Some(oneiron::ErrorKind::EmbeddingTransformChanged)
+    );
+}
+
+/// `reembed` never decides on a transform it has not resolved. A host
+/// without the configured model's metadata, configured for a transform the
+/// vault does not hold, is refused before the vault is touched — with or
+/// without `--force` — rather than reporting the vault current, or dropping
+/// its vectors under the pin it already holds.
+#[test]
+fn reembed_refuses_a_target_whose_transform_it_cannot_resolve() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    let id = filled(&own);
+    let empty = tempfile::tempdir().expect("no model files");
+    let mut unresolved = local_config(dir.path(), EmbedderAttention::Causal);
+    if let Some(embedder) = unresolved.embedder.as_mut() {
+        embedder.local.model_dir = Some(empty.path().to_path_buf());
+    }
+    assert_eq!(
+        unresolved.vault_config().embedding_transform,
+        None,
+        "nothing to read at open"
+    );
+    for force in [false, true] {
+        let error = reembed_with_config(&unresolved, force).expect_err("unresolved is refused");
+        assert_eq!(
+            error
+                .downcast_ref::<oneiron::Error>()
+                .map(oneiron::Error::kind),
+            Some(oneiron::ErrorKind::InvalidConfig)
+        );
+    }
+    let vault = open(&own).expect("the vault opens in its own transform");
+    assert!(vault.get_vector(&id).expect("vector read").is_some());
+    drop(vault);
+    assert_eq!(
+        refusal_kind(&local_config(dir.path(), EmbedderAttention::Causal)),
+        Some(oneiron::ErrorKind::EmbeddingTransformChanged),
+        "the pin is the one the vectors were made under"
+    );
+}
+
+/// What `serve` resolves for a vault served by an endpoint under the same
+/// model and width as [`local_config`].
+fn endpoint_config(path: &Path) -> ServeConfig {
+    ServeConfig {
+        vault_path: path.to_path_buf(),
+        dimensions: WIDE,
+        embedder: Some(EmbedderConfig {
+            provider: EmbedderProvider::Endpoint,
+            model_id: OLD.to_owned(),
+            dimensions: WIDE,
+            endpoint: crate::config::EndpointEmbedderConfig {
+                endpoint: Some("http://127.0.0.1:9/v1".to_owned()),
+                model_key: Some("k".to_owned()),
+                ..crate::config::EndpointEmbedderConfig::default()
+            },
+            ..EmbedderConfig::default()
+        }),
+        ..ServeConfig::default()
+    }
+}
+
+/// A route is not a space. A vault filled locally opens under an endpoint
+/// serving the same model, needs no reembed there, and opens locally again
+/// afterwards: the endpoint neither checks nor touches the local descriptor,
+/// which still refuses a local transform the vectors were not made with.
+#[test]
+fn a_vault_moves_between_local_and_an_endpoint_of_the_same_model_without_a_reembed() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let own = local_config(dir.path(), EmbedderAttention::Auto);
+    let id = filled(&own);
+    let endpoint = endpoint_config(dir.path());
+    assert_eq!(
+        refusal_kind(&endpoint),
+        None,
+        "the endpoint opens the vault"
+    );
+    assert_eq!(
+        reembed_with_config(&endpoint, false).expect("reembed"),
+        ReembedOutcome {
+            from: None,
+            to: OLD.to_owned(),
+            transform: None,
+            migrated: false,
+        }
+    );
+    assert_eq!(refusal_kind(&own), None, "back on local, with no reembed");
+    let vault = open(&own).expect("opens");
+    assert!(vault.get_vector(&id).expect("vector read").is_some());
+    drop(vault);
+    assert_eq!(
+        refusal_kind(&local_config(dir.path(), EmbedderAttention::Causal)),
+        Some(oneiron::ErrorKind::EmbeddingTransformChanged),
+        "the local descriptor survived the endpoint"
     );
 }

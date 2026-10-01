@@ -51,9 +51,16 @@ impl LocalModelSpec {
 
     /// The embedding-transform descriptor the vault pins beside the model id:
     /// everything the files and the host's overrides say that moves a stored
-    /// document vector — attention, pooling, the steps after it, the document
-    /// prompt and the width. Query-only settings, weight precision, device and
-    /// batch size move no stored vector and are left out.
+    /// document vector — attention, pooling, each step after it with every
+    /// setting the runtime reads for it (a Dense module's directory, widths,
+    /// activation and bias), the document prompt and the width. Query-only
+    /// settings, weight precision, device and batch size move no stored vector
+    /// and are left out.
+    ///
+    /// The input cap (`max_input_tokens`) is left out on purpose. It decides
+    /// how much of a long document is read, not the space the vector lands in:
+    /// a vector made under another cap is still comparable with every query,
+    /// the same class of difference as weight precision.
     pub(super) fn transform(&self) -> String {
         let attention = if self.body.causal() {
             "causal"
@@ -79,12 +86,14 @@ impl LocalModelSpec {
                 Step::Int8Tanh => "quantize:int8".to_owned(),
                 Step::BinaryTanh => "quantize:binary".to_owned(),
                 Step::Dense {
+                    path,
                     in_features,
                     out_features,
+                    bias,
                     tanh,
-                    ..
                 } => format!(
-                    "dense:{in_features}>{out_features}:{}",
+                    "dense:path={}:{in_features}>{out_features}:{}:bias={bias}",
+                    serde_json::Value::from(path.as_str()),
                     if *tanh { "tanh" } else { "identity" }
                 ),
             })

@@ -109,16 +109,23 @@ runs unpinned. Keys for a checkpoint whose files say less than they should:
 ```
 
 Beside the `model_id`, a vault pins its embedding transform: a descriptor of
-everything that moves a stored vector under the same model. For a local model
-it is read from the model's files and these keys, e.g. the default's
-`attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024`;
-an endpoint's is `endpoint;dims=<n>`; `none` pins nothing. Query settings,
-weight precision, device and batch size are not part of it. Changing
-`attention` or `output_quantization` on a filled vault therefore stops the
-next open (`EmbeddingTransformChanged`) until `oneiron-server reembed` (below)
-re-embeds the vault the new way. A vault from before the pin adopts the
-transform it is first opened with; a local model whose files arrive after
-open is checked once they load.
+everything that moves a stored vector under the same model. A local model's is
+read from the model's files and these keys, e.g. the default's
+`attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024`.
+Query settings, weight precision, device, batch size and `max_input_tokens`
+are not part of it. Changing `attention` or `output_quantization` on a filled
+vault therefore stops the next open (`EmbeddingTransformChanged`) until
+`oneiron-server reembed` (below) re-embeds the vault the new way. A vault from
+before the pin adopts the transform it is first opened with. The descriptor is
+read at open only from model files that are complete and verified; a model
+whose files arrive after open is checked once they load.
+
+An `endpoint` provider pins and checks no transform, and `none` pins nothing. A
+vault moves between `local` and an endpoint serving the same `model_id`
+without a reembed, and keeps the local descriptor for its return. The
+endpoint's `model_id` is therefore a promise about its whole document
+embedding function — attention, pooling, quantisation, document prompt and
+input cap as well as the weights — that nothing on the wire checks.
 
 Harrier's `config_sentence_transformers.json` names its prompts by task
 (`web_search_query`, `sts_query`, `bitext_query`) and sets no default, so
@@ -207,15 +214,19 @@ oneiron-server reembed --config <same config serve reads>
 # {"from":"microsoft/harrier-oss-v1-0.6b@f9b9dc8…","to":"perplexity-ai/pplx-embed-v1-0.6b@2c4d510…","transform":"attn=bidirectional;…","migrated":true}
 ```
 
-`reembed` repins the vault to the configured `model_id` and transform in one
-transaction, drops the vector graph and every staged vector, and queues every
-record that is embedded: claims and epoch summaries. The next `serve` embeds
-them all again in the background; lexical and graph reads answer throughout,
-and semantic results fill in as vectors land. A vault already in the
-configured space is left as it is (`"migrated":false`), unless `--force` asks
-for the same swap under the pins it already holds. A vault's dimensions are
-fixed when it is created: a model of another width needs a new vault, and
-`reembed` says so.
+`reembed` first resolves the transform the configured local model makes from
+its metadata files, fetching and verifying those small files (never the
+weights) when they are not on the host; when they cannot be resolved it stops
+and changes nothing. It then repins the vault to the configured `model_id` and
+transform in one transaction, drops the vector graph and every staged vector,
+and schedules everything that held a vector: claims and epoch summaries are
+queued, and other text records are re-embedded at idle from their published
+revision, which stays as it is. The next `serve` embeds them all again in the
+background; lexical and graph reads answer throughout, and semantic results
+fill in as vectors land. A vault already in the configured space is left as it
+is (`"migrated":false`), unless `--force` asks for the same swap under the
+pins it already holds. A vault's dimensions are fixed when it is created: a
+model of another width needs a new vault, and `reembed` says so.
 
 ## Linear mirror host bridge (opt-in)
 

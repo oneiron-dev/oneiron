@@ -7,9 +7,11 @@
 //! measured is to measure them once and refuse anything else afterwards. Any
 //! other repository runs unpinned.
 //!
-//! Nothing here runs at boot. The worker calls it on its first pass, so a vault
-//! whose model has never been fetched still opens and still answers BM25 while
-//! the download runs (OF-022, the two-tier write rule).
+//! Nothing here fetches at boot. The worker calls it on its first pass, so a
+//! vault whose model has never been fetched still opens and still answers BM25
+//! while the download runs (OF-022, the two-tier write rule). Open only reads
+//! what is already on the host ([`verified_metadata_dir`]); `reembed` fetches
+//! the metadata alone ([`ModelManager::ensure_metadata`]).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -154,17 +156,89 @@ pub(crate) fn pinned_files(config: &LocalEmbedderConfig) -> Option<&'static [Pin
         .map(|model| model.files)
 }
 
-/// The files a checkpoint needs, from its own `modules.json`: the body's
-/// small files, what the chain reads, then the body's tokenizer and weights.
-/// The prompt file is optional and asked for separately.
-pub(crate) fn planned_files(raw_modules_json: &str) -> oneiron::Result<Vec<Cow<'static, str>>> {
+/// What a checkpoint's own `modules.json` says to fetch after the body's
+/// small files, split by what reads it: the module configs the spec is read
+/// from, then what only the loader reads — the module weights, the body's
+/// tokenizer and weights. The prompt file is optional and asked for
+/// separately.
+struct Plan {
+    configs: Vec<Cow<'static, str>>,
+    weights: Vec<Cow<'static, str>>,
+}
+
+fn plan(raw_modules_json: &str) -> oneiron::Result<Plan> {
     let chain = super::st_modules::module_files(raw_modules_json)?;
+    Ok(Plan {
+        configs: chain.configs.into_iter().map(Cow::Owned).collect(),
+        weights: chain
+            .weights
+            .into_iter()
+            .map(Cow::Owned)
+            .chain(TAIL_FILES.iter().map(|file| Cow::Borrowed(*file)))
+            .collect(),
+    })
+}
+
+/// Every file a checkpoint needs, in fetch order: the body's small files,
+/// then the [`Plan`]. The prompt file is optional and asked for separately.
+#[cfg(test)]
+pub(crate) fn planned_files(raw_modules_json: &str) -> oneiron::Result<Vec<Cow<'static, str>>> {
+    let plan = plan(raw_modules_json)?;
     Ok(HEAD_FILES
         .iter()
         .map(|file| Cow::Borrowed(*file))
-        .chain(chain.into_iter().map(Cow::Owned))
-        .chain(TAIL_FILES.iter().map(|file| Cow::Borrowed(*file)))
+        .chain(plan.configs)
+        .chain(plan.weights)
         .collect())
+}
+
+/// Beside an optional file its source answered `404` for: the file is
+/// confirmed absent at this commit, not merely not fetched yet.
+fn absent_marker(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".absent");
+    path.with_file_name(name)
+}
+
+/// The directory holding every metadata file the model's spec is read from —
+/// `config.json`, `modules.json`, each module's config, and the prompt file or
+/// the knowledge that there is none — when all of it is on this host and
+/// passes the checks a fetch applies. `None` otherwise: nothing is fetched
+/// here, and the caller learns the spec once the files have been fetched.
+///
+/// A shipped default's files must match their digests, and its pins say
+/// whether its commit has a prompt file. Any other repository has no digests:
+/// every file must be present, and its prompt file present or confirmed absent
+/// upstream. An operator's `model_dir` is taken as it stands.
+pub(crate) fn verified_metadata_dir(config: &LocalEmbedderConfig) -> Option<PathBuf> {
+    let dir = model_dir(config).ok()?;
+    if config.model_dir.is_some() {
+        return dir.join("modules.json").is_file().then_some(dir);
+    }
+    let pins = pinned_files(config);
+    let checked = |file: Cow<'static, str>| {
+        artifact(pins, file).is_ok_and(|artifact| {
+            let path = dir.join(artifact.file.as_ref());
+            path.is_file() && verify(&path, &artifact).is_ok()
+        })
+    };
+    if !HEAD_FILES.iter().all(|file| checked(Cow::Borrowed(*file))) {
+        return None;
+    }
+    let raw = std::fs::read_to_string(dir.join("modules.json")).ok()?;
+    if !plan(&raw).ok()?.configs.into_iter().all(checked) {
+        return None;
+    }
+    let prompt = Cow::Borrowed(super::prompts::PROMPT_FILE);
+    let prompt_settled = match pins {
+        Some(pins) if pins.iter().any(|pin| pin.file == prompt) => checked(prompt),
+        Some(_) => true,
+        None => {
+            let path = dir.join(prompt.as_ref());
+            path.is_file() || absent_marker(&path).is_file()
+        }
+    };
+    prompt_settled.then_some(dir)
 }
 
 /// One file, with its digest when the checkpoint is a shipped default.
@@ -296,6 +370,15 @@ impl Default for ModelManager {
     }
 }
 
+/// The metadata a fetch made present, and the rest of the [`Plan`] it left
+/// for the caller.
+struct FetchedMetadata {
+    dir: PathBuf,
+    weights: Vec<Cow<'static, str>>,
+    /// Files downloaded rather than found.
+    fetched: usize,
+}
+
 /// What a file looked like when it was verified.
 ///
 /// Size and modification time: enough to notice the file being replaced, and
@@ -346,6 +429,45 @@ impl ModelManager {
         &self,
         config: &LocalEmbedderConfig,
     ) -> oneiron::Result<PathBuf> {
+        let metadata = self.fetch_metadata(config)?;
+        let pins = pinned_files(config);
+        let offline = config.model_dir.is_some();
+        let mut fetched = metadata.fetched;
+        for file in metadata.weights {
+            if self.require(config, &metadata.dir, &artifact(pins, file)?, offline)? {
+                fetched += 1;
+            }
+        }
+        if fetched > 0 {
+            tracing::info!(dir = %metadata.dir.display(), fetched, "embedder model artifacts ready");
+        }
+        Ok(metadata.dir)
+    }
+
+    /// Makes the metadata files present and verified — everything the
+    /// model's spec is read from — and fetches no weights.
+    ///
+    /// `reembed` reads the spec through this before it repins a vault, so it
+    /// never moves a vault to a transform it has not resolved, and never pays
+    /// for a gigabyte it does not need.
+    pub(in crate::embedder) fn ensure_metadata(
+        &self,
+        config: &LocalEmbedderConfig,
+    ) -> oneiron::Result<PathBuf> {
+        let metadata = self.fetch_metadata(config)?;
+        if metadata.fetched > 0 {
+            tracing::info!(
+                dir = %metadata.dir.display(),
+                fetched = metadata.fetched,
+                "embedder model metadata ready"
+            );
+        }
+        Ok(metadata.dir)
+    }
+
+    /// The head files, the prompt file and each module's config, in that
+    /// order; the weights are named for the caller to fetch.
+    fn fetch_metadata(&self, config: &LocalEmbedderConfig) -> oneiron::Result<FetchedMetadata> {
         let dir = model_dir(config)?;
         let offline = config.model_dir.is_some();
         let pins = pinned_files(config);
@@ -356,7 +478,7 @@ impl ModelManager {
             }
         }
         let raw = std::fs::read_to_string(dir.join("modules.json")).map_err(oneiron::Error::Io)?;
-        let plan = planned_files(&raw)?;
+        let plan = plan(&raw)?;
         let prompt = Cow::Borrowed(super::prompts::PROMPT_FILE);
         match pins {
             Some(pins) if pins.iter().any(|pin| pin.file == prompt) => {
@@ -368,17 +490,16 @@ impl ModelManager {
             None if !offline => self.fetch_optional(config, &dir, &artifact(None, prompt)?)?,
             None => {}
         }
-        // The head files again, already verified: a pass over them is a stamp
-        // check, and the plan stays one list.
-        for file in plan {
+        for file in plan.configs {
             if self.require(config, &dir, &artifact(pins, file)?, offline)? {
                 fetched += 1;
             }
         }
-        if fetched > 0 {
-            tracing::info!(dir = %dir.display(), fetched, "embedder model artifacts ready");
-        }
-        Ok(dir)
+        Ok(FetchedMetadata {
+            dir,
+            weights: plan.weights,
+            fetched,
+        })
     }
 
     /// One file that must be there: checked when the operator supplied the
@@ -402,8 +523,11 @@ impl ModelManager {
     }
 
     /// A file the checkpoint may not carry. Absent upstream (`404`) leaves it
-    /// absent; any other failure is an error, because a prompt file that
-    /// exists but did not arrive would put every query in a different place.
+    /// absent, with a marker beside it saying so: a commit never gains a file,
+    /// so the answer is not asked for again, and a reader can tell a file
+    /// confirmed absent from one not fetched yet. Any other failure is an
+    /// error, because a prompt file that exists but did not arrive would put
+    /// every query in a different place.
     fn fetch_optional(
         &self,
         config: &LocalEmbedderConfig,
@@ -411,13 +535,16 @@ impl ModelManager {
         artifact: &PinnedArtifact,
     ) -> oneiron::Result<()> {
         let path = dir.join(artifact.file.as_ref());
-        if path.is_file() {
+        if path.is_file() || absent_marker(&path).is_file() {
             return Ok(());
         }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
         }
         let fetched = download(&self.url(config, artifact), &path, artifact)?;
+        if !fetched {
+            std::fs::write(absent_marker(&path), b"").map_err(oneiron::Error::Io)?;
+        }
         tracing::info!(
             file = %artifact.file,
             present = fetched,

@@ -10,6 +10,11 @@
 //! graph reads keep answering. It runs with the server stopped: the vault's
 //! writer lease admits one process.
 //!
+//! The transform it moves to is resolved before anything is decided: the
+//! local model's metadata files are fetched and verified when they are not on
+//! this host (never its weights), and a transform that cannot be resolved stops
+//! `reembed` before it touches the vault. An endpoint declares no transform.
+//!
 //! `--force` runs the same swap under the pins the vault already holds.
 
 use oneiron::error::StoreError;
@@ -27,7 +32,7 @@ struct ReembedOutcome {
     /// The configured space the vault holds now.
     to: String,
     /// The transform the vault holds now, when the configured embedder
-    /// declares one before it loads.
+    /// declares one: the local provider always does, an endpoint never.
     transform: Option<String>,
     /// Whether every embeddable record was queued to be embedded again.
     migrated: bool,
@@ -46,26 +51,37 @@ pub fn reembed(args: ReembedArgs) -> anyhow::Result<()> {
 /// left as it is unless `force` asks for the swap anyway: opening it under the
 /// configured model is all `serve` needs.
 fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<ReembedOutcome> {
-    let Some(target) = config
+    let Some(embedder) = config
         .embedder
         .as_ref()
         .filter(|embedder| embedder.is_active())
-        .map(|embedder| embedder.model_id.clone())
     else {
         anyhow::bail!(
             "reembed needs an active [embedder] section; its model_id is the space the vault moves to"
         );
     };
+    let target = embedder.model_id.clone();
     if !config.vault_path.join("data.mdb").is_file() {
         anyhow::bail!(
             "vault {} does not exist; refusing to create a new vault for reembed",
             config.vault_path.display()
         );
     }
+    // Known before anything is decided: a vault is never left in, or moved to,
+    // a transform nobody resolved.
+    let transform = crate::embedder::resolve_transform(embedder).map_err(|error| {
+        anyhow::Error::from(error).context(format!(
+            "reembed could not resolve how the configured model {target} makes vectors from its \
+             metadata files (config.json, modules.json, the module configs, the prompt file); \
+             the vault is unchanged. Fix the cause below and run reembed again: on a host that \
+             can reach the model's source, or with embedder.model_dir set to a directory holding \
+             the model's files"
+        ))
+    })?;
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths =
         super::resolve_dict_search_paths(&config.dict_search_paths).paths;
-    let transform = vault_config.embedding_transform.clone();
+    vault_config.embedding_transform.clone_from(&transform);
     let from = match oneiron::Vault::open_owned(&config.vault_path, vault_config.clone()) {
         Ok(mut already) => {
             if force {

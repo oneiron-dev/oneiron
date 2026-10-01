@@ -326,7 +326,8 @@ impl Default for EndpointEmbedderConfig {
 pub struct EmbedderConfig {
     pub remote: Option<super::remote_embedder::RemoteEmbedderConfig>,
     pub provider: EmbedderProvider,
-    /// The vault's embedding space id. Every provider reports exactly this.
+    /// The vault's embedding space id. Every provider reports exactly this. For an endpoint, which
+    /// pins no transform, it promises the whole document embedding function, not only the weights.
     pub model_id: String,
     pub dimensions: usize,
     /// Text prepended to a query and never to a document. Unset, the local

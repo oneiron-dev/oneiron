@@ -246,15 +246,35 @@ impl EmbedderSlot {
 /// The embedding-transform descriptor a vault pins for this section, when it
 /// is known before the provider loads.
 ///
-/// `none` pins nothing. An endpoint makes whatever its server makes, and the
-/// host can say only how wide. The local provider's comes from the model's
-/// files when they are on this host, and from the loaded model otherwise
-/// ([`EmbedderSlot::ensure_ready`]).
+/// Only the local provider declares one: read from the model's files when
+/// they are on this host, complete and verified, and from the loaded model
+/// otherwise ([`EmbedderSlot::ensure_ready`]).
+///
+/// An endpoint declares none, and so neither writes nor checks one: a vault
+/// moves between the local provider and an endpoint serving the same
+/// `model_id` without a reembed, and the descriptor the local provider pinned
+/// stays in the vault for its return. The endpoint's `model_id` is the promise
+/// that it makes the same vectors — the same document embedding function, not
+/// only the same weights — which nothing on the wire can check. `none` pins
+/// nothing either.
 pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
     match config.provider {
-        EmbedderProvider::None => None,
-        EmbedderProvider::Endpoint => Some(format!("endpoint;dims={}", config.dimensions)),
+        EmbedderProvider::None | EmbedderProvider::Endpoint => None,
         EmbedderProvider::Local => local::transform_on_disk(config),
+    }
+}
+
+/// The descriptor a vault moves to under this section, resolved now: the
+/// local provider's from its model's verified metadata, fetching those small
+/// files when they are not on this host (never the weights); `None` for an
+/// endpoint and for `none`, which declare none.
+///
+/// An error means the local model's metadata could not be fetched, verified
+/// or read, and the transform it makes is unknown.
+pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
+    match config.provider {
+        EmbedderProvider::None | EmbedderProvider::Endpoint => Ok(None),
+        EmbedderProvider::Local => local::resolve_transform(config).map(Some),
     }
 }
 

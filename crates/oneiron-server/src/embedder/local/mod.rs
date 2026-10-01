@@ -61,16 +61,22 @@ pub(crate) struct LocalEmbedder {
 }
 
 /// The transform descriptor of the local model as its files on this host
-/// describe it, or `None` when they are not here yet or do not read: the
-/// worker checks the loaded model's once the files arrive.
+/// describe it, read only from metadata that is complete and verified by the
+/// loader's own rules ([`model_manager::verified_metadata_dir`]). `None` when
+/// it is not, or does not read: the worker checks the loaded model's once the
+/// files have been fetched and verified.
 pub(crate) fn transform_on_disk(config: &EmbedderConfig) -> Option<String> {
-    let dir = model_manager::model_dir(&config.local).ok()?;
-    if !dir.join("modules.json").is_file() {
-        return None;
-    }
+    let dir = model_manager::verified_metadata_dir(&config.local)?;
     LocalModelSpec::read(&dir, config)
         .ok()
         .map(|spec| spec.transform())
+}
+
+/// The transform descriptor of the local model, fetching and verifying its
+/// metadata files when they are not on this host. No weights are fetched.
+pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<String> {
+    let dir = model_manager::ModelManager::default().ensure_metadata(&config.local)?;
+    Ok(LocalModelSpec::read(&dir, config)?.transform())
 }
 
 pub(crate) fn prepare(config: &EmbedderConfig) -> oneiron::Result<&'static str> {

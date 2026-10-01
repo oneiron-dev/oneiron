@@ -1030,6 +1030,74 @@ fn each_shipped_model_declares_its_transform_from_its_own_files() {
     assert_ne!(binary.transform(), pplx.transform());
 }
 
+/// A Dense step is pinned by everything the runtime reads for it: the
+/// directory its weights come from, its widths, its activation and its bias.
+/// The input cap is left out on purpose: it changes how much of a document is
+/// read, not the space its vector lands in.
+#[test]
+fn the_transform_names_every_dense_setting_the_runtime_reads_and_not_the_input_cap() {
+    const TANH: &str = "torch.nn.modules.activation.Tanh";
+    let transform = |path: &str, bias: bool, activation: &str| {
+        let dense = format!(
+            r#"{{"idx":2,"name":"2","path":"{path}","type":"sentence_transformers.models.Dense"}}"#
+        );
+        let dir = module_dir(
+            &format!("[{TRANSFORMER},{POOLING},{dense}]"),
+            &[
+                (
+                    "1_Pooling/config.json",
+                    &pooling_config("mean_tokens", true),
+                ),
+                (
+                    &format!("{path}/config.json"),
+                    &format!(
+                        r#"{{"in_features":4,"out_features":2,"bias":{bias},"activation_function":"{activation}"}}"#
+                    ),
+                ),
+            ],
+        );
+        std::fs::copy(
+            model_fixture("tiny").join("config.json"),
+            dir.path().join("config.json"),
+        )
+        .expect("copy the body's config");
+        let mut config = spec_config();
+        config.dimensions = 2;
+        spec::LocalModelSpec::read(dir.path(), &config)
+            .expect("reads")
+            .transform()
+    };
+    let own = transform("2_Dense", true, TANH);
+    assert_eq!(
+        own,
+        r#"attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=dense:path="2_Dense":4>2:tanh:bias=true;dims=2"#
+    );
+    assert_ne!(transform("2_Dense", false, TANH), own, "bias");
+    assert_ne!(
+        transform("3_Dense", true, TANH),
+        own,
+        "the weights' directory"
+    );
+    assert_ne!(
+        transform("2_Dense", true, "torch.nn.modules.linear.Identity"),
+        own,
+        "activation"
+    );
+
+    let mut capped = spec_config();
+    capped.max_input_tokens = 512;
+    let mut uncapped = spec_config();
+    uncapped.max_input_tokens = 8192;
+    assert_eq!(
+        spec::LocalModelSpec::read(&model_fixture("pplx"), &capped)
+            .expect("reads")
+            .transform(),
+        spec::LocalModelSpec::read(&model_fixture("pplx"), &uncapped)
+            .expect("reads")
+            .transform()
+    );
+}
+
 /// The host override reaches the body; config says what the files do not.
 #[test]
 fn the_attention_and_quantizer_overrides_reach_the_read_model() {
@@ -1415,6 +1483,95 @@ fn an_unpinned_repository_needs_the_files_its_modules_name() {
     );
 }
 
+/// Copies the metadata of a committed model fixture into `dir`.
+fn copy_metadata(fixture: &str, dir: &std::path::Path, files: &[&str]) {
+    for file in files {
+        let target = dir.join(file);
+        std::fs::create_dir_all(target.parent().expect("parent")).expect("model dir");
+        std::fs::copy(model_fixture(fixture).join(file), target).expect("copy");
+    }
+}
+
+/// The transform a vault is checked against at open is read only from
+/// metadata the loader would accept as it stands: a shipped default's files
+/// by their digests, any other repository's complete, with its prompt file
+/// present or confirmed absent upstream. Anything less defers the check to
+/// the loaded model, which fetches, repairs and verifies first.
+#[test]
+fn an_early_transform_is_read_only_from_complete_verified_metadata() {
+    const METADATA: [&str; 3] = ["config.json", "modules.json", "1_Pooling/config.json"];
+    let root = tempfile::tempdir().expect("models root");
+    let mut config = crate::config::EmbedderConfig {
+        dimensions: 1024,
+        ..crate::config::EmbedderConfig::default()
+    };
+    config.local.models_dir = Some(root.path().to_path_buf());
+    let dir = model_manager::model_dir(&config.local).expect("model dir");
+
+    // The default, pinned: its files as measured.
+    copy_metadata("pplx", &dir, &METADATA[..2]);
+    assert_eq!(
+        super::transform_on_disk(&config),
+        None,
+        "a module config is missing"
+    );
+    copy_metadata("pplx", &dir, &METADATA[2..]);
+    assert_eq!(
+        super::transform_on_disk(&config).as_deref(),
+        Some(
+            "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024"
+        )
+    );
+    // Damaged from mean to CLS at the same size: it still parses and fits,
+    // and its digest is what refuses it.
+    let pooling = dir.join("1_Pooling/config.json");
+    let raw = std::fs::read_to_string(&pooling).expect("read");
+    let damaged = raw
+        .replace(
+            "\"pooling_mode_cls_token\": false",
+            "\"pooling_mode_cls_token\": true",
+        )
+        .replace(
+            "\"pooling_mode_mean_tokens\": true",
+            "\"pooling_mode_mean_tokens\": false",
+        );
+    assert_eq!(damaged.len(), raw.len());
+    std::fs::write(&pooling, damaged).expect("damage");
+    assert!(
+        spec::LocalModelSpec::read(&dir, &config).is_ok(),
+        "the damage reads as another model"
+    );
+    assert_eq!(super::transform_on_disk(&config), None);
+
+    // Another repository, unpinned: complete, and its prompt file settled.
+    config.local.repo = "someone/else".to_owned();
+    let dir = model_manager::model_dir(&config.local).expect("model dir");
+    copy_metadata("pplx", &dir, &METADATA);
+    assert_eq!(
+        super::transform_on_disk(&config),
+        None,
+        "no prompt file, and not known to be absent"
+    );
+    std::fs::write(dir.join("config_sentence_transformers.json.absent"), b"").expect("marker");
+    assert!(super::transform_on_disk(&config).is_some());
+    std::fs::remove_file(dir.join("config_sentence_transformers.json.absent")).expect("rm");
+    std::fs::write(
+        dir.join(prompts::PROMPT_FILE),
+        r#"{"prompts":{"document":"passage: "}}"#,
+    )
+    .expect("prompt file");
+    assert!(
+        super::transform_on_disk(&config)
+            .is_some_and(|transform| transform.contains(r#"doc_prompt="passage: ""#))
+    );
+
+    // An operator's directory is taken as it stands.
+    let operator = tempfile::tempdir().expect("model dir");
+    copy_metadata("pplx", operator.path(), &METADATA);
+    config.local.model_dir = Some(operator.path().to_path_buf());
+    assert!(super::transform_on_disk(&config).is_some());
+}
+
 // ─── the artifact source, stubbed on loopback ────────────────────────────
 
 /// The bytes the stub serves, and the pin that makes them the right bytes.
@@ -1588,6 +1745,18 @@ fn auto_fallback_can_prepare_an_uncached_model() {
     assert!(
         !model_dir.join("config_sentence_transformers.json").exists(),
         "a prompt file absent upstream stays absent"
+    );
+    assert!(
+        model_dir
+            .join("config_sentence_transformers.json.absent")
+            .is_file(),
+        "and is marked confirmed absent, not merely unfetched"
+    );
+    super::prepare_with_manager(&config, &manager).expect("prepares again");
+    assert_eq!(
+        source.paths().len(),
+        requested.len(),
+        "nothing is asked for again, the absent prompt file included"
     );
 }
 
