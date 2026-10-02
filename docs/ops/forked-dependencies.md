@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `57a7f6cbabdde4057ea37e6d2180bfe93739d6eb` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `e29e4ee7b8fcf95c5292aeb802a3ef44873fa941` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,14 +51,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.2), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.3), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -73,11 +73,28 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.2), over `362becff`:
   the recording Mac's yen locale; a FILTER `#CALC!` cached as `#VALUE!` in the xlsx). Examples:
   UNIQUE by column, CELL("filename"), trimmed text criteria, ROUND on 15-digit decimals,
   HYPERLINK numeric friendly names, TREND/GROWTH result shapes.
+- `57a7f6cb..e29e4ee7` (ONE-2700 part 3, the second parity loop, October 2026): 25 rounds of
+  one cause each, every one kept only when neither score dropped and reviewed against Excel's
+  documented behaviour. Owner rulings: where Excel for Windows and Excel for Mac differ the fork
+  follows Windows, so CHAR and CODE read Windows-1252 and FILTERXML is implemented (XPath 1.0
+  over quick-xml; WEBSERVICE and ENCODEURL stay `#NAME?`). `oneiron-xlsx-formula`'s
+  `mac_parity.rs` still answers `#NAME?` for FILTERXML before the engine runs; lifting that
+  is a separate change. The fresh-Excel truth gained 31
+  workbooks (timed-out rows re-run on Excel 16.113.2; the six `.xlsm` files of task 395-17 and
+  three FILTERXML answers recorded on Excel for Windows 16.0.20430). At `e29e4ee7` the fork
+  matches 2,866 of the 2,982 SpreadsheetBench workbooks (2,835 of the original 2,951; all 31
+  added rows match) and 808 of the 811 pinned cases. The three pinned misses are recording
+  artifacts: DOLLAR's yen locale, the FILTER `#CALC!` cached as `#VALUE!`, and the TRIM
+  golden recorded with the Mac Roman CHAR(160). Examples: implicit intersection in formulas
+  saved without the array flag, OFFSET/INDIRECT arrays of references, SUBTOTAL skipping
+  filter-hidden rows, Excel's calculate-always flags on save, `.xlsm`/`.xltx` admission,
+  INDEX array and omitted-column forms, date text and two-digit years, unknown functions as
+  `#NAME?` values.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.2`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.3`.
 
 ## Licences and attribution
 
