@@ -121,10 +121,10 @@ paste = { path = "crates/paste/vendor/paste-1.0.15" }
 # Match .cargo/config.toml: trybuild copies manifest patches into its external
 # offline workspace, but does not copy the checkout's Cargo configuration.
 pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
-# formualizer 0.9.3 from the org fork by rev (0.9.3-oneiron.2): the owned error-concatenation
+# formualizer 0.9.3 from the org fork by rev (0.9.3-oneiron.3): the owned error-concatenation
 # patch plus the Excel parity work on `oneiron/parity`. See docs/ops/forked-dependencies.md.
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "57a7f6cbabdde4057ea37e6d2180bfe93739d6eb" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "e29e4ee7b8fcf95c5292aeb802a3ef44873fa941" }
