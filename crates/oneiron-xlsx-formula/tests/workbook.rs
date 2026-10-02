@@ -366,10 +366,28 @@ fn contextual_formulas_are_refused_not_evaluated_on_the_corpus_clock() {
 }
 
 #[test]
-fn windows_only_functions_return_name_errors_in_the_native_mac_engine() {
+fn filterxml_evaluates_like_excel_for_windows() {
+    // Windows is the reference where Excel for Windows and Mac differ (ruling 2026-10-01);
+    // the truth for FILTERXML cells was recorded on Excel for Windows 16.0.20430.
+    let formula = r#"FILTERXML("<r><a>7</a></r>","/r/a")"#;
+    let xml_formula = formula.replace('&', "&amp;").replace('<', "&lt;");
+    let input = fixture(
+        "",
+        &format!(r#"<c r="A1"><f>{xml_formula}</f><v>0</v></c>"#),
+        false,
+    );
+    let output = recalc(&input).expect("native recalc");
+    let xml = part_text(&output.bytes, OUTPUT);
+    assert!(
+        xml.contains("<v>7</v>") && !xml.contains("#NAME?"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn functions_without_recorded_truth_return_name_errors() {
     for formula in [
         r#"ENCODEURL("a b")"#,
-        r#"FILTERXML("<root/>","/root")"#,
         r#"WEBSERVICE("https://example.invalid/")"#,
     ] {
         let xml_formula = formula.replace('&', "&amp;").replace('<', "&lt;");

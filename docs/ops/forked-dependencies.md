@@ -78,8 +78,8 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.3), over `362becff`:
   documented behaviour. Owner rulings: where Excel for Windows and Excel for Mac differ the fork
   follows Windows, so CHAR and CODE read Windows-1252 and FILTERXML is implemented (XPath 1.0
   over quick-xml; WEBSERVICE and ENCODEURL stay `#NAME?`). `oneiron-xlsx-formula`'s
-  `mac_parity.rs` still answers `#NAME?` for FILTERXML before the engine runs; lifting that
-  is a separate change. The fresh-Excel truth gained 31
+  `mac_parity.rs` masks only ENCODEURL and WEBSERVICE since 2026-10-02, so FILTERXML reaches
+  the fork. The fresh-Excel truth gained 31
   workbooks (timed-out rows re-run on Excel 16.113.2; the six `.xlsm` files of task 395-17 and
   three FILTERXML answers recorded on Excel for Windows 16.0.20430). At `e29e4ee7` the fork
   matches 2,866 of the 2,982 SpreadsheetBench workbooks (2,835 of the original 2,951; all 31
