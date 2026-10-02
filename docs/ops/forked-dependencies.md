@@ -83,9 +83,13 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.3), over `362becff`:
   workbooks (timed-out rows re-run on Excel 16.113.2; the six `.xlsm` files of task 395-17 and
   three FILTERXML answers recorded on Excel for Windows 16.0.20430). At `e29e4ee7` the fork
   matches 2,866 of the 2,982 SpreadsheetBench workbooks (2,835 of the original 2,951; all 31
-  added rows match) and 808 of the 811 pinned cases. The three pinned misses are recording
-  artifacts: DOLLAR's yen locale, the FILTER `#CALC!` cached as `#VALUE!`, and the TRIM
-  golden recorded with the Mac Roman CHAR(160). Examples: implicit intersection in formulas
+  added rows match) and 808 of the 811 pinned cases against the Mac goldens. On 2026-10-02
+  the goldens were re-recorded on Excel for Windows 16.0.20430 (en-US region; `scripts/office/win_excel_cases.py`
+  on the Windows VM, pinned by `collect_excel_goldens.py` as before): 7 of 834 values changed
+  (DOLLAR in dollars, TRIM with the real non-breaking space, VALUE of a currency string, and
+  the four NOW/TODAY/RAND cases that never score). Against them the fork matches 809 of 811;
+  the two misses are FILTER's `#CALC!`, which Excel caches as `#VALUE!` on both platforms, and
+  VALUE("$1,000"), which is 1000 in the en-US region while the fork answers `#VALUE!`. Examples: implicit intersection in formulas
   saved without the array flag, OFFSET/INDIRECT arrays of references, SUBTOTAL skipping
   filter-hidden rows, Excel's calculate-always flags on save, `.xlsm`/`.xltx` admission,
   INDEX array and omitted-column forms, date text and two-digit years, unknown functions as
