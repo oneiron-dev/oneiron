@@ -49435,7 +49435,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/mac_parity.rs",
-     "purpose": "Workbook-local Excel-for-Mac function availability, never global overrides",
+     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides",
      "surface": {
       "crate-vis": 1
      }
@@ -49558,7 +49558,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Workbook-local Excel-for-Mac function availability, never global overrides"
+     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides"
     },
     "measure": {
      "files": 1,
