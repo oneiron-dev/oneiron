@@ -14,3 +14,13 @@ This is larger than the 604-case count in ARCH-0075. No cases were silently disc
 Oracle outputs must live separately and carry app version, input/output hashes,
 calendar mode, and recalc-canary evidence. Probe-only cases have no fixed expectation
 and must not be counted as exact-value matches.
+
+`excel/goldens.json` and `excel/cached-workbooks.zip` are the measured Excel goldens: 834 cases
+recorded on **Excel for Windows 16.0.20430.20118** (en-US region, 2026-10-02) by
+`scripts/office/win_excel_cases.py` (COM: one new workbook per case, setup cells typed as the
+corpus says, the `Z1` canary, the formula at the check anchor, calculate, save) and pinned by
+`scripts/office/collect_excel_goldens.py`. The first recording (Excel for Mac 16.112.4, a
+Japanese-region Mac) differed in 7 values: DOLLAR's currency symbol, TRIM with a Mac Roman
+CHAR(160), VALUE of a currency string, and the four NOW/TODAY/RAND cases. Where Excel for
+Windows and Excel for Mac differ, Windows is the reference (ruling 2026-10-01).
+
