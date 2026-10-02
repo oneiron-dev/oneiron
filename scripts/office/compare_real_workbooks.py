@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor/xlsx_corpus_bench"))
 from cached_values import compare_to_truth, extract
+from volatile_dependents import volatile_dependents
 
 
 def digest(path):
@@ -56,7 +57,12 @@ def compare(manifest_path, excel_dir, engine_dir):
             output = engine_dir / "workbooks" / (key + ".xlsx")
             if digest(output) != observed_row["output_sha256"]: raise ValueError("engine output hash changed")
             observed = extract(str(output))
-        comparisons.append(dict(sha256=key, status="scored", metrics=compare_to_truth(truth, observed), engine_recalculated=observed_row["recalc"]["ok"]))
+        # Cells downstream of NOW/TODAY/RAND* differ between two Excel runs as much as the volatile cell itself;
+        # the comparator skips only the volatile cell, so its dependents are taken out of the denominator here.
+        dependents = volatile_dependents(truth)
+        metrics = compare_to_truth({addr: t for addr, t in truth.items() if addr not in dependents}, observed)
+        metrics["volatile_dependent_skipped"] = len(dependents)
+        comparisons.append(dict(sha256=key, status="scored", metrics=metrics, engine_recalculated=observed_row["recalc"]["ok"]))
     scored = [row for row in comparisons if row.get("metrics", {}).get("formula_cells", 0) > 0]
     summary = dict(fresh_excel_truth=True, manifest_sha256=manifest_hash, workbooks=len(manifest),
                    excel_completed=sum(row["status"] == "completed" for row in excel.values()),
