@@ -378,10 +378,7 @@ fn filterxml_evaluates_like_excel_for_windows() {
     );
     let output = recalc(&input).expect("native recalc");
     let xml = part_text(&output.bytes, OUTPUT);
-    assert!(
-        xml.contains("<v>7</v>") && !xml.contains("#NAME?"),
-        "{xml}"
-    );
+    assert!(xml.contains("<v>7</v>") && !xml.contains("#NAME?"), "{xml}");
 }
 
 #[test]
