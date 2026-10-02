@@ -463,7 +463,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `context` | file | 1 | s | Bound formula AST evaluation and keep ambient context out of native recalc |
 | `engine` | file | 1 | m | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `error` | file | 1 | s | Typed failures for the formula crate |
-| `mac_parity` | file | 1 | s | Workbook-local Excel-for-Mac function availability, never global overrides |
+| `mac_parity` | file | 1 | s | Workbook-local function masking for functions without recorded truth, never global overrides |
 | `measure` | file | 1 | m | Step-19 corpus runner: honest per-case results over the pinned 834 cases |
 | `routing` | file | 1 | s | External-link routing (step 25): linked workbooks stay off this engine |
 | `workbook` | file | 1 | m | Load a bounded XLSX graph and update only formula XML and cached values |
