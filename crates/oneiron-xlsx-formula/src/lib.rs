@@ -8,10 +8,10 @@
 //! The core's edit round trip wraps every host session in this engine unless
 //! the host opts out, so this crate does not depend on the core.
 //!
-//! The corpus rule is met at fork rev `57a7f6cb` (0.9.3-oneiron.2): 2,700 of
-//! the 2,951 formula-bearing fresh-Excel SpreadsheetBench workbooks are fully
-//! Excel-identical, against 2,648 for LibreOffice 25.8 on the same corpus,
-//! and 809 of the 811 pinned goldens against LibreOffice's 753. The host's
+//! The corpus rule is met at fork rev `e29e4ee7` (0.9.3-oneiron.3): 2,866 of
+//! the 2,982 formula-bearing fresh-Excel SpreadsheetBench workbooks are fully
+//! Excel-identical (2,835 of the 2,951 that LibreOffice 25.8 matches 2,648
+//! of), and 808 of the 811 pinned goldens against LibreOffice's 753. The host's
 //! LibreOffice recalc stays the precision fallback for refused workbooks
 //! only: unsupported features and formulas needing caller context; the corpus
 //! clock is never substituted for production time. External-link workbooks
