@@ -401,7 +401,7 @@ fn functions_without_recorded_truth_return_name_errors() {
         );
         assert_eq!(
             output.engine.stamp(),
-            "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.4"
+            "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.5"
         );
     }
 }
@@ -428,7 +428,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.4"
+        "0.1.0+formualizer.0.9.3-oneiron.5"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);
