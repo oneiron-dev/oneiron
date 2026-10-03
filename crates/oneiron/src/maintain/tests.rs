@@ -25,6 +25,7 @@ fn test_config() -> VaultConfig {
         fast_dims: None,
         embedding_model: Some("test/model@v1".to_owned()),
         embedding_transform: None,
+        tagging: None,
         max_readers: 16,
         hnsw: HnswConfig {
             m_max_0: 64,

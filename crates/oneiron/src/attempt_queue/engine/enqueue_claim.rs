@@ -129,6 +129,33 @@ impl<'a> AttemptQueue<'a> {
         task_ref: Option<String>,
         dedupe_actor_ref: Option<&str>,
     ) -> Result<EnqueueOutcome> {
+        self.enqueue_storage_in_txn(wtxn, input, task_ref, dedupe_actor_ref, None)
+    }
+
+    /// Transaction-composable, actorless enqueue under an id the caller derived
+    /// from the work's own identity.
+    ///
+    /// It draws nothing from the vault's id source, so a write that also owes
+    /// this attempt allocates exactly the entity ids it would allocate without
+    /// it. A taken id is refused as a collision, never overwritten.
+    pub(crate) fn enqueue_with_id_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        mut input: EnqueueAttempt,
+    ) -> Result<EnqueueOutcome> {
+        input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
+        self.enqueue_storage_in_txn(wtxn, input, None, None, Some(id))
+    }
+
+    fn enqueue_storage_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueAttempt,
+        task_ref: Option<String>,
+        dedupe_actor_ref: Option<&str>,
+        id: Option<AttemptId>,
+    ) -> Result<EnqueueOutcome> {
         validate_kind(&input.kind)?;
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
         validate_optional_dedupe_actor_ref(dedupe_actor_ref)?;
@@ -158,8 +185,12 @@ impl<'a> AttemptQueue<'a> {
             return Ok(EnqueueOutcome::Existing(record));
         }
 
+        let id = match id {
+            Some(id) => id,
+            None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+        };
         let record = AttemptRecord {
-            id: AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+            id,
             kind: input.kind,
             payload: input.payload,
             state: AttemptState::Queued,

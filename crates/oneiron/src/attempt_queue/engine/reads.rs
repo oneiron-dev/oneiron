@@ -247,19 +247,52 @@ impl AttemptQueue<'_> {
     /// authoritative, write-serialized dedupe check on a miss.
     pub(crate) fn pending_dedupe(&self, kind: &str, key: &str) -> Result<Option<AttemptRecord>> {
         let txn = self.store.env.read_txn()?;
+        self.pending_dedupe_in_txn(&txn, kind, key)
+    }
+
+    /// [`Self::pending_dedupe`] inside the caller's transaction.
+    pub(crate) fn pending_dedupe_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+        key: &str,
+    ) -> Result<Option<AttemptRecord>> {
         let keys = DedupeIndexKeys::new(kind, None, key);
         if let Some(row) =
-            self.read_existing_dedupe_in_read_txn(&txn, &keys.primary, kind, None, key)?
+            self.read_existing_dedupe_in_read_txn(txn, &keys.primary, kind, None, key)?
         {
             return Ok(Some(row));
         }
         self.read_existing_dedupe_in_read_txn(
-            &txn,
+            txn,
             &legacy_dedupe_index_key(kind, key),
             kind,
             None,
             key,
         )
+    }
+
+    /// The instant the earliest ready-indexed attempt of `kind` becomes
+    /// claimable, read from the readiness index in due-time order. Rows that
+    /// do not decode are skipped here; the claim scan repairs them.
+    pub(crate) fn next_ready_at_of_kind(&self, kind: &str) -> Result<Option<u64>> {
+        let txn = self.store.env.read_txn()?;
+        for row in self.store.attempt_ready.iter(&txn)? {
+            let (_, value) = row?;
+            let Ok(id) = AttemptId::from_bytes(&value) else {
+                continue;
+            };
+            let Some(raw) = self.store.attempt_records.get(&txn, id.as_bytes())? else {
+                continue;
+            };
+            let Ok(record) = decode_record(&raw, id) else {
+                continue;
+            };
+            if record.kind == kind && record.state.is_ready_indexed() {
+                return Ok(Some(ready_at(&record)));
+            }
+        }
+        Ok(None)
     }
 
     pub(super) fn read_existing_dedupe_in_read_txn(

@@ -1,0 +1,381 @@
+//! The slot's laws: configuration, the endpoint's wire and identity probe,
+//! the typed refusals, `init`, and the worker against a stub tagger server.
+
+mod support;
+mod worker;
+
+use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder};
+use serde_json::json;
+
+use super::endpoint::{HttpTagger, ProbeError, ProbeOutcome};
+use super::{TaggerNotBuilt, build_slot};
+use crate::config::{
+    EnvConfig, OneironerConfig, OneironerMode, OneironerProvider, ServeArgs,
+    resolve_serve_config_with_sources,
+};
+use support::{Answer, CHECKPOINT, LABEL_COUNT, StubTagger, card, endpoint_config};
+
+fn input(text: &str) -> EncoderInput {
+    EncoderInput {
+        turn: "72727272727272727272727272727272".into(),
+        messages: vec![EncoderMessage {
+            id: "73737373737373737373737373737373".into(),
+            text: text.into(),
+        }],
+    }
+}
+
+fn resolve(
+    file: &str,
+    env: &[(&str, &str)],
+    args: ServeArgs,
+) -> anyhow::Result<crate::config::ServeConfig> {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("oneiron.toml");
+    std::fs::write(&path, file).expect("write config");
+    resolve_serve_config_with_sources(
+        &ServeArgs {
+            config: Some(path),
+            ..args
+        },
+        EnvConfig::from_pairs(env.iter().copied()).expect("env"),
+        None,
+    )
+}
+
+// ─── configuration ──────────────────────────────────────────────────────
+
+#[test]
+fn an_absent_section_arms_nothing_and_a_named_one_defaults_to_local_save() {
+    let absent = resolve("", &[], ServeArgs::default()).expect("absent");
+    assert!(absent.oneironer.is_none());
+    assert!(absent.vault_config().tagging.is_none());
+    let named = resolve("[oneironer]\n", &[], ServeArgs::default()).expect("named");
+    let section = named.oneironer.expect("section");
+    assert_eq!(section.provider, OneironerProvider::Local);
+    assert_eq!(section.mode, OneironerMode::Save);
+    // Only an endpoint arms markers: the local provider never serves here.
+    assert!(named_vault_tagging("[oneironer]\n").is_none());
+}
+
+fn named_vault_tagging(file: &str) -> Option<String> {
+    resolve(file, &[], ServeArgs::default())
+        .expect("resolve")
+        .vault_config()
+        .tagging
+        .map(|tagging| tagging.checkpoint)
+}
+
+#[test]
+fn file_environment_and_flags_layer_in_that_order() {
+    let file = r#"
+[oneironer]
+provider = "endpoint"
+mode = "shadow"
+url = "http://127.0.0.1:9100"
+checkpoint_sha16 = "0123456789abcdef"
+label_count = 53
+[oneironer.labels]
+PERSON = "PERSON"
+"#;
+    let config = resolve(
+        file,
+        &[
+            ("ONEIRON_ONEIRONER_URL", "http://127.0.0.1:9200"),
+            ("ONEIRON_ONEIRONER_LABELS", "PERSON=PERSON,PLACE=PLACE"),
+        ],
+        ServeArgs {
+            oneironer: crate::config::OneironerArgs {
+                oneironer_url: Some("http://127.0.0.1:9300".into()),
+                oneironer_timeout_ms: Some(250),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .expect("resolve");
+    let section = config.oneironer.as_ref().expect("section");
+    assert_eq!(section.url.as_deref(), Some("http://127.0.0.1:9300"));
+    assert_eq!(section.timeout_ms, 250);
+    assert_eq!(section.label_count, Some(53));
+    assert_eq!(section.labels.len(), 2);
+    assert_eq!(
+        section.label_kinds().get("PLACE"),
+        Some(&oneiron::registry::ENTITY_TYPE_PLACE)
+    );
+    assert_eq!(
+        config
+            .vault_config()
+            .tagging
+            .map(|tagging| tagging.checkpoint),
+        Some("0123456789abcdef".to_owned())
+    );
+}
+
+#[test]
+fn an_endpoint_section_missing_its_identity_or_naming_an_unknown_kind_is_refused() {
+    let base = "[oneironer]\nprovider = \"endpoint\"\nmode = \"shadow\"\n";
+    let url = "url = \"http://127.0.0.1:9100\"\n";
+    let sha = "checkpoint_sha16 = \"0123456789abcdef\"\n";
+    let count = "label_count = 3\n";
+    for file in [
+        format!("{base}{sha}{count}"),
+        format!("{base}{url}{count}"),
+        format!("{base}{url}{sha}"),
+        format!("{base}{url}checkpoint_sha16 = \"0123456789ABCDEF\"\n{count}"),
+        format!("{base}{url}{sha}{count}[oneironer.labels]\nPERSON = \"NOT_A_KIND\"\n"),
+    ] {
+        assert!(resolve(&file, &[], ServeArgs::default()).is_err(), "{file}");
+    }
+    assert!(
+        resolve(
+            &format!("{base}{url}{sha}{count}"),
+            &[],
+            ServeArgs::default()
+        )
+        .is_ok()
+    );
+}
+
+// ─── the endpoint ───────────────────────────────────────────────────────
+
+#[test]
+fn extract_posts_the_engine_input_and_reads_the_engine_output() {
+    let stub = StubTagger::start(Answer::Good);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    assert_eq!(
+        tagger.locality(),
+        oneiron::embed::EmbedderLocality::OnDevice
+    );
+    let request = input("Ada sailed north");
+    let output = tagger.infer(&request).expect("answer");
+    assert_eq!(output.spans.len(), 1);
+    assert_eq!((output.spans[0].start, output.spans[0].end), (0, 3));
+    assert_eq!(output.spans[0].label, "PERSON");
+    assert_eq!(
+        stub.extracts(),
+        vec![serde_json::to_value(&request).expect("input json")]
+    );
+}
+
+#[test]
+fn a_network_tagger_is_refused_and_a_loopback_one_is_on_device() {
+    for url in [
+        "https://tagger.example",
+        "http://10.0.0.7:9100",
+        "http://user:pw@127.0.0.1:9100",
+        "http://127.0.0.1:9100/?key=x",
+    ] {
+        let mut config = endpoint_config(url);
+        config.url = Some(url.into());
+        assert!(HttpTagger::from_config(&config).is_err(), "{url}");
+    }
+    for url in [
+        "http://127.0.0.1:9100",
+        "http://localhost:9100",
+        "http://[::1]:9100/tagger",
+    ] {
+        assert!(
+            HttpTagger::from_config(&endpoint_config(url)).is_ok(),
+            "{url}"
+        );
+    }
+}
+
+#[test]
+fn the_probe_accepts_the_configured_tagger_and_refuses_another() {
+    let stub = StubTagger::start(Answer::Good);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    assert!(
+        matches!(tagger.probe(), Ok(ProbeOutcome::Ready(card)) if card.label_count == LABEL_COUNT)
+    );
+
+    stub.set_card(card("ffffffffffffffff"));
+    assert!(matches!(
+        tagger.probe(),
+        Err(ProbeError::WrongCheckpoint { .. })
+    ));
+    let mut wrong = card(CHECKPOINT);
+    wrong["contract_version"] = json!(99);
+    stub.set_card(wrong);
+    assert!(matches!(
+        tagger.probe(),
+        Err(ProbeError::WrongContract { got: 99, .. })
+    ));
+    let mut wrong = card(CHECKPOINT);
+    wrong["label_count"] = json!(LABEL_COUNT + 1);
+    stub.set_card(wrong);
+    assert!(matches!(
+        tagger.probe(),
+        Err(ProbeError::WrongLabelCount { .. })
+    ));
+    let mut wrong = card(CHECKPOINT);
+    wrong["returns"]["mood"] = json!(false);
+    stub.set_card(wrong);
+    if oneiron::tagging::spans_only_answers_admitted() {
+        assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Ready(_))));
+    } else {
+        assert_eq!(tagger.probe(), Err(ProbeError::NoMood));
+    }
+    stub.set_card(json!({"name": "something else"}));
+    assert_eq!(tagger.probe(), Err(ProbeError::NoModelCard));
+}
+
+#[test]
+fn an_unreachable_tagger_is_not_fatal() {
+    let tagger = HttpTagger::from_config(&endpoint_config("http://127.0.0.1:1")).expect("tagger");
+    assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Unreachable(_))));
+    let slot = build_slot(Some(&endpoint_config("http://127.0.0.1:1")))
+        .expect("an unreachable tagger still builds a slot")
+        .expect("slot");
+    assert!(slot.card().is_none());
+}
+
+#[test]
+fn a_failed_call_carries_its_class_and_never_the_turn_text() {
+    const SECRET: &str = "the harbour code is 4471";
+    let stub = StubTagger::start(Answer::ServerError);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    for (answer, class) in [
+        (Answer::ServerError, "tagger extract returned HTTP 500"),
+        (
+            Answer::NotTheContract,
+            "tagger extract response is not the contract",
+        ),
+        (Answer::Slow, "tagger extract timed out"),
+    ] {
+        stub.set_answer(answer);
+        let error = tagger.infer(&input(SECRET)).expect_err("a failed call");
+        let shown = format!("{error} {error:?}");
+        assert!(!shown.contains("4471"), "{shown}");
+        assert!(matches!(
+            &error,
+            oneiron::Error::UpstreamToolFailure { code, .. } if code == class
+        ));
+    }
+}
+
+// ─── the slot ───────────────────────────────────────────────────────────
+
+#[test]
+fn the_local_provider_and_save_mode_are_refused_by_name_and_none_builds_nothing() {
+    let local = OneironerConfig {
+        provider: OneironerProvider::Local,
+        ..OneironerConfig::default()
+    };
+    let refused = build_slot(Some(&local)).err().expect("local refused");
+    assert_eq!(
+        refused.downcast_ref::<TaggerNotBuilt>(),
+        Some(&TaggerNotBuilt::LocalProvider)
+    );
+    let stub = StubTagger::start(Answer::Good);
+    let save = OneironerConfig {
+        mode: OneironerMode::Save,
+        ..stub.config()
+    };
+    let refused = build_slot(Some(&save)).err().expect("save refused");
+    assert_eq!(
+        refused.downcast_ref::<TaggerNotBuilt>(),
+        Some(&TaggerNotBuilt::SaveMode)
+    );
+    let none = OneironerConfig {
+        provider: OneironerProvider::None,
+        ..stub.config()
+    };
+    assert!(build_slot(Some(&none)).expect("none").is_none());
+    assert!(build_slot(None).expect("absent").is_none());
+}
+
+#[test]
+fn a_wrong_checkpoint_at_startup_refuses_the_tagger() {
+    let stub = StubTagger::start(Answer::Good);
+    stub.set_card(card("ffffffffffffffff"));
+    let refused = build_slot(Some(&stub.config())).err().expect("refused");
+    assert!(matches!(
+        refused.downcast_ref::<ProbeError>(),
+        Some(ProbeError::WrongCheckpoint { .. })
+    ));
+    stub.set_card(card(CHECKPOINT));
+    let slot = build_slot(Some(&stub.config()))
+        .expect("built")
+        .expect("slot");
+    assert_eq!(
+        slot.card().map(|card| card.checkpoint_sha16),
+        Some(CHECKPOINT.to_owned())
+    );
+}
+
+// ─── init ───────────────────────────────────────────────────────────────
+
+fn init_args(dir: &std::path::Path) -> crate::cli::InitArgs {
+    crate::cli::InitArgs {
+        path: dir.join("vault"),
+        config: Some(dir.join("oneiron.toml")),
+        embedder: Some(crate::config::EmbedderProvider::None),
+        dimensions: Some(32),
+        map_size: 64 * 1024 * 1024,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn init_writes_the_tagger_serve_reads_and_refuses_one_it_cannot_serve() {
+    let stub = StubTagger::start(Answer::Good);
+    let dir = tempfile::tempdir().expect("dir");
+    let args = crate::cli::InitArgs {
+        oneironer: Some(OneironerProvider::Endpoint),
+        oneironer_url: Some(stub.base.clone()),
+        oneironer_checkpoint_sha16: Some(CHECKPOINT.into()),
+        oneironer_label_count: Some(LABEL_COUNT),
+        oneironer_mode: Some(OneironerMode::Shadow),
+        ..init_args(dir.path())
+    };
+    crate::commands::init(args).expect("init");
+    let serve = resolve_serve_config_with_sources(
+        &ServeArgs {
+            config: Some(dir.path().join("oneiron.toml")),
+            ..Default::default()
+        },
+        EnvConfig::default(),
+        None,
+    )
+    .expect("serve config");
+    let section = serve.oneironer.as_ref().expect("section");
+    assert_eq!(section.provider, OneironerProvider::Endpoint);
+    assert_eq!(section.mode, OneironerMode::Shadow);
+    assert_eq!(
+        serve
+            .vault_config()
+            .tagging
+            .map(|tagging| tagging.checkpoint),
+        Some(CHECKPOINT.to_owned())
+    );
+
+    for (provider, mode, refusal) in [
+        (
+            OneironerProvider::Local,
+            None,
+            TaggerNotBuilt::LocalProvider,
+        ),
+        (
+            OneironerProvider::Endpoint,
+            Some(OneironerMode::Save),
+            TaggerNotBuilt::SaveMode,
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let endpoint = provider == OneironerProvider::Endpoint;
+        let args = crate::cli::InitArgs {
+            oneironer: Some(provider),
+            oneironer_url: endpoint.then(|| stub.base.clone()),
+            oneironer_checkpoint_sha16: endpoint.then(|| CHECKPOINT.to_owned()),
+            oneironer_label_count: endpoint.then_some(LABEL_COUNT),
+            oneironer_mode: mode,
+            ..init_args(dir.path())
+        };
+        let refused = crate::commands::init(args).expect_err("refused");
+        assert_eq!(refused.downcast_ref::<TaggerNotBuilt>(), Some(&refusal));
+        assert!(!dir.path().join("oneiron.toml").exists());
+        assert!(!dir.path().join("vault").exists());
+    }
+}
