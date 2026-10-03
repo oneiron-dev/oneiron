@@ -2519,7 +2519,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3201,7 +3201,7 @@ dependencies = [
 [[package]]
 name = "formualizer-common"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=e29e4ee7b8fcf95c5292aeb802a3ef44873fa941#e29e4ee7b8fcf95c5292aeb802a3ef44873fa941"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=158cee8fdf9ca50b016561280581ca515a9f60c6#158cee8fdf9ca50b016561280581ca515a9f60c6"
 dependencies = [
  "chrono",
 ]
@@ -3209,7 +3209,7 @@ dependencies = [
 [[package]]
 name = "formualizer-eval"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=e29e4ee7b8fcf95c5292aeb802a3ef44873fa941#e29e4ee7b8fcf95c5292aeb802a3ef44873fa941"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=158cee8fdf9ca50b016561280581ca515a9f60c6#158cee8fdf9ca50b016561280581ca515a9f60c6"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -3235,7 +3235,7 @@ dependencies = [
 [[package]]
 name = "formualizer-macros"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=e29e4ee7b8fcf95c5292aeb802a3ef44873fa941#e29e4ee7b8fcf95c5292aeb802a3ef44873fa941"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=158cee8fdf9ca50b016561280581ca515a9f60c6#158cee8fdf9ca50b016561280581ca515a9f60c6"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -3246,7 +3246,7 @@ dependencies = [
 [[package]]
 name = "formualizer-parse"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=e29e4ee7b8fcf95c5292aeb802a3ef44873fa941#e29e4ee7b8fcf95c5292aeb802a3ef44873fa941"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=158cee8fdf9ca50b016561280581ca515a9f60c6#158cee8fdf9ca50b016561280581ca515a9f60c6"
 dependencies = [
  "formualizer-common",
  "once_cell",
@@ -3256,7 +3256,7 @@ dependencies = [
 [[package]]
 name = "formualizer-workbook"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=e29e4ee7b8fcf95c5292aeb802a3ef44873fa941#e29e4ee7b8fcf95c5292aeb802a3ef44873fa941"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=158cee8fdf9ca50b016561280581ca515a9f60c6#158cee8fdf9ca50b016561280581ca515a9f60c6"
 dependencies = [
  "chrono",
  "formualizer-common",
@@ -7073,7 +7073,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
