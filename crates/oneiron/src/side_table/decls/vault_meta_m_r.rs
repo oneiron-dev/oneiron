@@ -9,6 +9,10 @@ side_tables! {
     IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN: VaultMeta b"m:identity_topology_zero_head_seen" Raw;
     /// Idle publication delay. Key: ().
     ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
+    /// Per-turn tag overlay of the extraction save path: derived rows, never synced, rebuilt by
+    /// tagging again. Key: family byte + id16 (0 = a TURN's tag set, 1 = a provisional entity's
+    /// origin turn).
+    MEMORY_EXTRACTION_OVERLAY: VaultMeta b"memory.extraction.overlay.v1:" Named;
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named;

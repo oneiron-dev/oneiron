@@ -114,7 +114,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.lookup_identity_key_in_txn(&txn, kind, mention)
     }
-    pub(super) fn lookup_identity_key_in_txn(
+    pub(crate) fn lookup_identity_key_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         kind: u8,

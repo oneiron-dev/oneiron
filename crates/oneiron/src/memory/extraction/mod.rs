@@ -3,8 +3,10 @@ mod persist;
 mod shadow;
 mod types;
 pub use types::{
-    CorefLink, EncoderGolden, EncoderInput, EncoderMessage, EncoderOutput, EncoderParity,
-    ExtractionEncoder, ExtractionReceipt, NerSpan, ShadowTrace, WitnessWithShadow,
+    CorefLink, DerivationEnvelope, EncoderGolden, EncoderInput, EncoderMessage, EncoderOutput,
+    EncoderParity, ExtractionEncoder, ExtractionLabels, ExtractionReceipt, ExtractionRefusal,
+    ExtractionSaveConfig, ExtractionSaveError, ExtractionTagSet, MentionLink, MergeEvidence,
+    NerSpan, ShadowTrace, UnconfirmedMention, WitnessWithShadow,
 };
 #[cfg(test)]
 mod tests;

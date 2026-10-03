@@ -157,22 +157,6 @@ impl Vault {
         Ok(result)
     }
 
-    /// Stages the canonical consolidation in an enclosing atomic operation.
-    /// Unlike the standalone maintenance door, a decline leaves all rollback
-    /// decisions to that operation and never commits a partial clear.
-    pub(crate) fn consolidate_claim_vad_in_write_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        claim_id: &EntityId,
-        now: u64,
-    ) -> Result<ClaimVadConsolidation> {
-        let body = self.claim_body_for_claim_vad_in_txn(wtxn, claim_id)?;
-        if !claim_consolidatable(&body) {
-            return Err(Error::InvalidClaimBody("claim is not consolidatable"));
-        }
-        self.consolidate_claim_vad_staged(wtxn, claim_id, body, now)
-    }
-
     fn consolidate_claim_vad_staged(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
