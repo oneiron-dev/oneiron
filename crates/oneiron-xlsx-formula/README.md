@@ -23,7 +23,7 @@ a typed error on either side of `&`, plus the Excel parity work on the fork's
 fork branch, the rev and the patches. Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `7b3de1d5`: 2,960 of the 2,967 scored fresh-Excel SpreadsheetBench workbooks (truth
+rev `158cee8f`: 2,960 of the 2,967 scored fresh-Excel SpreadsheetBench workbooks (truth
 recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND skipped) are fully
 Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured on), and 810 of
 the 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430), against

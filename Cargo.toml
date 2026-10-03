@@ -123,8 +123,8 @@ paste = { path = "crates/paste/vendor/paste-1.0.15" }
 pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
 # formualizer 0.9.3 from the org fork by rev (0.9.3-oneiron.4): the owned error-concatenation
 # patch plus the Excel parity work on `oneiron/parity`. See docs/ops/forked-dependencies.md.
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }

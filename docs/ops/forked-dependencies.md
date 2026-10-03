@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `158cee8fdf9ca50b016561280581ca515a9f60c6` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,11 +51,11 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "7b3de1d59d70ffbefbeda9c22e89f733cf3dd1a6" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "158cee8fdf9ca50b016561280581ca515a9f60c6" }
 ```
 
 Fork branch `oneiron/parity` (0.9.3-oneiron.4), over `362becff`:
@@ -94,12 +94,12 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.4), over `362becff`:
   filter-hidden rows, Excel's calculate-always flags on save, `.xlsm`/`.xltx` admission,
   INDEX array and omitted-column forms, date text and two-digit years, unknown functions as
   `#NAME?` values.
-- `e29e4ee7..7b3de1d5` (ONE-2700, the third parity loop, October 2026, against Excel for Windows): on
+- `e29e4ee7..158cee8f` (ONE-2700, the third parity loop, October 2026, against Excel for Windows): on
   2026-10-02 the whole SpreadsheetBench truth was re-recorded on Excel for Windows 16.0.20430
   (en-US region; numeric date text reads M/d/yyyy) and the scorer skips cells downstream of
   NOW/TODAY/RAND (#1280), so `e29e4ee7` starts at 2,883 of 2,967 and 809 of 811 pinned. 24
   rounds of one cause each, every one kept only when neither score dropped, plus follow-ups
-  for each round's post-landing review (sol). At `7b3de1d5` the fork matches 2,960 of the 2,967
+  for each round's post-landing review (sol). At `158cee8f` the fork matches 2,960 of the 2,967
   SpreadsheetBench workbooks and 810 of the 811 pinned goldens. The pinned miss is FILTER's
   `#CALC!` cached as `#VALUE!` (a recording artifact). The seven bench misses are four
   external-link cells and the three answers of task 42110, where Excel turns a row number such
