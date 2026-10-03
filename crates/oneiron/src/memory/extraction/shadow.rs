@@ -94,7 +94,10 @@ pub(super) fn hash_input(input: &EncoderInput) -> String {
     format!("{:x}", hash.finalize())
 }
 fn validate(input: &EncoderInput, output: &EncoderOutput) -> Result<(), &'static str> {
-    if output.spans.len() > 4096 || output.links.len() > 4096 || output.vad.validate().is_err() {
+    if output.spans.len() > 4096
+        || output.links.len() > 4096
+        || output.vad.is_some_and(|vad| vad.validate().is_err())
+    {
         return Err("invalid_encoder_output");
     }
     for span in &output.spans {
