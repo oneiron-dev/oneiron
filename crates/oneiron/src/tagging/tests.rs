@@ -508,12 +508,17 @@ fn a_failed_call_ends_the_pass_and_waits_for_its_backoff() {
         panic!("the call failed");
     };
     assert_eq!(retry_at, NOW + 30);
+    // The pass itself says when its failed marker is next owed a call.
+    assert_eq!(pass.earliest_retry_at(), Some(NOW + 30));
+    let failed_turn = pass.traces[0].turn;
     // The untouched marker is next; the failed one waits for its instant.
-    assert_eq!(reconciler.next_ready_at().expect("next"), Some(0));
     tagger.set(Answer::Good);
     let pass = reconciler.drain_once().expect("drain");
     assert_eq!(pass.traces.len(), 1);
-    assert_eq!(reconciler.next_ready_at().expect("next"), Some(NOW + 30));
+    assert_ne!(pass.traces[0].turn, failed_turn);
+    assert_eq!(pass.earliest_retry_at(), None);
+    assert!(reconciler.drain_once().expect("drain").traces.is_empty());
+    assert_eq!(tagger.calls(), 2);
 }
 
 #[test]
@@ -593,6 +598,86 @@ fn a_turn_edited_during_the_call_is_tagged_again_on_its_new_text() {
     assert_ne!(pass.traces[0].input_hash, pass.traces[1].input_hash);
     assert_eq!(tagger.calls(), 2);
     assert_eq!(count(&vault, AttemptState::Completed), 1);
+}
+
+#[test]
+fn text_that_appears_after_an_empty_read_is_tagged_before_the_marker_settles() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let writer = Arc::clone(&vault);
+    let turn_ref = Some("65656565656565656565656565656565".to_owned());
+    vault
+        .memory(speaker(&vault), EdgeActorClass::Human)
+        .witness(&turn(turn_ref.clone(), vec![message(0, "")]))
+        .expect("witness");
+    // Visible text lands after the worker read the turn as empty and before
+    // the transaction that settles the marker; the leased marker absorbs it.
+    super::reconciler::set_after_turn_read_hook(move || {
+        writer
+            .memory(speaker(&writer), EdgeActorClass::Human)
+            .witness(&turn(turn_ref, vec![message(1, "then Grace followed")]))
+            .expect("text between the read and the settle");
+    });
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 2);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Superseded { .. }
+    ));
+    assert!(matches!(
+        pass.traces[1].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert_eq!(tagger.calls(), 1);
+    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    assert_eq!(count(&vault, AttemptState::Queued), 0);
+}
+
+#[test]
+fn a_stale_lease_release_passes_over_other_owners_and_undecodable_rows() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    witness(&vault, "Ada sailed north");
+    witness(&vault, "Grace stayed behind");
+    let queue = AttemptQueue::new(&vault);
+    for owner in ["oneironer-tagging", "another-worker"] {
+        let claimed = queue
+            .claim_kind(
+                TAGGING_MARKER_KIND,
+                ClaimAttempt {
+                    lease_owner: owner.into(),
+                    now: u64::MAX,
+                },
+            )
+            .expect("claim");
+        assert!(matches!(claimed, ClaimOutcome::Claimed(_)));
+    }
+    // A job row of no kind this build can read.
+    vault
+        .try_with_write_txn(|txn| {
+            vault
+                .store
+                .attempt_records
+                .put(txn, &[0xee; 16], b"not an attempt record")?;
+            Ok::<(), crate::Error>(())
+        })
+        .expect("undecodable row");
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    assert_eq!(reconciler.release_stale_leases().expect("release"), 1);
+    // The full listing decodes every row, so the bad one goes first.
+    vault
+        .try_with_write_txn(|txn| {
+            vault.store.attempt_records.delete(txn, &[0xee; 16])?;
+            Ok::<(), crate::Error>(())
+        })
+        .expect("drop the undecodable row");
+    // This owner's lease is a retried try with a new scheduled row; the
+    // other owner's stays leased.
+    assert_eq!(count(&vault, AttemptState::Failed), 1);
+    assert_eq!(count(&vault, AttemptState::Scheduled), 1);
+    assert_eq!(count(&vault, AttemptState::Leased), 1);
 }
 
 #[test]

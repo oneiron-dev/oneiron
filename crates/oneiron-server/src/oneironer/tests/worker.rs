@@ -10,7 +10,7 @@ use oneiron::tagging::{OutputRefusal, TaggingFailure, TaggingOutcome};
 use oneiron::{EntityId, Vault};
 
 use super::support::{
-    Answer, StubTagger, copy_dir, endpoint_config, markers, open_vault, server, speaker,
+    Answer, StubTagger, card, copy_dir, endpoint_config, markers, open_vault, server, speaker,
     wait_until, witness,
 };
 use crate::server::SyncServer;
@@ -261,6 +261,42 @@ fn a_restarted_server_resumes_the_markers_of_a_crashed_one() {
         markers(&vault)
             .iter()
             .all(|row| row.state == AttemptState::Completed)
+    );
+}
+
+/// A tagger that turns into another checkpoint after startup is caught by
+/// the probe that follows the worker's next idle wait: the worker stops and
+/// later markers wait, so no answer settles under the configured identity.
+#[test]
+fn a_tagger_swapped_for_another_checkpoint_stops_the_worker_after_its_idle_wait() {
+    let stub = StubTagger::start(Answer::Good);
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open_vault(dir.path(), true, false);
+    let tagged = server(&vault, Some(&stub.config()));
+    let running = Running::start(&tagged);
+    witness(&vault, TEXTS[0]);
+    assert!(wait_until(|| shadowed(&tagged) == 1));
+    stub.set_card(card("ffffffffffffffff"));
+    assert!(
+        wait_until(|| running
+            .worker
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)),
+        "the worker stops once a probe finds another checkpoint"
+    );
+    let waiting = witness(&vault, TEXTS[1]);
+    running.stop();
+    assert_eq!(stub.extracts().len(), 1);
+    let queued: Vec<_> = markers(&vault)
+        .into_iter()
+        .filter(|row| row.state == AttemptState::Queued)
+        .collect();
+    assert_eq!(queued.len(), 1);
+    assert!(
+        queued[0]
+            .dedupe_key
+            .as_deref()
+            .is_some_and(|key| key.starts_with(&waiting.to_hex()))
     );
 }
 

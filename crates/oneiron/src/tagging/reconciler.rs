@@ -10,10 +10,11 @@ use super::input::{TurnInput, turn_input_in_txn};
 use super::marker::{MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn};
 use super::output::{AnswerMood, check_output};
 use super::trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex};
+use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
-    FailAttempt, RetryAttempt,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+    CompleteAttempt, FailAttempt, RetryAttempt, decode_record,
 };
 use crate::embed::EmbedderLocality;
 use crate::error::{Error, Result};
@@ -21,8 +22,6 @@ use crate::memory::extraction::{EncoderOutput, ExtractionEncoder};
 
 const DEFAULT_LEASE_OWNER: &str = "oneironer-tagging";
 const DEFAULT_BATCH_SIZE: usize = 16;
-/// Startup scan bound when this worker's own stale leases are looked up.
-const MAX_STARTUP_SCAN: usize = 1 << 24;
 
 /// Retry backoff for a failed attempt, in store-clock seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +57,22 @@ pub struct TaggingPass {
     pub calls: usize,
     /// Calls that returned an error or panicked; a refused answer is not one.
     pub failed_calls: usize,
+}
+
+impl TaggingPass {
+    /// The earliest store-clock second a marker this pass failed is retried
+    /// at: when the worker next has a retry to claim, read from the pass
+    /// itself rather than from the queue.
+    #[must_use]
+    pub fn earliest_retry_at(&self) -> Option<u64> {
+        self.traces
+            .iter()
+            .filter_map(|trace| match trace.outcome {
+                TaggingOutcome::Failed { retry_at, .. } => Some(retry_at),
+                _ => None,
+            })
+            .min()
+    }
 }
 
 /// Drains tagging markers through one host-served tagger.
@@ -139,16 +154,32 @@ impl TaggingReconciler {
     /// Run once at worker start: one worker serves a vault, so a lease under
     /// its own name outlived the process that took it. Each returns as an
     /// immediate retry, so the turn is tagged once more and settled once.
+    ///
+    /// One pass over the job records keeps only this owner's leased markers;
+    /// a row of any kind this build cannot decode is passed over, so no other
+    /// job's row can stop the worker from starting.
     pub fn release_stale_leases(&self) -> Result<usize> {
-        let queue = AttemptQueue::new(&self.vault);
-        let stale: Vec<AttemptRecord> = queue
-            .list_kind_bounded(TAGGING_MARKER_KIND, MAX_STARTUP_SCAN)?
-            .into_iter()
-            .filter(|record| {
-                record.state == AttemptState::Leased
+        let stale = {
+            let txn = self.vault.store.env.read_txn()?;
+            let mut stale = Vec::new();
+            for row in self.vault.store.attempt_records.iter(&txn)? {
+                let (key, raw) = row?;
+                let Ok(id) = AttemptId::from_bytes(&key) else {
+                    continue;
+                };
+                let Ok(record) = decode_record(&raw, id) else {
+                    continue;
+                };
+                if record.kind == TAGGING_MARKER_KIND
+                    && record.state == AttemptState::Leased
                     && record.lease_owner.as_deref() == Some(self.lease_owner.as_str())
-            })
-            .collect();
+                {
+                    stale.push(record);
+                }
+            }
+            stale
+        };
+        let queue = AttemptQueue::new(&self.vault);
         for record in &stale {
             queue.retry(RetryAttempt {
                 id: record.id,
@@ -160,11 +191,6 @@ impl TaggingReconciler {
             })?;
         }
         Ok(stale.len())
-    }
-
-    /// The store-clock second the earliest waiting marker becomes claimable.
-    pub fn next_ready_at(&self) -> Result<Option<u64>> {
-        AttemptQueue::new(&self.vault).next_ready_at_of_kind(TAGGING_MARKER_KIND)
     }
 
     /// Claims and settles up to the batch size of ready markers.
@@ -245,9 +271,15 @@ impl TaggingReconciler {
             let txn = self.vault.store.env.read_txn()?;
             turn_input_in_txn(&self.vault, &txn, &payload.turn)?
         };
+        #[cfg(test)]
+        run_after_turn_read_hook();
         let (input, hash) = match read {
-            TurnInput::Gone => return self.skip(record, SkipReason::TurnGone, trace),
-            TurnInput::Empty => return self.skip(record, SkipReason::NoText, trace),
+            TurnInput::Gone => {
+                return self.skip(queue, record, &payload.turn, SkipReason::TurnGone, trace);
+            }
+            TurnInput::Empty => {
+                return self.skip(queue, record, &payload.turn, SkipReason::NoText, trace);
+            }
             TurnInput::Ready { input, hash } => (input, hash),
         };
         trace.input_hash = Some(hash.clone());
@@ -302,15 +334,35 @@ impl TaggingReconciler {
     }
 
     /// Nothing is owed: the marker completes with no tagger call.
+    ///
+    /// The skip stands only for the turn it read: a witness that added text
+    /// since then was absorbed by this leased marker, so the settling
+    /// transaction reads the turn again and, if it now has text, the marker
+    /// is retried at once on it.
     fn skip(
         &self,
+        queue: &AttemptQueue<'_>,
         record: &AttemptRecord,
+        turn: &EntityId,
         reason: SkipReason,
         mut trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
-        self.vault
-            .try_with_write_txn(|txn| self.complete_in_txn(txn, record))?;
-        trace.outcome = TaggingOutcome::Skipped { reason };
+        let settled = self.vault.try_with_write_txn(|txn| -> Result<bool> {
+            let owes_nothing = !matches!(
+                turn_input_in_txn(&self.vault, txn, turn)?,
+                TurnInput::Ready { .. }
+            );
+            if owes_nothing {
+                self.complete_in_txn(txn, record)?;
+            }
+            Ok(owes_nothing)
+        })?;
+        if settled {
+            trace.outcome = TaggingOutcome::Skipped { reason };
+            return Ok(trace);
+        }
+        let retry_at = self.retry_at(queue, record, 0, "superseded")?;
+        trace.outcome = TaggingOutcome::Superseded { retry_at };
         Ok(trace)
     }
 
@@ -376,6 +428,27 @@ impl TaggingReconciler {
             now: 0,
         })?;
         Ok(retry_at)
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static AFTER_TURN_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `hook` once on this thread, between an attempt's read of its turn and
+/// the transaction that settles it.
+#[cfg(test)]
+pub(super) fn set_after_turn_read_hook(hook: impl FnOnce() + 'static) {
+    AFTER_TURN_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_after_turn_read_hook() {
+    let hook = AFTER_TURN_READ.with(|slot| slot.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook();
     }
 }
 

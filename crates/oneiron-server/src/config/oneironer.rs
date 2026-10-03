@@ -240,9 +240,15 @@ impl OneironerConfig {
                 "oneironer.provider = \"endpoint\" requires oneironer.label_count, the number of labels the tagger reports"
             );
         }
-        if self.timeout_ms == 0 || self.batch_size == 0 || self.idle_interval_ms == 0 {
+        // A zero first retry delay would let one refused answer be claimed
+        // and sent again with no wait between passes.
+        if self.timeout_ms == 0
+            || self.batch_size == 0
+            || self.idle_interval_ms == 0
+            || self.retry_backoff_secs == 0
+        {
             anyhow::bail!(
-                "oneironer.timeout_ms, batch_size and idle_interval_ms must be greater than zero"
+                "oneironer.timeout_ms, batch_size, idle_interval_ms and retry_backoff_secs must be greater than zero"
             );
         }
         if self.max_retry_backoff_secs < self.retry_backoff_secs {

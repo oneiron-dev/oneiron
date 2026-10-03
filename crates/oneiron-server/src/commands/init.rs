@@ -1,8 +1,8 @@
 //! First-run embedder and tagger choices, using the same config and providers as serve.
 use crate::cli::InitArgs;
 use crate::config::{
-    EmbedderConfig, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerProvider, ServeArgs,
-    ServeConfig,
+    EmbedderConfig, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerMode,
+    OneironerProvider, ServeArgs, ServeConfig,
 };
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -59,6 +59,10 @@ fn init_with_env(
     let staged = stage_config(&path, &config_text)?;
     let result = (|| {
         let config = read_config(&staged, env)?;
+        // The same slot serve builds: the local provider and save mode are
+        // refused by name, and a reachable tagger must be the configured one.
+        // Checked first, so a refusal comes before the local model download.
+        crate::oneironer::build_slot(config.oneironer.as_ref())?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
             Some(embedder) if embedder.provider == EmbedderProvider::Local => {
                 crate::embedder::prepare_local(embedder)?.to_owned()
@@ -77,9 +81,6 @@ fn init_with_env(
             }
             None => "none".to_owned(),
         };
-        // The same slot serve builds: the local provider and save mode are
-        // refused by name, and a reachable tagger must be the configured one.
-        crate::oneironer::build_slot(config.oneironer.as_ref())?;
         let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
         std::fs::rename(&staged, &path)?;
         super::print_doctor_report(&vault)?;
@@ -117,7 +118,8 @@ fn init_with_env(
 }
 
 /// Asks for the tagger the way the embedder is asked for. The local tagger is
-/// not built yet, so the default is none.
+/// not built yet, so the default is none; save mode is not built yet either,
+/// so the mode defaults to shadow.
 fn ask_tagger(
     args: &mut InitArgs,
     input: &mut impl BufRead,
@@ -150,10 +152,12 @@ fn ask_tagger(
         args.oneironer_label_count = Some(ask("Tagger label count: ")?.parse()?);
     }
     if args.oneironer_mode.is_none() {
-        let mode = ask("Tagger mode save | shadow [save]: ")?;
-        if !mode.is_empty() {
-            args.oneironer_mode = Some(mode.parse().map_err(anyhow::Error::msg)?);
-        }
+        let mode = ask("Tagger mode shadow | save (save is not available yet) [shadow]: ")?;
+        args.oneironer_mode = Some(if mode.is_empty() {
+            OneironerMode::Shadow
+        } else {
+            mode.parse().map_err(anyhow::Error::msg)?
+        });
     }
     Ok(())
 }
@@ -625,6 +629,54 @@ provider = "local"
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn the_interactive_tagger_mode_defaults_to_shadow_while_save_is_not_built() {
+        let mut args = InitArgs::default();
+        let mut shown = Vec::new();
+        ask_tagger(
+            &mut args,
+            &mut "endpoint\nhttp://127.0.0.1:9100\n0123456789abcdef\n3\n\n".as_bytes(),
+            &mut shown,
+        )
+        .unwrap();
+        assert_eq!(args.oneironer_mode, Some(OneironerMode::Shadow));
+        let shown = String::from_utf8(shown).unwrap();
+        assert!(
+            shown.contains("save is not available yet) [shadow]"),
+            "{shown}"
+        );
+        let table = tagger_table(&args).unwrap();
+        assert_eq!(
+            table.get("mode").and_then(toml::Value::as_str),
+            Some("shadow")
+        );
+    }
+
+    #[test]
+    fn a_tagger_refusal_comes_before_the_local_embedder_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = InitArgs {
+            path: dir.path().join("vault"),
+            config: Some(dir.path().join("oneiron.toml")),
+            embedder: Some(EmbedderProvider::Local),
+            oneironer: Some(OneironerProvider::Local),
+            map_size: 64 * 1024 * 1024,
+            ..Default::default()
+        };
+        // CUDA is not built into this crate on any host: were the local
+        // embedder prepared first, its device refusal would come back instead,
+        // and with a device that resolved, its model download would start.
+        let env = EnvConfig::from_pairs([("ONEIRON_EMBEDDER_DEVICE", "cuda")]).unwrap();
+        let refused = init_with_env(args.clone(), env, None).unwrap_err();
+        assert_eq!(
+            refused.downcast_ref::<crate::oneironer::TaggerNotBuilt>(),
+            Some(&crate::oneironer::TaggerNotBuilt::LocalProvider),
+            "{refused}"
+        );
+        assert!(!args.path.exists());
+        assert!(!dir.path().join("oneiron.toml").exists());
     }
 
     #[test]

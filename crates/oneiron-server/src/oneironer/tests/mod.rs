@@ -137,6 +137,77 @@ fn an_endpoint_section_missing_its_identity_or_naming_an_unknown_kind_is_refused
     );
 }
 
+#[test]
+fn a_zero_first_retry_delay_is_refused() {
+    let base = "[oneironer]\nprovider = \"endpoint\"\nmode = \"shadow\"\nurl = \"http://127.0.0.1:9100\"\ncheckpoint_sha16 = \"0123456789abcdef\"\nlabel_count = 3\n";
+    let refused = resolve(
+        &format!("{base}retry_backoff_secs = 0\n"),
+        &[],
+        ServeArgs::default(),
+    )
+    .expect_err("a zero first retry delay");
+    assert!(
+        refused.to_string().contains("retry_backoff_secs"),
+        "{refused}"
+    );
+    let section = resolve(
+        &format!("{base}retry_backoff_secs = 1\n"),
+        &[],
+        ServeArgs::default(),
+    )
+    .expect("a one-second first retry delay")
+    .oneironer
+    .expect("section");
+    assert_eq!(section.retry_backoff_secs, 1);
+    let zero = OneironerConfig {
+        retry_backoff_secs: 0,
+        ..section
+    };
+    assert!(zero.validate().is_err());
+}
+
+/// Managed mode builds its configuration from its own flags and never reads
+/// the tagger's: each `--oneironer-*` flag is refused by name, not dropped.
+#[test]
+fn managed_mode_refuses_every_tagger_flag_by_name() {
+    #[derive(clap::Parser)]
+    struct Probe {
+        #[command(flatten)]
+        serve: ServeArgs,
+    }
+    let version = oneiron_vault_contract::CONTRACT_VERSION.to_string();
+    for (flag, value) in [
+        ("--oneironer-provider", "endpoint"),
+        ("--oneironer-mode", "shadow"),
+        ("--oneironer-url", "http://127.0.0.1:9100"),
+        ("--oneironer-checkpoint-sha16", CHECKPOINT),
+        ("--oneironer-label-count", "3"),
+        ("--oneironer-labels", "PERSON=PERSON"),
+        ("--oneironer-timeout-ms", "250"),
+    ] {
+        let argv = [
+            "oneiron-server",
+            "--managed-by-hypnos",
+            "--contract-version",
+            version.as_str(),
+            flag,
+            value,
+        ];
+        let args = <Probe as clap::Parser>::try_parse_from(argv)
+            .expect("parse")
+            .serve;
+        let refused = crate::managed::ManagedArgs::from_serve_args(&args).expect_err(flag);
+        assert!(
+            matches!(
+                &refused,
+                crate::managed::ManagedError::ConflictingFlag { flag: named, .. }
+                    if *named == flag.trim_start_matches("--")
+            ),
+            "{flag}: {refused}"
+        );
+    }
+}
+
 // ─── the endpoint ───────────────────────────────────────────────────────
 
 #[test]

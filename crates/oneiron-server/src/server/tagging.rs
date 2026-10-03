@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::memory::extraction::ExtractionEncoder;
-use oneiron::tagging::{TaggingBackoff, TaggingPass, TaggingReconciler};
+use oneiron::tagging::{TaggingBackoff, TaggingReconciler};
 
 use super::core::SyncServer;
 use crate::oneironer::endpoint::ProbeOutcome;
@@ -52,24 +52,32 @@ impl SyncServer {
             Duration::from_millis(slot.config().idle_interval_ms).max(MIN_IDLE)
         });
         let mut backoff = FIRST_BACKOFF;
+        // The earliest retry a pass of this worker scheduled that no later
+        // pass has reached: the next wake when no commit comes first.
+        let mut next_retry: Option<u64> = None;
         loop {
             // Level-triggered: the pass reads what is ready, so every wake
             // queued before it is already answered by it.
             while wake.try_recv().is_ok() {}
+            let started = self.vault().now_recorded_at();
             let pass = Arc::clone(&reconciler);
             let server = Arc::clone(&self);
             let outcome = tokio::task::spawn_blocking(move || {
-                let drained = pass.drain_once_with(|trace| {
+                pass.drain_once_with(|trace| {
                     if let Some(slot) = server.tagger.as_ref() {
                         slot.log(trace);
                     }
-                })?;
-                let next = pass.next_ready_at()?;
-                Ok::<(TaggingPass, Option<u64>), oneiron::Error>((drained, next))
+                })
             })
             .await;
             match outcome {
-                Ok(Ok((pass, next_ready_at))) => {
+                Ok(Ok(pass)) => {
+                    // A retry due when this pass began was claimable by it.
+                    next_retry = next_retry
+                        .filter(|at| *at > started)
+                        .into_iter()
+                        .chain(pass.earliest_retry_at())
+                        .min();
                     let claimed = pass.traces.len();
                     let call_failed = pass.failed_calls > 0;
                     if call_failed {
@@ -87,10 +95,16 @@ impl SyncServer {
                     if claimed > 0 {
                         continue;
                     }
-                    let wait = self.until_ready(next_ready_at, idle);
+                    let wait = self.until_ready(next_retry, idle);
                     tokio::select! {
                         _ = wake.recv() => {}
                         () = tokio::time::sleep(wait) => {}
+                    }
+                    // The tagger may have been swapped while the loop waited:
+                    // its answers settle under the configured checkpoint, so
+                    // probe before the next pass.
+                    if !self.tagger_still_configured().await {
+                        return;
                     }
                 }
                 Ok(Err(error)) => {
@@ -106,10 +120,10 @@ impl SyncServer {
         }
     }
 
-    /// How long to wait for the next marker that will become ready, bounded
-    /// by the idle interval.
-    fn until_ready(&self, next_ready_at: Option<u64>, idle: Duration) -> Duration {
-        let Some(at) = next_ready_at else {
+    /// How long to wait for the earliest scheduled retry, bounded by the idle
+    /// interval.
+    fn until_ready(&self, next_retry: Option<u64>, idle: Duration) -> Duration {
+        let Some(at) = next_retry else {
             return idle;
         };
         let now = self.vault().now_recorded_at();
@@ -152,12 +166,17 @@ impl SyncServer {
                     max_secs: config.max_retry_backoff_secs,
                 })
                 .with_label_kinds(config.label_kinds());
-            let released = reconciler.release_stale_leases()?;
-            if released > 0 {
-                tracing::info!(
+            match reconciler.release_stale_leases() {
+                Ok(0) => {}
+                Ok(released) => tracing::info!(
                     released,
                     "tagging markers left leased by a stopped worker resume"
-                );
+                ),
+                // Only those markers wait; every other marker is still served.
+                Err(error) => tracing::warn!(
+                    ?error,
+                    "tagging markers left leased by a stopped worker were not released"
+                ),
             }
             Ok::<_, oneiron::Error>(reconciler)
         })
