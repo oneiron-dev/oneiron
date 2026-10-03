@@ -31,6 +31,7 @@ mod livequery;
 pub mod managed;
 pub mod mcp;
 mod oauth_relay;
+mod oneironer;
 pub mod projection;
 mod protocol;
 pub mod runtime;

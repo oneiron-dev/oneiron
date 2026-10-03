@@ -247,14 +247,24 @@ impl AttemptQueue<'_> {
     /// authoritative, write-serialized dedupe check on a miss.
     pub(crate) fn pending_dedupe(&self, kind: &str, key: &str) -> Result<Option<AttemptRecord>> {
         let txn = self.store.env.read_txn()?;
+        self.pending_dedupe_in_txn(&txn, kind, key)
+    }
+
+    /// [`Self::pending_dedupe`] inside the caller's transaction.
+    pub(crate) fn pending_dedupe_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+        key: &str,
+    ) -> Result<Option<AttemptRecord>> {
         let keys = DedupeIndexKeys::new(kind, None, key);
         if let Some(row) =
-            self.read_existing_dedupe_in_read_txn(&txn, &keys.primary, kind, None, key)?
+            self.read_existing_dedupe_in_read_txn(txn, &keys.primary, kind, None, key)?
         {
             return Ok(Some(row));
         }
         self.read_existing_dedupe_in_read_txn(
-            &txn,
+            txn,
             &legacy_dedupe_index_key(kind, key),
             kind,
             None,
