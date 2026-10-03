@@ -19,6 +19,52 @@ def digest(path):
 
 
 # --- copied verbatim from harness/scripts/office/run_excel_oracle.py (the readers the goldens are proven with)
+RICH_ERRORS = {0: "#NULL!", 1: "#DIV/0!", 2: "#VALUE!", 3: "#REF!", 4: "#NAME?", 5: "#NUM!", 6: "#N/A",
+               7: "#GETTING_DATA", 8: "#SPILL!", 9: "#CONNECT!", 10: "#BLOCKED!", 11: "#UNKNOWN!",
+               12: "#FIELD!", 13: "#CALC!", 14: "#EXTERNAL!"}
+RICHDATA = "{http://schemas.microsoft.com/office/spreadsheetml/2017/richdata}"
+
+
+def rich_error_names(archive):
+    """Error names for the cells Excel stores as rich values, indexed by the cell's vm attribute (1-based).
+
+    Excel 365 writes #CALC!, #SPILL! and the other errors newer than the file format as a legacy #VALUE!
+    in the cell plus a rich value: the cell's vm points into xl/metadata.xml valueMetadata, whose
+    XLRICHVALUE block points (xlrd:rvb i) into xl/richData/rdrichvalue.xml, whose record's structure
+    (xl/richData/rdrichvaluestructure.xml, type _error) names the errorType field. Reading only the
+    cell would score Excel's #CALC! as #VALUE!. An entry is None when the rich value is not an error.
+    """
+    parts = set(archive.namelist())
+    if not {"xl/metadata.xml", "xl/richData/rdrichvalue.xml", "xl/richData/rdrichvaluestructure.xml"} <= parts:
+        return []
+    metadata = ET.fromstring(archive.read("xl/metadata.xml"))
+    types = [t.get("name") for t in metadata.findall("s:metadataTypes/s:metadataType", NS)]
+    future = {}
+    for block in metadata.findall("s:futureMetadata", NS):
+        indexes = []
+        for bk in block.findall("s:bk", NS):
+            rvb = bk.find(f".//{RICHDATA}rvb")
+            indexes.append(None if rvb is None else int(rvb.get("i")))
+        future[block.get("name")] = indexes
+    structures = [[key.get("n") for key in structure.findall(f"{RICHDATA}k")] for structure in
+                  ET.fromstring(archive.read("xl/richData/rdrichvaluestructure.xml")).findall(f"{RICHDATA}s")]
+    records = []
+    for record in ET.fromstring(archive.read("xl/richData/rdrichvalue.xml")).findall(f"{RICHDATA}rv"):
+        keys = structures[int(record.get("s"))]
+        records.append(dict(zip(keys, [v.text for v in record.findall(f"{RICHDATA}v")])))
+    resolved = []
+    for bk in metadata.findall("s:valueMetadata/s:bk", NS):
+        rc = bk.find("s:rc", NS)
+        name = None
+        if rc is not None and types[int(rc.get("t")) - 1] == "XLRICHVALUE":
+            index = future.get("XLRICHVALUE", [])[int(rc.get("v"))]
+            fields = records[index] if index is not None and index < len(records) else {}
+            if fields.get("errorType") is not None:
+                name = RICH_ERRORS.get(int(fields["errorType"]))
+        resolved.append(name)
+    return resolved
+
+
 def cached_cells(path):
     with zipfile.ZipFile(path) as archive:
         if archive.testzip() is not None:
@@ -27,6 +73,7 @@ def cached_cells(path):
         if "xl/sharedStrings.xml" in archive.namelist():
             root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
             strings = ["".join(item.itertext()) for item in root.findall("s:si", NS)]
+        rich_errors = rich_error_names(archive)
         root = ET.fromstring(archive.read("xl/worksheets/sheet1.xml"))
         cells = {}
         for cell in root.findall(".//s:sheetData/s:row/s:c", NS):
@@ -41,7 +88,12 @@ def cached_cells(path):
                 decoded = strings[int(value.text)]
             elif kind == "b":
                 decoded = value.text == "1"
-            elif kind in ("e", "str"):
+            elif kind == "e":
+                decoded = value.text or ""
+                vm = cell.get("vm")
+                if vm is not None and 0 < int(vm) <= len(rich_errors) and rich_errors[int(vm) - 1]:
+                    decoded = rich_errors[int(vm) - 1]
+            elif kind == "str":
                 decoded = value.text or ""
             else:
                 decoded = float(value.text) if value.text else None

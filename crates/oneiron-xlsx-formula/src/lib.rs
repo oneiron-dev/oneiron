@@ -11,8 +11,8 @@
 //! The corpus rule is met at fork rev `158cee8f` (0.9.3-oneiron.4): 2,960 of
 //! the 2,967 scored fresh-Excel SpreadsheetBench workbooks (Excel for Windows
 //! truth) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the
-//! 2,951 it was measured on), and 810 of the 811 pinned goldens (Excel for
-//! Windows 16.0.20430) against LibreOffice's 753. The host's
+//! 2,951 it was measured on), and all 811 pinned goldens (Excel for
+//! Windows 16.0.20430, rich-value error caches resolved) against LibreOffice's 753. The host's
 //! LibreOffice recalc stays the precision fallback for refused workbooks
 //! only: unsupported features and formulas needing caller context; the corpus
 //! clock is never substituted for production time. External-link workbooks

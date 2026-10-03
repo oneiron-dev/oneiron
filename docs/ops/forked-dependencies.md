@@ -100,11 +100,18 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.4), over `362becff`:
   NOW/TODAY/RAND (#1280), so `e29e4ee7` starts at 2,883 of 2,967 and 809 of 811 pinned. 24
   rounds of one cause each, every one kept only when neither score dropped, plus follow-ups
   for each round's post-landing review (sol). At `158cee8f` the fork matches 2,960 of the 2,967
-  SpreadsheetBench workbooks and 810 of the 811 pinned goldens. The pinned miss is FILTER's
-  `#CALC!` cached as `#VALUE!` (a recording artifact). The seven bench misses are four
-  external-link cells and the three answers of task 42110, where Excel turns a row number such
-  as 1.9999999985 into row 2 inside INDEX; the corpus bounds that tolerance only loosely
-  (7.5e-10 to 0.083 relative), so the fork does not guess it. Examples: date and time text in
+  SpreadsheetBench workbooks and all 811 pinned goldens. Excel saves `#CALC!`, `#SPILL!` and the
+  other errors newer than the file format as a legacy `#VALUE!` cell plus an `xl/richData` record;
+  since 2026-10-03 the goldens reader (`cached_cells` in `scripts/office/run_excel_oracle.py`,
+  copied into `win_excel_cases.py`) resolves that record, so FILTER's `#CALC!` reads as `#CALC!`
+  (the recorded workbooks are unchanged; `scripts/tests/fixtures/excel-windows-spill-error.xlsx`
+  pins `#SPILL!`). The seven bench misses are four external-link cells and the three answers of
+  task 42110, where Excel turns a row number such as 1.9999999985 into row 2 inside INDEX. A probe
+  on Excel for Windows 16.0.20430 (2026-10-03) pinned the rule: INDEX (row and column), VLOOKUP and
+  HLOOKUP index, ADDRESS row and DATE month read an integer argument as floor(x + 2^-22): 2 - 2.38E-7
+  is row 2 and 2 - 2.39E-7 is row 1, the same absolute window at 1999 and at 100000; OFFSET, CHOOSE,
+  SMALL, MID and REPT truncate without the snap and LARGE rounds. The fork still truncates INDEX's
+  row_num, which is the next loop's first item. Examples: date and time text in
   number arguments, criteria and en-US currency text (VALUE("$1,000") = 1000), numbers as text
   with 15 significant digits and criteria compared to 15 digits, approximate lookups over
   unsorted data, negative zero, AGGREGATE array k and FREQUENCY bins, INDEX area_num and
