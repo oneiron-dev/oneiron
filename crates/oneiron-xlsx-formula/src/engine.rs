@@ -25,12 +25,12 @@ use crate::error::{FormulaError, Result};
 pub const ENGINE_NAME: &str = "formualizer-workbook";
 /// Owned evaluator version; upstream plus the error-concatenation repair and the Excel
 /// parity work on the fork's `oneiron/parity` branch (ONE-2700 part 1).
-pub const ENGINE_VERSION: &str = "0.9.3-oneiron.3";
+pub const ENGINE_VERSION: &str = "0.9.3-oneiron.4";
 /// Pinned upstream commit (tag `v0.9.3`).
 pub const ENGINE_UPSTREAM_REV: &str = "362becffa029d8f77349c2c477fc39eff7fc52d5";
 /// Full deterministic stamp recorded on every evaluation report.
 pub const ENGINE_STAMP: &str =
-    "formualizer-workbook 0.9.3-oneiron.3 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
+    "formualizer-workbook 0.9.3-oneiron.4 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
 
 /// Fixed instant every volatile function observes. 2026-01-01T00:00:00Z in
 /// UTC: deterministic across hosts and timezones, never the wall clock.
@@ -280,11 +280,11 @@ mod tests {
     #[test]
     fn stamp_is_deterministic_and_pinned() {
         assert_eq!(
-            "formualizer-workbook/0.9.3-oneiron.3",
+            "formualizer-workbook/0.9.3-oneiron.4",
             current_engine_id().stamp()
         );
         assert_eq!(ENGINE_NAME, "formualizer-workbook");
-        assert_eq!(ENGINE_VERSION, "0.9.3-oneiron.3");
+        assert_eq!(ENGINE_VERSION, "0.9.3-oneiron.4");
         assert_eq!(ENGINE_UPSTREAM_REV.len(), 40);
     }
 
