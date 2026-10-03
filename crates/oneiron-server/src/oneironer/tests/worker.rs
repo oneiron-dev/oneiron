@@ -293,73 +293,96 @@ fn summary(mut samples: Vec<Duration>) -> serde_json::Value {
     })
 }
 
-/// Acceptance lines 2 and 3, a measurement rather than a law. Writes
-/// alternate between a vault whose tagger worker runs against the stub and a
-/// vault with no tagger, in rounds, so drift on the host lands on both arms.
+/// Acceptance lines 2 and 3, a measurement rather than a law. Three vaults
+/// take the same writes in rotating order, round by round, so drift on the
+/// host lands on every arm: no tagger; markers on with no worker running (the
+/// write's own cost); markers on with the worker draining them against the
+/// stub (the cost under a live worker). Write-to-trace is read twice on the
+/// live arm: during those bursts, and for turns written one at a time.
 /// Run alone on a quiet host:
 /// `cargo test --locked -p oneiron-server --lib oneironer::tests::worker::timing -- --ignored --nocapture`
 #[test]
 #[ignore = "timing run; needs a quiet host"]
 fn timing_write_latency_and_write_to_trace() {
     const WARMUP: usize = 20;
-    const ROUNDS: usize = 10;
+    const ROUNDS: usize = 12;
     const PER_ROUND: usize = 50;
+    const PACED: usize = 100;
     let stub = StubTagger::start(Answer::Good);
-    let tagged_dir = tempfile::tempdir().expect("dir");
-    let plain_dir = tempfile::tempdir().expect("dir");
-    let tagged_vault = open_vault(tagged_dir.path(), true, false);
-    let plain_vault = open_vault(plain_dir.path(), false, false);
-    let tagged = server(&tagged_vault, Some(&stub.config()));
-    let running = Running::start(&tagged);
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().expect("dir")).collect();
+    let plain = open_vault(dirs[0].path(), false, false);
+    let markers_only = open_vault(dirs[1].path(), true, false);
+    let live = open_vault(dirs[2].path(), true, false);
+    let live_server = server(&live, Some(&stub.config()));
+    let running = Running::start(&live_server);
+    let arms = [&plain, &markers_only, &live];
     for index in 0..WARMUP {
-        witness(&tagged_vault, &format!("warm up turn number {index}"));
-        witness(&plain_vault, &format!("warm up turn number {index}"));
+        for vault in arms {
+            witness(vault, &format!("warm up turn number {index}"));
+        }
     }
-    let mut marker_on = Vec::new();
-    let mut no_tagger = Vec::new();
+    let mut latency: [Vec<Duration>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut written: BTreeMap<EntityId, Instant> = BTreeMap::new();
     for round in 0..ROUNDS {
-        let tagged_first = round % 2 == 0;
-        for arm in [tagged_first, !tagged_first] {
+        for step in 0..3 {
+            let arm = (round + step) % 3;
             for index in 0..PER_ROUND {
                 let text = format!("round {round} turn {index} where Ada met Grace by the sea");
-                let vault = if arm { &tagged_vault } else { &plain_vault };
                 let started = Instant::now();
-                let turn = witness(vault, &text);
+                let turn = witness(arms[arm], &text);
                 let done = Instant::now();
-                if arm {
-                    marker_on.push(done - started);
+                latency[arm].push(done - started);
+                if arm == 2 {
                     written.insert(turn, done);
-                } else {
-                    no_tagger.push(done - started);
                 }
             }
         }
     }
-    let expected = WARMUP + ROUNDS * PER_ROUND;
-    assert!(wait_until_long(|| shadowed(&tagged) == expected));
+    let burst_turns = WARMUP + ROUNDS * PER_ROUND;
+    assert!(wait_until_long(|| shadowed(&live_server) == burst_turns));
+    let mut paced: BTreeMap<EntityId, Instant> = BTreeMap::new();
+    for index in 0..PACED {
+        let turn = witness(
+            &live,
+            &format!("paced turn {index} where Grace wrote to Ada"),
+        );
+        paced.insert(turn, Instant::now());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(wait_until_long(
+        || shadowed(&live_server) == burst_turns + PACED
+    ));
     running.stop();
-    let to_trace: Vec<Duration> = tagged
-        .tagger
-        .as_ref()
-        .expect("slot")
-        .traces()
-        .into_iter()
-        .filter(|logged| matches!(logged.trace.outcome, TaggingOutcome::Shadowed { .. }))
-        .filter_map(|logged| {
-            let turn = logged.trace.turn?;
-            written
-                .get(&turn)
-                .map(|at| logged.at.saturating_duration_since(*at))
-        })
-        .collect();
-    assert_eq!(to_trace.len(), ROUNDS * PER_ROUND);
+    let to_trace = |turns: &BTreeMap<EntityId, Instant>| -> Vec<Duration> {
+        live_server
+            .tagger
+            .as_ref()
+            .expect("slot")
+            .traces()
+            .into_iter()
+            .filter(|logged| matches!(logged.trace.outcome, TaggingOutcome::Shadowed { .. }))
+            .filter_map(|logged| {
+                let turn = logged.trace.turn?;
+                turns
+                    .get(&turn)
+                    .map(|at| logged.at.saturating_duration_since(*at))
+            })
+            .collect()
+    };
+    let burst = to_trace(&written);
+    let one_at_a_time = to_trace(&paced);
+    assert_eq!(burst.len(), ROUNDS * PER_ROUND);
+    assert_eq!(one_at_a_time.len(), PACED);
+    assert_eq!(markers(&markers_only).len(), burst_turns);
+    let [no_tagger, marker_only, marker_live] = latency;
     println!(
         "{}",
         serde_json::json!({
-            "write_latency_marker_on": summary(marker_on),
             "write_latency_no_tagger": summary(no_tagger),
-            "write_to_trace": summary(to_trace),
+            "write_latency_marker_on_no_worker": summary(marker_only),
+            "write_latency_marker_on_live_worker": summary(marker_live),
+            "write_to_trace_during_bursts": summary(burst),
+            "write_to_trace_one_at_a_time": summary(one_at_a_time),
         })
     );
 }
