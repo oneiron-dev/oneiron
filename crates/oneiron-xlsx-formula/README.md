@@ -25,9 +25,10 @@ fork branch, the rev and the patches. Nothing of formualizer is vendored here.
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
 rev `158cee8f`: 2,960 of the 2,967 scored fresh-Excel SpreadsheetBench workbooks (truth
 recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND skipped) are fully
-Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured on), and 810 of
-the 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430), against
-LibreOffice's 753 (the unchanged evaluator scored 754; the one miss is a recording artifact). The
+Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured on), and all 811 pinned
+native Excel goldens (recorded on Excel for Windows 16.0.20430; the goldens reader resolves
+Excel's rich-value error caches since 2026-10-03), against LibreOffice's 753 (the unchanged
+evaluator scored 754). The
 comparison uses a pinned UTC instant. Production volatile or context-dependent formulas
 route to the precision fallback, not that clock.
 

@@ -19,7 +19,10 @@ and must not be counted as exact-value matches.
 recorded on **Excel for Windows 16.0.20430.20118** (en-US region, 2026-10-02) by
 `scripts/office/win_excel_cases.py` (COM: one new workbook per case, setup cells typed as the
 corpus says, the `Z1` canary, the formula at the check anchor, calculate, save) and pinned by
-`scripts/office/collect_excel_goldens.py`. The first recording (Excel for Mac 16.112.4, a
+`scripts/office/collect_excel_goldens.py`. On 2026-10-03 the reader learned Excel's rich-value error
+caches (`#CALC!`, `#SPILL!` and the other errors newer than the file format are saved as a `#VALUE!`
+cell plus an `xl/richData` record naming the real error); the receipt and goldens were re-read from
+the same 2026-10-02 workbooks, which changed one value (FILTER_all_false_no_default is `#CALC!`). The first recording (Excel for Mac 16.112.4, a
 Japanese-region Mac) differed in 7 values: DOLLAR's currency symbol, TRIM with a Mac Roman
 CHAR(160), VALUE of a currency string, and the four NOW/TODAY/RAND cases. Where Excel for
 Windows and Excel for Mac differ, Windows is the reference (ruling 2026-10-01).
