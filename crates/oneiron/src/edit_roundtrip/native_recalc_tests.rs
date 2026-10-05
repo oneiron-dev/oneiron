@@ -17,7 +17,7 @@ const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.6";
+const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.7";
 
 fn build(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
     opc::write(&OpcPackage::from_parts(

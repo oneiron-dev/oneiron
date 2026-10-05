@@ -17,13 +17,13 @@ External-link workbooks keep their link-preserving route to the host, and
 `preserve_external_links` refuses host output that alters or drops a link.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.6): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.7): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3 and the third and fourth parity loops). `docs/ops/forked-dependencies.md` records the
 fork branch, the rev and the patches. Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `d598ad05`: 2,963 of the 2,967 scored fresh-Excel SpreadsheetBench workbooks (truth
+rev `c9d441cd`: 2,963 of the 2,967 scored fresh-Excel SpreadsheetBench workbooks (truth
 recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND skipped) are fully
 Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured on), and all 811 pinned
 native Excel goldens (recorded on Excel for Windows 16.0.20430; the goldens reader resolves
@@ -32,7 +32,7 @@ evaluator scored 754). The
 comparison uses a pinned UTC instant. Production volatile or context-dependent formulas
 route to the precision fallback, not that clock.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.6`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.7`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
