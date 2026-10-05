@@ -22,6 +22,7 @@
 //! scorers and the tokenizer stand-in are fixed in code.
 
 mod arms;
+mod board;
 mod strategies;
 mod window;
 
@@ -158,8 +159,9 @@ pub(crate) struct EpisodeResult {
     pub(crate) reprefill_tok: u64,
     /// Tokens restored from references at query time.
     pub(crate) restore_tok: u64,
-    /// Peak of the live window plus one restored reference while reading.
-    pub(crate) query_peak: u64,
+    /// Largest context the reader received for one query: the live window
+    /// plus every page restored for it.
+    pub(crate) read_peak: u64,
     /// Model calls that saw a window over budget.
     pub(crate) over_budget: u64,
     pub(crate) violations: Vec<&'static str>,
@@ -190,14 +192,14 @@ pub(crate) fn run_episode_with(
     let mut window_sum = 0_u64;
     for (n, turn) in ep.turns.iter().enumerate() {
         win.push(SpanKind::Turn(n as u32), turn.text.clone());
-        let mut ctx = Ctx {
-            win: &mut win,
-            refs: &mut refs,
-            led: &mut led,
+        let mut ctx = Ctx::new(
+            &mut win,
+            &mut refs,
+            &mut led,
             caps,
             budget,
-            low_water: low_water(budget),
-        };
+            low_water(budget),
+        );
         if let Some(verb) = &turn.verb {
             strategy.on_verb(verb, &mut ctx);
         }
@@ -209,36 +211,38 @@ pub(crate) fn run_episode_with(
         res.over_budget += u64::from(live > budget);
     }
     res.mean = window_sum as f64 / ep.turns.len().max(1) as f64;
-    res.query_peak = res.peak;
+    res.read_peak = res.peak;
     tamper(&mut refs);
 
     let mut answers = Vec::with_capacity(ep.queries.len());
     for q in &ep.queries {
         let mut ids = {
-            let ctx = Ctx {
-                win: &mut win,
-                refs: &mut refs,
-                led: &mut led,
+            let ctx = Ctx::new(
+                &mut win,
+                &mut refs,
+                &mut led,
                 caps,
                 budget,
-                low_water: low_water(budget),
-            };
+                low_water(budget),
+            );
             strategy.on_query(q, &ctx)
         };
         ids.sort_unstable();
         ids.dedup();
         let mut chunks: Vec<&str> = Vec::new();
+        let mut read = win.total();
         for id in ids {
             match refs.restore(id) {
                 Ok(spans) => {
                     let tok = refs.meta(id).map_or(0, |m| m.tok);
                     res.restore_tok += tok;
-                    res.query_peak = res.query_peak.max(win.total() + tok);
+                    read += tok;
                     chunks.extend(spans.into_iter().map(|(_, text)| text));
                 }
                 Err(_) => res.restore_fail = true,
             }
         }
+        res.read_peak = res.read_peak.max(read);
         chunks.extend(win.spans().iter().map(window::Span::text));
         answers.push(arms::read(ep.arm, q, &chunks));
     }
@@ -259,7 +263,7 @@ pub(crate) fn run_episode_with(
 
 /// One (arm, strategy) cell over a split.
 #[derive(Default)]
-struct Cell {
+pub(crate) struct Cell {
     ran: bool,
     episodes: u64,
     score_sum: f64,
@@ -271,7 +275,7 @@ struct Cell {
     edit: u64,
     reprefill: u64,
     restore: u64,
-    query_peak: u64,
+    read_peak: u64,
     over_budget: u64,
     restore_fail: u64,
     violations: usize,
@@ -279,7 +283,7 @@ struct Cell {
 }
 
 impl Cell {
-    fn add(&mut self, r: &EpisodeResult, elapsed_ms: f64) {
+    pub(crate) fn add(&mut self, r: &EpisodeResult, elapsed_ms: f64) {
         self.ran = true;
         self.episodes += 1;
         self.score_sum += r.score.value;
@@ -291,15 +295,17 @@ impl Cell {
         self.edit += r.edit_tok;
         self.reprefill += r.reprefill_tok;
         self.restore += r.restore_tok;
-        self.query_peak = self.query_peak.max(r.query_peak);
+        self.read_peak = self.read_peak.max(r.read_peak);
         self.over_budget += r.over_budget;
         self.restore_fail += u64::from(r.restore_fail);
         self.violations += r.violations.len();
         self.elapsed_ms += elapsed_ms;
     }
 
-    fn valid(&self, seeds: u64) -> bool {
-        self.ran && self.episodes == seeds && self.violations == 0
+    /// Every episode ran, no operation was refused, and no model call saw a
+    /// window over budget (an unmanaged window would read the whole stream).
+    pub(crate) fn valid(&self, seeds: u64) -> bool {
+        self.ran && self.episodes == seeds && self.violations == 0 && self.over_budget == 0
     }
 
     fn score(&self) -> f64 {
@@ -344,8 +350,9 @@ fn self_checks(seeds: &RangeInclusive<u64>) -> Result<(), String> {
             let score = ep.score(&answers);
             if score.correct != score.total {
                 return Err(format!(
-                    "{} seed {seed}: full-stream oracle {}/{}",
+                    "{} seed {}: full-stream oracle {}/{}",
                     arm.name(),
+                    ep.seed,
                     score.correct,
                     score.total
                 ));
@@ -376,19 +383,14 @@ fn report(opts: &Options) {
     println!("tokenizer: {TOKENIZER}");
     println!("re-prefill: bench-local column (beam CostComponentReport not extended)");
     println!(
+        "policy hook: strategies::Policy (model-decided policies plug in there; none is called); default {}",
+        strategies::Policy::name(&strategies::OldestFirst)
+    );
+    println!(
         "tests: in-binary self-checks (generator determinism, full-stream oracle exact on every seed): {}",
         checks
             .as_ref()
             .map_or_else(|e| format!("FAIL {e}"), |()| "pass".to_owned())
-    );
-    let engine_board_built = strategies::build("engine-board").is_some();
-    println!(
-        "engine-board: {}",
-        if engine_board_built {
-            "ran: oneiron::context_board::render_board_block, typed state to dynamic tail, no server plumbing"
-        } else {
-            "did not run (strategy not built yet)"
-        }
     );
     let stream: Vec<String> = ARMS
         .iter()
@@ -411,7 +413,7 @@ fn report(opts: &Options) {
         stream.join(" | ")
     );
     println!(
-        "columns: token columns are per-episode means; peak_tok and q_peak are maxima; \
+        "columns: token columns are per-episode means; peak_tok (live window at a model call) and read_peak (window + all pages restored for one query) are maxima; \
          over, halluc and rfail are totals over the split"
     );
     println!(
@@ -425,7 +427,7 @@ fn report(opts: &Options) {
         "edit_tok",
         "reprefill_tok",
         "restore_tok",
-        "q_peak",
+        "read_peak",
         "over",
         "halluc",
         "rfail",
@@ -444,6 +446,7 @@ fn report(opts: &Options) {
                     let Some(mut strategy) = strategies::build(name) else {
                         break;
                     };
+                    debug_assert_eq!(strategy.name(), name);
                     let start = Instant::now();
                     let r = run_episode(&ep, strategy.as_mut(), opts.budget);
                     cell.add(&r, start.elapsed().as_secs_f64() * 1000.0);
@@ -454,6 +457,21 @@ fn report(opts: &Options) {
         }
     }
 
+    let engine_cells = cells
+        .iter()
+        .filter(|(_, name, c)| *name == "engine-board" && c.ran)
+        .count();
+    println!(
+        "engine-board: {}",
+        if engine_cells > 0 {
+            format!(
+                "RAN on {engine_cells} arm(s) via oneiron::context_board::render_board_block \
+                 (typed state -> dynamic tail; zero oneiron-server plumbing)"
+            )
+        } else {
+            "did not run (not selected)".to_owned()
+        }
+    );
     let valid = |c: &Cell| c.valid(n_seeds);
     let arms_scored = ARMS
         .iter()
@@ -510,7 +528,7 @@ fn print_cell(arm: Arm, name: &str, c: &Cell, selected: bool) {
         c.per_episode(c.edit),
         c.per_episode(c.reprefill),
         c.per_episode(c.restore),
-        c.query_peak,
+        c.read_peak,
         c.over_budget,
         c.hallucinated,
         c.restore_fail,
