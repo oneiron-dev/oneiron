@@ -9,7 +9,7 @@
 use std::ops::Range;
 
 use super::arms::{Grid, Query, Verb, snapshot_lines};
-use super::window::{Caps, Ctx, Span};
+use super::window::{Caps, Ctx, Span, SpanKind};
 
 /// The five named strategies, in report order.
 pub(crate) const STRATEGIES: [&str; 5] = [
@@ -44,6 +44,8 @@ pub(crate) trait Strategy {
 pub(crate) fn build(name: &str) -> Option<Box<dyn Strategy>> {
     match name {
         "truncate" => Some(Box::new(Truncate::new(Box::new(OldestFirst)))),
+        "fifo-fold" => Some(Box::new(FifoFold::new(Box::new(OldestFirst)))),
+        "recoverable-fold" => Some(Box::new(RecoverableFold::new(Box::new(OldestFirst)))),
         _ => None,
     }
 }
@@ -194,5 +196,135 @@ impl Strategy for Truncate {
         shrink(ctx, self.policy.as_mut(), &|_| false, |ctx, r| {
             ctx.drop_spans(r);
         });
+    }
+}
+
+/// A fixed-size stub: about 96 tokens.
+const STUB_BYTES: usize = 384;
+/// Each line a stub keeps is cut to this many bytes.
+const STUB_LINE_BYTES: usize = 32;
+
+fn cut(line: &str, max: usize) -> &str {
+    let mut end = line.len().min(max);
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    &line[..end]
+}
+
+/// The model-free summary stand-in: the newest data-bearing lines (any line
+/// holding a digit) of the folded spans, each cut to [`STUB_LINE_BYTES`], as
+/// many as fit in [`STUB_BYTES`]. Prose is dropped. Lossy by construction,
+/// and a cut line can read back as a needle or value the stream never held.
+pub(crate) fn lossy_summary(spans: &[Span]) -> String {
+    let lines: Vec<&str> = spans
+        .iter()
+        .flat_map(|s| s.text().lines())
+        .filter(|l| l.bytes().any(|b| b.is_ascii_digit()))
+        .map(|l| cut(l, STUB_LINE_BYTES))
+        .collect();
+    let mut kept = Vec::new();
+    let mut used = 0;
+    for line in lines.iter().rev() {
+        if used + line.len() + 1 > STUB_BYTES {
+            break;
+        }
+        used += line.len() + 1;
+        kept.push(*line);
+    }
+    kept.reverse();
+    if kept.is_empty() {
+        "(nothing kept)".to_owned()
+    } else {
+        kept.join("\n")
+    }
+}
+
+/// Folds the oldest spans (older stubs included) into one fixed-size lossy
+/// stub. No restore path.
+pub(crate) struct FifoFold {
+    policy: Box<dyn Policy>,
+    sketch: Sketch,
+}
+
+impl FifoFold {
+    pub(crate) fn new(policy: Box<dyn Policy>) -> Self {
+        Self {
+            policy,
+            sketch: Sketch::default(),
+        }
+    }
+}
+
+impl Strategy for FifoFold {
+    fn name(&self) -> &'static str {
+        "fifo-fold"
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            fold_lossy: true,
+            ..Caps::default()
+        }
+    }
+
+    fn on_verb(&mut self, verb: &Verb, ctx: &mut Ctx<'_>) {
+        regenerate_board(&mut self.sketch, verb, ctx);
+    }
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        shrink(ctx, self.policy.as_mut(), &|_| false, |ctx, r| {
+            let stub = lossy_summary(&ctx.spans()[r.clone()]);
+            ctx.fold_lossy(r, stub);
+        });
+    }
+}
+
+/// Folds the oldest spans into an ID-keyed reference the harness mints and
+/// restores byte-exactly on demand (Sculptor, OF-190). The reference stubs
+/// stay in the window as its index. At query time it searches its own
+/// references for the query's key and restores every match.
+pub(crate) struct RecoverableFold {
+    policy: Box<dyn Policy>,
+    sketch: Sketch,
+}
+
+impl RecoverableFold {
+    pub(crate) fn new(policy: Box<dyn Policy>) -> Self {
+        Self {
+            policy,
+            sketch: Sketch::default(),
+        }
+    }
+}
+
+fn is_ref_stub(span: &Span) -> bool {
+    matches!(span.kind(), SpanKind::RefStub(_))
+}
+
+impl Strategy for RecoverableFold {
+    fn name(&self) -> &'static str {
+        "recoverable-fold"
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            offload: true,
+            ..Caps::default()
+        }
+    }
+
+    fn on_verb(&mut self, verb: &Verb, ctx: &mut Ctx<'_>) {
+        regenerate_board(&mut self.sketch, verb, ctx);
+    }
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        shrink(ctx, self.policy.as_mut(), &is_ref_stub, |ctx, r| {
+            ctx.offload(r);
+        });
+    }
+
+    fn on_query(&mut self, query: &Query, ctx: &Ctx<'_>) -> Vec<u32> {
+        ctx.grep_refs(&query.key)
     }
 }
