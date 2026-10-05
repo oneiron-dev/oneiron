@@ -23,6 +23,8 @@
 //!   real-traffic cache hit rates and a descriptive NVMe fsync row, each
 //!   reported on its own axis. Accuracy and cost stay BEAM-owned.
 //!
+//! * `ctx-arms` — OF-546 context-management bench arms (needle retention,
+//!   sketchpad, KV offload-and-recall, log triage) per strategy; model-free.
 //! * `swarm` — seeded one-vault, in-process write/recall/mixed agent curve.
 //! * `fleet` — authenticated fleet writes, recall and real held sockets, plus
 //!   paired full/resumed PPR measurements and receipt-derived regression floors.
@@ -38,6 +40,7 @@ use oneiron::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 mod beam;
+mod ctx_arms;
 mod eval;
 mod fleet;
 mod interface_bench;
@@ -75,6 +78,7 @@ fn main() -> ExitCode {
             }
         },
         [cmd, rest @ ..] if cmd == "beam" => beam::run(rest),
+        [cmd, rest @ ..] if cmd == "ctx-arms" => ctx_arms::run(rest),
         [cmd, rest @ ..] if cmd == "oneironer-shadow" => oneironer_shadow::cli(rest),
         [cmd, rest @ ..] if cmd == "interface-bench" => interface_bench::run(rest),
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
@@ -112,6 +116,12 @@ fn print_help() {
           beam corpus-export          export finalized turn states to JSONL\n\
           beam corpus-replay          reload JSONL and replay stored packs and traces\n\
                                        (ONE-1311 BEAM deterministic-arm reader)\n\
+          ctx-arms --report --split heldout|dev [--arm NAME] [--strategy NAME]
+                   [--budget 32768]
+                                       OF-546 context-management arms: needle,
+                                       sketchpad, kv offload, log triage per
+                                       strategy (score, exact restore, window,
+                                       edit and re-prefill tokens)
           eval outcome-ingest         apply evaluator-supplied rewards from\n\
                                        JSONL to finalized retrieval runs\n\
                                        (ONE-218 telemetry-v0 outcome driver)\n\
