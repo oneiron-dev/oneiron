@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `b0695cb4c768139b650d27b49d825661442581bf` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `d598ad0591aa1ce851d07f7ea543f8b47f47fce7` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,14 +51,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "b0695cb4c768139b650d27b49d825661442581bf" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "b0695cb4c768139b650d27b49d825661442581bf" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "b0695cb4c768139b650d27b49d825661442581bf" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "b0695cb4c768139b650d27b49d825661442581bf" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "b0695cb4c768139b650d27b49d825661442581bf" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "d598ad0591aa1ce851d07f7ea543f8b47f47fce7" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "d598ad0591aa1ce851d07f7ea543f8b47f47fce7" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "d598ad0591aa1ce851d07f7ea543f8b47f47fce7" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "d598ad0591aa1ce851d07f7ea543f8b47f47fce7" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "d598ad0591aa1ce851d07f7ea543f8b47f47fce7" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.5), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.6), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -132,11 +132,23 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.5), over `362becff`:
   while `=INDEX(F:F,1)+1` stays `#CIRC!` (static detection remains an opt-in). At `b0695cb4`
   the fork matches 2,963 of the 2,967 SpreadsheetBench workbooks (task 42110's three answers
   now match; the four misses left are external-link cells) and all 811 pinned goldens.
+- `b0695cb4..d598ad05` (ONE-2700, the fourth parity loop, round 3, October 2026): what two more
+  probes on the Windows VM recorded (2026-10-04, 42 cases in probes 7-8 of the same note).
+  ROUND's digits snap on their magnitude and then go toward zero, sign(x) * trunc(abs(x) +
+  2^-22): `ROUND(1234.5678,-1.9999999)` is 1200, where round 2 gave 1230. VLOOKUP and HLOOKUP
+  look up before they check the index: a miss is `#N/A` whatever the index, and on a match an
+  index below 1 is `#VALUE!` and one past the table `#REF!`. ADDRESS reads its row, column and
+  abs_num as number arguments (`TRUE` is 1, a blank cell 0, numeric text converts) and a1 as a
+  logical (any non-zero number is TRUE, a blank cell FALSE, numeric text `#VALUE!`); an empty
+  abs_num or a1 argument (`ADDRESS(1,1,)`, `ADDRESS(1,1,,)`) is the default, and a date is its
+  serial in the workbook's date system. A negative INDEX position is `#VALUE!` in the reference
+  form as well, as the fork already did. The scores at `d598ad05` are unchanged: 2,963 of the
+  2,967 SpreadsheetBench workbooks and all 811 pinned goldens.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.5`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.6`.
 
 ## Licences and attribution
 
