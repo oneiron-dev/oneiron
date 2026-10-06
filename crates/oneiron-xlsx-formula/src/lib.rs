@@ -11,17 +11,20 @@
 //! The core's edit round trip wraps every host session in this engine unless
 //! the host opts out, so this crate does not depend on the core.
 //!
-//! The corpus rule is met at fork rev `63e2ec69` (0.9.3-oneiron.8): through
-//! the writer, 2,963 of the 2,967 scored fresh-Excel SpreadsheetBench
+//! The corpus rule is met at fork rev `91599813` (0.9.3-oneiron.9): through
+//! the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 //! workbooks (Excel for Windows truth) are fully Excel-identical (LibreOffice
 //! 25.8 matched 2,648 of the 2,951 it was measured on), and all 811 pinned
 //! goldens (Excel for Windows 16.0.20430, rich-value error caches resolved)
-//! against LibreOffice's 753. Through this adapter, 2,508 of the corpus's
+//! against LibreOffice's 753. Through this adapter, 2,705 of the corpus's
 //! 3,040 formula workbooks recalculate natively as saved, ZIP directory
-//! entries included (see the README), and all 2,508 match Excel. The
+//! entries and closed linked workbooks included (see the README), and all
+//! 2,705 match Excel. The
 //! host's LibreOffice recalc stays the precision fallback for refused
-//! workbooks only: external links (their link-preserving route, see
-//! [`routing`]), formulas needing caller context (the corpus clock is never
+//! workbooks only: the external links the engine cannot read as Excel does
+//! with the linked workbook closed (the others recalculate here from the
+//! values their links save; [`routing`] checks that the fallback keeps every
+//! link), formulas needing caller context (the corpus clock is never
 //! substituted for production time), functions the engine does not implement,
 //! workbook names used as functions (LAMBDA names), string escapes the
 //! writer's reader decodes differently from Excel, precision-as-displayed,
@@ -33,6 +36,7 @@ pub mod calc;
 mod context;
 pub mod engine;
 pub mod error;
+mod links;
 pub mod measure;
 pub mod routing;
 pub mod workbook;

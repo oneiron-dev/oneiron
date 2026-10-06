@@ -9,8 +9,9 @@ use formualizer_workbook::{
 use oneiron_docedit::retained_opc::{Limits, Package};
 
 use crate::engine::{EngineId, FormualizerEngine};
+use crate::links::LinkedBooks;
 use crate::xml::{DOC_REL, MAIN, REL, Xml, invalid, parse_part, unsupported};
-use crate::{FormulaError, Result, RouteDecision, route_workbook, storage_form};
+use crate::{FormulaError, Result, route_workbook, storage_form};
 
 /// A retained XLSX output, ready for the EditSession corruption gate.
 #[derive(Debug)]
@@ -44,8 +45,10 @@ impl FormualizerEngine {
     /// references. Only formula caches, their value types and the error tags
     /// Excel saves with them change; every other byte of the package is kept.
     /// `UnsupportedWorkbook` is returned before bytes are emitted, so the
-    /// caller's precision fallback recalculates, for: external links,
-    /// formulas needing caller context or volatile reference semantics,
+    /// caller's precision fallback recalculates, for: the external links the
+    /// engine cannot read as Excel does with the linked workbook closed (see
+    /// `links.rs`), formulas needing caller context or volatile
+    /// reference semantics,
     /// functions the engine does not implement, a workbook name used as a
     /// function or holding a LAMBDA, string escapes the writer's reader does
     /// not decode as Excel does (in strings, formulas, and sheet, defined and
@@ -62,9 +65,9 @@ impl FormualizerEngine {
     /// of them and its own, and every part it reads or changes fits them.
     pub fn recalculate_xlsx(&self, bytes: &[u8], limits: Limits) -> Result<WorkbookRecalc> {
         let package = Package::open(bytes, limits)?;
-        require_local(&package)?;
+        let links = LinkedBooks::read(&package)?;
         let formulas = Formulas::read(&package)?;
-        formulas.admit(limits)?;
+        formulas.admit(&links)?;
         let result =
             recalculate_xlsx_bytes(bytes, options(limits)).map_err(retained_writer_error)?;
         if result.bytes != bytes {
@@ -268,14 +271,6 @@ impl Formulas {
         })
     }
 
-    fn all(&self) -> impl Iterator<Item = &str> {
-        self.sheets
-            .values()
-            .flatten()
-            .chain(self.names.iter().map(|name| &name.formula))
-            .map(String::as_str)
-    }
-
     fn defines(&self, name: &str) -> bool {
         self.names
             .iter()
@@ -283,7 +278,7 @@ impl Formulas {
     }
 
     /// Refuse what the engine must not evaluate natively, before it runs.
-    fn admit(&self, limits: Limits) -> Result<()> {
+    fn admit(&self, links: &LinkedBooks) -> Result<()> {
         if let Some(reason) = &self.refusal {
             return Err(unsupported(reason.clone()));
         }
@@ -323,16 +318,42 @@ impl Formulas {
                 )));
             }
         }
-        if let RouteDecision::Openpyxl { reason } = route_workbook([], [], self.all(), limits.xml) {
-            return Err(unsupported(reason));
+        // Every formula is bounded now. A linked workbook is written `[1]`, a
+        // file name `[Book.xlsx]` and a linked name `[1]!Rate`, so only a
+        // formula with `[`, or one using a workbook name that holds such a
+        // reference, reads another workbook.
+        let mut parsed = Vec::new();
+        for name in self.names.iter().filter(|name| name.formula.contains('[')) {
+            parsed.push((
+                name.name.as_str(),
+                crate::context::parse_bounded(&name.formula)?,
+            ));
+        }
+        let linked = links.names(parsed.iter().map(|(name, formula)| (*name, formula)));
+        let reads_a_link = |formula: &str| {
+            formula.contains('[') || {
+                let upper = formula.to_ascii_uppercase();
+                linked.keys().any(|name| upper.contains(name.as_str()))
+            }
+        };
+        for formula in self.sheets.values().flatten() {
+            if reads_a_link(formula) {
+                links.admit(&crate::context::parse_bounded(formula)?, &linked)?;
+            }
+        }
+        for name in &self.names {
+            if reads_a_link(&name.formula) {
+                links.admit_name(&crate::context::parse_bounded(&name.formula)?, &linked)?;
+            }
         }
         Ok(())
     }
 }
 
 /// The relationships of part `source` (the package's own for `""`) by id: the
-/// target part, resolved from the source's folder, and the type.
-/// `require_local` has sent every external target to the fallback already.
+/// target part, resolved from the source's folder, and the type. An external
+/// target (a hyperlink, a linked workbook's path) names no part; the link
+/// check admits only those external targets.
 fn relationships(package: &Package, source: &str) -> Result<BTreeMap<String, (String, String)>> {
     let folder = source.rsplit_once('/').map_or("", |(folder, _)| folder);
     let rels = parse_part(package, &rels_part(source))?;
@@ -351,6 +372,9 @@ fn relationships(package: &Package, source: &str) -> Result<BTreeMap<String, (St
         let kind = node
             .attr("Type")
             .ok_or_else(|| invalid("relationship type missing"))?;
+        if node.attr("TargetMode") == Some("External") {
+            continue;
+        }
         if targets
             .insert(id.to_owned(), (resolve(folder, target)?, kind.to_owned()))
             .is_some()
@@ -558,13 +582,16 @@ fn escaped(text: &str) -> bool {
 }
 
 /// The edit round trip's corruption gate keeps every part outside its
-/// supported set byte for byte and requires the OOXML function prefix in each
-/// worksheet whose bytes change (`oneiron::edit_roundtrip`'s
-/// `session_validate`). A recalculation that would fail either check goes to
+/// supported set byte for byte, keeps every external link with its part,
+/// relationship and content type, and requires the OOXML function prefix in
+/// each worksheet whose bytes change (`oneiron::edit_roundtrip`'s
+/// `session_validate`). A recalculation that would fail any check goes to
 /// the fallback instead: the writer adds or edits `xl/richData/` rich values
 /// when it tags a new #SPILL! or #CALC!, and never rewrites formula text.
 /// Its other edits (worksheets, `xl/metadata.xml`, and the content types and
-/// relationships of added parts) are parts the gate lets change. The host
+/// relationships of added parts) are parts the gate lets change, so long as
+/// a relationship part holding an external target, the workbook's link
+/// relationships and the links' content types stay as they were. The host
 /// reads the result back under its own limits, so the result must fit them.
 fn keep_gated_bytes(before: &Package, after: &[u8], formulas: &Formulas) -> Result<()> {
     let after = Package::open(after, before.limits())
@@ -595,9 +622,38 @@ fn keep_gated_bytes(before: &Package, after: &[u8], formulas: &Formulas) -> Resu
                     "recalculated worksheet has a formula without its OOXML function prefix",
                 ));
             }
-            None if name == "xl/metadata.xml"
-                || name == "[Content_Types].xml"
-                || name.ends_with(".rels") => {}
+            None if name.starts_with("xl/externalLinks/") => {
+                return Err(unsupported("recalculation changes an external link part"));
+            }
+            None if name == "[Content_Types].xml" => {
+                let before_types = before.part(name)?;
+                if link_content_types(before, before_types.as_deref())?
+                    != link_content_types(before, part.as_deref())?
+                {
+                    return Err(unsupported(
+                        "recalculation changes the content type of an external link",
+                    ));
+                }
+            }
+            None if name.ends_with(".rels") => {
+                let before_rels = before.part(name)?;
+                if before_rels.as_deref().is_some_and(|rels| {
+                    !route_workbook([], [rels], [], before.limits().xml).is_in_process()
+                }) {
+                    return Err(unsupported(
+                        "recalculation changes a relationship part with an external target",
+                    ));
+                }
+                if name == "xl/_rels/workbook.xml.rels"
+                    && link_relationships(before, before_rels.as_deref())?
+                        != link_relationships(before, part.as_deref())?
+                {
+                    return Err(unsupported(
+                        "recalculation changes the workbook's external link relationships",
+                    ));
+                }
+            }
+            None if name == "xl/metadata.xml" => {}
             None => {
                 return Err(unsupported(format!(
                     "recalculation changes {name}, a part the edit gate passes through"
@@ -608,24 +664,74 @@ fn keep_gated_bytes(before: &Package, after: &[u8], formulas: &Formulas) -> Resu
     Ok(())
 }
 
-/// Cheap external-parts admission runs before semantic import, including on
-/// workbooks whose local features are not yet handled by this adapter.
-fn require_local(package: &Package) -> Result<()> {
-    let rels = package
+/// The workbook's external link relationships (`Id`, `Target`, `TargetMode`),
+/// which the edit gate joins to its `<externalReference>` list.
+fn link_relationships(
+    package: &Package,
+    rels: Option<&[u8]>,
+) -> Result<Vec<(String, String, String)>> {
+    let Some(rels) = rels else {
+        return Ok(Vec::new());
+    };
+    let xml = Xml::parse(rels, package.limits().xml)?;
+    let mut links: Vec<_> = xml
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.is(REL, "Relationship")
+                && node
+                    .attr("Type")
+                    .is_some_and(|kind| kind.ends_with("/externalLink"))
+        })
+        .map(|node| {
+            let attr = |name| node.attr(name).unwrap_or_default().to_owned();
+            (attr("Id"), attr("Target"), attr("TargetMode"))
+        })
+        .collect();
+    links.sort();
+    Ok(links)
+}
+
+/// The content-type entries (`Override` by part name, `Default` by extension)
+/// that type the link parts of `package`, from content types `types`.
+fn link_content_types(
+    package: &Package,
+    types: Option<&[u8]>,
+) -> Result<Vec<(String, String, String)>> {
+    let Some(types) = types else {
+        return Ok(Vec::new());
+    };
+    let xml = Xml::parse(types, package.limits().xml)?;
+    let links: BTreeSet<String> = package
         .names()
-        .filter(|name| name.ends_with(".rels"))
-        .map(|name| package.part(name))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    let route = route_workbook(
-        package.names(),
-        rels.iter().flatten().map(Vec::as_slice),
-        [],
-        package.limits().xml,
-    );
-    if let RouteDecision::Openpyxl { reason } = route {
-        return Err(unsupported(reason));
-    }
-    Ok(())
+        .filter(|name| name.starts_with("xl/externalLinks/"))
+        .map(|name| format!("/{name}").to_ascii_lowercase())
+        .collect();
+    let extensions: BTreeSet<String> = links
+        .iter()
+        .filter_map(|name| {
+            name.rsplit_once('.')
+                .map(|(_, extension)| extension.to_owned())
+        })
+        .collect();
+    let mut entries: Vec<_> = xml
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let attr = |name| node.attr(name).unwrap_or_default().to_owned();
+            if node.name == "Override" && links.contains(&attr("PartName").to_ascii_lowercase()) {
+                Some(("Override".to_owned(), attr("PartName"), attr("ContentType")))
+            } else if node.name == "Default"
+                && extensions.contains(&attr("Extension").to_ascii_lowercase())
+            {
+                Some(("Default".to_owned(), attr("Extension"), attr("ContentType")))
+            } else {
+                None
+            }
+        })
+        .collect();
+    entries.sort();
+    Ok(entries)
 }
 
 /// Worksheet parts, located by the workbook's relationship targets.

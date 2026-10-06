@@ -17,8 +17,9 @@ error tags change; the package keeps every other byte. This crate depends on
 The host's own recalc (LibreOffice headless in production) is the precision fallback for
 refused workbooks only. The adapter refuses, before any output:
 
-- external links: they keep their link-preserving route to the host, and
-  `preserve_external_links` refuses host output that alters or drops a link;
+- the external links the engine cannot read as Excel does with the linked workbook closed (see
+  "Linked workbooks" below); `preserve_external_links` refuses host output that alters or drops
+  a link;
 - a formula, in a cell or a defined name, that needs caller context or volatile reference
   semantics (NOW, TODAY, RAND, RANDBETWEEN, RANDARRAY, CELL, INFO, OFFSET, INDIRECT), called
   or passed by name (`_xleta.RANDBETWEEN`);
@@ -44,6 +45,39 @@ refused workbooks only. The adapter refuses, before any output:
   worksheet holding a modern function without its OOXML prefix (the writer never rewrites
   formula text).
 
+## Linked workbooks
+
+A formula names a linked workbook by its place in the workbook's `<externalReferences>` list
+(`[1]Sheet!A1`), and the link's part (`xl/externalLinks/externalLinkN.xml`) keeps the values Excel
+last read from it. With the linked workbook closed, Excel for Windows computes from those saved
+values, and so does the engine: a saved cell is its value, a cell not saved is blank, a sheet the
+link does not name is `#REF!`, and on a sheet Excel could not read at its last refresh
+(`refreshError`), or saved nothing for, every cell not saved is `#REF!`. ROW, COLUMN, ROWS,
+COLUMNS and INDEX go by the reference as written, and an ordinary formula intersects a linked range
+with its own cell. Such workbooks recalculate natively, and every link part, link relationship and
+link content type, and every relationship part with an external target, stays byte for byte (the
+edit gate checks the link join and the parts too). Evidence: probes 1 to 3 of the fork's
+`ops/excel-extlinks-probe-20261006.md` (Excel for Windows 16.0.20430, 192 cases) and the
+SpreadsheetBench workbooks with links (Excel truth recorded with links not updated).
+
+These forms keep the fallback, each with its own reason: a DDE or OLE link; a link part the check
+cannot read, or one that links nothing it knows; an external relationship other than a hyperlink, a
+link's path or a pivot cache's external source; a link list or link content type the edit gate cannot
+join; a reference by file name, to `[0]` (the workbook itself) or to a link the list does not hold;
+a name defined in the linked workbook (`[1]!Rate`); a 3D linked reference; a linked reference in a
+reference operator (`:`, intersection, union), directly, through INDEX or through a name; a
+multi-cell linked range passed on by a function that returns references (IF, CHOOSE, IFS, XLOOKUP,
+OFFSET, INDIRECT, LET), by INDEX unless it narrows it to one cell, or given to AREAS, RANK or
+GETPIVOTDATA, or standing as the whole formula (the engine holds a linked range as values with no
+position, so intersection and the criteria functions' `#VALUE!` would not see it); a linked range
+reaching a criteria function's range through a name; and an open or very large linked range, read
+only up to the last saved cell (plus one `#REF!` on a sheet with a refresh error), unless its
+function gives Excel's result from those cells: INDEX at one cell, ROWS, COLUMNS, exact MATCH,
+VLOOKUP and HLOOKUP, SUM, AVERAGE, MIN, MAX, PRODUCT, COUNT, CONCAT, the criteria functions' ranges
+(`#VALUE!` for any closed linked range), and COUNTA where the unsaved cells are blank. Counting the
+unsaved cells, pairing the range with one of another length, ROW over it and approximate searches
+stay the fallback's.
+
 A package the retained OPC reader refuses fails outright, as before. Malformed workbook
 content fails outright too, as it did before the writer: the adapter reads the workbook, its
 relationships, the shared strings, every worksheet and every table a worksheet relates as the
@@ -57,16 +91,17 @@ support (sheet ID 0, two header rows) still goes to the fallback. Every part the
 (the workbook, shared strings, worksheets, each table wherever its worksheet's relationship
 puts it, content types, styles, cell metadata and rich data) must fit the host's XML node and
 depth limits, or the workbook fails outright. A relationship part that does not fit goes to
-the fallback, as before: the external-link check fails closed.
+the fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.8): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.9): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
-`oneiron/parity` branch (ONE-2700 parts 1 and 3 and the third, fourth and fifth parity loops). `docs/ops/forked-dependencies.md` records the
+`oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops, and
+stage 2's linked workbooks). `docs/ops/forked-dependencies.md` records the
 fork branch, the rev and the patches. Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `63e2ec69`: through the writer, 2,963 of the 2,967 scored fresh-Excel SpreadsheetBench
+rev `91599813`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
@@ -75,17 +110,21 @@ LibreOffice's 753 (the unchanged evaluator scored 754). The comparison uses a pi
 instant. Production volatile or context-dependent formulas route to the precision fallback,
 not that clock.
 
-The shipped adapter on the same corpus (2026-10-06, `recalc_native` over the 5,455 saved
+The shipped adapter on the same corpus (2026-10-07, `recalc_native` over the 5,455 saved
 originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP directory
-entries): 2,508 of the 3,040 formula workbooks (82.5%) recalculate natively, none is refused
-outright and 532 fall back: 279 for external links, 223 for caller context (132 clock or
-random functions, 82 OFFSET or INDIRECT only, 9 CELL), 21 for functions the engine lacks, 3
-for precision-as-displayed, 3 over the token bound and 3 for an unreadable defined name. All
-2,508 native workbooks match Excel (none of their 388,407 scored cells differs), and every
-native output passes the edit gate. The checks for escaped names and formulas, related tables
+entries): 2,705 of the 3,040 formula workbooks (89.0%) recalculate natively, none is refused
+outright and 335 fall back: 274 for caller context, 32 for functions the engine lacks, 15 for
+precision-as-displayed, 8 for linked-workbook forms the engine does not read as Excel does (5
+linked ranges INDEX selects at a computed row, 3 approximate VLOOKUPs over open linked ranges),
+3 over the token bound and 3 for an unreadable defined name. All 2,705 native workbooks match
+Excel (none of their 537,893 scored cells differs), and every native output passes the edit
+gate. Of the 279 formula workbooks with external links or external relationship targets, which
+all fell back before, 197 recalculate natively (none of their 149,486 scored cells differs from
+Excel), 74 now meet another reason (51 caller context, 12 precision-as-displayed, 11 unknown
+functions) and 8 a linked-workbook form. The checks for escaped names and formulas, related tables
 and malformed workbook metadata change no corpus workbook's decision or output bytes.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.8`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.9`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 

@@ -38,7 +38,8 @@
 //!    LibreOffice headless in production, a session-image dependency — stays
 //!    the precision fallback for refused workbooks only (unsupported
 //!    features, formulas needing caller context) and keeps the link-preserving
-//!    route for external-link workbooks. A session opts out explicitly with
+//!    route for the external-link workbooks the engine cannot read as Excel
+//!    does with the linked workbook closed. A session opts out explicitly with
 //!    [`RecalcPolicy::SessionOnly`].
 //! 4. **Corruption-check validation** — the `validate` stage runs an automated
 //!    open/verify plus a passthrough diff. A failed check yields
