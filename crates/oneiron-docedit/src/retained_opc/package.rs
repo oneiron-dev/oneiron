@@ -305,14 +305,14 @@ impl Package {
 
     /// Detect OPC digital signatures by type declarations and relationships,
     /// not only their conventional path. Invalid metadata leaves the package
-    /// open for byte-exact no-op export but makes every edit read-only.
+    /// open for byte-exact no-op export but makes every edit read-only. Only
+    /// parts count on that path: an empty `_xmlsignatures/` folder entry
+    /// holds no signature.
     fn signature_or_unsafe_metadata(&self) -> Editability {
-        if self.entries.iter().any(|entry| {
-            entry
-                .name
-                .to_ascii_lowercase()
-                .starts_with("_xmlsignatures/")
-        }) {
+        if self
+            .names()
+            .any(|name| name.to_ascii_lowercase().starts_with("_xmlsignatures/"))
+        {
             return Editability::Signed;
         }
         let mut editability = Editability::Unsigned;
@@ -905,6 +905,70 @@ mod tests {
             original_cd[42..46].fill(0);
             edited_cd[42..46].fill(0);
             assert_eq!(original_cd, edited_cd, "central record: {folder}");
+        }
+    }
+
+    #[test]
+    fn empty_signature_folders_leave_an_unsigned_package_editable() {
+        // An unsigned workbook with a leftover folder entry on the signature
+        // path: STORED content types, an empty STORED folder, a DEFLATE sheet,
+        // and no signature type or relationship.
+        let stored =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for folder in ["_xmlsignatures/", "_xmlsignatures/empty/"] {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            zip.start_file(TYPES.0, stored).expect("entry header");
+            zip.write_all(TYPES.1).expect("entry bytes");
+            zip.add_directory(folder, stored).expect("directory entry");
+            zip.start_file("xl/sheet.xml", zip::write::FileOptions::default())
+                .expect("entry header");
+            zip.write_all(b"<root><item>old</item></root>")
+                .expect("entry bytes");
+            let source = zip.finish().expect("archive").into_inner();
+            let mut package = Package::open(&source, limits()).expect("package opens");
+            assert_eq!(
+                package.entries.iter().map(|e| e.method).collect::<Vec<_>>(),
+                [0, 0, 8],
+                "{folder}"
+            );
+            assert_eq!(
+                package.names().collect::<Vec<_>>(),
+                [TYPES.0, "xl/sheet.xml"]
+            );
+            assert_eq!(package.editability(), Editability::Unsigned, "{folder}");
+            package
+                .replace_text("xl/sheet.xml", &["root", "item"], "old", "new")
+                .expect("edit beside an empty signature folder");
+            let edited = package.export().expect("edited export");
+            let reopened = Package::open(&edited, limits()).expect("output opens");
+            assert_eq!(
+                reopened.part("xl/sheet.xml").expect("part"),
+                Some(b"<root><item>new</item></root>".to_vec())
+            );
+            assert_eq!(reopened.editability(), Editability::Unsigned, "{folder}");
+        }
+    }
+
+    #[test]
+    fn a_signature_part_keeps_the_package_signed() {
+        let signature: (&str, &[u8]) = (
+            "_xmlsignatures/sig1.xml",
+            b"<Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"/>",
+        );
+        let sheet: (&str, &[u8]) = ("xl/sheet.xml", b"<root><item>old</item></root>");
+        let cases: [&[(&str, &[u8])]; 2] = [
+            &[TYPES, signature, sheet],
+            &[TYPES, ("_xmlsignatures/", b""), signature, sheet],
+        ];
+        for entries in cases {
+            let source = archive(entries);
+            let mut package = Package::open(&source, limits()).expect("package opens");
+            assert_eq!(package.editability(), Editability::Signed);
+            assert!(matches!(
+                package.replace_text("xl/sheet.xml", &["root", "item"], "old", "new"),
+                Err(Error::Edit(_))
+            ));
+            assert_eq!(package.export().expect("no-op export"), source);
         }
     }
 
