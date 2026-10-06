@@ -525,6 +525,7 @@ pub(crate) mod tests {
         let entity_id = "10101010101010101010101010101010";
         let case = FixtureCase {
             ppr_vad_query: None,
+            question_time: None,
             case_id: record.question_id.clone(),
             query: record.question.clone(),
             limit: 1,

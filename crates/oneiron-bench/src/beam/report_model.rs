@@ -146,6 +146,65 @@ pub(super) struct ContractGold {
     pub(super) answers: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) labels: Option<serde_json::Value>,
+    /// Contract v2: source ids of the evidence items. The exactness check
+    /// resolves every id to exactly one ingested corpus item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) evidence_ids: Option<Vec<String>>,
+    /// Contract v2: the closed answer pool for judge-free scoring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) pool: Option<Vec<ContractGoldPoolEntry>>,
+    /// Contract v2, optional: named answer keys scored as separate columns
+    /// (LoCoMo: original, audit-corrected, Refined). `answers` stays the
+    /// default key. The bench only carries this to packs.jsonl.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) answer_keys: Option<BTreeMap<String, Vec<String>>>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub(super) struct ContractGoldPoolEntry {
+    pub(super) text: String,
+    pub(super) role: ContractPoolRole,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ContractPoolRole {
+    Gold,
+    Drift,
+    Distractor,
+}
+/// Contract v2: one corpus file shared by every question that names it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub(super) struct ContractCorpusRef {
+    pub(super) corpus_id: String,
+    /// JSONL of corpus items, relative to the run.jsonl directory.
+    pub(super) path: std::path::PathBuf,
+    /// Lowercase hex sha256 of the corpus file bytes.
+    pub(super) sha256: String,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ContractSplit {
+    Dev,
+    Heldout,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub(super) struct ContractCleaning {
+    pub(super) manifest_id: String,
+    /// Lowercase hex sha256 of the cleaning manifest file.
+    pub(super) sha256: String,
+    pub(super) action: ContractCleaningAction,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ContractCleaningAction {
+    Kept,
+    Relabelled,
+    Excluded,
+}
+/// A `corpus_ref` file after its sha256 and per-item source hashes passed.
+#[derive(Debug)]
+pub(super) struct SharedCorpus {
+    pub(super) corpus_ref: ContractCorpusRef,
+    pub(super) items: Vec<ContractCorpusRecord>,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct RunContractRecord {
@@ -159,9 +218,44 @@ pub(super) struct RunContractRecord {
     pub(super) question: String,
     #[serde(default, alias = "queryEmbedding")]
     pub(super) query_embedding: Option<ContractEmbeddingState>,
+    /// Inline corpus. Contract v2 records carry either this or `corpus_ref`.
+    #[serde(default)]
     pub(super) corpus: Vec<ContractCorpusRecord>,
     #[serde(default)]
     pub(super) gold: Option<ContractGold>,
+    /// Contract v2: the reader's "now", Unix seconds.
+    #[serde(default)]
+    pub(super) question_time: Option<u64>,
+    #[serde(default)]
+    pub(super) corpus_ref: Option<ContractCorpusRef>,
+    #[serde(default)]
+    pub(super) split: Option<ContractSplit>,
+    #[serde(default)]
+    pub(super) cleaning: Option<ContractCleaning>,
+    /// Filled by the loader from `corpus_ref` after the sha256 check.
+    #[serde(skip)]
+    pub(super) shared_corpus: Option<std::sync::Arc<SharedCorpus>>,
+}
+impl RunContractRecord {
+    /// The corpus this question reads: the verified shared file, else inline.
+    pub(super) fn corpus_items(&self) -> &[ContractCorpusRecord] {
+        self.shared_corpus
+            .as_ref()
+            .map_or(self.corpus.as_slice(), |shared| shared.items.as_slice())
+    }
+
+    /// The vault unit: one base vault per key. A shared corpus is keyed by
+    /// its corpus id, an inline corpus by its question.
+    pub(super) fn corpus_key(&self) -> String {
+        self.corpus_ref.as_ref().map_or_else(
+            || format!("question:{}", self.question_id),
+            |corpus_ref| format!("corpus:{}", corpus_ref.corpus_id),
+        )
+    }
+
+    pub(super) fn is_v2(&self) -> bool {
+        self.contract_version == super::EVAL_CONTRACT_VERSION_V2
+    }
 }
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct ContractCorpusRecord {
@@ -171,6 +265,9 @@ pub(super) struct ContractCorpusRecord {
     pub(super) metadata: Option<serde_json::Value>,
     #[serde(default)]
     pub(super) embedding: Option<ContractEmbeddingState>,
+    /// Contract v2: lowercase hex sha256 of the source bytes of `text`.
+    #[serde(default)]
+    pub(super) source_sha256: Option<String>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
@@ -205,6 +302,14 @@ pub(super) struct ContextPackContractRecord {
     pub(super) pack: ContractPack,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) gold: Option<ContractGold>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) question_time: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) corpus_ref: Option<ContractCorpusRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) split: Option<ContractSplit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) cleaning: Option<ContractCleaning>,
 }
 #[derive(Debug, Serialize)]
 pub(super) struct ContractPack {

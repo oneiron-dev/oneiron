@@ -336,7 +336,7 @@ pub(super) fn run_with_session(
             .ok_or_else(|| refusal("measured answering requires run.jsonl corpus"))?;
         plan.judge.validate_dataset(&record.dataset.id)?;
         offline_ingest.input_tokens += record
-            .corpus
+            .corpus_items()
             .iter()
             .map(|c| oneiron::count_context_pack_tokens(&c.text) as u64)
             .sum::<u64>();
@@ -355,7 +355,7 @@ pub(super) fn run_with_session(
         let chroma = plan
             .chroma
             .as_ref()
-            .map(|config| super::chroma::ChromaArm::ingest(config, &record.corpus))
+            .map(|config| super::chroma::ChromaArm::ingest(config, record.corpus_items()))
             .transpose()?;
         if chroma.is_some() {
             offline_index.elapsed_us += chroma_started
@@ -395,7 +395,7 @@ pub(super) fn run_with_session(
                     let mut request_case = case.clone();
                     request_case.token_budget = if leg == Some("ablation-1:context-budget-off") {
                         record
-                            .corpus
+                            .corpus_items()
                             .iter()
                             .map(|row| oneiron::count_context_pack_tokens(&row.text))
                             .sum::<usize>()
@@ -415,7 +415,9 @@ pub(super) fn run_with_session(
                                             &vault,
                                             &request_case,
                                         )
-                                        .with_temporal_now(plan.temporal_now)
+                                        .with_temporal_now(
+                                            request_case.question_time.unwrap_or(plan.temporal_now),
+                                        )
                                         .with_access_factor_overrides(&factor_overrides)
                                     },
                                     &vault,
@@ -457,7 +459,9 @@ pub(super) fn run_with_session(
                                     .ok_or_else(|| refusal("Chroma query vector missing"))?,
                             )?,
                         ArmKind::BackboneSolo => String::new(),
-                        ArmKind::Chat => chat_history(&record.corpus, path, effort.token_budget)?,
+                        ArmKind::Chat => {
+                            chat_history(record.corpus_items(), path, effort.token_budget)?
+                        }
                         _ => return Err(refusal("arm not supported by shared model scaffold")),
                     };
                     let context = bounded_context(&context, request_case.token_budget);
@@ -731,7 +735,11 @@ fn measured_pack(
     now: u64,
 ) -> BeamResult<super::arms::BudgetedContextPack> {
     super::arms::run_budgeted_context_pack(
-        || super::arms::configured_context_pack_builder(vault, case).with_temporal_now(now),
+        || {
+            // A contract v2 question_time is the reader's "now" and wins.
+            super::arms::configured_context_pack_builder(vault, case)
+                .with_temporal_now(case.question_time.unwrap_or(now))
+        },
         vault,
         case,
     )

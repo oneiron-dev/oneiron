@@ -5,9 +5,9 @@ use super::model::{
 };
 use super::report_model::{
     ArmOutcome, ArmReport, ContextPackContractRecord, ContractArm, ContractCorpusRecord,
-    ContractEmbeddingState, ContractPack, ContractPackConfig, ContractPackContext,
-    ContractRecordType, ContractVector, CostComponentInput, DatasetLoadReport, LoadedDataset,
-    RunContractRecord,
+    ContractCorpusRef, ContractEmbeddingState, ContractPack, ContractPackConfig,
+    ContractPackContext, ContractRecordType, ContractVector, CostComponentInput, DatasetLoadReport,
+    LoadedDataset, RunContractRecord, SharedCorpus,
 };
 use super::util::{
     dataset_not_ready, decode_base64_standard, hash_str, hex_lower, invalid_fixture,
@@ -15,9 +15,10 @@ use super::util::{
 };
 use super::{
     BEAM_CONTRACT_EMBEDDING_DIMENSIONS, BENCH_CONTRACT_ENTITY_TYPE, BeamError, BeamResult,
-    EVAL_CONTRACT_VERSION, JSONL_CONTRACT_SOURCE_KIND, ONEIRON_CONTEXT_PACK_ARM_KIND,
-    VANILLA_RAG_CHUNKING, VANILLA_RAG_CONFIG_VERSION, VANILLA_RAG_CONTRACT_ARM_ID,
-    VANILLA_RAG_CONTRACT_ARM_KIND, VANILLA_RAG_EMBEDDER_ID, VANILLA_RAG_FUSION,
+    EVAL_CONTRACT_VERSION, EVAL_CONTRACT_VERSION_V2, JSONL_CONTRACT_SOURCE_KIND,
+    ONEIRON_CONTEXT_PACK_ARM_KIND, SHARED_CORPUS_ENTITY_DOMAIN, VANILLA_RAG_CHUNKING,
+    VANILLA_RAG_CONFIG_VERSION, VANILLA_RAG_CONTRACT_ARM_ID, VANILLA_RAG_CONTRACT_ARM_KIND,
+    VANILLA_RAG_EMBEDDER_ID, VANILLA_RAG_FUSION,
 };
 use oneiron::{EntityId, TimeRange, Vault};
 use sha2::Digest;
@@ -28,7 +29,8 @@ use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub(super) fn load_dataset(
     vault: &Vault,
@@ -75,10 +77,12 @@ pub(super) fn load_dataset(
             .map(|field| oneiron::count_context_pack_tokens(&field.value) as u64)
             .sum()
     } else {
+        let mut counted = BTreeSet::new();
         loaded
             .contract_records
             .values()
-            .flat_map(|record| &record.corpus)
+            .filter(|record| counted.insert(record.corpus_key()))
+            .flat_map(RunContractRecord::corpus_items)
             .map(|row| oneiron::count_context_pack_tokens(&row.text) as u64)
             .sum()
     };
@@ -274,11 +278,15 @@ pub(super) fn load_run_jsonl_dataset(
             None => {}
         }
         let mut recorded_at = 0_u64;
-        for item in &record.corpus {
+        let corpus_key = record.corpus_key();
+        for item in record.corpus_items() {
             let entity_id = contract_corpus_entity_id(&record, item)?;
             let entity_hex = entity_id.to_hex();
             source_id_by_entity_id.insert(entity_hex.clone(), item.id.clone());
-            if !seen_corpus.insert((record.question_id.clone(), item.id.clone())) {
+            if !seen_corpus.insert((corpus_key.clone(), item.id.clone())) {
+                if let Some(ContractEmbeddingState::Pending { .. }) = &item.embedding {
+                    pending_for_case += 1;
+                }
                 continue;
             }
             let occurred_at = super::corpus_clock::occurred_at(item, path, line)?;
@@ -316,6 +324,7 @@ pub(super) fn load_run_jsonl_dataset(
         if case_seen.insert(record.question_id.clone()) {
             cases.push(FixtureCase {
                 ppr_vad_query: None,
+                question_time: record.question_time,
                 case_id: record.question_id.clone(),
                 query: record.question.clone(),
                 limit,
@@ -337,8 +346,12 @@ pub(super) fn load_run_jsonl_dataset(
     batch.commit()?;
     // Optional corpus-authored statements are inputs, never gold or extracted
     // judge labels. Materialize through the ordinary claim door after sources.
+    let mut stated_corpora = BTreeSet::new();
     for record in contract_records.values() {
-        for item in &record.corpus {
+        if !stated_corpora.insert(record.corpus_key()) {
+            continue;
+        }
+        for item in record.corpus_items() {
             if let Some(predicate) = item
                 .metadata
                 .as_ref()
@@ -451,15 +464,52 @@ pub(super) struct RunJsonlEntry {
 pub(super) fn read_run_jsonl_records(path: &Path) -> BeamResult<Vec<RunJsonlEntry>> {
     let file = File::open(path)?;
     let mut records = Vec::new();
+    let mut corpora: BTreeMap<String, Arc<SharedCorpus>> = BTreeMap::new();
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let line_number = index + 1;
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let record: RunContractRecord = serde_json::from_str(&line)
+        let mut record: RunContractRecord = serde_json::from_str(&line)
             .map_err(|source| invalid_run_jsonl(path, line_number, source.to_string()))?;
         validate_run_contract_record_at(path, line_number, &record)?;
+        if let Some(corpus_ref) = &record.corpus_ref {
+            let shared = match corpora.get(&corpus_ref.corpus_id) {
+                Some(shared) if &shared.corpus_ref == corpus_ref => Arc::clone(shared),
+                Some(_) => {
+                    return Err(invalid_run_jsonl(
+                        path,
+                        line_number,
+                        format!(
+                            "corpus_ref `{}` names a different path or sha256 than an earlier record",
+                            corpus_ref.corpus_id
+                        ),
+                    ));
+                }
+                None => {
+                    let shared = Arc::new(load_shared_corpus(path, line_number, corpus_ref)?);
+                    corpora.insert(corpus_ref.corpus_id.clone(), Arc::clone(&shared));
+                    shared
+                }
+            };
+            if record.is_v2()
+                && let Some(item) = shared
+                    .items
+                    .iter()
+                    .find(|item| item.source_sha256.is_none())
+            {
+                return Err(invalid_run_jsonl(
+                    path,
+                    line_number,
+                    format!(
+                        "contract v2 corpus `{}` item `{}` lacks source_sha256",
+                        corpus_ref.corpus_id, item.id
+                    ),
+                ));
+            }
+            record.shared_corpus = Some(shared);
+        }
         records.push(RunJsonlEntry {
             line: line_number,
             record,
@@ -479,12 +529,14 @@ pub(super) fn validate_run_contract_record_at(
     line: usize,
     record: &RunContractRecord,
 ) -> BeamResult<()> {
-    if record.contract_version != EVAL_CONTRACT_VERSION {
+    if record.contract_version != EVAL_CONTRACT_VERSION
+        && record.contract_version != EVAL_CONTRACT_VERSION_V2
+    {
         return Err(invalid_run_jsonl(
             path,
             line,
             format!(
-                "contract_version must be `{EVAL_CONTRACT_VERSION}`, got `{}`",
+                "contract_version must be `{EVAL_CONTRACT_VERSION}` or `{EVAL_CONTRACT_VERSION_V2}`, got `{}`",
                 record.contract_version
             ),
         ));
@@ -526,11 +578,125 @@ pub(super) fn validate_run_contract_record_at(
     if record.question.trim().is_empty() {
         return Err(invalid_run_jsonl(path, line, "question must not be empty"));
     }
-    if record.corpus.is_empty() {
-        return Err(invalid_run_jsonl(path, line, "corpus must not be empty"));
+    match &record.corpus_ref {
+        Some(corpus_ref) => {
+            if !record.corpus.is_empty() {
+                return Err(invalid_run_jsonl(
+                    path,
+                    line,
+                    "a record carries either an inline corpus or a corpus_ref, never both",
+                ));
+            }
+            validate_corpus_ref(path, line, corpus_ref)?;
+        }
+        None => {
+            if record.corpus.is_empty() {
+                return Err(invalid_run_jsonl(path, line, "corpus must not be empty"));
+            }
+            validate_corpus_items(path, line, &record.corpus, record.is_v2())?;
+        }
     }
+    validate_v2_fields(path, line, record)
+}
+/// v2 fields are optional on read for a v1 record and checked when present;
+/// a v2 record must carry every one of them.
+fn validate_v2_fields(path: &Path, line: usize, record: &RunContractRecord) -> BeamResult<()> {
+    let v2 = record.is_v2();
+    let missing = |field: &str| {
+        invalid_run_jsonl(
+            path,
+            line,
+            format!("contract v2 record must carry `{field}`"),
+        )
+    };
+    if v2 && record.question_time.is_none() {
+        return Err(missing("question_time"));
+    }
+    if v2 && record.split.is_none() {
+        return Err(missing("split"));
+    }
+    match &record.cleaning {
+        Some(cleaning) => {
+            if cleaning.manifest_id.trim().is_empty() || !is_sha256_hex(&cleaning.sha256) {
+                return Err(invalid_run_jsonl(
+                    path,
+                    line,
+                    "cleaning needs a manifest_id and a lowercase hex sha256",
+                ));
+            }
+        }
+        None if v2 => return Err(missing("cleaning")),
+        None => {}
+    }
+    match &record.gold {
+        Some(gold) => {
+            if v2 && gold.evidence_ids.is_none() {
+                return Err(missing("gold.evidence_ids"));
+            }
+            if v2 && gold.pool.is_none() {
+                return Err(missing("gold.pool"));
+            }
+            if let Some(ids) = &gold.evidence_ids {
+                let mut seen = BTreeSet::new();
+                if ids
+                    .iter()
+                    .any(|id| id.trim().is_empty() || !seen.insert(id))
+                {
+                    return Err(invalid_run_jsonl(
+                        path,
+                        line,
+                        "gold.evidence_ids must be unique non-empty source ids",
+                    ));
+                }
+            }
+            if let Some(pool) = &gold.pool
+                && pool.iter().any(|entry| entry.text.trim().is_empty())
+            {
+                return Err(invalid_run_jsonl(
+                    path,
+                    line,
+                    "gold.pool entries must carry non-empty text",
+                ));
+            }
+            if let Some(keys) = &gold.answer_keys
+                && keys.keys().any(|key| key.trim().is_empty())
+            {
+                return Err(invalid_run_jsonl(
+                    path,
+                    line,
+                    "gold.answer_keys names must not be empty",
+                ));
+            }
+        }
+        None if v2 => return Err(missing("gold")),
+        None => {}
+    }
+    if v2 && record.corpus_ref.is_none() && record.corpus.is_empty() {
+        return Err(missing("corpus_ref"));
+    }
+    Ok(())
+}
+fn validate_corpus_ref(path: &Path, line: usize, corpus_ref: &ContractCorpusRef) -> BeamResult<()> {
+    if corpus_ref.corpus_id.trim().is_empty()
+        || corpus_ref.path.as_os_str().is_empty()
+        || !is_sha256_hex(&corpus_ref.sha256)
+    {
+        return Err(invalid_run_jsonl(
+            path,
+            line,
+            "corpus_ref needs a corpus_id, a path and a lowercase hex sha256",
+        ));
+    }
+    Ok(())
+}
+fn validate_corpus_items(
+    path: &Path,
+    line: usize,
+    items: &[ContractCorpusRecord],
+    require_source_sha256: bool,
+) -> BeamResult<()> {
     let mut corpus_ids = BTreeSet::new();
-    for item in &record.corpus {
+    for item in items {
         if item.id.trim().is_empty() || item.text.trim().is_empty() {
             return Err(invalid_run_jsonl(
                 path,
@@ -545,17 +711,136 @@ pub(super) fn validate_run_contract_record_at(
                 "corpus item ids must be unique per run record",
             ));
         }
+        match &item.source_sha256 {
+            Some(expected) => {
+                let actual = sha256_hex(item.text.as_bytes());
+                if !is_sha256_hex(expected) || expected != &actual {
+                    return Err(invalid_run_jsonl(
+                        path,
+                        line,
+                        format!(
+                            "corpus item `{}` source_sha256 `{expected}` does not match its text ({actual})",
+                            item.id
+                        ),
+                    ));
+                }
+            }
+            None if require_source_sha256 => {
+                return Err(invalid_run_jsonl(
+                    path,
+                    line,
+                    format!("contract v2 corpus item `{}` lacks source_sha256", item.id),
+                ));
+            }
+            None => {}
+        }
     }
     Ok(())
+}
+/// Reads a `corpus_ref` file relative to the run.jsonl directory. The file's
+/// sha256 must equal the reference before a single item is parsed.
+pub(super) fn load_shared_corpus(
+    run_path: &Path,
+    line: usize,
+    corpus_ref: &ContractCorpusRef,
+) -> BeamResult<SharedCorpus> {
+    let resolved = resolve_corpus_path(run_path, &corpus_ref.path);
+    let bytes = std::fs::read(&resolved).map_err(|error| {
+        invalid_run_jsonl(
+            run_path,
+            line,
+            format!(
+                "corpus_ref `{}` file {}: {error}",
+                corpus_ref.corpus_id,
+                resolved.display()
+            ),
+        )
+    })?;
+    let actual = sha256_hex(&bytes);
+    if actual != corpus_ref.sha256 {
+        return Err(invalid_run_jsonl(
+            run_path,
+            line,
+            format!(
+                "corpus_ref `{}` sha256 mismatch: expected {}, file {} hashes to {actual}",
+                corpus_ref.corpus_id,
+                corpus_ref.sha256,
+                resolved.display()
+            ),
+        ));
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|error| {
+        invalid_run_jsonl(
+            run_path,
+            line,
+            format!(
+                "corpus_ref `{}` is not UTF-8: {error}",
+                corpus_ref.corpus_id
+            ),
+        )
+    })?;
+    let mut items = Vec::new();
+    for (index, row) in text.lines().enumerate() {
+        if row.trim().is_empty() {
+            continue;
+        }
+        let item: ContractCorpusRecord = serde_json::from_str(row).map_err(|error| {
+            invalid_run_jsonl(
+                run_path,
+                line,
+                format!(
+                    "corpus_ref `{}` line {}: {error}",
+                    corpus_ref.corpus_id,
+                    index + 1
+                ),
+            )
+        })?;
+        items.push(item);
+    }
+    if items.is_empty() {
+        return Err(invalid_run_jsonl(
+            run_path,
+            line,
+            format!("corpus_ref `{}` holds no items", corpus_ref.corpus_id),
+        ));
+    }
+    validate_corpus_items(run_path, line, &items, false)?;
+    Ok(SharedCorpus {
+        corpus_ref: corpus_ref.clone(),
+        items,
+    })
+}
+pub(super) fn resolve_corpus_path(run_path: &Path, corpus_path: &Path) -> PathBuf {
+    if corpus_path.is_absolute() {
+        return corpus_path.to_path_buf();
+    }
+    run_path
+        .parent()
+        .map_or_else(|| corpus_path.to_path_buf(), |base| base.join(corpus_path))
+}
+pub(super) fn sha256_hex(bytes: &[u8]) -> String {
+    hex_lower(&Sha256::digest(bytes))
+}
+pub(super) fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 pub(super) fn contract_corpus_entity_id(
     record: &RunContractRecord,
     item: &ContractCorpusRecord,
 ) -> BeamResult<EntityId> {
     let mut hasher = Sha256::new();
-    hash_str(&mut hasher, EVAL_CONTRACT_VERSION);
-    hash_str(&mut hasher, &record.run_id);
-    hash_str(&mut hasher, &record.question_id);
+    if let Some(corpus_ref) = &record.corpus_ref {
+        // Shared corpus: every question on this corpus sees the same ids.
+        hash_str(&mut hasher, SHARED_CORPUS_ENTITY_DOMAIN);
+        hash_str(&mut hasher, &corpus_ref.corpus_id);
+    } else {
+        hash_str(&mut hasher, EVAL_CONTRACT_VERSION);
+        hash_str(&mut hasher, &record.run_id);
+        hash_str(&mut hasher, &record.question_id);
+    }
     hash_str(&mut hasher, &item.id);
     let digest = hasher.finalize();
     let mut bytes = [0_u8; 16];
@@ -682,7 +967,11 @@ pub(super) fn contract_context_pack_record(
     }
 
     Ok(Some(ContextPackContractRecord {
-        contract_version: EVAL_CONTRACT_VERSION,
+        contract_version: if record.is_v2() {
+            EVAL_CONTRACT_VERSION_V2
+        } else {
+            EVAL_CONTRACT_VERSION
+        },
         record_type: ContractRecordType::ContextPack,
         run_id: record.run_id.clone(),
         question_id: record.question_id.clone(),
@@ -697,6 +986,10 @@ pub(super) fn contract_context_pack_record(
             contexts,
         },
         gold: record.gold.clone(),
+        question_time: record.question_time,
+        corpus_ref: record.corpus_ref.clone(),
+        split: record.split,
+        cleaning: record.cleaning.clone(),
     }))
 }
 pub(super) fn contract_output_arm(record: &RunContractRecord, arm: ArmKind) -> ContractArm {
@@ -749,9 +1042,15 @@ pub(super) fn contract_corpus_digest(record: &RunContractRecord) -> String {
     hash_str(&mut hasher, &record.dataset.id);
     hash_str(&mut hasher, &record.dataset.revision);
     hash_str(&mut hasher, &record.question_id);
-    for item in &record.corpus {
-        hash_str(&mut hasher, &item.id);
-        hash_str(&mut hasher, &item.text);
+    if let Some(corpus_ref) = &record.corpus_ref {
+        // The file sha256 was verified at load and commits to every byte.
+        hash_str(&mut hasher, &corpus_ref.corpus_id);
+        hash_str(&mut hasher, &corpus_ref.sha256);
+    } else {
+        for item in &record.corpus {
+            hash_str(&mut hasher, &item.id);
+            hash_str(&mut hasher, &item.text);
+        }
     }
     format!("sha256:{}", hex_lower(&hasher.finalize()))
 }

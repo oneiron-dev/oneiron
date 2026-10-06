@@ -227,6 +227,11 @@ pub(super) fn configured_context_pack_builder<'a>(
         .merge_neighbors(false)
         .include_stats(true)
         .token_budget(case.token_budget);
+    // Contract v2: the question's own time is the reader's "now".
+    let builder = match case.question_time {
+        Some(now) => builder.with_temporal_now(now),
+        None => builder,
+    };
 
     match (case.fixture_class, &case.temporal_search) {
         (FixtureClass::TemporalStaleness, Some(range)) => builder

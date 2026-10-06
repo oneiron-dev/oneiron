@@ -26,6 +26,15 @@ const BUILTIN_MANIFEST_JSON: &str = include_str!("../../fixtures/beam_128k_smoke
 
 const EVAL_CONTRACT_VERSION: &str = "oneiron-eval.contract.v1";
 
+/// Contract v2 adds `question_time`, `corpus_ref`, `gold.evidence_ids`,
+/// `gold.pool`, `split`, `cleaning` and a per-item `source_sha256`. Every v2
+/// field is optional on a v1 record and required on a v2 record.
+const EVAL_CONTRACT_VERSION_V2: &str = "oneiron-eval.contract.v2";
+
+/// Entity-id domain for items of a shared `corpus_ref` corpus. One base vault
+/// per corpus id, so ids depend on the corpus, never on the question.
+const SHARED_CORPUS_ENTITY_DOMAIN: &str = "oneiron-eval.contract.v2:corpus-item";
+
 const JSONL_CONTRACT_SOURCE_KIND: &str = "jsonl";
 
 const ONEIRON_CONTEXT_PACK_ARM_KIND: &str = "context_pack_http";
@@ -145,6 +154,8 @@ mod runner;
 mod scorer;
 #[cfg(test)]
 mod tests_community_eval004;
+#[cfg(test)]
+mod tests_contract_v2;
 #[cfg(test)]
 mod tests_gates;
 #[cfg(test)]

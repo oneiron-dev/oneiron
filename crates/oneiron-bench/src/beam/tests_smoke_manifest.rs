@@ -387,6 +387,7 @@ neighbors:
     fn budget_discipline_uses_accounting_not_serialized_byte_count() {
         let case = FixtureCase {
             ppr_vad_query: None,
+            question_time: None,
             case_id: "budget-accounting-regression".to_owned(),
             query: "budget accounting".to_owned(),
             limit: 1,
@@ -527,6 +528,7 @@ neighbors:
         let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
         fixture.cases.push(FixtureCase {
             ppr_vad_query: None,
+            question_time: None,
             case_id: "beam_small_budget_smoke".to_owned(),
             query: "BEAM deterministic context pack".to_owned(),
             limit: 5,

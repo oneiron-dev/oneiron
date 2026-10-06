@@ -70,6 +70,9 @@ pub(crate) struct FixtureCase {
     pub(super) offline_amortized_cost: CostComponentInput,
     #[serde(default)]
     pub(super) ppr_vad_query: Option<PprVadQuery>,
+    /// Contract v2 `question_time`: the reader's "now", Unix seconds.
+    #[serde(default)]
+    pub(super) question_time: Option<u64>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

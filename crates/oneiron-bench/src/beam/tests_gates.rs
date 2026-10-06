@@ -353,6 +353,7 @@ pub(crate) mod tests {
     fn low_confidence_gate_suppresses_score_publication() {
         let case = FixtureCase {
             ppr_vad_query: None,
+            question_time: None,
             case_id: "eval004-low-confidence".to_owned(),
             query: "unsupported low confidence query".to_owned(),
             limit: 0,

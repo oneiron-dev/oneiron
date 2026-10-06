@@ -300,6 +300,7 @@ pub(crate) mod tests {
     pub(crate) fn gate_case(fixture_class: FixtureClass) -> FixtureCase {
         FixtureCase {
             ppr_vad_query: None,
+            question_time: None,
             case_id: format!("eval004-{}", fixture_class.gate_label()),
             query: "fixture gate query".to_owned(),
             limit: if fixture_class == FixtureClass::LowConfidence {

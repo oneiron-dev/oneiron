@@ -117,6 +117,7 @@ pub(crate) mod tests {
     fn query_cost_elapsed_uses_serialized_pass_only() {
         let case = FixtureCase {
             ppr_vad_query: None,
+            question_time: None,
             case_id: "elapsed_boundary".to_owned(),
             query: "BEAM deterministic context pack".to_owned(),
             limit: 1,
