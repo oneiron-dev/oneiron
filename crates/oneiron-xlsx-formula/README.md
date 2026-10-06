@@ -20,20 +20,38 @@ refused workbooks only. The adapter refuses, before any output:
 - external links: they keep their link-preserving route to the host, and
   `preserve_external_links` refuses host output that alters or drops a link;
 - a formula, in a cell or a defined name, that needs caller context or volatile reference
-  semantics (NOW, TODAY, RAND, RANDBETWEEN, RANDARRAY, CELL, INFO, OFFSET, INDIRECT);
+  semantics (NOW, TODAY, RAND, RANDBETWEEN, RANDARRAY, CELL, INFO, OFFSET, INDIRECT), called
+  or passed by name (`_xleta.RANDBETWEEN`);
 - a function the engine does not implement, after the `_xlfn.`/`_xlws.` prefixes resolve
   as the engine resolves them, where the engine would cache `#NAME?`;
+- a workbook name used as a function: a defined name that holds a LAMBDA, a name passed where
+  MAP, REDUCE, SCAN, BYROW, BYCOL, MAKEARRAY, GROUPBY or PIVOTBY take their LAMBDA, or a
+  defined name called like a function. The engine does not resolve workbook LAMBDA names
+  yet and would cache `#NAME?`; LET names and LAMBDA parameters stay native;
+- a shared or inline string whose OOXML escapes the writer's reader (Calamine 0.36) decodes
+  differently from Excel: it decodes `_x00HH_` but keeps `_x20AC_` (the euro sign) as seven
+  characters, and decodes no escape in a literal `t="str"` value;
 - precision-as-displayed (`fullPrecision="0"`): the writer calculates at full precision;
 - a formula over the size, token or nesting bound that keeps evaluation off deep recursion,
   or one the parser cannot read;
 - what the writer cannot write exactly, such as a dynamic array larger than its saved extent;
+- a result the host could not read back under its own limits, such as a worksheet whose new
+  caches take it over the XML node limit;
 - a recalculation the edit gate would refuse: one that changes `xl/richData/` (the rich value
   of a new `#SPILL!` or `#CALC!`), which the gate passes through byte for byte, or a changed
   worksheet holding a modern function without its OOXML prefix (the writer never rewrites
   formula text).
 
 A package the retained OPC reader refuses fails outright, as before. That reader refuses ZIP
-directory entries (`xl/`, `_rels/`).
+directory entries (`xl/`, `_rels/`). Malformed workbook content fails outright too, as it did
+before the writer: the adapter reads the workbook, its relationships, the shared strings and
+every worksheet as the old loader did and refuses a missing, unreadable, off-grid or repeated
+cell address, a literal its type cannot hold (a number that is not one, a boolean other than
+0 or 1, a shared-string index past the table, an inline string without its text), an invalid
+`date1904` flag and a broken sheet list. Every part the writer reads (the workbook, shared
+strings, worksheets, content types, styles, tables, cell metadata and rich data) must fit the
+host's XML node and depth limits, or the workbook fails outright. A relationship part that
+does not fit goes to the fallback, as before: the external-link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
 by rev in the root manifest (0.9.3-oneiron.8): upstream plus the owned patch that keeps

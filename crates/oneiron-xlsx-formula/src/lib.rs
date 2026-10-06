@@ -23,8 +23,11 @@
 //! workbooks only: external links (their link-preserving route, see
 //! [`routing`]), formulas needing caller context (the corpus clock is never
 //! substituted for production time), functions the engine does not implement,
-//! precision-as-displayed, what the writer cannot write exactly, and a
-//! recalculation the edit round trip's corruption gate would refuse.
+//! workbook names used as functions (LAMBDA names), string escapes the
+//! writer's reader decodes differently from Excel, precision-as-displayed,
+//! what the writer cannot write exactly, a result over the host's limits, and
+//! a recalculation the edit round trip's corruption gate would refuse.
+//! Malformed content is refused outright, as before the writer.
 
 pub mod calc;
 mod context;

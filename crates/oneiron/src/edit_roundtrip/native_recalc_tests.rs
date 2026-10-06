@@ -325,6 +325,7 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         "<f>_xlfn.TODAY()</f>",
         "<f>SUM(RAND(),1)</f>",
         "<f>LAMBDA(x,NOW()+x)(2)</f>",
+        "<f>_xlfn.REDUCE(1,Input!A1:A1,_xleta.RANDBETWEEN)</f>",
         deep_chain.as_str(),
         // The engine would cache #NAME? where Excel computes a value.
         "<f>NOSUCHFUNCTION(1)</f>",
@@ -348,6 +349,24 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         part_text(&local, "xl/workbook.xml")
             .replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#),
     ));
+    // A workbook LAMBDA name, which the engine would resolve to #NAME?.
+    let named = workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>SUM(_xlfn.MAP(Input!A1:A1,AddDouble))</f></c>"#,
+    );
+    inputs.push(with_part(
+        &named,
+        "xl/workbook.xml",
+        part_text(&named, "xl/workbook.xml").replace(
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="AddDouble">_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)</definedName></definedNames>"#,
+        ),
+    ));
+    // An escape the engine's reader keeps as seven characters (`_x20AC_` is €).
+    inputs.push(workbook(
+        r#"<c r="A1"><v>2</v></c><c r="B1" t="inlineStr"><is><t>_x20AC_</t></is></c>"#,
+        r#"<c r="A1"><f>LEN(Input!B1)</f></c>"#,
+    ));
     for input in inputs {
         let expected = edited(&input);
         let host = Host {
@@ -366,6 +385,38 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         assert_eq!(*host.seen.borrow(), vec![expected.clone()], "{sheet}");
         assert_eq!(proposal.new_bytes, expected, "{sheet}");
         assert_eq!(proposal.calc_engine.as_deref(), Some(&host_stamp()));
+    }
+}
+
+#[test]
+fn malformed_workbooks_fail_outright_without_the_host_recalc() {
+    for (inputs, formulas, reason) in [
+        (
+            "",
+            r#"<c r="A1"><f>1+1</f></c><c r="A1"><f>9+9</f></c>"#,
+            "duplicate or out-of-grid cell",
+        ),
+        (
+            r#"<c r="A1" t="b"><v>2</v></c>"#,
+            r#"<c r="A1"><f>Input!A1</f></c>"#,
+            "invalid boolean",
+        ),
+    ] {
+        let host = Host {
+            output: Some(Vec::new()),
+            ..Host::default()
+        };
+        assert_eq!(
+            refusal(run_edit_roundtrip(
+                &host,
+                &workbook(inputs, formulas),
+                OfficeFormat::Xlsx,
+                &recalc_plan(),
+                "run:malformed",
+            )),
+            reason
+        );
+        assert!(host.seen.borrow().is_empty());
     }
 }
 

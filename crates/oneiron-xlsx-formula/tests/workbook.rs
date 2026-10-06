@@ -116,6 +116,20 @@ fn with_names(bytes: &[u8], names: &str) -> Vec<u8> {
         )
     })
 }
+/// `fixture` with a shared-string table holding `items` (`<si>` elements).
+fn with_strings(bytes: &[u8], items: &str) -> Vec<u8> {
+    let bytes = edit_part(bytes, "xl/_rels/workbook.xml.rels", |rels| {
+        rels.replace("</Relationships>", &format!(r#"<Relationship Id="strings" Type="{DOC_REL}/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#))
+    });
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace("</Types>", &format!(r#"<Override PartName="/xl/sharedStrings.xml" ContentType="{SPREADSHEET}.sharedStrings+xml"/></Types>"#))
+    });
+    with_part(
+        &bytes,
+        "xl/sharedStrings.xml",
+        format!(r#"<sst xmlns="{MAIN}">{items}</sst>"#),
+    )
+}
 fn part_bytes(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
     Package::open(bytes, limits())
         .expect("retained XLSX")
@@ -134,6 +148,31 @@ fn fallback(bytes: &[u8]) -> String {
         Err(FormulaError::UnsupportedWorkbook(reason)) => reason.into_owned(),
         other => panic!("expected the precision fallback, got {other:?}"),
     }
+}
+/// The outright refusal, or a panic when the workbook was not refused.
+fn refused(
+    result: oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc>,
+) -> &'static str {
+    match result {
+        Err(FormulaError::InvalidWorkbook(reason)) => reason,
+        other => panic!("expected an outright refusal, got {other:?}"),
+    }
+}
+/// A stored Excel save of the pinned compatibility corpus, by case name.
+fn stored_golden(case: &str) -> Vec<u8> {
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../oneiron-docedit/tests/fixtures/spreadsheet-compat/excel");
+    let goldens: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(base.join("goldens.json")).expect("stored goldens"))
+            .expect("golden metadata");
+    let file = goldens["cases"][case]["file"]
+        .as_str()
+        .expect("oracle file");
+    parts(&std::fs::read(base.join("cached-workbooks.zip")).expect("stored Excel saves"))
+        .into_iter()
+        .find(|(name, _)| name == file)
+        .expect("native saved XLSX")
+        .1
 }
 #[test]
 fn scalar_cache_types_and_unknown_xml_survive_the_retained_writer() {
@@ -228,18 +267,9 @@ fn package_shared_strings_and_typed_input_errors_reach_the_graph() {
         r#"<c r="A1"><f>Input!A1&amp;&quot;!&quot;</f><v/></c><c r="B1"><f>IFERROR(Input!B1,7)</f><v/></c>"#,
         false,
     );
-    let bytes = edit_part(&bytes, "xl/_rels/workbook.xml.rels", |rels| {
-        rels.replace("</Relationships>", &format!(r#"<Relationship Id="strings" Type="{DOC_REL}/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#))
-    });
-    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
-        types.replace("</Types>", &format!(r#"<Override PartName="/xl/sharedStrings.xml" ContentType="{SPREADSHEET}.sharedStrings+xml"/></Types>"#))
-    });
-    let input = with_part(
+    let input = with_strings(
         &bytes,
-        "xl/sharedStrings.xml",
-        format!(
-            r#"<sst xmlns="{MAIN}"><si><r><t>東</t></r><r><t>京</t></r><rPh><t>ignored phonetics</t></rPh></si></sst>"#
-        ),
+        "<si><r><t>東</t></r><r><t>京</t></r><rPh><t>ignored phonetics</t></rPh></si>",
     );
     let report = recalc(&input).expect("typed inputs");
     let xml = part_text(&report.bytes, OUTPUT);
@@ -450,29 +480,210 @@ fn new_rich_error_tags_fall_back_to_keep_passthrough_parts() {
 }
 
 #[test]
-fn malformed_xml_and_duplicate_cells_are_not_recalculated() {
-    let input = fixture(
+fn malformed_content_is_refused_outright_not_sent_to_the_fallback() {
+    let formula = r#"<c r="A1"><f>Input!A1</f><v>0</v></c>"#;
+    // Two cells at one address: either value could be the cell's.
+    let repeated = fixture(
         "",
         r#"<c r="A1"><f>1+1</f></c><c r="A1"><f>9+9</f></c>"#,
         false,
     );
-    assert!(recalc(&input).is_err());
-    let input = fixture("", "<c r='A1'><f>1</f></wrong>", false);
-    assert!(matches!(
-        recalc(&input),
-        Err(FormulaError::InvalidWorkbook(_))
-    ));
+    assert_eq!(refused(recalc(&repeated)), "duplicate or out-of-grid cell");
+    let boolean = fixture(r#"<c r="A1" t="b"><v>2</v></c>"#, formula, false);
+    assert_eq!(refused(recalc(&boolean)), "invalid boolean");
+    let epoch = edit_part(&fixture("", formula, false), "xl/workbook.xml", |xml| {
+        xml.replace(r#"date1904="0""#, r#"date1904="bad""#)
+    });
+    assert_eq!(refused(recalc(&epoch)), "invalid date1904 flag");
+    let table = "<si><t>only</t></si>";
+    let past_table = with_strings(
+        &fixture(r#"<c r="A1" t="s"><v>1</v></c>"#, formula, false),
+        table,
+    );
+    assert_eq!(refused(recalc(&past_table)), "missing shared string");
+    let malformed = fixture("", "<c r='A1'><f>1</f></wrong>", false);
+    assert_eq!(refused(recalc(&malformed)), "malformed XML");
+    // Valid neighbours of each stay native: an index inside the table, a
+    // true boolean, the 1904 flag spelled `true`.
+    let in_table = with_strings(
+        &fixture(r#"<c r="A1" t="s"><v>0</v></c>"#, formula, false),
+        table,
+    );
+    let flag = fixture(r#"<c r="A1" t="b"><v>1</v></c>"#, formula, false);
+    let spelled = edit_part(
+        &fixture("", "<c r=\"A1\"><f>DATE(1904,1,2)</f></c>", false),
+        "xl/workbook.xml",
+        |xml| xml.replace(r#"date1904="0""#, r#"date1904="true""#),
+    );
+    for (input, expected) in [
+        (in_table, "<v>only</v>"),
+        (flag, "<v>1</v>"),
+        (spelled, "<v>1</v>"),
+    ] {
+        let xml = part_text(&recalc(&input).expect("valid input").bytes, OUTPUT);
+        assert!(xml.contains(expected), "{expected} in {xml}");
+    }
+}
+
+#[test]
+fn escaped_strings_recalculate_only_where_the_reader_decodes_them_like_excel() {
+    let formula = r#"<c r="A1"><f>LEN(Input!A1)</f><v>0</v></c>"#;
+    let inline = |text: &str| {
+        fixture(
+            &format!(r#"<c r="A1" t="inlineStr"><is><t>{text}</t></is></c>"#),
+            formula,
+            false,
+        )
+    };
+    let shared = |item: &str| {
+        with_strings(
+            &fixture(r#"<c r="A1" t="s"><v>0</v></c>"#, formula, false),
+            &format!("<si>{item}</si>"),
+        )
+    };
+    // `_x20AC_` is the euro sign, LEN 1, where the reader keeps seven
+    // characters; the reader also reads `_x00+A_` as a line feed.
+    for input in [
+        inline("_x20AC_"),
+        shared("<t>_x20AC_</t>"),
+        shared("<r><t>price </t></r><r><t>_x20AC_</t></r>"),
+        shared("<t>_x00+A_</t>"),
+    ] {
+        assert_eq!(
+            fallback(&input),
+            "escaped text the reader does not decode as Excel does"
+        );
+    }
+    // `_x00HH_` decodes, and `_x005F_` escapes the underscore of a literal
+    // `_x20AC_`.
+    for (text, length) in [("a_x0042_c", 3), ("_x005F_x20AC_", 7)] {
+        for input in [inline(text), shared(&format!("<t>{text}</t>"))] {
+            let xml = part_text(&recalc(&input).expect("decoded escape").bytes, OUTPUT);
+            assert!(xml.contains(&format!("<v>{length}</v>")), "{text}: {xml}");
+        }
+    }
+}
+
+#[test]
+fn every_part_the_writer_reads_or_returns_fits_the_host_xml_limits() {
+    let nodes = |max_nodes| Limits {
+        xml: XmlLimits {
+            max_depth: 256,
+            max_nodes,
+        },
+        ..limits()
+    };
+    let under = |bytes: &[u8], limits| FormualizerEngine::new().recalculate_xlsx(bytes, limits);
+    // One hundred shared strings are 201 elements.
+    let strings = with_strings(
+        &fixture(
+            r#"<c r="A1" t="s"><v>0</v></c>"#,
+            r#"<c r="A1"><f>Input!A1</f><v>0</v></c>"#,
+            false,
+        ),
+        &"<si><t>x</t></si>".repeat(100),
+    );
+    assert!(recalc(&strings).is_ok());
+    assert_eq!(
+        refused(under(&strings, nodes(64))),
+        "XML node or depth limit"
+    );
+    let styles = with_part(
+        &fixture("", r#"<c r="A1"><f>1</f></c>"#, false),
+        "xl/styles.xml",
+        format!(
+            r#"<styleSheet xmlns="{MAIN}">{}</styleSheet>"#,
+            "<x/>".repeat(100)
+        ),
+    );
+    assert_eq!(
+        refused(under(&styles, nodes(64))),
+        "XML node or depth limit"
+    );
+    // Ten formulas without caches fit 25 elements; with their caches the
+    // result sheet does not, so the host could not read the result back.
+    let formulas: String = (1..=10u8)
+        .map(|column| {
+            format!(
+                r#"<c r="{}1"><f>{column}</f></c>"#,
+                char::from(b'@' + column)
+            )
+        })
+        .collect();
+    let input = fixture("", &formulas, false);
+    assert!(recalc(&input).is_ok());
+    match under(&input, nodes(25)) {
+        Err(FormulaError::UnsupportedWorkbook(reason)) => assert_eq!(
+            reason,
+            "recalculated xl/worksheets/result.xml does not read back under the host's XML limits"
+        ),
+        other => panic!("expected the precision fallback, got {other:?}"),
+    }
+}
+
+#[test]
+fn workbook_lambda_names_fall_back_until_the_engine_resolves_them() {
+    // The stored Excel save of MAP over an inline LAMBDA recalculates to
+    // its own bytes; with the LAMBDA moved into the defined name `AddDouble`
+    // the engine would cache #NAME? for the same result.
+    let stored = stored_golden("MAP_double");
+    assert_eq!(recalc(&stored).expect("inline LAMBDA").bytes, stored);
+    let named = edit_part(&stored, "xl/workbook.xml", |xml| {
+        xml.replace(
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="AddDouble">_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)</definedName></definedNames>"#,
+        )
+    });
+    let called = edit_part(&named, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "_xlfn.MAP(A1:A3,_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2))",
+            "_xlfn.MAP(A1:A3,AddDouble)",
+        )
+    });
+    assert_eq!(fallback(&called), "name used as a function: AddDouble");
+    // Defined and never called is refused too: no formula proves it unused.
+    assert_eq!(fallback(&named), "defined name holds a LAMBDA: AddDouble");
+
+    let inputs = r#"<c r="A1"><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row><row r="3"><c r="A3"><v>3</v></c>"#;
+    let names = r#"<definedName name="AddDouble">_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)</definedName><definedName name="first">Input!$A$1</definedName><definedName name="nums">Input!$A$1:$A$3</definedName>"#;
+    for (formula, name) in [
+        ("AddDouble(3)", "AddDouble"),
+        ("SUM(_xlfn.BYROW(Input!A1:A3,first))", "first"),
+        ("_xlfn.REDUCE(0,nums,first)", "first"),
+    ] {
+        let input = with_names(
+            &fixture(
+                inputs,
+                &format!(r#"<c r="A1"><f>{formula}</f><v>0</v></c>"#),
+                false,
+            ),
+            names,
+        );
+        assert_eq!(
+            fallback(&input),
+            format!("name used as a function: {name}"),
+            "{formula}"
+        );
+    }
+    // A named range in a data argument, and a LET name in the LAMBDA slot,
+    // stay native.
+    let input = with_names(
+        &fixture(
+            inputs,
+            r#"<c r="A1"><f>SUM(_xlfn.MAP(nums,_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)))</f><v>0</v></c><c r="B1"><f>_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2),SUM(_xlfn.MAP(Input!A1:A3,_xlpm.f)))</f><v>0</v></c>"#,
+            false,
+        ),
+        r#"<definedName name="nums">Input!$A$1:$A$3</definedName>"#,
+    );
+    let xml = part_text(
+        &recalc(&input).expect("native LAMBDA helpers").bytes,
+        OUTPUT,
+    );
+    assert_eq!(xml.matches("<v>12</v>").count(), 2, "{xml}");
 }
 
 #[test]
 fn stored_excel_scalar_goldens_survive_actual_xlsx_recalculation() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../oneiron-docedit/tests/fixtures/spreadsheet-compat/excel");
-    let goldens: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(base.join("goldens.json")).expect("stored goldens"))
-            .expect("golden metadata");
-    let archive =
-        parts(&std::fs::read(base.join("cached-workbooks.zip")).expect("stored Excel saves"));
     // These are stored Excel saves, not generated fixtures or upstream beliefs.
     // Stale-cache tests above independently prove this is not a no-op adapter.
     for case in [
@@ -481,17 +692,11 @@ fn stored_excel_scalar_goldens_survive_actual_xlsx_recalculation() {
         "DATE_basic",
         "TIME_basic",
     ] {
-        let file = goldens["cases"][case]["file"]
-            .as_str()
-            .expect("oracle file");
-        let (_, input) = archive
-            .iter()
-            .find(|(name, _)| name == file)
-            .expect("native saved XLSX");
-        let output = recalc(input).expect("native scalar golden");
+        let input = stored_golden(case);
+        let output = recalc(&input).expect("native scalar golden");
         assert!(output.formula_count > 0);
         assert_eq!(
-            &output.bytes, input,
+            output.bytes, input,
             "stored Excel cache and untouched bytes: {case}"
         );
     }
@@ -525,6 +730,9 @@ fn contextual_formulas_are_refused_not_evaluated_on_the_corpus_clock() {
         "_xlfn.TODAY()",
         "SUM(RAND(),1)",
         "_xlfn.LAMBDA(_xlpm.x,NOW()+_xlpm.x)(2)",
+        // A function passed by name is called with the caller's context too.
+        "_xlfn.REDUCE(1,Input!A1:A1,_xleta.RANDBETWEEN)",
+        "_xlfn.MAP(Input!A1:A1,_xleta.INDIRECT)",
     ] {
         let input = fixture(
             "",
