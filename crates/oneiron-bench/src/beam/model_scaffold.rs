@@ -46,6 +46,9 @@ pub(super) struct ModelRunPlan {
     pub efforts: Vec<Effort>,
     pub amortized_question_count: usize,
     pub chroma: Option<super::chroma::ChromaConfig>,
+    /// Run-card result folders: `<resultsRoot>/<commit>/<set>/<tier>/<split>/`.
+    #[serde(default)]
+    pub results_root: Option<PathBuf>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(super) struct AccuracyCostPoint {
@@ -113,6 +116,8 @@ pub(super) struct MeasuredReport {
     pub routing_prompt: AnswerPromptPin,
     pub judge: JudgeConfig,
     pub chroma_card_id: Option<String>,
+    pub exactness: super::exactness::ExactnessReport,
+    pub card: Option<super::card::RunCard>,
 }
 impl ModelRunPlan {
     pub(super) fn validate(&self) -> BeamResult<()> {
@@ -224,6 +229,11 @@ pub(super) fn run(path: &Path) -> BeamResult<MeasuredReport> {
             .unwrap_or(Path::new("."))
             .join(&plan.retrieval_manifest);
     }
+    if let Some(root) = &mut plan.results_root
+        && root.is_relative()
+    {
+        *root = path.parent().unwrap_or(Path::new(".")).join(&root);
+    }
     let models: Vec<_> = plan
         .answerers
         .iter()
@@ -321,11 +331,10 @@ pub(super) fn run_with_session(
     let mut offline_receipts = Vec::new();
     // One base vault per corpus, one fork per question: a shared corpus is
     // ingested (and its offline cost counted) once, never once per question.
-    let groups = super::runner::group_by_corpus(super::load::select_run_jsonl_records(
-        &manifest,
-        path,
-        arm_id.as_deref(),
-    )?);
+    let selected = super::load::select_run_jsonl_records(&manifest, path, arm_id.as_deref())?;
+    let summaries = super::card::RecordSummary::of(&selected);
+    let groups = super::runner::group_by_corpus(selected);
+    let mut exactness = super::exactness::ExactnessReport::default();
     for (corpus_identity, mut group) in groups {
         super::load::resolve_corpus_refs(path, &mut group)?;
         let group_ids: BTreeSet<String> = group
@@ -339,18 +348,21 @@ pub(super) fn run_with_session(
             .cloned()
             .collect();
         let receipt_start = session.receipts().len();
-        let (base, loaded) = super::fork::BaseVault::build(corpus_identity, |vault| {
-            let loaded = super::load::load_jsonl_group(
-                vault,
-                &group_case_ids,
-                path,
-                group,
-                *limit,
-                *expected_min_results,
-            )?;
-            super::exactness::verify_loaded_corpus(vault, &loaded)?.into_result()?;
-            Ok(loaded)
-        })?;
+        let (base, (loaded, group_exactness)) =
+            super::fork::BaseVault::build(corpus_identity, |vault| {
+                let loaded = super::load::load_jsonl_group(
+                    vault,
+                    &group_case_ids,
+                    path,
+                    group,
+                    *limit,
+                    *expected_min_results,
+                )?;
+                let report =
+                    super::exactness::verify_loaded_corpus(vault, &loaded)?.into_result()?;
+                Ok((loaded, report))
+            })?;
+        exactness.merge(group_exactness);
         offline_ingest.elapsed_us = offline_ingest.elapsed_us.saturating_add(
             loaded
                 .offline
@@ -657,7 +669,39 @@ pub(super) fn run_with_session(
         .iter()
         .map(|r| r.judge_overhead.cost_usd)
         .sum::<f64>();
-    Ok(MeasuredReport {
+    let scorer = super::report_model::ScorerReport {
+        judge_instruction_sha256: Some(plan.judge.instruction.sha256.clone()),
+        ..super::scorer::BeamScorer::metadata(&FixedBeamScorer)
+    };
+    let mut card = super::card::build_card(super::card::CardInputs {
+        manifest: &manifest,
+        run_jsonl: path,
+        records: &summaries,
+        scorer: &scorer,
+        exactness: &exactness,
+        judges: vec![super::card::CardJudge {
+            role: "answer-judge".to_owned(),
+            judge_pin: plan.judge.model.model_id.as_str().to_owned(),
+            vote_count: plan.judge.card.vote_count,
+            prompt_sha256: Some(plan.judge.instruction.sha256.clone()),
+        }],
+        answerers: plan
+            .answerers
+            .iter()
+            .map(|arm| super::card::CardAnswerer {
+                arm: arm.arm.as_str().to_owned(),
+                model_pin: arm.model.model_id.as_str().to_owned(),
+                prompt_sha256: super::load::sha256_hex(plan.answer_prompt.as_bytes()),
+            })
+            .collect(),
+        cost: measured_arm_costs(&rows, &offline_amortized),
+    })?;
+    if let Some(root) = &plan.results_root {
+        card.result_dir = Some(super::card::result_dir(root, &card));
+    }
+    let report = MeasuredReport {
+        exactness,
+        card: Some(card),
         retrieval_cards: manifest
             .competitors
             .iter()
@@ -668,10 +712,7 @@ pub(super) fn run_with_session(
                 )
             })
             .collect(),
-        scorer: super::report_model::ScorerReport {
-            judge_instruction_sha256: Some(plan.judge.instruction.sha256.clone()),
-            ..super::scorer::BeamScorer::metadata(&FixedBeamScorer)
-        },
+        scorer,
         execution_contract: "response_format=text; tools=none; provider_options=none",
         ablation_rows,
         ablation_unavailable,
@@ -713,7 +754,48 @@ pub(super) fn run_with_session(
         answer_prompt: plan.answer_prompt.clone(),
         routing_prompt: plan.routing_prompt.clone(),
         judge: plan.judge.clone(),
-    })
+    };
+    if let Some(card) = &report.card
+        && let Some(dir) = &card.result_dir
+    {
+        super::card::write_result_folder(dir, card, &report, &report.exactness, None)?;
+    }
+    Ok(report)
+}
+/// Per arm and effort: the measured cost columns of the card.
+fn measured_arm_costs(
+    rows: &[ModelRow],
+    offline_amortized: &CostComponentReport,
+) -> Vec<super::card::CardArmCost> {
+    let mut groups: BTreeMap<String, Vec<&ModelRow>> = BTreeMap::new();
+    for row in rows {
+        groups
+            .entry(format!("{}/{}", row.arm.as_str(), row.effort))
+            .or_default()
+            .push(row);
+    }
+    groups
+        .into_iter()
+        .map(|(arm, rows)| {
+            let elapsed: Vec<u64> = rows.iter().map(|r| r.query_cost.elapsed_us).collect();
+            super::card::CardArmCost {
+                arm,
+                questions: rows.len(),
+                pack_tokens: None,
+                query_input_tokens: rows.iter().map(|r| r.query_cost.input_tokens).sum(),
+                query_output_tokens: rows.iter().map(|r| r.query_cost.output_tokens).sum(),
+                reprefill_tokens: rows.iter().map(|r| r.query_cost.reprefill_tokens).sum(),
+                judge_input_tokens: rows.iter().map(|r| r.judge_overhead.input_tokens).sum(),
+                offline_input_tokens_amortized: offline_amortized.input_tokens * rows.len() as u64,
+                elapsed_us_p50: super::card::percentile(&elapsed, 50),
+                elapsed_us_p95: super::card::percentile(&elapsed, 95),
+                cost_usd: rows
+                    .iter()
+                    .map(|r| r.query_cost.cost_usd + r.judge_overhead.cost_usd)
+                    .sum(),
+            }
+        })
+        .collect()
 }
 fn chat_history(
     corpus: &[super::report_model::ContractCorpusRecord],

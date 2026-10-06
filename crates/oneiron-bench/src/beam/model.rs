@@ -157,6 +157,9 @@ pub(super) enum DatasetSource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct RunOutputs {
     pub(super) packs_jsonl: PathBuf,
+    /// Run-card result folders go under `<resultsRoot>/<commit>/<set>/<tier>/<split>/`.
+    #[serde(default)]
+    pub(super) results_root: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]

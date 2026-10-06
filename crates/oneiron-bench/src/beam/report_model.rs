@@ -100,6 +100,9 @@ pub(crate) struct BeamReport {
     /// Corpus round-trip receipts for run.jsonl runs; always exact when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) exactness: Option<super::exactness::ExactnessReport>,
+    /// The run card for run.jsonl runs (plan section 7).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) card: Option<super::card::RunCard>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -477,4 +477,111 @@ pub(crate) mod tests {
                 .unwrap();
         assert_eq!(super::super::split::split_unit(&inline), inline.question_id);
     }
+
+    #[test]
+    fn run_card_pins_identity_scorer_split_cost_and_exactness() {
+        let fixture = V2Fixture::write(&["q-a", "q-b"]);
+        let report = run_manifest(&fixture.manifest(&["q-a", "q-b"]), None).unwrap();
+        let card = report.card.expect("run.jsonl runs carry a card");
+        let wire = serde_json::to_value(&card).unwrap();
+        let identity = &wire["identity"];
+        assert_eq!(identity["set"], V2_DATASET_ID);
+        assert_eq!(
+            identity["tier"], "fixture",
+            "tier comes from the competitor cards"
+        );
+        assert_eq!(identity["datasetRevision"], "fixture-v2");
+        assert_eq!(
+            identity["runJsonlSha256"],
+            sha256_hex_of(&std::fs::read(&fixture.run_jsonl).unwrap())
+        );
+        assert_eq!(identity["corpora"][0]["corpusId"], V2_CORPUS_ID);
+        assert_eq!(
+            identity["corpora"][0]["sha256"],
+            sha256_hex_of(&std::fs::read(&fixture.corpus_path).unwrap())
+        );
+        assert_eq!(identity["cleaning"][0]["manifestId"], "fixture-cleaning-v1");
+        assert_eq!(identity["cleaning"][0]["kept"], 2);
+        let split = super::super::split::expected_split(V2_DATASET_ID, V2_CORPUS_ID).as_str();
+        assert_eq!(identity["split"]["label"], split);
+        assert_eq!(identity["split"]["ruleId"], "oneiron-bench.split.v1");
+        assert_eq!(
+            identity["split"]["saltSha256"],
+            sha256_hex_of(super::super::split::SPLIT_SALT.as_bytes())
+        );
+        assert_eq!(identity["seeds"], serde_json::json!([]));
+        assert_eq!(identity["questionsWithQuestionTime"], 2);
+        assert!(
+            identity["commit"]
+                .as_str()
+                .is_some_and(|sha| sha.len() == 40)
+        );
+        let pins = &wire["pins"];
+        assert_eq!(pins["scorer"]["scorerId"], "beam-fixed-scorer");
+        assert_eq!(
+            pins["tokenizer"],
+            oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID
+        );
+        assert_eq!(pins["packBudgets"], serde_json::json!([131072]));
+        assert_eq!(pins["judges"].as_array().unwrap().len(), 2);
+        assert_eq!(wire["exactness"]["itemsChecked"], 2);
+        assert_eq!(wire["exactness"]["mismatches"], 0);
+        assert_eq!(wire["exactness"]["evidenceIdsUnresolved"], 0);
+        let cost = wire["cost"].as_array().unwrap();
+        assert_eq!(cost.len(), 2, "one cost row per competitor");
+        for row in cost {
+            assert_eq!(row["questions"], 2);
+            assert!(row["packTokens"].as_u64().unwrap() > 0);
+            assert_eq!(row["reprefillTokens"], 0);
+            assert!(row["elapsedUsP95"].as_u64() >= row["elapsedUsP50"].as_u64());
+        }
+        assert!(card.result_dir.is_none(), "no resultsRoot, no folder");
+    }
+
+    #[test]
+    fn result_folder_is_named_by_commit_and_never_overwritten() {
+        let fixture = V2Fixture::write(&["q-a"]);
+        let mut raw: serde_json::Value = serde_json::from_str(CONTRACT_MANIFEST_JSON).unwrap();
+        raw["runId"] = serde_json::json!(V2_RUN_ID);
+        raw["dataset"]["path"] = serde_json::json!(fixture.run_jsonl);
+        raw["caseIds"] = serde_json::json!(["q-a"]);
+        raw["outputs"]["packsJsonl"] = serde_json::json!(fixture.packs_jsonl);
+        raw["outputs"]["resultsRoot"] = serde_json::json!(fixture.path().join("results"));
+        let manifest = parse_manifest_json(&raw.to_string()).unwrap();
+        let report = run_manifest(&manifest, None).unwrap();
+        let card = report.card.as_ref().unwrap();
+        let dir = card.result_dir.clone().expect("resultsRoot names a folder");
+        let commit = card.identity.commit.clone().unwrap();
+        let split = super::super::split::expected_split(V2_DATASET_ID, V2_CORPUS_ID).as_str();
+        let expected_tail = Path::new(V2_DATASET_ID).join("fixture").join(split);
+        assert!(dir.ends_with(&expected_tail), "{}", dir.display());
+        let commit_folder = dir
+            .strip_prefix(fixture.path().join("results"))
+            .unwrap()
+            .components()
+            .next()
+            .unwrap()
+            .as_os_str()
+            .to_string_lossy()
+            .into_owned();
+        assert!(commit_folder.starts_with(&commit), "{commit_folder}");
+        for file in [
+            "card.json",
+            "report.json",
+            "packs.jsonl",
+            "cost.json",
+            "exactness.json",
+            "split.json",
+            "cleaning.json",
+        ] {
+            assert!(dir.join(file).exists(), "{file} written");
+        }
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("card.json")).unwrap()).unwrap();
+        assert_eq!(written["identity"]["commit"], commit.as_str());
+        let error = run_manifest(&manifest, None)
+            .expect_err("a second run into the same folder must refuse")
+            .to_string();
+        assert!(error.contains("never overwritten"), "{error}");
+    }
 }

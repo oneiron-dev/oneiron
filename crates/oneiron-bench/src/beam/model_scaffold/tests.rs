@@ -180,6 +180,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
             },
         ],
         amortized_question_count: 1,
+        results_root: None,
         chroma: None,
     };
     let session = ModelSession::with_backend(
@@ -273,6 +274,24 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
         }
     }
     assert!(wire["rows"][0]["query_cost"]["reprefillTokens"].is_u64());
+    let card = report.card.as_ref().expect("measured runs carry a card");
+    assert_eq!(card.pins.judges.len(), 1);
+    assert_eq!(
+        card.pins.judges[0].prompt_sha256.as_deref(),
+        Some(plan.judge.instruction.sha256.as_str())
+    );
+    assert_eq!(
+        card.pins.judges[0].judge_pin,
+        plan.judge.model.model_id.as_str()
+    );
+    assert_eq!(card.pins.answerers.len(), plan.answerers.len());
+    assert!(
+        card.pins.answerers.iter().all(
+            |a| a.prompt_sha256 == crate::beam::load::sha256_hex(plan.answer_prompt.as_bytes())
+        )
+    );
+    assert!(card.exactness.items_checked > 0 && card.exactness.mismatches == 0);
+    assert!(card.cost.iter().any(|row| row.arm.starts_with("agentic/")));
     let det = report
         .points
         .iter()

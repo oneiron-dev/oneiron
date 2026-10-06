@@ -1,6 +1,10 @@
 //! Subcommand run entry points and orchestration.
 
 use super::arms::adapter_for;
+use super::card::{
+    CardInputs, RecordSummary, build_card, manifest_judges, report_arm_costs, result_dir,
+    write_result_folder,
+};
 use super::exactness::{ExactnessReport, verify_loaded_corpus};
 use super::fork::BaseVault;
 use super::load::{
@@ -161,6 +165,7 @@ pub(super) fn run_manifest(
         ppr_vad_sweep: ppr_vad_sweep_report(&cases),
         cases,
         exactness: None,
+        card: None,
     })
 }
 /// One base vault per corpus key, one fork per question. A shared corpus
@@ -182,6 +187,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         ));
     };
     let entries = select_run_jsonl_records(manifest, path, arm_id.as_deref())?;
+    let summaries = RecordSummary::of(&entries);
     let mut dataset_report: Option<DatasetLoadReport> = None;
     let mut fixture_id: Option<String> = None;
     let mut fixture_description: Option<String> = None;
@@ -289,7 +295,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         write_contract_pack_rows(&outputs.packs_jsonl, &pack_rows)?;
     }
 
-    Ok(BeamReport {
+    let mut report = BeamReport {
         schema_version: SCHEMA_VERSION,
         run_id: manifest.run_id.clone(),
         fixture_id: fixture_id.unwrap_or_else(|| "jsonl".to_owned()),
@@ -300,8 +306,40 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         report_format,
         ppr_vad_sweep: ppr_vad_sweep_report(&cases),
         cases,
-        exactness: Some(exactness),
-    })
+        exactness: None,
+        card: None,
+    };
+    let mut card = build_card(CardInputs {
+        manifest,
+        run_jsonl: path,
+        records: &summaries,
+        scorer: &report.scorer,
+        exactness: &exactness,
+        judges: manifest_judges(manifest),
+        answerers: Vec::new(),
+        cost: report_arm_costs(&report),
+    })?;
+    let results_root = manifest
+        .outputs
+        .as_ref()
+        .and_then(|outputs| outputs.results_root.as_deref());
+    if let Some(root) = results_root {
+        card.result_dir = Some(result_dir(root, &card));
+    }
+    report.card = Some(card);
+    report.exactness = Some(exactness);
+    if let (Some(card), Some(exactness)) = (&report.card, &report.exactness)
+        && let Some(dir) = &card.result_dir
+    {
+        write_result_folder(
+            dir,
+            card,
+            &report,
+            exactness,
+            manifest.outputs.as_ref().map(|o| o.packs_jsonl.as_path()),
+        )?;
+    }
+    Ok(report)
 }
 /// Selected records grouped by vault unit, in first-appearance order. Each
 /// group carries its corpus identity: the corpus_ref sha256, or the inline

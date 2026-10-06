@@ -569,10 +569,15 @@ pub(super) fn resolve_manifest_paths(manifest: &mut RunManifest, manifest_path: 
     {
         *path = base.join(&path);
     }
-    if let Some(outputs) = &mut manifest.outputs
-        && outputs.packs_jsonl.is_relative()
-    {
-        outputs.packs_jsonl = base.join(&outputs.packs_jsonl);
+    if let Some(outputs) = &mut manifest.outputs {
+        if outputs.packs_jsonl.is_relative() {
+            outputs.packs_jsonl = base.join(&outputs.packs_jsonl);
+        }
+        if let Some(root) = &mut outputs.results_root
+            && root.is_relative()
+        {
+            *root = base.join(&root);
+        }
     }
 }
 #[derive(Debug)]
