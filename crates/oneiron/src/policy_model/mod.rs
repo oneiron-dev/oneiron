@@ -89,11 +89,12 @@ mod enforce;
 mod hold_queue;
 pub use hold_queue::{HeldPolicyItem, PolicyHoldResolution};
 mod owner_rows;
+pub use crate::batch::secret_scan::SecretScanMode;
 pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource};
 pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
-    PolicyRowSubmission, policy_row_grant_target,
+    PolicyRowSubmission, SecretScanReceipt, policy_row_grant_target,
 };
 mod notice;
 mod pattern;
