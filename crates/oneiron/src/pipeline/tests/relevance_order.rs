@@ -1,19 +1,13 @@
-//! REPRO (ignored until the engine fix lands): channel relevance never
-//! orders the result list.
+//! Channel relevance orders the result list (ONE-2702).
 //!
-//! Found by the oneiron-bench Japanese set (2026-10-06). Since commit
-//! 35470684e ("retrieval: add linear-log ranking blend") retired RRF,
-//! `fusion::retrieval_candidates_from_ranked_lists` keeps only the candidate
-//! ids of every channel list and drops their scores, and
-//! `fusion::linear_log_blend_scores_with_weights` blends only recency,
-//! salience, confidence and gravity. BM25F and vector scores choose the pool
-//! but never its order. With those four signals tied (plain turns) every
-//! candidate blends to exactly 1.0 and ties fall to id order, so an
-//! exact-phrase query does not rank its own turn first. Not CJK-specific:
-//! English ties the same way. A candidate fix and the pinned tests it moves
-//! are in the bench branch notes (engine-relevance-blend.candidate.patch).
-//!
-//! Run: cargo test -p oneiron --lib relevance_order -- --ignored
+//! Found by the oneiron-bench Japanese set (2026-10-06). Commit 35470684e
+//! ("retrieval: add linear-log ranking blend") retired RRF, and from then the
+//! blend read only recency, salience, confidence and gravity: BM25F and vector
+//! scores chose the pool but never its order, so with those four signals tied
+//! (plain turns) every candidate blended to 1.0 and ties fell to id order.
+//! Relevance is now the blend's fifth input (`fusion::RELEVANCE_LOG_WEIGHT`).
+//! These pin that an exact-phrase query ranks its own turn first, in Japanese
+//! and in English, with and without a temporal now.
 
 use super::*;
 
@@ -50,7 +44,6 @@ fn ids_and_vault() -> (tempfile::TempDir, Vault, Vec<EntityId>) {
 }
 
 #[test]
-#[ignore = "engine issue: channel relevance never reaches the blend (fusion.rs)"]
 fn exact_japanese_phrase_ranks_its_own_turn_first() -> Result<()> {
     let (_dir, vault, ids) = ids_and_vault();
     let results = vault.query().search_text("株式会社青葉リンク", 10).run()?;
@@ -65,7 +58,6 @@ fn exact_japanese_phrase_ranks_its_own_turn_first() -> Result<()> {
 }
 
 #[test]
-#[ignore = "engine issue: channel relevance never reaches the blend (fusion.rs)"]
 fn exact_japanese_phrase_ranks_first_with_a_temporal_now() -> Result<()> {
     let (_dir, vault, ids) = ids_and_vault();
     let results = vault
@@ -78,7 +70,6 @@ fn exact_japanese_phrase_ranks_first_with_a_temporal_now() -> Result<()> {
 }
 
 #[test]
-#[ignore = "engine issue: channel relevance never reaches the blend (fusion.rs)"]
 fn english_relevance_orders_tied_turns_too() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let weak = entity_id(0x61);
