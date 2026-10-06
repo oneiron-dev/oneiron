@@ -47,8 +47,7 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
     if tokens.len() > MAX_FORMULA_TOKENS {
         return Err(unsupported("formula token limit"));
     }
-    let node = formualizer_parse::parse(expression.as_ref())
-        .map_err(|_| unsupported("formula parsing"))?;
+    let node = parse_bounded(&expression)?;
     let mut pending: Vec<(&ASTNode, usize)> = vec![(&node, 1)];
     let mut contextual = false;
     let mut lambda = false;
@@ -130,6 +129,17 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
         callable_name,
         lambda,
     })
+}
+
+/// Parse a formula within the bounds `inspect_formula` proves, with the
+/// parser's mandatory leading `=`.
+pub(super) fn parse_bounded(formula: &str) -> Result<ASTNode> {
+    let expression = if formula.starts_with('=') {
+        std::borrow::Cow::Borrowed(formula)
+    } else {
+        std::borrow::Cow::Owned(format!("={formula}"))
+    };
+    formualizer_parse::parse(expression.as_ref()).map_err(|_| unsupported("formula parsing"))
 }
 
 /// Functions that read the caller's clock, seed, cell or environment, or
