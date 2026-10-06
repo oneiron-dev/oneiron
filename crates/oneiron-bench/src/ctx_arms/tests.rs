@@ -1374,9 +1374,35 @@ fn stream(k: Option<u32>, f: Option<u64>, refresh: bool) -> StreamBoard {
         Dials {
             keyframe_every: k,
             fold_over: f,
+            keyframe_after_tok: None,
             refresh,
         },
     )
+}
+
+#[test]
+fn on_big_turns_the_keyframe_must_come_by_log_tokens_not_turns() {
+    let ep = Episode::generate(Arm::Transactions, 28);
+    let by_turns = run_episode(&ep, &mut stream(Some(100), None, false), DEFAULT_BUDGET);
+    assert!(
+        by_turns.view_missing > 0,
+        "100 turns of 1k-token tool results outrun what the harness keeps"
+    );
+    let by_tokens = run_episode(
+        &ep,
+        &mut StreamBoard::new(
+            "stream-test",
+            Harness::Truncate,
+            Dials {
+                keyframe_every: None,
+                fold_over: None,
+                keyframe_after_tok: Some(8_192),
+                refresh: false,
+            },
+        ),
+        DEFAULT_BUDGET,
+    );
+    assert_eq!(by_tokens.view_missing + by_tokens.view_stale, 0);
 }
 
 #[test]

@@ -1066,18 +1066,25 @@ pub(crate) struct Dials {
     /// Fold the deltas sent since the last keyframe into a new keyframe once
     /// they pass this many tokens (`None`: never).
     pub(crate) fold_over: Option<u64>,
+    /// A keyframe once this many log tokens (tool results and frames) have
+    /// arrived since the last one (`None`: never). The quantity a foreign
+    /// compaction eats is log tokens, not turns.
+    pub(crate) keyframe_after_tok: Option<u64>,
     /// The agent calls `board.refresh` after each compaction of its harness;
     /// the keyframe rides the next tool result.
     pub(crate) refresh: bool,
 }
 
-/// Default dials, tuned on dev with `--stream-sweep`: the cheapest setting
-/// whose board was never wrong on the sketchpad, relink and needle arms, on
-/// both harnesses (a keyframe every 100 turns; no delta fold; no refresh,
-/// which that keyframe interval never needed).
+/// Default dials, tuned on dev with `--stream-sweep` over all arms: the
+/// cheapest setting whose board was never wrong on any arm, on both
+/// harnesses (a keyframe once 16,384 log tokens arrived since the last; no
+/// turn interval, no delta fold, no refresh, which it never needed). A
+/// keyframe every 100 turns, the earlier default, broke on every arm whose
+/// turns average 300 tokens or more.
 pub(crate) const STREAM_DIALS: Dials = Dials {
-    keyframe_every: Some(100),
+    keyframe_every: None,
     fold_over: None,
+    keyframe_after_tok: Some(16_384),
     refresh: false,
 };
 
@@ -1115,6 +1122,8 @@ pub(crate) struct StreamBoard {
     last: Option<BoardSnapshot>,
     since_key: u32,
     delta_tok: u64,
+    /// Log tokens since the last keyframe.
+    since_tok: u64,
     refresh_pending: bool,
     /// The connection's carrier: frames ride the next tool response,
     /// deltas superseding within a key.
@@ -1135,6 +1144,7 @@ impl StreamBoard {
             last: None,
             since_key: 0,
             delta_tok: 0,
+            since_tok: 0,
             refresh_pending: false,
             carrier: CarrierCoalesceBuffer::default(),
         }
@@ -1274,6 +1284,7 @@ impl Strategy for StreamBoard {
 
     fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
         self.since_key += 1;
+        self.since_tok += ctx.spans().last().map_or(0, Span::tok);
         let (rows, res_rows) = self.board(ctx);
         let mut due = self.last.is_none()
             || self.refresh_pending
@@ -1281,7 +1292,11 @@ impl Strategy for StreamBoard {
                 .dials
                 .keyframe_every
                 .is_some_and(|k| self.since_key >= k)
-            || self.dials.fold_over.is_some_and(|f| self.delta_tok >= f);
+            || self.dials.fold_over.is_some_and(|f| self.delta_tok >= f)
+            || self
+                .dials
+                .keyframe_after_tok
+                .is_some_and(|t| self.since_tok >= t);
         let mut snapshot = BoardSnapshot {
             epoch: self.epoch,
             keyframe: String::new(),
@@ -1323,6 +1338,7 @@ impl Strategy for StreamBoard {
             Some(FrameKind::Keyframe(_)) => {
                 self.since_key = 0;
                 self.delta_tok = 0;
+                self.since_tok = 0;
             }
             Some(FrameKind::Delta(rows)) => {
                 self.delta_tok += rows

@@ -1108,26 +1108,44 @@ fn report(opts: &Options) {
 /// harness whose board is never wrong.
 fn stream_sweep(opts: &Options, seeds: &RangeInclusive<u64>, n_seeds: u64) {
     use strategies::{Dials, Harness, StreamBoard};
-    let arms = [Arm::Sketchpad, Arm::Relink, Arm::Needle];
+    let arms: Vec<Arm> = ARMS
+        .into_iter()
+        .filter(|a| opts.arm.is_none_or(|o| o == *a))
+        .collect();
     let mut configs = Vec::new();
     for harness in [Harness::Truncate, Harness::FifoFold] {
-        for keyframe_every in [None, Some(25), Some(100), Some(200), Some(400)] {
-            for fold_over in [None, Some(512), Some(2048)] {
+        for keyframe_every in [None, Some(25), Some(100)] {
+            for keyframe_after_tok in [None, Some(8_192), Some(16_384)] {
                 for refresh in [false, true] {
+                    if harness == Harness::FifoFold && keyframe_every.is_some() {
+                        continue;
+                    }
                     configs.push((
                         harness,
                         Dials {
                             keyframe_every,
-                            fold_over,
+                            fold_over: None,
+                            keyframe_after_tok,
                             refresh,
                         },
                     ));
                 }
             }
         }
+        for refresh in [false, true] {
+            configs.push((
+                harness,
+                Dials {
+                    keyframe_every: None,
+                    fold_over: Some(512),
+                    keyframe_after_tok: None,
+                    refresh,
+                },
+            ));
+        }
     }
     println!(
-        "stream sweep: {} settings x {} arms x {n_seeds} seeds; K = keyframe every K turns (- = only when forced), F = fold deltas into a keyframe past F tokens (- = never)",
+        "stream sweep: {} settings x {} arms x {n_seeds} seeds; K = keyframe every K turns, F = fold deltas into a keyframe past F tokens, T = keyframe once T log tokens arrived since the last (- = off)",
         configs.len(),
         arms.len()
     );
@@ -1151,7 +1169,7 @@ fn stream_sweep(opts: &Options, seeds: &RangeInclusive<u64>, n_seeds: u64) {
     let mut best: BTreeMap<String, (u64, String)> = BTreeMap::new();
     for (k, (harness, dials)) in configs.iter().enumerate() {
         let label = format!(
-            "{} K={} F={} refresh={}",
+            "{} K={} F={} T={} refresh={}",
             if *harness == Harness::Truncate {
                 "truncate"
             } else {
@@ -1159,6 +1177,7 @@ fn stream_sweep(opts: &Options, seeds: &RangeInclusive<u64>, n_seeds: u64) {
             },
             show(dials.keyframe_every.map(u64::from)),
             show(dials.fold_over),
+            show(dials.keyframe_after_tok),
             if dials.refresh { "on" } else { "off" }
         );
         let mut wrong_all = 0;
