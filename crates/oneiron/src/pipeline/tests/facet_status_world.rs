@@ -22,6 +22,7 @@ fn facet_absent_is_a_no_op_regression_pin() -> Result<()> {
         .search_vector(&FACET_QUERY, 10)
         .with_temporal_now(FACET_NOW)
         .run()?;
+    // ONE-2702: the R constants now carry vector relevance; the order is the vector rank.
     assert_eq!(
         ordered_results(&results),
         vec![
@@ -51,6 +52,7 @@ fn facet_strict_removes_other_facet_claims_only() -> Result<()> {
         .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
+    // ONE-2702: retained rows keep their pool scores, which now carry vector relevance.
     assert_eq!(
         ordered_results(&results),
         vec![
@@ -79,6 +81,7 @@ fn facet_prefer_boosts_active_facet_with_exact_derived_values() -> Result<()> {
         .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Prefer { boost: 3.0 })
         .run()?;
+    // ONE-2702: the R constants carry relevance; R1 * 3 (~5.12) still outranks R0 (~2.91).
     assert_eq!(
         ordered_results(&results),
         vec![
@@ -109,6 +112,7 @@ fn facet_strict_excluded_claims_free_result_limit_slots() -> Result<()> {
         .limit(2)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
+    // ONE-2702: the two survivors keep their pool scores, which now carry vector relevance.
     assert_eq!(
         ordered_results(&results),
         vec![
@@ -184,7 +188,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
             .run()?;
         assert_eq!(
             ordered_results(&results),
-            vec![(claim_multi, FACET_R0)],
+            vec![(claim_multi, FACET_SOLO)],
             "strict must keep a claim scoped to the active facet"
         );
     }
@@ -209,7 +213,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
         .run()?;
     assert_eq!(
         ordered_results(&prefer),
-        vec![(claim_multi, FACET_R0 * 2.0)],
+        vec![(claim_multi, FACET_SOLO * 2.0)],
         "prefer must apply the boost exactly once per claim"
     );
     Ok(())
@@ -240,6 +244,8 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
         .edge(&claim_scoped_b, EdgeKind::HasFacet, &facet_a, 0.7)
         .commit()?;
 
+    // ONE-2702: a two-row pool z-normalizes relevance to +1 and -1, so the scores are e and 1/e.
+    let (closer, farther) = (1.0_f64.exp() as f32, (-1.0_f64).exp() as f32);
     let strict = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
@@ -248,7 +254,7 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
         .run()?;
     assert_eq!(
         ordered_results(&strict),
-        vec![(claim_has_facet, FACET_R0)],
+        vec![(claim_has_facet, closer)],
         "HasFacet must not scope a claim, and must not rescue a \
              FacetOf-scoped one"
     );
@@ -259,12 +265,10 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
         .with_temporal_now(FACET_NOW)
         .facet(&facet_b, FacetMode::Prefer { boost: 4.0 })
         .run()?;
+    // ONE-2702: 4/e stays below e, so the boosted row no longer jumps the closer match.
     assert_eq!(
         ordered_results(&prefer),
-        vec![
-            (claim_scoped_b, FACET_R1 * 4.0),
-            (claim_has_facet, FACET_R0),
-        ],
+        vec![(claim_has_facet, closer), (claim_scoped_b, farther * 4.0),],
         "prefer must boost via FacetOf only — a HasFacet edge to the \
              active facet earns no boost"
     );
@@ -302,7 +306,7 @@ fn facet_filter_never_rescores_non_claim_entities() -> Result<()> {
             .run()?;
         assert_eq!(
             ordered_results(&results),
-            vec![(event_active, FACET_R0)],
+            vec![(event_active, FACET_SOLO)],
             "non-claim entity must pass unchanged under {mode:?}"
         );
     }

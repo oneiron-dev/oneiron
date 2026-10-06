@@ -3431,22 +3431,33 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SecretScanMode"
+     ],
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8,
+      "enum": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/shapes.rs",
      "purpose": "Credential-shape detection shared by write, serve, and export",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/secret_scan/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -4157,7 +4168,7 @@
      "path": "src/bm25/codec.rs",
      "purpose": "Binary codecs, stat/total-docs accessors, corruption constructors, key validation",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -18285,7 +18296,7 @@
      "path": "src/fusion.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -27430,6 +27441,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/tests/relevance_order.rs",
+     "purpose": "Channel relevance orders the result list (ONE-2702)",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -27673,7 +27692,7 @@
      "purpose": "Policy classification over two planes",
      "surface": {
       "crate-vis": 1,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -27693,7 +27712,7 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -27708,7 +27727,7 @@
      "path": "src/policy_model/owner_rows/ledger.rs",
      "purpose": "Append-only row change history and proposal inbox",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -27726,7 +27745,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27754,6 +27773,27 @@
      "notable": [],
      "path": "src/policy_model/owner_rows/notify_tests.rs",
      "purpose": "Notification queue fairness, failure isolation, and recipient digest cadence",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretScanReceipt"
+     ],
+     "path": "src/policy_model/owner_rows/secret_scan_switch.rs",
+     "purpose": "The owner's `secrets: on | off` switch for the write-door secret scan",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/secret_scan_switch/tests.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -36722,7 +36762,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -39559,7 +39599,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 95,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40343,14 +40383,14 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
     "policy_model": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40807,8 +40847,8 @@
    },
    "over_bar": 21,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2426,
-   "test_files": 847
+   "source_files": 2427,
+   "test_files": 850
   },
   "oneiron-android": {
    "files": [
@@ -42163,7 +42203,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Editability",
@@ -42284,7 +42324,7 @@
     "retained_opc": {
      "files": 6,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Bounded, retained OPC archives"
     },
@@ -42296,7 +42336,7 @@
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
    "source_files": 11,
    "test_files": 5
@@ -49352,16 +49392,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/cache.rs",
-     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "CalcReport",
       "CalcSetup",
@@ -49384,13 +49414,13 @@
      "kind": "src",
      "notable": [],
      "path": "src/context.rs",
-     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc",
+     "purpose": "Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "FormualizerEngine"
@@ -49399,7 +49429,7 @@
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam",
      "surface": {
       "const": 6,
-      "crate-vis": 3,
+      "crate-vis": 1,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -49431,13 +49461,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
-     "path": "src/mac_parity.rs",
-     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides",
+     "path": "src/links.rs",
+     "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -49462,22 +49492,22 @@
      "kind": "src",
      "notable": [],
      "path": "src/routing.rs",
-     "purpose": "External-link routing (step 25): linked workbooks stay off this engine",
+     "purpose": "External links on the precision fallback's route",
      "surface": {
       "fn": 2,
       "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WorkbookRecalc"
      ],
      "path": "src/workbook.rs",
-     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values",
+     "purpose": "Recalculate a local XLSX through the fork's retained cache writer",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -49509,7 +49539,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/workbook.rs",
@@ -49518,13 +49548,6 @@
     }
    ],
    "modules": {
-    "cache": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML"
-    },
     "calc": {
      "files": 1,
      "impl_vault": false,
@@ -49537,12 +49560,12 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc"
+     "purpose": "Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine…"
     },
     "engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam"
     },
@@ -49553,12 +49576,12 @@
      "layout": "file",
      "purpose": "Typed failures for the formula crate"
     },
-    "mac_parity": {
+    "links": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides"
+     "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…"
     },
     "measure": {
      "files": 1,
@@ -49572,14 +49595,14 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "External-link routing (step 25): linked workbooks stay off this engine"
+     "purpose": "External links on the precision fallback's route"
     },
     "workbook": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values"
+     "purpose": "Recalculate a local XLSX through the fork's retained cache writer"
     },
     "xml": {
      "files": 1,
@@ -49589,9 +49612,9 @@
      "purpose": "The document organ's namespace-aware reader, with this crate's errors"
     }
    },
-   "over_bar": 0,
+   "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 13,
+   "source_files": 12,
    "test_files": 3
   }
  }

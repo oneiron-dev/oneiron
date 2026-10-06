@@ -12,7 +12,10 @@ use crate::error::Result;
 use crate::pipeline::ScoredEntity;
 use crate::store::ManifestDbs;
 
-use super::codec::{PostingEntry, corrupted, decode_posting_entry, read_field_stats};
+use super::codec::{
+    MAX_RAW_POSTING_KEY_BYTES, PostingEntry, corrupted, decode_posting_entry, posting_key,
+    read_field_stats,
+};
 use super::config::{Bm25Config, Bm25RecencyConfig};
 use super::scoring;
 
@@ -103,6 +106,13 @@ pub(super) fn collect_final_token_prefix_terms(
         if expanded_terms == MAX_FINAL_TOKEN_PREFIX_TERMS {
             break;
         }
+        // A prefix over the key limit cannot open a cursor; the exact lookup
+        // above already covered the one term it can be. Stated limit: a term
+        // over the limit keys under its first 256 bytes plus a digest, so a
+        // prefix longer than that head reaches it only as an exact match.
+        if prefix.len() > MAX_RAW_POSTING_KEY_BYTES {
+            continue;
+        }
 
         // The scan cap is per distinct final surface prefix. A query can
         // carry multiple final surface tokens, so total cursor reads are
@@ -162,7 +172,7 @@ where
     for term in final_token_prefix_terms(&tokens, trimmed_query_end) {
         let Some(dups) = store
             .text_postings()
-            .get_duplicates(rtxn, term.as_bytes())?
+            .get_duplicates(rtxn, posting_key(&term).as_bytes())?
         else {
             continue;
         };
@@ -210,6 +220,9 @@ where
         }
         if expanded_terms == MAX_FINAL_TOKEN_PREFIX_TERMS {
             break;
+        }
+        if prefix.len() > MAX_RAW_POSTING_KEY_BYTES {
+            continue;
         }
 
         for (scanned_terms, row) in store
@@ -265,7 +278,7 @@ fn exact_term_has_scoped_posting(
 ) -> Result<bool> {
     let Some(dups) = store
         .text_postings()
-        .get_duplicates(rtxn, term.as_bytes())?
+        .get_duplicates(rtxn, posting_key(term).as_bytes())?
     else {
         return Ok(false);
     };
@@ -297,7 +310,7 @@ fn term_posting_decisions(
 ) -> Result<TermPostingDecisions> {
     let Some(dups) = store
         .text_postings()
-        .get_duplicates(rtxn, term.as_bytes())?
+        .get_duplicates(rtxn, posting_key(term).as_bytes())?
     else {
         return Ok(TermPostingDecisions::default());
     };

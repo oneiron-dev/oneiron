@@ -14,6 +14,34 @@ use super::{
     TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY,
 };
 
+// === Posting keys ===
+
+/// LMDB refuses a key over 511 bytes (`MDB_MAXKEYSIZE`), so a term is its own
+/// `text_postings` key only up to that length. Every term that fits keeps its
+/// raw bytes, exactly as before.
+pub(super) const MAX_RAW_POSTING_KEY_BYTES: usize = 511;
+/// How much of an over-long term its digest key keeps, so prefix expansion
+/// still reaches it from a short query prefix.
+const LONG_TERM_HEAD_BYTES: usize = 256;
+
+/// The `text_postings` key for one term. A term over the LMDB key limit (a
+/// pasted base64 blob is one word) keys as its head, a U+0001 separator, and
+/// 128 bits of its BLAKE3 digest: stable across index, query and deindex, and
+/// itself under the limit, so applying this to a stored key is the identity.
+pub(super) fn posting_key(term: &str) -> std::borrow::Cow<'_, str> {
+    if term.len() <= MAX_RAW_POSTING_KEY_BYTES {
+        return std::borrow::Cow::Borrowed(term);
+    }
+    let mut head = LONG_TERM_HEAD_BYTES;
+    while !term.is_char_boundary(head) {
+        head -= 1;
+    }
+    let digest = blake3::Hasher::new_derive_key("oneiron/bm25/long-term-posting-key/v1")
+        .update(term.as_bytes())
+        .finalize();
+    std::borrow::Cow::Owned(format!("{}\u{1}{}", &term[..head], &digest.to_hex()[..32]))
+}
+
 // === Encoders / decoders ===
 
 #[derive(Debug)]
@@ -46,7 +74,10 @@ pub(super) fn find_posting_dup(
     id: &EntityId,
 ) -> Result<PostingLookup> {
     let diagnostics = &store.diagnostics().bm25;
-    let Some(dups) = store.text_postings().get_duplicates(txn, term.as_bytes())? else {
+    let Some(dups) = store
+        .text_postings()
+        .get_duplicates(txn, posting_key(term).as_bytes())?
+    else {
         return Ok(PostingLookup::RowMissing);
     };
     let mut found: Option<Vec<u8>> = None;

@@ -2119,3 +2119,61 @@ fn duplicate_entity_dup_items_fail_closed() -> Result<()> {
     assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
+
+/// `len` characters of the base64 alphabet's letters and digits, from a fixed
+/// seed: one Unicode word, like a pasted key or image blob.
+fn synthetic_base64_word(seed: &str, len: usize) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut bytes = vec![0_u8; len];
+    blake3::Hasher::new()
+        .update(seed.as_bytes())
+        .finalize_xof()
+        .fill(&mut bytes);
+    bytes
+        .into_iter()
+        .map(|byte| char::from(ALPHABET[usize::from(byte) % ALPHABET.len()]))
+        .collect()
+}
+
+/// A pasted 1,583-character base64 word is one term over LMDB's 511-byte key
+/// limit. It indexes under a stable digest key, an exact query finds it, a
+/// same-head twin stays apart, and reindex and delete both remove it.
+#[test]
+fn a_1583_character_base64_term_round_trips_through_the_index() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let long = synthetic_base64_word("bm25-long-term", 1_583);
+    let mut tokens = Vec::new();
+    vault
+        .analyzer
+        .analyze(&long, &AnalyzerContext::for_index(), &mut tokens);
+    assert!(
+        tokens.iter().any(|token| token.term.len() > 511),
+        "the fixture must reach the index as one over-limit term"
+    );
+    // Same first 1,000 characters, different tail: a distinct term.
+    let twin = format!("{}{}", &long[..1_000], synthetic_base64_word("twin", 583));
+
+    let id = EntityId::now();
+    let twin_id = EntityId::now();
+    put_text_doc(&vault, &id, &format!("pasted blob {long} end"))?;
+    put_text_doc(&vault, &twin_id, &twin)?;
+    let hits = vault.search_text(&long, 10)?;
+    assert!(contains_id(&hits, &id));
+    assert!(!contains_id(&hits, &twin_id));
+    assert!(contains_id(&vault.search_text(&twin, 10)?, &twin_id));
+
+    vault
+        .batch()
+        .text(&id, &[("body", "replaced body")])
+        .commit()?;
+    assert!(!contains_id(&vault.search_text(&long, 10)?, &id));
+    assert!(contains_id(&vault.search_text("replaced", 10)?, &id));
+
+    assert!(vault.delete_entity_with_options(
+        &twin_id,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
+    assert!(vault.search_text(&twin, 10)?.is_empty());
+    Ok(())
+}

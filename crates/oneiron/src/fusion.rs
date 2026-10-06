@@ -18,9 +18,28 @@ pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
     });
 }
 
+/// Weight of channel relevance in the log blend. Relevance is the base
+/// factor (ARCH-0004 ranks by relevance x recency x importance, in log
+/// space); the learned table's four signals modulate it. Fixed until the
+/// weight table carries a relevance row. Hashed into the trace fork hash.
+pub(crate) const RELEVANCE_LOG_WEIGHT: f64 = 1.0;
+
+/// Highest score the blend hands downstream. A pool of thousands with one
+/// extreme outlier (a PPR seed over its whole neighbourhood) z-normalizes
+/// near `sqrt(n)`, and its `exp()` would pass `f32::MAX`. The cap keeps every
+/// score finite with headroom for the post-blend multipliers (facet boosts,
+/// contiguity, the community prior); `narrow_scores_desc` keeps strict order
+/// above it. Hashed into the trace fork hash.
+pub(crate) const BLEND_SCORE_CEILING: f32 = 1.0e18;
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RetrievalBlendInput {
     pub(crate) id: EntityId,
+    /// Channel relevance: the sum, over every channel's ranked list, of the
+    /// candidate's z-normalized score in that list (the list's lowest z when
+    /// the channel did not return it). Scale-free across BM25F, cosine, PPR,
+    /// temporal and phonetic scores.
+    relevance: f64,
     /// f64, like the whole blend; `narrow_scores_desc` says why.
     pub(crate) recency: f64,
     pub(crate) salience: f32,
@@ -33,6 +52,29 @@ pub(crate) struct RetrievalBlendInput {
 pub(crate) fn retrieval_candidates_from_ranked_lists(
     ranked_lists: &[Vec<ScoredEntity>],
 ) -> Vec<RetrievalBlendInput> {
+    // Each channel's own scores, z-normalized within its list, so channels
+    // on different scales add up. A candidate a channel did not return takes
+    // that list's lowest z: absent ranks below everything the channel saw.
+    let channels: Vec<(HashMap<EntityId, f64>, f64)> = ranked_lists
+        .iter()
+        .filter(|ranked| !ranked.is_empty())
+        .map(|ranked| {
+            let z = z_normalized(
+                ranked
+                    .iter()
+                    .map(|scored| f64::from(scored.score))
+                    .collect(),
+            );
+            let floor = z.iter().copied().fold(f64::INFINITY, f64::min);
+            let mut by_id = HashMap::<EntityId, f64>::new();
+            for (scored, value) in ranked.iter().zip(z) {
+                let slot = by_id.entry(scored.id).or_insert(value);
+                *slot = slot.max(value);
+            }
+            (by_id, floor)
+        })
+        .collect();
+
     let mut candidates = HashSet::<EntityId>::new();
     for ranked in ranked_lists {
         for scored in ranked {
@@ -47,6 +89,10 @@ pub(crate) fn retrieval_candidates_from_ranked_lists(
         .into_iter()
         .map(|id| RetrievalBlendInput {
             id,
+            relevance: channels
+                .iter()
+                .map(|(by_id, floor)| by_id.get(&id).copied().unwrap_or(*floor))
+                .sum(),
             recency: 0.0,
             salience: 0.0,
             confidence: 0.0,
@@ -87,7 +133,8 @@ pub(crate) fn linear_log_blend_scores_with_weights(
     let mut scores = Vec::with_capacity(inputs.len());
     let mut base_scores = Vec::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
-        let log_score = f64::from(weights.recency) * columns.recency[index]
+        let log_score = RELEVANCE_LOG_WEIGHT * columns.relevance[index]
+            + f64::from(weights.recency) * columns.recency[index]
             + f64::from(weights.salience) * columns.salience[index]
             + f64::from(weights.confidence) * columns.confidence[index]
             + f64::from(weights.gravity) * columns.gravity[index];
@@ -106,7 +153,8 @@ pub(crate) fn linear_log_blend_scores_with_weights(
 }
 
 /// Sorts f64 blend scores descending, ties by id, and narrows them to the
-/// pipeline's f32 score without losing that order.
+/// pipeline's f32 score, at most [`BLEND_SCORE_CEILING`], without losing that
+/// order.
 ///
 /// Records written seconds apart, or of types whose recency half-lives
 /// differ by days, differ in blend score by far less than one f32 step. A
@@ -124,10 +172,11 @@ fn narrow_scores_desc(mut scores: Vec<(EntityId, f64)>) -> Vec<ScoredEntity> {
     let mut narrowed = Vec::with_capacity(scores.len());
     let mut previous: Option<(f64, f32)> = None;
     for (id, wide) in scores {
+        let capped = (wide as f32).min(BLEND_SCORE_CEILING);
         let score = match previous {
             Some((previous_wide, previous_score)) if wide == previous_wide => previous_score,
-            Some((_, previous_score)) => (wide as f32).min(previous_score.next_down()),
-            None => wide as f32,
+            Some((_, previous_score)) => capped.min(previous_score.next_down()),
+            None => capped,
         };
         previous = Some((wide, score));
         narrowed.push(ScoredEntity { id, score });
@@ -179,6 +228,7 @@ pub(crate) fn retrieval_blend_score_components(
 }
 
 struct NormalizedBlendColumns {
+    relevance: Vec<f64>,
     recency: Vec<f64>,
     salience: Vec<f64>,
     confidence: Vec<f64>,
@@ -187,6 +237,7 @@ struct NormalizedBlendColumns {
 
 fn normalized_blend_columns(inputs: &[RetrievalBlendInput]) -> NormalizedBlendColumns {
     NormalizedBlendColumns {
+        relevance: z_normalized(inputs.iter().map(|input| input.relevance).collect()),
         recency: z_normalized(inputs.iter().map(|input| input.recency).collect()),
         salience: z_normalized(inputs.iter().map(|input| input.salience.into()).collect()),
         confidence: z_normalized(inputs.iter().map(|input| input.confidence.into()).collect()),
@@ -227,6 +278,7 @@ fn canonical_blend_inputs(inputs: &[RetrievalBlendInput]) -> Cow<'_, [RetrievalB
 fn compare_blend_inputs(a: &RetrievalBlendInput, b: &RetrievalBlendInput) -> Ordering {
     a.id.as_bytes()
         .cmp(b.id.as_bytes())
+        .then_with(|| a.relevance.total_cmp(&b.relevance))
         .then_with(|| a.recency.total_cmp(&b.recency))
         .then_with(|| a.salience.total_cmp(&b.salience))
         .then_with(|| a.confidence.total_cmp(&b.confidence))

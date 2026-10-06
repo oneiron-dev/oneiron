@@ -356,6 +356,8 @@ fn sigma_driven_discovery_for_year_granularity() -> Result<()> {
             TemporalAnchorMode::Occurred,
             100,
         )
+        // ONE-2702: seeded rows nearer the anchor now outrank `far`; page past the default 20.
+        .limit(100)
         .run()?;
     assert!(!day_results.iter().any(|entry| entry.id == far));
 
@@ -368,6 +370,7 @@ fn sigma_driven_discovery_for_year_granularity() -> Result<()> {
             TemporalAnchorMode::Occurred,
             100,
         )
+        .limit(100)
         .run()?;
     assert!(year_results.iter().any(|entry| entry.id == far));
 

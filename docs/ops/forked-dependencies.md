@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `c9d441cd261ee69589cb25ca072ca48c1274efdc` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `91599813bda5f4b4a085a20a4add6b023e0fc70c` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,14 +51,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.7), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.9), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -151,11 +151,64 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.7), over `362becff`:
   difference: ADDRESS's sheet_text from a blank cell is the empty name, so
   `ADDRESS(1,1,1,TRUE,A1)` with A1 blank is `!$A$1`, while an empty argument is still no sheet.
   The scores at `c9d441cd` are unchanged: 2,963 of 2,967 and 811/811.
+- `c9d441cd..63e2ec69` (ONE-2700, the fifth parity loop, rounds 1 and 2, October 2026): Excel's
+  compatibility names for the distributions, with their legacy signatures. Twenty were unregistered
+  (`#NAME?`) and are registered now: BETADIST, BETAINV, BINOMDIST, CHIDIST, CHIINV, EXPONDIST,
+  FDIST, FINV, GAMMADIST, HYPGEOMDIST, LOGINV, LOGNORMDIST, NEGBINOMDIST, NORMDIST, NORMINV,
+  NORMSDIST, NORMSINV, POISSON, TDIST and WEIBULL (NORMSDIST(z) is NORM.S.DIST(z,TRUE),
+  LOGNORMDIST is cumulative, CHIDIST and FDIST are right-tailed, TDIST takes 1 or 2 tails). Six
+  existing aliases followed a wrong target and now match Excel: CHITEST, CRITBINOM, GAMMAINV,
+  ZTEST, TINV and CONFIDENCE. A probe on the Windows VM (2026-10-06, 445 scored cases,
+  `ops/excel-legacy-functions-probe-20261006.md` in the calc workspace) agrees on 442 rows (84 at
+  `c9d441cd`); the other 3 are Excel's own precision loss at 1E10 to 1E11 degrees of freedom, and
+  the tests assert the true quantile there. The scores at `2bdd595d` are unchanged: 2,963 of 2,967
+  and 811/811. Round 2 (`2bdd595d..63e2ec69`) follows a review of round 1 and two more probes
+  (probes 6 and 7 of the same note: 224 scored rows, 105 agreeing at `2bdd595d`, 204 now). Every
+  current distribution name and alias lifts its single values over arrays
+  (`SUM(T.DIST({0,1},10,TRUE))` is 1.3295534338489701; it read the first element only). Small x
+  far below the centre of a large gamma or beta shape keeps its precision
+  (`GAMMA.DIST(1E-20,10,1,TRUE)` is 2.7557319223985218E-207, was 0), and BETA.DIST's density
+  divides before it underflows (`BETA.DIST(1E-200,2,3,FALSE)` is 1.2E-199). NORM.S.INV refines its
+  far tail (`NORM.S.INV(2.225074E-308)` is -37.519379345450844), and a distribution argument below
+  the smallest number is 0. NORMSDIST, NORMSINV, NORM.S.INV, PHI and GAUSS take exactly one
+  argument (`#VALUE!` for more). The T and F far tails overflow and underflow where Excel's do
+  (`#NUM!`, 0 or `#DIV/0!`), and T.INV solves its far tail (`T.INV(1E-160,1)` is
+  -3.1830988618379068E159, was `#NUM!`). BINOM.INV and CRITBINOM bisect on BINOM.DIST, the
+  smallest k whose cumulative reaches alpha: 63 of Excel's 81 boundary rows agree, and the other
+  18 differ in the last bit of the cumulative. The scores at `63e2ec69` are unchanged: 2,963 of
+  2,967 and 811/811.
+- `63e2ec69..cf3d5f5d` (stage 2, linked workbooks, October 2026): references into a closed linked
+  workbook (`[1]Sheet!A1`) as Excel for Windows 16.0.20430 reads them from the values the link part
+  saves, from three probes on the Windows VM (2026-10-06, 192 cases,
+  `ops/excel-extlinks-probe-20261006.md` in the calc workspace; 173 agree, 94 at `63e2ec69`). On a
+  sheet Excel could not read at its last refresh (`refreshError="1"`), or one the link saves no
+  values for, every cell not saved is `#REF!`, element by element in ranges (`COUNTA` counts them,
+  the lookups skip them, `SUM` returns the error); a saved blank stays blank, and an open range
+  there keeps one `#REF!` row past the last saved cell. ROW, COLUMN, ROWS and COLUMNS give the
+  position a linked reference is written with (`ROW([1]DATI!$K$2:$K$999)` is `{2;...;999}`, it
+  read `{1;...;998}`); INDEX over a linked range selects a reference into the linked sheet; an
+  ordinary (legacy) formula intersects a linked range with its own cell; ISREF of a linked
+  reference is TRUE and ISFORMULA, FORMULATEXT, SHEET and SHEETS of one are `#N/A`; IFERROR and
+  IFNA catch the error of a one-cell range. At `cf3d5f5d` the fork matches all 2,967
+  SpreadsheetBench workbooks (the four misses were linked workbooks: 55965 twice, 59932 twice; 0 of
+  1,193,688 scored cells differ) and all 811 pinned goldens.
+- `cf3d5f5d..91599813` (stage 2, October 2026): the other stage-2 lanes landed in between, and this
+  pin carries them: `88f30164` (round 6 finance: the 23 financial functions the fork read as
+  `#NAME?`, on one coupon and day-count module, and PRICE, YIELD, ACCRINT, ACCRINTM, DDB and the
+  T-bill functions fixed against Excel probes; `ops/excel-finance-probe-20261006.md`) and `c67530db`
+  (round 6 functions: MDETERM and MINVERSE, MUNIT, PERMUTATIONA, PROB, PERCENTOF, AREAS, ISOMITTED
+  with optional LAMBDA parameters, ENCODEURL, BAHTTEXT, TRIMRANGE and the trim operators, the
+  REGEX functions on a PCRE2-compatible matcher (`regex-syntax` for its Unicode tables), and
+  FORECAST.ETS only where its fit is exact). `91599813` is the linked-workbook review: a reversed
+  linked range reads in order (`INDEX([1]Ok!A5:A1,1)` is 1, `ROWS` 5) and a large one keeps its
+  `#REF!` past the saved cells, and a saved value in a CDATA section is its text (probes 4 and 5 of
+  the linked-workbook note). At `91599813` the fork matches all 2,967 SpreadsheetBench workbooks
+  and all 811 pinned goldens.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.7`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.9`.
 
 ## Licences and attribution
 

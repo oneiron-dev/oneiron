@@ -13,17 +13,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/bin/measure.rs` | src | s | — | — | Measurement executable: stamped owned formualizer over `cases.json` |
 | `src/bin/recalc_native.rs` | src | s | — | — | Measure the shipped retained XLSX adapter without a precision fallback |
-| `src/cache.rs` | src | s | 3 crate-vis | — | Typed formula caches as checked byte patches, preserving unmodelled XML |
 | `src/calc.rs` | src | s | 2 struct · 3 enum · 1 trait · 2 fn | CalcReport, CalcSetup, CalcValue, EngineId, RecalcEngine, RouteDecision | Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock |
-| `src/context.rs` | src | s | 1 crate-vis | — | Bound formula AST evaluation and keep ambient context out of native recalc |
-| `src/engine.rs` | src | m | 1 struct · 1 fn · 6 const · 1 re-export · 3 crate-vis | FormualizerEngine | The owned formualizer engine behind the [`RecalcEngine`] seam |
+| `src/context.rs` | src | s | 3 crate-vis | — | Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine… |
+| `src/engine.rs` | src | s | 1 struct · 1 fn · 6 const · 1 re-export · 1 crate-vis | FormualizerEngine | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `src/error.rs` | src | s | 1 enum · 1 fn · 1 type | FormulaError | Typed failures for the formula crate |
 | `src/lib.rs` | src | s | 6 mod · 6 re-export | — | In-process XLSX formula recalculation, the default of the edit round trip |
-| `src/mac_parity.rs` | src | s | 1 crate-vis | — | Workbook-local function masking for functions without recorded truth, never global overrides |
+| `src/links.rs` | src | L | 7 crate-vis | — | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |
 | `src/measure.rs` | src | m | 4 struct · 3 fn · 1 const | CaseResult, CorpusCase, CorpusReport, MeasureOptions | Step-19 corpus runner: honest per-case results over the pinned 834 cases |
-| `src/routing.rs` | src | s | 2 fn · 1 re-export | — | External-link routing (step 25): linked workbooks stay off this engine |
-| `src/workbook.rs` | src | m | 1 struct · 1 fn · 1 crate-vis | WorkbookRecalc | Load a bounded XLSX graph and update only formula XML and cached values |
+| `src/routing.rs` | src | s | 2 fn · 1 re-export | — | External links on the precision fallback's route |
+| `src/workbook.rs` | src | L | 1 struct · 1 fn · 3 crate-vis | WorkbookRecalc | Recalculate a local XLSX through the fork's retained cache writer |
 | `src/xml.rs` | src | s | 4 crate-vis | — | The document organ's namespace-aware reader, with this crate's errors |
 | `tests/corpus.rs` | test | s | — | — | Corpus honesty: every case emits exactly one row, probes never score |
 | `tests/error_concat.rs` | test | s | — | — | Error operands remain typed errors across both owned evaluator paths |
-| `tests/workbook.rs` | test | m | — | — | Actual XLSX in/out tests of the retained engine |
+| `tests/workbook.rs` | test | XL | — | — | Actual XLSX in/out tests of the retained engine |
