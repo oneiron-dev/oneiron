@@ -190,8 +190,12 @@ impl Package {
                 return Err(Error::Invalid("expanded size limit"));
             }
             let local_start = get32(source, cursor + 42)? as usize;
+            // Excel writes some local headers whose DEFLATE option hints (bits
+            // 1-2) differ from the central record; every other bit must agree.
+            let local_flags = get16(source, local_start + 6)?;
             if get32(source, local_start)? != LOCAL
-                || get16(source, local_start + 6)? != flags
+                || (local_flags ^ flags) & !0x0006 != 0
+                || (method == 0 && local_flags & 6 != 0)
                 || get16(source, local_start + 8)? != method
             {
                 return Err(Error::Invalid("local header mismatch"));
@@ -902,6 +906,62 @@ mod tests {
             edited_cd[42..46].fill(0);
             assert_eq!(original_cd, edited_cd, "central record: {folder}");
         }
+    }
+
+    /// `bytes` with the local header flags of entry `name` XORed by `bits`.
+    fn flip_local_flags(mut bytes: Vec<u8>, name: &str, bits: u16) -> Vec<u8> {
+        let eocd = bytes.len() - 22;
+        let mut at = get32(&bytes, eocd + 16).expect("directory offset") as usize;
+        loop {
+            let n = usize::from(get16(&bytes, at + 28).expect("name length"));
+            let skip = n
+                + usize::from(get16(&bytes, at + 30).expect("extra length"))
+                + usize::from(get16(&bytes, at + 32).expect("comment length"));
+            if &bytes[at + 46..at + 46 + n] == name.as_bytes() {
+                let local = get32(&bytes, at + 42).expect("local offset") as usize;
+                let flags = get16(&bytes, local + 6).expect("local flags") ^ bits;
+                patch16(&mut bytes, local + 6, flags);
+                return bytes;
+            }
+            at += 46 + skip;
+        }
+    }
+
+    #[test]
+    fn deflate_option_hints_may_differ_between_local_and_central_headers() {
+        let sheet = "xl/sheet.xml";
+        let source = archive(&[
+            TYPES,
+            ("xl/other.xml", b"<root><item>old</item></root>"),
+            (sheet, b"<root><item>old</item></root>"),
+        ]);
+        // Excel's hint mismatch: the local header says maximum compression.
+        let hinted = flip_local_flags(source.clone(), sheet, 0x0002);
+        let mut package = Package::open(&hinted, limits()).expect("hint bits differ only");
+        assert_eq!(package.export().expect("no-op export"), hinted);
+        package
+            .replace_text("xl/other.xml", &["root", "item"], "old", "new")
+            .expect("edit beside the hinted entry");
+        let edited = package.export().expect("edited export");
+        let reopened = Package::open(&edited, limits()).expect("output opens");
+        let find = |package: &Package| {
+            package
+                .entries
+                .iter()
+                .find(|entry| entry.name == sheet)
+                .cloned()
+                .expect("entry kept")
+        };
+        let (before, after) = (find(&package), find(&reopened));
+        assert_eq!(
+            hinted[before.local], edited[after.local],
+            "the hinted local header is kept as it was"
+        );
+        // Any other differing bit (bit 11 here: UTF-8 names) stays refused.
+        assert!(matches!(
+            Package::open(&flip_local_flags(source, sheet, 0x0800), limits()),
+            Err(Error::Invalid("local header mismatch"))
+        ));
     }
 
     #[test]
