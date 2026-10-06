@@ -174,8 +174,14 @@ fn read_back_text(vault: &Vault, id: &oneiron::EntityId) -> BeamResult<Option<St
 /// `oneiron-bench beam verify-corpus <manifest>`: ingests every selected
 /// corpus into a base vault, as `beam run` would, and checks it without
 /// running any arm. Every corpus is checked; any mismatch, unresolved
-/// evidence id or gate-refused item fails the command.
+/// evidence id or refused item fails the command.
+#[cfg(test)]
 pub(super) fn run(manifest_path: &Path) -> BeamResult<ExactnessReport> {
+    census(manifest_path)?.into_result()
+}
+/// The full report over every corpus, exact or not; the CLI prints it and
+/// then fails unless it is exact.
+pub(super) fn census(manifest_path: &Path) -> BeamResult<ExactnessReport> {
     let mut manifest =
         super::runner::parse_manifest_json(&std::fs::read_to_string(manifest_path)?)?;
     resolve_manifest_paths(&mut manifest, manifest_path);
@@ -219,5 +225,5 @@ pub(super) fn run(manifest_path: &Path) -> BeamResult<ExactnessReport> {
             Err(error) => return Err(error),
         }
     }
-    report.into_result()
+    Ok(report)
 }
