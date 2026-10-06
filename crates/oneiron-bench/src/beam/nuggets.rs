@@ -12,16 +12,16 @@ pub(super) const BEAM_REPLICATE_COMMIT: &str = "3e12035532eb85768f1a7cd779832b65
 /// At 3e12035 the judge prompt's question slot was never substituted: the
 /// judge saw this literal text where the probing question belongs.
 pub(super) const BEAM_REPLICATE_QUESTION: &str = "<question>";
-/// Replicate column: judged with the placeholder question, `int(score)` per
+/// Replicate column (canon ARCH-0042 D9): judged with the placeholder question, `int(score)` per
 /// rubric item (event ordering kept `float`), mean per probe, mean over probes.
-pub(super) const REPLICATE_COLUMN: &str = "beam_replicate_3e12035";
-/// Fixed column: judged with the real probing question, `float(score)`
+pub(super) const REPLICATE_COLUMN: &str = "beam-replicate@3e12035";
+/// Fixed column (canon ARCH-0042 D9): judged with the real probing question, `float(score)`
 /// clamped to [0, 1] so half credit survives, mean per probe, mean over probes.
-pub(super) const FIXED_COLUMN: &str = "beam_fixed_float_question";
+pub(super) const FIXED_COLUMN: &str = "beam-fixed";
 /// The nugget scorer's own version. Changing the convention is a new version;
 /// results scored under an older one are never rescored.
 pub(super) const BEAM_NUGGET_SCORER_VERSION: &str = "beam-nugget-scorer-v2";
-pub(super) const CONVENTION: &str = "beam_replicate_3e12035: judge sees the literal <question>, int(score) per rubric item except event_ordering float(score), probe mean of items, mean of probes; beam_fixed_float_question: judge sees the real probing question, float(score).clamp(0,1), probe mean of items, mean of probes";
+pub(super) const CONVENTION: &str = "beam-replicate@3e12035: judge sees the literal <question>, int(score) per rubric item except event_ordering float(score), probe mean of items, mean of probes; beam-fixed: judge sees the real probing question, float(score).clamp(0,1), probe mean of items, mean of probes";
 /// The one ability whose evaluator at 3e12035 summed `float(score)`.
 const FLOAT_AT_REPLICATE_ABILITY: &str = "event_ordering";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -284,8 +284,8 @@ mod tests {
             .score_nuggets(&[item(0.5, 1.0), item(0.5, 0.5)])
             .unwrap();
         let columns = report.beam.unwrap();
-        assert_eq!(columns.replicate_column, "beam_replicate_3e12035");
-        assert_eq!(columns.fixed_column, "beam_fixed_float_question");
+        assert_eq!(columns.replicate_column, "beam-replicate@3e12035");
+        assert_eq!(columns.fixed_column, "beam-fixed");
         assert_eq!(columns.replicate_commit, BEAM_REPLICATE_COMMIT);
         assert_eq!(columns.aggregate.probes, 1);
         assert_eq!(columns.aggregate.count, 2);

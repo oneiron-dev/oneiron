@@ -2,10 +2,10 @@
   "adapter": "oneiron_eval.adapters.locomo",
   "adapter_version": "locomo-contract-v2-adapter-1",
   "answer_key_columns": {
-    "abstention": 1,
-    "audit_corrected": 5,
-    "original": 5,
-    "refined": 4
+    "audit-corrected": 5,
+    "category-5": 1,
+    "locomo-refined": 4,
+    "original": 5
   },
   "category_map": {
     "1": "multi_hop",
@@ -25,7 +25,7 @@
   "dataset_revision": "audit_errors#f2f08b27e2f0c57d54457d8ad3765e765931d22e97c06bb58c1eb0c6b5444034 + locomo10#1c9534534484ac5ecfaeea09cdb4349adba7a362031a88a014904fbc315cceb0 + refined#2506bdca4186d8109f0209693623ae5edf853f95a56a8f0a4db2e1bf265a1599",
   "questions": 7,
   "render": "'<speaker>: <text>' plus '\\n[shared image: <blip_caption>]' when a caption exists",
-  "run_jsonl_sha256": "9949ca8b59360d85ebefbb0de2ade385d5282211c695c530c6eb418d1bcfa74e",
+  "run_jsonl_sha256": "1ce3eab25b5491bed9015ce5e3743779f74e234ef33a7db4b02b1fe4ba6a087c",
   "sources": [
     {
       "name": "audit_errors",

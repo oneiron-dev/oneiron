@@ -3,10 +3,10 @@
   "overallScore": 0.0,
   "abilities": [],
   "beam": {
-    "convention": "beam_replicate_3e12035: judge sees the literal <question>, int(score) per rubric item except event_ordering float(score), probe mean of items, mean of probes; beam_fixed_float_question: judge sees the real probing question, float(score).clamp(0,1), probe mean of items, mean of probes",
-    "replicateColumn": "beam_replicate_3e12035",
+    "convention": "beam-replicate@3e12035: judge sees the literal <question>, int(score) per rubric item except event_ordering float(score), probe mean of items, mean of probes; beam-fixed: judge sees the real probing question, float(score).clamp(0,1), probe mean of items, mean of probes",
+    "replicateColumn": "beam-replicate@3e12035",
     "replicateCommit": "3e12035532eb85768f1a7cd779832b650c4b2ef9",
-    "fixedColumn": "beam_fixed_float_question",
+    "fixedColumn": "beam-fixed",
     "aggregate": {
       "count": 4,
       "probes": 4,

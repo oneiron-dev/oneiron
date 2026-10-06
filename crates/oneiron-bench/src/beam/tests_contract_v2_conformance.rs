@@ -61,13 +61,18 @@ mod tests {
             .unwrap();
         assert_eq!(
             corrected["gold"]["answer_keys"],
-            serde_json::json!({"original": ["2023"], "audit_corrected": ["2022"], "refined": ["2022"]})
+            serde_json::json!({"original": ["2023"], "audit-corrected": ["2022"], "locomo-refined": ["2022"]})
         );
         let adversarial = rows
             .iter()
             .find(|row| row["question_id"] == "locomo:conv-1:q0003")
             .unwrap();
         assert_eq!(adversarial["gold"]["labels"]["scored_apart"], true);
+        assert_eq!(adversarial["gold"]["labels"]["paper_category_id"], 5);
+        assert_eq!(
+            adversarial["gold"]["answer_keys"],
+            serde_json::json!({"category-5": []})
+        );
         assert!(
             rows.iter()
                 .all(|row| row["split"] == "heldout" || row["split"] == "dev")
