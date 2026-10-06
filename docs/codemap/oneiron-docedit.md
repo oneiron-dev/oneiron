@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 1 enum · 7 fn · 3 mod · 4 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned… |
 | `src/ooxml.rs` | src | m | 3 struct · 9 fn · 4 const | Node, XmlError, XmlTree | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 2 re-export | Error | Bounded, retained OPC archives |
-| `src/retained_opc/package.rs` | src | m | 2 struct · 1 enum · 8 fn | Editability, Limits, Package | ZIP central-directory reader and copy-through writer |
+| `src/retained_opc/package.rs` | src | L | 2 struct · 1 enum · 8 fn | Editability, Limits, Package | ZIP central-directory reader and copy-through writer |
 | `src/retained_opc/xml/ffi.rs` | src | s | 17 crate-vis | — | Minimal Expat C ABI |
 | `src/retained_opc/xml/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
