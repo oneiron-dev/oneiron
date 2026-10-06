@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 244 | 106 | 2 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 1 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 12 | 3 | 0 |
-| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 13 | 3 | 0 |
+| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 11 | 3 | 0 |
 
 ## oneiron
 
@@ -458,13 +458,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `cache` | file | 1 | s | Typed formula caches as checked byte patches, preserving unmodelled XML |
 | `calc` | file | 1 | s | Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock |
-| `context` | file | 1 | s | Bound formula AST evaluation and keep ambient context out of native recalc |
-| `engine` | file | 1 | m | The owned formualizer engine behind the [`RecalcEngine`] seam |
+| `context` | file | 1 | s | Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine… |
+| `engine` | file | 1 | s | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `error` | file | 1 | s | Typed failures for the formula crate |
-| `mac_parity` | file | 1 | s | Workbook-local function masking for functions without recorded truth, never global overrides |
 | `measure` | file | 1 | m | Step-19 corpus runner: honest per-case results over the pinned 834 cases |
 | `routing` | file | 1 | s | External-link routing (step 25): linked workbooks stay off this engine |
-| `workbook` | file | 1 | m | Load a bounded XLSX graph and update only formula XML and cached values |
+| `workbook` | file | 1 | m | Recalculate a local XLSX through the fork's retained cache writer |
 | `xml` | file | 1 | s | The document organ's namespace-aware reader, with this crate's errors |

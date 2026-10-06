@@ -49352,16 +49352,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/cache.rs",
-     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "CalcReport",
       "CalcSetup",
@@ -49384,13 +49374,13 @@
      "kind": "src",
      "notable": [],
      "path": "src/context.rs",
-     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc",
+     "purpose": "Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "FormualizerEngine"
@@ -49399,7 +49389,7 @@
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam",
      "surface": {
       "const": 6,
-      "crate-vis": 3,
+      "crate-vis": 1,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -49428,16 +49418,6 @@
      "surface": {
       "mod": 6,
       "re-export": 6
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/mac_parity.rs",
-     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -49475,7 +49455,7 @@
       "WorkbookRecalc"
      ],
      "path": "src/workbook.rs",
-     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values",
+     "purpose": "Recalculate a local XLSX through the fork's retained cache writer",
      "surface": {
       "crate-vis": 1,
       "fn": 1,
@@ -49509,7 +49489,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/workbook.rs",
@@ -49518,13 +49498,6 @@
     }
    ],
    "modules": {
-    "cache": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML"
-    },
     "calc": {
      "files": 1,
      "impl_vault": false,
@@ -49537,12 +49510,12 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc"
+     "purpose": "Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine…"
     },
     "engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam"
     },
@@ -49552,13 +49525,6 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Typed failures for the formula crate"
-    },
-    "mac_parity": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides"
     },
     "measure": {
      "files": 1,
@@ -49579,7 +49545,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values"
+     "purpose": "Recalculate a local XLSX through the fork's retained cache writer"
     },
     "xml": {
      "files": 1,
@@ -49591,7 +49557,7 @@
    },
    "over_bar": 0,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 13,
+   "source_files": 11,
    "test_files": 3
   }
  }
