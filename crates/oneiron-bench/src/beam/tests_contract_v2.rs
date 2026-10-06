@@ -62,7 +62,7 @@ pub(crate) mod tests {
             "query_embedding": {"encoding": "f32-le-base64", "dimensions": 4, "data": "AACAPwAAAAAAAAAAAAAAAA=="},
             "question_time": V2_QUESTION_TIME,
             "corpus_ref": {"corpus_id": V2_CORPUS_ID, "path": format!("corpus/{V2_CORPUS_ID}.jsonl"), "sha256": corpus_sha256},
-            "split": "dev",
+            "split": super::super::split::expected_split(V2_DATASET_ID, V2_CORPUS_ID).as_str(),
             "cleaning": {"manifest_id": "fixture-cleaning-v1", "sha256": "a".repeat(64), "action": "kept"},
             "gold": {
                 "answers": ["tulip"],
@@ -437,5 +437,44 @@ pub(crate) mod tests {
             .expect_err("unresolved evidence fails verify-corpus")
             .to_string();
         assert!(error.contains("1 of 1 evidence ids unresolved"), "{error}");
+    }
+
+    #[test]
+    fn split_that_disagrees_with_the_frozen_rule_is_refused() {
+        let declared = super::super::split::expected_split(V2_DATASET_ID, V2_CORPUS_ID);
+        let flipped = match declared {
+            ContractSplit::Dev => "heldout",
+            ContractSplit::Heldout => "dev",
+        };
+        let fixture = V2Fixture::write_with(&["q-a"], |record| {
+            record["split"] = serde_json::json!(flipped);
+        });
+        let error = run_manifest(&fixture.manifest(&["q-a"]), None)
+            .expect_err("a wrong split must refuse the run")
+            .to_string();
+        assert!(error.contains("disagrees with the frozen rule"), "{error}");
+        assert!(
+            error.contains(V2_CORPUS_ID),
+            "the unit is the corpus: {error}"
+        );
+        // A v1 record that states a split is held to the same rule.
+        let v1 = V2Fixture::write_with(&["q-a"], |record| {
+            record["contract_version"] = serde_json::json!("oneiron-eval.contract.v1");
+            record["split"] = serde_json::json!(flipped);
+        });
+        assert!(read_run_jsonl_records(&v1.run_jsonl).is_err());
+    }
+
+    #[test]
+    fn split_unit_is_the_corpus_for_shared_and_the_question_for_inline() {
+        let fixture = V2Fixture::write(&["q-a", "q-b"]);
+        let entries = read_run_jsonl_records(&fixture.run_jsonl).unwrap();
+        for entry in &entries {
+            assert_eq!(super::super::split::split_unit(&entry.record), V2_CORPUS_ID);
+        }
+        let inline: RunContractRecord =
+            serde_json::from_str(super::super::tests_community_eval004::CONTRACT_RUN_JSONL.trim())
+                .unwrap();
+        assert_eq!(super::super::split::split_unit(&inline), inline.question_id);
     }
 }

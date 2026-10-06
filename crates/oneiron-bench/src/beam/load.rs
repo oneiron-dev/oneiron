@@ -696,7 +696,8 @@ pub(super) fn validate_run_contract_record_at(
             validate_corpus_items(path, line, &record.corpus, record.is_v2())?;
         }
     }
-    validate_v2_fields(path, line, record)
+    validate_v2_fields(path, line, record)?;
+    super::split::recheck_split(path, line, record)
 }
 /// v2 fields are optional on read for a v1 record and checked when present;
 /// a v2 record must carry every one of them.

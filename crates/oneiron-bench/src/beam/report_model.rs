@@ -193,6 +193,14 @@ pub(super) enum ContractSplit {
     Dev,
     Heldout,
 }
+impl ContractSplit {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Heldout => "heldout",
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub(super) struct ContractCleaning {
     pub(super) manifest_id: String,

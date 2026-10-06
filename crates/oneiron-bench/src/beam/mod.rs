@@ -156,6 +156,7 @@ mod report_model;
 mod rung_fixture;
 mod runner;
 mod scorer;
+mod split;
 #[cfg(test)]
 mod tests_community_eval004;
 #[cfg(test)]
