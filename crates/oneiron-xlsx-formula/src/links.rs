@@ -29,7 +29,11 @@
 //! or LAMBDA name, and an open or very large linked range unless the function
 //! reading it gives Excel's result from the cells up to the last saved one
 //! (`reads_past_saved_values`). A workbook name over a linked workbook is
-//! checked where each formula uses it, as if written there.
+//! checked where each formula uses it, as if written there; one with a
+//! relative linked reference anywhere in its formula falls back wherever it
+//! is used, as the fork reads every name's formula at A1 where Excel moves
+//! the reference with the cell using it. A link part that is not XML is
+//! malformed workbook content, refused outright (`InvalidWorkbook`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -128,8 +132,8 @@ pub(crate) fn external_targets(package: &Package) -> Result<()> {
 impl LinkedBooks {
     /// Read the workbook's links, after `external_targets` and the formula
     /// reader have checked the package. A link the engine cannot read as
-    /// Excel does is the fallback's; malformed workbook XML stays an outright
-    /// refusal (`InvalidWorkbook`).
+    /// Excel does is the fallback's; malformed XML in the workbook or a link
+    /// part stays an outright refusal (`InvalidWorkbook`).
     pub(crate) fn read(package: &Package) -> Result<Self> {
         let limits = package.limits().xml;
         let Some(workbook) = package.part("xl/workbook.xml")? else {
@@ -192,15 +196,14 @@ impl LinkedBooks {
         let mut linked = BTreeMap::new();
         for ((name, formula), _) in names.iter().zip(&reads).filter(|(_, reads)| **reads) {
             let shape = match &formula.node_type {
-                // A relative reference in a name moves with the cell using it.
                 ASTNodeType::Reference {
                     reference: ReferenceType::External(external),
                     ..
                 } if absolute(external.kind) => LinkedName::Reference(external.clone()),
-                ASTNodeType::Reference {
-                    reference: ReferenceType::External(_),
-                    ..
-                } => LinkedName::Unclear,
+                // A relative reference in a name moves with the cell using
+                // it, bare or inside an expression; the fork reads every
+                // name's formula at A1 (`evaluate_named_formula`).
+                _ if relative_link(formula) => LinkedName::Unclear,
                 _ => LinkedName::Expression((*formula).clone()),
             };
             // A name defined in several scopes may hold any of its formulas.
@@ -408,11 +411,13 @@ fn linked_workbook_name(name: &str) -> Result<()> {
 pub(crate) enum LinkedName {
     /// One absolute linked reference, read as that reference.
     Reference(ExternalReference),
-    /// Any other formula over a linked workbook. It may return a linked
-    /// reference (`IF(TRUE,[1]S!$A$3)`), so each use is checked as if the
-    /// formula were written there.
+    /// Any other formula over a linked workbook, its linked references all
+    /// absolute. It may return a linked reference (`IF(TRUE,[1]S!$A$3)`), so
+    /// each use is checked as if the formula were written there.
     Expression(ASTNode),
-    /// A relative linked reference, or a name defined more than once.
+    /// A formula with a relative linked reference anywhere in it
+    /// (`IF(TRUE,[1]S!$A3)`), which Excel moves with the cell using the name
+    /// and the fork reads at A1, or a name defined more than once.
     Unclear,
 }
 
@@ -438,6 +443,24 @@ fn absolute(kind: ExternalRefKind) -> bool {
                 && (end_row.is_none() || end_row_abs)
                 && (end_col.is_none() || end_col_abs)
         }
+    }
+}
+
+/// Whether `node` holds a linked reference with a relative bound.
+fn relative_link(node: &ASTNode) -> bool {
+    match &node.node_type {
+        ASTNodeType::Reference {
+            reference: ReferenceType::External(external),
+            ..
+        } => !absolute(external.kind),
+        ASTNodeType::Reference { .. } | ASTNodeType::Literal(_) | ASTNodeType::Omitted => false,
+        ASTNodeType::UnaryOp { expr, .. } => relative_link(expr),
+        ASTNodeType::BinaryOp { left, right, .. } => relative_link(left) || relative_link(right),
+        ASTNodeType::Function { args, .. } => args.iter().any(relative_link),
+        ASTNodeType::Call { callee, args } => {
+            relative_link(callee) || args.iter().any(relative_link)
+        }
+        ASTNodeType::Array(rows) => rows.iter().flatten().any(relative_link),
     }
 }
 
@@ -514,11 +537,14 @@ impl LinkedBook {
     /// Excel could not refresh. The fork's reader takes the same values only
     /// from markup in its SpreadsheetML place (`OUT_OF_PLACE`), and decodes no
     /// `_xHHHH_` escape in a sheet name or saved value, where Excel reads each
-    /// as one UTF-16 unit (`a_x0001_b` is three characters).
+    /// as one UTF-16 unit (`a_x0001_b` is three characters). A part that is
+    /// not XML, or over the host's XML limits, is malformed workbook content
+    /// as in any part the writer reads; well-formed content the check cannot
+    /// read is the fallback's.
     fn read(part: &[u8], package: &Package) -> Result<Self> {
         let unreadable = || unsupported("external link part the check cannot read");
         let out_of_place = || unsupported(OUT_OF_PLACE);
-        let xml = Xml::parse(part, package.limits().xml).map_err(|_| unreadable())?;
+        let xml = Xml::parse(part, package.limits().xml)?;
         xml.root(MAIN, "externalLink").map_err(|_| unreadable())?;
         if xml
             .child(0, MAIN, "ddeLink")
@@ -1116,7 +1142,9 @@ mod tests {
 
     /// `Rates` names `[1]Data!$A$1:$A$5`, `Twice` an expression over a link,
     /// `Chosen` and `Pick` expressions returning a linked reference, `Two` a
-    /// name for `Chosen`, and `Loop` and `Back` names that use each other.
+    /// name for `Chosen`, `Moving`, `Shifting` and `Tail` relative linked
+    /// references, `Shifted` a name for `Shifting`, and `Loop` and `Back`
+    /// names that use each other.
     fn names() -> BTreeMap<String, LinkedName> {
         let defined = [
             ("Rates", "=[1]Data!$A$1:$A$5"),
@@ -1125,6 +1153,9 @@ mod tests {
             ("Chosen", "=IF(TRUE,[1]Data!$A$3)"),
             ("Pick", "=INDEX([1]Data!$A$1:$A$5,3)"),
             ("Two", "=Chosen"),
+            ("Shifting", "=IF(TRUE,[1]Data!$A3)"),
+            ("Shifted", "=Shifting"),
+            ("Tail", "=SUM([1]Data!$A$1:$A5)"),
             ("Local", "=Result!$A$1:$A$5"),
             ("Loop", "=Back+[1]Data!$A$1"),
             ("Back", "=Loop"),
@@ -1255,10 +1286,22 @@ mod tests {
         ] {
             assert_eq!(reason(formula), operator, "{formula}");
         }
-        assert_eq!(
-            reason("=Moving+1"),
-            Some("workbook name holding a relative or repeated linked reference".to_owned())
-        );
+        // The fork reads a name's formula at A1, where Excel moves a relative
+        // reference with the cell using the name; through another name too.
+        let relative =
+            Some("workbook name holding a relative or repeated linked reference".to_owned());
+        for formula in [
+            "=Moving+1",
+            "=Shifting*2",
+            "=Shifted*2",
+            "=ROW(Shifting)",
+            "=Tail+Twice",
+        ] {
+            assert_eq!(reason(formula), relative, "{formula}");
+        }
+        assert!(matches!(names()["CHOSEN"], LinkedName::Expression(_)));
+        assert!(matches!(names()["SHIFTED"], LinkedName::Expression(_)));
+        assert!(matches!(names()["SHIFTING"], LinkedName::Unclear));
         assert_eq!(
             reason("=SUMIF(Rates,\">0\")"),
             Some("external range reaching a criteria function through a name".to_owned())

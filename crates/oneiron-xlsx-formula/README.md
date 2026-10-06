@@ -87,7 +87,9 @@ unsaved cells are blank. Counting the unsaved cells, pairing the range with one 
 ROW over it and approximate searches stay the fallback's. A workbook name that reads a linked
 workbook, itself or through another name, is checked where each formula uses it, as if its formula
 were written there (`ROW(Chosen)` with `Chosen` holding `IF(TRUE,[1]S!$A$3)` falls back as
-`ROW(IF(TRUE,[1]S!$A$3))` does).
+`ROW(IF(TRUE,[1]S!$A$3))` does). A name with a relative linked reference anywhere in its formula
+(`IF(TRUE,[1]S!$A3)`) falls back wherever it is used, itself or through another name: Excel moves
+the reference with the cell using the name, and the engine reads every name's formula at A1.
 
 A package the retained OPC reader refuses fails outright, as before. Malformed workbook content,
 linked or not, fails outright too, as it did before the writer: the adapter reads the workbook, its
@@ -95,14 +97,14 @@ relationships, the shared strings, every worksheet and every table a worksheet r
 loader did, and refuses a missing, unreadable, off-grid or repeated cell address, a literal its type
 cannot hold (a number that is not one, a boolean other than 0 or 1, a shared-string index past the
 table, an inline string without its text), an invalid `date1904` flag, a broken sheet list, a
-missing, non-numeric or repeated sheet ID, a repeated defined name or one scoped past the sheets,
-and a table part that is malformed XML, missing, unnamed, named twice, or whose range is unreadable
-or not spanned by its columns. Valid content the writer does not support (sheet ID 0, two header
-rows) still goes to the fallback. Every part the writer reads (the workbook, shared strings,
-worksheets, each table wherever its worksheet's relationship puts it, content types, styles, cell
-metadata and rich data) must fit the host's XML node and depth limits, or the workbook fails
-outright. A relationship part that does not fit goes to the fallback, as before: the link check
-fails closed.
+missing, non-numeric or repeated sheet ID, a repeated defined name or one scoped past the sheets, a
+table part that is malformed XML, missing, unnamed, named twice, or whose range is unreadable or not
+spanned by its columns, and a link part that is malformed XML. Valid content the writer does not
+support (sheet ID 0, two header rows) still goes to the fallback. Every part the writer reads (the
+workbook, shared strings, worksheets, each table wherever its worksheet's relationship puts it, each
+link part, content types, styles, cell metadata and rich data) must fit the host's XML node and
+depth limits, or the workbook fails outright. A relationship part that does not fit goes to the
+fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
 by rev in the root manifest (0.9.3-oneiron.9): upstream plus the owned patch that keeps

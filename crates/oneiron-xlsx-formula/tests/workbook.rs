@@ -659,6 +659,35 @@ fn names_returning_a_linked_reference_are_checked_where_they_are_used() {
 }
 
 #[test]
+fn relative_linked_references_in_workbook_names_fall_back() {
+    // Excel moves a name's relative reference with the cell using it: from
+    // A2, the `$A3` written for A1 reads linked A4, so `Chosen*2` is 8. The
+    // fork reads every name's formula at A1 and wrote 6.
+    let at_a2 = |formula: &str, names: &str| {
+        with_names(
+            &linked_workbook(
+                FIVE,
+                &format!(
+                    r#"<c r="A1"><v>0</v></c></row><row r="2"><c r="A2"><f>{formula}</f><v>0</v></c>"#
+                ),
+            ),
+            names,
+        )
+    };
+    let chosen = r#"<definedName name="Chosen">IF(TRUE,[1]S!$A3)</definedName>"#;
+    let again = format!(r#"{chosen}<definedName name="Again">Chosen</definedName>"#);
+    let relative = "workbook name holding a relative or repeated linked reference";
+    assert_eq!(fallback(&at_a2("Chosen*2", chosen)), relative);
+    assert_eq!(fallback(&at_a2("Again*2", &again)), relative);
+    // Absolute, the name reads linked A3 from any cell.
+    let fixed = again.replace("$A3", "$A$3");
+    let report = recalc(&at_a2("Chosen*2+Again", &fixed)).expect("absolute linked references");
+    assert!(
+        part_text(&report.bytes, OUTPUT).contains(r#"<c r="A2"><f>Chosen*2+Again</f><v>9</v></c>"#)
+    );
+}
+
+#[test]
 fn escaped_saved_values_and_linked_sheet_names_fall_back() {
     // Excel reads `_x0001_` as U+0001 (LEN 3) and `_x0041_` as "A" (LEN 1);
     // the fork's link reader decodes neither and wrote 9 and 7.
@@ -771,6 +800,25 @@ fn malformed_local_workbook_xml_is_refused_outright() {
         |xml| xml.replace("</workbook>", ""),
     );
     assert_eq!(refused(recalc(&input)), "XML needs one complete root");
+}
+
+#[test]
+fn malformed_link_part_xml_is_refused_outright() {
+    // A link part that is not XML is malformed workbook content, refused
+    // outright like the workbook's own parts; the check sent it to the
+    // fallback.
+    let link = "xl/externalLinks/externalLink1.xml";
+    let input = edit_part(&over_five("[1]S!A1"), link, |xml| {
+        xml.replace("</externalLink>", "")
+    });
+    assert_eq!(refused(recalc(&input)), "XML needs one complete root");
+    // Well-formed link content the check cannot read stays the fallback's.
+    let twice = with_part(
+        &over_five("[1]S!A1"),
+        link,
+        format!(r#"<externalLink xmlns="{MAIN}" xmlns:r="{DOC_REL}">{FIVE}{FIVE}</externalLink>"#),
+    );
+    assert_eq!(fallback(&twice), "external link part the check cannot read");
 }
 
 #[test]
