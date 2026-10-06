@@ -1,16 +1,19 @@
 use super::arms::{ARMS, Arm, Episode, Query, read};
 use super::arms::{Verb, snapshot_lines};
+use super::arms_epoch::{self, GAP_TOK};
 use super::board;
 use super::strategies::{
-    EngineBoard, FifoFold, FreeFile, OldestFirst, RecoverableFold, STRATEGIES, Sketch, Strategy,
-    Truncate, build, lossy_summary, shape,
+    CanonPlacement, EngineBoard, FifoFold, FreeFile, Layout, OldestFirst, RecoverableFold,
+    STRATEGIES, Sketch, Strategy, Truncate, build, lossy_summary, shape,
 };
-use super::window::{Caps, Ctx, Ledger, RefStore, SpanKind, Window, tokens};
+use super::window::{Caps, Ctx, Ledger, RefStore, SpanKind, Surface, Window, tokens};
 use super::{DEFAULT_BUDGET, DEV_SEEDS, HELDOUT_SEEDS, low_water, run_episode, run_episode_with};
 
+/// The four loop-1 arms (loop 2 adds two).
+const LOOP1_ARMS: [Arm; 4] = [Arm::Needle, Arm::Sketchpad, Arm::KvOffload, Arm::LogTriage];
+
 fn full_stream_answers(ep: &Episode) -> Vec<String> {
-    let full: Vec<&str> = ep.turns.iter().map(|t| t.text.as_str()).collect();
-    ep.queries.iter().map(|q| read(ep.arm, q, &full)).collect()
+    arms_epoch::oracle_answers(ep)
 }
 
 #[test]
@@ -38,9 +41,10 @@ fn full_stream_oracle_is_exact_on_every_arm() {
     for arm in ARMS {
         for seed in [1, 1001] {
             let ep = Episode::generate(arm, seed);
-            let score = ep.score(&full_stream_answers(&ep));
+            let (score, extra) = ep.score_full(&full_stream_answers(&ep));
             assert_eq!(score.correct, score.total, "{arm:?} seed {seed}");
             assert_eq!(score.hallucinated, 0);
+            assert_eq!(extra.stale, 0);
         }
     }
 }
@@ -159,7 +163,7 @@ fn truncate_stays_in_budget_and_restores_nothing() {
 
 #[test]
 fn recoverable_fold_restores_every_departed_span_byte_exactly() {
-    for arm in ARMS {
+    for arm in LOOP1_ARMS {
         let ep = Episode::generate(arm, 2);
         let r = run_episode(
             &ep,
@@ -371,7 +375,7 @@ fn engine_board_renders_typed_state_through_the_engine_renderer() {
 
 #[test]
 fn engine_board_keeps_everything_restorable_on_every_arm() {
-    for arm in ARMS {
+    for arm in LOOP1_ARMS {
         let ep = Episode::generate(arm, 6);
         let r = run_episode(
             &ep,
@@ -522,4 +526,405 @@ fn edits_cannot_reach_the_board_and_strategies_cannot_write_it() {
         led.edit_tok, 0,
         "the engine render is not decoded by the agent"
     );
+}
+
+// ---- loop 2: the two-surface window, the placement family, the new arms ----
+
+fn caps_all() -> Caps {
+    Caps {
+        offload: true,
+        board: true,
+        prefix: true,
+        get: true,
+        ..Caps::default()
+    }
+}
+
+#[test]
+fn prefix_hit_serves_the_unchanged_head_and_never_the_tail() {
+    let mut win = Window::default();
+    let (mut refs, mut led) = (RefStore::default(), Ledger::default());
+    win.push(SpanKind::Turn(0), "a".repeat(400));
+    let first = win.call();
+    assert_eq!(
+        (first.served, first.reprefill),
+        (0, 0),
+        "nothing cached yet"
+    );
+
+    // A pure append: the whole previous prompt is served.
+    let before = win.total();
+    win.push(SpanKind::Turn(1), "b".repeat(400));
+    let append = win.call();
+    assert_eq!(append.served, before);
+    assert_eq!(append.reprefill, 0);
+
+    // A tail render is never served, even when its bytes do not change.
+    let mut ctx = ctx_with(&mut win, &mut refs, &mut led, caps_all());
+    ctx.render_board(None);
+    let log = win.total() - win.spans().last().unwrap().tok();
+    win.call();
+    win.push(SpanKind::Turn(2), "c".repeat(400));
+    let mut ctx = ctx_with(&mut win, &mut refs, &mut led, caps_all());
+    ctx.clear_tail();
+    ctx.render_board(None);
+    let tail_turn = win.call();
+    assert_eq!(
+        tail_turn.served, log,
+        "served up to the old tail, not past it"
+    );
+    assert!(
+        tail_turn.reprefill > 0,
+        "the new turn and the tail re-prefill"
+    );
+
+    // A prefix block rewritten in place keeps only the bytes before the change.
+    let mut ctx = ctx_with(&mut win, &mut refs, &mut led, caps_all());
+    ctx.place_keyframe(super::window::Place::Prefix, 1, &[]);
+    win.call();
+    let mut ctx = ctx_with(&mut win, &mut refs, &mut led, caps_all());
+    ctx.place_keyframe(super::window::Place::Prefix, 2, &[]);
+    let rewritten = win.call();
+    assert!(
+        rewritten.served < 20,
+        "the keyframe changed in its first line: {rewritten:?}"
+    );
+    assert!(rewritten.reprefill > 300, "everything after it re-prefills");
+    assert!(win.ordered());
+}
+
+/// Runs a placement-family strategy turn by turn and records, per turn, the
+/// prefix bytes and the epoch count.
+fn canon_trace(layout: Layout, arm: Arm, seed: u64) -> (Vec<(String, u64)>, Window) {
+    let ep = Episode::generate(arm, seed);
+    let mut strategy = CanonPlacement::new(layout);
+    let mut win = Window::default();
+    let (mut refs, mut led) = (RefStore::default(), Ledger::default());
+    let mut trace = Vec::new();
+    for (n, turn) in ep.turns.iter().enumerate() {
+        win.push(SpanKind::Turn(n as u32), turn.text.clone());
+        let mut ctx = Ctx::new(
+            &mut win,
+            &mut refs,
+            &mut led,
+            strategy.caps(),
+            DEFAULT_BUDGET,
+            low_water(DEFAULT_BUDGET),
+        )
+        .with_env(&ep.env, n);
+        if let Some(verb) = &turn.verb {
+            strategy.on_verb(verb, &mut ctx);
+        }
+        strategy.on_turn(&mut ctx);
+        assert!(win.ordered(), "{layout:?} turn {n}");
+        win.call();
+        let prefix: String = win
+            .spans()
+            .iter()
+            .filter(|s| s.surface() == Surface::Prefix)
+            .map(|s| s.text())
+            .collect::<Vec<_>>()
+            .join("\u{0}");
+        trace.push((prefix, strategy.epochs()));
+    }
+    assert!(led.violations.is_empty(), "{:?}", led.violations);
+    (trace, win)
+}
+
+#[test]
+fn canon_keeps_the_prefix_byte_stable_within_an_epoch() {
+    for arm in [Arm::Needle, Arm::Sketchpad, Arm::Relink] {
+        let (trace, win) = canon_trace(Layout::Canon, arm, 8);
+        let mut changes = 0;
+        for pair in trace.windows(2) {
+            if pair[0].0 != pair[1].0 {
+                changes += 1;
+                assert_ne!(
+                    pair[0].1, pair[1].1,
+                    "{arm:?}: the prefix moved inside an epoch"
+                );
+            }
+        }
+        assert!(changes >= 2, "{arm:?}: epochs closed {changes} times");
+        let kinds = |s: Surface| -> Vec<SpanKind> {
+            win.spans()
+                .iter()
+                .filter(|x| x.surface() == s)
+                .map(|x| x.kind())
+                .collect()
+        };
+        assert!(kinds(Surface::Prefix).contains(&SpanKind::Keyframe));
+        assert_eq!(kinds(Surface::Tail), vec![SpanKind::Board], "{arm:?}");
+    }
+}
+
+#[test]
+fn the_controls_place_the_board_and_the_keyframe_where_named() {
+    let (trace, win) = canon_trace(Layout::BoardInPrefix, Arm::Needle, 8);
+    assert!(
+        trace.windows(2).filter(|p| p[0].0 != p[1].0).count() > trace.len() / 2,
+        "the prefix board rewrites the prefix nearly every turn"
+    );
+    assert!(win.spans().iter().all(|s| s.surface() != Surface::Tail));
+    assert!(
+        win.spans()
+            .iter()
+            .any(|s| s.surface() == Surface::Prefix && s.kind() == SpanKind::Board)
+    );
+    let (_, win) = canon_trace(Layout::KeyframeInTail, Arm::Needle, 8);
+    let tail: Vec<SpanKind> = win
+        .spans()
+        .iter()
+        .filter(|s| s.surface() == Surface::Tail)
+        .map(|s| s.kind())
+        .collect();
+    assert_eq!(tail, vec![SpanKind::Keyframe, SpanKind::Board]);
+}
+
+#[test]
+fn wrong_placement_costs_more_and_scores_the_same_on_every_arm() {
+    for arm in ARMS {
+        let ep = Episode::generate(arm, 9);
+        let run = |layout| run_episode(&ep, &mut CanonPlacement::new(layout), DEFAULT_BUDGET);
+        let (canon, prefix_board, tail_keyframe) = (
+            run(Layout::Canon),
+            run(Layout::BoardInPrefix),
+            run(Layout::KeyframeInTail),
+        );
+        for r in [&canon, &prefix_board, &tail_keyframe] {
+            assert!(r.violations.is_empty(), "{arm:?} {:?}", r.violations);
+            assert_eq!(r.over_budget, 0, "{arm:?}");
+            assert_eq!(
+                r.score, canon.score,
+                "{arm:?}: placement never changes what is read"
+            );
+        }
+        assert!(
+            prefix_board.reprefill_tok > 10 * canon.reprefill_tok,
+            "{arm:?}: {} vs {}",
+            prefix_board.reprefill_tok,
+            canon.reprefill_tok
+        );
+        assert!(tail_keyframe.reprefill_tok > canon.reprefill_tok, "{arm:?}");
+        assert!(canon.hit_rate() > 0.9, "{arm:?} {}", canon.hit_rate());
+        assert!(
+            prefix_board.hit_rate() < 0.1,
+            "{arm:?} {}",
+            prefix_board.hit_rate()
+        );
+        assert!(tail_keyframe.hit_rate() < canon.hit_rate(), "{arm:?}");
+    }
+}
+
+#[test]
+fn canon_never_deletes_and_meets_every_arm() {
+    for arm in ARMS {
+        let ep = Episode::generate(arm, 10);
+        let r = run_episode(&ep, &mut CanonPlacement::new(Layout::Canon), DEFAULT_BUDGET);
+        assert!(r.audit.departed > 0, "{arm:?}");
+        assert_eq!(
+            r.audit.exact, r.audit.departed,
+            "{arm:?}: compaction never deletes"
+        );
+        assert!(!r.restore_fail);
+        assert!((r.score.value - 1.0).abs() < 1e-9, "{arm:?} {:?}", r.score);
+    }
+}
+
+#[test]
+fn relink_needs_are_post_compaction_and_mixed() {
+    for seed in [1, 20, 1001, 1020] {
+        let ep = Episode::generate(Arm::Relink, seed);
+        arms_epoch::check(&ep).unwrap();
+        assert_eq!(ep.queries.len(), 36);
+        assert!(ep.ask_at.iter().all(Option::is_some));
+        let total: u64 = ep.turns.iter().map(|t| tokens(&t.text)).sum();
+        assert!(total > 5 * GAP_TOK, "{total}");
+    }
+}
+
+#[test]
+fn relink_separates_dropping_stale_restores_and_relinking() {
+    let ep = Episode::generate(Arm::Relink, 11);
+    let truncate = run_episode(
+        &ep,
+        &mut Truncate::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert_eq!(truncate.score.correct, 0, "every need is post-compaction");
+    let restore = run_episode(
+        &ep,
+        &mut RecoverableFold::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    let external = restore.extra.buckets.get(2).map_or(0, |b| b.1);
+    assert!(external > 0);
+    assert_eq!(
+        restore.extra.stale, external,
+        "a restore can only give back what the stream showed"
+    );
+    assert_eq!(restore.score.correct + external, restore.score.total);
+    let canon = run_episode(&ep, &mut CanonPlacement::new(Layout::Canon), DEFAULT_BUDGET);
+    assert_eq!(canon.extra.stale, 0);
+    assert_eq!(canon.score.correct, canon.score.total);
+    assert!(canon.fetch_tok > 0);
+    assert!(canon.peak <= DEFAULT_BUDGET);
+}
+
+#[test]
+fn a_window_that_keeps_everything_is_never_a_valid_cell_on_the_new_arms() {
+    for arm in [Arm::Relink, Arm::MultiEpoch] {
+        let ep = Episode::generate(arm, 12);
+        let r = run_episode(
+            &ep,
+            &mut Truncate::new(Box::new(Rogue(Vec::new()))),
+            DEFAULT_BUDGET,
+        );
+        assert!(r.over_budget > 0, "{arm:?}");
+        let mut cell = super::Cell::default();
+        cell.add(&r, 0.0);
+        assert!(!cell.valid(1));
+    }
+}
+
+#[test]
+fn a_broken_reference_fails_the_new_arms() {
+    for arm in [Arm::Relink, Arm::MultiEpoch] {
+        let ep = Episode::generate(arm, 13);
+        let r = run_episode_with(
+            &ep,
+            &mut CanonPlacement::new(Layout::Canon),
+            DEFAULT_BUDGET,
+            |refs| refs.corrupt(1),
+        );
+        assert!(r.restore_fail, "{arm:?}");
+        assert_eq!(r.score.value, 0.0, "{arm:?}");
+    }
+}
+
+#[test]
+fn multi_epoch_forces_at_least_four_compactions_and_reports_each_epoch() {
+    for seed in [1, 1001] {
+        let ep = Episode::generate(Arm::MultiEpoch, seed);
+        arms_epoch::check(&ep).unwrap();
+        assert!(ep.ask_at.iter().any(Option::is_some), "mid-session queries");
+        assert!(ep.ask_at.iter().any(Option::is_none), "end queries");
+        let (trace, _) = canon_trace(Layout::Canon, Arm::MultiEpoch, seed);
+        assert!(
+            trace.last().unwrap().1 >= 4,
+            "epochs {}",
+            trace.last().unwrap().1
+        );
+        let r = run_episode(
+            &ep,
+            &mut Truncate::new(Box::new(OldestFirst)),
+            DEFAULT_BUDGET,
+        );
+        assert_eq!(r.extra.buckets.len(), arms_epoch::SEGMENTS);
+        let (first, last) = (
+            r.extra.buckets[0],
+            r.extra.buckets[arms_epoch::SEGMENTS - 1],
+        );
+        assert!(
+            f64::from(first.0) / f64::from(first.1) < f64::from(last.0) / f64::from(last.1),
+            "truncate forgets the oldest epoch first: {:?}",
+            r.extra.buckets
+        );
+    }
+}
+
+#[test]
+fn the_canon_board_carries_the_engine_changed_and_loaded_lines() {
+    let mut read_set = oneiron::context_board::SessionReadSet::default();
+    read_set.served(
+        "file:src/a.rs",
+        oneiron::context_board::ServedLifecycle::Active,
+    );
+    read_set.loaded_skill("skill:deploy", "v2");
+    let rows = vec![
+        board::ResRow {
+            name: "file:src/a.rs".to_owned(),
+            current: 3,
+            served: 2,
+            held: board::Held::Get,
+        },
+        board::ResRow {
+            name: "skill:deploy".to_owned(),
+            current: 2,
+            served: 2,
+            held: board::Held::Prefix,
+        },
+    ];
+    let text = board::render_canon(&board::CanonBoard {
+        epoch: 4,
+        turn: 17,
+        sketch: None,
+        resources: &rows,
+        read_set: &read_set,
+    })
+    .unwrap();
+    assert!(
+        text.starts_with("<memory surface=\"board\" epoch=\"4\""),
+        "{text}"
+    );
+    assert!(text.contains("changed[1:]{id,to}:"), "{text}");
+    assert!(text.contains("file:src/a.rs: superseded:v3"), "{text}");
+    assert!(text.contains("loaded: skill:deploy@v2"), "{text}");
+    assert!(text.contains("turn: 17"), "{text}");
+    // No board row reads back as a resource body.
+    let q = Query {
+        text: "NEED file:src/a.rs".to_owned(),
+        key: "file:src/a.rs@".to_owned(),
+    };
+    assert_eq!(read(Arm::Relink, &q, &[text.as_str()]), "");
+}
+
+#[test]
+fn get_needs_its_capability_and_serves_the_current_version() {
+    let ep = Episode::generate(Arm::Relink, 14);
+    let name = ep.queries[0].key.trim_end_matches('@').to_owned();
+    let at = ep.ask_at[0].unwrap();
+    let mut win = Window::default();
+    win.push(SpanKind::Turn(0), "x".to_owned());
+    let (mut refs, mut led) = (RefStore::default(), Ledger::default());
+    let mut ctx = ctx_with(&mut win, &mut refs, &mut led, Caps::default()).with_env(&ep.env, at);
+    assert_eq!(ctx.get(&name), None);
+    assert_eq!(led.violations, vec!["get"]);
+    let mut led = Ledger::default();
+    let mut ctx = ctx_with(&mut win, &mut refs, &mut led, caps_all()).with_env(&ep.env, at);
+    let (version, _) = ctx.get(&name).unwrap();
+    assert_eq!(Some(version), ep.env.current(&name, at));
+    let chunks: Vec<&str> = win.spans().iter().map(super::window::Span::text).collect();
+    assert_eq!(read(Arm::Relink, &ep.queries[0], &chunks), ep.expected[0]);
+    assert!(led.fetch_tok > 0);
+}
+
+struct AppendAfterTail;
+
+impl Strategy for AppendAfterTail {
+    fn name(&self) -> &'static str {
+        "append-after-tail"
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            board: true,
+            ..Caps::default()
+        }
+    }
+
+    fn on_verb(&mut self, _verb: &Verb, _ctx: &mut Ctx<'_>) {}
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        ctx.clear_board();
+        ctx.render_board(None);
+        ctx.append_note("after the tail".to_owned());
+    }
+}
+
+#[test]
+fn a_span_written_after_the_tail_breaks_the_surface_order() {
+    let ep = Episode::generate(Arm::Needle, 15);
+    let r = run_episode(&ep, &mut AppendAfterTail, DEFAULT_BUDGET);
+    assert!(r.violations.contains(&"surface order"));
 }

@@ -8,11 +8,19 @@
 //! text it writes). References are minted by the harness, never by the
 //! strategy: the strategy chooses which spans leave, the substrate makes them
 //! restorable (OF-190, Sculptor).
+//!
+//! Loop 2 renders the window on two sibling surfaces around the log
+//! (ARCH-0067 §2): a cached PREFIX (byte-stable between epoch boundaries:
+//! the prefix inventory and the epoch keyframe), the append-only LOG, and a
+//! dynamic TAIL (re-rendered every turn: the Context Board). Every span
+//! carries its surface; the harness keeps the order prefix, log, tail, and
+//! only harness renders ever land on the prefix or the tail.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 use super::arms::Grid;
+use super::arms_epoch::Env;
 use super::board;
 
 /// The one fixed tokenizer stand-in. Named in every report header and never
@@ -36,12 +44,40 @@ pub(crate) enum SpanKind {
     RefStub(u32),
     /// The engine-rendered dynamic tail: a projection of typed state.
     Board,
+    /// The epoch keyframe: the harness-rendered index of every compaction
+    /// so far (a projection of the reference store, never content).
+    Keyframe,
+    /// The prefix inventory: the budgeted working set of resources,
+    /// re-selected only at an epoch boundary, bodies fetched by the harness.
+    Inventory,
+    /// A resource body the harness fetched from the environment (a `get`).
+    Fetch,
+}
+
+impl SpanKind {
+    /// Harness projections of typed state: never content, never audited
+    /// as a departure, never movable by an edit.
+    pub(crate) const fn is_projection(self) -> bool {
+        matches!(self, Self::Board | Self::Keyframe | Self::Inventory)
+    }
+}
+
+/// Where a span renders. The order is always prefix, log, tail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Surface {
+    /// Cached prefix: byte-stable within an epoch.
+    Prefix,
+    /// The append-only conversation log between the two siblings.
+    Log,
+    /// Dynamic tail: re-rendered every turn, never served from cache.
+    Tail,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Span {
     id: u64,
     kind: SpanKind,
+    surface: Surface,
     text: String,
     tok: u64,
     /// Bytes of the rendered `[[label]]\n` head.
@@ -49,23 +85,31 @@ pub(crate) struct Span {
 }
 
 impl Span {
-    fn new(id: u64, kind: SpanKind, text: String) -> Self {
+    fn new(id: u64, kind: SpanKind, surface: Surface, text: String) -> Self {
         let label = match kind {
             SpanKind::Turn(n) => format!("t{n}"),
             SpanKind::Note => format!("note s{id}"),
             SpanKind::Stub => format!("stub s{id}"),
             SpanKind::RefStub(r) => format!("ref r{r}"),
             SpanKind::Board => "board".to_owned(),
+            SpanKind::Keyframe => "keyframe".to_owned(),
+            SpanKind::Inventory => "inventory".to_owned(),
+            SpanKind::Fetch => format!("get s{id}"),
         };
         let head = format!("[[{label}]]\n");
         let tok = tokens(&format!("{head}{text}\n"));
         Self {
             id,
             kind,
+            surface,
             text,
             tok,
             head: head.len(),
         }
+    }
+
+    pub(crate) const fn surface(&self) -> Surface {
+        self.surface
     }
 
     pub(crate) const fn id(&self) -> u64 {
@@ -93,25 +137,83 @@ struct Dirty {
     kept_tok: u64,
 }
 
+/// One model call's cache accounting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Call {
+    /// Loop 1's rule: everything from the first changed cached position to
+    /// the end of the rendered window.
+    pub(crate) reprefill: u64,
+    /// Tokens served from the cache: the head of this prompt that is
+    /// byte-identical to the previous call's prompt, cut at the first
+    /// changed byte and never reaching into the previous call's tail.
+    pub(crate) served: u64,
+    /// The whole prompt.
+    pub(crate) total: u64,
+    /// The strict surface reading: the prefix surface's tokens when that
+    /// surface is byte-identical to the previous call's prefix surface,
+    /// else zero (the log is never counted).
+    pub(crate) frozen: u64,
+}
+
 /// The rendered window as an ordered span list. `cached` is the span count
-/// the last model call prefilled. A pure append never dirties anything.
+/// the last model call prefilled; `cacheable` is how many of those sat
+/// before the dynamic tail. A pure append never dirties anything.
 #[derive(Default)]
 pub(crate) struct Window {
     spans: Vec<Span>,
     total: u64,
     next_id: u64,
     cached: usize,
+    cacheable: usize,
     dirty: Option<Dirty>,
+    /// Digest of the previous call's prefix surface.
+    prev_prefix: Option<[u8; 32]>,
 }
 
 impl Window {
-    /// Appends at the tail (the environment's turn, or agent output).
+    /// Appends at the end (the environment's turn, or agent output). The
+    /// board is a tail render; everything else lands on the log.
     pub(crate) fn push(&mut self, kind: SpanKind, text: String) -> u64 {
+        let surface = if kind == SpanKind::Board {
+            Surface::Tail
+        } else {
+            Surface::Log
+        };
+        self.push_on(kind, surface, text)
+    }
+
+    fn push_on(&mut self, kind: SpanKind, surface: Surface, text: String) -> u64 {
         self.next_id += 1;
-        let span = Span::new(self.next_id, kind, text);
+        let span = Span::new(self.next_id, kind, surface, text);
         self.total += span.tok;
         self.spans.push(span);
         self.next_id
+    }
+
+    /// The first log index: the count of leading prefix spans.
+    pub(crate) fn log_start(&self) -> usize {
+        self.spans
+            .iter()
+            .take_while(|s| s.surface == Surface::Prefix)
+            .count()
+    }
+
+    /// The first tail index, or the length when there is no tail.
+    pub(crate) fn tail_start(&self) -> usize {
+        self.spans
+            .iter()
+            .position(|s| s.surface == Surface::Tail)
+            .unwrap_or(self.spans.len())
+    }
+
+    /// Prefix spans, then log spans, then tail spans, and nothing else.
+    pub(crate) fn ordered(&self) -> bool {
+        let rank = |s: &Span| match s.surface {
+            Surface::Prefix => 0,
+            Surface::Log => 1,
+            Surface::Tail => 2,
+        };
+        self.spans.windows(2).all(|w| rank(&w[0]) <= rank(&w[1]))
     }
 
     pub(crate) const fn total(&self) -> u64 {
@@ -141,11 +243,53 @@ impl Window {
     }
 
     fn insert(&mut self, index: usize, kind: SpanKind, text: String) {
+        self.insert_on(index, kind, Surface::Log, text);
+    }
+
+    fn insert_on(&mut self, index: usize, kind: SpanKind, surface: Surface, text: String) -> u64 {
         self.touch(index, 0);
         self.next_id += 1;
-        let span = Span::new(self.next_id, kind, text);
+        let span = Span::new(self.next_id, kind, surface, text);
         self.total += span.tok;
         self.spans.insert(index, span);
+        self.next_id
+    }
+
+    /// Writes a harness block onto the prefix: rewritten in place when one
+    /// of its kind is there (the first changed byte rule; identical bytes
+    /// cost nothing), else inserted in the fixed prefix order inventory,
+    /// keyframe, board.
+    fn set_prefix_block(&mut self, kind: SpanKind, text: String) {
+        let rank = |k: SpanKind| match k {
+            SpanKind::Inventory => 0,
+            SpanKind::Keyframe => 1,
+            _ => 2,
+        };
+        let log_start = self.log_start();
+        if let Some(i) = self.spans[..log_start].iter().position(|s| s.kind == kind) {
+            if self.spans[i].text != text {
+                self.set_text(i, text);
+            }
+            return;
+        }
+        let at = self.spans[..log_start]
+            .iter()
+            .position(|s| rank(s.kind) > rank(kind))
+            .unwrap_or(log_start);
+        self.insert_on(at, kind, Surface::Prefix, text);
+    }
+
+    /// Removes every tail span (they are re-rendered next).
+    fn clear_tail(&mut self) {
+        while let Some(i) = self.spans.iter().rposition(|s| s.surface == Surface::Tail) {
+            self.take(i..i + 1);
+        }
+    }
+
+    /// Inserts a span at the end of the log, before any tail.
+    fn insert_log(&mut self, kind: SpanKind, text: String) -> u64 {
+        let at = self.tail_start();
+        self.insert_on(at, kind, Surface::Log, text)
     }
 
     /// Replaces a span's text in place, keeping its id. The rendered bytes
@@ -159,7 +303,7 @@ impl Window {
             .take_while(|(a, b)| a == b)
             .count();
         let kept_tok = (old.head + same) as u64 / 4;
-        let span = Span::new(old.id, old.kind, text);
+        let span = Span::new(old.id, old.kind, old.surface, text);
         self.total = self.total - old.tok + span.tok;
         self.spans[index] = span;
         self.touch(index, kept_tok);
@@ -168,18 +312,51 @@ impl Window {
     /// One model call: everything from the first changed cached position to
     /// the end of the rendered window is re-prefilled (OF-263's missing
     /// component). Returns those tokens and re-arms the cache.
+    #[cfg(test)]
     pub(crate) fn checkpoint(&mut self) -> u64 {
-        let reprefill = match self.dirty {
-            Some(d) if d.index < self.cached => self.spans[d.index..]
+        self.call().reprefill
+    }
+
+    /// One model call, with the prefix-cache accounting beside re-prefill.
+    pub(crate) fn call(&mut self) -> Call {
+        let first = match self.dirty {
+            Some(d) if d.index < self.cached => Some(d),
+            _ => None,
+        };
+        let reprefill = first.map_or(0, |d| {
+            self.spans[d.index..]
                 .iter()
                 .map(|s| s.tok)
                 .sum::<u64>()
-                .saturating_sub(d.kept_tok),
-            _ => 0,
+                .saturating_sub(d.kept_tok)
+        });
+        let head = |end: usize| -> u64 { self.spans[..end].iter().map(|s| s.tok).sum() };
+        let served = match first {
+            Some(d) if d.index < self.cacheable => head(d.index) + d.kept_tok,
+            _ => head(self.cacheable.min(self.spans.len())),
         };
+        let prefix = &self.spans[..self.log_start()];
+        let mut h = blake3::Hasher::new();
+        for s in prefix {
+            h.update(s.text.as_bytes());
+            h.update(b"\0");
+        }
+        let digest = *h.finalize().as_bytes();
+        let frozen = if self.prev_prefix == Some(digest) {
+            prefix.iter().map(|s| s.tok).sum()
+        } else {
+            0
+        };
+        self.prev_prefix = Some(digest);
         self.cached = self.spans.len();
+        self.cacheable = self.tail_start();
         self.dirty = None;
-        reprefill
+        Call {
+            reprefill,
+            served,
+            total: self.total,
+            frozen,
+        }
     }
 }
 
@@ -305,12 +482,19 @@ impl RefStore {
 #[derive(Default)]
 pub(crate) struct Ledger {
     pub(crate) edit_tok: u64,
+    /// Tokens of resource bodies the harness fetched from the environment
+    /// (a `get` into the log, or a body made resident on the prefix).
+    pub(crate) fetch_tok: u64,
     /// Every version of every span that left the window or was rewritten,
     /// keyed by (span id, the harness's own digest of the bytes it held),
     /// with the reference (if any) that claims to restore it. Keying by
     /// version means a span rewritten and later offloaded is audited twice.
     departed: BTreeMap<(u64, [u8; 32]), Option<u32>>,
     pub(crate) violations: Vec<&'static str>,
+    /// The prefix inventory's resident set as last placed (harness-side, so
+    /// an unchanged body is not counted as fetched again).
+    resident: BTreeMap<String, u32>,
+    links: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -332,9 +516,10 @@ impl Audit {
 
 impl Ledger {
     fn depart(&mut self, span: &Span, via: Option<u32>) {
-        // The dynamic tail is a projection of typed state, not content, and
-        // the harness never lets any operation but the re-render move it.
-        if span.kind != SpanKind::Board {
+        // The board, the keyframe and the inventory are projections of
+        // typed state, not content, and the harness never lets any
+        // operation but their re-render move them.
+        if !span.kind.is_projection() {
             let slot = self
                 .departed
                 .entry((span.id, digest(&span.text)))
@@ -383,6 +568,11 @@ pub(crate) struct Caps {
     pub(crate) rewrite: bool,
     /// Keep an engine-rendered board as the dynamic tail.
     pub(crate) board: bool,
+    /// Place harness-rendered blocks (keyframe, inventory, board) on the
+    /// cached prefix.
+    pub(crate) prefix: bool,
+    /// Fetch a resource's current body from the environment (`get`).
+    pub(crate) get: bool,
 }
 
 /// A strategy's handle on the window for one step. Its fields are private:
@@ -394,6 +584,8 @@ pub(crate) struct Ctx<'a> {
     caps: Caps,
     budget: u64,
     low_water: u64,
+    env: Option<&'a Env>,
+    turn: usize,
 }
 
 impl<'a> Ctx<'a> {
@@ -412,7 +604,17 @@ impl<'a> Ctx<'a> {
             caps,
             budget,
             low_water,
+            env: None,
+            turn: 0,
         }
+    }
+
+    /// The environment a `get` reads (current resource bodies) and the
+    /// stream turn this step runs at.
+    pub(crate) const fn with_env(mut self, env: &'a Env, turn: usize) -> Self {
+        self.env = Some(env);
+        self.turn = turn;
+        self
     }
 }
 
@@ -438,6 +640,11 @@ impl Ctx<'_> {
         self.win.spans().iter().position(|s| s.id == id)
     }
 
+    /// The stream turn this step runs at.
+    pub(crate) const fn turn(&self) -> usize {
+        self.turn
+    }
+
     pub(crate) fn ref_metas(&self) -> Vec<RefMeta> {
         self.refs.metas().cloned().collect()
     }
@@ -455,8 +662,9 @@ impl Ctx<'_> {
         ok
     }
 
-    /// A range an edit may touch: in bounds and clear of the board, which
-    /// only the harness re-render moves. An empty range is a no-op.
+    /// A range an edit may touch: in bounds and on the log, clear of the
+    /// board and every other harness render, which only their re-render
+    /// moves. An empty range is a no-op.
     fn editable(&mut self, range: &Range<usize>, op: &'static str) -> bool {
         if range.is_empty() {
             return false;
@@ -465,7 +673,7 @@ impl Ctx<'_> {
         let ok = range.end <= spans.len()
             && spans[range.clone()]
                 .iter()
-                .all(|s| s.kind != SpanKind::Board);
+                .all(|s| !s.kind.is_projection() && s.surface == Surface::Log);
         self.allow(ok, op)
     }
 
@@ -675,4 +883,200 @@ impl Ctx<'_> {
             }
         }
     }
+
+    /// The surface gate: the prefix needs the prefix capability, the tail
+    /// the board capability.
+    fn may_place(&mut self, place: Place, op: &'static str) -> bool {
+        let ok = match place {
+            Place::Prefix => self.caps.prefix,
+            Place::Tail => self.caps.board,
+        };
+        self.allow(ok, op)
+    }
+
+    /// Moves log spans into a harness-minted reference and leaves nothing in
+    /// the log: the epoch keyframe, not a stub, indexes it. The strategy
+    /// only names the spans.
+    pub(crate) fn fold_to_keyframe(&mut self, range: Range<usize>) -> Option<u32> {
+        if !self.allow(self.caps.offload, "fold_to_keyframe")
+            || !self.editable(&range, "fold_to_keyframe range")
+        {
+            return None;
+        }
+        self.charge(&format!("fold {}", self.label(range.clone())));
+        let gone = self.win.take(range);
+        let id = self.refs.mint(&gone);
+        for span in &gone {
+            self.led.depart(span, Some(id));
+        }
+        Some(id)
+    }
+
+    /// Removes every tail render so the tail can be re-rendered.
+    pub(crate) fn clear_tail(&mut self) {
+        if self.allow(self.caps.board, "clear_tail") {
+            self.win.clear_tail();
+        }
+    }
+
+    fn place(&mut self, place: Place, kind: SpanKind, text: String) -> u64 {
+        match place {
+            Place::Prefix => {
+                self.win.set_prefix_block(kind, text);
+                let log_start = self.win.log_start();
+                self.win.spans()[..log_start]
+                    .iter()
+                    .find(|s| s.kind == kind)
+                    .map_or(0, |s| s.tok)
+            }
+            Place::Tail => {
+                let id = self.win.push_on(kind, Surface::Tail, text);
+                self.win
+                    .spans()
+                    .last()
+                    .filter(|s| s.id == id)
+                    .map_or(0, |s| s.tok)
+            }
+        }
+    }
+
+    /// Renders the canon board (typed state only: the turn clock, the
+    /// sketchpad grid, the resource index, the engine read set's changed
+    /// and loaded lines) through `render_board_block` onto `place`. The
+    /// strategy supplies no text, so nothing is charged. Returns its tokens.
+    pub(crate) fn place_board(&mut self, place: Place, state: &board::CanonBoard<'_>) -> u64 {
+        if !self.may_place(place, "place_board") {
+            return 0;
+        }
+        match board::render_canon(state) {
+            Ok(text) => self.place(place, SpanKind::Board, text),
+            Err(_) => {
+                self.fail("engine board render");
+                0
+            }
+        }
+    }
+
+    /// Renders the epoch keyframe from the reference store's typed index
+    /// (`(reference, epoch that minted it)`) onto `place`. Nothing charged:
+    /// the harness renders it. Returns its tokens.
+    pub(crate) fn place_keyframe(
+        &mut self,
+        place: Place,
+        epoch: u64,
+        minted: &[(u32, u64)],
+    ) -> u64 {
+        if !self.may_place(place, "place_keyframe") {
+            return 0;
+        }
+        let rows: Vec<(RefMeta, u64)> = minted
+            .iter()
+            .filter_map(|&(id, e)| self.refs.meta(id).cloned().map(|m| (m, e)))
+            .collect();
+        let text = board::render_keyframe(epoch, &rows);
+        self.place(place, SpanKind::Keyframe, text)
+    }
+
+    /// Re-selects the prefix inventory: `resident` names get their current
+    /// bodies fetched from the environment by the harness, `links` get one
+    /// index row each (where the current body is: a reference or a `get`).
+    /// The strategy names resources only; it is charged its selection
+    /// command, and each body that was not already resident at its current
+    /// version counts as fetched. Returns the resident versions.
+    pub(crate) fn place_inventory(
+        &mut self,
+        resident: &[String],
+        links: &[(String, u32, Link)],
+    ) -> Vec<(String, u32)> {
+        if !self.allow(self.caps.prefix && self.caps.get, "place_inventory") {
+            return Vec::new();
+        }
+        let Some(env) = self.env else {
+            self.fail("place_inventory without an environment");
+            return Vec::new();
+        };
+        let mut held = Vec::new();
+        let mut bodies = Vec::new();
+        let mut fetched = 0;
+        for name in resident {
+            let Some(version) = env.current(name, self.turn) else {
+                self.fail("place_inventory unknown resource");
+                continue;
+            };
+            let body = env.body(name, version).unwrap_or_default();
+            if self.led.resident.get(name) != Some(&version) {
+                fetched += tokens(&body);
+            }
+            held.push((name.clone(), version));
+            bodies.push(body);
+        }
+        let text = board::render_inventory(&held, &bodies, links);
+        let selection: BTreeMap<String, u32> = held.iter().cloned().collect();
+        if selection != self.led.resident || links.len() != self.led.links {
+            let names: Vec<&str> = resident
+                .iter()
+                .map(String::as_str)
+                .chain(links.iter().map(|(n, _, _)| n.as_str()))
+                .collect();
+            self.charge(&format!("relink {}", names.join(",")));
+        }
+        self.led.fetch_tok += fetched;
+        self.led.resident = selection;
+        self.led.links = links.len();
+        self.place(Place::Prefix, SpanKind::Inventory, text);
+        held
+    }
+
+    /// The tokens a `get` of `name` would add to the log (a `stat`).
+    pub(crate) fn fetch_cost(&self, name: &str) -> Option<u64> {
+        if !self.caps.get {
+            return None;
+        }
+        let env = self.env?;
+        let body = env.body(name, env.current(name, self.turn)?)?;
+        Some(tokens(&format!(
+            "[[get s{}]]\n{body}\n",
+            self.win.next_id + 1
+        )))
+    }
+
+    /// Fetches `name`'s current body from the environment into the end of
+    /// the log (paid once, then live). Returns its version and span id.
+    pub(crate) fn get(&mut self, name: &str) -> Option<(u32, u64)> {
+        if !self.allow(self.caps.get, "get") {
+            return None;
+        }
+        let found = self
+            .env
+            .and_then(|env| env.current(name, self.turn).map(|v| (v, env.body(name, v))));
+        let Some((version, Some(body))) = found else {
+            self.fail("get unknown resource");
+            return None;
+        };
+        self.charge(&format!("get {name}"));
+        let id = self.win.insert_log(SpanKind::Fetch, body);
+        self.led.fetch_tok += self
+            .win
+            .spans()
+            .iter()
+            .find(|s| s.id == id)
+            .map_or(0, |s| s.tok);
+        Some((version, id))
+    }
+}
+
+/// Which surface a harness render lands on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Place {
+    Prefix,
+    Tail,
+}
+
+/// Where a non-resident resource's current body can be had again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Link {
+    /// Inside reference `r` (restorable byte-exactly).
+    Ref(u32),
+    /// Only from the environment (it changed outside the session).
+    Get,
 }

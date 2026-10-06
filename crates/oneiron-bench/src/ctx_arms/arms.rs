@@ -13,8 +13,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Every arm, in report order.
-pub(crate) const ARMS: [Arm; 4] = [Arm::Needle, Arm::Sketchpad, Arm::KvOffload, Arm::LogTriage];
+use super::arms_epoch::{self, Env, Extra};
+
+/// Every arm, in report order. The last two are loop 2's (`arms_epoch.rs`).
+pub(crate) const ARMS: [Arm; 6] = [
+    Arm::Needle,
+    Arm::Sketchpad,
+    Arm::KvOffload,
+    Arm::LogTriage,
+    Arm::Relink,
+    Arm::MultiEpoch,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Arm {
@@ -22,6 +31,8 @@ pub(crate) enum Arm {
     Sketchpad,
     KvOffload,
     LogTriage,
+    Relink,
+    MultiEpoch,
 }
 
 impl Arm {
@@ -31,6 +42,8 @@ impl Arm {
             Self::Sketchpad => "sketchpad",
             Self::KvOffload => "kv-offload-recall",
             Self::LogTriage => "log-triage",
+            Self::Relink => "relink-after-compaction",
+            Self::MultiEpoch => "multi-epoch",
         }
     }
 
@@ -44,6 +57,8 @@ impl Arm {
             Self::Sketchpad => 2,
             Self::KvOffload => 3,
             Self::LogTriage => 4,
+            Self::Relink => 5,
+            Self::MultiEpoch => 6,
         }
     }
 }
@@ -74,18 +89,18 @@ impl Rng {
         lo + self.below(hi - lo + 1)
     }
 
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+    pub(crate) fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
         &items[self.below(items.len())]
     }
 
-    fn shuffle<T>(&mut self, items: &mut [T]) {
+    pub(crate) fn shuffle<T>(&mut self, items: &mut [T]) {
         for i in (1..items.len()).rev() {
             items.swap(i, self.below(i + 1));
         }
     }
 }
 
-const WORDS: [&str; 64] = [
+pub(crate) const WORDS: [&str; 64] = [
     "amber", "basin", "cedar", "delta", "ember", "fable", "glade", "harbor", "island", "juniper",
     "kettle", "lantern", "meadow", "nectar", "orchard", "pebble", "quarry", "river", "saddle",
     "thistle", "umber", "valley", "willow", "yonder", "zephyr", "anchor", "bramble", "canyon",
@@ -95,12 +110,12 @@ const WORDS: [&str; 64] = [
     "knoll", "lagoon", "moss", "north", "ocher", "pine",
 ];
 const HEX: &[u8; 16] = b"0123456789abcdef";
-const SERVICES: [&str; 8] = [
+pub(crate) const SERVICES: [&str; 8] = [
     "auth", "billing", "search", "gateway", "ledger", "notify", "storage", "sched",
 ];
 
 /// Prose filler: lowercase words, never a digit.
-fn filler_line(rng: &mut Rng) -> String {
+pub(crate) fn filler_line(rng: &mut Rng) -> String {
     let n = rng.range(6, 13);
     let mut line = String::new();
     for i in 0..n {
@@ -113,12 +128,12 @@ fn filler_line(rng: &mut Rng) -> String {
     line
 }
 
-fn filler_lines(rng: &mut Rng, lo: usize, hi: usize) -> Vec<String> {
+pub(crate) fn filler_lines(rng: &mut Rng, lo: usize, hi: usize) -> Vec<String> {
     let n = rng.range(lo, hi);
     (0..n).map(|_| filler_line(rng)).collect()
 }
 
-fn hex(rng: &mut Rng, n: usize) -> String {
+pub(crate) fn hex(rng: &mut Rng, n: usize) -> String {
     (0..n).map(|_| char::from(HEX[rng.below(16)])).collect()
 }
 
@@ -131,7 +146,23 @@ pub(crate) type Grid = [u8; 81];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Verb {
     BoardInit(Grid),
-    SetCell { mv: u32, cell: u8, digit: u8 },
+    SetCell {
+        mv: u32,
+        cell: u8,
+        digit: u8,
+    },
+    /// The turn carries `res`'s body at `version` (a read, write, open,
+    /// rotation or load the session made). Loop 2.
+    Read {
+        res: String,
+        version: u32,
+    },
+    /// `res` moved to `version` outside the session; the turn carries a
+    /// notice and no body. Loop 2.
+    Changed {
+        res: String,
+        version: u32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -156,12 +187,20 @@ pub(crate) struct Episode {
     pub(crate) seed: u64,
     pub(crate) turns: Vec<Turn>,
     pub(crate) queries: Vec<Query>,
-    expected: Vec<String>,
+    pub(super) expected: Vec<String>,
     /// Whether a wrong non-empty answer to this query can be a hallucination
     /// (an atom the stream never held). Counts cannot.
-    atomic: Vec<bool>,
+    pub(super) atomic: Vec<bool>,
     /// Every answerable atom the stream actually held.
-    present: BTreeSet<String>,
+    pub(super) present: BTreeSet<String>,
+    /// Loop 2: the stream turn after which each query is asked (`None`:
+    /// after the stream, as in loop 1). Parallel to `queries`.
+    pub(crate) ask_at: Vec<Option<usize>>,
+    /// Loop 2: the bucket each query reports under (epoch of origin for
+    /// multi-epoch, need kind for relink). Empty for loop-1 arms.
+    pub(super) origin: Vec<u8>,
+    /// Loop 2: the environment a `get` reads. Empty for loop-1 arms.
+    pub(crate) env: Env,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -202,7 +241,27 @@ impl Episode {
             Arm::Sketchpad => gen_sketchpad(&mut rng),
             Arm::KvOffload => gen_kv(&mut rng),
             Arm::LogTriage => gen_logs(&mut rng),
+            Arm::Relink | Arm::MultiEpoch => {
+                let g = if arm == Arm::Relink {
+                    arms_epoch::gen_relink(&mut rng)
+                } else {
+                    arms_epoch::gen_multi_epoch(&mut rng)
+                };
+                return Self {
+                    arm,
+                    seed,
+                    turns: g.turns,
+                    queries: g.queries,
+                    expected: g.expected,
+                    atomic: g.atomic,
+                    present: g.present,
+                    ask_at: g.ask_at,
+                    origin: g.origin,
+                    env: g.env,
+                };
+            }
         };
+        let n = parts.queries.len();
         Self {
             arm,
             seed,
@@ -211,6 +270,18 @@ impl Episode {
             expected: parts.expected,
             atomic: parts.atomic,
             present: parts.present,
+            ask_at: vec![None; n],
+            origin: Vec::new(),
+            env: Env::default(),
+        }
+    }
+
+    /// Scores answers and adds the loop-2 breakdown (stale answers, the
+    /// per-bucket tallies). Loop-1 arms score exactly as [`Self::score`].
+    pub(crate) fn score_full(&self, answers: &[String]) -> (Score, Extra) {
+        match self.arm {
+            Arm::Relink | Arm::MultiEpoch => arms_epoch::score(self, answers),
+            _ => (self.score(answers), Extra::default()),
         }
     }
 
@@ -259,6 +330,11 @@ impl Episode {
             h.update(q.key.as_bytes());
             h.update(e.as_bytes());
             h.update(b"\0");
+        }
+        // Loop-2 fields only when present, so loop-1 digests are unchanged.
+        if self.ask_at.iter().any(Option::is_some) || !self.env.is_empty() {
+            h.update(format!("{:?}{:?}", self.ask_at, self.origin).as_bytes());
+            self.env.hash_into(&mut h);
         }
         *h.finalize().as_bytes()
     }
@@ -456,7 +532,7 @@ fn fresh_key(rng: &mut Rng, seen: &mut BTreeSet<String>, keys: &mut Vec<String>)
 const LOG_TURNS: usize = 320;
 const ERROR_COUNTS: [usize; 6] = [1, 2, 3, 5, 8, 13];
 
-fn timestamp(ms: u64) -> String {
+pub(crate) fn timestamp(ms: u64) -> String {
     let (h, m, s, milli) = (ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
     format!("2026-10-06T{h:02}:{m:02}:{s:02}.{milli:03}Z")
 }
@@ -594,6 +670,8 @@ pub(crate) fn read(arm: Arm, q: &Query, chunks: &[&str]) -> String {
         }
         Arm::Sketchpad => read_board(&lines.collect::<Vec<_>>()),
         Arm::LogTriage => read_logs(q, &lines.collect::<Vec<_>>()),
+        Arm::Relink => arms_epoch::read_resource(q, &lines.collect::<Vec<_>>()),
+        Arm::MultiEpoch => arms_epoch::read_mixed(q, chunks),
     }
 }
 

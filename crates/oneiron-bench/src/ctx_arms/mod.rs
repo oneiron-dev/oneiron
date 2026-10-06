@@ -20,8 +20,16 @@
 //!
 //! Tune on `dev` only; the goal reads `heldout` only. Seeds, generators,
 //! scorers and the tokenizer stand-in are fixed in code.
+//!
+//! Loop 2 adds the two-surface window (cached prefix, append-only log,
+//! dynamic tail), a `prefix_hit_rate` column (tokens served from an
+//! unchanged cached prefix over all prompt tokens, summed over the turns),
+//! the placement family (canon-placement and its two wrong-placement
+//! controls) and two arms (relink-after-compaction, multi-epoch) whose
+//! queries may come mid-session.
 
 mod arms;
+mod arms_epoch;
 mod board;
 mod strategies;
 mod window;
@@ -29,13 +37,15 @@ mod window;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::process::ExitCode;
 use std::time::Instant;
 
 use arms::{ARMS, Arm, Episode, Score};
+use arms_epoch::Extra;
 use strategies::{STRATEGIES, Strategy};
-use window::{Audit, Ctx, Ledger, RefStore, SpanKind, TOKENIZER, Window};
+use window::{Audit, Caps, Ctx, Ledger, RefStore, SpanKind, TOKENIZER, Window};
 
 pub(crate) const DEV_SEEDS: RangeInclusive<u64> = 1..=20;
 pub(crate) const HELDOUT_SEEDS: RangeInclusive<u64> = 1001..=1020;
@@ -165,6 +175,24 @@ pub(crate) struct EpisodeResult {
     /// Model calls that saw a window over budget.
     pub(crate) over_budget: u64,
     pub(crate) violations: Vec<&'static str>,
+    /// Prompt tokens served from an unchanged cached prefix, summed over
+    /// the turns' model calls.
+    pub(crate) served_tok: u64,
+    /// Every prompt token of those calls.
+    pub(crate) prompt_tok: u64,
+    /// The strict surface reading of the same (see `window::Call::frozen`).
+    pub(crate) frozen_tok: u64,
+    /// Resource bodies the harness fetched from the environment.
+    pub(crate) fetch_tok: u64,
+    /// Stale answers and per-bucket tallies (loop-2 arms).
+    pub(crate) extra: Extra,
+}
+
+impl EpisodeResult {
+    #[cfg(test)]
+    pub(crate) fn hit_rate(&self) -> f64 {
+        self.served_tok as f64 / self.prompt_tok.max(1) as f64
+    }
 }
 
 pub(crate) fn low_water(budget: u64) -> u64 {
@@ -175,8 +203,69 @@ pub(crate) fn run_episode(ep: &Episode, strategy: &mut dyn Strategy, budget: u64
     run_episode_with(ep, strategy, budget, |_| {})
 }
 
-/// Streams the episode through the strategy, then asks every query.
-/// `tamper` runs between the stream and the queries (tests corrupt a
+/// The harness state one episode runs on.
+struct Run<'e> {
+    ep: &'e Episode,
+    win: Window,
+    refs: RefStore,
+    led: Ledger,
+    caps: Caps,
+    budget: u64,
+    res: EpisodeResult,
+    answers: Vec<String>,
+}
+
+impl Run<'_> {
+    /// Asks query `i` at stream turn `turn`: the strategy may edit or fetch
+    /// (mid-session) and names references to restore; the fixed reader
+    /// answers from the restores plus the window it left. A mid-session
+    /// query is a model call, so its window counts against the budget.
+    fn ask(&mut self, strategy: &mut dyn Strategy, i: usize, turn: usize) {
+        let q = &self.ep.queries[i];
+        let mut ids = {
+            let mut ctx = Ctx::new(
+                &mut self.win,
+                &mut self.refs,
+                &mut self.led,
+                self.caps,
+                self.budget,
+                low_water(self.budget),
+            )
+            .with_env(&self.ep.env, turn);
+            strategy.on_query(q, &mut ctx)
+        };
+        if !self.win.ordered() {
+            self.led.violations.push("surface order");
+        }
+        if self.ep.ask_at[i].is_some() {
+            let live = self.win.total();
+            self.res.peak = self.res.peak.max(live);
+            self.res.over_budget += u64::from(live > self.budget);
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let mut chunks: Vec<&str> = Vec::new();
+        let mut read = self.win.total();
+        for id in ids {
+            match self.refs.restore(id) {
+                Ok(spans) => {
+                    let tok = self.refs.meta(id).map_or(0, |m| m.tok);
+                    self.res.restore_tok += tok;
+                    read += tok;
+                    chunks.extend(spans.into_iter().map(|(_, text)| text));
+                }
+                Err(_) => self.res.restore_fail = true,
+            }
+        }
+        self.res.read_peak = self.res.read_peak.max(read);
+        chunks.extend(self.win.spans().iter().map(window::Span::text));
+        self.answers[i] = arms::read(self.ep.arm, q, &chunks);
+    }
+}
+
+/// Streams the episode through the strategy, asking each mid-session query
+/// right after its turn's model call, then asks the rest. `tamper` runs
+/// between the stream and the end-of-session queries (tests corrupt a
 /// reference there to prove the arm fails).
 pub(crate) fn run_episode_with(
     ep: &Episode,
@@ -184,79 +273,87 @@ pub(crate) fn run_episode_with(
     budget: u64,
     tamper: impl FnOnce(&mut RefStore),
 ) -> EpisodeResult {
-    let mut win = Window::default();
-    let mut refs = RefStore::default();
-    let mut led = Ledger::default();
-    let caps = strategy.caps();
-    let mut res = EpisodeResult::default();
+    let mut run = Run {
+        ep,
+        win: Window::default(),
+        refs: RefStore::default(),
+        led: Ledger::default(),
+        caps: strategy.caps(),
+        budget,
+        res: EpisodeResult::default(),
+        answers: vec![String::new(); ep.queries.len()],
+    };
+    let mut mid: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (i, at) in ep.ask_at.iter().enumerate() {
+        if let Some(t) = at {
+            mid.entry(*t).or_default().push(i);
+        }
+    }
     let mut window_sum = 0_u64;
     for (n, turn) in ep.turns.iter().enumerate() {
-        win.push(SpanKind::Turn(n as u32), turn.text.clone());
-        let mut ctx = Ctx::new(
-            &mut win,
-            &mut refs,
-            &mut led,
-            caps,
-            budget,
-            low_water(budget),
-        );
-        if let Some(verb) = &turn.verb {
-            strategy.on_verb(verb, &mut ctx);
-        }
-        strategy.on_turn(&mut ctx);
-        res.reprefill_tok += win.checkpoint();
-        let live = win.total();
-        res.peak = res.peak.max(live);
-        window_sum += live;
-        res.over_budget += u64::from(live > budget);
-    }
-    res.mean = window_sum as f64 / ep.turns.len().max(1) as f64;
-    res.read_peak = res.peak;
-    tamper(&mut refs);
-
-    let mut answers = Vec::with_capacity(ep.queries.len());
-    for q in &ep.queries {
-        let mut ids = {
-            let ctx = Ctx::new(
-                &mut win,
-                &mut refs,
-                &mut led,
-                caps,
+        run.win.push(SpanKind::Turn(n as u32), turn.text.clone());
+        {
+            let mut ctx = Ctx::new(
+                &mut run.win,
+                &mut run.refs,
+                &mut run.led,
+                run.caps,
                 budget,
                 low_water(budget),
-            );
-            strategy.on_query(q, &ctx)
-        };
-        ids.sort_unstable();
-        ids.dedup();
-        let mut chunks: Vec<&str> = Vec::new();
-        let mut read = win.total();
-        for id in ids {
-            match refs.restore(id) {
-                Ok(spans) => {
-                    let tok = refs.meta(id).map_or(0, |m| m.tok);
-                    res.restore_tok += tok;
-                    read += tok;
-                    chunks.extend(spans.into_iter().map(|(_, text)| text));
-                }
-                Err(_) => res.restore_fail = true,
+            )
+            .with_env(&ep.env, n);
+            if let Some(verb) = &turn.verb {
+                strategy.on_verb(verb, &mut ctx);
             }
+            strategy.on_turn(&mut ctx);
         }
-        res.read_peak = res.read_peak.max(read);
-        chunks.extend(win.spans().iter().map(window::Span::text));
-        answers.push(arms::read(ep.arm, q, &chunks));
+        if !run.win.ordered() {
+            run.led.violations.push("surface order");
+        }
+        let call = run.win.call();
+        run.res.reprefill_tok += call.reprefill;
+        run.res.served_tok += call.served;
+        run.res.prompt_tok += call.total;
+        run.res.frozen_tok += call.frozen;
+        let live = run.win.total();
+        run.res.peak = run.res.peak.max(live);
+        window_sum += live;
+        run.res.over_budget += u64::from(live > budget);
+        for &i in mid.get(&n).map_or(&[][..], Vec::as_slice) {
+            run.ask(strategy, i, n);
+        }
+    }
+    run.res.mean = window_sum as f64 / ep.turns.len().max(1) as f64;
+    run.res.read_peak = run.res.read_peak.max(run.res.peak);
+    tamper(&mut run.refs);
+    let last = ep.turns.len().saturating_sub(1);
+    for i in 0..ep.queries.len() {
+        if ep.ask_at[i].is_none() {
+            run.ask(strategy, i, last);
+        }
     }
 
+    let Run {
+        refs,
+        led,
+        mut res,
+        answers,
+        ..
+    } = run;
     res.audit = led.audit(&refs);
     res.restore_fail |= res.audit.broken_reference();
-    res.score = ep.score(&answers);
+    let (score, extra) = ep.score_full(&answers);
+    res.score = score;
+    res.extra = extra;
     // OF-546 note 3 / OF-190: a reference that cannot restore its span
-    // byte-exactly fails the offload arm by construction.
-    if ep.arm == Arm::KvOffload && res.restore_fail {
+    // byte-exactly fails the offload arm by construction, and (loop 2) the
+    // relink and multi-epoch arms, whose answers ride the same references.
+    if matches!(ep.arm, Arm::KvOffload | Arm::Relink | Arm::MultiEpoch) && res.restore_fail {
         res.score.value = 0.0;
         res.score.correct = 0;
     }
     res.edit_tok = led.edit_tok;
+    res.fetch_tok = led.fetch_tok;
     res.violations = led.violations;
     res
 }
@@ -280,6 +377,12 @@ pub(crate) struct Cell {
     restore_fail: u64,
     violations: usize,
     elapsed_ms: f64,
+    served: u64,
+    prompt: u64,
+    frozen: u64,
+    fetch: u64,
+    stale: u64,
+    buckets: Vec<(u64, u64)>,
 }
 
 impl Cell {
@@ -300,6 +403,31 @@ impl Cell {
         self.restore_fail += u64::from(r.restore_fail);
         self.violations += r.violations.len();
         self.elapsed_ms += elapsed_ms;
+        self.served += r.served_tok;
+        self.prompt += r.prompt_tok;
+        self.frozen += r.frozen_tok;
+        self.fetch += r.fetch_tok;
+        self.stale += u64::from(r.extra.stale);
+        if self.buckets.len() < r.extra.buckets.len() {
+            self.buckets.resize(r.extra.buckets.len(), (0, 0));
+        }
+        for (cell, (ok, n)) in self.buckets.iter_mut().zip(&r.extra.buckets) {
+            cell.0 += u64::from(*ok);
+            cell.1 += u64::from(*n);
+        }
+    }
+
+    /// Tokens served from an unchanged cached prefix over all prompt
+    /// tokens, summed over every turn of every episode.
+    pub(crate) fn hit_rate(&self) -> f64 {
+        self.served as f64 / self.prompt.max(1) as f64
+    }
+
+    /// The strict surface reading: prefix-surface tokens on calls whose
+    /// prefix surface was byte-identical to the previous call's, over all
+    /// prompt tokens.
+    pub(crate) fn frozen_rate(&self) -> f64 {
+        self.frozen as f64 / self.prompt.max(1) as f64
     }
 
     /// Every episode ran, no operation was refused, and no model call saw a
@@ -326,8 +454,11 @@ impl Cell {
 }
 
 /// In-binary self-checks behind the summary line's `tests` field: every
-/// generator is deterministic and distinct across seeds, and the fixed reader
-/// over the full stream answers every query exactly on every seed. `cargo
+/// generator is deterministic and distinct across seeds, the fixed reader
+/// over the stream (up to each query's turn, plus for relink the needed
+/// body as the environment holds it) answers every query exactly on every
+/// seed, and the loop-2 arms hold their structural invariants (every relink
+/// need post-compaction, every multi-epoch segment over budget). `cargo
 /// test -p oneiron-bench` is run separately.
 fn self_checks(seeds: &RangeInclusive<u64>) -> Result<(), String> {
     for arm in ARMS {
@@ -341,13 +472,9 @@ fn self_checks(seeds: &RangeInclusive<u64>) -> Result<(), String> {
                 ));
             }
             digests.insert(ep.digest());
-            let full: Vec<&str> = ep.turns.iter().map(|t| t.text.as_str()).collect();
-            let answers: Vec<String> = ep
-                .queries
-                .iter()
-                .map(|q| arms::read(arm, q, &full))
-                .collect();
-            let score = ep.score(&answers);
+            arms_epoch::check(&ep).map_err(|e| format!("{} seed {seed}: {e}", arm.name()))?;
+            let answers = arms_epoch::oracle_answers(&ep);
+            let score = ep.score_full(&answers).0;
             if score.correct != score.total {
                 return Err(format!(
                     "{} seed {}: full-stream oracle {}/{}",
@@ -414,10 +541,19 @@ fn report(opts: &Options) {
     );
     println!(
         "columns: token columns are per-episode means; peak_tok (live window at a model call) and read_peak (window + all pages restored for one query) are maxima; \
-         over, halluc and rfail are totals over the split"
+         over, halluc, stale and rfail are totals over the split"
     );
     println!(
-        "{:<18} {:<17} {:>6} {:>9} {:>8} {:>8} {:>9} {:>13} {:>11} {:>8} {:>5} {:>6} {:>5} {:>8}",
+        "prefix_hit: tokens served from an unchanged cached prefix / all prompt tokens, summed over every turn's model call. \
+         A call's prompt is prefix + log + tail; it is served from cache up to the first byte that differs from the previous call's prompt, \
+         and never past where the previous call's dynamic tail began (the tail is never cached). fetch_tok: bodies the harness fetched from the environment"
+    );
+    println!(
+        "frozen (CTX2 lines only): the strict surface reading. A call counts its prefix-surface tokens only when the prefix surface is \
+         byte-identical to the previous call's; the append-only log never counts. Loop-1 strategies have no prefix surface, so they read 0"
+    );
+    println!(
+        "{:<23} {:<16} {:>6} {:>9} {:>8} {:>8} {:>9} {:>13} {:>10} {:>11} {:>9} {:>8} {:>5} {:>6} {:>5} {:>5} {:>8}",
         "arm",
         "strategy",
         "score",
@@ -426,10 +562,13 @@ fn report(opts: &Options) {
         "mean_tok",
         "edit_tok",
         "reprefill_tok",
+        "prefix_hit",
         "restore_tok",
+        "fetch_tok",
         "read_peak",
         "over",
         "halluc",
+        "stale",
         "rfail",
         "ms"
     );
@@ -459,14 +598,20 @@ fn report(opts: &Options) {
 
     let engine_cells = cells
         .iter()
-        .filter(|(_, name, c)| *name == "engine-board" && c.ran)
+        .filter(|(_, name, c)| {
+            matches!(
+                *name,
+                "engine-board" | "canon-placement" | "board-in-prefix" | "keyframe-in-tail"
+            ) && c.ran
+        })
         .count();
     println!(
-        "engine-board: {}",
+        "engine board render: {}",
         if engine_cells > 0 {
             format!(
-                "RAN on {engine_cells} arm(s) via oneiron::context_board::render_board_block \
-                 (typed state -> dynamic tail; zero oneiron-server plumbing)"
+                "RAN on {engine_cells} cell(s) via oneiron::context_board::render_board_block \
+                 (typed state -> board; the placement family adds the engine SessionReadSet changed line and SKILLS section; \
+                 zero oneiron-server plumbing)"
             )
         } else {
             "did not run (not selected)".to_owned()
@@ -482,11 +627,92 @@ fn report(opts: &Options) {
         .filter(|s| cells.iter().any(|(_, name, c)| name == *s && valid(c)))
         .count();
     let cells_valid = cells.iter().filter(|(_, _, c)| valid(c)).count();
+    let n_cells = ARMS.len() * STRATEGIES.len();
+    let tests = if checks.is_ok() { "pass" } else { "fail" };
     println!(
-        "{} | arms {arms_scored}/4 | strategies {strategies_scored} | cells {cells_valid}/20 | tests {}",
+        "{} | arms {arms_scored}/{} | strategies {strategies_scored} | cells {cells_valid}/{n_cells} | tests {tests}",
         opts.split.tag(),
-        if checks.is_ok() { "pass" } else { "fail" }
+        ARMS.len()
     );
+    println!(
+        "CTX2-{} | arms {arms_scored}/{} | strategies {strategies_scored}/{} | cells {cells_valid}/{n_cells} | tests {tests}",
+        opts.split.name().to_uppercase(),
+        ARMS.len(),
+        STRATEGIES.len()
+    );
+    for name in STRATEGIES {
+        let per_arm: Vec<String> = cells
+            .iter()
+            .filter(|(_, s, c)| *s == name && c.ran)
+            .map(|(arm, _, c)| {
+                format!(
+                    "{} {:.3} er {:.3} rp {} hit {:.3} frozen {:.3}{}",
+                    arm.name(),
+                    c.score(),
+                    c.exact_restore(),
+                    c.per_episode(c.reprefill),
+                    c.hit_rate(),
+                    c.frozen_rate(),
+                    if valid(c) { "" } else { " INVALID" }
+                )
+            })
+            .collect();
+        if !per_arm.is_empty() {
+            println!("CTX2-STRATEGY {name} | {}", per_arm.join(" | "));
+        }
+    }
+    for (arm, name, c) in &cells {
+        if !c.ran || c.buckets.is_empty() {
+            continue;
+        }
+        let label = |b: usize| match arm {
+            Arm::Relink => ["one-version", "rewritten", "external"]
+                .get(b)
+                .map_or_else(|| format!("k{b}"), |s| (*s).to_owned()),
+            _ => format!("e{}", b + 1),
+        };
+        let parts: Vec<String> = c
+            .buckets
+            .iter()
+            .enumerate()
+            .map(|(b, (ok, n))| {
+                format!(
+                    "{} {:.3} ({ok}/{n})",
+                    label(b),
+                    *ok as f64 / (*n).max(1) as f64
+                )
+            })
+            .collect();
+        println!(
+            "CTX2-BUCKETS {} {name} | {} | stale {}",
+            arm.name(),
+            parts.join(" | "),
+            c.stale
+        );
+    }
+    for arm in ARMS {
+        let get = |s: &str| cells.iter().find(|(a, n, c)| *a == arm && *n == s && c.ran);
+        if let Some((_, _, canon)) = get("canon-placement") {
+            let mut parts = vec![format!(
+                "canon rp {} hit {:.3} frozen {:.3}",
+                canon.per_episode(canon.reprefill),
+                canon.hit_rate(),
+                canon.frozen_rate()
+            )];
+            for control in ["board-in-prefix", "keyframe-in-tail"] {
+                if let Some((_, _, c)) = get(control) {
+                    parts.push(format!(
+                        "{control} rp {} ({:.2}x) hit {:.3} frozen {:.3}",
+                        c.per_episode(c.reprefill),
+                        c.reprefill as f64 / canon.reprefill.max(1) as f64,
+                        c.hit_rate(),
+                        c.frozen_rate()
+                    ));
+                }
+            }
+            println!("CTX2-PLACEMENT {} | {}", arm.name(), parts.join(" | "));
+        }
+    }
     let best: Vec<String> = ARMS
         .iter()
         .map(|arm| {
@@ -515,11 +741,11 @@ fn print_cell(arm: Arm, name: &str, c: &Cell, selected: bool) {
         } else {
             "not selected"
         };
-        println!("{:<18} {name:<17} -- not run ({why})", arm.name());
+        println!("{:<23} {name:<16} -- not run ({why})", arm.name());
         return;
     }
     println!(
-        "{:<18} {name:<17} {:>6.3} {:>9.3} {:>8} {:>8.0} {:>9} {:>13} {:>11} {:>8} {:>5} {:>6} {:>5} {:>8.0}{}",
+        "{:<23} {name:<16} {:>6.3} {:>9.3} {:>8} {:>8.0} {:>9} {:>13} {:>10.3} {:>11} {:>9} {:>8} {:>5} {:>6} {:>5} {:>5} {:>8.0}{}",
         arm.name(),
         c.score(),
         c.exact_restore(),
@@ -527,10 +753,13 @@ fn print_cell(arm: Arm, name: &str, c: &Cell, selected: bool) {
         c.mean_sum / c.episodes.max(1) as f64,
         c.per_episode(c.edit),
         c.per_episode(c.reprefill),
+        c.hit_rate(),
         c.per_episode(c.restore),
+        c.per_episode(c.fetch),
         c.read_peak,
         c.over_budget,
         c.hallucinated,
+        c.stale,
         c.restore_fail,
         c.elapsed_ms,
         if c.violations > 0 {

@@ -9,16 +9,23 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use super::arms::{Grid, Query, Verb, snapshot_lines};
-use super::window::{Caps, Ctx, Span, SpanKind};
+use oneiron::context_board::{ServedLifecycle, SessionReadSet};
 
-/// The five named strategies, in report order.
-pub(crate) const STRATEGIES: [&str; 5] = [
+use super::arms::{Grid, Query, Verb, snapshot_lines};
+use super::board::{CanonBoard, Held, ResRow};
+use super::window::{Caps, Ctx, Link, Place, Span, SpanKind, Surface};
+
+/// The named strategies, in report order. The last three are loop 2's
+/// placement family.
+pub(crate) const STRATEGIES: [&str; 8] = [
     "truncate",
     "fifo-fold",
     "recoverable-fold",
     "free-file",
     "engine-board",
+    "canon-placement",
+    "board-in-prefix",
+    "keyframe-in-tail",
 ];
 
 pub(crate) trait Strategy {
@@ -35,8 +42,10 @@ pub(crate) trait Strategy {
     fn on_turn(&mut self, ctx: &mut Ctx<'_>);
 
     /// References to restore before the reader answers `query`. The live
-    /// window is always visible; nothing else is.
-    fn on_query(&mut self, query: &Query, ctx: &Ctx<'_>) -> Vec<u32> {
+    /// window is always visible; nothing else is. A query may come
+    /// mid-session (loop 2); a strategy holding the capabilities may edit
+    /// or fetch here, and the window it leaves is the one read.
+    fn on_query(&mut self, query: &Query, ctx: &mut Ctx<'_>) -> Vec<u32> {
         let _ = (query, ctx);
         Vec::new()
     }
@@ -49,6 +58,9 @@ pub(crate) fn build(name: &str) -> Option<Box<dyn Strategy>> {
         "recoverable-fold" => Some(Box::new(RecoverableFold::new(Box::new(OldestFirst)))),
         "free-file" => Some(Box::new(FreeFile::default())),
         "engine-board" => Some(Box::new(EngineBoard::new(Box::new(OldestFirst)))),
+        "canon-placement" => Some(Box::new(CanonPlacement::new(Layout::Canon))),
+        "board-in-prefix" => Some(Box::new(CanonPlacement::new(Layout::BoardInPrefix))),
+        "keyframe-in-tail" => Some(Box::new(CanonPlacement::new(Layout::KeyframeInTail))),
         _ => None,
     }
 }
@@ -175,6 +187,7 @@ impl Sketch {
                 self.version = mv;
                 Some(usize::from(cell) / 9)
             }
+            Verb::Read { .. } | Verb::Changed { .. } => None,
         }
     }
 
@@ -362,7 +375,7 @@ impl Strategy for RecoverableFold {
         });
     }
 
-    fn on_query(&mut self, query: &Query, ctx: &Ctx<'_>) -> Vec<u32> {
+    fn on_query(&mut self, query: &Query, ctx: &mut Ctx<'_>) -> Vec<u32> {
         ctx.grep_refs(&query.key)
     }
 }
@@ -529,14 +542,8 @@ impl Strategy for EngineBoard {
     }
 
     fn on_verb(&mut self, verb: &Verb, ctx: &mut Ctx<'_>) {
-        let call = match *verb {
-            Verb::BoardInit(grid) => {
-                let digits: String = grid.iter().map(|d| char::from(b'0' + d)).collect();
-                format!("board.init {digits}")
-            }
-            Verb::SetCell { cell, digit, .. } => {
-                format!("board.set r{}c{}={digit}", cell / 9 + 1, cell % 9 + 1)
-            }
+        let Some(call) = board_call(verb) else {
+            return;
         };
         self.sketch.apply(verb);
         ctx.charge_verb(&call);
@@ -559,7 +566,401 @@ impl Strategy for EngineBoard {
         self.board_tok = ctx.render_board(self.sketch.typed());
     }
 
-    fn on_query(&mut self, query: &Query, ctx: &Ctx<'_>) -> Vec<u32> {
+    fn on_query(&mut self, query: &Query, ctx: &mut Ctx<'_>) -> Vec<u32> {
+        ctx.grep_refs(&query.key)
+    }
+}
+
+/// The typed `board.*` call an agent emits for a sketchpad move. Resource
+/// events are the session's own tool calls, not context management.
+fn board_call(verb: &Verb) -> Option<String> {
+    match verb {
+        Verb::BoardInit(grid) => {
+            let digits: String = grid.iter().map(|d| char::from(b'0' + d)).collect();
+            Some(format!("board.init {digits}"))
+        }
+        Verb::SetCell { cell, digit, .. } => Some(format!(
+            "board.set r{}c{}={digit}",
+            cell / 9 + 1,
+            cell % 9 + 1
+        )),
+        Verb::Read { .. } | Verb::Changed { .. } => None,
+    }
+}
+
+/// Where the placement family writes its two harness renders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Layout {
+    /// ARCH-0067 §2: keyframe on the cached prefix, board on the tail.
+    Canon,
+    /// Wrong-placement control: the board on the prefix too, so each
+    /// turn's re-render rewrites the prefix and everything after it.
+    BoardInPrefix,
+    /// Wrong-placement control: the keyframe on the tail, re-emitted with
+    /// the board every turn.
+    KeyframeInTail,
+}
+
+impl Layout {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Canon => "canon-placement",
+            Self::BoardInPrefix => "board-in-prefix",
+            Self::KeyframeInTail => "keyframe-in-tail",
+        }
+    }
+
+    const fn keyframe(self) -> Place {
+        match self {
+            Self::KeyframeInTail => Place::Tail,
+            _ => Place::Prefix,
+        }
+    }
+
+    const fn board(self) -> Place {
+        match self {
+            Self::BoardInPrefix => Place::Prefix,
+            _ => Place::Tail,
+        }
+    }
+}
+
+/// The prefix inventory's budget in tokens (a strategy knob, tuned on dev):
+/// looser than the board's, far under the window's.
+pub(crate) const INVENTORY_TOK: u64 = 2_048;
+
+/// What the strategy knows about one resource, from typed events only.
+#[derive(Clone, Debug, Default)]
+struct Res {
+    /// The newest version the session knows exists.
+    current: u32,
+    /// The newest version whose body the session was served.
+    served: u32,
+    uses: u32,
+    last: usize,
+    /// The stream turn whose span held the newest body the stream showed,
+    /// with that body's version.
+    body_turn: Option<(usize, u32)>,
+    /// The span holding the newest body the session saw (a stream turn or
+    /// a fetch), with its version.
+    live: Option<(u64, u32)>,
+    /// The version resident on the prefix inventory, if any.
+    resident: Option<u32>,
+}
+
+fn not_log(span: &Span) -> bool {
+    span.surface() != Surface::Log
+}
+
+/// The placement family (OF-546 loop 2, ARCH-0067 §2). An epoch closes when
+/// the window would exceed its budget (or every `every` turns): the oldest
+/// log spans fold into harness-minted references (byte-exact, never
+/// deleted), the prefix inventory is re-selected (pinned + most-used +
+/// recent within [`INVENTORY_TOK`]; the harness fetches the resident bodies
+/// at their current version, every other resource gets a link row), and the
+/// keyframe (the reference index) is rewritten. Within an epoch the prefix
+/// never changes. Every turn the board is re-rendered from typed state
+/// through `render_board_block`. A need for a resource whose current body is
+/// neither live in the log nor resident is met with one `get`: the engine
+/// read set's changed line is what flags a resident copy as superseded.
+/// The three layouts differ only in where the keyframe and the board land.
+pub(crate) struct CanonPlacement {
+    layout: Layout,
+    policy: Box<dyn Policy>,
+    /// Force an epoch close every this many turns (`None`: only when the
+    /// window would exceed its budget).
+    every: Option<u32>,
+    inventory_tok: u64,
+    sketch: Sketch,
+    epoch: u64,
+    since_close: u32,
+    /// Every reference minted, with the epoch that minted it.
+    minted: Vec<(u32, u64)>,
+    res: BTreeMap<String, Res>,
+    read_set: SessionReadSet,
+    tail_tok: u64,
+}
+
+impl CanonPlacement {
+    pub(crate) fn new(layout: Layout) -> Self {
+        Self::with(layout, Box::new(OldestFirst), None, INVENTORY_TOK)
+    }
+
+    pub(crate) fn with(
+        layout: Layout,
+        policy: Box<dyn Policy>,
+        every: Option<u32>,
+        inventory_tok: u64,
+    ) -> Self {
+        Self {
+            layout,
+            policy,
+            every,
+            inventory_tok,
+            sketch: Sketch::default(),
+            epoch: 0,
+            since_close: 0,
+            minted: Vec::new(),
+            res: BTreeMap::new(),
+            read_set: SessionReadSet::default(),
+            tail_tok: 0,
+        }
+    }
+
+    /// Epochs closed so far.
+    #[cfg(test)]
+    pub(crate) const fn epochs(&self) -> u64 {
+        self.epoch
+    }
+
+    fn serve(&mut self, name: &str, version: u32) {
+        if let Some(r) = self.res.get_mut(name) {
+            r.served = r.served.max(version);
+        }
+        self.read_set.served(name, ServedLifecycle::Active);
+        if name.starts_with("skill:") {
+            self.read_set.loaded_skill(name, format!("v{version}"));
+        }
+    }
+
+    fn live_now(r: &Res, ctx: &Ctx<'_>) -> bool {
+        r.live
+            .is_some_and(|(id, v)| v == r.current && ctx.index_of(id).is_some())
+    }
+
+    /// Where the current body is, typed: resident, live, inside a
+    /// reference (found by the reference's typed turn range), or only in
+    /// the environment.
+    fn held(r: &Res, ctx: &Ctx<'_>) -> Held {
+        if r.resident == Some(r.current) {
+            return Held::Prefix;
+        }
+        if Self::live_now(r, ctx) {
+            return Held::Log;
+        }
+        if let Some((t, v)) = r.body_turn
+            && v == r.current
+            && let Some(m) = ctx.ref_metas().iter().find(|m| {
+                m.turns
+                    .is_some_and(|(a, b)| a as usize <= t && t <= b as usize)
+            })
+        {
+            return Held::Ref(m.id);
+        }
+        Held::Get
+    }
+
+    fn rows(&self, ctx: &Ctx<'_>) -> Vec<ResRow> {
+        self.res
+            .iter()
+            .map(|(name, r)| ResRow {
+                name: name.clone(),
+                current: r.current,
+                served: r.served,
+                held: Self::held(r, ctx),
+            })
+            .collect()
+    }
+
+    /// Re-selects the prefix inventory: the most-used, then most recent
+    /// resources whose current bodies fit [`Self::inventory_tok`] are made
+    /// resident; the rest get link rows.
+    fn relink(&mut self, ctx: &mut Ctx<'_>) {
+        if self.res.is_empty() {
+            return;
+        }
+        let mut ranked: Vec<(&String, &Res)> = self.res.iter().collect();
+        ranked.sort_by(|(an, a), (bn, b)| {
+            b.uses
+                .cmp(&a.uses)
+                .then(b.last.cmp(&a.last))
+                .then(an.cmp(bn))
+        });
+        let mut resident = Vec::new();
+        let mut links = Vec::new();
+        let mut used = 0;
+        for (name, r) in ranked {
+            let cost = ctx.fetch_cost(name).unwrap_or(u64::MAX);
+            if used + cost <= self.inventory_tok {
+                used += cost;
+                resident.push(name.clone());
+            } else {
+                let link = match Self::held(r, ctx) {
+                    Held::Ref(id) => Link::Ref(id),
+                    _ => Link::Get,
+                };
+                links.push((name.clone(), r.current, link));
+            }
+        }
+        let held = ctx.place_inventory(&resident, &links);
+        for r in self.res.values_mut() {
+            r.resident = None;
+        }
+        for (name, version) in held {
+            if let Some(r) = self.res.get_mut(&name) {
+                r.resident = Some(version);
+                r.current = r.current.max(version);
+            }
+            self.serve(&name, version);
+        }
+    }
+
+    /// Closes an epoch: fold the oldest log spans into references until the
+    /// window (plus `tail` tokens about to be rendered and `extra` about to
+    /// be fetched) sits at the low-water mark, re-select the inventory,
+    /// rewrite the keyframe.
+    fn close_epoch(&mut self, ctx: &mut Ctx<'_>, tail: u64, extra: u64) {
+        self.epoch += 1;
+        self.since_close = 0;
+        let inventory = if self.res.is_empty() {
+            0
+        } else {
+            self.inventory_tok + 16 * self.res.len() as u64
+        };
+        let need = ctx.tokens() + tail + extra + inventory;
+        if need > ctx.low_water() {
+            let mut minted = Vec::new();
+            move_out(
+                ctx,
+                self.policy.as_mut(),
+                &not_log,
+                need - ctx.low_water(),
+                |ctx, r| {
+                    if let Some(id) = ctx.fold_to_keyframe(r) {
+                        minted.push(id);
+                    }
+                },
+            );
+            minted.sort_unstable();
+            self.minted
+                .extend(minted.into_iter().map(|id| (id, self.epoch)));
+        }
+        self.relink(ctx);
+        if self.layout.keyframe() == Place::Prefix {
+            ctx.place_keyframe(Place::Prefix, self.epoch, &self.minted);
+        }
+    }
+
+    /// Renders this turn's tail (and, for the prefix-board control, the
+    /// prefix board) from typed state.
+    fn render(&mut self, ctx: &mut Ctx<'_>) {
+        let rows = self.rows(ctx);
+        let mut tail = 0;
+        if self.layout.keyframe() == Place::Tail && self.epoch > 0 {
+            tail += ctx.place_keyframe(Place::Tail, self.epoch, &self.minted);
+        }
+        let state = CanonBoard {
+            epoch: self.epoch,
+            turn: ctx.turn(),
+            sketch: self.sketch.typed(),
+            resources: &rows,
+            read_set: &self.read_set,
+        };
+        let board = ctx.place_board(self.layout.board(), &state);
+        if self.layout.board() == Place::Tail {
+            tail += board;
+        }
+        self.tail_tok = tail;
+    }
+
+    /// Meets a need for `name`: nothing when its current body is live or
+    /// resident, else one `get` (closing an epoch first if the body would
+    /// not fit).
+    fn need(&mut self, name: &str, ctx: &mut Ctx<'_>) {
+        let turn = ctx.turn();
+        let Some(r) = self.res.get_mut(name) else {
+            return;
+        };
+        r.uses += 1;
+        r.last = turn;
+        let r = r.clone();
+        if r.resident == Some(r.current) || Self::live_now(&r, ctx) {
+            return;
+        }
+        let cost = ctx.fetch_cost(name).unwrap_or(0);
+        if ctx.tokens() + cost > ctx.budget() {
+            self.close_epoch(ctx, 0, cost);
+            if self
+                .res
+                .get(name)
+                .is_some_and(|r| r.resident == Some(r.current))
+            {
+                return;
+            }
+        }
+        if let Some((version, id)) = ctx.get(name) {
+            if let Some(r) = self.res.get_mut(name) {
+                r.live = Some((id, version));
+                r.current = r.current.max(version);
+            }
+            self.serve(name, version);
+        }
+    }
+}
+
+impl Strategy for CanonPlacement {
+    fn name(&self) -> &'static str {
+        self.layout.name()
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            offload: true,
+            board: true,
+            prefix: true,
+            get: true,
+            ..Caps::default()
+        }
+    }
+
+    fn on_verb(&mut self, verb: &Verb, ctx: &mut Ctx<'_>) {
+        match verb {
+            Verb::Read { res, version } => {
+                let turn = ctx.turn();
+                let span = ctx.spans().last().map(Span::id);
+                let r = self.res.entry(res.clone()).or_default();
+                r.current = r.current.max(*version);
+                r.uses += 1;
+                r.last = turn;
+                r.body_turn = Some((turn, *version));
+                r.live = span.map(|id| (id, *version));
+                self.serve(res, *version);
+            }
+            Verb::Changed { res, version } => {
+                let r = self.res.entry(res.clone()).or_default();
+                r.current = r.current.max(*version);
+            }
+            Verb::BoardInit(_) | Verb::SetCell { .. } => {
+                if let Some(call) = board_call(verb) {
+                    self.sketch.apply(verb);
+                    ctx.charge_verb(&call);
+                }
+            }
+        }
+    }
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        self.since_close += 1;
+        ctx.clear_tail();
+        let forced = self.every.is_some_and(|k| self.since_close >= k);
+        if forced || ctx.tokens() + self.tail_tok > ctx.budget() {
+            self.close_epoch(ctx, self.tail_tok, 0);
+        }
+        self.render(ctx);
+        if ctx.tokens() > ctx.budget() {
+            ctx.clear_tail();
+            self.close_epoch(ctx, self.tail_tok, 0);
+            self.render(ctx);
+        }
+    }
+
+    fn on_query(&mut self, query: &Query, ctx: &mut Ctx<'_>) -> Vec<u32> {
+        if let Some(name) = query.key.strip_suffix('@')
+            && self.res.contains_key(name)
+        {
+            self.need(name, ctx);
+            return Vec::new();
+        }
         ctx.grep_refs(&query.key)
     }
 }
