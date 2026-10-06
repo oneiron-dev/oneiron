@@ -49,6 +49,13 @@ struct Entry {
     replacement: Option<Vec<u8>>,
 }
 
+impl Entry {
+    /// A ZIP directory entry (`xl/`) names a folder, not a part.
+    fn is_directory(&self) -> bool {
+        self.name.ends_with('/')
+    }
+}
+
 /// A retained OPC package. It owns the original ZIP, including unreachable
 /// entries, central-directory metadata, comments and untouched local records.
 #[derive(Debug, Clone)]
@@ -64,7 +71,9 @@ pub struct Package {
 impl Package {
     /// Open a single-disk, non-ZIP64 OPC package under explicit limits.
     /// Supported payload methods are STORED and DEFLATE. Every entry is CRC
-    /// checked; duplicate, unsafe or ambiguous names are rejected.
+    /// checked; duplicate, unsafe or ambiguous names are rejected. An empty
+    /// entry whose name ends in `/` is a ZIP directory entry: its folder path
+    /// passes the same checks, and the archive keeps it, but it is no part.
     pub fn open(source: &[u8], limits: Limits) -> Result<Self> {
         if [
             limits.archive_bytes,
@@ -154,14 +163,23 @@ impl Package {
                 .ok_or(Error::Invalid("name bounds"))?;
             let name = std::str::from_utf8(name_bytes)
                 .map_err(|_| Error::Invalid("non-UTF8 entry name"))?;
-            if name.is_empty()
-                || name.starts_with('/')
-                || name.contains('\\')
-                || name.contains('\0')
-                || name
+            // A directory entry (`xl/`) is empty, and its folder path takes the
+            // part-name checks, so it also collides with a part of that name.
+            let path = match name.strip_suffix('/') {
+                Some(_) if uncompressed != 0 => {
+                    return Err(Error::Invalid("directory entry with content"));
+                }
+                Some(folder) => folder,
+                None => name,
+            };
+            if path.is_empty()
+                || path.starts_with('/')
+                || path.contains('\\')
+                || path.contains('\0')
+                || path
                     .split('/')
                     .any(|part| part == ".." || part == "." || part.is_empty())
-                || !seen.insert(name.to_ascii_lowercase())
+                || !seen.insert(path.to_ascii_lowercase())
             {
                 return Err(Error::Invalid("unsafe or duplicate entry name"));
             }
@@ -323,16 +341,20 @@ impl Package {
         self.limits
     }
 
-    /// Names in central-directory order, including unreachable entries.
+    /// Part names in central-directory order, including unreachable parts.
+    /// Directory entries stay in the archive and every export, unnamed here.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.entries.iter().map(|entry| entry.name.as_str())
+        self.entries
+            .iter()
+            .filter(|entry| !entry.is_directory())
+            .map(|entry| entry.name.as_str())
     }
 
     /// Returns verified expanded bytes for one part.
     pub fn part(&self, name: &str) -> Result<Option<Vec<u8>>> {
         self.entries
             .iter()
-            .find(|entry| entry.name == name)
+            .find(|entry| entry.name == name && !entry.is_directory())
             .map(|entry| self.expanded(entry))
             .transpose()
     }
@@ -793,6 +815,117 @@ mod tests {
                 method => panic!("unexpected fixture method {method}"),
             };
             assert_eq!(package.part(&entry.name).expect("part"), Some(expanded));
+        }
+    }
+
+    /// A ZIP of `entries`; an empty entry named `…/` is a directory entry.
+    fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, data) in entries {
+            if name.ends_with('/') && data.is_empty() {
+                zip.add_directory(*name, zip::write::FileOptions::default())
+                    .expect("directory entry");
+            } else {
+                zip.start_file(*name, zip::write::FileOptions::default())
+                    .expect("entry header");
+                zip.write_all(data).expect("entry bytes");
+            }
+        }
+        zip.finish().expect("archive").into_inner()
+    }
+
+    const TYPES: (&str, &[u8]) = (
+        "[Content_Types].xml",
+        b"<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>",
+    );
+
+    fn limits() -> Limits {
+        Limits {
+            archive_bytes: 1024 * 1024,
+            entries: 100,
+            part_bytes: 64 * 1024,
+            expanded_bytes: 1024 * 1024,
+            xml: XmlLimits {
+                max_depth: 64,
+                max_nodes: 10_000,
+            },
+        }
+    }
+
+    #[test]
+    fn directory_entries_are_retained_byte_identical_and_never_parts() {
+        let source = archive(&[
+            TYPES,
+            ("_rels/", b""),
+            (
+                "_rels/.rels",
+                b"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>",
+            ),
+            ("xl/", b""),
+            ("xl/sheet.xml", b"<root><item>old</item></root>"),
+        ]);
+        let mut package = Package::open(&source, limits()).expect("directory entries open");
+        assert_eq!(
+            package.names().collect::<Vec<_>>(),
+            ["[Content_Types].xml", "_rels/.rels", "xl/sheet.xml"]
+        );
+        assert_eq!(package.part("xl/").expect("lookup"), None);
+        assert_eq!(package.editability(), Editability::Unsigned);
+        assert_eq!(package.export().expect("no-op export"), source);
+        package
+            .replace_text("xl/sheet.xml", &["root", "item"], "old", "new")
+            .expect("edit beside directory entries");
+        let edited = package.export().expect("edited export");
+        let reopened = Package::open(&edited, limits()).expect("output opens");
+        assert_eq!(
+            reopened.part("xl/sheet.xml").expect("part"),
+            Some(b"<root><item>new</item></root>".to_vec())
+        );
+        for folder in ["_rels/", "xl/"] {
+            let find = |package: &Package| {
+                package
+                    .entries
+                    .iter()
+                    .find(|entry| entry.name == folder)
+                    .cloned()
+                    .expect("directory entry kept")
+            };
+            let (before, after) = (find(&package), find(&reopened));
+            assert_eq!(
+                source[before.local.clone()],
+                edited[after.local.clone()],
+                "local record: {folder}"
+            );
+            let mut original_cd = source[before.central.clone()].to_vec();
+            let mut edited_cd = edited[after.central.clone()].to_vec();
+            original_cd[42..46].fill(0);
+            edited_cd[42..46].fill(0);
+            assert_eq!(original_cd, edited_cd, "central record: {folder}");
+        }
+    }
+
+    #[test]
+    fn unsafe_directory_names_stay_refused() {
+        let cases: [&[(&str, &[u8])]; 9] = [
+            &[TYPES, ("/", b"")],
+            &[TYPES, ("../", b"")],
+            &[TYPES, ("xl/../", b"")],
+            &[TYPES, ("xl/./", b"")],
+            &[TYPES, ("xl//", b"")],
+            &[TYPES, ("xl\\media/", b"")],
+            &[TYPES, ("xl/", b""), ("XL/", b"")],
+            &[TYPES, ("xl", b"file"), ("xl/", b"")],
+            &[TYPES, ("xl/", b"content")],
+        ];
+        for entries in cases {
+            let names: Vec<_> = entries.iter().map(|(name, _)| *name).collect();
+            assert!(
+                matches!(
+                    Package::open(&archive(entries), limits()),
+                    Err(Error::Invalid(_))
+                ),
+                "{names:?}"
+            );
         }
     }
 }
