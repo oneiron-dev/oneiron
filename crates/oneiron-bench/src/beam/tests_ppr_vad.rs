@@ -121,6 +121,39 @@ pub(crate) mod tests {
             .value
     }
 
+    /// The production top 15 for this fixture (ONE-2702): the seeds lead on PPR
+    /// relevance, then the salient target 14 once alpha lifts its arousal edge,
+    /// then the equal-mass one-hop targets in ID order.
+    fn ppr_vad_expected_final_ids(fixture: &BeamFixture, seeds: usize, alpha: f32) -> Vec<String> {
+        let ids: Vec<_> = fixture
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        let salient = &ids[19];
+        let mut expected = ids[..seeds].to_vec();
+        if alpha > 0.0 {
+            expected.push(salient.clone());
+        }
+        expected.extend(ids[seeds..].iter().filter(|id| *id != salient).cloned());
+        expected.truncate(15);
+        expected
+    }
+
+    /// The non-seed, non-salient rows tie below every seed row (ONE-2702).
+    fn plain_targets_tie_below_seeds(
+        fixture: &BeamFixture,
+        rows: &[oneiron::ScoredEntity],
+        seeds: usize,
+    ) -> bool {
+        let salient = EntityId::from_hex(&fixture.records[19].id).expect("salient target");
+        let (seed_rows, targets) = rows.split_at(seeds);
+        let plain: Vec<_> = targets.iter().filter(|row| row.id != salient).collect();
+        plain.iter().all(|row| {
+            row.score == plain[0].score && seed_rows.iter().all(|seed| row.score < seed.score)
+        })
+    }
+
     #[test]
     fn ppr_vad_sweep_manifest_runs_five_alphas_and_reports_real_measurements() {
         let (fixture, _) = ppr_vad_test_fixture_and_manifest();
@@ -164,17 +197,19 @@ pub(crate) mod tests {
                     ppr_vad_production_final_rows(&fixture, &seeds, query.depth, sample.alpha);
                 let final_ids: Vec<_> = final_rows.iter().map(|row| row.id.to_hex()).collect();
                 assert_eq!(sample.result_ids, final_ids);
-                // Production fusion uses PPR only for candidate membership.
-                // No boosts and non-claim records give identical final scores:
-                // ID order selects 01..0f, including the seed, at EVERY alpha.
-                // The salient target (14) remains outside the final top 15 even
-                // when its raw PPR score rises. Do not manufacture a PPR win.
-                let expected_ids: Vec<_> = fixture.records[..15]
-                    .iter()
-                    .map(|record| record.id.clone())
-                    .collect();
-                assert_eq!(final_ids, expected_ids);
-                assert!(final_rows.iter().all(|row| row.score == 1.0));
+                // Production fusion orders the pool by channel relevance (ONE-2702),
+                // so the final rows are what PPR alone ranks: 01..0f at alpha 0, and
+                // from alpha 0.1 the salient target 14 right after the seed. The
+                // benchmark reads that order; it never manufactures a PPR win.
+                assert_eq!(
+                    final_ids,
+                    ppr_vad_expected_final_ids(&fixture, seeds.len(), sample.alpha)
+                );
+                assert!(plain_targets_tie_below_seeds(
+                    &fixture,
+                    &final_rows,
+                    seeds.len()
+                ));
                 assert!(query.seeds.iter().all(|id| sample.result_ids.contains(id)));
                 let hits = query
                     .relevant_ids
@@ -210,7 +245,11 @@ pub(crate) mod tests {
             // Independently calculate nearest-rank p95 of the 40 real queries.
             assert_eq!(row.p95_latency_ms, measured_latencies[37]);
             assert!(row.p95_latency_ms.is_finite());
-            assert_eq!(row.salient_recall_at_15, 0.0);
+            // ONE-2702: relevance ranks the lifted salient target into the top 15 from alpha 0.1.
+            assert_eq!(
+                row.salient_recall_at_15,
+                if row.alpha == 0.0 { 0.0 } else { 1.0 }
+            );
             assert_eq!(row.neutral_recall_at_15, 1.0);
             assert_eq!(row.neutral_delta_pp_vs_zero, 0.0);
             // A zero salient baseline cannot support a relative gain claim.
@@ -220,7 +259,7 @@ pub(crate) mod tests {
             );
             assert!(
                 !row.gate_passed,
-                "the unchanged tie fixture has no final-retrieval win"
+                "a zero salient baseline gives no relative gain, so the gate fails closed"
             );
         }
         let json = serde_json::to_value(&report).expect("valid sweep test input");
@@ -241,20 +280,17 @@ pub(crate) mod tests {
             assert_eq!(rows, production_rows);
             // Seeds are ordinary final candidates. The benchmark must neither
             // remove them nor backfill from a larger query or a channel trace.
-            let expected_ids: Vec<_> = fixture.records[..15]
-                .iter()
-                .map(|record| record.id.clone())
-                .collect();
+            // ONE-2702: both seeds lead on PPR relevance; from alpha 0.1 the salient target follows.
             assert_eq!(
                 rows.iter().map(|row| row.id.to_hex()).collect::<Vec<_>>(),
-                expected_ids
+                ppr_vad_expected_final_ids(&fixture, seeds.len(), *alpha)
             );
             assert!(
                 seeds
                     .iter()
                     .all(|seed| rows.iter().any(|row| row.id == *seed))
             );
-            assert!(rows.iter().all(|row| row.score == 1.0));
+            assert!(plain_targets_tie_below_seeds(&fixture, &rows, seeds.len()));
         }
     }
 

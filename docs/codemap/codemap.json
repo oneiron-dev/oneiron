@@ -18285,7 +18285,7 @@
      "path": "src/fusion.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -27427,6 +27427,14 @@
      "notable": [],
      "path": "src/pipeline/tests/relationship_scope_filter.rs",
      "purpose": "Relationship-scope filter, demotion, and facet/world conjunction",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/tests/relevance_order.rs",
+     "purpose": "Channel relevance orders the result list (ONE-2702)",
      "surface": {}
     },
     {
@@ -40343,7 +40351,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40808,7 +40816,7 @@
    "over_bar": 21,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2426,
-   "test_files": 847
+   "test_files": 848
   },
   "oneiron-android": {
    "files": [

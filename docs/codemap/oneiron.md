@@ -1466,7 +1466,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/intake/tests.rs` | test | s | — | — | — |
 | `src/feedback/mod.rs` | src | s | 1 mod · 4 re-export | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/tests.rs` | test | XL | — | — | — |
-| `src/fusion.rs` | src | m | 9 crate-vis | — | — |
+| `src/fusion.rs` | src | m | 11 crate-vis | — | — |
 | `src/fusion/tests.rs` | test | m | — | — | — |
 | `src/gate/ask_policy.rs` | src | s | 12 crate-vis | — | Manifest-owned operating policy for cross-vault ask confirmation |
 | `src/gate/auto_signals.rs` | src | s | 1 crate-vis | — | Receipt-derived rate and failure streak supplied to the existing auto checker |
@@ -2237,6 +2237,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/tests/facet_status_world.rs` | test | L | — | — | Facet filter, claim-status gate, and world-scope visibility pins |
 | `src/pipeline/tests/mod.rs` | test | m | 7 crate-vis | — | — |
 | `src/pipeline/tests/relationship_scope_filter.rs` | test | L | — | — | Relationship-scope filter, demotion, and facet/world conjunction |
+| `src/pipeline/tests/relevance_order.rs` | test | s | — | — | Channel relevance orders the result list (ONE-2702) |
 | `src/pipeline/tests/rerank_hyde_session_stale.rs` | test | L | 3 crate-vis | — | Rerank blocks, Hyde recall, session staging, and stale-world federation |
 | `src/pipeline/tests/retrieval_blend.rs` | test | L | — | — | Vector/PPR channels, recency boost, prefix gates, and temporal hints |
 | `src/pipeline/tests/scoring_basics.rs` | test | m | — | — | Scoring constants, blend weights, and dreamer working-set basics |
