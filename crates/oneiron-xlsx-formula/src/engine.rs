@@ -4,9 +4,10 @@
 //! config, the `S` corpus sheet, 1-based coordinates, demand-driven
 //! `evaluate_cell` and `read_range` spills.
 //!
-//! Determinism: without the `system-clock` feature there is no ambient clock;
-//! volatile functions pin to [`PINNED_TIMESTAMP_UTC`] in UTC via
-//! `set_deterministic_mode(Enabled{..})`, never `Local`. The engine stamp on
+//! Determinism: the corpus workbook pins volatile functions to
+//! [`PINNED_TIMESTAMP_UTC`] in UTC via `set_deterministic_mode(Enabled{..})`,
+//! never `Local`, although the cache writer's `xlsx-recalc` feature turns on
+//! the upstream `system-clock` feature. The engine stamp on
 //! every report is a literal (the upstream crate exposes no version const; an
 //! `env!` stamp would name this harness instead).
 
@@ -25,12 +26,12 @@ use crate::error::{FormulaError, Result};
 pub const ENGINE_NAME: &str = "formualizer-workbook";
 /// Owned evaluator version; upstream plus the error-concatenation repair and the Excel
 /// parity work on the fork's `oneiron/parity` branch (ONE-2700 part 1).
-pub const ENGINE_VERSION: &str = "0.9.3-oneiron.7";
+pub const ENGINE_VERSION: &str = "0.9.3-oneiron.8";
 /// Pinned upstream commit (tag `v0.9.3`).
 pub const ENGINE_UPSTREAM_REV: &str = "362becffa029d8f77349c2c477fc39eff7fc52d5";
 /// Full deterministic stamp recorded on every evaluation report.
 pub const ENGINE_STAMP: &str =
-    "formualizer-workbook 0.9.3-oneiron.7 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
+    "formualizer-workbook 0.9.3-oneiron.8 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
 
 /// Fixed instant every volatile function observes. 2026-01-01T00:00:00Z in
 /// UTC: deterministic across hosts and timezones, never the wall clock.
@@ -69,16 +70,8 @@ impl FormualizerEngine {
     }
 
     fn fresh_workbook() -> Result<Workbook> {
-        let mut workbook = Self::configured_workbook(DateSystem::Excel1900)?;
-        workbook
-            .add_sheet(CORPUS_SHEET)
-            .map_err(|error| FormulaError::Engine(error.to_string()))?;
-        Ok(workbook)
-    }
-
-    pub(crate) fn configured_workbook(date_system: DateSystem) -> Result<Workbook> {
         let mut config = WorkbookConfig::ephemeral();
-        config.eval.date_system = date_system;
+        config.eval.date_system = DateSystem::Excel1900;
         let mut workbook = Workbook::new_with_config(config);
         let timestamp: DateTime<Utc> = PINNED_TIMESTAMP_UTC
             .parse()
@@ -88,6 +81,9 @@ impl FormualizerEngine {
                 timestamp_utc: timestamp,
                 timezone: TimeZoneSpec::Utc,
             })
+            .map_err(|error| FormulaError::Engine(error.to_string()))?;
+        workbook
+            .add_sheet(CORPUS_SHEET)
             .map_err(|error| FormulaError::Engine(error.to_string()))?;
         Ok(workbook)
     }
@@ -220,26 +216,6 @@ pub(crate) fn from_literal(value: LiteralValue) -> CellValue {
     }
 }
 
-/// Serialize temporal values using the workbook's own epoch, not the host.
-pub(crate) fn from_literal_for_date_system(value: LiteralValue, system: DateSystem) -> CellValue {
-    if system == DateSystem::Excel1904 {
-        let epoch = NaiveDate::from_ymd_opt(1904, 1, 1).unwrap_or(NaiveDate::MIN);
-        match value {
-            LiteralValue::Date(date) => {
-                return CellValue::Number(date.signed_duration_since(epoch).num_days() as f64);
-            }
-            LiteralValue::DateTime(datetime) => {
-                return CellValue::Number(
-                    datetime.date().signed_duration_since(epoch).num_days() as f64
-                        + excel_time(datetime.time()),
-                );
-            }
-            other => return from_literal(other),
-        }
-    }
-    from_literal(value)
-}
-
 // Serialization only: upstream date evaluation remains unchanged. Excel stores
 // dates as serial numbers, including its fictional 1900-02-29 leap day.
 fn excel_date(date: NaiveDate) -> f64 {
@@ -280,11 +256,11 @@ mod tests {
     #[test]
     fn stamp_is_deterministic_and_pinned() {
         assert_eq!(
-            "formualizer-workbook/0.9.3-oneiron.7",
+            "formualizer-workbook/0.9.3-oneiron.8",
             current_engine_id().stamp()
         );
         assert_eq!(ENGINE_NAME, "formualizer-workbook");
-        assert_eq!(ENGINE_VERSION, "0.9.3-oneiron.7");
+        assert_eq!(ENGINE_VERSION, "0.9.3-oneiron.8");
         assert_eq!(ENGINE_UPSTREAM_REV.len(), 40);
     }
 
