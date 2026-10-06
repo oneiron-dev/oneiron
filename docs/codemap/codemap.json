@@ -3431,22 +3431,33 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SecretScanMode"
+     ],
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8,
+      "enum": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/shapes.rs",
      "purpose": "Credential-shape detection shared by write, serve, and export",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/secret_scan/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -4157,7 +4168,7 @@
      "path": "src/bm25/codec.rs",
      "purpose": "Binary codecs, stat/total-docs accessors, corruption constructors, key validation",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -27681,7 +27692,7 @@
      "purpose": "Policy classification over two planes",
      "surface": {
       "crate-vis": 1,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -27701,7 +27712,7 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -27716,7 +27727,7 @@
      "path": "src/policy_model/owner_rows/ledger.rs",
      "purpose": "Append-only row change history and proposal inbox",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -27734,7 +27745,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27762,6 +27773,27 @@
      "notable": [],
      "path": "src/policy_model/owner_rows/notify_tests.rs",
      "purpose": "Notification queue fairness, failure isolation, and recipient digest cadence",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretScanReceipt"
+     ],
+     "path": "src/policy_model/owner_rows/secret_scan_switch.rs",
+     "purpose": "The owner's `secrets: on | off` switch for the write-door secret scan",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/secret_scan_switch/tests.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -36730,7 +36762,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -39567,7 +39599,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 95,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40358,7 +40390,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40815,8 +40847,8 @@
    },
    "over_bar": 21,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2426,
-   "test_files": 848
+   "source_files": 2427,
+   "test_files": 850
   },
   "oneiron-android": {
    "files": [
