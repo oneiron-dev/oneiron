@@ -1,9 +1,11 @@
 //! The document organ's namespace-aware reader, with this crate's errors.
+use std::borrow::Cow;
+
 use oneiron_docedit::retained_opc::Package;
 
 pub(crate) use oneiron_docedit::ooxml::{
     DOCUMENT_RELATIONSHIPS as DOC_REL, PACKAGE_RELATIONSHIPS as REL, SPREADSHEET_MAIN as MAIN,
-    XmlTree as Xml, escape_text as escaped,
+    XmlTree as Xml,
 };
 
 use crate::{FormulaError, Result};
@@ -19,6 +21,6 @@ pub(crate) fn parse_part(package: &Package, name: &str) -> Result<Xml> {
 pub(crate) fn invalid(reason: &'static str) -> FormulaError {
     FormulaError::InvalidWorkbook(reason)
 }
-pub(crate) fn unsupported(reason: &'static str) -> FormulaError {
-    FormulaError::UnsupportedWorkbook(reason)
+pub(crate) fn unsupported(reason: impl Into<Cow<'static, str>>) -> FormulaError {
+    FormulaError::UnsupportedWorkbook(reason.into())
 }

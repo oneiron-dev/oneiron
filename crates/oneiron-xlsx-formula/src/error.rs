@@ -1,4 +1,5 @@
 //! Typed failures for the formula crate. No stringly errors cross the seam.
+use std::borrow::Cow;
 
 /// Every way formula evaluation, routing, or corpus measurement can fail.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -18,8 +19,9 @@ pub enum FormulaError {
     #[error("invalid workbook: {0}")]
     InvalidWorkbook(&'static str),
     /// Valid workbook features this optional adapter cannot safely serialize.
+    /// The reason names the feature, such as the function the engine lacks.
     #[error("workbook requires the fallback session: {0}")]
-    UnsupportedWorkbook(&'static str),
+    UnsupportedWorkbook(Cow<'static, str>),
     /// The retained OPC boundary refused the archive or an edit.
     #[error(transparent)]
     Package(#[from] oneiron_docedit::retained_opc::Error),
