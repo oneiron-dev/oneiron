@@ -30,7 +30,9 @@ refused workbooks only. The adapter refuses, before any output:
   yet and would cache `#NAME?`; LET names and LAMBDA parameters stay native;
 - a shared or inline string whose OOXML escapes the writer's reader (Calamine 0.36) decodes
   differently from Excel: it decodes `_x00HH_` but keeps `_x20AC_` (the euro sign) as seven
-  characters, and decodes no escape in a literal `t="str"` value;
+  characters. It decodes no escape in a literal `t="str"` value, a cell formula, a defined
+  name or its formula, or a sheet, table or table-column name, so any escape there falls
+  back (`"_x20AC_"` in a defined name is `"€"` to Excel);
 - precision-as-displayed (`fullPrecision="0"`): the writer calculates at full precision;
 - a formula over the size, token or nesting bound that keeps evaluation off deep recursion,
   or one the parser cannot read;
@@ -42,16 +44,20 @@ refused workbooks only. The adapter refuses, before any output:
   worksheet holding a modern function without its OOXML prefix (the writer never rewrites
   formula text).
 
-A package the retained OPC reader refuses fails outright, as before. That reader refuses ZIP
-directory entries (`xl/`, `_rels/`). Malformed workbook content fails outright too, as it did
-before the writer: the adapter reads the workbook, its relationships, the shared strings and
-every worksheet as the old loader did and refuses a missing, unreadable, off-grid or repeated
-cell address, a literal its type cannot hold (a number that is not one, a boolean other than
-0 or 1, a shared-string index past the table, an inline string without its text), an invalid
-`date1904` flag and a broken sheet list. Every part the writer reads (the workbook, shared
-strings, worksheets, content types, styles, tables, cell metadata and rich data) must fit the
-host's XML node and depth limits, or the workbook fails outright. A relationship part that
-does not fit goes to the fallback, as before: the external-link check fails closed.
+A package the retained OPC reader refuses fails outright, as before. Malformed workbook
+content fails outright too, as it did before the writer: the adapter reads the workbook, its
+relationships, the shared strings, every worksheet and every table a worksheet relates as the
+old loader did, and refuses a missing, unreadable, off-grid or repeated cell address, a literal
+its type cannot hold (a number that is not one, a boolean other than 0 or 1, a shared-string
+index past the table, an inline string without its text), an invalid `date1904` flag, a broken
+sheet list, a missing, non-numeric or repeated sheet ID, a repeated defined name or one scoped
+past the sheets, and a table part that is malformed XML, missing, unnamed, named twice, or
+whose range is unreadable or not spanned by its columns. Valid content the writer does not
+support (sheet ID 0, two header rows) still goes to the fallback. Every part the writer reads
+(the workbook, shared strings, worksheets, each table wherever its worksheet's relationship
+puts it, content types, styles, cell metadata and rich data) must fit the host's XML node and
+depth limits, or the workbook fails outright. A relationship part that does not fit goes to
+the fallback, as before: the external-link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
 by rev in the root manifest (0.9.3-oneiron.8): upstream plus the owned patch that keeps
@@ -69,18 +75,15 @@ LibreOffice's 753 (the unchanged evaluator scored 754). The comparison uses a pi
 instant. Production volatile or context-dependent formulas route to the precision fallback,
 not that clock.
 
-The shipped adapter on the same corpus (2026-10-06, `recalc_native` over the 5,455
-originals, 3,040 of them with formulas): as saved, 1,256 formula workbooks recalculate
-natively, 1,477 are refused by the retained OPC reader for their ZIP directory entries and
-307 fall back. With the directory entries removed, as a zipfile-based host save writes the
-package, 2,508 of the 3,040 (82.5%) recalculate natively and 532 fall back: 279 for external
-links, 223 for caller context (132 clock or random functions, 82 OFFSET or INDIRECT only,
-9 CELL), 21 for functions the engine lacks, 3 for precision-as-displayed, 3 over the token
-bound and 3 for an unreadable defined name. All 2,508 native workbooks match Excel (none of
-their 388,407 scored cells differs), and every native output passes the edit gate. At
-`63e2ec69`, with the malformed-content, LAMBDA-name, escape and XML-limit checks, a rerun
-with directory entries admitted gave the same decision and the same output bytes on every
-workbook.
+The shipped adapter on the same corpus (2026-10-06, `recalc_native` over the 5,455 saved
+originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP directory
+entries): 2,508 of the 3,040 formula workbooks (82.5%) recalculate natively, none is refused
+outright and 532 fall back: 279 for external links, 223 for caller context (132 clock or
+random functions, 82 OFFSET or INDIRECT only, 9 CELL), 21 for functions the engine lacks, 3
+for precision-as-displayed, 3 over the token bound and 3 for an unreadable defined name. All
+2,508 native workbooks match Excel (none of their 388,407 scored cells differs), and every
+native output passes the edit gate. The checks for escaped names and formulas, related tables
+and malformed workbook metadata change no corpus workbook's decision or output bytes.
 
 Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.8`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc

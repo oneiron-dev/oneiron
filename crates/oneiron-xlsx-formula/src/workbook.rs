@@ -48,13 +48,15 @@ impl FormualizerEngine {
     /// formulas needing caller context or volatile reference semantics,
     /// functions the engine does not implement, a workbook name used as a
     /// function or holding a LAMBDA, string escapes the writer's reader does
-    /// not decode as Excel does, precision-as-displayed, anything the writer
+    /// not decode as Excel does (in strings, formulas, and sheet, defined and
+    /// table names), precision-as-displayed, anything the writer
     /// cannot write exactly (such as a dynamic array larger than its saved
     /// extent), a result over the host's limits and a recalculation the edit
     /// round trip's corruption gate would refuse. Malformed content (such as
-    /// a repeated cell or a boolean other than 0 or 1) and a part the writer
-    /// reads over the host's XML limits are `InvalidWorkbook`, refused
-    /// outright as before the writer.
+    /// a repeated cell, a boolean other than 0 or 1, a repeated sheet ID or a
+    /// broken table part) and a part the writer reads over the host's XML
+    /// limits, wherever a relationship puts it, are `InvalidWorkbook`,
+    /// refused outright as before the writer.
     /// `limits` are the host's document ceilings (the vault's resolved
     /// `docedit_package_limits`); the writer runs under the stricter of each
     /// of them and its own, and every part it reads or changes fits them.
@@ -134,16 +136,38 @@ impl Formulas {
         ) {
             return Err(invalid("invalid date1904 flag"));
         }
-        let names = workbook
+        // A defined name and its formula are OOXML escaped strings, like sheet
+        // and table names and cell formulas, and the reader decodes no escape
+        // in any of them: Excel reads `_x20AC_` there as the euro sign.
+        let mut names = Vec::new();
+        let mut scopes = BTreeSet::new();
+        for node in workbook
             .nodes
             .iter()
             .filter(|node| node.is(MAIN, "definedName"))
-            .map(|node| DefinedName {
-                name: node.attr("name").unwrap_or_default().to_owned(),
+        {
+            let name = node
+                .attr("name")
+                .ok_or_else(|| invalid("defined name missing"))?;
+            let scope = node
+                .attr("localSheetId")
+                .map(str::parse::<usize>)
+                .transpose()
+                .map_err(|_| invalid("invalid defined-name scope"))?;
+            if !scopes.insert((scope, name.to_lowercase())) {
+                return Err(invalid("duplicate defined name"));
+            }
+            if escaped(name) || escaped(&node.text) {
+                refusal.get_or_insert_with(|| ESCAPED_TEXT.into());
+            }
+            names.push(DefinedName {
+                name: name.to_owned(),
                 formula: node.text.clone(),
-            })
-            .collect();
-        let targets = relationships(package)?;
+            });
+        }
+        // The writer reads the package's own relationships first.
+        relationships(package, "")?;
+        let targets = relationships(package, "xl/workbook.xml")?;
         let strings_type = format!("{DOC_REL}/sharedStrings");
         let strings = match targets.values().find(|(_, kind)| *kind == strings_type) {
             Some((part, _)) => {
@@ -162,8 +186,11 @@ impl Formulas {
             .child(0, MAIN, "sheets")?
             .ok_or_else(|| invalid("missing sheets"))?;
         let worksheet_type = format!("{DOC_REL}/worksheet");
+        let table_type = format!("{DOC_REL}/table");
         let mut sheets = BTreeMap::new();
         let mut sheet_names = BTreeSet::new();
+        let mut sheet_ids = BTreeSet::new();
+        let mut tables = BTreeSet::new();
         for (_, node) in workbook
             .children(sheet_list)
             .filter(|(_, node)| node.is(MAIN, "sheet"))
@@ -173,6 +200,17 @@ impl Formulas {
                 .ok_or_else(|| invalid("sheet name missing"))?;
             if !sheet_names.insert(name.to_lowercase()) {
                 return Err(invalid("duplicate sheet name"));
+            }
+            if escaped(name) {
+                refusal.get_or_insert_with(|| ESCAPED_TEXT.into());
+            }
+            // Zero is valid XML the writer refuses; the fallback takes it.
+            let sheet_id: u32 = node
+                .attr("sheetId")
+                .and_then(|id| id.parse().ok())
+                .ok_or_else(|| invalid("invalid sheet ID"))?;
+            if !sheet_ids.insert(sheet_id) {
+                return Err(invalid("duplicate sheet ID"));
             }
             let id = node
                 .attr_ns(DOC_REL, "id")
@@ -190,16 +228,35 @@ impl Formulas {
             let xml = parse_part(package, part)?;
             xml.root(MAIN, "worksheet")?;
             check_cells(&xml, strings, &mut refusal)?;
-            let formulas = xml
+            let formulas: Vec<String> = xml
                 .nodes
                 .iter()
                 .filter(|node| node.is(MAIN, "f") && !node.text.is_empty())
                 .map(|node| node.text.clone())
                 .collect();
+            if formulas.iter().any(|formula| escaped(formula)) {
+                refusal.get_or_insert_with(|| ESCAPED_TEXT.into());
+            }
+            // The writer registers every table a worksheet relates, wherever
+            // the part lives.
+            let rels = rels_part(part);
+            if package.names().any(|name| name == rels) {
+                for (table, kind) in relationships(package, part)?.values() {
+                    if *kind == table_type {
+                        check_table(package, table, &mut tables, &mut refusal)?;
+                    }
+                }
+            }
             sheets.insert(part.clone(), formulas);
         }
         if sheet_names.is_empty() {
             return Err(invalid("empty workbook"));
+        }
+        if scopes
+            .iter()
+            .any(|(scope, _)| scope.is_some_and(|sheet| sheet >= sheet_names.len()))
+        {
+            return Err(invalid("defined-name scope past the sheets"));
         }
         for name in package.names().filter(|name| reader_part(name)) {
             parse_part(package, name)?;
@@ -273,9 +330,12 @@ impl Formulas {
     }
 }
 
-/// The workbook's relationships by id: the resolved target part and the type.
-fn relationships(package: &Package) -> Result<BTreeMap<String, (String, String)>> {
-    let rels = parse_part(package, "xl/_rels/workbook.xml.rels")?;
+/// The relationships of part `source` (the package's own for `""`) by id: the
+/// target part, resolved from the source's folder, and the type.
+/// `require_local` has sent every external target to the fallback already.
+fn relationships(package: &Package, source: &str) -> Result<BTreeMap<String, (String, String)>> {
+    let folder = source.rsplit_once('/').map_or("", |(folder, _)| folder);
+    let rels = parse_part(package, &rels_part(source))?;
     rels.root(REL, "Relationships")?;
     let mut targets = BTreeMap::new();
     for (_, node) in rels
@@ -292,7 +352,7 @@ fn relationships(package: &Package) -> Result<BTreeMap<String, (String, String)>
             .attr("Type")
             .ok_or_else(|| invalid("relationship type missing"))?;
         if targets
-            .insert(id.to_owned(), (resolve(target)?, kind.to_owned()))
+            .insert(id.to_owned(), (resolve(folder, target)?, kind.to_owned()))
             .is_some()
         {
             return Err(invalid("duplicate relationship id"));
@@ -301,15 +361,82 @@ fn relationships(package: &Package) -> Result<BTreeMap<String, (String, String)>
     Ok(targets)
 }
 
-/// The parts the writer and its reader parse besides the workbook, its
-/// relationships, the shared strings and the worksheets. `require_local`
-/// reads every relationship part under the host's XML limits.
+/// The relationship part of `source` (`_rels/.rels` for the package).
+fn rels_part(source: &str) -> String {
+    match source.rsplit_once('/') {
+        Some((folder, name)) => format!("{folder}/_rels/{name}.rels"),
+        None => format!("_rels/{source}.rels"),
+    }
+}
+
+/// The parts the writer and its reader parse at fixed names, besides the
+/// workbook and the relationship parts. The shared strings, worksheets and
+/// tables are found through relationships.
 fn reader_part(name: &str) -> bool {
     matches!(
         name,
         "[Content_Types].xml" | "xl/styles.xml" | "xl/metadata.xml"
-    ) || ((name.starts_with("xl/richData/") || name.starts_with("xl/tables/"))
-        && name.ends_with(".xml"))
+    ) || (name.starts_with("xl/richData/") && name.ends_with(".xml"))
+}
+
+/// Check a table part the writer registers, as Excel would read it: malformed
+/// content (an unnamed table, a range that is not one, a column list that
+/// does not span it, a second table of the same name) is refused, and an
+/// escaped table or column name is noted for the fallback.
+fn check_table(
+    package: &Package,
+    part: &str,
+    names: &mut BTreeSet<String>,
+    refusal: &mut Option<Cow<'static, str>>,
+) -> Result<()> {
+    let xml = parse_part(package, part)?;
+    xml.root(MAIN, "table")?;
+    let table = &xml.nodes[0];
+    let name = table
+        .attr("displayName")
+        .or_else(|| table.attr("name"))
+        .ok_or_else(|| invalid("unnamed table"))?;
+    if !names.insert(name.to_lowercase()) {
+        return Err(invalid("duplicate table name"));
+    }
+    let area = table
+        .attr("ref")
+        .ok_or_else(|| invalid("invalid table range"))?;
+    let (start, end) = area.split_once(':').unwrap_or((area, area));
+    let column = |cell: &str| {
+        parse_a1_1based(cell)
+            .map(|(_, column, _, _)| column)
+            .map_err(|_| invalid("invalid table range"))
+    };
+    let (first, last) = (column(start)?, column(end)?);
+    for count in ["headerRowCount", "totalsRowCount"] {
+        if table.attr(count).is_some_and(|n| n.parse::<u32>().is_err()) {
+            return Err(invalid("invalid table row count"));
+        }
+    }
+    let (list, _) = xml
+        .child(0, MAIN, "tableColumns")?
+        .ok_or_else(|| invalid("table columns missing"))?;
+    let mut columns = 0u32;
+    let mut escapes = escaped(name);
+    for (_, node) in xml
+        .children(list)
+        .filter(|(_, node)| node.is(MAIN, "tableColumn"))
+    {
+        let header = node
+            .attr("name")
+            .ok_or_else(|| invalid("table column name missing"))?;
+        escapes |= escaped(header);
+        columns += 1;
+    }
+    // A reversed range is the writer's to refuse.
+    if first <= last && columns != last - first + 1 {
+        return Err(invalid("table column count mismatch"));
+    }
+    if escapes {
+        refusal.get_or_insert_with(|| ESCAPED_TEXT.into());
+    }
+    Ok(())
 }
 
 /// Refuse a malformed cell as the reader before this writer did: a missing,
@@ -513,6 +640,7 @@ fn worksheet_parts(package: &Package) -> Result<Vec<String>> {
         })
         .map(|(_, relation)| {
             resolve(
+                "xl",
                 relation
                     .attr("Target")
                     .ok_or_else(|| invalid("worksheet target missing"))?,
@@ -552,10 +680,11 @@ pub(crate) fn external_formulas(package: &Package) -> Result<BTreeMap<(String, S
     Ok(formulas)
 }
 
-fn resolve(target: &str) -> Result<String> {
+/// The part a relationship `target` names, relative to `folder`.
+fn resolve(folder: &str, target: &str) -> Result<String> {
     let path = target
         .strip_prefix('/')
-        .map_or_else(|| format!("xl/{target}"), str::to_owned);
+        .map_or_else(|| format!("{folder}/{target}"), str::to_owned);
     let mut segments = Vec::new();
     for segment in path.split('/') {
         match segment {

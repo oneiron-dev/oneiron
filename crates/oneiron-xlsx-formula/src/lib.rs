@@ -17,8 +17,8 @@
 //! 25.8 matched 2,648 of the 2,951 it was measured on), and all 811 pinned
 //! goldens (Excel for Windows 16.0.20430, rich-value error caches resolved)
 //! against LibreOffice's 753. Through this adapter, 2,508 of the corpus's
-//! 3,040 formula workbooks recalculate natively once their ZIP directory
-//! entries are removed (see the README), and all 2,508 match Excel. The
+//! 3,040 formula workbooks recalculate natively as saved, ZIP directory
+//! entries included (see the README), and all 2,508 match Excel. The
 //! host's LibreOffice recalc stays the precision fallback for refused
 //! workbooks only: external links (their link-preserving route, see
 //! [`routing`]), formulas needing caller context (the corpus clock is never

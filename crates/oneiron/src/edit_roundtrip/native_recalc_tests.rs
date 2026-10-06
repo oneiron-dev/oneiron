@@ -362,10 +362,23 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
             r#"</sheets><definedNames><definedName name="AddDouble">_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)</definedName></definedNames>"#,
         ),
     ));
-    // An escape the engine's reader keeps as seven characters (`_x20AC_` is €).
+    // An escape the engine's reader keeps as seven characters (`_x20AC_` is €),
+    // in a string and in a defined name.
     inputs.push(workbook(
         r#"<c r="A1"><v>2</v></c><c r="B1" t="inlineStr"><is><t>_x20AC_</t></is></c>"#,
         r#"<c r="A1"><f>LEN(Input!B1)</f></c>"#,
+    ));
+    let escaped = workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>LEN(rate)</f></c>"#,
+    );
+    inputs.push(with_part(
+        &escaped,
+        "xl/workbook.xml",
+        part_text(&escaped, "xl/workbook.xml").replace(
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="rate">&quot;_x20AC_&quot;</definedName></definedNames>"#,
+        ),
     ));
     for input in inputs {
         let expected = edited(&input);
@@ -390,17 +403,26 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
 
 #[test]
 fn malformed_workbooks_fail_outright_without_the_host_recalc() {
-    for (inputs, formulas, reason) in [
+    // Two sheets with one sheet ID (the fixture's are 1 and 2).
+    let local = workbook("", r#"<c r="A1"><f>1+1</f></c>"#);
+    let shared_id = with_part(
+        &local,
+        "xl/workbook.xml",
+        part_text(&local, "xl/workbook.xml").replace(r#"sheetId="2""#, r#"sheetId="1""#),
+    );
+    for (input, reason) in [
         (
-            "",
-            r#"<c r="A1"><f>1+1</f></c><c r="A1"><f>9+9</f></c>"#,
+            workbook("", r#"<c r="A1"><f>1+1</f></c><c r="A1"><f>9+9</f></c>"#),
             "duplicate or out-of-grid cell",
         ),
         (
-            r#"<c r="A1" t="b"><v>2</v></c>"#,
-            r#"<c r="A1"><f>Input!A1</f></c>"#,
+            workbook(
+                r#"<c r="A1" t="b"><v>2</v></c>"#,
+                r#"<c r="A1"><f>Input!A1</f></c>"#,
+            ),
             "invalid boolean",
         ),
+        (shared_id, "duplicate sheet ID"),
     ] {
         let host = Host {
             output: Some(Vec::new()),
@@ -409,7 +431,7 @@ fn malformed_workbooks_fail_outright_without_the_host_recalc() {
         assert_eq!(
             refusal(run_edit_roundtrip(
                 &host,
-                &workbook(inputs, formulas),
+                &input,
                 OfficeFormat::Xlsx,
                 &recalc_plan(),
                 "run:malformed",

@@ -331,6 +331,42 @@ fn names_tables_and_shared_formulas() -> Vec<u8> {
     )
 }
 
+/// `Result!A1` totals the `Prices` table over `Input!A1:A2` (`Price`, 7),
+/// whose part `table` sits outside `xl/tables/`, where only the worksheet's
+/// relationship finds it.
+fn related_table(table: &str) -> Vec<u8> {
+    let bytes = fixture(
+        r#"<c r="A1" t="inlineStr"><is><t>Price</t></is></c></row><row r="2"><c r="A2"><v>7</v></c>"#,
+        r#"<c r="A1"><f>SUM(Prices[Price])</f><v>0</v></c>"#,
+        false,
+    );
+    let bytes = edit_part(&bytes, INPUT, |xml| {
+        xml.replace(
+            "<extLst>",
+            &format!(r#"<tableParts count="1"><tablePart xmlns:r="{DOC_REL}" r:id="t1"/></tableParts><extLst>"#),
+        )
+    });
+    let bytes = with_part(
+        &bytes,
+        "xl/worksheets/_rels/input.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="t1" Type="{DOC_REL}/table" Target="../custom/table1.xml"/></Relationships>"#
+        ),
+    );
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace("</Types>", &format!(r#"<Override PartName="/xl/custom/table1.xml" ContentType="{SPREADSHEET}.table+xml"/></Types>"#))
+    });
+    with_part(&bytes, "xl/custom/table1.xml", table)
+}
+/// The `Prices` table part with `columns` inside `tableColumns` and `extra`
+/// after it.
+fn prices(attributes: &str, columns: &str, extra: &str) -> String {
+    format!(
+        r#"<table xmlns="{MAIN}" xmlns:u="urn:review-padding" id="1" name="Prices" displayName="Prices" ref="A1:A2"{attributes}><tableColumns count="1">{columns}</tableColumns>{extra}</table>"#
+    )
+}
+const PRICE: &str = r#"<tableColumn id="1" name="Price"/>"#;
+
 #[test]
 fn shared_formulas_defined_names_and_tables_recalculate_natively() {
     let input = names_tables_and_shared_formulas();
@@ -526,6 +562,91 @@ fn malformed_content_is_refused_outright_not_sent_to_the_fallback() {
 }
 
 #[test]
+fn malformed_related_parts_and_workbook_metadata_are_refused_outright() {
+    // A table part a worksheet relates is read before the writer runs; the
+    // writer reported this one as an engine error, which fell back.
+    let broken = prices("", PRICE, "").replace("</tableColumns>", "</badColumns>");
+    assert_eq!(refused(recalc(&related_table(&broken))), "malformed XML");
+    let second = r#"<tableColumn id="2" name="Cost"/>"#;
+    for (table, reason) in [
+        (
+            prices("", &format!("{PRICE}{second}"), ""),
+            "table column count mismatch",
+        ),
+        (
+            prices("", PRICE, "").replace(r#"ref="A1:A2""#, r#"ref="A1:nowhere""#),
+            "invalid table range",
+        ),
+        (
+            prices("", PRICE, "").replace(r#" name="Prices" displayName="Prices""#, ""),
+            "unnamed table",
+        ),
+        (
+            prices(r#" headerRowCount="one""#, PRICE, ""),
+            "invalid table row count",
+        ),
+    ] {
+        assert_eq!(refused(recalc(&related_table(&table))), reason, "{table}");
+    }
+    let table = related_table(&prices("", PRICE, ""));
+    let dangling = edit_part(&table, "xl/worksheets/_rels/input.xml.rels", |rels| {
+        rels.replace("../custom/table1.xml", "../custom/missing.xml")
+    });
+    assert_eq!(refused(recalc(&dangling)), "missing workbook part");
+    let twice = edit_part(&table, "xl/worksheets/_rels/input.xml.rels", |rels| {
+        rels.replace(
+            "</Relationships>",
+            &format!(r#"<Relationship Id="t2" Type="{DOC_REL}/table" Target="/xl/custom/table1.xml"/></Relationships>"#),
+        )
+    });
+    assert_eq!(refused(recalc(&twice)), "duplicate table name");
+
+    // Workbook metadata Excel would have to repair. The fixture's sheets are
+    // Result (sheetId 7) and Input (sheetId 3).
+    let base = fixture("", r#"<c r="A1"><f>1+1</f></c>"#, false);
+    for (from, to, reason) in [
+        (r#"sheetId="3""#, r#"sheetId="7""#, "duplicate sheet ID"),
+        (r#"sheetId="3""#, r#"sheetId="three""#, "invalid sheet ID"),
+        (
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="rate">1</definedName><definedName name="RATE">2</definedName></definedNames>"#,
+            "duplicate defined name",
+        ),
+        (
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="rate" localSheetId="first">1</definedName></definedNames>"#,
+            "invalid defined-name scope",
+        ),
+        (
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="rate" localSheetId="2">1</definedName></definedNames>"#,
+            "defined-name scope past the sheets",
+        ),
+    ] {
+        let input = edit_part(&base, "xl/workbook.xml", |xml| xml.replace(from, to));
+        assert_eq!(refused(recalc(&input)), reason, "{to}");
+    }
+
+    // Valid content the writer does not support still goes to the fallback,
+    // and the same names in two scopes stay native.
+    let zero = edit_part(&base, "xl/workbook.xml", |xml| {
+        xml.replace(r#"sheetId="3""#, r#"sheetId="0""#)
+    });
+    assert_eq!(fallback(&zero), "duplicate/invalid sheet ID (workbook XML)");
+    let headers = related_table(&prices(r#" headerRowCount="2""#, PRICE, ""));
+    assert_eq!(
+        fallback(&headers),
+        "unsupported table geometry (xl/custom/table1.xml)"
+    );
+    let scoped = with_names(
+        &fixture("", r#"<c r="A1"><f>rate</f><v>0</v></c>"#, false),
+        r#"<definedName name="rate">1</definedName><definedName name="RATE" localSheetId="1">2</definedName>"#,
+    );
+    let xml = part_text(&recalc(&scoped).expect("scoped names").bytes, OUTPUT);
+    assert!(xml.contains("<f>rate</f><v>1</v>"), "{xml}");
+}
+
+#[test]
 fn escaped_strings_recalculate_only_where_the_reader_decodes_them_like_excel() {
     let formula = r#"<c r="A1"><f>LEN(Input!A1)</f><v>0</v></c>"#;
     let inline = |text: &str| {
@@ -565,6 +686,74 @@ fn escaped_strings_recalculate_only_where_the_reader_decodes_them_like_excel() {
 }
 
 #[test]
+fn escaped_names_and_formulas_fall_back_because_the_reader_keeps_every_escape() {
+    // A defined name and its formula, a sheet or table name and a cell
+    // formula are escaped strings too, and the reader decodes no escape in
+    // any of them. Excel reads `"_x20AC_"` as "€" (LEN 1) where the reader
+    // would cache 7, and `r_x00E9_te` as the name `réte`, which the reader
+    // would not find.
+    let rate = |definition: &str| {
+        with_names(
+            &fixture("", r#"<c r="A1"><f>LEN(rate)</f><v>0</v></c>"#, false),
+            &format!(r#"<definedName name="rate">{definition}</definedName>"#),
+        )
+    };
+    let named = |name: &str| {
+        with_names(
+            &fixture("", r#"<c r="A1"><f>réte</f><v>0</v></c>"#, false),
+            &format!(r#"<definedName name="{name}">42</definedName>"#),
+        )
+    };
+    let sheet = |name: &str| {
+        let input = fixture(
+            r#"<c r="A1"><v>7</v></c>"#,
+            r#"<c r="A1"><f>Input!A1</f><v>0</v></c>"#,
+            false,
+        );
+        edit_part(&input, "xl/workbook.xml", |xml| {
+            xml.replace(r#"name="Input""#, &format!(r#"name="{name}""#))
+        })
+    };
+    let formula = |text: &str| {
+        fixture(
+            "",
+            &format!(r#"<c r="A1"><f>LEN(&quot;{text}&quot;)</f><v>0</v></c>"#),
+            false,
+        )
+    };
+    let column = |name: &str| {
+        related_table(&prices(
+            "",
+            &format!(r#"<tableColumn id="1" name="{name}"/>"#),
+            "",
+        ))
+    };
+    for input in [
+        rate("&quot;_x20AC_&quot;"),
+        named("r_x00E9_te"),
+        sheet("Inp_x0075_t"),
+        formula("_x20AC_"),
+        column("Pric_x0065_"),
+    ] {
+        assert_eq!(
+            fallback(&input),
+            "escaped text the reader does not decode as Excel does"
+        );
+    }
+    // Spelled without the escape, each recalculates natively to Excel's value.
+    for (input, expected) in [
+        (rate("&quot;€&quot;"), "<f>LEN(rate)</f><v>1</v>"),
+        (named("réte"), "<f>réte</f><v>42</v>"),
+        (sheet("Input"), "<f>Input!A1</f><v>7</v>"),
+        (formula("€"), "<f>LEN(&quot;€&quot;)</f><v>1</v>"),
+        (column("Price"), "<f>SUM(Prices[Price])</f><v>7</v>"),
+    ] {
+        let xml = part_text(&recalc(&input).expect("unescaped").bytes, OUTPUT);
+        assert!(xml.contains(expected), "{expected} in {xml}");
+    }
+}
+
+#[test]
 fn every_part_the_writer_reads_or_returns_fits_the_host_xml_limits() {
     let nodes = |max_nodes| Limits {
         xml: XmlLimits {
@@ -600,6 +789,16 @@ fn every_part_the_writer_reads_or_returns_fits_the_host_xml_limits() {
         refused(under(&styles, nodes(64))),
         "XML node or depth limit"
     );
+    // A table is found through its worksheet's relationship, wherever it
+    // lives: this one, outside `xl/tables/`, is 106 elements.
+    let padding = format!(
+        r#"<extLst><ext uri="urn:review-padding"><u:padding>{}</u:padding></ext></extLst>"#,
+        "<u:x/>".repeat(100)
+    );
+    let table = related_table(&prices("", PRICE, &padding));
+    let xml = part_text(&recalc(&table).expect("related table").bytes, OUTPUT);
+    assert!(xml.contains("<f>SUM(Prices[Price])</f><v>7</v>"), "{xml}");
+    assert_eq!(refused(under(&table, nodes(64))), "XML node or depth limit");
     // Ten formulas without caches fit 25 elements; with their caches the
     // result sheet does not, so the host could not read the result back.
     let formulas: String = (1..=10u8)
