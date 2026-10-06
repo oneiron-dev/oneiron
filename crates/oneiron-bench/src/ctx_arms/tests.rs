@@ -713,9 +713,10 @@ fn wrong_placement_costs_more_and_scores_the_same_on_every_arm() {
             assert!(r.violations.is_empty(), "{arm:?} {:?}", r.violations);
             assert_eq!(r.over_budget, 0, "{arm:?}");
             // Placement changes what is read only through the room a
-            // prefix board takes when the read budget binds.
+            // prefix board takes when the read budget binds (a few
+            // queries an episode on the budget-bound arms).
             assert!(
-                (r.score.value - canon.score.value).abs() <= 0.02,
+                (r.score.value - canon.score.value).abs() <= 0.05,
                 "{arm:?}: {} vs {}",
                 r.score.value,
                 canon.score.value
@@ -754,10 +755,19 @@ fn canon_never_deletes_and_meets_every_arm() {
         assert!(cell_of(&r).valid(1), "{arm:?} {:?}", cell_of(&r).invalid(1));
         // Where the matching pages fit the window, every answer is exact;
         // log counts and multi-epoch aggregates need more pages than fit.
-        if matches!(arm, Arm::LogTriage | Arm::MultiEpoch | Arm::Obligations) {
-            assert!(r.score.correct > 0, "{arm:?} {:?}", r.score);
-        } else {
+        let pages_fit = matches!(
+            arm,
+            Arm::Needle
+                | Arm::Sketchpad
+                | Arm::KvOffload
+                | Arm::Relink
+                | Arm::StreamFrames
+                | Arm::KvInterleaved
+        );
+        if pages_fit {
             assert!((r.score.value - 1.0).abs() < 1e-9, "{arm:?} {:?}", r.score);
+        } else {
+            assert!(r.score.correct > 0, "{arm:?} {:?}", r.score);
         }
     }
 }
@@ -1533,4 +1543,101 @@ fn pending_obligations_keep_the_earliest_open_and_close_only_on_the_exact_token(
     let end = ep.ask_at.iter().position(Option::is_none).unwrap();
     assert!(truncate.score.correct < truncate.score.total);
     let _ = end;
+}
+
+#[test]
+fn late_tool_results_join_by_call_and_accepted_attempt() {
+    for seed in [1, 1001] {
+        let ep = Episode::generate(Arm::LateResults, seed);
+        assert_eq!(ep.turns.len(), 200, "seed {seed}");
+        let lines: Vec<&str> = ep.turns.iter().flat_map(|t| t.text.lines()).collect();
+        let field = |l: &str, f: &str| {
+            l.split_whitespace()
+                .find_map(|t| t.strip_prefix(f).and_then(|v| v.strip_prefix('=')))
+                .map(str::to_owned)
+        };
+        let (mut first, mut retry, mut late, mut last_wrong) = (0, 0, 0, 0);
+        for q in ep.queries.iter().filter(|_| true) {
+            let call = q.text.strip_prefix("CALL ").unwrap();
+            let accept = lines
+                .iter()
+                .position(|l| l.starts_with("ACCEPT ") && field(l, "call").as_deref() == Some(call))
+                .unwrap();
+            let attempt = field(lines[accept], "attempt").unwrap();
+            if attempt == "a1" {
+                first += 1
+            } else {
+                retry += 1
+            }
+            let responses: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| {
+                    l.starts_with("RESPONSE ") && field(l, "call").as_deref() == Some(call)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            late += usize::from(responses.iter().any(|&i| {
+                i > accept && field(lines[i], "attempt").as_deref() != Some(attempt.as_str())
+            }));
+            let last = *responses.last().unwrap();
+            last_wrong +=
+                usize::from(field(lines[last], "attempt").as_deref() != Some(attempt.as_str()));
+        }
+        assert!(first > 0 && retry > 0, "seed {seed}: both acceptances");
+        assert!(
+            late > 0,
+            "seed {seed}: a rejected result lands after its ACCEPT"
+        );
+        assert!(
+            last_wrong > 0,
+            "seed {seed}: the last response is not always the accepted one"
+        );
+        assert_eq!(ep.ask_at.iter().filter(|a| a.is_none()).count(), 40);
+        assert_eq!(ep.ask_at.iter().filter(|a| a.is_some()).count(), 25);
+    }
+}
+
+#[test]
+fn commit_or_rollback_publishes_only_committed_writes() {
+    for seed in [1, 1001] {
+        let ep = Episode::generate(Arm::Transactions, seed);
+        assert_eq!(ep.turns.len(), 145, "seed {seed}");
+        let text: Vec<&str> = ep.turns.iter().flat_map(|t| t.text.lines()).collect();
+        assert_eq!(text.iter().filter(|l| l.starts_with("COMMIT ")).count(), 12);
+        assert_eq!(text.iter().filter(|l| l.starts_with("ABORT ")).count(), 12);
+        // Transactions overlap: one BEGINs before another terminates.
+        let mut open = 0_i32;
+        let mut max_open = 0;
+        for l in &text {
+            if l.starts_with("BEGIN ") {
+                open += 1;
+                max_open = max_open.max(open);
+            } else if l.starts_with("COMMIT ") || l.starts_with("ABORT ") {
+                open -= 1;
+            }
+        }
+        assert!(max_open >= 2, "seed {seed}");
+        // An eager latest-write view disagrees with the committed state.
+        let end: Vec<usize> = (0..ep.queries.len())
+            .filter(|&i| ep.ask_at[i].is_none() && ep.queries[i].text.starts_with("VALUE "))
+            .collect();
+        let eager_wrong = end
+            .iter()
+            .filter(|&&i| {
+                let f = ep.queries[i].text.strip_prefix("VALUE ").unwrap();
+                let latest = text
+                    .iter()
+                    .filter_map(|l| l.strip_prefix("WRITE "))
+                    .filter_map(|r| r.split_once(' '))
+                    .filter_map(|(_, r)| r.split_once(" = "))
+                    .filter(|(file, _)| *file == f)
+                    .map(|(_, v)| v)
+                    .last();
+                latest.is_some_and(|v| v != ep.expected[i])
+            })
+            .count();
+        assert!(eager_wrong > 0, "seed {seed}");
+        assert_eq!(ep.queries.len(), 7 * 17);
+    }
 }

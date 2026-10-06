@@ -456,7 +456,9 @@ pub(crate) fn evidence(arm: Arm, q: &Query, chunks: &[&str]) -> Vec<String> {
                 .unwrap_or_default())
         }
         Arm::KvInterleaved => evidence(Arm::KvOffload, q, chunks),
-        Arm::Obligations => own(super::arms_next::read_with(arm, q, &lines).1),
+        Arm::Obligations | Arm::LateResults | Arm::Transactions => {
+            own(super::arms_next::read_with(arm, q, &lines).1)
+        }
         Arm::MultiEpoch => {
             let inner = if q.text.starts_with("RECALL NEEDLE") {
                 Arm::Needle

@@ -1,5 +1,6 @@
 //! The "build next" arms of the merged designer cases (OF-546 loop 2):
-//! kv-interleaved (F-C10), pending-obligations (A-C5). Seeded generators,
+//! kv-interleaved (F-C10), pending-obligations (A-C5), late-tool-results
+//! (A-C7), commit-or-rollback (A-C2). Seeded generators,
 //! fixed readers; each freezes at its first commit, dev seeds 1..=20 and
 //! held-out 1001..=1020 like every other arm. Readers return the answer and
 //! the evidence lines they used (the unbacked audit reads the second).
@@ -363,6 +364,403 @@ pub(crate) fn score(ep: &Episode, answers: &[String]) -> Score {
 pub(crate) fn read_with<'a>(arm: Arm, q: &Query, lines: &[&'a str]) -> (String, Vec<&'a str>) {
     match arm {
         Arm::Obligations => read_obligations(q, lines),
+        Arm::LateResults => read_calls(q, lines),
+        Arm::Transactions => read_transactions(q, lines),
         _ => (String::new(), Vec::new()),
     }
+}
+
+const CALLS: usize = 40;
+const OPS: [&str; 4] = ["fetch_report", "resize_image", "sync_ledger", "send_digest"];
+const REQ_BYTES: usize = 1_020;
+const RESP_BYTES: usize = 3_060;
+const ACCEPT_BYTES: usize = 500;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CallEv {
+    Request,
+    Response,
+    Accept,
+}
+
+/// late-tool-results (A-C7): 40 logical calls, two attempts each, four
+/// operation display names shared across calls. 80 request turns (about
+/// 256 tokens), 80 response turns (about 768, each with an opaque artifact
+/// tag and a response id), 40 ACCEPT turns (about 128) naming the
+/// authoritative attempt: 200 turns, causally shuffled, so some rejected
+/// responses land after their call's ACCEPT. Queries after the 25th ACCEPT
+/// (every call accepted so far) and at the end (all 40): the accepted
+/// attempt, its artifact and its response id.
+pub(crate) fn gen_late_results(rng: &mut Rng) -> Generated {
+    let mut ids: Vec<String> = Vec::new();
+    while ids.len() < CALLS {
+        let id = format!("c-{}", hex(rng, 5));
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let ops: Vec<&str> = (0..CALLS).map(|_| *rng.pick(&OPS)).collect();
+    // Both first-attempt and retry acceptance, in every seed.
+    let accepted: Vec<u8> = (0..CALLS)
+        .map(|i| match i {
+            0 => 1,
+            1 => 2,
+            _ => 1 + rng.below(2) as u8,
+        })
+        .collect();
+    let artifacts: Vec<[String; 2]> = (0..CALLS)
+        .map(|_| {
+            [
+                format!("art-{}", hex(rng, 8)),
+                format!("art-{}", hex(rng, 8)),
+            ]
+        })
+        .collect();
+    let mut events: Vec<(u64, CallEv, usize, u8)> = Vec::new();
+    for c in 0..CALLS {
+        let req1 = rng.below(4_000) as u64;
+        let resp1 = req1 + rng.range(20, 400) as u64;
+        let req2 = req1 + rng.range(10, 300) as u64;
+        let resp2 = req2 + rng.range(20, 400) as u64;
+        let acc_at = if accepted[c] == 1 { resp1 } else { resp2 };
+        let accept = acc_at + rng.range(5, 200) as u64;
+        events.push((req1, CallEv::Request, c, 1));
+        events.push((resp1, CallEv::Response, c, 1));
+        events.push((req2, CallEv::Request, c, 2));
+        events.push((resp2, CallEv::Response, c, 2));
+        events.push((accept, CallEv::Accept, c, accepted[c]));
+    }
+    events.sort_unstable();
+    let mut turns = Vec::new();
+    let mut rid = 0_u32;
+    let mut rids: BTreeMap<(usize, u8), String> = BTreeMap::new();
+    let mut accepts_seen = 0;
+    let mut mid_at = 0;
+    let mut accepted_by_mid: Vec<usize> = Vec::new();
+    let mut present = BTreeSet::new();
+    for (_, ev, c, a) in events {
+        let (line, bytes) = match ev {
+            CallEv::Request => (
+                format!("REQUEST call={} attempt=a{a} op={}", ids[c], ops[c]),
+                REQ_BYTES,
+            ),
+            CallEv::Response => {
+                rid += 1;
+                let r = format!("R{rid:03}");
+                rids.insert((c, a), r.clone());
+                let art = &artifacts[c][usize::from(a) - 1];
+                present.insert(art.clone());
+                (
+                    format!(
+                        "RESPONSE call={} attempt=a{a} op={} rid={r} artifact={art}",
+                        ids[c], ops[c]
+                    ),
+                    RESP_BYTES,
+                )
+            }
+            CallEv::Accept => {
+                accepts_seen += 1;
+                if accepts_seen <= 25 {
+                    accepted_by_mid.push(c);
+                }
+                if accepts_seen == 25 {
+                    mid_at = turns.len();
+                }
+                (format!("ACCEPT call={} attempt=a{a}", ids[c]), ACCEPT_BYTES)
+            }
+        };
+        turns.push(Turn {
+            text: pad(rng, vec![line], bytes),
+            verb: None,
+        });
+    }
+    let mut queries = Vec::new();
+    let mut expected = Vec::new();
+    let mut ask_at = Vec::new();
+    let answer = |c: usize| {
+        let a = accepted[c];
+        format!(
+            "a{a} {} {}",
+            artifacts[c][usize::from(a) - 1],
+            rids.get(&(c, a)).cloned().unwrap_or_default()
+        )
+    };
+    accepted_by_mid.sort_unstable();
+    for (at, calls) in [
+        (Some(mid_at), accepted_by_mid.clone()),
+        (None, (0..CALLS).collect::<Vec<_>>()),
+    ] {
+        for c in calls {
+            queries.push(Query {
+                text: format!("CALL {}", ids[c]),
+                key: format!("call={} ", ids[c]),
+            });
+            expected.push(answer(c));
+            ask_at.push(at);
+        }
+    }
+    let n = queries.len();
+    generated(turns, queries, expected, vec![false; n], present, ask_at)
+}
+
+/// The late-results reader: join by call id and the ACCEPT's attempt, never
+/// by display name or arrival order. Answers `attempt artifact rid`; the
+/// attempt alone when its response is not visible; nothing without an
+/// ACCEPT.
+pub(crate) fn read_calls<'a>(q: &Query, lines: &[&'a str]) -> (String, Vec<&'a str>) {
+    let Some(call) = q.text.strip_prefix("CALL ") else {
+        return (String::new(), Vec::new());
+    };
+    let field = |line: &'a str, name: &str| -> Option<&'a str> {
+        line.split_whitespace()
+            .find_map(|t| t.strip_prefix(name).and_then(|v| v.strip_prefix('=')))
+    };
+    let mut accept: Option<(&str, &'a str)> = None;
+    for &line in lines {
+        if line.starts_with("ACCEPT ") && field(line, "call") == Some(call) {
+            if let Some(a) = field(line, "attempt") {
+                accept = Some((a, line));
+            }
+        }
+    }
+    let Some((attempt, accept_line)) = accept else {
+        return (String::new(), Vec::new());
+    };
+    for &line in lines {
+        if line.starts_with("RESPONSE ")
+            && field(line, "call") == Some(call)
+            && field(line, "attempt") == Some(attempt)
+            && let (Some(rid), Some(art)) = (field(line, "rid"), field(line, "artifact"))
+        {
+            return (format!("{attempt} {art} {rid}"), vec![accept_line, line]);
+        }
+    }
+    (attempt.to_owned(), vec![accept_line])
+}
+
+const TX_FILES: usize = 16;
+const TXNS: usize = 24;
+const TX_COMMITS: usize = 12;
+/// Bytes each turn is padded to (about 1,024 tokens).
+const TX_TURN_BYTES: usize = 4_080;
+
+#[derive(Clone, Copy)]
+enum TxEv {
+    Begin,
+    Write(usize, usize),
+    Terminal,
+    Distractor,
+}
+
+/// commit-or-rollback (A-C2): one turn defining 16 files, then 24 six-turn
+/// transactions (BEGIN, three staged writes to two files, COMMIT or ABORT,
+/// a distractor), up to three in flight at once; exactly 12 commit. Every
+/// turn is padded to about 1,024 tokens: 145 turns. A file's committed
+/// value replays only committed transactions in commit order, each
+/// applying its last staged value per file. Queries after every fourth
+/// terminal event and at the end: every file's committed value and the
+/// outcomes so far.
+pub(crate) fn gen_transactions(rng: &mut Rng) -> Generated {
+    let files: Vec<String> = (1..=TX_FILES).map(|i| format!("f{i:02}")).collect();
+    let initial: Vec<String> = (0..TX_FILES)
+        .map(|_| format!("v-{}", hex(rng, 8)))
+        .collect();
+    let mut order: Vec<usize> = (0..TXNS).collect();
+    rng.shuffle(&mut order);
+    let commits: BTreeSet<usize> = order[..TX_COMMITS].iter().copied().collect();
+    let mut present: BTreeSet<String> = initial.iter().cloned().collect();
+    // Each transaction: two files, three writes (A, B, A), its events.
+    let mut plans: Vec<Vec<TxEv>> = Vec::new();
+    let mut values: Vec<Vec<(usize, String)>> = Vec::new();
+    for _ in 0..TXNS {
+        let a = rng.below(TX_FILES);
+        let b = loop {
+            let b = rng.below(TX_FILES);
+            if b != a {
+                break b;
+            }
+        };
+        let writes = [
+            (a, format!("v-{}", hex(rng, 8))),
+            (b, format!("v-{}", hex(rng, 8))),
+            (a, format!("v-{}", hex(rng, 8))),
+        ];
+        for (_, v) in &writes {
+            present.insert(v.clone());
+        }
+        plans.push(vec![
+            TxEv::Begin,
+            TxEv::Write(0, writes[0].0),
+            TxEv::Write(1, writes[1].0),
+            TxEv::Write(2, writes[2].0),
+            TxEv::Terminal,
+            TxEv::Distractor,
+        ]);
+        values.push(writes.to_vec());
+    }
+    // Interleave: up to three transactions in flight.
+    let mut active: Vec<(usize, usize)> = Vec::new();
+    let mut next_tx = 0;
+    let mut sched: Vec<(usize, TxEv)> = Vec::new();
+    while next_tx < TXNS || !active.is_empty() {
+        if next_tx < TXNS && (active.is_empty() || (active.len() < 3 && rng.below(2) == 0)) {
+            active.push((next_tx, 0));
+            next_tx += 1;
+            continue;
+        }
+        let k = rng.below(active.len());
+        let (tx, step) = active[k];
+        sched.push((tx, plans[tx][step]));
+        if step + 1 == plans[tx].len() {
+            active.remove(k);
+        } else {
+            active[k].1 += 1;
+        }
+    }
+    let mut lines0: Vec<String> = files
+        .iter()
+        .zip(&initial)
+        .map(|(f, v)| format!("FILE {f} = {v}"))
+        .collect();
+    lines0.insert(0, "FILES 16 committed".to_owned());
+    let mut turns = vec![Turn {
+        text: pad(rng, lines0, TX_TURN_BYTES),
+        verb: None,
+    }];
+    let tx_id = |tx: usize| format!("tx-{:02}", tx + 1);
+    let mut committed: Vec<String> = initial.clone();
+    let mut outcomes: BTreeMap<String, &str> = BTreeMap::new();
+    let mut terminals = 0;
+    let mut checkpoints: Vec<(usize, Vec<String>, BTreeMap<String, &str>)> = Vec::new();
+    for (tx, ev) in sched {
+        let line = match ev {
+            TxEv::Begin => format!("BEGIN {}", tx_id(tx)),
+            TxEv::Write(w, f) => format!("WRITE {} {} = {}", tx_id(tx), files[f], values[tx][w].1),
+            TxEv::Terminal => {
+                terminals += 1;
+                if commits.contains(&tx) {
+                    let mut last: BTreeMap<usize, &String> = BTreeMap::new();
+                    for (f, v) in &values[tx] {
+                        last.insert(*f, v);
+                    }
+                    for (f, v) in last {
+                        committed[f].clone_from(v);
+                    }
+                    outcomes.insert(tx_id(tx), "commit");
+                    format!("COMMIT {}", tx_id(tx))
+                } else {
+                    outcomes.insert(tx_id(tx), "abort");
+                    format!("ABORT {}", tx_id(tx))
+                }
+            }
+            TxEv::Distractor => {
+                let (f, v) = &values[tx][2];
+                format!(
+                    "PREVIEW {} {} would become {v} once it lands",
+                    tx_id(tx),
+                    files[*f]
+                )
+            }
+        };
+        turns.push(Turn {
+            text: pad(rng, vec![line], TX_TURN_BYTES),
+            verb: None,
+        });
+        if matches!(ev, TxEv::Terminal) && terminals % 4 == 0 {
+            checkpoints.push((turns.len() - 1, committed.clone(), outcomes.clone()));
+        }
+    }
+    let mut queries = Vec::new();
+    let mut expected = Vec::new();
+    let mut ask_at = Vec::new();
+    let end = (turns.len(), committed.clone(), outcomes.clone());
+    for (k, (t, values, outs)) in checkpoints
+        .into_iter()
+        .chain(std::iter::once(end))
+        .enumerate()
+    {
+        let at = (k < TXNS / 4).then_some(t);
+        for (f, v) in files.iter().zip(&values) {
+            queries.push(Query {
+                text: format!("VALUE {f}"),
+                key: format!("{f} "),
+            });
+            expected.push(v.clone());
+            ask_at.push(at);
+        }
+        queries.push(Query {
+            text: "OUTCOMES".to_owned(),
+            key: "tx-".to_owned(),
+        });
+        expected.push(
+            outs.iter()
+                .map(|(t, o)| format!("{t}:{o}"))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        ask_at.push(at);
+    }
+    let n = queries.len();
+    generated(turns, queries, expected, vec![false; n], present, ask_at)
+}
+
+/// The transactions reader: a file's committed value is its FILE line,
+/// overwritten, for each visible COMMIT in arrival order, by that
+/// transaction's last visible staged write to the file. ABORTed and
+/// unterminated writes never apply; PREVIEW lines are not writes.
+/// OUTCOMES lists every visible terminal event by transaction id.
+pub(crate) fn read_transactions<'a>(q: &Query, lines: &[&'a str]) -> (String, Vec<&'a str>) {
+    let mut terminals: Vec<(&str, &str, &'a str)> = Vec::new();
+    for &line in lines {
+        if let Some(tx) = line.strip_prefix("COMMIT ") {
+            terminals.push((tx, "commit", line));
+        } else if let Some(tx) = line.strip_prefix("ABORT ") {
+            terminals.push((tx, "abort", line));
+        }
+    }
+    if q.text == "OUTCOMES" {
+        let mut outs: BTreeMap<&str, &str> = BTreeMap::new();
+        for (tx, o, _) in &terminals {
+            outs.insert(tx, o);
+        }
+        return (
+            outs.iter()
+                .map(|(t, o)| format!("{t}:{o}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            terminals.iter().map(|t| t.2).collect(),
+        );
+    }
+    let Some(file) = q.text.strip_prefix("VALUE ") else {
+        return (String::new(), Vec::new());
+    };
+    let mut initial: Option<(&str, &'a str)> = None;
+    let mut writes: BTreeMap<&str, (&str, &'a str)> = BTreeMap::new();
+    for &line in lines {
+        if let Some(rest) = line.strip_prefix("FILE ")
+            && let Some((f, v)) = rest.split_once(" = ")
+            && f == file
+            && initial.is_none()
+        {
+            initial = Some((v, line));
+        } else if let Some(rest) = line.strip_prefix("WRITE ")
+            && let Some((tx, rest)) = rest.split_once(' ')
+            && let Some((f, v)) = rest.split_once(" = ")
+            && f == file
+        {
+            writes.insert(tx, (v, line));
+        }
+    }
+    let mut value = initial.map(|(v, _)| v);
+    let mut evidence: Vec<&'a str> = initial.map(|(_, l)| l).into_iter().collect();
+    for (tx, o, line) in &terminals {
+        if *o == "commit"
+            && let Some((v, write)) = writes.get(tx)
+        {
+            value = Some(v);
+            evidence.push(write);
+            evidence.push(line);
+        }
+    }
+    value.map_or_else(|| (String::new(), Vec::new()), |v| (v.to_owned(), evidence))
 }
