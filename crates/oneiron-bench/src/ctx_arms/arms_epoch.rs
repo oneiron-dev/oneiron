@@ -26,10 +26,11 @@
 //! segment. Each query reports under its fact's epoch of origin.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use super::arms::{
-    Arm, Episode, Query, Rng, SERVICES, Score, Turn, Verb, WORDS, filler_line, filler_lines, hex,
-    read, timestamp,
+    Arm, Episode, Grid, Query, Rng, SERVICES, Score, Turn, Verb, WORDS, filler_line, filler_lines,
+    hex, parse_rows, read, row_line, timestamp,
 };
 use super::window::tokens;
 
@@ -108,6 +109,31 @@ impl Env {
         )
     }
 
+    /// The first turn at which `version` of `name` became current.
+    pub(crate) fn version_turn(&self, name: &str, version: u32) -> Option<usize> {
+        self.find(name)?
+            .events
+            .iter()
+            .find(|(_, v)| *v == version)
+            .map(|(t, _)| *t)
+    }
+
+    /// Every resource name.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.resources.iter().map(|r| r.name.as_str())
+    }
+
+    /// Every `(version, turn it became current)` of `name`.
+    pub(crate) fn versions(&self, name: &str) -> Vec<(u32, usize)> {
+        let mut out: Vec<(u32, usize)> = Vec::new();
+        for &(t, v) in self.find(name).map_or(&[][..], |r| r.events.as_slice()) {
+            if !out.iter().any(|(x, _)| *x == v) {
+                out.push((v, t));
+            }
+        }
+        out
+    }
+
     pub(crate) fn hash_into(&self, h: &mut blake3::Hasher) {
         for r in &self.resources {
             h.update(format!("{}{:?}{:?}", r.name, r.versions, r.events).as_bytes());
@@ -136,6 +162,7 @@ pub(crate) struct Generated {
     pub(crate) ask_at: Vec<Option<usize>>,
     pub(crate) origin: Vec<u8>,
     pub(crate) env: Env,
+    pub(crate) truth: Vec<(usize, Grid)>,
 }
 
 const FILES: usize = 6;
@@ -411,6 +438,7 @@ pub(crate) fn gen_relink(rng: &mut Rng) -> Generated {
         ask_at,
         origin,
         env,
+        truth: Vec::new(),
     }
 }
 
@@ -674,7 +702,223 @@ pub(crate) fn gen_multi_epoch(rng: &mut Rng) -> Generated {
         ask_at,
         origin,
         env: Env::default(),
+        truth: Vec::new(),
     }
+}
+
+const FRAME_TURNS: usize = 1000;
+
+#[derive(Clone, Copy)]
+enum Frame {
+    Key(u32, Grid),
+    Delta(u32, u8, u8),
+}
+
+fn frame_lines(frame: Frame) -> Vec<String> {
+    match frame {
+        Frame::Key(epoch, grid) => {
+            let mut lines = vec![format!("<board epoch={epoch}>")];
+            lines.extend((0..9).map(|row| row_line(&grid, row)));
+            lines
+        }
+        Frame::Delta(epoch, cell, digit) => vec![format!(
+            "<delta epoch={epoch}> r{}c{}={digit}",
+            cell / 9 + 1,
+            cell % 9 + 1
+        )],
+    }
+}
+
+/// The stream-frames generator (F-C18, the STREAM-mode law). An 81-cell
+/// board evolves elsewhere and arrives inside tool results: a keyframe
+/// `<board epoch=N>` with the nine rows opens each epoch (dev: every 45-55
+/// turns; held-out: every 20-120), deltas `<delta epoch=N> rIcJ=D` ride
+/// 40% of the other turns, filler elsewhere. Stale frames ride some frame
+/// turns (dev 5%: a delta of the previous epoch, chosen so that applying it
+/// again leaves a cell wrong that no later delta touches; held-out 15%, a
+/// third of them a stale keyframe of the previous epoch). The query at the
+/// end asks for the board.
+pub(crate) fn gen_stream_frames(rng: &mut Rng, heldout: bool) -> Generated {
+    let stale_pct = if heldout { 15 } else { 5 };
+    let mut grid: Grid = [0; 81];
+    for cell in &mut grid {
+        *cell = if rng.below(100) < 45 {
+            0
+        } else {
+            rng.range(1, 9) as u8
+        };
+    }
+    let mut keys = BTreeSet::new();
+    let mut t = 0;
+    while t < FRAME_TURNS {
+        keys.insert(t);
+        t += if heldout {
+            rng.range(20, 120)
+        } else {
+            rng.range(45, 55)
+        };
+    }
+    let mut frames: Vec<Option<Frame>> = Vec::with_capacity(FRAME_TURNS);
+    let mut truth = vec![(0, grid)];
+    let mut key_grids: Vec<Grid> = vec![[0; 81]];
+    let mut epoch_deltas: Vec<Vec<(u8, u8)>> = vec![Vec::new()];
+    let mut last_touch = [0_usize; 81];
+    let mut epoch = 0_u32;
+    for t in 0..FRAME_TURNS {
+        if keys.contains(&t) {
+            epoch += 1;
+            key_grids.push(grid);
+            epoch_deltas.push(Vec::new());
+            frames.push(Some(Frame::Key(epoch, grid)));
+        } else if rng.below(100) < 40 {
+            let cell = rng.below(81) as u8;
+            let digit = rng.range(1, 9) as u8;
+            grid[usize::from(cell)] = digit;
+            last_touch[usize::from(cell)] = t;
+            truth.push((t, grid));
+            epoch_deltas[epoch as usize].push((cell, digit));
+            frames.push(Some(Frame::Delta(epoch, cell, digit)));
+        } else {
+            frames.push(None);
+        }
+    }
+    let final_grid = grid;
+
+    let mut turns = Vec::with_capacity(FRAME_TURNS);
+    let mut epoch_at = 0_u32;
+    for (t, frame) in frames.into_iter().enumerate() {
+        let mut blocks: Vec<Vec<String>> = filler_lines(rng, 5, 9)
+            .into_iter()
+            .map(|l| vec![l])
+            .collect();
+        if let Some(frame) = frame {
+            if let Frame::Key(e, _) = frame {
+                epoch_at = e;
+            }
+            let at = rng.below(blocks.len() + 1);
+            blocks.insert(at, frame_lines(frame));
+            if epoch_at >= 2 && rng.below(100) < stale_pct {
+                let prev = epoch_at - 1;
+                let stale = if heldout && rng.below(3) == 0 {
+                    Some(Frame::Key(prev, key_grids[prev as usize]))
+                } else {
+                    let fits: Vec<(u8, u8)> = epoch_deltas[prev as usize]
+                        .iter()
+                        .copied()
+                        .filter(|&(c, d)| {
+                            last_touch[usize::from(c)] < t && final_grid[usize::from(c)] != d
+                        })
+                        .collect();
+                    (!fits.is_empty()).then(|| {
+                        let (c, d) = fits[rng.below(fits.len())];
+                        Frame::Delta(prev, c, d)
+                    })
+                };
+                if let Some(stale) = stale {
+                    let after = at + 1 + rng.below(blocks.len() - at);
+                    blocks.insert(after, frame_lines(stale));
+                }
+            }
+        }
+        turns.push(Turn {
+            text: blocks.concat().join("\n"),
+            verb: None,
+        });
+    }
+    let answer: String = final_grid.iter().map(|d| char::from(b'0' + d)).collect();
+    Generated {
+        turns,
+        queries: vec![Query {
+            text: "BOARD FINAL".to_owned(),
+            key: "<board epoch=".to_owned(),
+        }],
+        expected: vec![answer],
+        atomic: vec![false],
+        present: BTreeSet::new(),
+        ask_at: vec![None],
+        origin: Vec::new(),
+        env: Env::default(),
+        truth,
+    }
+}
+
+/// A visible frame: its epoch, what it carries, and the lines it spans.
+pub(crate) enum Seen {
+    Key(u32, Grid, Range<usize>),
+    Delta(u32, usize, u8, usize),
+}
+
+/// Every complete frame among `lines`, in arrival order.
+pub(crate) fn parse_frames(lines: &[&str]) -> Vec<Seen> {
+    let digit = |x: u8| x.is_ascii_digit().then(|| x - b'0');
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(epoch) = line
+            .strip_prefix("<board epoch=")
+            .and_then(|r| r.strip_suffix('>'))
+            .and_then(|e| e.parse::<u32>().ok())
+        {
+            if let Some(grid) = parse_rows(&lines[i + 1..]) {
+                out.push(Seen::Key(epoch, grid, i..i + 10));
+            }
+        } else if let Some((epoch, rest)) = line
+            .strip_prefix("<delta epoch=")
+            .and_then(|r| r.split_once("> "))
+            && let Ok(epoch) = epoch.parse::<u32>()
+            && let [b'r', r, b'c', c, b'=', d] = rest.as_bytes()
+            && let (Some(r), Some(c), Some(d)) = (digit(*r), digit(*c), digit(*d))
+            && (1..=9).contains(&r)
+            && (1..=9).contains(&c)
+        {
+            out.push(Seen::Delta(epoch, usize::from((r - 1) * 9 + (c - 1)), d, i));
+        }
+    }
+    out
+}
+
+/// The frames reader (the STREAM-mode law): the keyframe with the highest
+/// epoch, then the deltas carrying that epoch in arrival order; frames of
+/// older epochs are ignored. With no keyframe, the deltas of the highest
+/// epoch seen. Unknown cells read `?`.
+pub(crate) fn read_frames(lines: &[&str]) -> String {
+    let seen = parse_frames(lines);
+    let Some(epoch) = seen
+        .iter()
+        .filter_map(|s| match s {
+            Seen::Key(e, _, _) => Some(*e),
+            Seen::Delta(..) => None,
+        })
+        .max()
+        .or_else(|| {
+            seen.iter()
+                .filter_map(|s| match s {
+                    Seen::Delta(e, ..) => Some(*e),
+                    Seen::Key(..) => None,
+                })
+                .max()
+        })
+    else {
+        return "?".repeat(81);
+    };
+    let mut cells: [Option<u8>; 81] = seen
+        .iter()
+        .rev()
+        .find_map(|s| match s {
+            Seen::Key(e, grid, _) if *e == epoch => Some(grid.map(Some)),
+            _ => None,
+        })
+        .unwrap_or([None; 81]);
+    for s in &seen {
+        if let Seen::Delta(e, cell, digit, _) = s
+            && *e == epoch
+        {
+            cells[*cell] = Some(*digit);
+        }
+    }
+    cells
+        .iter()
+        .map(|c| c.map_or('?', |d| char::from(b'0' + d)))
+        .collect()
 }
 
 /// The relink reader: the highest version of the keyed resource that is
@@ -731,6 +975,20 @@ pub(crate) fn read_mixed(q: &Query, chunks: &[&str]) -> String {
 /// content, relink), hallucinated atoms (multi-epoch, the loop-1 rule) and
 /// the per-bucket tallies.
 pub(crate) fn score(ep: &Episode, answers: &[String]) -> (Score, Extra) {
+    if ep.arm == Arm::StreamFrames {
+        let want = ep.expected[0].as_bytes();
+        let got = answers.first().map_or(&[][..], |a| a.as_bytes());
+        let correct = (0..81).filter(|&i| got.get(i) == Some(&want[i])).count() as u32;
+        return (
+            Score {
+                value: f64::from(correct) / 81.0,
+                correct,
+                total: 81,
+                hallucinated: 0,
+            },
+            Extra::default(),
+        );
+    }
     let mut score = Score {
         total: ep.queries.len() as u32,
         ..Score::default()

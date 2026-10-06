@@ -993,3 +993,345 @@ fn sweep_canon_knobs_on_dev() {
         }
     }
 }
+
+// ---- loop 2, the merged "build now" cases ----
+
+fn cell_of(r: &super::EpisodeResult) -> super::Cell {
+    let mut cell = super::Cell::default();
+    cell.add(r, 0.0);
+    cell
+}
+
+#[test]
+fn evidence_mirrors_every_reader_and_the_oracle_is_fully_backed() {
+    for arm in ARMS {
+        for seed in [1, 1001] {
+            let ep = Episode::generate(arm, seed);
+            let base = super::audit::AuditBase::new(&ep);
+            let mut checks = super::audit::Checks::new(&base);
+            for (i, q) in ep.queries.iter().enumerate() {
+                let end = ep.ask_at[i].map_or(ep.turns.len(), |t| t + 1);
+                let mut chunks: Vec<String> =
+                    ep.turns[..end].iter().map(|t| t.text.clone()).collect();
+                if arm == Arm::Relink {
+                    let name = q.key.trim_end_matches('@');
+                    let v = ep.env.current(name, end - 1).unwrap();
+                    chunks.push(ep.env.body(name, v).unwrap());
+                }
+                let refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
+                let answer = read(arm, q, &refs);
+                assert!(
+                    !super::audit::evidence(arm, q, &refs).is_empty()
+                        || answer.is_empty()
+                        || answer == "0",
+                    "{arm:?} seed {seed} query {i}: an answer with no evidence"
+                );
+                checks.on_answer(arm, q, end - 1, &refs, &answer);
+            }
+            assert_eq!(checks.unbacked, 0, "{arm:?} seed {seed}");
+        }
+    }
+}
+
+#[test]
+fn read_over_invalidates_a_cell_that_reads_past_the_budget() {
+    let ep = Episode::generate(Arm::Needle, 16);
+    let restore = run_episode(
+        &ep,
+        &mut RecoverableFold::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert!(restore.read_over > 0, "a page on top of a full window");
+    assert!(restore.read_sum / restore.reads > DEFAULT_BUDGET);
+    let cell = cell_of(&restore);
+    assert!(cell.valid_loop1(1));
+    assert_eq!(cell.invalid(1), vec!["read_over"]);
+    let truncate = run_episode(
+        &ep,
+        &mut Truncate::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert_eq!(truncate.read_over, 0);
+    assert!(cell_of(&truncate).valid(1));
+}
+
+/// A test-only cheat: writes every hidden atom it is handed as a note on
+/// the first turn (a replay of the public seeds).
+struct Replay(Vec<String>, bool);
+
+impl Strategy for Replay {
+    fn name(&self) -> &'static str {
+        "replay"
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            drop: true,
+            ..Caps::default()
+        }
+    }
+
+    fn on_verb(&mut self, _verb: &Verb, _ctx: &mut Ctx<'_>) {}
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        if !self.1 {
+            self.1 = true;
+            ctx.append_note(self.0.join("\n"));
+        }
+        let note = |s: &super::window::Span| s.kind() == SpanKind::Note;
+        if ctx.tokens() > ctx.budget() {
+            let must = ctx.tokens() - ctx.low_water();
+            let ranges = OldestFirst.choose(ctx.spans(), must, &note);
+            for r in ranges.into_iter().rev() {
+                ctx.drop_spans(r);
+            }
+        }
+    }
+}
+
+use super::strategies::Policy as _;
+
+#[test]
+fn precog_catches_answers_written_before_they_arrive() {
+    let ep = Episode::generate(Arm::Needle, 17);
+    let atoms: Vec<String> = ep
+        .queries
+        .iter()
+        .zip(&ep.expected)
+        .map(|(q, want)| format!("{} {want}", q.key))
+        .collect();
+    let r = run_episode(&ep, &mut Replay(atoms, false), DEFAULT_BUDGET);
+    assert!(
+        (r.score.value - 1.0).abs() < 1e-9,
+        "the replay answers everything"
+    );
+    assert!(r.precog > 0);
+    assert!(cell_of(&r).invalid(1).contains(&"precog"));
+}
+
+#[test]
+fn unbacked_catches_answers_resting_on_cut_lines() {
+    let ep = Episode::generate(Arm::Needle, 3);
+    let r = run_episode(
+        &ep,
+        &mut FifoFold::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert!(r.score.hallucinated > 0);
+    assert!(
+        r.unbacked >= u64::from(r.score.hallucinated),
+        "{} {:?}",
+        r.unbacked,
+        r.score
+    );
+    assert!(cell_of(&r).invalid(1).contains(&"unbacked"));
+}
+
+/// A test-only cheat: keeps live exactly the spans that hold an asked
+/// key's SET line, dropping everything else first.
+struct KeepAsked(Vec<String>);
+
+impl Strategy for KeepAsked {
+    fn name(&self) -> &'static str {
+        "keep-asked"
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            drop: true,
+            ..Caps::default()
+        }
+    }
+
+    fn on_verb(&mut self, _verb: &Verb, _ctx: &mut Ctx<'_>) {}
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        if ctx.tokens() <= ctx.budget() {
+            return;
+        }
+        let keys = &self.0;
+        let asked = |s: &super::window::Span| keys.iter().any(|k| s.text().contains(k.as_str()));
+        let must = ctx.tokens() - ctx.low_water();
+        let ranges = OldestFirst.choose(ctx.spans(), must, &asked);
+        for r in ranges.into_iter().rev() {
+            ctx.drop_spans(r);
+        }
+    }
+}
+
+#[test]
+fn foreknow_catches_keeping_the_asked_keys_live() {
+    let ep = Episode::generate(Arm::KvOffload, 18);
+    let keys: Vec<String> = ep.queries.iter().map(|q| q.key.clone()).collect();
+    let r = run_episode(&ep, &mut KeepAsked(keys), DEFAULT_BUDGET);
+    assert!(r.foreknow.unwrap() > 0.5, "{:?}", r.foreknow);
+    assert!(cell_of(&r).invalid(1).contains(&"foreknow"));
+    let honest = run_episode(
+        &ep,
+        &mut Truncate::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert!(
+        honest.foreknow.unwrap().abs() < 0.2,
+        "{:?}",
+        honest.foreknow
+    );
+}
+
+#[test]
+fn reprefill_attribution_sums_to_the_total_and_names_the_cause() {
+    for arm in [Arm::Needle, Arm::Sketchpad, Arm::Relink] {
+        let ep = Episode::generate(arm, 19);
+        for name in STRATEGIES {
+            let r = run_episode(&ep, build(name).unwrap().as_mut(), DEFAULT_BUDGET);
+            assert_eq!(
+                r.rp_tail + r.rp_fold + r.rp_patch + r.rp_fetch,
+                r.reprefill_tok,
+                "{arm:?} {name}"
+            );
+            match name {
+                "truncate" | "fifo-fold" | "recoverable-fold" => {
+                    assert_eq!(r.reprefill_tok, r.rp_fold, "{arm:?} {name}");
+                    assert!(r.folds > 0);
+                }
+                "free-file" => assert_eq!(r.reprefill_tok, r.rp_patch, "{arm:?} {name}"),
+                "engine-board" | "canon-placement" | "keyframe-in-tail" => {
+                    assert!(r.rp_tail > 0 && r.rp_fold > 0, "{arm:?} {name}")
+                }
+                "board-in-prefix" => assert!(r.rp_tail > 10 * r.rp_fold, "{arm:?} {name}"),
+                _ => {}
+            }
+        }
+    }
+}
+
+#[test]
+fn stale_and_overcount_are_named() {
+    let kv = Episode::generate(Arm::KvOffload, 20);
+    let mut answers = full_stream_answers(&kv);
+    // A key set twice: answer with its first value.
+    let i = (0..kv.queries.len())
+        .find(|&i| {
+            kv.turns
+                .iter()
+                .flat_map(|t| t.text.lines())
+                .filter(|l| l.starts_with(kv.queries[i].key.as_str()))
+                .count()
+                > 1
+        })
+        .expect("a seed with an overwritten asked key");
+    let first = kv
+        .turns
+        .iter()
+        .flat_map(|t| t.text.lines())
+        .find_map(|l| l.strip_prefix(kv.queries[i].key.as_str()))
+        .and_then(|r| r.split_whitespace().next())
+        .unwrap()
+        .to_owned();
+    answers[i] = first;
+    assert_eq!(super::audit::diagnose(&kv, &answers), (1, 0));
+    let logs = Episode::generate(Arm::LogTriage, 20);
+    let mut answers = full_stream_answers(&logs);
+    let c = logs
+        .queries
+        .iter()
+        .position(|q| q.text.starts_with("COUNT "))
+        .unwrap();
+    answers[c] = (answers[c].parse::<u64>().unwrap() + 1).to_string();
+    assert_eq!(super::audit::diagnose(&logs, &answers), (0, 1));
+}
+
+/// recoverable-fold, plus a wrong needle line written after the stream:
+/// the restore alone answers right and the live line turns it wrong.
+struct Overrider(RecoverableFold, usize, String);
+
+impl Strategy for Overrider {
+    fn name(&self) -> &'static str {
+        "overrider"
+    }
+
+    fn caps(&self) -> Caps {
+        self.0.caps()
+    }
+
+    fn on_verb(&mut self, verb: &Verb, ctx: &mut Ctx<'_>) {
+        self.0.on_verb(verb, ctx);
+    }
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        self.0.on_turn(ctx);
+        self.1 -= 1;
+        if self.1 == 0 {
+            ctx.append_note(self.2.clone());
+        }
+    }
+
+    fn on_query(&mut self, query: &Query, ctx: &mut Ctx<'_>) -> Vec<u32> {
+        self.0.on_query(query, ctx)
+    }
+}
+
+#[test]
+fn override_counts_a_live_line_that_turns_a_restored_answer_wrong() {
+    let ep = Episode::generate(Arm::Needle, 21);
+    let line = format!("{} not the needle", ep.queries[0].key);
+    let r = run_episode(
+        &ep,
+        &mut Overrider(
+            RecoverableFold::new(Box::new(OldestFirst)),
+            ep.turns.len(),
+            line,
+        ),
+        DEFAULT_BUDGET,
+    );
+    assert_eq!(r.overrides, 1);
+    assert!(r.unbacked >= 1, "the live line never arrived");
+}
+
+#[test]
+fn stream_frames_carry_stale_frames_the_reader_ignores() {
+    let mut naive_wrong = 0;
+    for seed in [1, 2, 3, 4, 5, 1001, 1002, 1003] {
+        let ep = Episode::generate(Arm::StreamFrames, seed);
+        let lines: Vec<&str> = ep.turns.iter().flat_map(|t| t.text.lines()).collect();
+        assert_eq!(
+            read(Arm::StreamFrames, &ep.queries[0], &lines),
+            ep.expected[0]
+        );
+        // Arrival order, every frame applied: stale frames corrupt it.
+        let mut naive = [0_u8; 81];
+        for seen in super::arms_epoch::parse_frames(&lines) {
+            match seen {
+                super::arms_epoch::Seen::Key(_, grid, _) => naive = grid,
+                super::arms_epoch::Seen::Delta(_, cell, digit, _) => naive[cell] = digit,
+            }
+        }
+        let naive: String = naive.iter().map(|d| char::from(b'0' + d)).collect();
+        naive_wrong += usize::from(naive != ep.expected[0]);
+        if seed >= 1001 {
+            let keys: Vec<u32> = super::arms_epoch::parse_frames(&lines)
+                .iter()
+                .filter_map(|s| match s {
+                    super::arms_epoch::Seen::Key(e, _, _) => Some(*e),
+                    super::arms_epoch::Seen::Delta(..) => None,
+                })
+                .collect();
+            assert!(
+                keys.windows(2).any(|w| w[1] < w[0]),
+                "held-out seed {seed}: a stale keyframe arrives late"
+            );
+        }
+    }
+    assert!(
+        naive_wrong >= 6,
+        "stale frames bite arrival-order application: {naive_wrong}/8"
+    );
+    let ep = Episode::generate(Arm::StreamFrames, 22);
+    let r = run_episode(
+        &ep,
+        &mut Truncate::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert!((r.score.value - 1.0).abs() < 1e-9);
+    assert!(r.frames_live > 0, "superseded frames ride the window");
+}

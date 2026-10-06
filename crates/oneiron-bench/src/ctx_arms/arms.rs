@@ -15,14 +15,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::arms_epoch::{self, Env, Extra};
 
-/// Every arm, in report order. The last two are loop 2's (`arms_epoch.rs`).
-pub(crate) const ARMS: [Arm; 6] = [
+/// Every arm, in report order. The last three are loop 2's
+/// (`arms_epoch.rs`).
+pub(crate) const ARMS: [Arm; 7] = [
     Arm::Needle,
     Arm::Sketchpad,
     Arm::KvOffload,
     Arm::LogTriage,
     Arm::Relink,
     Arm::MultiEpoch,
+    Arm::StreamFrames,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -33,6 +35,7 @@ pub(crate) enum Arm {
     LogTriage,
     Relink,
     MultiEpoch,
+    StreamFrames,
 }
 
 impl Arm {
@@ -44,6 +47,7 @@ impl Arm {
             Self::LogTriage => "log-triage",
             Self::Relink => "relink-after-compaction",
             Self::MultiEpoch => "multi-epoch",
+            Self::StreamFrames => "stream-frames",
         }
     }
 
@@ -59,6 +63,7 @@ impl Arm {
             Self::LogTriage => 4,
             Self::Relink => 5,
             Self::MultiEpoch => 6,
+            Self::StreamFrames => 7,
         }
     }
 }
@@ -201,6 +206,9 @@ pub(crate) struct Episode {
     pub(super) origin: Vec<u8>,
     /// Loop 2: the environment a `get` reads. Empty for loop-1 arms.
     pub(crate) env: Env,
+    /// Loop 2 (stream-frames): the true board after each turn that changed
+    /// it, `(turn, grid)`. Hidden; the audits date board rows by it.
+    pub(super) truth: Vec<(usize, Grid)>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -241,11 +249,11 @@ impl Episode {
             Arm::Sketchpad => gen_sketchpad(&mut rng),
             Arm::KvOffload => gen_kv(&mut rng),
             Arm::LogTriage => gen_logs(&mut rng),
-            Arm::Relink | Arm::MultiEpoch => {
-                let g = if arm == Arm::Relink {
-                    arms_epoch::gen_relink(&mut rng)
-                } else {
-                    arms_epoch::gen_multi_epoch(&mut rng)
+            Arm::Relink | Arm::MultiEpoch | Arm::StreamFrames => {
+                let g = match arm {
+                    Arm::Relink => arms_epoch::gen_relink(&mut rng),
+                    Arm::MultiEpoch => arms_epoch::gen_multi_epoch(&mut rng),
+                    _ => arms_epoch::gen_stream_frames(&mut rng, seed >= 1001),
                 };
                 return Self {
                     arm,
@@ -258,6 +266,7 @@ impl Episode {
                     ask_at: g.ask_at,
                     origin: g.origin,
                     env: g.env,
+                    truth: g.truth,
                 };
             }
         };
@@ -273,6 +282,7 @@ impl Episode {
             ask_at: vec![None; n],
             origin: Vec::new(),
             env: Env::default(),
+            truth: Vec::new(),
         }
     }
 
@@ -280,7 +290,7 @@ impl Episode {
     /// per-bucket tallies). Loop-1 arms score exactly as [`Self::score`].
     pub(crate) fn score_full(&self, answers: &[String]) -> (Score, Extra) {
         match self.arm {
-            Arm::Relink | Arm::MultiEpoch => arms_epoch::score(self, answers),
+            Arm::Relink | Arm::MultiEpoch | Arm::StreamFrames => arms_epoch::score(self, answers),
             _ => (self.score(answers), Extra::default()),
         }
     }
@@ -332,8 +342,9 @@ impl Episode {
             h.update(b"\0");
         }
         // Loop-2 fields only when present, so loop-1 digests are unchanged.
-        if self.ask_at.iter().any(Option::is_some) || !self.env.is_empty() {
-            h.update(format!("{:?}{:?}", self.ask_at, self.origin).as_bytes());
+        if self.ask_at.iter().any(Option::is_some) || !self.env.is_empty() || !self.truth.is_empty()
+        {
+            h.update(format!("{:?}{:?}{:?}", self.ask_at, self.origin, self.truth).as_bytes());
             self.env.hash_into(&mut h);
         }
         *h.finalize().as_bytes()
@@ -672,10 +683,11 @@ pub(crate) fn read(arm: Arm, q: &Query, chunks: &[&str]) -> String {
         Arm::LogTriage => read_logs(q, &lines.collect::<Vec<_>>()),
         Arm::Relink => arms_epoch::read_resource(q, &lines.collect::<Vec<_>>()),
         Arm::MultiEpoch => arms_epoch::read_mixed(q, chunks),
+        Arm::StreamFrames => arms_epoch::read_frames(&lines.collect::<Vec<_>>()),
     }
 }
 
-fn parse_rows(lines: &[&str]) -> Option<Grid> {
+pub(crate) fn parse_rows(lines: &[&str]) -> Option<Grid> {
     let mut grid: Grid = [0; 81];
     for row in 0..9 {
         let digits = lines.get(row)?.strip_prefix(&format!("r{} ", row + 1))?;
@@ -690,7 +702,7 @@ fn parse_rows(lines: &[&str]) -> Option<Grid> {
     Some(grid)
 }
 
-fn parse_move(line: &str) -> Option<(u32, usize, u8)> {
+pub(crate) fn parse_move(line: &str) -> Option<(u32, usize, u8)> {
     let (mv, rest) = line.strip_prefix("MOVE m")?.split_once(": r")?;
     let b = rest.as_bytes();
     if b.len() != 5 || b[1] != b'c' || b[3] != b'=' {

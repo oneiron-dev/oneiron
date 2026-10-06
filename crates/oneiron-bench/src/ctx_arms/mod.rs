@@ -26,10 +26,17 @@
 //! unchanged cached prefix over all prompt tokens, summed over the turns),
 //! the placement family (canon-placement and its two wrong-placement
 //! controls) and two arms (relink-after-compaction, multi-epoch) whose
-//! queries may come mid-session.
+//! queries may come mid-session. The merged designer cases add a third arm
+//! (stream-frames, F-C18) and harness audits on every cell (`audit.rs`):
+//! the query-time read budget (F-C3, `read_over` invalidates), seed replay
+//! and foreknowledge (F-C1, `precog` / `unbacked` / `foreknow` invalidate),
+//! re-prefill attribution (F-C5) and the stale-evidence diagnostics
+//! (F-C15). They print as `CTX2-AUDIT` lines; `CTX2-LAWS` counts the cells
+//! valid under the loop-1 law and under the loop-2 laws.
 
 mod arms;
 mod arms_epoch;
+mod audit;
 mod board;
 mod strategies;
 mod window;
@@ -45,7 +52,7 @@ use std::time::Instant;
 use arms::{ARMS, Arm, Episode, Score};
 use arms_epoch::Extra;
 use strategies::{STRATEGIES, Strategy};
-use window::{Audit, Caps, Ctx, Ledger, RefStore, SpanKind, TOKENIZER, Window};
+use window::{Audit, Caps, Cause, Ctx, Ledger, RefStore, SpanKind, TOKENIZER, Window};
 
 pub(crate) const DEV_SEEDS: RangeInclusive<u64> = 1..=20;
 pub(crate) const HELDOUT_SEEDS: RangeInclusive<u64> = 1001..=1020;
@@ -186,6 +193,30 @@ pub(crate) struct EpisodeResult {
     pub(crate) fetch_tok: u64,
     /// Stale answers and per-bucket tallies (loop-2 arms).
     pub(crate) extra: Extra,
+    /// F-C5: re-prefill by the cause of each call's first edit, fold and
+    /// drop operations, board tokens summed over calls, model calls.
+    pub(crate) rp_tail: u64,
+    pub(crate) rp_fold: u64,
+    pub(crate) rp_patch: u64,
+    pub(crate) rp_fetch: u64,
+    pub(crate) folds: u64,
+    pub(crate) board_tok: u64,
+    pub(crate) calls: u64,
+    /// F-C3: queries read, their window-plus-restore tokens summed, and the
+    /// queries whose read exceeded the budget.
+    pub(crate) reads: u64,
+    pub(crate) read_sum: u64,
+    pub(crate) read_over: u64,
+    /// F-C1.
+    pub(crate) precog: u64,
+    pub(crate) unbacked: u64,
+    pub(crate) foreknow: Option<f64>,
+    /// F-C15: COUNT answers above the truth; queries the restores alone
+    /// answered right and the live window turned wrong.
+    pub(crate) overcount: u64,
+    pub(crate) overrides: u64,
+    /// F-C18: frames of superseded epochs live at the last model call.
+    pub(crate) frames_live: u64,
 }
 
 impl EpisodeResult {
@@ -199,6 +230,7 @@ pub(crate) fn low_water(budget: u64) -> u64 {
     budget * LOW_WATER_PERCENT / 100
 }
 
+#[cfg(test)]
 pub(crate) fn run_episode(ep: &Episode, strategy: &mut dyn Strategy, budget: u64) -> EpisodeResult {
     run_episode_with(ep, strategy, budget, |_| {})
 }
@@ -213,13 +245,15 @@ struct Run<'e> {
     budget: u64,
     res: EpisodeResult,
     answers: Vec<String>,
+    checks: audit::Checks<'e>,
 }
 
 impl Run<'_> {
     /// Asks query `i` at stream turn `turn`: the strategy may edit or fetch
     /// (mid-session) and names references to restore; the fixed reader
     /// answers from the restores plus the window it left. A mid-session
-    /// query is a model call, so its window counts against the budget.
+    /// query is a model call, so its window counts against the budget; every
+    /// query's read (window plus restored pages) counts against it too.
     fn ask(&mut self, strategy: &mut dyn Strategy, i: usize, turn: usize) {
         let q = &self.ep.queries[i];
         let mut ids = {
@@ -242,6 +276,7 @@ impl Run<'_> {
             self.res.peak = self.res.peak.max(live);
             self.res.over_budget += u64::from(live > self.budget);
         }
+        self.checks.on_call(turn, &self.win);
         ids.sort_unstable();
         ids.dedup();
         let mut chunks: Vec<&str> = Vec::new();
@@ -258,8 +293,20 @@ impl Run<'_> {
             }
         }
         self.res.read_peak = self.res.read_peak.max(read);
+        self.res.reads += 1;
+        self.res.read_sum += read;
+        self.res.read_over += u64::from(read > self.budget);
+        let restored = chunks.len();
+        let only_restored = (restored > 0).then(|| arms::read(self.ep.arm, q, &chunks));
         chunks.extend(self.win.spans().iter().map(window::Span::text));
-        self.answers[i] = arms::read(self.ep.arm, q, &chunks);
+        let answer = arms::read(self.ep.arm, q, &chunks);
+        let want = &self.ep.expected[i];
+        if only_restored.as_ref() == Some(want) && &answer != want {
+            self.res.overrides += 1;
+        }
+        self.checks
+            .on_answer(self.ep.arm, q, turn, &chunks, &answer);
+        self.answers[i] = answer;
     }
 }
 
@@ -267,8 +314,22 @@ impl Run<'_> {
 /// right after its turn's model call, then asks the rest. `tamper` runs
 /// between the stream and the end-of-session queries (tests corrupt a
 /// reference there to prove the arm fails).
+#[cfg(test)]
 pub(crate) fn run_episode_with(
     ep: &Episode,
+    strategy: &mut dyn Strategy,
+    budget: u64,
+    tamper: impl FnOnce(&mut RefStore),
+) -> EpisodeResult {
+    let base = audit::AuditBase::new(ep);
+    run_full(ep, &base, strategy, budget, tamper)
+}
+
+/// [`run_episode_with`] on a prebuilt audit base (the report builds one per
+/// episode and runs every strategy on it).
+pub(crate) fn run_full(
+    ep: &Episode,
+    base: &audit::AuditBase,
     strategy: &mut dyn Strategy,
     budget: u64,
     tamper: impl FnOnce(&mut RefStore),
@@ -282,6 +343,7 @@ pub(crate) fn run_episode_with(
         budget,
         res: EpisodeResult::default(),
         answers: vec![String::new(); ep.queries.len()],
+        checks: audit::Checks::new(base),
     };
     let mut mid: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (i, at) in ep.ask_at.iter().enumerate() {
@@ -312,9 +374,25 @@ pub(crate) fn run_episode_with(
         }
         let call = run.win.call();
         run.res.reprefill_tok += call.reprefill;
+        match call.cause {
+            Some(Cause::Tail) => run.res.rp_tail += call.reprefill,
+            Some(Cause::Fold) => run.res.rp_fold += call.reprefill,
+            Some(Cause::Patch) => run.res.rp_patch += call.reprefill,
+            Some(Cause::Fetch) => run.res.rp_fetch += call.reprefill,
+            None => {}
+        }
         run.res.served_tok += call.served;
         run.res.prompt_tok += call.total;
         run.res.frozen_tok += call.frozen;
+        run.res.calls += 1;
+        run.res.board_tok += run
+            .win
+            .spans()
+            .iter()
+            .filter(|s| s.kind() == SpanKind::Board)
+            .map(window::Span::tok)
+            .sum::<u64>();
+        run.checks.on_call(n, &run.win);
         let live = run.win.total();
         run.res.peak = run.res.peak.max(live);
         window_sum += live;
@@ -325,6 +403,8 @@ pub(crate) fn run_episode_with(
     }
     run.res.mean = window_sum as f64 / ep.turns.len().max(1) as f64;
     run.res.read_peak = run.res.read_peak.max(run.res.peak);
+    run.res.foreknow = base.foreknow(&run.win);
+    run.res.frames_live = base.frames_live(&run.win);
     tamper(&mut run.refs);
     let last = ep.turns.len().saturating_sub(1);
     for i in 0..ep.queries.len() {
@@ -338,11 +418,17 @@ pub(crate) fn run_episode_with(
         led,
         mut res,
         answers,
+        checks,
         ..
     } = run;
+    res.precog = checks.precog;
+    res.unbacked = checks.unbacked;
     res.audit = led.audit(&refs);
     res.restore_fail |= res.audit.broken_reference();
-    let (score, extra) = ep.score_full(&answers);
+    let (score, mut extra) = ep.score_full(&answers);
+    let (stale_kv, overcount) = audit::diagnose(ep, &answers);
+    extra.stale += stale_kv;
+    res.overcount = u64::from(overcount);
     res.score = score;
     res.extra = extra;
     // OF-546 note 3 / OF-190: a reference that cannot restore its span
@@ -354,6 +440,7 @@ pub(crate) fn run_episode_with(
     }
     res.edit_tok = led.edit_tok;
     res.fetch_tok = led.fetch_tok;
+    res.folds = led.folds();
     res.violations = led.violations;
     res
 }
@@ -383,6 +470,22 @@ pub(crate) struct Cell {
     fetch: u64,
     stale: u64,
     buckets: Vec<(u64, u64)>,
+    rp_tail: u64,
+    rp_fold: u64,
+    rp_patch: u64,
+    rp_fetch: u64,
+    folds: u64,
+    board_tok: u64,
+    calls: u64,
+    reads: u64,
+    read_sum: u64,
+    read_over: u64,
+    precog: u64,
+    unbacked: u64,
+    foreknow_max: Option<f64>,
+    overcount: u64,
+    overrides: u64,
+    frames_live: u64,
 }
 
 impl Cell {
@@ -415,6 +518,24 @@ impl Cell {
             cell.0 += u64::from(*ok);
             cell.1 += u64::from(*n);
         }
+        self.rp_tail += r.rp_tail;
+        self.rp_fold += r.rp_fold;
+        self.rp_patch += r.rp_patch;
+        self.rp_fetch += r.rp_fetch;
+        self.folds += r.folds;
+        self.board_tok += r.board_tok;
+        self.calls += r.calls;
+        self.reads += r.reads;
+        self.read_sum += r.read_sum;
+        self.read_over += r.read_over;
+        self.precog += r.precog;
+        self.unbacked += r.unbacked;
+        if let Some(f) = r.foreknow {
+            self.foreknow_max = Some(self.foreknow_max.map_or(f, |m| m.max(f)));
+        }
+        self.overcount += r.overcount;
+        self.overrides += r.overrides;
+        self.frames_live += r.frames_live;
     }
 
     /// Tokens served from an unchanged cached prefix over all prompt
@@ -430,10 +551,46 @@ impl Cell {
         self.frozen as f64 / self.prompt.max(1) as f64
     }
 
-    /// Every episode ran, no operation was refused, and no model call saw a
-    /// window over budget (an unmanaged window would read the whole stream).
+    /// Every episode ran, no operation was refused, no model call saw a
+    /// window over budget (an unmanaged window would read the whole stream),
+    /// and (loop 2, the merged cases) no query read more than the budget
+    /// (F-C3), no strategy-written span held an atom before it arrived, no
+    /// answer rested on a line that never arrived, and no episode kept the
+    /// asked keys live more than half again as often as all keys (F-C1).
     pub(crate) fn valid(&self, seeds: u64) -> bool {
+        self.invalid(seeds).is_empty()
+    }
+
+    /// The loop-1 law alone (episodes, refusals, window over budget).
+    pub(crate) fn valid_loop1(&self, seeds: u64) -> bool {
         self.ran && self.episodes == seeds && self.violations == 0 && self.over_budget == 0
+    }
+
+    /// Why the cell is not valid, law by law.
+    pub(crate) fn invalid(&self, seeds: u64) -> Vec<&'static str> {
+        let mut why = Vec::new();
+        if !self.ran || self.episodes != seeds {
+            why.push("episodes");
+        }
+        if self.violations > 0 {
+            why.push("violations");
+        }
+        if self.over_budget > 0 {
+            why.push("over");
+        }
+        if self.read_over > 0 {
+            why.push("read_over");
+        }
+        if self.precog > 0 {
+            why.push("precog");
+        }
+        if self.unbacked > 0 {
+            why.push("unbacked");
+        }
+        if self.foreknow_max.is_some_and(|f| f > 0.5) {
+            why.push("foreknow");
+        }
+        why
     }
 
     fn score(&self) -> f64 {
@@ -575,24 +732,49 @@ fn report(opts: &Options) {
 
     let mut cells: Vec<(Arm, &str, Cell)> = Vec::new();
     for arm in ARMS {
-        for name in STRATEGIES {
-            let mut cell = Cell::default();
-            let selected = opts.arm.is_none_or(|a| a == arm)
-                && opts.strategy.as_deref().is_none_or(|s| s == name);
-            if selected && strategies::build(name).is_some() {
-                for seed in seeds.clone() {
-                    let ep = Episode::generate(arm, seed);
+        let selected: Vec<bool> = STRATEGIES
+            .iter()
+            .map(|name| {
+                opts.arm.is_none_or(|a| a == arm)
+                    && opts.strategy.as_deref().is_none_or(|s| s == *name)
+                    && strategies::build(name).is_some()
+            })
+            .collect();
+        let mut row: Vec<Cell> = STRATEGIES.iter().map(|_| Cell::default()).collect();
+        if selected.iter().any(|s| *s) {
+            // One episode and one audit base per seed, every strategy on it.
+            for seed in seeds.clone() {
+                let ep = Episode::generate(arm, seed);
+                let base = audit::AuditBase::new(&ep);
+                for (k, name) in STRATEGIES.iter().enumerate() {
+                    if !selected[k] {
+                        continue;
+                    }
                     let Some(mut strategy) = strategies::build(name) else {
-                        break;
+                        continue;
                     };
-                    debug_assert_eq!(strategy.name(), name);
+                    debug_assert_eq!(strategy.name(), *name);
                     let start = Instant::now();
-                    let r = run_episode(&ep, strategy.as_mut(), opts.budget);
-                    cell.add(&r, start.elapsed().as_secs_f64() * 1000.0);
+                    let r = run_full(&ep, &base, strategy.as_mut(), opts.budget, |_| {});
+                    row[k].add(&r, start.elapsed().as_secs_f64() * 1000.0);
                 }
             }
-            print_cell(arm, name, &cell, selected);
+        }
+        for ((name, cell), was) in STRATEGIES.iter().zip(row).zip(&selected) {
+            print_cell(arm, name, &cell, *was, n_seeds);
             cells.push((arm, name, cell));
+        }
+    }
+    println!(
+        "audit columns (CTX2-AUDIT): re-prefill per episode by the cause of each call's first edit (tail = board or tail render, \
+         fold = spans moved out and the keyframe and inventory an epoch close writes, patch = in-place rewrite or delete, fetch = a body \
+         fetched before the tail); folds and rp/fold per episode; tail_tok = mean board tokens a call; read_over (queries whose window \
+         plus restored pages exceeded the budget) and read_mean; precog, unbacked, overcount, override and frames_live totals; \
+         foreknow = the worst episode (kv-offload-recall only)"
+    );
+    for (arm, name, c) in &cells {
+        if c.ran {
+            print_audit(*arm, name, c, n_seeds);
         }
     }
 
@@ -627,7 +809,31 @@ fn report(opts: &Options) {
         .filter(|s| cells.iter().any(|(_, name, c)| name == *s && valid(c)))
         .count();
     let cells_valid = cells.iter().filter(|(_, _, c)| valid(c)).count();
+    let cells_loop1 = cells
+        .iter()
+        .filter(|(_, _, c)| c.valid_loop1(n_seeds))
+        .count();
     let n_cells = ARMS.len() * STRATEGIES.len();
+    let mut by_law: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_, _, c) in &cells {
+        if c.ran {
+            for law in c.invalid(n_seeds) {
+                *by_law.entry(law).or_default() += 1;
+            }
+        }
+    }
+    println!(
+        "CTX2-LAWS | cells valid under the loop-1 law {cells_loop1}/{n_cells} | under the loop-2 laws {cells_valid}/{n_cells} | invalid by law: {}",
+        if by_law.is_empty() {
+            "none".to_owned()
+        } else {
+            by_law
+                .iter()
+                .map(|(law, n)| format!("{law} {n}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    );
     let tests = if checks.is_ok() { "pass" } else { "fail" };
     println!(
         "{} | arms {arms_scored}/{} | strategies {strategies_scored} | cells {cells_valid}/{n_cells} | tests {tests}",
@@ -734,7 +940,37 @@ fn report(opts: &Options) {
     println!("CTX-BEST | {}", best.join(" | "));
 }
 
-fn print_cell(arm: Arm, name: &str, c: &Cell, selected: bool) {
+fn print_audit(arm: Arm, name: &str, c: &Cell, seeds: u64) {
+    let why = c.invalid(seeds);
+    println!(
+        "CTX2-AUDIT {} {name} | rp_tail {} rp_fold {} rp_patch {} rp_fetch {} | folds {} rp/fold {} tail_tok {} | read_over {} read_mean {} | precog {} unbacked {} foreknow {} | stale {} overcount {} override {} | frames_live {} | {}",
+        arm.name(),
+        c.per_episode(c.rp_tail),
+        c.per_episode(c.rp_fold),
+        c.per_episode(c.rp_patch),
+        c.per_episode(c.rp_fetch),
+        c.per_episode(c.folds),
+        c.rp_fold / c.folds.max(1),
+        c.board_tok / c.calls.max(1),
+        c.read_over,
+        c.read_sum / c.reads.max(1),
+        c.precog,
+        c.unbacked,
+        c.foreknow_max
+            .map_or_else(|| "-".to_owned(), |f| format!("{f:.3}")),
+        c.stale,
+        c.overcount,
+        c.overrides,
+        c.frames_live,
+        if why.is_empty() {
+            "valid".to_owned()
+        } else {
+            format!("INVALID {}", why.join(","))
+        }
+    );
+}
+
+fn print_cell(arm: Arm, name: &str, c: &Cell, selected: bool, seeds: u64) {
     if !c.ran {
         let why = if selected {
             "not built yet"
@@ -762,10 +998,13 @@ fn print_cell(arm: Arm, name: &str, c: &Cell, selected: bool) {
         c.stale,
         c.restore_fail,
         c.elapsed_ms,
-        if c.violations > 0 {
-            format!("  INVALID: {} capability violations", c.violations)
-        } else {
-            String::new()
+        {
+            let why = c.invalid(seeds);
+            if why.is_empty() {
+                String::new()
+            } else {
+                format!("  INVALID: {}", why.join(","))
+            }
         }
     );
 }

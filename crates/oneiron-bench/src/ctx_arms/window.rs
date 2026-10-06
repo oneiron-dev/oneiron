@@ -82,6 +82,8 @@ pub(crate) struct Span {
     tok: u64,
     /// Bytes of the rendered `[[label]]\n` head.
     head: usize,
+    /// Rewrites of this span so far (an audit checks each version once).
+    rev: u32,
 }
 
 impl Span {
@@ -105,11 +107,16 @@ impl Span {
             text,
             tok,
             head: head.len(),
+            rev: 0,
         }
     }
 
     pub(crate) const fn surface(&self) -> Surface {
         self.surface
+    }
+
+    pub(crate) const fn rev(&self) -> u32 {
+        self.rev
     }
 
     pub(crate) const fn id(&self) -> u64 {
@@ -135,6 +142,23 @@ impl Span {
 struct Dirty {
     index: usize,
     kept_tok: u64,
+    cause: Cause,
+}
+
+/// What made an edit (F-C5 re-prefill attribution): a model call's whole
+/// re-prefill goes to the cause of its first dirty position.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Cause {
+    /// A board or tail render (and the clear before it), wherever placed.
+    Tail,
+    /// Spans moved out (drop, lossy fold, offload, fold into a keyframe),
+    /// and the keyframe and inventory an epoch close rewrites.
+    #[default]
+    Fold,
+    /// In-place rewrites and deletions (patch, retain, delete).
+    Patch,
+    /// A resource body fetched into the log before the tail.
+    Fetch,
 }
 
 /// One model call's cache accounting.
@@ -153,6 +177,8 @@ pub(crate) struct Call {
     /// surface is byte-identical to the previous call's prefix surface,
     /// else zero (the log is never counted).
     pub(crate) frozen: u64,
+    /// What made the first edit, when there was re-prefill.
+    pub(crate) cause: Option<Cause>,
 }
 
 /// The rendered window as an ordered span list. `cached` is the span count
@@ -168,6 +194,8 @@ pub(crate) struct Window {
     dirty: Option<Dirty>,
     /// Digest of the previous call's prefix surface.
     prev_prefix: Option<[u8; 32]>,
+    /// The cause the next edit is tagged with (set by each `Ctx` op).
+    cause: Cause,
 }
 
 impl Window {
@@ -225,13 +253,15 @@ impl Window {
     }
 
     fn touch(&mut self, index: usize, kept_tok: u64) {
+        let cause = self.cause;
         self.dirty = Some(match self.dirty {
             Some(d) if d.index < index => d,
-            Some(d) if d.index == index => Dirty {
+            Some(d) if d.index == index && d.kept_tok <= kept_tok => d,
+            _ => Dirty {
                 index,
-                kept_tok: d.kept_tok.min(kept_tok),
+                kept_tok,
+                cause,
             },
-            _ => Dirty { index, kept_tok },
         });
     }
 
@@ -303,7 +333,8 @@ impl Window {
             .take_while(|(a, b)| a == b)
             .count();
         let kept_tok = (old.head + same) as u64 / 4;
-        let span = Span::new(old.id, old.kind, old.surface, text);
+        let mut span = Span::new(old.id, old.kind, old.surface, text);
+        span.rev = old.rev + 1;
         self.total = self.total - old.tok + span.tok;
         self.spans[index] = span;
         self.touch(index, kept_tok);
@@ -351,11 +382,13 @@ impl Window {
         self.cached = self.spans.len();
         self.cacheable = self.tail_start();
         self.dirty = None;
+        let cause = first.filter(|_| reprefill > 0).map(|d| d.cause);
         Call {
             reprefill,
             served,
             total: self.total,
             frozen,
+            cause,
         }
     }
 }
@@ -495,6 +528,8 @@ pub(crate) struct Ledger {
     /// an unchanged body is not counted as fetched again).
     resident: BTreeMap<String, u32>,
     links: usize,
+    /// Fold and drop operations (F-C5).
+    folds: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -532,6 +567,10 @@ impl Ledger {
 
     /// Restores every departed version through its reference and compares
     /// the bytes with the harness's own digest.
+    pub(crate) const fn folds(&self) -> u64 {
+        self.folds
+    }
+
     pub(crate) fn audit(&self, refs: &RefStore) -> Audit {
         let mut restored: BTreeMap<u32, Option<BTreeMap<u64, [u8; 32]>>> = BTreeMap::new();
         let mut audit = Audit {
@@ -727,6 +766,8 @@ impl Ctx<'_> {
             return;
         }
         self.charge(&format!("drop {}", self.label(range.clone())));
+        self.win.cause = Cause::Fold;
+        self.led.folds += 1;
         for span in self.win.take(range) {
             self.led.depart(&span, None);
         }
@@ -740,6 +781,8 @@ impl Ctx<'_> {
             return;
         }
         self.charge(&format!("fold {}\n{stub}", self.label(range.clone())));
+        self.win.cause = Cause::Fold;
+        self.led.folds += 1;
         let start = range.start;
         for span in self.win.take(range) {
             self.led.depart(&span, None);
@@ -754,6 +797,8 @@ impl Ctx<'_> {
             return None;
         }
         self.charge(&format!("fold {}", self.label(range.clone())));
+        self.win.cause = Cause::Fold;
+        self.led.folds += 1;
         let start = range.start;
         let gone = self.win.take(range);
         let id = self.refs.mint(&gone);
@@ -782,6 +827,7 @@ impl Ctx<'_> {
         {
             return;
         }
+        self.win.cause = Cause::Patch;
         let span = &self.win.spans()[index];
         let mut lines: Vec<String> = span.text.lines().map(str::to_owned).collect();
         let mut command = format!("patch s{}", span.id);
@@ -802,6 +848,7 @@ impl Ctx<'_> {
         if !self.allow(self.caps.rewrite, "retain_lines") || ids.is_empty() {
             return;
         }
+        self.win.cause = Cause::Patch;
         let mut at: Vec<usize> = ids.iter().filter_map(|&id| self.index_of(id)).collect();
         at.sort_unstable();
         self.charge(&format!("del {} /{label}/", self.label(at)));
@@ -835,6 +882,7 @@ impl Ctx<'_> {
             return;
         }
         self.charge(&format!("delete {}", self.label(range.clone())));
+        self.win.cause = Cause::Patch;
         for span in self.win.take(range) {
             self.led.depart(&span, None);
         }
@@ -862,6 +910,7 @@ impl Ctx<'_> {
         if !self.allow(self.caps.board, "clear_board") {
             return;
         }
+        self.win.cause = Cause::Tail;
         if let Some(i) = self
             .win
             .spans()
@@ -914,6 +963,8 @@ impl Ctx<'_> {
             return None;
         }
         self.charge(&format!("fold {}", self.label(range.clone())));
+        self.win.cause = Cause::Fold;
+        self.led.folds += 1;
         let gone = self.win.take(range);
         let id = self.refs.mint(&gone);
         for span in &gone {
@@ -925,11 +976,19 @@ impl Ctx<'_> {
     /// Removes every tail render so the tail can be re-rendered.
     pub(crate) fn clear_tail(&mut self) {
         if self.allow(self.caps.board, "clear_tail") {
+            self.win.cause = Cause::Tail;
             self.win.clear_tail();
         }
     }
 
     fn place(&mut self, place: Place, kind: SpanKind, text: String) -> u64 {
+        // A board render, and a keyframe re-emitted on the tail, are the
+        // per-turn render; a keyframe or inventory written on the prefix is
+        // part of an epoch close.
+        self.win.cause = match (place, kind) {
+            (_, SpanKind::Board) | (Place::Tail, _) => Cause::Tail,
+            _ => Cause::Fold,
+        };
         match place {
             Place::Prefix => {
                 self.win.set_prefix_block(kind, text);
@@ -1064,6 +1123,7 @@ impl Ctx<'_> {
             return None;
         };
         self.charge(&format!("get {name}"));
+        self.win.cause = Cause::Fetch;
         let id = self.win.insert_log(SpanKind::Fetch, body);
         self.led.fetch_tok += self
             .win
