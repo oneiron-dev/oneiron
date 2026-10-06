@@ -56,8 +56,8 @@ link does not name is `#REF!`, and on a sheet Excel could not read at its last r
 COLUMNS and INDEX go by the reference as written, and an ordinary formula intersects a linked range
 with its own cell. Such workbooks recalculate natively, and every link part, link relationship and
 link content type, and every relationship part with an external target, stays byte for byte (the
-edit gate checks the link join and the parts too). Evidence: probes 1 to 3 of the fork's
-`ops/excel-extlinks-probe-20261006.md` (Excel for Windows 16.0.20430, 192 cases) and the
+edit gate checks the link join and the parts too). Evidence: probes 1 to 5 of the fork's
+`ops/excel-extlinks-probe-20261006.md` (Excel for Windows 16.0.20430, 216 cases) and the
 SpreadsheetBench workbooks with links (Excel truth recorded with links not updated).
 
 These forms keep the fallback, each with its own reason: a DDE or OLE link; a link part the check
