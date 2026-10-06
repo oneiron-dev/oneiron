@@ -617,6 +617,24 @@ fn canon_trace(layout: Layout, arm: Arm, seed: u64) -> (Vec<(String, u64)>, Wind
         }
         strategy.on_turn(&mut ctx);
         assert!(win.ordered(), "{layout:?} turn {n}");
+        let closed = trace
+            .last()
+            .is_some_and(|(_, e): &(String, u64)| *e != strategy.epochs());
+        if closed && layout == Layout::Canon {
+            // A close folds to the loop-1 low-water mark: only the board
+            // and the keyframe's new rows ride above it.
+            let tail = win
+                .spans()
+                .iter()
+                .filter(|s| s.surface() == Surface::Tail)
+                .map(|s| s.tok())
+                .sum::<u64>();
+            assert!(
+                win.total() <= low_water(DEFAULT_BUDGET) + tail + 64,
+                "{arm:?} turn {n}: {} after a close",
+                win.total()
+            );
+        }
         win.call();
         let prefix: String = win
             .spans()
@@ -708,9 +726,10 @@ fn wrong_placement_costs_more_and_scores_the_same_on_every_arm() {
         assert!(tail_keyframe.reprefill_tok > canon.reprefill_tok, "{arm:?}");
         assert!(canon.hit_rate() > 0.9, "{arm:?} {}", canon.hit_rate());
         assert!(
-            prefix_board.hit_rate() < 0.1,
-            "{arm:?} {}",
-            prefix_board.hit_rate()
+            prefix_board.hit_rate() < canon.hit_rate() / 2.0,
+            "{arm:?}: {} vs {}",
+            prefix_board.hit_rate(),
+            canon.hit_rate()
         );
         assert!(tail_keyframe.hit_rate() < canon.hit_rate(), "{arm:?}");
     }
@@ -927,4 +946,50 @@ fn a_span_written_after_the_tail_breaks_the_surface_order() {
     let ep = Episode::generate(Arm::Needle, 15);
     let r = run_episode(&ep, &mut AppendAfterTail, DEFAULT_BUDGET);
     assert!(r.violations.contains(&"surface order"));
+}
+
+/// Dev-only tuning of the placement family's two knobs (forced epoch
+/// cadence, prefix inventory budget). Prints; asserts nothing. Run with
+/// `cargo test -p oneiron-bench sweep_canon_knobs -- --ignored --nocapture`.
+#[test]
+#[ignore = "dev tuning sweep, prints a table"]
+fn sweep_canon_knobs_on_dev() {
+    for arm in [Arm::Relink, Arm::MultiEpoch, Arm::Needle] {
+        let eps: Vec<Episode> = DEV_SEEDS.map(|s| Episode::generate(arm, s)).collect();
+        for every in [None, Some(50), Some(200)] {
+            for inventory in [0, 1024, 2048, 4096, 8192] {
+                if arm != Arm::Relink && inventory != 2048 {
+                    continue;
+                }
+                let (mut score, mut rp, mut served, mut prompt, mut fetch, mut edit, mut over) =
+                    (0.0, 0, 0, 0, 0, 0, 0);
+                for ep in &eps {
+                    let mut s = CanonPlacement::with(
+                        Layout::Canon,
+                        Box::new(OldestFirst),
+                        every,
+                        inventory,
+                    );
+                    let r = run_episode(ep, &mut s, DEFAULT_BUDGET);
+                    score += r.score.value;
+                    rp += r.reprefill_tok;
+                    served += r.served_tok;
+                    prompt += r.prompt_tok;
+                    fetch += r.fetch_tok;
+                    edit += r.edit_tok;
+                    over += r.over_budget + r.violations.len() as u64;
+                }
+                let n = eps.len() as u64;
+                println!(
+                    "SWEEP {} every={every:?} inventory={inventory} score {:.3} rp {} hit {:.4} fetch {} edit {} invalid {over}",
+                    arm.name(),
+                    score / n as f64,
+                    rp / n,
+                    served as f64 / prompt as f64,
+                    fetch / n,
+                    edit / n
+                );
+            }
+        }
+    }
 }

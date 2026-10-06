@@ -625,9 +625,11 @@ impl Layout {
     }
 }
 
-/// The prefix inventory's budget in tokens (a strategy knob, tuned on dev):
-/// looser than the board's, far under the window's.
-pub(crate) const INVENTORY_TOK: u64 = 2_048;
+/// The prefix inventory's budget in tokens (a strategy knob, tuned on dev:
+/// 4096 holds the relink arm's whole working set on every dev seed and
+/// beats 2048 on re-prefill, fetched and edit tokens; 8192 changes
+/// nothing). Looser than the board's, far under the window's.
+pub(crate) const INVENTORY_TOK: u64 = 4_096;
 
 /// What the strategy knows about one resource, from typed events only.
 #[derive(Clone, Debug, Default)]
@@ -762,13 +764,10 @@ impl CanonPlacement {
             .collect()
     }
 
-    /// Re-selects the prefix inventory: the most-used, then most recent
-    /// resources whose current bodies fit [`Self::inventory_tok`] are made
-    /// resident; the rest get link rows.
-    fn relink(&mut self, ctx: &mut Ctx<'_>) {
-        if self.res.is_empty() {
-            return;
-        }
+    /// Selects the resident set: the most-used, then most recent resources
+    /// whose current bodies fit [`Self::inventory_tok`]. Returns the names
+    /// and the tokens their bodies take.
+    fn select(&self, ctx: &Ctx<'_>) -> (Vec<String>, u64) {
         let mut ranked: Vec<(&String, &Res)> = self.res.iter().collect();
         ranked.sort_by(|(an, a), (bn, b)| {
             b.uses
@@ -777,22 +776,37 @@ impl CanonPlacement {
                 .then(an.cmp(bn))
         });
         let mut resident = Vec::new();
-        let mut links = Vec::new();
         let mut used = 0;
-        for (name, r) in ranked {
+        for (name, _) in ranked {
             let cost = ctx.fetch_cost(name).unwrap_or(u64::MAX);
             if used + cost <= self.inventory_tok {
                 used += cost;
                 resident.push(name.clone());
-            } else {
+            }
+        }
+        (resident, used)
+    }
+
+    /// Places the prefix inventory: `resident` bodies (fetched by the
+    /// harness at their current version) and a link row for every other
+    /// resource.
+    fn relink(&mut self, ctx: &mut Ctx<'_>, resident: &[String]) {
+        if self.res.is_empty() {
+            return;
+        }
+        let links: Vec<(String, u32, Link)> = self
+            .res
+            .iter()
+            .filter(|(name, _)| !resident.contains(name))
+            .map(|(name, r)| {
                 let link = match Self::held(r, ctx) {
                     Held::Ref(id) => Link::Ref(id),
                     _ => Link::Get,
                 };
-                links.push((name.clone(), r.current, link));
-            }
-        }
-        let held = ctx.place_inventory(&resident, &links);
+                (name.clone(), r.current, link)
+            })
+            .collect();
+        let held = ctx.place_inventory(resident, &links);
         for r in self.res.values_mut() {
             r.resident = None;
         }
@@ -812,12 +826,16 @@ impl CanonPlacement {
     fn close_epoch(&mut self, ctx: &mut Ctx<'_>, tail: u64, extra: u64) {
         self.epoch += 1;
         self.since_close = 0;
-        let inventory = if self.res.is_empty() {
+        // Reserve only what the re-selected inventory adds over the current
+        // one: its bodies plus one row per resource.
+        let (resident, bodies) = self.select(ctx);
+        let growth = if self.res.is_empty() {
             0
         } else {
-            self.inventory_tok + 16 * self.res.len() as u64
+            (bodies + 16 * self.res.len() as u64 + 32)
+                .saturating_sub(ctx.kind_tok(SpanKind::Inventory))
         };
-        let need = ctx.tokens() + tail + extra + inventory;
+        let need = ctx.tokens() + tail + extra + growth;
         if need > ctx.low_water() {
             let mut minted = Vec::new();
             move_out(
@@ -835,7 +853,7 @@ impl CanonPlacement {
             self.minted
                 .extend(minted.into_iter().map(|id| (id, self.epoch)));
         }
-        self.relink(ctx);
+        self.relink(ctx, &resident);
         if self.layout.keyframe() == Place::Prefix {
             ctx.place_keyframe(Place::Prefix, self.epoch, &self.minted);
         }

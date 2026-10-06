@@ -645,6 +645,16 @@ impl Ctx<'_> {
         self.turn
     }
 
+    /// Tokens of every span of one kind (a harness block's current size).
+    pub(crate) fn kind_tok(&self, kind: SpanKind) -> u64 {
+        self.win
+            .spans()
+            .iter()
+            .filter(|s| s.kind == kind)
+            .map(|s| s.tok)
+            .sum()
+    }
+
     pub(crate) fn ref_metas(&self) -> Vec<RefMeta> {
         self.refs.metas().cloned().collect()
     }
