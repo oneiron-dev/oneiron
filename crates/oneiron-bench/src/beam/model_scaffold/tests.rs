@@ -292,6 +292,20 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
     );
     assert!(card.exactness.items_checked > 0 && card.exactness.mismatches == 0);
     assert!(card.cost.iter().any(|row| row.arm.starts_with("agentic/")));
+    let rot = report
+        .results
+        .iter()
+        .find(|row| row.approach == "full-context" && row.group == "all")
+        .expect("the chat arm is the full-context rot row");
+    assert!(rot.rot && rot.approach_kind == "answered");
+    assert_eq!(rot.metric, "beam-fixed");
+    assert!(rot.reader_model.is_some() && rot.price_table.is_some());
+    assert!(
+        report
+            .results
+            .iter()
+            .any(|row| row.approach == "oneiron-agentic" && row.reprefill_tokens_mean > 0.0)
+    );
     let det = report
         .points
         .iter()

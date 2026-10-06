@@ -121,6 +121,9 @@ pub(super) struct MeasuredReport {
     pub chroma_card_id: Option<String>,
     pub exactness: super::exactness::ExactnessReport,
     pub card: Option<super::card::RunCard>,
+    /// Results rows (`oneiron-bench.results-row.v1`): answered approaches x
+    /// effort budgets x groups x metrics; the chat arm is the rot row.
+    pub results: Vec<super::sweep::ResultsRow>,
 }
 impl ModelRunPlan {
     pub(super) fn validate(&self) -> BeamResult<()> {
@@ -224,7 +227,30 @@ pub(super) fn pareto(points: &[AccuracyCostPoint]) -> Vec<AccuracyCostPoint> {
 }
 
 pub(super) fn run(path: &Path) -> BeamResult<MeasuredReport> {
+    run_with(path, &super::sweep::SweepOptions::default())
+}
+/// `beam measure <plan> [--budget ...] [--results <path>]`: a sweep replaces
+/// the plan's efforts with one effort per budget, keeping its retrieval steps.
+pub(super) fn run_with(
+    path: &Path,
+    sweep: &super::sweep::SweepOptions,
+) -> BeamResult<MeasuredReport> {
     let mut plan: ModelRunPlan = serde_json::from_slice(&std::fs::read(path)?)?;
+    if !sweep.budgets.is_empty() {
+        let steps = plan
+            .efforts
+            .first()
+            .map_or(1, |effort| effort.retrieval_steps);
+        plan.efforts = sweep
+            .budgets
+            .iter()
+            .map(|budget| Effort {
+                name: budget.label(),
+                token_budget: budget.tokens().unwrap_or(super::sweep::FULL_BUDGET_TOKENS),
+                retrieval_steps: steps,
+            })
+            .collect();
+    }
     plan.validate()?;
     if plan.retrieval_manifest.is_relative() {
         plan.retrieval_manifest = path
@@ -255,7 +281,11 @@ pub(super) fn run(path: &Path) -> BeamResult<MeasuredReport> {
         },
     );
     let session = ModelSession::connect(host, &models)?;
-    run_with_session(&plan, &session)
+    let report = run_with_session(&plan, &session)?;
+    if let Some(results) = &sweep.results_path {
+        super::sweep::write_rows(results, &report.results)?;
+    }
+    Ok(report)
 }
 fn answer(
     session: &ModelSession,
@@ -325,6 +355,7 @@ pub(super) fn run_with_session(
         })
     });
     let mut ablation_rows = Vec::new();
+    let mut groups_by_question: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut ablation_unavailable = Vec::new();
     let mut access_factor_observations = Vec::new();
     let mut rows = Vec::new();
@@ -382,6 +413,9 @@ pub(super) fn run_with_session(
         // Only calls made while loading this corpus belong to offline work.
         // Query and judge calls below are deliberately excluded.
         offline_receipts.extend(session.receipts().into_iter().skip(receipt_start));
+        for (id, record) in &loaded.contract_records {
+            groups_by_question.insert(id.clone(), super::sweep::groups_for(record));
+        }
         for id in &group_case_ids {
             let fork = base.fork(id)?;
             let vault = &fork.vault;
@@ -563,34 +597,15 @@ pub(super) fn run_with_session(
                             .to_owned();
                         let wedge_bucket: WedgeBucket =
                             serde_json::from_value(labels["wedge_bucket"].clone())?;
-                        // (replicate, fixed): the best verdict over aliases, per pass.
-                        let mut best_verdict: Option<(f64, f64)> = None;
-                        let mut judge_costs = Vec::new();
-                        for gold_answer in &gold.answers {
-                            let judged = score_item(
-                                session,
-                                &plan.judge,
-                                &plan.answer_prompt,
-                                &JudgeItem {
-                                    question: case.query.clone(),
-                                    candidate_answer: answer_text.clone(),
-                                    gold_answer: gold_answer.clone(),
-                                    ability: ability.clone(),
-                                    wedge_bucket,
-                                },
-                            )?;
-                            let replicate = judged.replicate_verdict.unwrap_or(judged.verdict);
-                            best_verdict = Some(best_verdict.map_or(
-                                (replicate, judged.verdict),
-                                |(best_replicate, best_fixed)| {
-                                    (
-                                        best_replicate.max(replicate),
-                                        best_fixed.max(judged.verdict),
-                                    )
-                                },
-                            ));
-                            judge_costs.push(judged.judge_cost);
-                        }
+                        let (best_verdict, judge_costs) = judge_aliases(
+                            session,
+                            plan,
+                            &case.query,
+                            &answer_text,
+                            &gold.answers,
+                            &ability,
+                            wedge_bucket,
+                        )?;
                         let row = ModelRow {
                             ablation: leg.map(str::to_owned),
                             question_id: id.clone(),
@@ -716,7 +731,16 @@ pub(super) fn run_with_session(
         rows: &rows,
         offline_amortized: &offline_amortized,
     })?;
+    let results = measured_results(
+        plan,
+        session,
+        &rows,
+        &groups_by_question,
+        &card,
+        &manifest.run_id,
+    );
     let report = MeasuredReport {
+        results,
         exactness,
         card: Some(card),
         retrieval_cards: manifest
@@ -775,7 +799,14 @@ pub(super) fn run_with_session(
     if let Some(card) = &report.card
         && let Some(dir) = &card.result_dir
     {
-        super::card::write_result_folder(dir, card, &report, &report.exactness, None)?;
+        super::card::write_result_folder(
+            dir,
+            card,
+            &report,
+            &report.exactness,
+            None,
+            &report.results,
+        )?;
     }
     Ok(report)
 }
@@ -823,11 +854,139 @@ fn measured_card(inputs: MeasuredCardInputs<'_>) -> BeamResult<super::card::RunC
             })
             .collect(),
         cost: measured_arm_costs(rows, offline_amortized),
+        budgets: plan
+            .efforts
+            .iter()
+            .map(|effort| effort.name.clone())
+            .collect(),
+        references: if plan.answerers.iter().any(|arm| arm.arm == ArmKind::Chat) {
+            vec![super::sweep::CONTEXT_ROT]
+        } else {
+            Vec::new()
+        },
     })?;
     if let Some(root) = &plan.results_root {
         card.result_dir = Some(super::card::result_dir(root, &card));
     }
     Ok(card)
+}
+/// Results rows for the measured run. A budget is the effort's token budget
+/// (`full` reads as no budget); the chat arm is the full-context reader, the
+/// rot row. Costs are provider usage priced by the plan's price table.
+fn measured_results(
+    plan: &ModelRunPlan,
+    session: &ModelSession,
+    rows: &[ModelRow],
+    groups_by_question: &BTreeMap<String, Vec<String>>,
+    card: &super::card::RunCard,
+    run_id: &str,
+) -> Vec<super::sweep::ResultsRow> {
+    use super::sweep::{Observation, PriceStamp};
+    let beam_columns = plan.judge.benchmark == super::llm_judge::JudgeBenchmark::Beam;
+    let observations: Vec<Observation> = rows
+        .iter()
+        .map(|row| {
+            let effort = plan.efforts.iter().find(|effort| effort.name == row.effort);
+            let budget = effort
+                .filter(|effort| effort.name != "full")
+                .map(|effort| effort.token_budget);
+            let price = session
+                .prices
+                .models
+                .get(&row.answerer)
+                .map(|prices| PriceStamp {
+                    as_of: session.prices.revision.clone(),
+                    source: session.prices.source.clone(),
+                    model: row.answerer.as_str().to_owned(),
+                    input_per_million: prices.input_per_million,
+                    output_per_million: prices.output_per_million,
+                });
+            let approach = match row.arm {
+                ArmKind::Deterministic => "oneiron-deterministic",
+                ArmKind::Agentic => "oneiron-agentic",
+                ArmKind::VanillaRag => "vanilla-rag",
+                ArmKind::Chat => super::sweep::FULL_CONTEXT_APPROACH,
+                ArmKind::BackboneSolo => "backbone-solo",
+                ArmKind::PprVadSweep => "ppr-vad-sweep",
+            };
+            Observation {
+                approach: approach.to_owned(),
+                approach_kind: "answered",
+                reader_model: Some(row.answerer.as_str().to_owned()),
+                budget,
+                budget_label: row.effort.clone(),
+                rot: row.arm == ArmKind::Chat,
+                groups: groups_by_question
+                    .get(&row.question_id)
+                    .cloned()
+                    .unwrap_or_else(|| vec!["all".to_owned()]),
+                metrics: super::sweep::judged_metrics(&row.scoring, beam_columns),
+                refused: row.reader_refusal.is_some(),
+                prompt_tokens: row.query_cost.input_tokens as f64,
+                reprefill_tokens: row.query_cost.reprefill_tokens as f64,
+                output_tokens: row.query_cost.output_tokens as f64,
+                judge_tokens: (row.judge_overhead.input_tokens + row.judge_overhead.output_tokens)
+                    as f64,
+                usd: Some(row.query_cost.cost_usd),
+                price,
+                latency_ms: Some(row.query_cost.elapsed_us as f64 / 1000.0),
+            }
+        })
+        .collect();
+    super::sweep::aggregate(
+        &super::sweep::RowContext {
+            producer: "oneiron-bench beam measure".to_owned(),
+            run_id: run_id.to_owned(),
+            commit: card.identity.commit.clone(),
+            set: card.identity.set.clone(),
+            set_revision: card.identity.dataset_revision.clone(),
+            tier: card.identity.tier.clone(),
+            split: card.identity.split.label.clone(),
+        },
+        &observations,
+    )
+}
+/// The best (replicate, fixed) verdict over aliases, and every judge call's cost.
+type AliasVerdicts = (Option<(f64, f64)>, Vec<CostComponentReport>);
+/// Judges one answer against every gold alias. Returns the best verdict per
+/// pass, (replicate, fixed), and every call's cost: each alias is billed.
+fn judge_aliases(
+    session: &ModelSession,
+    plan: &ModelRunPlan,
+    question: &str,
+    answer_text: &str,
+    aliases: &[String],
+    ability: &str,
+    wedge_bucket: WedgeBucket,
+) -> BeamResult<AliasVerdicts> {
+    let mut best_verdict: Option<(f64, f64)> = None;
+    let mut judge_costs = Vec::new();
+    for gold_answer in aliases {
+        let judged = score_item(
+            session,
+            &plan.judge,
+            &plan.answer_prompt,
+            &JudgeItem {
+                question: question.to_owned(),
+                candidate_answer: answer_text.to_owned(),
+                gold_answer: gold_answer.clone(),
+                ability: ability.to_owned(),
+                wedge_bucket,
+            },
+        )?;
+        let replicate = judged.replicate_verdict.unwrap_or(judged.verdict);
+        best_verdict = Some(best_verdict.map_or(
+            (replicate, judged.verdict),
+            |(best_replicate, best_fixed)| {
+                (
+                    best_replicate.max(replicate),
+                    best_fixed.max(judged.verdict),
+                )
+            },
+        ));
+        judge_costs.push(judged.judge_cost);
+    }
+    Ok((best_verdict, judge_costs))
 }
 /// Per arm and effort: the measured cost columns of the card.
 fn measured_arm_costs(

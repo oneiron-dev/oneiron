@@ -1,0 +1,8 @@
+{
+  "as_of": "2026-10-06",
+  "source": "example-not-current-tariff: replace with the provider's published prices before reading a dollar column",
+  "reader_model": "openai/gpt-4.1-mini@2025-04-14",
+  "models": {
+    "openai/gpt-4.1-mini@2025-04-14": {"input_per_million": 0.4, "output_per_million": 1.6}
+  }
+}

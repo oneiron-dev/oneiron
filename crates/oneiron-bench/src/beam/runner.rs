@@ -20,6 +20,10 @@ use super::report_model::{
     LoadedDataset,
 };
 use super::scorer::{BeamScorer, FixedBeamScorer};
+use super::sweep::{
+    BudgetLabel, CONTEXT_ROT, FULL_BUDGET_TOKENS, Observation, PriceConfig, PriceStamp, RowContext,
+    SweepOptions, aggregate, evidence_metrics, full_context_observation, groups_for, write_rows,
+};
 use super::util::{beam_vault_config, invalid_manifest, report_format_label};
 use super::validate::{
     validate_fixture, validate_manifest, validate_manifest_fixture_cases, validate_manifest_paths,
@@ -58,9 +62,11 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                            fixture-protocol <fixture.json> known-span retrieval evaluation\n\
                            edit-path-pack <dir>   materialize five edit-task sandboxes\n\
                            edit-path <attempts.json>   score tests and contracts per arm\n\
-                           run <manifest>\n\
+                           run <manifest> [--budget 4096,8192,...,full] [--prices <file>] [--results <file>]\n\
                                     run a BEAM manifest; fixture datasets load dataset.path JSON\n\
-                                    relative to the manifest; emit declared packs.jsonl outputs\n\
+                                    relative to the manifest; emit declared packs.jsonl outputs;\n\
+                                    a budget sweep runs every arm at every budget and writes\n\
+                                    results rows (oneiron-bench.results-row.v1)\n\
                            trace-export\n\
                                     export RetrievalTrace records to JSONL by fork hash (ONE-1311)\n\
                            corpus-export / corpus-replay\n\
@@ -69,6 +75,9 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                                     ingest each corpus once and fail unless every item reads\n\
                                     back byte-exact (sha256) and every gold evidence id resolves";
 pub(crate) fn run_manifest_path(path: &Path) -> BeamResult<BeamReport> {
+    run_manifest_path_with(path, &SweepOptions::default())
+}
+pub(crate) fn run_manifest_path_with(path: &Path, sweep: &SweepOptions) -> BeamResult<BeamReport> {
     let manifest_json = std::fs::read_to_string(path)?;
     let mut manifest = parse_manifest_json(&manifest_json)?;
     resolve_manifest_paths(&mut manifest, path);
@@ -78,7 +87,7 @@ pub(crate) fn run_manifest_path(path: &Path) -> BeamResult<BeamReport> {
         } => Some(parse_fixture_json(&std::fs::read_to_string(path)?)?),
         _ => None,
     };
-    run_manifest(&manifest, fixture.as_ref())
+    run_manifest_with(&manifest, fixture.as_ref(), sweep)
 }
 pub(super) fn ensure_manifest_selects_128k_case(
     manifest: &RunManifest,
@@ -130,6 +139,13 @@ pub(super) fn run_manifest(
     manifest: &RunManifest,
     fixture: Option<&BeamFixture>,
 ) -> BeamResult<BeamReport> {
+    run_manifest_with(manifest, fixture, &SweepOptions::default())
+}
+pub(super) fn run_manifest_with(
+    manifest: &RunManifest,
+    fixture: Option<&BeamFixture>,
+    sweep: &SweepOptions,
+) -> BeamResult<BeamReport> {
     validate_manifest(manifest)?;
     validate_manifest_paths(manifest)?;
     if let (DatasetSource::Fixture { .. }, Some(fixture)) = (&manifest.dataset, fixture) {
@@ -137,7 +153,12 @@ pub(super) fn run_manifest(
     }
 
     if matches!(manifest.dataset, DatasetSource::Jsonl { .. }) {
-        return run_jsonl_manifest_isolated(manifest);
+        return run_jsonl_manifest_isolated(manifest, sweep);
+    } else if !sweep.budgets.is_empty() {
+        return Err(invalid_manifest(
+            manifest,
+            "a budget sweep needs a run.jsonl dataset",
+        ));
     }
 
     let tempdir = tempfile::tempdir()?;
@@ -166,12 +187,16 @@ pub(super) fn run_manifest(
         cases,
         exactness: None,
         card: None,
+        results: Vec::new(),
     })
 }
 /// One base vault per corpus key, one fork per question. A shared corpus
 /// (`corpus_ref`) is ingested once for all its questions; an inline corpus is
 /// its own key, so v1 runs keep one ingest per question.
-pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<BeamReport> {
+pub(super) fn run_jsonl_manifest_isolated(
+    manifest: &RunManifest,
+    sweep: &SweepOptions,
+) -> BeamResult<BeamReport> {
     let scorer = FixedBeamScorer;
     let report_format = report_format_label(manifest.report.format).to_owned();
     let DatasetSource::Jsonl {
@@ -192,10 +217,19 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
     let mut dataset_report: Option<DatasetLoadReport> = None;
     let mut fixture_id: Option<String> = None;
     let mut fixture_description: Option<String> = None;
-    let mut cases_by_id: BTreeMap<String, CaseReport> = BTreeMap::new();
+    let mut cases_by_id: BTreeMap<String, Vec<CaseReport>> = BTreeMap::new();
     let mut rows_by_id: BTreeMap<String, Vec<ContextPackContractRecord>> = BTreeMap::new();
     let mut offline_runs = Vec::new();
     let mut exactness = ExactnessReport::default();
+    // None: each record's own budget. A sweep runs every point on the same
+    // fork: packs are reads, and the fork is this question's alone.
+    let budgets: Vec<Option<BudgetLabel>> = if sweep.budgets.is_empty() {
+        vec![None]
+    } else {
+        sweep.budgets.iter().copied().map(Some).collect()
+    };
+    let price = sweep.prices.as_ref().map(PriceConfig::stamp);
+    let mut observations = Vec::new();
 
     for (corpus_identity, mut group) in group_by_corpus(entries) {
         resolve_corpus_refs(path, &mut group)?;
@@ -256,13 +290,34 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
             }
             let mut single_case_manifest = manifest.clone();
             single_case_manifest.case_ids = vec![case_id.clone()];
-            let (case_reports, rows) =
-                run_loaded_cases(&fork.vault, &single_case_manifest, &loaded)?;
-            for mut case in case_reports {
-                case.fork_key = Some(fork.fork_key.clone());
-                cases_by_id.insert(case.case_id.clone(), case);
+            let record = loaded
+                .contract_records
+                .get(case_id)
+                .ok_or_else(|| invalid_manifest(manifest, "case lost its record"))?;
+            for budget in &budgets {
+                let tokens = budget.map(|label| label.tokens().unwrap_or(FULL_BUDGET_TOKENS));
+                let (case_reports, rows) =
+                    run_loaded_cases_at(&fork.vault, &single_case_manifest, &loaded, tokens)?;
+                for mut case in case_reports {
+                    case.fork_key = Some(fork.fork_key.clone());
+                    case.budget_label = budget.map(BudgetLabel::label);
+                    let label =
+                        budget.map_or_else(|| BudgetLabel::Tokens(case.token_budget), |b| b);
+                    observations.extend(retrieval_observations(
+                        &case,
+                        record,
+                        &loaded,
+                        label,
+                        price.as_ref(),
+                    ));
+                    observations.push(full_context_observation(record, label, price.as_ref()));
+                    cases_by_id
+                        .entry(case.case_id.clone())
+                        .or_default()
+                        .push(case);
+                }
+                rows_by_id.entry(case_id.clone()).or_default().extend(rows);
             }
-            rows_by_id.insert(case_id.clone(), rows);
         }
     }
 
@@ -270,8 +325,8 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
     let mut cases = Vec::with_capacity(manifest.case_ids.len());
     let mut pack_rows = Vec::new();
     for case_id in &manifest.case_ids {
-        if let Some(case) = cases_by_id.remove(case_id) {
-            cases.push(case);
+        if let Some(mut swept) = cases_by_id.remove(case_id) {
+            cases.append(&mut swept);
         }
         if let Some(mut rows) = rows_by_id.remove(case_id) {
             pack_rows.append(&mut rows);
@@ -318,6 +373,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         cases,
         exactness: None,
         card: None,
+        results: Vec::new(),
     };
     let mut card = build_card(CardInputs {
         manifest,
@@ -328,6 +384,11 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         judges: manifest_judges(manifest),
         answerers: Vec::new(),
         cost: report_arm_costs(&report),
+        budgets: budgets
+            .iter()
+            .map(|budget| budget.map_or_else(|| "record".to_owned(), BudgetLabel::label))
+            .collect(),
+        references: vec![CONTEXT_ROT],
     })?;
     let results_root = manifest
         .outputs
@@ -335,6 +396,21 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         .and_then(|outputs| outputs.results_root.as_deref());
     if let Some(root) = results_root {
         card.result_dir = Some(result_dir(root, &card));
+    }
+    report.results = aggregate(
+        &RowContext {
+            producer: "oneiron-bench beam run".to_owned(),
+            run_id: manifest.run_id.clone(),
+            commit: card.identity.commit.clone(),
+            set: card.identity.set.clone(),
+            set_revision: card.identity.dataset_revision.clone(),
+            tier: card.identity.tier.clone(),
+            split: card.identity.split.label.clone(),
+        },
+        &observations,
+    );
+    if let Some(path) = &sweep.results_path {
+        write_rows(path, &report.results)?;
     }
     report.card = Some(card);
     report.exactness = Some(exactness);
@@ -347,6 +423,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
             &report,
             exactness,
             manifest.outputs.as_ref().map(|o| o.packs_jsonl.as_path()),
+            &report.results,
         )?;
     }
     Ok(report)
@@ -382,6 +459,16 @@ pub(super) fn run_loaded_cases(
     manifest: &RunManifest,
     loaded: &LoadedDataset,
 ) -> BeamResult<(Vec<CaseReport>, Vec<ContextPackContractRecord>)> {
+    run_loaded_cases_at(vault, manifest, loaded, None)
+}
+/// [`run_loaded_cases`] with every case's token budget replaced by `budget`
+/// (one point of a budget sweep).
+pub(super) fn run_loaded_cases_at(
+    vault: &Vault,
+    manifest: &RunManifest,
+    loaded: &LoadedDataset,
+    budget: Option<usize>,
+) -> BeamResult<(Vec<CaseReport>, Vec<ContextPackContractRecord>)> {
     let scorer = FixedBeamScorer;
     let cases_by_id: BTreeMap<&str, &FixtureCase> = loaded
         .cases
@@ -398,6 +485,11 @@ pub(super) fn run_loaded_cases(
                 fixture_id: loaded.fixture_id.clone(),
                 case_id: case_id.clone(),
             })?;
+        let mut swept = (*case).clone();
+        if let Some(budget) = budget {
+            swept.token_budget = budget;
+        }
+        let case = &swept;
         let mut arms = Vec::with_capacity(manifest.competitors.len());
         let mut competitors = Vec::with_capacity(manifest.competitors.len());
         for competitor in &manifest.competitors {
@@ -444,6 +536,7 @@ pub(super) fn run_loaded_cases(
             expected_min_results: case.expected_min_results,
             fixture_class: case.fixture_class,
             fork_key: None,
+            budget_label: budget.map(|tokens| tokens.to_string()),
             offline_amortized_cost: amortized_load(loaded, manifest.case_ids.len()),
             arms,
             competitors,
@@ -487,4 +580,68 @@ fn amortized_load(
     cost.reprefill_tokens = cost.reprefill_tokens.div_ceil(n);
     cost.cost_usd /= n as f64;
     cost
+}
+
+/// One observation per completed or refused retrieval arm of a case.
+fn retrieval_observations(
+    case: &CaseReport,
+    record: &super::report_model::RunContractRecord,
+    loaded: &LoadedDataset,
+    budget: BudgetLabel,
+    price: Option<&PriceStamp>,
+) -> Vec<Observation> {
+    use super::report_model::ArmOutcome;
+    let question_tokens = oneiron::count_context_pack_tokens(&record.question) as f64;
+    case.arms
+        .iter()
+        .filter_map(|arm| {
+            let approach = match arm.arm {
+                ArmKind::Deterministic => "oneiron-deterministic",
+                ArmKind::VanillaRag => "vanilla-rag",
+                _ => return None,
+            };
+            let (ids, prompt, latency, refused) = match &arm.outcome {
+                ArmOutcome::Completed { context_pack } => {
+                    let ids: Vec<String> = context_pack
+                        .results
+                        .iter()
+                        .chain(&context_pack.neighbors)
+                        .map(|entity| {
+                            loaded
+                                .source_id_by_entity_id
+                                .get(&entity.id)
+                                .cloned()
+                                .unwrap_or_else(|| entity.id.clone())
+                        })
+                        .collect();
+                    (
+                        ids,
+                        question_tokens + context_pack.serialized_tokens as f64,
+                        Some(context_pack.query_cost.elapsed_us as f64 / 1000.0),
+                        false,
+                    )
+                }
+                ArmOutcome::NotReady { .. } => (Vec::new(), question_tokens, None, true),
+                ArmOutcome::RetrievalSweep { .. } => return None,
+            };
+            Some(Observation {
+                approach: approach.to_owned(),
+                approach_kind: "retrieval",
+                reader_model: None,
+                budget: budget.tokens(),
+                budget_label: budget.label(),
+                rot: false,
+                groups: groups_for(record),
+                metrics: evidence_metrics(record, &ids),
+                refused,
+                prompt_tokens: prompt,
+                reprefill_tokens: 0.0,
+                output_tokens: 0.0,
+                judge_tokens: 0.0,
+                usd: price.map(|stamp| stamp.usd(prompt, 0.0)),
+                price: price.cloned(),
+                latency_ms: latency,
+            })
+        })
+        .collect()
 }

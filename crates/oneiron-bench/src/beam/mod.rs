@@ -166,6 +166,7 @@ mod rung_fixture;
 mod runner;
 mod scorer;
 mod split;
+mod sweep;
 #[cfg(test)]
 mod tests_community_eval004;
 #[cfg(test)]
@@ -184,6 +185,8 @@ mod tests_ppr_vad;
 mod tests_rerank_sweep;
 #[cfg(test)]
 mod tests_smoke_manifest;
+#[cfg(test)]
+mod tests_sweep;
 #[cfg(test)]
 mod tests_vault_shape;
 mod tiers;

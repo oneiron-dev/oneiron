@@ -63,6 +63,8 @@ pub(crate) struct RunCard {
     pub(super) cost: Vec<CardArmCost>,
     pub(super) exactness: CardExactness,
     pub(super) comparability: Vec<CardComparability>,
+    /// Works the run's design leans on (the context-rot row cites Chroma).
+    pub(super) references: Vec<super::sweep::Reference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) result_dir: Option<PathBuf>,
 }
@@ -122,6 +124,8 @@ pub(super) struct CardPins {
     pub(super) answerers: Vec<CardAnswerer>,
     pub(super) tokenizer: String,
     pub(super) pack_budgets: Vec<usize>,
+    /// The budget sweep: labels, `full`, or `record` (each record's own).
+    pub(super) budget_sweep: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -186,6 +190,8 @@ pub(super) struct CardInputs<'a> {
     pub(super) judges: Vec<CardJudge>,
     pub(super) answerers: Vec<CardAnswerer>,
     pub(super) cost: Vec<CardArmCost>,
+    pub(super) budgets: Vec<String>,
+    pub(super) references: Vec<super::sweep::Reference>,
 }
 
 pub(super) fn build_card(inputs: CardInputs<'_>) -> BeamResult<RunCard> {
@@ -198,6 +204,8 @@ pub(super) fn build_card(inputs: CardInputs<'_>) -> BeamResult<RunCard> {
         judges,
         answerers,
         cost,
+        budgets,
+        references,
     } = inputs;
     let first = records
         .first()
@@ -319,6 +327,7 @@ pub(super) fn build_card(inputs: CardInputs<'_>) -> BeamResult<RunCard> {
             answerers,
             tokenizer: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
             pack_budgets: pack_budgets.into_iter().collect(),
+            budget_sweep: budgets,
         },
         cost,
         exactness: CardExactness {
@@ -328,6 +337,7 @@ pub(super) fn build_card(inputs: CardInputs<'_>) -> BeamResult<RunCard> {
             evidence_ids_unresolved: exactness.evidence_ids_unresolved.len(),
         },
         comparability,
+        references,
         result_dir: None,
     })
 }
@@ -450,8 +460,8 @@ fn folder_safe(value: &str) -> String {
     }
 }
 
-/// Writes card.json, report.json, packs.jsonl, cost.json, exactness.json,
-/// split.json and cleaning.json. Refuses a folder that already holds a card:
+/// Writes card.json, report.json, packs.jsonl, results.jsonl, cost.json,
+/// exactness.json, split.json and cleaning.json. Refuses a folder that already holds a card:
 /// a published result is never overwritten or rescored.
 pub(super) fn write_result_folder(
     dir: &Path,
@@ -459,6 +469,7 @@ pub(super) fn write_result_folder(
     report: &impl Serialize,
     exactness: &ExactnessReport,
     packs_jsonl: Option<&Path>,
+    results: &[super::sweep::ResultsRow],
 ) -> BeamResult<()> {
     if dir.join("card.json").exists() {
         return Err(card_error(&format!(
@@ -476,6 +487,9 @@ pub(super) fn write_result_folder(
         && packs.exists()
     {
         std::fs::copy(packs, dir.join("packs.jsonl"))?;
+    }
+    if !results.is_empty() {
+        super::sweep::write_rows(&dir.join("results.jsonl"), results)?;
     }
     // The card goes last: its presence marks a complete folder.
     write_json(dir, "card.json", card)

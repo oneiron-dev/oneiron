@@ -197,6 +197,33 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 }
             }
         }
+        [sub, target, flags @ ..] if (sub == "run" || sub == "measure") && !flags.is_empty() => {
+            let result = parse_sweep_flags(flags).and_then(|sweep| {
+                if sub == "run" {
+                    serde_json::to_string_pretty(&super::runner::run_manifest_path_with(
+                        Path::new(target),
+                        &sweep,
+                    )?)
+                    .map_err(BeamError::from)
+                } else {
+                    serde_json::to_string_pretty(&super::model_scaffold::run_with(
+                        Path::new(target),
+                        &sweep,
+                    )?)
+                    .map_err(BeamError::from)
+                }
+            });
+            match result {
+                Ok(report) => {
+                    println!("{report}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("BEAM {sub} failed: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         [sub, manifest] if sub == "verify-corpus" => {
             match super::exactness::census(Path::new(manifest)).and_then(|report| {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -419,4 +446,32 @@ fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
         )?),
         _ => Ok(serde_json::to_string_pretty(&run_manifest_path(path)?)?),
     }
+}
+/// `--budget 4096,8192,full`, `--prices <file>`, `--results <file>`.
+fn parse_sweep_flags(flags: &[String]) -> BeamResult<super::sweep::SweepOptions> {
+    let mut sweep = super::sweep::SweepOptions::default();
+    let mut index = 0;
+    while index < flags.len() {
+        let value = flags
+            .get(index + 1)
+            .ok_or_else(|| BeamError::Comparability {
+                reason: format!("{} needs a value", flags[index]),
+            })?;
+        match flags[index].as_str() {
+            "--budget" => sweep.budgets = super::sweep::parse_budgets(value)?,
+            "--prices" => {
+                sweep.prices = Some(super::sweep::PriceConfig::load(Path::new(value))?);
+            }
+            "--results" => sweep.results_path = Some(value.into()),
+            other => {
+                return Err(BeamError::Comparability {
+                    reason: format!(
+                        "unknown flag {other}; expected --budget, --prices or --results"
+                    ),
+                });
+            }
+        }
+        index += 2;
+    }
+    Ok(sweep)
 }

@@ -103,6 +103,10 @@ pub(crate) struct BeamReport {
     /// The run card for run.jsonl runs (plan section 7).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) card: Option<super::card::RunCard>,
+    /// Results rows (`oneiron-bench.results-row.v1`), one per approach x
+    /// budget x group x metric.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) results: Vec<super::sweep::ResultsRow>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -373,6 +377,9 @@ pub(super) struct CaseReport {
     /// The base-vault fork this question ran on, when the run forks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) fork_key: Option<String>,
+    /// The sweep point this case ran at, when the run sweeps budgets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) budget_label: Option<String>,
     pub(super) offline_amortized_cost: CostComponentReport,
     pub(super) arms: Vec<ArmReport>,
     pub(super) competitors: Vec<CompetitorReport>,

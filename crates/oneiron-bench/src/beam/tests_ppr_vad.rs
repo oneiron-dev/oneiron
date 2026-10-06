@@ -588,6 +588,7 @@ pub(crate) mod tests {
             expected_min_results: 0,
             fixture_class: FixtureClass::EvidenceSupported,
             fork_key: None,
+            budget_label: None,
             offline_amortized_cost: not_applicable_cost(),
             competitors: Vec::new(),
             appendix: Vec::new(),
