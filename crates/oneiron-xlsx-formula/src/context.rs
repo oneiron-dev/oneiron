@@ -1,6 +1,9 @@
-//! Bound formula AST evaluation and keep ambient context out of native recalc.
+//! Bound formula AST evaluation, keep ambient context out of native recalc and
+//! find the functions the engine does not implement.
+use std::collections::BTreeSet;
+
 use formualizer_parse::TokenStream;
-use formualizer_parse::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 use crate::Result;
 use crate::xml::unsupported;
@@ -13,10 +16,19 @@ const MAX_FORMULA_BYTES: usize = 32 * 1024;
 const MAX_FORMULA_TOKENS: usize = 256;
 const MAX_EVALUATION_DEPTH: usize = 32;
 
-/// Prove bounded evaluation and return whether caller-owned context is needed.
+/// What one bounded formula needs from its caller and from the engine.
+pub(super) struct Inspection {
+    /// The formula needs caller-owned context or volatile reference semantics.
+    pub contextual: bool,
+    /// A function the engine's registry does not resolve. The engine would
+    /// cache `#NAME?` for it where Excel computes a value.
+    pub unknown_function: Option<String>,
+}
+
+/// Prove bounded evaluation and report what the formula needs.
 /// The compatibility harness may supply deterministic context; production falls
 /// back rather than substitute its corpus clock for the caller's time or seed.
-pub(super) fn inspect_formula(formula: &str) -> Result<bool> {
+pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
     if formula.len() > MAX_FORMULA_BYTES {
         return Err(unsupported("formula byte limit"));
     }
@@ -33,21 +45,32 @@ pub(super) fn inspect_formula(formula: &str) -> Result<bool> {
         .map_err(|_| unsupported("formula parsing"))?;
     let mut pending: Vec<(&ASTNode, usize)> = vec![(&node, 1)];
     let mut contextual = false;
+    // Called names, and the LET names and LAMBDA parameters a call may name.
+    let mut called = Vec::new();
+    let mut local = BTreeSet::new();
     while let Some((node, depth)) = pending.pop() {
         if depth > MAX_EVALUATION_DEPTH {
             return Err(unsupported("formula evaluation depth limit"));
         }
         match &node.node_type {
-            ASTNodeType::Literal(_) | ASTNodeType::Omitted | ASTNodeType::Reference { .. } => {}
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
+            ASTNodeType::Reference { reference, .. } => {
+                // A function passed by name (`_xleta.SUM`) is a call too.
+                if let ReferenceType::NamedRange(name) = reference
+                    && let Some(function) = strip_prefix(name, "_xleta.")
+                {
+                    called.push(function);
+                }
+            }
             ASTNodeType::UnaryOp { expr, .. } => pending.push((expr, depth + 1)),
             ASTNodeType::BinaryOp { left, right, .. } => {
                 pending.push((left, depth + 1));
                 pending.push((right, depth + 1));
             }
             ASTNodeType::Function { name, args } => {
-                let name = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
+                let bare = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
                 contextual |= matches!(
-                    name.as_str(),
+                    bare.as_str(),
                     "NOW"
                         | "TODAY"
                         | "RAND"
@@ -58,6 +81,26 @@ pub(super) fn inspect_formula(formula: &str) -> Result<bool> {
                         | "OFFSET"
                         | "INDIRECT"
                 );
+                // LET binds every other argument before its body; LAMBDA
+                // binds each argument before its body.
+                let step = match bare.as_str() {
+                    "LET" => 2,
+                    "LAMBDA" => 1,
+                    _ => 0,
+                };
+                if step > 0 {
+                    let bound = args.len().saturating_sub(1);
+                    for arg in args[..bound].iter().step_by(step) {
+                        if let ASTNodeType::Reference {
+                            reference: ReferenceType::NamedRange(name),
+                            ..
+                        } = &arg.node_type
+                        {
+                            local.insert(name.to_ascii_uppercase());
+                        }
+                    }
+                }
+                called.push(name.as_str());
                 pending.extend(args.iter().map(|arg| (arg, depth + 1)));
             }
             ASTNodeType::Call { callee, args } => {
@@ -69,5 +112,25 @@ pub(super) fn inspect_formula(formula: &str) -> Result<bool> {
             }
         }
     }
-    Ok(contextual)
+    let unknown_function = called
+        .into_iter()
+        .find(|name| !local.contains(&name.to_ascii_uppercase()) && !registered(name))
+        .map(str::to_owned);
+    Ok(Inspection {
+        contextual,
+        unknown_function,
+    })
+}
+
+/// Whether the engine resolves `name` as it resolves a call: its registry,
+/// after the `_xlfn.`, `_xlws.` and `_xll.` storage prefixes.
+fn registered(name: &str) -> bool {
+    formualizer_workbook::ensure_builtins_loaded();
+    formualizer_eval::function_registry::get("", name).is_some()
+}
+
+fn strip_prefix<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
+    name.get(..prefix.len())
+        .filter(|head| head.eq_ignore_ascii_case(prefix))
+        .map(|_| &name[prefix.len()..])
 }

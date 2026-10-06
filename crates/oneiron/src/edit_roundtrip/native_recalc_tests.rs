@@ -13,6 +13,8 @@ use crate::error::{ArtifactError, Error, Result};
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+const SPREADSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml";
 const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
@@ -48,7 +50,8 @@ fn sheet(cells: &str) -> String {
 /// plus one opaque vendor part the passthrough law must keep.
 fn workbook(inputs: &str, formulas: &str) -> Vec<u8> {
     build(vec![
-        ("[Content_Types].xml", br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>"#.to_vec()),
+        ("[Content_Types].xml", format!(r#"<Types xmlns="{TYPES}"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Override PartName="/xl/workbook.xml" ContentType="{SPREADSHEET}.sheet.main+xml"/><Override PartName="/{OUTPUT}" ContentType="{SPREADSHEET}.worksheet+xml"/><Override PartName="/{INPUT}" ContentType="{SPREADSHEET}.worksheet+xml"/></Types>"#).into_bytes()),
+        ("_rels/.rels", format!(r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>"#).into_bytes()),
         ("xl/workbook.xml", format!(r#"<workbook xmlns="{MAIN}" xmlns:r="{DOC_REL}"><sheets><sheet name="Result" sheetId="1" r:id="out"/><sheet name="Input" sheetId="2" r:id="in"/></sheets></workbook>"#).into_bytes()),
         ("xl/_rels/workbook.xml.rels", format!(r#"<Relationships xmlns="{REL}"><Relationship Id="out" Type="{DOC_REL}/worksheet" Target="worksheets/result.xml"/><Relationship Id="in" Type="{DOC_REL}/worksheet" Target="worksheets/input.xml"/></Relationships>"#).into_bytes()),
         (INPUT, sheet(inputs).into_bytes()),
@@ -68,6 +71,44 @@ fn external_workbook() -> Vec<u8> {
         "xl/externalLinks/_rels/externalLink1.xml.rels",
         format!(
             r#"<Relationships xmlns="{REL}"><Relationship Id="link" Type="{DOC_REL}/externalLinkPath" TargetMode="External" Target="file:///private/other.xlsx"/></Relationships>"#
+        ),
+    )
+}
+
+/// `workbook` plus the defined name `rate` (`Input!$A$1`) and the `Prices`
+/// table on `Input!A3:B5`; `Result!A1:A2` repeat one shared formula over both.
+fn names_tables_and_shared_formulas() -> Vec<u8> {
+    let inputs = r#"<c r="A1"><v>2</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>Item</t></is></c><c r="B3" t="inlineStr"><is><t>Price</t></is></c></row><row r="4"><c r="A4" t="inlineStr"><is><t>tea</t></is></c><c r="B4"><v>3</v></c></row><row r="5"><c r="A5" t="inlineStr"><is><t>cake</t></is></c><c r="B5"><v>5</v></c>"#;
+    let formulas = r#"<c r="A1"><f t="shared" ref="A1:A2" si="0">Input!B4*rate</f><v>0</v></c><c r="B1"><f>SUM(Prices[Price])*rate</f><v>0</v></c></row><row r="2"><c r="A2"><f t="shared" si="0"/><v>0</v></c>"#;
+    let bytes = workbook(inputs, formulas);
+    let bytes = with_part(
+        &bytes,
+        "xl/workbook.xml",
+        part_text(&bytes, "xl/workbook.xml").replace(
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="rate">Input!$A$1</definedName></definedNames>"#,
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "[Content_Types].xml",
+        part_text(&bytes, "[Content_Types].xml").replace(
+            "</Types>",
+            &format!(r#"<Override PartName="/xl/tables/table1.xml" ContentType="{SPREADSHEET}.table+xml"/></Types>"#),
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "xl/worksheets/_rels/input.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="t1" Type="{DOC_REL}/table" Target="../tables/table1.xml"/></Relationships>"#
+        ),
+    );
+    with_part(
+        &bytes,
+        "xl/tables/table1.xml",
+        format!(
+            r#"<table xmlns="{MAIN}" id="1" name="Prices" displayName="Prices" ref="A3:B5"><autoFilter ref="A3:B5"/><tableColumns count="2"><tableColumn id="1" name="Item"/><tableColumn id="2" name="Price"/></tableColumns></table>"#
         ),
     )
 }
@@ -221,6 +262,38 @@ fn supported_workbook_recalculates_natively_by_default_and_stamps_the_crate() {
 }
 
 #[test]
+fn shared_formulas_defined_names_and_tables_recalculate_natively_through_the_gate() {
+    let input = names_tables_and_shared_formulas();
+    let host = Host {
+        edit: true,
+        ..Host::default()
+    };
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &set_input(),
+        "run:names-tables",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert!(
+        xml.contains(r#"<f t="shared" ref="A1:A2" si="0">Input!B4*rate</f><v>21</v>"#),
+        "{xml}"
+    );
+    assert!(xml.contains(r#"<f t="shared" si="0"/><v>35</v>"#), "{xml}");
+    assert!(
+        xml.contains("<f>SUM(Prices[Price])*rate</f><v>56</v>"),
+        "{xml}"
+    );
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+}
+
+#[test]
 fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
     let input = workbook("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#);
     let host = Host::default();
@@ -248,13 +321,15 @@ fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
 fn refused_workbooks_reach_the_host_recalc_untouched() {
     let deep_chain = format!("<f>{}</f>", ["1"; 40].join("+"));
     let cases = [
-        r#"<f t="shared" si="0" ref="A1:A2">1+2</f>"#,
-        "<f>SEQUENCE(2,2)</f>",
         "<f>NOW()</f>",
         "<f>_xlfn.TODAY()</f>",
         "<f>SUM(RAND(),1)</f>",
         "<f>LAMBDA(x,NOW()+x)(2)</f>",
         deep_chain.as_str(),
+        // The engine would cache #NAME? where Excel computes a value.
+        "<f>NOSUCHFUNCTION(1)</f>",
+        // The edit gate requires the OOXML prefix in a recalculated sheet.
+        "<f>XLOOKUP(2,Input!A1:A1,Input!A1:A1)</f>",
     ];
     let mut inputs: Vec<Vec<u8>> = cases
         .iter()
@@ -270,10 +345,8 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
     inputs.push(with_part(
         &local,
         "xl/workbook.xml",
-        part_text(&local, "xl/workbook.xml").replace(
-            "</sheets>",
-            "</sheets><definedNames><definedName name=\"rate\">Input!$A$1</definedName></definedNames>",
-        ),
+        part_text(&local, "xl/workbook.xml")
+            .replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#),
     ));
     for input in inputs {
         let expected = edited(&input);

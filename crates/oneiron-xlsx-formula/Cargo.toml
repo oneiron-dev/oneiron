@@ -15,7 +15,7 @@ doctest = false
 oneiron-docedit = { path = "../oneiron-docedit" }
 # Exact upstream releases; the root manifest patches all five to the org fork
 # by rev (docs/ops/forked-dependencies.md).
-formualizer-workbook = { version = "=0.9.3", default-features = false }
+formualizer-workbook = { version = "=0.9.3", default-features = false, features = ["xlsx-recalc"] }
 formualizer-common = "=3.1.2"
 formualizer-parse = "=3.1.2"
 formualizer-eval = { version = "=0.9.3", default-features = false }

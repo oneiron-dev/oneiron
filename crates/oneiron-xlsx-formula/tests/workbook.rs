@@ -11,6 +11,8 @@ use proptest::prelude::*;
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+const SPREADSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml";
 const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
@@ -59,6 +61,10 @@ fn with_part(bytes: &[u8], name: &str, data: impl Into<Vec<u8>>) -> Vec<u8> {
     }
     build(&parts)
 }
+/// Rebuild `bytes` with `edit` applied to the text of part `name`.
+fn edit_part(bytes: &[u8], name: &str, edit: impl FnOnce(String) -> String) -> Vec<u8> {
+    with_part(bytes, name, edit(part_text(bytes, name)))
+}
 fn part(name: &str, data: impl Into<Vec<u8>>) -> (String, Vec<u8>) {
     (name.into(), data.into())
 }
@@ -67,14 +73,48 @@ fn sheet(cells: &str) -> String {
         r#"<worksheet xmlns="{MAIN}" xmlns:u="urn:unknown"><sheetData><row r="1">{cells}</row></sheetData><extLst><u:keep value="unaltered">unmodelled content</u:keep></extLst></worksheet>"#
     )
 }
+/// An Excel-shaped package: root relationships, content types, `r:id` sheets.
 fn fixture(inputs: &str, formulas: &str, date1904: bool) -> Vec<u8> {
     build(&[
-        part("[Content_Types].xml", br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>"#.to_vec()),
+        part(
+            "[Content_Types].xml",
+            format!(
+                r#"<Types xmlns="{TYPES}"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Override PartName="/xl/workbook.xml" ContentType="{SPREADSHEET}.sheet.main+xml"/><Override PartName="/{OUTPUT}" ContentType="{SPREADSHEET}.worksheet+xml"/><Override PartName="/{INPUT}" ContentType="{SPREADSHEET}.worksheet+xml"/></Types>"#
+            ),
+        ),
+        part(
+            "_rels/.rels",
+            format!(
+                r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+            ),
+        ),
         // Formula sheet comes first and references the later-created input sheet.
-        part("xl/workbook.xml", format!(r#"<workbook xmlns="{MAIN}" xmlns:link="{DOC_REL}"><workbookPr date1904="{}"/><sheets><sheet name="Result" sheetId="7" link:id="out"/><sheet name="Input" sheetId="3" link:id="in"/></sheets></workbook>"#, u8::from(date1904))),
-        part("xl/_rels/workbook.xml.rels", format!(r#"<Relationships xmlns="{REL}"><Relationship Id="out" Type="{DOC_REL}/worksheet" Target="worksheets/result.xml"/><Relationship Id="in" Type="{DOC_REL}/worksheet" Target="worksheets/input.xml"/></Relationships>"#)),
-        part(INPUT, sheet(inputs)), part(OUTPUT, sheet(formulas)), part("vendor/opaque.bin", UNKNOWN.to_vec()),
+        part(
+            "xl/workbook.xml",
+            format!(
+                r#"<workbook xmlns="{MAIN}" xmlns:r="{DOC_REL}"><workbookPr date1904="{}"/><sheets><sheet name="Result" sheetId="7" r:id="out"/><sheet name="Input" sheetId="3" r:id="in"/></sheets></workbook>"#,
+                u8::from(date1904)
+            ),
+        ),
+        part(
+            "xl/_rels/workbook.xml.rels",
+            format!(
+                r#"<Relationships xmlns="{REL}"><Relationship Id="out" Type="{DOC_REL}/worksheet" Target="worksheets/result.xml"/><Relationship Id="in" Type="{DOC_REL}/worksheet" Target="worksheets/input.xml"/></Relationships>"#
+            ),
+        ),
+        part(INPUT, sheet(inputs)),
+        part(OUTPUT, sheet(formulas)),
+        part("vendor/opaque.bin", UNKNOWN.to_vec()),
     ])
+}
+/// `fixture` with `definedNames` added to the workbook part.
+fn with_names(bytes: &[u8], names: &str) -> Vec<u8> {
+    edit_part(bytes, "xl/workbook.xml", |xml| {
+        xml.replace(
+            "</sheets>",
+            &format!("</sheets><definedNames>{names}</definedNames>"),
+        )
+    })
 }
 fn part_bytes(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
     Package::open(bytes, limits())
@@ -88,52 +128,97 @@ fn part_text(bytes: &[u8], name: &str) -> String {
 fn recalc(bytes: &[u8]) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
     FormualizerEngine::new().recalculate_xlsx(bytes, limits())
 }
+/// The fallback reason, or a panic when the workbook was not refused to it.
+fn fallback(bytes: &[u8]) -> String {
+    match recalc(bytes) {
+        Err(FormulaError::UnsupportedWorkbook(reason)) => reason.into_owned(),
+        other => panic!("expected the precision fallback, got {other:?}"),
+    }
+}
 #[test]
 fn scalar_cache_types_and_unknown_xml_survive_the_retained_writer() {
-    let cells = r#"<c r="A1" t="str" s="4" u:cell="keep"><f u:f="keep">40+2</f><v u:v="keep">old</v><u:cellExt a="b"/></c><c r="B1"><f>&quot;東京 &amp; &lt;report&gt;&quot;</f><v/></c><c r="C1" t="str"><f>1/0</f><v>old</v></c><c r="D1"><f>TRUE()</f></c>"#;
+    let cells = r#"<c r="A1" t="str" s="4" u:cell="keep"><f u:f="keep">40+2</f><v u:v="keep">old</v></c><c r="B1"><f>&quot;東京 &amp; &lt;report&gt;&quot;</f><v/></c><c r="C1" t="str"><f>1/0</f><v>old</v></c><c r="D1"><f>TRUE()</f></c>"#;
     let input = fixture("", cells, false);
     let report = recalc(&input).expect("real XLSX recalc");
     assert_eq!(report.formula_count, 4);
     let xml = part_text(&report.bytes, OUTPUT);
-    assert!(xml.contains(r#"<c r="A1"  s="4" u:cell="keep"><f u:f="keep">40+2</f><v u:v="keep">42</v><u:cellExt a="b"/></c>"#));
-    assert!(xml.contains(r#"<c r="B1" t="str"><f>&quot;東京 &amp; &lt;report&gt;&quot;</f><v>東京 &amp; &lt;report&gt;</v></c>"#));
-    assert!(xml.contains(r#"<c r="C1" t="e"><f>1/0</f><v>#DIV/0!</v></c>"#));
-    assert!(xml.contains(r#"<c r="D1" t="b"><f>TRUE()</f><v>1</v></c>"#));
+    assert!(
+        xml.contains(
+            r#"<c r="A1"  s="4" u:cell="keep"><f u:f="keep">40+2</f><v u:v="keep">42</v></c>"#
+        ),
+        "{xml}"
+    );
+    assert!(xml.contains(r#"<c r="B1" t="str"><f>&quot;東京 &amp; &lt;report&gt;&quot;</f><v>東京 &amp; &lt;report&gt;</v></c>"#), "{xml}");
+    assert!(
+        xml.contains(r#"<c r="C1" t="e"><f>1/0</f><v>#DIV/0!</v></c>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<c r="D1" t="b"><f>TRUE()</f><v>1</v></c>"#),
+        "{xml}"
+    );
     assert!(xml.ends_with(
         r#"<extLst><u:keep value="unaltered">unmodelled content</u:keep></extLst></worksheet>"#
     ));
+    assert_eq!(
+        part_bytes(&report.bytes, "vendor/opaque.bin").as_deref(),
+        Some(UNKNOWN)
+    );
     let again = recalc(&report.bytes).expect("idempotent recalc");
     assert_eq!(again.bytes, report.bytes);
 }
 
 #[test]
-fn prefixed_sheet_elements_and_unknown_same_name_elements_are_preserved() {
+fn prefixed_sheet_elements_recalculate_and_unknown_same_name_elements_fall_back() {
     let input = fixture("", "", false);
-    let source = format!(
-        r#"<s:worksheet xmlns:s="{MAIN}" xmlns:u="urn:unknown"><s:sheetData><s:row r="1"><s:c r="A1" u:t="not-a-cache-type"><s:f>20+22</s:f><s:v/></s:c><u:c r="B1"><u:f>unmodelled</u:f></u:c></s:row></s:sheetData></s:worksheet>"#
-    );
-    let report = recalc(&with_part(&input, OUTPUT, source)).expect("prefixed XML");
+    let source = |extra: &str| {
+        format!(
+            r#"<s:worksheet xmlns:s="{MAIN}" xmlns:u="urn:unknown"><s:sheetData><s:row r="1"><s:c r="A1" u:t="not-a-cache-type"><s:f>20+22</s:f><s:v/></s:c>{extra}</s:row></s:sheetData></s:worksheet>"#
+        )
+    };
+    let report = recalc(&with_part(&input, OUTPUT, source(""))).expect("prefixed XML");
     assert_eq!(report.formula_count, 1);
     let xml = part_text(&report.bytes, OUTPUT);
     assert!(
-        xml.contains(r#"<s:c r="A1" u:t="not-a-cache-type"><s:f>20+22</s:f><s:v>42</s:v></s:c>"#)
+        xml.contains(r#"<s:c r="A1" u:t="not-a-cache-type"><s:f>20+22</s:f><s:v>42</s:v></s:c>"#),
+        "{xml}"
     );
-    assert!(xml.contains(r#"<u:c r="B1"><u:f>unmodelled</u:f></u:c>"#));
+    // The writer refuses a lookalike rather than guess which cell it is.
+    let lookalike = source(r#"<u:c r="B1"><u:f>unmodelled</u:f></u:c>"#);
+    assert!(fallback(&with_part(&input, OUTPUT, lookalike)).contains("lookalike"));
+    let foreign_child = sheet(r#"<c r="A1"><f>40+2</f><v>0</v><u:cellExt a="b"/></c>"#);
+    assert!(matches!(
+        recalc(&with_part(&input, OUTPUT, foreign_child)),
+        Err(FormulaError::Engine(_))
+    ));
 }
 
 #[test]
-fn xlookup_is_evaluated_and_written_with_storage_prefix() {
+fn xlookup_is_evaluated_from_its_storage_spelling() {
     let input = fixture(
         r#"<c r="A1"><v>7</v></c><c r="B1" t="inlineStr"><is><t>found</t></is></c>"#,
-        r#"<c r="A1"><f u:keep="f">XLOOKUP(7,Input!A1:A1,Input!B1:B1)</f><v/></c>"#,
+        r#"<c r="A1"><f u:keep="f">_xlfn.XLOOKUP(7,Input!A1:A1,Input!B1:B1)</f><v/></c>"#,
         false,
     );
     let report = recalc(&input).expect("XLOOKUP");
     let xml = part_text(&report.bytes, OUTPUT);
     assert!(
-        xml.contains(r#"<f u:keep="f">_xlfn.XLOOKUP(7,Input!A1:A1,Input!B1:B1)</f><v>found</v>"#)
+        xml.contains(r#"<f u:keep="f">_xlfn.XLOOKUP(7,Input!A1:A1,Input!B1:B1)</f><v>found</v>"#),
+        "{xml}"
     );
     assert!(xml.contains(r#"<c r="A1" t="str">"#));
+}
+
+#[test]
+fn an_unprefixed_modern_function_falls_back_rather_than_fail_the_edit_gate() {
+    // The writer patches caches, never formula text, and the edit gate
+    // requires the OOXML prefix in every worksheet whose bytes change.
+    let input = fixture(
+        r#"<c r="A1"><v>7</v></c>"#,
+        r#"<c r="A1"><f>XLOOKUP(7,Input!A1:A1,Input!A1:A1)</f><v>0</v></c>"#,
+        false,
+    );
+    assert!(fallback(&input).contains("OOXML function prefix"));
 }
 
 #[test]
@@ -143,9 +228,12 @@ fn package_shared_strings_and_typed_input_errors_reach_the_graph() {
         r#"<c r="A1"><f>Input!A1&amp;&quot;!&quot;</f><v/></c><c r="B1"><f>IFERROR(Input!B1,7)</f><v/></c>"#,
         false,
     );
-    let rels = part_text(&bytes, "xl/_rels/workbook.xml.rels")
-        .replace("</Relationships>", &format!(r#"<Relationship Id="strings" Type="{DOC_REL}/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#));
-    let bytes = with_part(&bytes, "xl/_rels/workbook.xml.rels", rels);
+    let bytes = edit_part(&bytes, "xl/_rels/workbook.xml.rels", |rels| {
+        rels.replace("</Relationships>", &format!(r#"<Relationship Id="strings" Type="{DOC_REL}/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#))
+    });
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace("</Types>", &format!(r#"<Override PartName="/xl/sharedStrings.xml" ContentType="{SPREADSHEET}.sharedStrings+xml"/></Types>"#))
+    });
     let input = with_part(
         &bytes,
         "xl/sharedStrings.xml",
@@ -155,8 +243,8 @@ fn package_shared_strings_and_typed_input_errors_reach_the_graph() {
     );
     let report = recalc(&input).expect("typed inputs");
     let xml = part_text(&report.bytes, OUTPUT);
-    assert!(xml.contains("<v>東京!</v>"));
-    assert!(xml.contains("<f>IFERROR(Input!B1,7)</f><v>7</v>"));
+    assert!(xml.contains("<v>東京!</v>"), "{xml}");
+    assert!(xml.contains("<f>IFERROR(Input!B1,7)</f><v>7</v>"), "{xml}");
     assert_eq!(
         part_text(&report.bytes, "xl/sharedStrings.xml"),
         part_text(&input, "xl/sharedStrings.xml")
@@ -170,10 +258,78 @@ fn workbook_date_system_changes_dates_but_not_time_or_numeric_inputs() {
         let input = fixture(r#"<c r="A1"><v>60</v></c>"#, formula, is_1904);
         let report = recalc(&input).expect("date-aware XLSX");
         let xml = part_text(&report.bytes, OUTPUT);
-        assert!(xml.contains(&format!("<f>DATE(2024,3,15)</f><v>{expected}</v>")));
-        assert!(xml.contains("<f>TIME(13,30,0)</f><v>0.5625</v>"));
-        assert!(xml.contains("<f>Input!A1+1</f><v>61</v>"));
+        assert!(
+            xml.contains(&format!("<f>DATE(2024,3,15)</f><v>{expected}</v>")),
+            "{xml}"
+        );
+        assert!(xml.contains("<f>TIME(13,30,0)</f><v>0.5625</v>"), "{xml}");
+        assert!(xml.contains("<f>Input!A1+1</f><v>61</v>"), "{xml}");
     }
+}
+
+/// `Result!A1:A3` repeat one shared formula over the defined name `rate` and
+/// the `Prices` table on `Input`; `B1` totals a table column.
+fn names_tables_and_shared_formulas() -> Vec<u8> {
+    let input = r#"<c r="A1" t="inlineStr"><is><t>Item</t></is></c><c r="B1" t="inlineStr"><is><t>Price</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>tea</t></is></c><c r="B2"><v>3</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>cake</t></is></c><c r="B3"><v>5</v></c></row><row r="4"><c r="A4"><v>10</v></c>"#;
+    let result = r#"<c r="A1"><f t="shared" ref="A1:A3" si="0">Input!B2*rate</f><v>0</v></c><c r="B1"><f>SUM(Prices[Price])</f><v>0</v></c></row><row r="2"><c r="A2"><f t="shared" si="0"/><v>0</v></c></row><row r="3"><c r="A3"><f t="shared" si="0"/><v>0</v></c>"#;
+    let bytes = with_names(
+        &fixture(input, result, false),
+        r#"<definedName name="rate">Input!$A$4</definedName>"#,
+    );
+    let bytes = edit_part(&bytes, INPUT, |xml| {
+        xml.replace(
+            "<extLst>",
+            &format!(r#"<tableParts count="1"><tablePart xmlns:r="{DOC_REL}" r:id="t1"/></tableParts><extLst>"#),
+        )
+    });
+    let bytes = with_part(
+        &bytes,
+        "xl/worksheets/_rels/input.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="t1" Type="{DOC_REL}/table" Target="../tables/table1.xml"/></Relationships>"#
+        ),
+    );
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace("</Types>", &format!(r#"<Override PartName="/xl/tables/table1.xml" ContentType="{SPREADSHEET}.table+xml"/></Types>"#))
+    });
+    with_part(
+        &bytes,
+        "xl/tables/table1.xml",
+        format!(
+            r#"<table xmlns="{MAIN}" id="1" name="Prices" displayName="Prices" ref="A1:B3"><autoFilter ref="A1:B3"/><tableColumns count="2"><tableColumn id="1" name="Item"/><tableColumn id="2" name="Price"/></tableColumns></table>"#
+        ),
+    )
+}
+
+#[test]
+fn shared_formulas_defined_names_and_tables_recalculate_natively() {
+    let input = names_tables_and_shared_formulas();
+    let report = recalc(&input).expect("native recalc");
+    assert_eq!(report.formula_count, 4);
+    let xml = part_text(&report.bytes, OUTPUT);
+    for expected in [
+        r#"<c r="A1"><f t="shared" ref="A1:A3" si="0">Input!B2*rate</f><v>30</v></c>"#,
+        r#"<c r="A2"><f t="shared" si="0"/><v>50</v></c>"#,
+        r#"<c r="A3"><f t="shared" si="0"/><v>0</v></c>"#,
+        r#"<c r="B1"><f>SUM(Prices[Price])</f><v>8</v></c>"#,
+    ] {
+        assert!(xml.contains(expected), "{expected} in {xml}");
+    }
+    for unchanged in [
+        INPUT,
+        "xl/workbook.xml",
+        "xl/tables/table1.xml",
+        "vendor/opaque.bin",
+    ] {
+        assert_eq!(
+            part_bytes(&report.bytes, unchanged),
+            part_bytes(&input, unchanged)
+        );
+    }
+    assert_eq!(
+        recalc(&report.bytes).expect("idempotent").bytes,
+        report.bytes
+    );
 }
 
 fn external_workbook() -> Vec<u8> {
@@ -195,10 +351,7 @@ fn external_workbook() -> Vec<u8> {
 #[test]
 fn external_link_workbook_is_refused_before_evaluation() {
     let input = external_workbook();
-    assert!(matches!(
-        recalc(&input),
-        Err(FormulaError::UnsupportedWorkbook("external-links-part"))
-    ));
+    assert_eq!(fallback(&input), "external-links-part");
     assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
 }
 
@@ -232,12 +385,12 @@ fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
         r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>42</v></c>"#,
         false,
     );
-    assert!(matches!(
-        recalc(&input),
-        Err(FormulaError::UnsupportedWorkbook(
-            "external-formula-reference"
-        ))
-    ));
+    assert_eq!(fallback(&input), "external-formula-reference");
+    let named = with_names(
+        &fixture("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#, false),
+        r#"<definedName name="linked">'[linked.xlsx]S'!$A$1</definedName>"#,
+    );
+    assert_eq!(fallback(&named), "external-formula-reference");
     let damaged = with_part(&input, OUTPUT, sheet(r#"<c r="A1"><v>42</v></c>"#));
     assert_eq!(
         preserve_external_links(&input, &damaged, limits()),
@@ -251,18 +404,49 @@ fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
     assert_eq!(preserve_external_links(&input, &recached, limits()), Ok(()));
 }
 
+/// `fixture` whose `Result!A1` is a dynamic-array formula saved over `extent`.
+fn dynamic_array(extent: &str, members: &str) -> Vec<u8> {
+    let cells = format!(
+        r#"<c r="A1" cm="1"><f t="array" ref="{extent}">_xlfn.SEQUENCE(2,2)</f><v>999</v></c>{members}"#
+    );
+    let bytes = fixture("", &cells, false);
+    let bytes = edit_part(&bytes, "xl/_rels/workbook.xml.rels", |rels| {
+        rels.replace("</Relationships>", &format!(r#"<Relationship Id="md" Type="{DOC_REL}/sheetMetadata" Target="metadata.xml"/></Relationships>"#))
+    });
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace("</Types>", &format!(r#"<Override PartName="/xl/metadata.xml" ContentType="{SPREADSHEET}.sheetMetadata+xml"/></Types>"#))
+    });
+    with_part(
+        &bytes,
+        "xl/metadata.xml",
+        format!(
+            r#"<metadata xmlns="{MAIN}" xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray"><metadataTypes count="1"><metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/></metadataTypes><futureMetadata name="XLDAPR" count="1"><bk><extLst><ext uri="{{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}}"><xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext></extLst></bk></futureMetadata><cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata></metadata>"#
+        ),
+    )
+}
+
 #[test]
-fn unsupported_spills_and_shared_formulas_are_refused_not_partially_written() {
-    for formula in [
-        r#"<f t="shared" si="0" ref="A1:A2">1+2</f>"#,
-        "<f>SEQUENCE(2,2)</f>",
-    ] {
-        let input = fixture("", &format!(r#"<c r="A1">{formula}<v>999</v></c>"#), false);
-        assert!(matches!(
-            recalc(&input),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
-    }
+fn dynamic_arrays_fill_their_saved_extent_and_larger_spills_fall_back() {
+    let members =
+        r#"<c r="B1"><v>9</v></c></row><row r="2"><c r="A2"><v>9</v></c><c r="B2"><v>9</v></c>"#;
+    let report = recalc(&dynamic_array("A1:B2", members)).expect("native spill");
+    let xml = part_text(&report.bytes, OUTPUT);
+    assert!(xml.contains(r#"<f t="array" ref="A1:B2">_xlfn.SEQUENCE(2,2)</f><v>1</v></c><c r="B1"><v>2</v></c></row><row r="2"><c r="A2"><v>3</v></c><c r="B2"><v>4</v></c>"#), "{xml}");
+    // A result larger than the saved extent needs cells the package lacks.
+    assert!(fallback(&dynamic_array("A1", "")).contains("multi-cell dynamic spill"));
+}
+
+#[test]
+fn new_rich_error_tags_fall_back_to_keep_passthrough_parts() {
+    // Excel saves #CALC! as #VALUE! tagged by a rich value in xl/richData/,
+    // a part the edit gate passes through byte for byte.
+    let input = fixture(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>_xlfn._xlws.FILTER(Input!A1:A1,Input!A1:A1&gt;5)</f><v>0</v></c>"#,
+        false,
+    );
+    let reason = fallback(&input);
+    assert!(reason.contains("xl/richData/"), "{reason}");
 }
 
 #[test]
@@ -272,10 +456,7 @@ fn malformed_xml_and_duplicate_cells_are_not_recalculated() {
         r#"<c r="A1"><f>1+1</f></c><c r="A1"><f>9+9</f></c>"#,
         false,
     );
-    assert!(matches!(
-        recalc(&input),
-        Err(FormulaError::InvalidWorkbook(_))
-    ));
+    assert!(recalc(&input).is_err());
     let input = fixture("", "<c r='A1'><f>1</f></wrong>", false);
     assert!(matches!(
         recalc(&input),
@@ -343,18 +524,21 @@ fn contextual_formulas_are_refused_not_evaluated_on_the_corpus_clock() {
         "NOW()",
         "_xlfn.TODAY()",
         "SUM(RAND(),1)",
-        "LAMBDA(x,NOW()+x)(2)",
+        "_xlfn.LAMBDA(_xlpm.x,NOW()+_xlpm.x)(2)",
     ] {
         let input = fixture(
             "",
             &format!(r#"<c r="A1"><f>{formula}</f><v>42</v></c>"#),
             false,
         );
-        assert!(matches!(
-            recalc(&input),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
+        assert!(fallback(&input).contains("caller context"), "{formula}");
     }
+    // A defined name is evaluated too.
+    let named = with_names(
+        &fixture("", r#"<c r="A1"><f>stamp+1</f><v>0</v></c>"#, false),
+        r#"<definedName name="stamp">NOW()</definedName>"#,
+    );
+    assert!(fallback(&named).contains("caller context"));
     let input = fixture(
         "",
         r#"<c r="A1"><f>&quot;NOW()&quot;</f><v>0</v></c>"#,
@@ -369,7 +553,7 @@ fn contextual_formulas_are_refused_not_evaluated_on_the_corpus_clock() {
 fn filterxml_evaluates_like_excel_for_windows() {
     // Windows is the reference where Excel for Windows and Mac differ (ruling 2026-10-01);
     // the truth for FILTERXML cells was recorded on Excel for Windows 16.0.20430.
-    let formula = r#"FILTERXML("<r><a>7</a></r>","/r/a")"#;
+    let formula = r#"_xlfn.FILTERXML("<r><a>7</a></r>","/r/a")"#;
     let xml_formula = formula.replace('&', "&amp;").replace('<', "&lt;");
     let input = fixture(
         "",
@@ -382,28 +566,49 @@ fn filterxml_evaluates_like_excel_for_windows() {
 }
 
 #[test]
-fn functions_without_recorded_truth_return_name_errors() {
-    for formula in [
-        r#"ENCODEURL("a b")"#,
-        r#"WEBSERVICE("https://example.invalid/")"#,
+fn functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
+    for (formula, function) in [
+        (r#"_xlfn.ENCODEURL("a b")"#, "_xlfn.ENCODEURL"),
+        (
+            r#"_xlfn.WEBSERVICE("https://example.invalid/")"#,
+            "_xlfn.WEBSERVICE",
+        ),
+        ("1+NOSUCHFUNCTION(2)", "NOSUCHFUNCTION"),
+        ("_xludf.MACRO(1)", "_xludf.MACRO"),
+        ("_xlfn.ANCHORARRAY(Input!A1)", "_xlfn.ANCHORARRAY"),
     ] {
-        let xml_formula = formula.replace('&', "&amp;").replace('<', "&lt;");
         let input = fixture(
             "",
-            &format!(r#"<c r="A1"><f>{xml_formula}</f><v>42</v></c>"#),
+            &format!(
+                r#"<c r="A1"><f>{}</f><v>42</v></c>"#,
+                formula.replace('&', "&amp;")
+            ),
             false,
         );
-        let output = recalc(&input).expect("native recalc");
-        let xml = part_text(&output.bytes, OUTPUT);
-        assert!(
-            xml.contains(r#"t="e""#) && xml.contains("<v>#NAME?</v>"),
-            "{xml}"
-        );
         assert_eq!(
-            output.engine.stamp(),
-            "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.7"
+            fallback(&input),
+            format!("function the engine does not implement: {function}")
         );
     }
+    let named = with_names(
+        &fixture("", r#"<c r="A1"><f>scaled</f><v>0</v></c>"#, false),
+        r#"<definedName name="scaled">NOSUCHFUNCTION(2)</definedName>"#,
+    );
+    assert_eq!(
+        fallback(&named),
+        "function the engine does not implement: NOSUCHFUNCTION"
+    );
+    // LET names and LAMBDA parameters are callable; storage prefixes resolve.
+    let input = fixture(
+        "",
+        r#"<c r="A1"><f>_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.x,_xlpm.x+1),_xlpm.f(2))</f><v>0</v></c><c r="B1"><f>_xlfn.CONCAT(&quot;a&quot;,&quot;b&quot;)</f><v>0</v></c>"#,
+        false,
+    );
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    assert!(
+        xml.contains("<v>3</v>") && xml.contains("<v>ab</v>"),
+        "{xml}"
+    );
 }
 
 #[test]
@@ -448,14 +653,14 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     std::fs::remove_file(&output).expect("owned output cleanup");
     std::fs::write(&input, fixture("", r#"<c r="A1"><f>NOW()</f></c>"#, false))
         .expect("context-dependent input");
-    assert!(
-        !Command::new(env!("CARGO_BIN_EXE_recalc_native"))
-            .args([&input, &output])
-            .output()
-            .expect("precision fallback refusal")
-            .status
-            .success()
-    );
+    let refused = Command::new(env!("CARGO_BIN_EXE_recalc_native"))
+        .args([&input, &output])
+        .output()
+        .expect("precision fallback refusal");
+    assert_eq!(refused.status.code(), Some(3));
+    let report: serde_json::Value = serde_json::from_slice(&refused.stdout).expect("refusal");
+    assert_eq!(report["code"], "unsupported-workbook");
+    assert_eq!(report["precision_fallback"], true);
     assert!(!output.exists());
 }
 
@@ -477,15 +682,6 @@ fn absent_inline_string_is_blank_but_explicit_empty_text_is_not() {
         assert!(part_text(&output.bytes, OUTPUT).contains(expected));
         assert_eq!(part_text(&input, INPUT), part_text(&output.bytes, INPUT));
     }
-    let malformed = fixture(
-        r#"<c r="A1" t="inlineStr"><v>not an inline string</v></c>"#,
-        "",
-        false,
-    );
-    assert!(matches!(
-        recalc(&malformed),
-        Err(FormulaError::InvalidWorkbook(_))
-    ));
 }
 
 #[test]

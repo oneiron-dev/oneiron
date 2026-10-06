@@ -4,9 +4,10 @@
 //! config, the `S` corpus sheet, 1-based coordinates, demand-driven
 //! `evaluate_cell` and `read_range` spills.
 //!
-//! Determinism: without the `system-clock` feature there is no ambient clock;
-//! volatile functions pin to [`PINNED_TIMESTAMP_UTC`] in UTC via
-//! `set_deterministic_mode(Enabled{..})`, never `Local`. The engine stamp on
+//! Determinism: the corpus workbook pins volatile functions to
+//! [`PINNED_TIMESTAMP_UTC`] in UTC via `set_deterministic_mode(Enabled{..})`,
+//! never `Local`, although the cache writer's `xlsx-recalc` feature turns on
+//! the upstream `system-clock` feature. The engine stamp on
 //! every report is a literal (the upstream crate exposes no version const; an
 //! `env!` stamp would name this harness instead).
 
@@ -69,16 +70,8 @@ impl FormualizerEngine {
     }
 
     fn fresh_workbook() -> Result<Workbook> {
-        let mut workbook = Self::configured_workbook(DateSystem::Excel1900)?;
-        workbook
-            .add_sheet(CORPUS_SHEET)
-            .map_err(|error| FormulaError::Engine(error.to_string()))?;
-        Ok(workbook)
-    }
-
-    pub(crate) fn configured_workbook(date_system: DateSystem) -> Result<Workbook> {
         let mut config = WorkbookConfig::ephemeral();
-        config.eval.date_system = date_system;
+        config.eval.date_system = DateSystem::Excel1900;
         let mut workbook = Workbook::new_with_config(config);
         let timestamp: DateTime<Utc> = PINNED_TIMESTAMP_UTC
             .parse()
@@ -88,6 +81,9 @@ impl FormualizerEngine {
                 timestamp_utc: timestamp,
                 timezone: TimeZoneSpec::Utc,
             })
+            .map_err(|error| FormulaError::Engine(error.to_string()))?;
+        workbook
+            .add_sheet(CORPUS_SHEET)
             .map_err(|error| FormulaError::Engine(error.to_string()))?;
         Ok(workbook)
     }
@@ -218,26 +214,6 @@ pub(crate) fn from_literal(value: LiteralValue) -> CellValue {
         }
         LiteralValue::Pending => CellValue::Error("#CANCELLED!".to_owned()),
     }
-}
-
-/// Serialize temporal values using the workbook's own epoch, not the host.
-pub(crate) fn from_literal_for_date_system(value: LiteralValue, system: DateSystem) -> CellValue {
-    if system == DateSystem::Excel1904 {
-        let epoch = NaiveDate::from_ymd_opt(1904, 1, 1).unwrap_or(NaiveDate::MIN);
-        match value {
-            LiteralValue::Date(date) => {
-                return CellValue::Number(date.signed_duration_since(epoch).num_days() as f64);
-            }
-            LiteralValue::DateTime(datetime) => {
-                return CellValue::Number(
-                    datetime.date().signed_duration_since(epoch).num_days() as f64
-                        + excel_time(datetime.time()),
-                );
-            }
-            other => return from_literal(other),
-        }
-    }
-    from_literal(value)
 }
 
 // Serialization only: upstream date evaluation remains unchanged. Excel stores
