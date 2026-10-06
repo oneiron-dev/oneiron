@@ -293,7 +293,7 @@ fn claim_tie_keeps_the_branch_and_base() -> Result<()> {
 fn staged_claim_scans_private_keys_sensitive_fields_and_session_metadata_before_persistence()
 -> Result<()> {
     let f = Fixture::new()?;
-    let private_key = "-----BEGIN PRIVATE KEY-----\nsynthetic-not-a-key\n-----END PRIVATE KEY-----";
+    let private_key = crate::test_util::SYNTHETIC_PRIVATE_KEY_BLOCK;
     let mut proposals = vec![f.proposal(private_key)];
     let mut sensitive = f.proposal("ordinary");
     sensitive.value = rmpv::Value::Map(vec![(

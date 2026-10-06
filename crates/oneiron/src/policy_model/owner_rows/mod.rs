@@ -2,12 +2,14 @@
 mod authority;
 mod ledger;
 mod notifications;
+mod secret_scan_switch;
 
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
 pub use notifications::{
     PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget,
 };
+pub use secret_scan_switch::SecretScanReceipt;
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};

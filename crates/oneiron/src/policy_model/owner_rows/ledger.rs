@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::notifications::PolicyNotificationTarget;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
 const SEQUENCE: &[u8] = b"owner_policy:change:seq:v1";
@@ -121,6 +122,21 @@ pub(super) fn append_change_in_txn(
         .vault_meta
         .put(txn, &key(EVENT, &id), &encode(&event)?)?;
     Ok(receipt)
+}
+
+/// The shared typed event stream, bound through the declared table. Key: the
+/// receipt id.
+const EVENTS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::OWNER_POLICY_CHANGE_EVENT);
+
+/// One event on the shared typed stream, for an owner change that keeps its
+/// receipts in a family of its own.
+pub(super) fn put_event_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event: &PolicyChangedEvent,
+) -> Result<()> {
+    EVENTS.put(&vault.store, txn, &event.receipt_id, &encode(event)?)
 }
 
 fn read_receipts_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<PolicyRowReceipt>> {

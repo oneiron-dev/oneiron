@@ -1176,8 +1176,7 @@ impl UsefulUpstreamJudge for SecretProvider {
     ) -> Result<TypedDecision> {
         let mut decision = Useful(self.0).decide(question, resident, base, candidate, delta)?;
         decision.receipt.providers[0].model =
-            "-----BEGIN PRIVATE KEY-----\nsynthetic-not-a-key\n-----END PRIVATE KEY-----"
-                .to_owned();
+            crate::test_util::SYNTHETIC_PRIVATE_KEY_BLOCK.to_owned();
         Ok(decision)
     }
 }
@@ -1197,7 +1196,7 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
             20,
         )?;
         let mut unsafe_question = useful_question(id);
-        unsafe_question.text = "-----BEGIN PRIVATE KEY-----\nsynthetic-not-a-key".to_owned();
+        unsafe_question.text = crate::test_util::SYNTHETIC_PRIVATE_KEY_BLOCK.to_owned();
         assert!(
             fixture
                 .vault

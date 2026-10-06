@@ -320,6 +320,7 @@ impl Vault {
     ) -> Result<ClaimRefinementMergeAsk> {
         question.validate()?;
         crate::batch::secret_scan::scan_staged_payload(
+            &self.store,
             &serde_json::to_vec(&question).map_err(|_| invalid("question encode failed"))?,
         )?;
         if question.id != candidate

@@ -25,7 +25,7 @@ pub(super) fn score_query_terms(
     for query_term in query_terms {
         let Some(dups) = store
             .text_postings()
-            .get_duplicates(rtxn, query_term.term.as_bytes())?
+            .get_duplicates(rtxn, super::codec::posting_key(&query_term.term).as_bytes())?
         else {
             continue;
         };
@@ -63,7 +63,7 @@ pub(super) fn score_query_terms(
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
         let Some(dups) = store
             .text_postings()
-            .get_duplicates(rtxn, query_term.term.as_bytes())?
+            .get_duplicates(rtxn, super::codec::posting_key(&query_term.term).as_bytes())?
         else {
             continue;
         };

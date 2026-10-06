@@ -356,6 +356,13 @@ pub(crate) fn assert_secret_scan_rejected(error: Error, expected_reason: &'stati
     }
 }
 
+/// A private key block the secret scan detects: PEM armor around a base64 body
+/// that decodes to an English sentence, not a key. The scan needs the whole
+/// block with a base64 body; a header alone is text about keys.
+pub(crate) const SYNTHETIC_PRIVATE_KEY_BLOCK: &str = "-----BEGIN PRIVATE KEY-----\n\
+U3ludGhldGljIGZpeHR1cmUgYm9keSBmb3IgdGhlIHNlY3JldCBzY2FuIHRlc3RzLiBJdCBpcyBub3QgYSBrZXku\n\
+-----END PRIVATE KEY-----";
+
 fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
     let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
     vault

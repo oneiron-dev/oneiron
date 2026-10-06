@@ -11,8 +11,8 @@ use crate::store::ManifestDbs;
 
 use super::codec::{
     PostingLookup, corrupted, decode_field_lengths, decode_forward, encode_field_lengths,
-    encode_forward, encode_posting_entry, find_posting_dup, read_field_stats, read_total_docs,
-    validate_text_doc_id, write_field_stats, write_total_docs,
+    encode_forward, encode_posting_entry, find_posting_dup, posting_key, read_field_stats,
+    read_total_docs, validate_text_doc_id, write_field_stats, write_total_docs,
 };
 use super::diagnostics::Bm25DiagnosticKind;
 use super::{DOC_META_LEN, ENTITY_ID_LEN, FIELD_STATS_LEN};
@@ -175,7 +175,7 @@ pub(crate) fn index_text(
         encode_posting_entry(id, fields_tf, &mut entry_buf)?;
         store
             .text_postings()
-            .put(wtxn, term.as_bytes(), &entry_buf)?;
+            .put(wtxn, posting_key(term).as_bytes(), &entry_buf)?;
     }
 
     // === Forward index: (term_len, term, field_id) records ===
@@ -317,10 +317,11 @@ pub(crate) fn deindex_text(
     for (term, entry) in postings_to_delete {
         // Exactly one duplicate item is removed; LMDB drops the term key
         // itself once its last duplicate is deleted.
-        if !store
-            .text_postings()
-            .delete_one_duplicate(wtxn, term.as_bytes(), &entry)?
-        {
+        if !store.text_postings().delete_one_duplicate(
+            wtxn,
+            posting_key(term).as_bytes(),
+            &entry,
+        )? {
             return Err(corrupted(
                 "posting entry vanished mid-transaction during deindex",
             ));

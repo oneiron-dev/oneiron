@@ -1,10 +1,15 @@
 mod shapes;
 mod wordlist;
 
+use heed::{RoTxn, RwTxn};
+
+use self::shapes::Door;
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::store::Store;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
@@ -15,7 +20,56 @@ const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
 const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
 const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
 
-pub(super) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
+/// The vault's `secrets` setting: whether the write door scans what a host
+/// writes into this vault for credential shapes. On by default; only the
+/// vault owner switches it, and every switch writes a receipt
+/// ([`Vault::set_secret_scan_mode`](crate::Vault::set_secret_scan_mode)).
+/// Serve and export redact credentials in both modes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretScanMode {
+    /// A credential-shaped hit refuses the whole write.
+    #[default]
+    On,
+    /// The write door does not scan; serve and export still redact.
+    Off,
+}
+
+/// The owner's switch row. Key: ().
+const SECRET_SCAN_MODE: SideTable<(), SecretScanMode, Named> =
+    SideTable::new(&side_table::OWNER_POLICY_SECRET_SCAN_MODE);
+
+/// The switch as the write door reads it. An absent row reads as on, and so
+/// does a row that does not decode: the scan fails closed.
+pub(crate) fn secret_scan_mode_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<SecretScanMode> {
+    Ok(SECRET_SCAN_MODE
+        .get_lenient(store, txn, &())?
+        .unwrap_or_default())
+}
+
+/// Stores the switch. The owner door that calls this checks the owner and
+/// writes the receipt in the same transaction.
+pub(crate) fn put_secret_scan_mode_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    mode: SecretScanMode,
+) -> Result<()> {
+    SECRET_SCAN_MODE.put(store, txn, &(), &mode)
+}
+
+/// The batch write door: every entity put, claim candidate, text field and
+/// phonetic code a batch stages, unless the owner switched the scan off.
+pub(super) fn scan_batch_ops(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    ops: &[BatchOp],
+) -> Result<()> {
+    if secret_scan_mode_in_txn(store, txn)? == SecretScanMode::Off {
+        return Ok(());
+    }
     for op in ops {
         match op {
             BatchOp::Put {
@@ -64,12 +118,17 @@ pub(super) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
     Ok(())
 }
 
-/// Scans snapshot file bytes using the shared detector without exposing values.
+/// Scans bytes with the serve/export reading of the shared detector, without
+/// exposing values. Snapshot custody, pack screening and every release door
+/// use this; none of them follows the owner's ingest switch.
 pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
     let haystack = String::from_utf8_lossy(bytes);
-    detect_secret(&haystack)
+    detect(&haystack, Door::Release)
 }
 
+/// Identifiers and records outside the batch door (refs, paths, telemetry
+/// keys, session tags, question rows) keep their scan in both modes: they land
+/// in keys, indexes and receipts that a later mask cannot reach.
 pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
     let _secrets_nulled = scan_payload(value.as_bytes())?;
     Ok(())
@@ -77,7 +136,15 @@ pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
 
 /// Apply the same raw/structured scan as ordinary non-custody batch puts to
 /// source bytes staged outside the entity tables, before their first write.
-pub(crate) fn scan_staged_payload(data: &[u8]) -> Result<()> {
+/// It follows the batch door, so the owner's switch turns it off too.
+pub(crate) fn scan_staged_payload(store: &Store, data: &[u8]) -> Result<()> {
+    let mode = {
+        let txn = store.env.read_txn()?;
+        secret_scan_mode_in_txn(store, &txn)?
+    };
+    if mode == SecretScanMode::Off {
+        return Ok(());
+    }
     let _secrets_nulled = scan_payload(data)?;
     Ok(())
 }
@@ -86,16 +153,16 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     let haystack = String::from_utf8_lossy(data);
     let secrets_nulled =
         ExportSecretsNulledManifest::from_redacted(has_redaction_marker(&haystack));
-    if let Some(reason) = detect_secret(&haystack) {
+    if let Some(reason) = detect(&haystack, Door::Write) {
         return Err(secret_scan_error(reason));
     }
     let mut cursor = std::io::Cursor::new(data);
-    let structured = if let Ok(value) = serde_json::from_slice(data) {
-        structured_secret(&value)
+    let structured = if let Ok(mut value) = serde_json::from_slice(data) {
+        sanitize_json(&mut value, false, Door::Write)
     } else if let Ok(mut value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == data.len() as u64
     {
-        sanitize_messagepack_credentials(&mut value, false)
+        sanitize_messagepack(&mut value, false, Door::Write)
     } else {
         false
     };
@@ -127,8 +194,12 @@ fn has_redaction_marker(haystack: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
-pub(crate) fn detect_secret(haystack: &str) -> Option<&'static str> {
-    if contains_private_key_marker(haystack) {
+fn detect(haystack: &str, door: Door) -> Option<&'static str> {
+    let private_key = match door {
+        Door::Write => shapes::private_key_block(haystack),
+        Door::Release => shapes::private_key_header(haystack),
+    };
+    if private_key {
         return Some(REASON_PRIVATE_KEY);
     }
 
@@ -143,19 +214,18 @@ pub(crate) fn detect_secret(haystack: &str) -> Option<&'static str> {
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
         .find_map(classify_token);
     provider.or_else(|| {
-        shapes::sensitive_assignment(haystack).then_some("gate.secret_scan.sensitive_env")
+        shapes::sensitive_assignment(haystack, door).then_some("gate.secret_scan.sensitive_env")
     })
-}
-
-fn structured_secret(value: &serde_json::Value) -> bool {
-    let mut copy = value.clone();
-    sanitize_credentials(&mut copy, false)
 }
 
 /// Recursively filters both credential field names and credential-shaped values.
 /// Returns whether any bytes were removed. `null` is the export representation;
 /// the serving representation is the fixed, non-authoritative redaction marker.
 pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
+    sanitize_json(value, null, Door::Release)
+}
+
+fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool {
     use serde_json::Value;
     let replacement = || {
         if null {
@@ -165,7 +235,7 @@ pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) ->
         }
     };
     match value {
-        Value::String(text) if detect_secret(text).is_some() => {
+        Value::String(text) if detect(text, door).is_some() => {
             *value = replacement();
             true
         }
@@ -178,25 +248,27 @@ pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) ->
                 .collect();
             if bytes
                 .as_ref()
-                .is_some_and(|bytes| scan_file_content("", bytes).is_some())
+                .is_some_and(|bytes| detect_bytes(bytes, door))
             {
                 *value = replacement();
                 true
             } else {
                 values.iter_mut().fold(false, |changed, value| {
-                    sanitize_credentials(value, null) | changed
+                    sanitize_json(value, null, door) | changed
                 })
             }
         }
         Value::Object(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
             let sensitive = shapes::sensitive_key(key)
                 && !value.is_null()
-                && !value.as_str().is_some_and(shapes::placeholder);
+                && !value
+                    .as_str()
+                    .is_some_and(|text| shapes::field_placeholder(text, door));
             if sensitive {
                 *value = replacement();
                 true
             } else {
-                sanitize_credentials(value, null) | changed
+                sanitize_json(value, null, door) | changed
             }
         }),
         _ => false,
@@ -206,6 +278,10 @@ pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) ->
 /// Scan MessagePack before any lossy JSON projection. Safe binary and extension
 /// values retain their original type on raw transports.
 pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bool) -> bool {
+    sanitize_messagepack(value, null, Door::Release)
+}
+
+fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool {
     use rmpv::Value;
     let replacement = || {
         if null {
@@ -215,11 +291,11 @@ pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bo
         }
     };
     match value {
-        Value::String(text) if scan_file_content("", text.as_bytes()).is_some() => {
+        Value::String(text) if detect_bytes(text.as_bytes(), door) => {
             *value = replacement();
             true
         }
-        Value::Binary(bytes) | Value::Ext(_, bytes) if scan_file_content("", bytes).is_some() => {
+        Value::Binary(bytes) | Value::Ext(_, bytes) if detect_bytes(bytes, door) => {
             *value = replacement();
             true
         }
@@ -230,26 +306,28 @@ pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bo
                 .collect();
             if bytes
                 .as_ref()
-                .is_some_and(|bytes| scan_file_content("", bytes).is_some())
+                .is_some_and(|bytes| detect_bytes(bytes, door))
             {
                 *value = replacement();
                 true
             } else {
                 values.iter_mut().fold(false, |changed, value| {
-                    sanitize_messagepack_credentials(value, null) | changed
+                    sanitize_messagepack(value, null, door) | changed
                 })
             }
         }
         Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
             let sensitive = key.as_str().is_some_and(shapes::sensitive_key)
                 && !value.is_nil()
-                && !value.as_str().is_some_and(shapes::placeholder);
-            let key_changed = sanitize_messagepack_credentials(key, null);
+                && !value
+                    .as_str()
+                    .is_some_and(|text| shapes::field_placeholder(text, door));
+            let key_changed = sanitize_messagepack(key, null, door);
             let value_changed = if sensitive {
                 *value = replacement();
                 true
             } else {
-                sanitize_messagepack_credentials(value, null)
+                sanitize_messagepack(value, null, door)
             };
             changed | key_changed | value_changed
         }),
@@ -257,17 +335,8 @@ pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bo
     }
 }
 
-fn contains_private_key_marker(haystack: &str) -> bool {
-    haystack.lines().any(|line| {
-        let Some(start) = line.find("-----BEGIN ") else {
-            return false;
-        };
-        let marker = &line[start + "-----BEGIN ".len()..];
-        let Some(end) = marker.find("-----") else {
-            return false;
-        };
-        marker[..end].contains("PRIVATE KEY")
-    })
+fn detect_bytes(bytes: &[u8], door: Door) -> bool {
+    detect(&String::from_utf8_lossy(bytes), door).is_some()
 }
 
 fn classify_token(token: &str) -> Option<&'static str> {
@@ -356,154 +425,4 @@ fn is_ascii_token_body(byte: u8) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::error::GateError;
-
-    #[test]
-    fn credential_fields_cannot_hide_behind_messagepack_binary_or_json_escapes() {
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(
-            &mut bytes,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("password"),
-                rmpv::Value::Binary(b"private fixture".to_vec()),
-            )]),
-        )
-        .unwrap();
-        for payload in [&bytes[..], &br#"{"pass\u0077ord":"private fixture"}"#[..]] {
-            let error = scan_payload(payload).expect_err("typed credential field");
-            assert!(
-                matches!(error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
-                if reason_codes.contains(&"gate.secret_scan.sensitive_env"))
-            );
-        }
-    }
-
-    #[test]
-    fn scan_payload_rejects_known_secret_fixture() {
-        let err = scan_payload(b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz")
-            .expect_err("known GitHub token fixture must reject");
-
-        match err {
-            Error::Gate(GateError::GateWriteRejected {
-                outcome,
-                reason_codes,
-            }) => {
-                assert_eq!(outcome, "deny");
-                assert_eq!(
-                    reason_codes.as_slice(),
-                    &[REASON_DETECTED, REASON_GITHUB_TOKEN]
-                );
-                assert!(reason_codes.iter().all(|code| code.starts_with("gate.")));
-            }
-            other => panic!("expected GateWriteRejected, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn scan_payload_rejects_exact_length_secret_prefixes_with_suffix_labels() {
-        for (payload, expected_reason) in [
-            ("id=AKIA0123456789ABCDEF_suffix", REASON_AWS_ACCESS_KEY_ID),
-            (
-                "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz_suffix",
-                REASON_GITHUB_TOKEN,
-            ),
-            (
-                "key=AIza0123456789abcdefghijklmnopqrstuvwxy_suffix",
-                REASON_GOOGLE_API_KEY,
-            ),
-            (
-                "token=sk-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL_suffix",
-                REASON_OPENAI_KEY,
-            ),
-        ] {
-            let err = scan_payload(payload.as_bytes())
-                .expect_err("exact-length secret prefix with suffix label must reject");
-
-            match err {
-                Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
-                    assert_eq!(reason_codes.as_slice(), &[REASON_DETECTED, expected_reason]);
-                }
-                other => panic!("expected GateWriteRejected, got {other:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn scan_payload_allows_secret_prefix_embedded_in_larger_identifier() {
-        for payload in [
-            "pack=myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
-            "pack=myAKIA0123456789ABCDEF_label",
-            "pack=myAIza0123456789abcdefghijklmnopqrstuvwxy_label",
-            "pack=mysk-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL_label",
-        ] {
-            scan_payload(payload.as_bytes())
-                .expect("embedded secret-like prefix in larger identifier is not a token");
-        }
-    }
-
-    #[test]
-    fn scan_payload_rejects_pgp_private_key_armor() {
-        let err = scan_payload(
-            b"-----BEGIN PGP PRIVATE KEY BLOCK-----\nsynthetic-private-key-fixture\n-----END PGP PRIVATE KEY BLOCK-----",
-        )
-        .expect_err("PGP private key armor must reject");
-
-        match err {
-            Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
-                assert_eq!(
-                    reason_codes.as_slice(),
-                    &[REASON_DETECTED, REASON_PRIVATE_KEY]
-                );
-            }
-            other => panic!("expected GateWriteRejected, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn scan_batch_ops_rejects_phonetic_secret_payload() {
-        let err = scan_batch_ops(&[BatchOp::Phonetic {
-            id: crate::entity_id::EntityId::now(),
-            codes: vec!["token=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned()],
-        }])
-        .expect_err("known GitHub token fixture in phonetic payload must reject");
-
-        match err {
-            Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
-                assert_eq!(
-                    reason_codes.as_slice(),
-                    &[REASON_DETECTED, REASON_GITHUB_TOKEN]
-                );
-            }
-            other => panic!("expected GateWriteRejected, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn scan_payload_marks_redacted_payload_as_structurally_secret_nulled() {
-        let manifest = scan_payload(b"api_key=[REDACTED]").expect("redacted payload is safe");
-
-        assert!(manifest.payloads());
-        assert!(manifest.structural_placeholders());
-    }
-
-    #[test]
-    fn scan_payload_marks_export_manifest_redaction_fields_as_secret_nulled() {
-        let manifest =
-            scan_payload(br#"{"secrets_nulled":{"payloads":true,"structural_placeholders":true}}"#)
-                .expect("export manifest marker payload is safe");
-
-        assert!(manifest.payloads());
-        assert!(manifest.structural_placeholders());
-    }
-
-    #[test]
-    fn scan_payload_keeps_legacy_redaction_fields_as_secret_nulled() {
-        let manifest = scan_payload(br#"{"secret_nulled":true,"structurally_secret_nulled":true}"#)
-            .expect("legacy manifest marker payload is safe");
-
-        assert!(manifest.payloads());
-        assert!(manifest.structural_placeholders());
-    }
-}
+mod tests;
