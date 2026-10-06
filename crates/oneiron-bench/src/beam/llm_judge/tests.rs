@@ -148,11 +148,18 @@ fn production_judge_issues_three_calls_prices_usage_and_rejects_prompt_before_ca
     }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let report = score_item(&session, &config, "Answer from the evidence.", &item).unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    // BEAM is judged twice (ruling 1a): replicate pass, then fixed pass.
+    assert_eq!(calls.load(Ordering::SeqCst), 6);
     assert_eq!(report.judge.instruction, config.instruction);
-    assert_eq!(report.winning_tally, 2);
+    // Votes 0.5, 0.5, 0 in the replicate pass; 0.5 x3 in the fixed pass.
+    assert_eq!(report.replicate_winning_tally, Some(2));
+    assert_eq!(report.replicate_verdict, Some(0.5));
+    assert_eq!(report.winning_tally, 3);
     assert_eq!(report.verdict, 0.5);
-    assert_eq!(report.judge_cost.input_tokens, 300);
+    let columns = report.score.beam.as_ref().unwrap();
+    assert_eq!(columns.aggregate.replicate, 0.0, "int(0.5) at 3e12035");
+    assert_eq!(columns.aggregate.fixed, 0.5);
+    assert_eq!(report.judge_cost.input_tokens, 600);
     assert_eq!(
         report.judge_cost.token_source,
         TokenAccountingSource::ProviderUsage
@@ -203,4 +210,124 @@ fn failed_vote_does_not_short_circuit_other_judge_calls() {
     };
     assert!(score_item(&session, &config, "Answer from the evidence.", &item).is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 3);
+}
+/// Records the question slot the judge saw on every call.
+struct QuestionRecorder {
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
+}
+impl LlmBackend for QuestionRecorder {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let ContentPart::Text { text } = &request.messages[1].content[0] else {
+                panic!("expected judge evidence");
+            };
+            let evidence: serde_json::Value = serde_json::from_str(text).unwrap();
+            let question = evidence["question"].as_str().unwrap().to_owned();
+            // Without the question the judge can only half-credit this answer.
+            let verdict = if question == "<question>" { "0.5" } else { "1" };
+            self.seen.lock().unwrap().push(question);
+            Ok(LlmResponse {
+                message: LlmMessage {
+                    role: LlmMessageRole::Assistant,
+                    content: vec![ContentPart::Text {
+                        text: verdict.into(),
+                    }],
+                },
+                usage: LlmUsage {
+                    input: LlmInputUsage {
+                        total: 100,
+                        ..Default::default()
+                    },
+                    output: LlmOutputUsage {
+                        total: 2,
+                        text: 2,
+                        reasoning: 0,
+                    },
+                    raw_provider: serde_json::json!({"prompt_tokens":100,"completion_tokens":2}),
+                },
+                finish_reason: FinishReason::Stop,
+            })
+        })
+    }
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(oneiron::FatalLlmError::InvalidRequest.into())
+    }
+}
+#[test]
+fn beam_replicate_pass_sees_the_placeholder_and_fixed_pass_sees_the_question() {
+    let config = config();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let session = ModelSession::with_backend(
+        Box::new(QuestionRecorder { seen: seen.clone() }),
+        prices(),
+        std::slice::from_ref(&config.model),
+        1_000_000,
+    )
+    .unwrap();
+    let item = JudgeItem {
+        question: "When did the launch move?".into(),
+        candidate_answer: "In May, after the review.".into(),
+        gold_answer: "May".into(),
+        ability: "temporal_reasoning".into(),
+        wedge_bucket: WedgeBucket::Temporal,
+    };
+    let report = score_item(&session, &config, "Answer from the evidence.", &item).unwrap();
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(
+        seen,
+        [
+            "<question>",
+            "<question>",
+            "<question>",
+            "When did the launch move?",
+            "When did the launch move?",
+            "When did the launch move?",
+        ]
+    );
+    assert_eq!(report.replicate_verdict, Some(0.5));
+    assert_eq!(report.verdict, 1.0);
+    let columns = report.score.beam.unwrap();
+    assert_eq!(columns.aggregate.replicate, 0.0);
+    assert_eq!(columns.aggregate.fixed, 1.0);
+}
+#[test]
+fn longmemeval_judge_runs_one_pass() {
+    let mut config = config();
+    config.benchmark = JudgeBenchmark::LongMemEvalS;
+    config.model.model_id = LME_JUDGE.parse().unwrap();
+    config.model.provider_model = "gpt-4o-2024-08-06".into();
+    config.card.judge_id = "gpt-4o".into();
+    config.card.version = "2024-08-06".into();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut table = prices();
+    table.models = BTreeMap::from([(
+        LME_JUDGE.parse().unwrap(),
+        ModelPrice {
+            input_per_million: 2.5,
+            output_per_million: 10.0,
+            cache_read_per_million: 1.25,
+            cache_write_per_million: 2.5,
+        },
+    )]);
+    let session = ModelSession::with_backend(
+        Box::new(QuestionRecorder { seen: seen.clone() }),
+        table,
+        std::slice::from_ref(&config.model),
+        1_000_000,
+    )
+    .unwrap();
+    let item = JudgeItem {
+        question: "Where?".into(),
+        candidate_answer: "Kyoto".into(),
+        gold_answer: "Kyoto".into(),
+        ability: "information_extraction".into(),
+        wedge_bucket: WedgeBucket::Temporal,
+    };
+    let report = score_item(&session, &config, "Answer from the evidence.", &item).unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 3);
+    assert_eq!(report.replicate_verdict, None);
 }

@@ -5,7 +5,7 @@ use super::{
     llm_host::{HostConfig, ModelPin, ModelSession},
     model::JudgeMetadata,
     model_usage::sum_costs,
-    nuggets::{NuggetJudgment, WedgeBucket},
+    nuggets::{BEAM_REPLICATE_QUESTION, NuggetJudgment, WedgeBucket},
     report_model::{CostComponentReport, ScoreReport},
     scorer::FixedBeamScorer,
 };
@@ -91,21 +91,35 @@ pub(super) struct JudgeItem {
 #[derive(Debug, Serialize)]
 pub(super) struct JudgedScore {
     pub judge: JudgeConfig,
+    /// Fixed pass: the judge saw the real probing question.
     pub winning_tally: usize,
     pub verdict: f64,
+    /// BEAM replicate pass (ruling 1a): the judge saw the literal
+    /// `<question>`, as at upstream 3e12035. `None` for other benchmarks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replicate_winning_tally: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replicate_verdict: Option<f64>,
+    /// Both passes' calls.
     pub judge_cost: CostComponentReport,
     pub score: ScoreReport,
 }
-pub(super) fn score_item(
+struct PassVerdict {
+    tally: usize,
+    verdict: f64,
+    costs: Vec<CostComponentReport>,
+}
+/// One three-vote pass. `question` is what the judge sees in the question slot.
+fn judge_pass(
     session: &ModelSession,
     config: &JudgeConfig,
     runtime_answer_prompt: &str,
+    question: &str,
     item: &JudgeItem,
-) -> BeamResult<JudgedScore> {
-    config.validate(runtime_answer_prompt)?;
+) -> BeamResult<PassVerdict> {
     // Ability and wedge labels classify the report, not the judge's evidence.
     let input = serde_json::to_string(&serde_json::json!({
-        "question": item.question,
+        "question": question,
         "candidate_answer": item.candidate_answer,
         "gold_answer": item.gold_answer,
     }))?;
@@ -148,16 +162,54 @@ pub(super) fn score_item(
             }
         }
     })?;
-    let verdict = f64::from(decision.verdict) / 2.0;
+    Ok(PassVerdict {
+        tally: decision.vote_count,
+        verdict: f64::from(decision.verdict) / 2.0,
+        costs,
+    })
+}
+/// Scores one item. A BEAM item is judged twice (ruling 1a): first as
+/// upstream 3e12035 judged it, with [`BEAM_REPLICATE_QUESTION`] in the
+/// question slot, then with the real probing question.
+pub(super) fn score_item(
+    session: &ModelSession,
+    config: &JudgeConfig,
+    runtime_answer_prompt: &str,
+    item: &JudgeItem,
+) -> BeamResult<JudgedScore> {
+    config.validate(runtime_answer_prompt)?;
+    let replicate = match config.benchmark {
+        JudgeBenchmark::Beam => Some(judge_pass(
+            session,
+            config,
+            runtime_answer_prompt,
+            BEAM_REPLICATE_QUESTION,
+            item,
+        )?),
+        JudgeBenchmark::LongMemEvalS => None,
+    };
+    let fixed = judge_pass(session, config, runtime_answer_prompt, &item.question, item)?;
+    let mut costs = replicate
+        .as_ref()
+        .map(|pass| pass.costs.clone())
+        .unwrap_or_default();
+    costs.extend(fixed.costs.iter().cloned());
     Ok(JudgedScore {
         judge: config.clone(),
-        winning_tally: decision.vote_count,
-        verdict,
+        winning_tally: fixed.tally,
+        verdict: fixed.verdict,
+        replicate_winning_tally: replicate.as_ref().map(|pass| pass.tally),
+        replicate_verdict: replicate.as_ref().map(|pass| pass.verdict),
         judge_cost: sum_costs(&costs)?,
         score: FixedBeamScorer.score_nuggets(&[NuggetJudgment {
-            value: verdict,
             ability: item.ability.clone(),
             wedge_bucket: item.wedge_bucket,
+            question_id: None,
+            // A single-pass benchmark has one verdict for both columns.
+            replicate_value: replicate
+                .as_ref()
+                .map_or(fixed.verdict, |pass| pass.verdict),
+            fixed_value: fixed.verdict,
         }])?,
     })
 }

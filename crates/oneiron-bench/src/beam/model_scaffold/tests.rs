@@ -614,8 +614,10 @@ fn measured_gold_aliases_are_one_question_and_all_votes_are_billed() {
     for row in report.rows.iter().chain(&report.ablation_rows) {
         let aggregate = &row.scoring.beam.as_ref().unwrap().aggregate;
         assert_eq!(aggregate.count, 1);
-        assert_eq!(aggregate.official_int_cast, 1.0);
-        assert_eq!(row.judge_overhead.input_tokens, 600);
+        assert_eq!(aggregate.replicate, 1.0);
+        assert_eq!(aggregate.fixed, 1.0);
+        // 2 aliases x 2 BEAM passes (replicate, fixed) x 3 votes x 100 tokens.
+        assert_eq!(row.judge_overhead.input_tokens, 1200);
     }
 }
 

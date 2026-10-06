@@ -162,7 +162,9 @@ mod tests {
         let judgments = [NuggetJudgment {
             ability: "updating".into(),
             wedge_bucket: WedgeBucket::KnowledgeUpdate,
-            value: 0.5,
+            question_id: None,
+            replicate_value: 0.5,
+            fixed_value: 0.5,
         }];
         let baseline = FixedBeamScorer.score_nuggets(&judgments).unwrap();
         for (recall, latency, cost) in [(0.0, 1, 0.0), (1.0, u64::MAX, 1_000_000.0)] {
@@ -186,6 +188,6 @@ mod tests {
             assert_eq!(FixedBeamScorer.score_nuggets(&judgments).unwrap(), baseline);
         }
         assert_eq!(baseline.overall_score, Some(0.0));
-        assert_eq!(baseline.beam.unwrap().aggregate.fixed_float_clamped, 0.5);
+        assert_eq!(baseline.beam.unwrap().aggregate.fixed, 0.5);
     }
 }

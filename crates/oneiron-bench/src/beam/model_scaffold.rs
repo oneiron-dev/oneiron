@@ -543,7 +543,8 @@ pub(super) fn run_with_session(
                             .to_owned();
                         let wedge_bucket: WedgeBucket =
                             serde_json::from_value(labels["wedge_bucket"].clone())?;
-                        let mut best_verdict: Option<f64> = None;
+                        // (replicate, fixed): the best verdict over aliases, per pass.
+                        let mut best_verdict: Option<(f64, f64)> = None;
                         let mut judge_costs = Vec::new();
                         for gold_answer in &gold.answers {
                             let judged = score_item(
@@ -558,10 +559,16 @@ pub(super) fn run_with_session(
                                     wedge_bucket,
                                 },
                             )?;
-                            best_verdict = Some(
-                                best_verdict
-                                    .map_or(judged.verdict, |best| best.max(judged.verdict)),
-                            );
+                            let replicate = judged.replicate_verdict.unwrap_or(judged.verdict);
+                            best_verdict = Some(best_verdict.map_or(
+                                (replicate, judged.verdict),
+                                |(best_replicate, best_fixed)| {
+                                    (
+                                        best_replicate.max(replicate),
+                                        best_fixed.max(judged.verdict),
+                                    )
+                                },
+                            ));
                             judge_costs.push(judged.judge_cost);
                         }
                         let row = ModelRow {
@@ -573,12 +580,17 @@ pub(super) fn run_with_session(
                             answer: answer_text,
                             // These are alternative answers under one question label,
                             // not independent factual nuggets. Bill every alias vote.
-                            scoring: FixedBeamScorer.score_nuggets(&[NuggetJudgment {
-                                ability,
-                                wedge_bucket,
-                                value: best_verdict
-                                    .ok_or_else(|| refusal("gold aliases required"))?,
-                            }])?,
+                            scoring: {
+                                let (replicate_value, fixed_value) =
+                                    best_verdict.ok_or_else(|| refusal("gold aliases required"))?;
+                                FixedBeamScorer.score_nuggets(&[NuggetJudgment {
+                                    ability,
+                                    wedge_bucket,
+                                    question_id: Some(id.clone()),
+                                    replicate_value,
+                                    fixed_value,
+                                }])?
+                            },
                             query_cost,
                             judge_overhead: sum_costs(&judge_costs)?,
                         };
@@ -634,7 +646,7 @@ pub(super) fn run_with_session(
                             .as_ref()
                             .expect("FixedBeamScorer produces BEAM columns")
                             .aggregate
-                            .official_int_cast
+                            .replicate
                     })
                     .sum::<f64>()
                     / n,
