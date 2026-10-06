@@ -65,8 +65,10 @@ impl FormualizerEngine {
     /// of them and its own, and every part it reads or changes fits them.
     pub fn recalculate_xlsx(&self, bytes: &[u8], limits: Limits) -> Result<WorkbookRecalc> {
         let package = Package::open(bytes, limits)?;
-        let links = LinkedBooks::read(&package)?;
+        crate::links::external_targets(&package)?;
+        // Malformed content is refused outright before any link is read.
         let formulas = Formulas::read(&package)?;
+        let links = LinkedBooks::read(&package)?;
         formulas.admit(&links)?;
         let result =
             recalculate_xlsx_bytes(bytes, options(limits)).map_err(retained_writer_error)?;
@@ -320,10 +322,10 @@ impl Formulas {
         }
         // Every formula is bounded now. A linked workbook is written `[1]`, a
         // file name `[Book.xlsx]` and a linked name `[1]!Rate`, so only a
-        // formula with `[`, or one using a workbook name that holds such a
-        // reference, reads another workbook.
+        // formula with `[`, or one using a workbook name that reads such a
+        // reference (itself or through another name), reads another workbook.
         let mut parsed = Vec::new();
-        for name in self.names.iter().filter(|name| name.formula.contains('[')) {
+        for name in &self.names {
             parsed.push((
                 name.name.as_str(),
                 crate::context::parse_bounded(&name.formula)?,
@@ -527,7 +529,7 @@ fn check_cells(xml: &Xml, strings: usize, refusal: &mut Option<Cow<'static, str>
     Ok(())
 }
 
-const ESCAPED_TEXT: &str = "escaped text the reader does not decode as Excel does";
+pub(crate) const ESCAPED_TEXT: &str = "escaped text the reader does not decode as Excel does";
 
 /// Note an escape in a string item (`si` or `is`) that Calamine, the writer's
 /// reader, decodes differently from Excel. Phonetic runs are not read.
@@ -573,7 +575,7 @@ fn decodes_like_excel(text: &str) -> bool {
 }
 
 /// Whether `text` holds an OOXML `_xHHHH_` escape.
-fn escaped(text: &str) -> bool {
+pub(crate) fn escaped(text: &str) -> bool {
     text.as_bytes().windows(7).any(|window| {
         window.starts_with(b"_x")
             && window[6] == b'_'

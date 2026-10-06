@@ -18,22 +18,30 @@
 //! own reason: a DDE or OLE link, a link part the check cannot read, an
 //! external relationship other than a hyperlink, a link's path or a pivot
 //! cache's source, a link list or link content type the edit gate cannot
-//! join, a reference by file name, to `[0]` or to a link the list does not
-//! hold, a defined name of a linked workbook (`[1]!Rate`), a 3D linked
-//! reference, a linked reference in a reference operator, a multi-cell linked
-//! range passed on as a reference (`reads_a_range`) or reaching a criteria
-//! function through a name, and an open or very large linked range unless the
-//! function reading it gives Excel's result from the cells up to the last
-//! saved one (`reads_past_saved_values`).
+//! join, link markup the fork's reader would read where Excel reads none, an
+//! escape in a link's sheet names or saved values, a reference by file name,
+//! to `[0]` or to a link the list does not hold, a defined name of a linked
+//! workbook (`[1]!Rate`), a 3D linked reference, a linked reference in a
+//! reference operator, a multi-cell linked range passed on as a reference
+//! (`reads_a_range`), a linked reference reaching a criteria function through
+//! another function or a name, or reaching a function that reads references
+//! through one that passes it on as values (`passed_on`), one bound to a LET
+//! or LAMBDA name, and an open or very large linked range unless the function
+//! reading it gives Excel's result from the cells up to the last saved one
+//! (`reads_past_saved_values`). A workbook name over a linked workbook is
+//! checked where each formula uses it, as if written there.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use formualizer_common::parse_a1_1based;
 use formualizer_parse::parser::{
     ASTNode, ASTNodeType, ExternalRefKind, ExternalReference, ReferenceType,
 };
+use oneiron_docedit::ooxml::Node;
 use oneiron_docedit::retained_opc::Package;
 
 use crate::Result;
+use crate::workbook::{ESCAPED_TEXT, escaped};
 use crate::xml::{DOC_REL, MAIN, REL, Xml, unsupported};
 
 /// The fork reads at most this many cells of a linked range, and crops a
@@ -48,6 +56,21 @@ const LINK_CONTENT_TYPE: &str =
 /// does not resolve that way.
 const WORKBOOK_ITSELF: &str = "external reference to the workbook itself ([0])";
 
+const UNJOINED: &str = "external link list the edit gate cannot join";
+
+/// The fork's link reader (`formualizer_workbook`'s `external_links.rs`)
+/// matches `externalReference`, `Relationship`, `externalBook`, `sheetName`,
+/// `sheetData`, `cell` and `v` by local name anywhere in their part, and takes
+/// the first attribute of each name it reads whatever its namespace. An
+/// element outside its SpreadsheetML place, or an attribute of that name in
+/// another namespace, is read where Excel reads none (a vendor extension's
+/// `u:cell` would replace a saved value).
+const OUT_OF_PLACE: &str = "external link markup outside its SpreadsheetML place";
+
+/// The most workbook names one formula's check reads through, nested or
+/// repeated; a name may use another, or itself.
+const MAX_NAME_EXPANSIONS: usize = 256;
+
 /// The workbook's links, in `<externalReferences>` order (`[1]` first).
 #[derive(Debug, Default)]
 pub(crate) struct LinkedBooks {
@@ -61,94 +84,113 @@ struct LinkedBook {
     sheets: Vec<(String, bool)>,
 }
 
-impl LinkedBooks {
-    /// Read the workbook's links and its external relationship targets. A
-    /// link or target the engine cannot read as Excel does is the fallback's.
-    pub(crate) fn read(package: &Package) -> Result<Self> {
-        let limits = package.limits().xml;
-        for name in package.names().filter(|name| name.ends_with(".rels")) {
-            let Some(bytes) = package.part(name)? else {
-                continue;
-            };
-            let xml = Xml::parse(&bytes, limits)
-                .map_err(|_| unsupported("relationship part the link check cannot read"))?;
-            // A link's path, and a pivot cache's external source, which only
-            // a pivot refresh reads, never a recalculation.
-            let link_paths = name.starts_with("xl/externalLinks/_rels/")
-                || name.starts_with("xl/pivotCache/_rels/");
-            for node in xml
-                .nodes
-                .iter()
-                .filter(|node| node.attr("TargetMode") == Some("External"))
-            {
-                let kind = node
-                    .attr("Type")
-                    .and_then(|kind| kind.rsplit('/').next())
-                    .unwrap_or_default();
-                let allowed = kind == "hyperlink"
-                    || (link_paths
-                        && matches!(
-                            kind,
-                            "externalLinkPath" | "xlPathMissing" | "externalLinkLongPath"
-                        ));
-                if !allowed {
-                    return Err(unsupported(format!(
-                        "external relationship target ({kind})"
-                    )));
-                }
+/// Refuse an external relationship target the engine cannot keep as Excel
+/// does: anything other than a hyperlink, a link's path or a pivot cache's
+/// external source. A relationship part the check cannot read fails closed to
+/// the fallback, as it did before linked workbooks were read natively.
+pub(crate) fn external_targets(package: &Package) -> Result<()> {
+    let limits = package.limits().xml;
+    for name in package.names().filter(|name| name.ends_with(".rels")) {
+        let Some(bytes) = package.part(name)? else {
+            continue;
+        };
+        let xml = Xml::parse(&bytes, limits)
+            .map_err(|_| unsupported("relationship part the link check cannot read"))?;
+        // A link's path, and a pivot cache's external source, which only
+        // a pivot refresh reads, never a recalculation.
+        let link_paths =
+            name.starts_with("xl/externalLinks/_rels/") || name.starts_with("xl/pivotCache/_rels/");
+        for node in xml
+            .nodes
+            .iter()
+            .filter(|node| node.attr("TargetMode") == Some("External"))
+        {
+            let kind = node
+                .attr("Type")
+                .and_then(|kind| kind.rsplit('/').next())
+                .unwrap_or_default();
+            let allowed = kind == "hyperlink"
+                || (link_paths
+                    && matches!(
+                        kind,
+                        "externalLinkPath" | "xlPathMissing" | "externalLinkLongPath"
+                    ));
+            if !allowed {
+                return Err(unsupported(format!(
+                    "external relationship target ({kind})"
+                )));
             }
         }
+    }
+    Ok(())
+}
+
+impl LinkedBooks {
+    /// Read the workbook's links, after `external_targets` and the formula
+    /// reader have checked the package. A link the engine cannot read as
+    /// Excel does is the fallback's; malformed workbook XML stays an outright
+    /// refusal (`InvalidWorkbook`).
+    pub(crate) fn read(package: &Package) -> Result<Self> {
+        let limits = package.limits().xml;
         let Some(workbook) = package.part("xl/workbook.xml")? else {
             return Ok(Self::default());
         };
-        let workbook = Xml::parse(&workbook, limits)
-            .map_err(|_| unsupported("external link list the check cannot read"))?;
-        let ids: Vec<&str> = workbook
-            .nodes
-            .iter()
-            .filter(|node| node.is(MAIN, "externalReference"))
-            .map(|node| node.attr_ns(DOC_REL, "id").unwrap_or_default())
-            .collect();
+        let ids = link_ids(&Xml::parse(&workbook, limits)?)?;
         let rels = match package.part("xl/_rels/workbook.xml.rels")? {
-            Some(bytes) => Xml::parse(&bytes, limits)
-                .map_err(|_| unsupported("external link list the check cannot read"))?,
+            Some(bytes) => Xml::parse(&bytes, limits)?,
             None if ids.is_empty() => return Ok(Self::default()),
-            None => return Err(unsupported("external link list the edit gate cannot join")),
+            None => return Err(unsupported(UNJOINED)),
         };
-        let links = link_relationships(&rels);
-        // The edit gate joins every reference to one internal link part.
-        if links.len() != ids.len() {
-            return Err(unsupported("external link list the edit gate cannot join"));
+        let targets = link_parts(&rels, &ids)?;
+        if targets.is_empty() {
+            return Ok(Self::default());
         }
         let types = ContentTypes::read(package)?;
-        let mut books = Vec::with_capacity(ids.len());
-        for id in ids {
-            let target = links
-                .get(id)
-                .and_then(|target| target.as_deref())
-                .ok_or_else(|| unsupported("external link list the edit gate cannot join"))?;
+        let mut books = Vec::with_capacity(targets.len());
+        for target in targets {
             let part = package
-                .part(target)?
-                .ok_or_else(|| unsupported("external link list the edit gate cannot join"))?;
-            if types.content_type(target).as_deref() != Some(LINK_CONTENT_TYPE) {
-                return Err(unsupported("external link list the edit gate cannot join"));
+                .part(&target)?
+                .ok_or_else(|| unsupported(UNJOINED))?;
+            if types.content_type(&target).as_deref() != Some(LINK_CONTENT_TYPE) {
+                return Err(unsupported(UNJOINED));
             }
             books.push(LinkedBook::read(&part, package)?);
         }
         Ok(Self { books })
     }
 
-    /// The defined names (upper case) whose formula reads a linked workbook:
-    /// one linked reference, or an expression over linked values.
+    /// The defined names (upper case) that read a linked workbook: through a
+    /// linked reference in their formula, or through another such name.
     pub(crate) fn names<'a>(
         &self,
         names: impl IntoIterator<Item = (&'a str, &'a ASTNode)>,
     ) -> BTreeMap<String, LinkedName> {
-        let mut linked = BTreeMap::new();
-        for (name, formula) in names {
-            if !mentions_link(formula, &BTreeMap::new()) {
+        let names: Vec<(String, &ASTNode)> = names
+            .into_iter()
+            .map(|(name, formula)| (name.to_ascii_uppercase(), formula))
+            .collect();
+        // The definitions that use each name, so a name that reads a linked
+        // workbook marks every definition using it in turn.
+        let mut users: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (index, (_, formula)) in names.iter().enumerate() {
+            let mut used = BTreeSet::new();
+            used_names(formula, &mut used);
+            for name in used {
+                users.entry(name).or_default().push(index);
+            }
+        }
+        let mut reads = vec![false; names.len()];
+        let mut pending: Vec<usize> = (0..names.len())
+            .filter(|&index| mentions_link(names[index].1, &BTreeMap::new()))
+            .collect();
+        while let Some(index) = pending.pop() {
+            if std::mem::replace(&mut reads[index], true) {
                 continue;
             }
+            pending.extend(users.get(&names[index].0).into_iter().flatten());
+        }
+        let mut linked = BTreeMap::new();
+        for ((name, formula), _) in names.iter().zip(&reads).filter(|(_, reads)| **reads) {
             let shape = match &formula.node_type {
                 // A relative reference in a name moves with the cell using it.
                 ASTNodeType::Reference {
@@ -159,11 +201,11 @@ impl LinkedBooks {
                     reference: ReferenceType::External(_),
                     ..
                 } => LinkedName::Unclear,
-                _ => LinkedName::Expression,
+                _ => LinkedName::Expression((*formula).clone()),
             };
             // A name defined in several scopes may hold any of its formulas.
             linked
-                .entry(name.to_ascii_uppercase())
+                .entry(name.clone())
                 .and_modify(|known| *known = LinkedName::Unclear)
                 .or_insert(shape);
         }
@@ -172,16 +214,28 @@ impl LinkedBooks {
 
     /// Admit one formula's external references, or name why they are the
     /// fallback's. `names` are the workbook names that read a linked workbook.
-    pub(crate) fn admit(
+    pub(crate) fn admit<'a>(
         &self,
-        formula: &ASTNode,
-        names: &BTreeMap<String, LinkedName>,
+        formula: &'a ASTNode,
+        names: &'a BTreeMap<String, LinkedName>,
     ) -> Result<()> {
         let mut pending = vec![(formula, Parent::Root)];
+        let mut expansions = 0;
         while let Some((node, parent)) = pending.pop() {
+            passed_on(node, &parent, names)?;
             match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
-                    self.reference(reference, &parent, names)?;
+                    // A name holding an expression over linked values is
+                    // checked as if its formula were written here.
+                    if let Some(expression) = self.reference(reference, &parent, names)? {
+                        expansions += 1;
+                        if expansions > MAX_NAME_EXPANSIONS {
+                            return Err(unsupported(
+                                "workbook names over linked workbooks nested past the check's limit",
+                            ));
+                        }
+                        pending.push((expression, parent));
+                    }
                 }
                 ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
                 ASTNodeType::UnaryOp { op, expr } => pending.push((expr, Parent::Operator(op))),
@@ -197,20 +251,25 @@ impl LinkedBooks {
                     pending.push((right, Parent::Operator(op)));
                 }
                 ASTNodeType::Function { name, args } => {
-                    let bare = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
-                    // A function that reads its argument as a reference sees a
-                    // linked reference that IF, CHOOSE or another function
-                    // passed on as values in the fork (`ROW(IF(1,[1]S!A3))`).
-                    if reads_reference(&bare) && args.iter().any(|arg| passes_on_a_link(arg, names))
-                    {
-                        return Err(unsupported(
-                            "external reference passed on by a function to one that reads references",
-                        ));
+                    let bare = bare_name(name);
+                    if binds_a_link(&bare, args, names) {
+                        return Err(unsupported(BOUND));
                     }
+                    // INDEX hands on the reference it selects, so its range
+                    // is read as a reference wherever the INDEX is.
+                    let through = bare == "INDEX"
+                        && matches!(
+                            parent,
+                            Parent::Argument {
+                                reference: true,
+                                ..
+                            }
+                        );
                     for (index, arg) in args.iter().enumerate() {
                         pending.push((
                             arg,
                             Parent::Argument {
+                                reference: reads_reference(&bare) || (through && index == 0),
                                 function: bare.clone(),
                                 index,
                                 args,
@@ -219,6 +278,11 @@ impl LinkedBooks {
                     }
                 }
                 ASTNodeType::Call { callee, args } => {
+                    // A LAMBDA's parameters hold its arguments as the fork's
+                    // LET names do.
+                    if args.iter().any(|arg| mentions_link(arg, names)) {
+                        return Err(unsupported(BOUND));
+                    }
                     pending.push((callee, Parent::Operator("")));
                     pending.extend(args.iter().map(|arg| (arg, Parent::Operator(""))));
                 }
@@ -230,36 +294,40 @@ impl LinkedBooks {
         Ok(())
     }
 
-    fn reference(
+    /// Check one reference, and return the expression of a workbook name
+    /// that holds one over linked values, to check where it is used.
+    fn reference<'a>(
         &self,
         reference: &ReferenceType,
         parent: &Parent<'_>,
-        names: &BTreeMap<String, LinkedName>,
-    ) -> Result<()> {
+        names: &'a BTreeMap<String, LinkedName>,
+    ) -> Result<Option<&'a ASTNode>> {
         match reference {
-            ReferenceType::External(external) => self.external(external, parent),
-            // A workbook name for a linked reference reads as that reference;
-            // one for an expression over linked values is a value.
-            ReferenceType::NamedRange(name) => match names.get(&name.to_ascii_uppercase()) {
-                Some(LinkedName::Reference(external)) => {
-                    // A criteria function refuses a closed linked range written
-                    // in it (#VALUE!), which the fork does too, and one a
-                    // name holds as well, which the fork computes.
-                    if criteria_range(parent) {
-                        return Err(unsupported(
-                            "external range reaching a criteria function through a name",
-                        ));
+            ReferenceType::External(external) => self.external(external, parent).map(|()| None),
+            // A workbook name for a linked reference reads as that reference.
+            ReferenceType::NamedRange(name) if !linked_name(name) => {
+                match names.get(&name_key(name)) {
+                    Some(LinkedName::Reference(external)) => {
+                        // A criteria function refuses a closed linked range
+                        // written in it (#VALUE!), which the fork does too, and
+                        // one a name holds as well, which the fork computes.
+                        if criteria_range(parent) {
+                            return Err(unsupported(
+                                "external range reaching a criteria function through a name",
+                            ));
+                        }
+                        self.external(external, parent).map(|()| None)
                     }
-                    self.external(external, parent)
+                    Some(LinkedName::Expression(expression)) => Ok(Some(expression)),
+                    Some(LinkedName::Unclear) => Err(unsupported(
+                        "workbook name holding a relative or repeated linked reference",
+                    )),
+                    None => Ok(None),
                 }
-                Some(LinkedName::Expression) => Ok(()),
-                Some(LinkedName::Unclear) => Err(unsupported(
-                    "workbook name holding a relative or repeated linked reference",
-                )),
-                None => linked_workbook_name(name),
-            },
+            }
+            ReferenceType::NamedRange(name) => linked_workbook_name(name).map(|()| None),
             // A table of a closed linked workbook is #REF! for both.
-            _ => Ok(()),
+            _ => Ok(None),
         }
     }
 
@@ -340,8 +408,10 @@ fn linked_workbook_name(name: &str) -> Result<()> {
 pub(crate) enum LinkedName {
     /// One absolute linked reference, read as that reference.
     Reference(ExternalReference),
-    /// An expression over linked values: a value.
-    Expression,
+    /// Any other formula over a linked workbook. It may return a linked
+    /// reference (`IF(TRUE,[1]S!$A$3)`), so each use is checked as if the
+    /// formula were written there.
+    Expression(ASTNode),
     /// A relative linked reference, or a name defined more than once.
     Unclear,
 }
@@ -378,7 +448,7 @@ fn mentions_link(node: &ASTNode, names: &BTreeMap<String, LinkedName>) -> bool {
         ASTNodeType::Reference { reference, .. } => match reference {
             ReferenceType::External(_) => true,
             ReferenceType::NamedRange(name) => {
-                linked_name(name) || names.contains_key(&name.to_ascii_uppercase())
+                linked_name(name) || names.contains_key(&name_key(name))
             }
             _ => false,
         },
@@ -395,9 +465,59 @@ fn mentions_link(node: &ASTNode, names: &BTreeMap<String, LinkedName>) -> bool {
     }
 }
 
+/// Collect the workbook names `node` uses, as `names` keys them.
+fn used_names(node: &ASTNode, used: &mut BTreeSet<String>) {
+    match &node.node_type {
+        ASTNodeType::Reference {
+            reference: ReferenceType::NamedRange(name),
+            ..
+        } if !linked_name(name) => {
+            used.insert(name_key(name));
+        }
+        ASTNodeType::Reference { .. } | ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
+        ASTNodeType::UnaryOp { expr, .. } => used_names(expr, used),
+        ASTNodeType::BinaryOp { left, right, .. } => {
+            used_names(left, used);
+            used_names(right, used);
+        }
+        ASTNodeType::Function { args, .. } => args.iter().for_each(|arg| used_names(arg, used)),
+        ASTNodeType::Call { callee, args } => {
+            used_names(callee, used);
+            args.iter().for_each(|arg| used_names(arg, used));
+        }
+        ASTNodeType::Array(rows) => rows.iter().flatten().for_each(|arg| used_names(arg, used)),
+    }
+}
+
+/// A workbook name as `names` keys it: upper case, without the sheet a
+/// formula may qualify it with (`Sheet1!Rate`).
+fn name_key(name: &str) -> String {
+    name.rsplit_once('!')
+        .map_or(name, |(_, name)| name)
+        .to_ascii_uppercase()
+}
+
+/// A function's name without its storage prefixes (`_xlfn.RANK.EQ` is
+/// `RANK.EQ`), upper case.
+fn bare_name(name: &str) -> String {
+    let mut name = name;
+    while let Some((prefix, rest)) = name.split_once('.')
+        && prefix.starts_with('_')
+    {
+        name = rest;
+    }
+    name.to_ascii_uppercase()
+}
+
 impl LinkedBook {
+    /// Read one link part as Excel reads it: its sheet names and which sheets
+    /// Excel could not refresh. The fork's reader takes the same values only
+    /// from markup in its SpreadsheetML place (`OUT_OF_PLACE`), and decodes no
+    /// `_xHHHH_` escape in a sheet name or saved value, where Excel reads each
+    /// as one UTF-16 unit (`a_x0001_b` is three characters).
     fn read(part: &[u8], package: &Package) -> Result<Self> {
         let unreadable = || unsupported("external link part the check cannot read");
+        let out_of_place = || unsupported(OUT_OF_PLACE);
         let xml = Xml::parse(part, package.limits().xml).map_err(|_| unreadable())?;
         xml.root(MAIN, "externalLink").map_err(|_| unreadable())?;
         if xml
@@ -418,31 +538,70 @@ impl LinkedBook {
             .child(0, MAIN, "externalBook")
             .map_err(|_| unreadable())?
             .ok_or_else(|| unsupported("unknown external link"))?;
-        let names: Vec<String> = match xml
-            .child(book, MAIN, "sheetNames")
-            .map_err(|_| unreadable())?
-        {
-            Some((list, _)) => xml
-                .children(list)
-                .filter(|(_, node)| node.is(MAIN, "sheetName"))
-                .map(|(_, node)| node.attr("val").unwrap_or_default().to_lowercase())
-                .collect(),
-            None => Vec::new(),
+        let child = |name| {
+            xml.child(book, MAIN, name)
+                .map(|found| found.map(|(index, _)| index))
+                .map_err(|_| unreadable())
         };
+        let (list, set) = (child("sheetNames")?, child("sheetDataSet")?);
+        // A saved row: a row of a sheet's saved values.
+        let saved_row = |row: usize| {
+            let row = &xml.nodes[row];
+            row.is(MAIN, "row")
+                && row.parent.is_some_and(|data| {
+                    xml.nodes[data].is(MAIN, "sheetData")
+                        && set.is_some()
+                        && xml.nodes[data].parent == set
+                })
+        };
+        let saved_cell = |cell: usize| {
+            let cell = &xml.nodes[cell];
+            cell.is(MAIN, "cell") && cell.parent.is_some_and(saved_row)
+        };
+        let mut names = Vec::new();
         // Saved values by sheet position: whether Excel could not refresh it.
         let mut saved = BTreeMap::new();
-        if let Some((set, _)) = xml
-            .child(book, MAIN, "sheetDataSet")
-            .map_err(|_| unreadable())?
-        {
-            for (_, data) in xml
-                .children(set)
-                .filter(|(_, node)| node.is(MAIN, "sheetData"))
-            {
-                if let Some(index) = data.attr("sheetId").and_then(|id| id.parse::<usize>().ok()) {
-                    let refresh_error = matches!(data.attr("refreshError"), Some("1" | "true"));
-                    saved.insert(index, refresh_error);
+        for (index, node) in xml.nodes.iter().enumerate() {
+            let parent = node.parent;
+            // Other markup, such as Excel's own `xxl21:alternateUrls`, the
+            // fork's reader passes over.
+            let placed = match node.name.as_str() {
+                "externalBook" => index == book,
+                "sheetName" => parent.is_some() && parent == list,
+                "sheetData" => parent.is_some() && parent == set,
+                "cell" => parent.is_some_and(saved_row),
+                "v" => node.children.is_empty() && parent.is_some_and(saved_cell),
+                _ => continue,
+            };
+            if !placed || node.namespace != MAIN {
+                return Err(out_of_place());
+            }
+            let attr = |local| sole_attr(node, "", local).ok_or_else(out_of_place);
+            match node.name.as_str() {
+                "sheetName" => {
+                    let name = attr("val")?.ok_or_else(unreadable)?;
+                    if escaped(name) {
+                        return Err(unsupported(ESCAPED_TEXT));
+                    }
+                    names.push(name.to_lowercase());
                 }
+                "sheetData" => {
+                    let refresh_error = matches!(attr("refreshError")?, Some("1" | "true"));
+                    if let Some(index) = attr("sheetId")?.and_then(|id| id.parse::<usize>().ok()) {
+                        saved.insert(index, refresh_error);
+                    }
+                }
+                "cell" => {
+                    let address = attr("r")?.ok_or_else(unreadable)?;
+                    parse_a1_1based(address).map_err(|_| unreadable())?;
+                    let kind = attr("t")?;
+                    if let Some((_, value)) =
+                        xml.child(index, MAIN, "v").map_err(|_| unreadable())?
+                    {
+                        saved_value(kind, &value.text)?;
+                    }
+                }
+                _ => {}
             }
         }
         let sheets = names
@@ -454,6 +613,123 @@ impl LinkedBook {
     }
 }
 
+/// A saved value the fork reads as Excel does: a number, text, a boolean or
+/// an error, with no `_xHHHH_` escape.
+fn saved_value(kind: Option<&str>, value: &str) -> Result<()> {
+    if escaped(value) {
+        return Err(unsupported(ESCAPED_TEXT));
+    }
+    let readable = match kind {
+        None | Some("n") => value.trim().parse::<f64>().is_ok_and(f64::is_finite),
+        Some("b") => matches!(value, "0" | "1"),
+        Some("str" | "e") => true,
+        _ => false,
+    };
+    if readable {
+        Ok(())
+    } else {
+        Err(unsupported(
+            "external link saved value the check cannot read",
+        ))
+    }
+}
+
+/// The value of `node`'s one attribute named `local`, when it is in namespace
+/// `ns` (`""` for none): `Some(None)` when there is none, and `None` when the
+/// fork's reader, which takes the first attribute of that local name in any
+/// namespace (a declaration `xmlns:r` included), could read another.
+fn sole_attr<'a>(node: &'a Node, ns: &str, local: &str) -> Option<Option<&'a str>> {
+    let mut named = node
+        .attrs
+        .keys()
+        .filter(|key| key.rsplit(':').next() == Some(local));
+    let Some(key) = named.next() else {
+        return Some(None);
+    };
+    if named.next().is_some() {
+        return None;
+    }
+    if ns.is_empty() {
+        (key == local).then(|| node.attr(local))
+    } else {
+        node.attr_ns(ns, local).map(Some)
+    }
+}
+
+/// The relationship ids of the workbook's links, in `<externalReferences>`
+/// order.
+fn link_ids(workbook: &Xml) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for node in workbook
+        .nodes
+        .iter()
+        .filter(|node| node.name == "externalReference")
+    {
+        let placed = node.namespace == MAIN
+            && node.parent.is_some_and(|list| {
+                workbook.nodes[list].is(MAIN, "externalReferences")
+                    && workbook.nodes[list].parent == Some(0)
+            });
+        let id = sole_attr(node, DOC_REL, "id")
+            .filter(|_| placed)
+            .ok_or_else(|| unsupported(OUT_OF_PLACE))?;
+        ids.push(id.unwrap_or_default().to_owned());
+    }
+    Ok(ids)
+}
+
+/// The link part each id of `ids` names. The edit gate joins every reference
+/// to one internal link relationship; the fork's reader takes the
+/// relationship by its first `Id` attribute whatever its namespace, type or
+/// target mode, so the id must name that one relationship alone.
+fn link_parts(rels: &Xml, ids: &[String]) -> Result<Vec<String>> {
+    let link = |node: &Node| {
+        node.is(REL, "Relationship")
+            && node.parent == Some(0)
+            && node
+                .attr("Type")
+                .is_some_and(|kind| kind.rsplit('/').next() == Some("externalLink"))
+    };
+    if rels.nodes.iter().filter(|node| link(node)).count() != ids.len() {
+        return Err(unsupported(UNJOINED));
+    }
+    let mut parts = Vec::with_capacity(ids.len());
+    for id in ids {
+        let named: Vec<&Node> = rels
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.name == "Relationship"
+                    && node
+                        .attrs
+                        .iter()
+                        .any(|(key, value)| key.rsplit(':').next() == Some("Id") && value == id)
+            })
+            .collect();
+        if named
+            .iter()
+            .any(|node| !node.is(REL, "Relationship") || node.parent != Some(0))
+        {
+            return Err(unsupported(OUT_OF_PLACE));
+        }
+        let [node] = named[..] else {
+            return Err(unsupported(UNJOINED));
+        };
+        if !link(node) {
+            return Err(unsupported(UNJOINED));
+        }
+        let (Some(Some(_)), Some(Some(target)), Some(None | Some("Internal"))) = (
+            sole_attr(node, "", "Id"),
+            sole_attr(node, "", "Target"),
+            sole_attr(node, "", "TargetMode"),
+        ) else {
+            return Err(unsupported(UNJOINED));
+        };
+        parts.push(resolve_under_xl(target).ok_or_else(|| unsupported(UNJOINED))?);
+    }
+    Ok(parts)
+}
+
 /// The package's content types: `Override` by part name, `Default` by
 /// extension, both case-insensitive as OPC compares them.
 struct ContentTypes {
@@ -463,7 +739,7 @@ struct ContentTypes {
 
 impl ContentTypes {
     fn read(package: &Package) -> Result<Self> {
-        let unreadable = || unsupported("external link list the edit gate cannot join");
+        let unreadable = || unsupported(UNJOINED);
         let bytes = package
             .part("[Content_Types].xml")?
             .ok_or_else(unreadable)?;
@@ -507,11 +783,14 @@ enum Parent<'a> {
     Root,
     /// An operand of an operator (`""` for a unary one, a call or an array).
     Operator(&'a str),
-    /// An argument of a function, by its bare upper-case name.
+    /// An argument of a function, by its bare upper-case name. `reference`:
+    /// a function that reads references reads it (`reads_reference`),
+    /// directly or through the range of an INDEX it is given.
     Argument {
         function: String,
         index: usize,
         args: &'a [ASTNode],
+        reference: bool,
     },
 }
 
@@ -532,6 +811,7 @@ fn reads_a_range(parent: &Parent<'_>, kind: ExternalRefKind) -> bool {
             function,
             index,
             args,
+            ..
         } => match (function.as_str(), *index) {
             // One position selects a cell of a single column or row only.
             ("INDEX", 0) => match args.len() {
@@ -565,6 +845,7 @@ fn reads_past_saved_values(parent: &Parent<'_>, unsaved_is_error: bool) -> bool 
         function,
         index,
         args,
+        ..
     } = parent
     else {
         return false;
@@ -597,6 +878,60 @@ fn criteria_range(parent: &Parent<'_>) -> bool {
     }
 }
 
+/// Refuse a linked reference that reaches a parameter Excel reads as a
+/// reference through what the fork passes on as values. A criteria function
+/// is #VALUE! for a closed linked range however it arrives, through INDEX,
+/// IF, CHOOSE or a name (probes: `SUMIF(INDEX([1]Ok!A1:A5,0),">0")`), and
+/// for one cell too, where the fork computes all but the one written in it
+/// (`SUMIF(INDEX([1]S!A1:A5,3),">0")` is 3). A function that reads references
+/// (`reads_reference`) sees the reference INDEX selects in the fork, but what
+/// IF, CHOOSE or another function passes on only as values: ROW of
+/// `IF(TRUE,[1]S!A3)`, or of a name holding it, is #VALUE! where Excel gives 3.
+fn passed_on(
+    node: &ASTNode,
+    parent: &Parent<'_>,
+    names: &BTreeMap<String, LinkedName>,
+) -> Result<()> {
+    let Parent::Argument { reference, .. } = parent else {
+        return Ok(());
+    };
+    if matches!(node.node_type, ASTNodeType::Reference { .. }) || !mentions_link(node, names) {
+        return Ok(());
+    }
+    if criteria_range(parent) {
+        return Err(unsupported(
+            "external reference reaching a criteria function through another function",
+        ));
+    }
+    if *reference && passes_on_values(node) {
+        return Err(unsupported(
+            "external reference passed on by a function to one that reads references",
+        ));
+    }
+    Ok(())
+}
+
+/// The fork binds a LET name or LAMBDA parameter to a linked reference's
+/// values, where Excel binds the reference: `LET(x,[1]S!A3,ROW(x))` is
+/// #VALUE! in the fork and 3 in Excel.
+const BOUND: &str = "external reference bound to a LET or LAMBDA name";
+
+/// Whether `function` binds a linked reference of `args` to a name: a LET
+/// value, or an array MAP, REDUCE, SCAN, BYROW or BYCOL hands its LAMBDA.
+fn binds_a_link(function: &str, args: &[ASTNode], names: &BTreeMap<String, LinkedName>) -> bool {
+    let lambda = |arg: &ASTNode| matches!(&arg.node_type, ASTNodeType::Function { name, .. } if bare_name(name) == "LAMBDA");
+    match function {
+        "LET" => args
+            .iter()
+            .enumerate()
+            .any(|(at, arg)| at % 2 == 1 && at + 1 < args.len() && mentions_link(arg, names)),
+        "MAP" | "REDUCE" | "SCAN" | "BYROW" | "BYCOL" => args
+            .iter()
+            .any(|arg| !lambda(arg) && mentions_link(arg, names)),
+        _ => false,
+    }
+}
+
 /// The functions that read an argument as a reference, not its values.
 fn reads_reference(function: &str) -> bool {
     matches!(
@@ -615,13 +950,10 @@ fn reads_reference(function: &str) -> bool {
 }
 
 /// A call other than INDEX (which selects a linked reference itself) that
-/// may return a reference and reads a linked workbook.
-fn passes_on_a_link(node: &ASTNode, names: &BTreeMap<String, LinkedName>) -> bool {
+/// may return a reference, and returns a linked one as values in the fork.
+fn passes_on_values(node: &ASTNode) -> bool {
     match &node.node_type {
-        ASTNodeType::Function { name, .. } => {
-            let bare = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
-            bare != "INDEX" && returns_reference(name) && mentions_link(node, names)
-        }
+        ASTNodeType::Function { name, .. } => bare_name(name) != "INDEX" && returns_reference(name),
         _ => false,
     }
 }
@@ -641,14 +973,9 @@ fn returns_reference(name: &str) -> bool {
 /// row): a literal of at least 1, or a MATCH or XMATCH.
 fn row_or_column(node: &ASTNode) -> bool {
     match &node.node_type {
-        ASTNodeType::Function { name, .. } => matches!(
-            name.rsplit('.')
-                .next()
-                .unwrap_or(name)
-                .to_ascii_uppercase()
-                .as_str(),
-            "MATCH" | "XMATCH"
-        ),
+        ASTNodeType::Function { name, .. } => {
+            matches!(bare_name(name).as_str(), "MATCH" | "XMATCH")
+        }
         _ => number(node).is_some_and(|value| value >= 1.0),
     }
 }
@@ -745,31 +1072,11 @@ fn link_index(token: &str) -> Option<usize> {
         .ok()
 }
 
-/// `[1]!Rate`: a name defined in a linked workbook.
+/// `[1]!Rate` or `[1]Sheet1!Rate`: a name defined in a linked workbook (no
+/// sheet name holds `[`).
 fn linked_name(name: &str) -> bool {
-    name.starts_with('[') && name.contains("]!")
-}
-
-/// The workbook's link relationships by id: the internal part each targets,
-/// `None` when it targets none (an external or unresolvable target).
-fn link_relationships(rels: &Xml) -> BTreeMap<String, Option<String>> {
-    let mut links = BTreeMap::new();
-    for node in rels
-        .nodes
-        .iter()
-        .filter(|node| node.is(REL, "Relationship"))
-        .filter(|node| {
-            node.attr("Type")
-                .is_some_and(|kind| kind.rsplit('/').next() == Some("externalLink"))
-        })
-    {
-        let target = match node.attr("TargetMode") {
-            None | Some("Internal") => node.attr("Target").and_then(resolve_under_xl),
-            Some(_) => None,
-        };
-        links.insert(node.attr("Id").unwrap_or_default().to_owned(), target);
-    }
-    links
+    name.rsplit_once('!')
+        .is_some_and(|(book, _)| book.contains('['))
 }
 
 /// The part a workbook relationship target names (relative to `xl/`).
@@ -807,12 +1114,23 @@ mod tests {
         }
     }
 
-    /// `Rates` names `[1]Data!$A$1:$A$5`, `Twice` an expression over a link.
+    /// `Rates` names `[1]Data!$A$1:$A$5`, `Twice` an expression over a link,
+    /// `Chosen` and `Pick` expressions returning a linked reference, `Two` a
+    /// name for `Chosen`, and `Loop` and `Back` names that use each other.
     fn names() -> BTreeMap<String, LinkedName> {
-        let rates = parse("=[1]Data!$A$1:$A$5");
-        let twice = parse("=[1]Data!$A$1*2");
-        let moving = parse("=[1]Data!A1");
-        books().names([("Rates", &rates), ("Twice", &twice), ("Moving", &moving)])
+        let defined = [
+            ("Rates", "=[1]Data!$A$1:$A$5"),
+            ("Twice", "=[1]Data!$A$1*2"),
+            ("Moving", "=[1]Data!A1"),
+            ("Chosen", "=IF(TRUE,[1]Data!$A$3)"),
+            ("Pick", "=INDEX([1]Data!$A$1:$A$5,3)"),
+            ("Two", "=Chosen"),
+            ("Local", "=Result!$A$1:$A$5"),
+            ("Loop", "=Back+[1]Data!$A$1"),
+            ("Back", "=Loop"),
+        ]
+        .map(|(name, formula)| (name, parse(formula)));
+        books().names(defined.iter().map(|(name, formula)| (*name, formula)))
     }
 
     fn reason(formula: &str) -> Option<String> {
@@ -845,9 +1163,73 @@ mod tests {
             "=VLOOKUP(1,[1]!Prices[#Data],2,FALSE)",
             "=SUM(Rates)+Twice",
             "=IF(Twice>1,Twice)",
+            // A name returning a linked reference, used for its value, and
+            // the reference INDEX selects, through a name too.
+            "=Chosen*2+SUM(Two)",
+            "=ROW(Pick)+ROW(INDEX(Rates,2))",
+            "=SUMIF(Local,\">0\")",
+            "=COUNTIF(A1:A3,[1]Data!A1)",
+            "=_xlfn.LET(_xlpm.x,5,_xlpm.x+[1]Data!A3)",
         ] {
             assert_eq!(reason(formula), None, "{formula}");
         }
+    }
+
+    #[test]
+    fn linked_references_passed_on_as_values_fall_back() {
+        // Excel's criteria functions are #VALUE! for a closed linked range,
+        // one cell too, however it arrives; the fork computes all but the
+        // one written in the function.
+        let criteria = Some(
+            "external reference reaching a criteria function through another function".to_owned(),
+        );
+        for formula in [
+            "=SUMIF(INDEX([1]Data!A1:A5,3),\">0\")",
+            "=SUMIF(IF(TRUE,[1]Data!A3),\">0\")",
+            "=SUMIF(CHOOSE(1,[1]Data!A3),\">0\")",
+            "=SUMIF(INDEX([1]Data!A1:A5,0),\">0\")",
+            "=SUMIF(CHOOSE(1,[1]Data!A1:A5),\">0\")",
+            "=COUNTIFS(A1:A5,1,INDEX([1]Data!A1:A5,2),1)",
+            "=_xlfn.MAXIFS(INDEX([1]Data!A1:B5,0,2),A1:A5,\">0\")",
+            "=SUMIF(Chosen,\">0\")",
+            "=SUMIF(Pick,\">0\")",
+            "=COUNTBLANK(Twice)",
+        ] {
+            assert_eq!(reason(formula), criteria, "{formula}");
+        }
+        // ROW and the other functions that read references see what IF or
+        // CHOOSE passes on as values in the fork, in a name or under INDEX.
+        let values = Some(
+            "external reference passed on by a function to one that reads references".to_owned(),
+        );
+        for formula in [
+            "=ROW(Chosen)",
+            "=ROW(Two)",
+            "=COLUMN(Result!Chosen)",
+            "=ROW(INDEX(IF(TRUE,[1]Data!A3),1))",
+            "=ISREF(CHOOSE(1,[1]Data!A3))",
+        ] {
+            assert_eq!(reason(formula), values, "{formula}");
+        }
+        let bound = Some(BOUND.to_owned());
+        for formula in [
+            "=_xlfn.LET(_xlpm.x,[1]Data!A3,ROW(_xlpm.x))",
+            "=_xlfn.LAMBDA(_xlpm.x,ROW(_xlpm.x))([1]Data!A3)",
+            "=_xlfn.MAP([1]Data!A1:A5,_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2))",
+        ] {
+            assert_eq!(reason(formula), bound, "{formula}");
+        }
+        assert_eq!(
+            reason("=[1]Data!Rate"),
+            Some("external reference to a defined name of a linked workbook".to_owned())
+        );
+        assert_eq!(
+            reason("=Loop"),
+            Some("workbook names over linked workbooks nested past the check's limit".to_owned())
+        );
+        // A name that uses a linked name reads the linked workbook too.
+        assert!(names().contains_key("TWO"));
+        assert!(!names().contains_key("LOCAL"));
     }
 
     #[test]
@@ -893,11 +1275,10 @@ mod tests {
         let passed = Some("external range returned or passed on as a reference".to_owned());
         for formula in [
             "=[1]Data!A1:A5",
-            "=SUMIF(INDEX([1]Data!A1:A5,0),\">0\")",
             "=SUM(INDEX([1]Data!A2:A5,0)*2)",
             "=SUM(INDEX([1]Data!A1:B5,3))",
-            "=SUMIF(CHOOSE(1,[1]Data!A1:A5),\">0\")",
             "=SUM(IF(TRUE,[1]Data!A1:A5))",
+            "=_xlfn.RANK.EQ(3,[1]Data!A1:A5)",
             "=MAX(IF([1]Failed!A:A>2,[1]Failed!A:A))",
             "=RANK(3,[1]Data!A1:A5)",
             "=INDEX(Rates,0)",

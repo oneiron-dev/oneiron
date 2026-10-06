@@ -62,36 +62,47 @@ SpreadsheetBench workbooks with links (Excel truth recorded with links not updat
 
 These forms keep the fallback, each with its own reason: a DDE or OLE link; a link part the check
 cannot read, or one that links nothing it knows; an external relationship other than a hyperlink, a
-link's path or a pivot cache's external source; a link list or link content type the edit gate cannot
-join; a reference by file name, to `[0]` (the workbook itself) or to a link the list does not hold;
-a name defined in the linked workbook (`[1]!Rate`); a 3D linked reference; a linked reference in a
-reference operator (`:`, intersection, union), directly, through INDEX or through a name; a
-multi-cell linked range passed on by a function that returns references (IF, CHOOSE, IFS, XLOOKUP,
-OFFSET, INDIRECT, LET), by INDEX unless it narrows it to one cell, or given to AREAS, RANK or
-GETPIVOTDATA, or standing as the whole formula (the engine holds a linked range as values with no
-position, so intersection and the criteria functions' `#VALUE!` would not see it); a linked range
-reaching a criteria function's range through a name; and an open or very large linked range, read
-only up to the last saved cell (plus one `#REF!` on a sheet with a refresh error), unless its
-function gives Excel's result from those cells: INDEX at one cell, ROWS, COLUMNS, exact MATCH,
-VLOOKUP and HLOOKUP, SUM, AVERAGE, MIN, MAX, PRODUCT, COUNT, CONCAT, the criteria functions' ranges
-(`#VALUE!` for any closed linked range), and COUNTA where the unsaved cells are blank. Counting the
-unsaved cells, pairing the range with one of another length, ROW over it and approximate searches
-stay the fallback's.
+link's path or a pivot cache's external source; a link list or link content type the edit gate
+cannot join; link markup the engine's reader would read where Excel reads none (it matches the list
+entry, the relationship, the cache's elements and their attributes by local name, so a vendor
+extension's look-alike `u:cell` would replace a saved value); an OOXML escape in a linked sheet name
+or a saved value (`a_x0001_b` is three characters to Excel, nine to the reader), or a saved value of
+a type the reader takes otherwise (`t="s"`, a number that is not one); a reference by file name, to
+`[0]` (the workbook itself) or to a link the list does not hold; a name defined in the linked
+workbook (`[1]!Rate`, `[1]Sheet1!Rate`); a 3D linked reference; a linked reference in a reference
+operator (`:`, intersection, union), directly, through INDEX or through a name; a multi-cell linked
+range passed on by a function that returns references (IF, CHOOSE, IFS, XLOOKUP, OFFSET, INDIRECT,
+LET), by INDEX unless it narrows it to one cell, or given to AREAS, RANK or GETPIVOTDATA, or
+standing as the whole formula (the engine holds a linked range as values with no position, so
+intersection and the criteria functions' `#VALUE!` would not see it); a linked reference, one cell
+too, reaching a criteria function's range through INDEX, IF, CHOOSE, another function or a name
+(Excel's `#VALUE!`; the engine computes it), or reaching ROW, COLUMN, ROWS, COLUMNS, ISREF, AREAS,
+ISFORMULA, FORMULATEXT, SHEET or SHEETS through IF, CHOOSE or another function that hands it on as
+values (INDEX hands on the reference); a linked reference bound to a LET name or a LAMBDA parameter;
+and an open or very large linked range, read only up to the last saved cell (plus one `#REF!` on a
+sheet with a refresh error), unless its function gives Excel's result from those cells: INDEX at one
+cell, ROWS, COLUMNS, exact MATCH, VLOOKUP and HLOOKUP, SUM, AVERAGE, MIN, MAX, PRODUCT, COUNT,
+CONCAT, the criteria functions' ranges (`#VALUE!` for any closed linked range), and COUNTA where the
+unsaved cells are blank. Counting the unsaved cells, pairing the range with one of another length,
+ROW over it and approximate searches stay the fallback's. A workbook name that reads a linked
+workbook, itself or through another name, is checked where each formula uses it, as if its formula
+were written there (`ROW(Chosen)` with `Chosen` holding `IF(TRUE,[1]S!$A$3)` falls back as
+`ROW(IF(TRUE,[1]S!$A$3))` does).
 
-A package the retained OPC reader refuses fails outright, as before. Malformed workbook
-content fails outright too, as it did before the writer: the adapter reads the workbook, its
-relationships, the shared strings, every worksheet and every table a worksheet relates as the
-old loader did, and refuses a missing, unreadable, off-grid or repeated cell address, a literal
-its type cannot hold (a number that is not one, a boolean other than 0 or 1, a shared-string
-index past the table, an inline string without its text), an invalid `date1904` flag, a broken
-sheet list, a missing, non-numeric or repeated sheet ID, a repeated defined name or one scoped
-past the sheets, and a table part that is malformed XML, missing, unnamed, named twice, or
-whose range is unreadable or not spanned by its columns. Valid content the writer does not
-support (sheet ID 0, two header rows) still goes to the fallback. Every part the writer reads
-(the workbook, shared strings, worksheets, each table wherever its worksheet's relationship
-puts it, content types, styles, cell metadata and rich data) must fit the host's XML node and
-depth limits, or the workbook fails outright. A relationship part that does not fit goes to
-the fallback, as before: the link check fails closed.
+A package the retained OPC reader refuses fails outright, as before. Malformed workbook content,
+linked or not, fails outright too, as it did before the writer: the adapter reads the workbook, its
+relationships, the shared strings, every worksheet and every table a worksheet relates as the old
+loader did, and refuses a missing, unreadable, off-grid or repeated cell address, a literal its type
+cannot hold (a number that is not one, a boolean other than 0 or 1, a shared-string index past the
+table, an inline string without its text), an invalid `date1904` flag, a broken sheet list, a
+missing, non-numeric or repeated sheet ID, a repeated defined name or one scoped past the sheets,
+and a table part that is malformed XML, missing, unnamed, named twice, or whose range is unreadable
+or not spanned by its columns. Valid content the writer does not support (sheet ID 0, two header
+rows) still goes to the fallback. Every part the writer reads (the workbook, shared strings,
+worksheets, each table wherever its worksheet's relationship puts it, content types, styles, cell
+metadata and rich data) must fit the host's XML node and depth limits, or the workbook fails
+outright. A relationship part that does not fit goes to the fallback, as before: the link check
+fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
 by rev in the root manifest (0.9.3-oneiron.9): upstream plus the owned patch that keeps
