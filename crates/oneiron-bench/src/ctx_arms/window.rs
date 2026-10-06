@@ -58,6 +58,9 @@ pub(crate) enum SpanKind {
     /// a tool result of a foreign harness. Content of the log like any tool
     /// output: the foreign harness may drop or fold it.
     Frame,
+    /// A page a mid-stream query restored, appended to the log by the
+    /// harness (kv-interleaved, the delta-load law).
+    Reload,
 }
 
 impl SpanKind {
@@ -104,6 +107,7 @@ impl Span {
             SpanKind::Inventory => "inventory".to_owned(),
             SpanKind::Fetch => format!("get s{id}"),
             SpanKind::Frame => format!("frame s{id}"),
+            SpanKind::Reload => format!("reload s{id}"),
         };
         let head = format!("[[{label}]]\n");
         let tok = tokens(&format!("{head}{text}\n"));
@@ -323,6 +327,14 @@ impl Window {
         }
     }
 
+    /// The harness appends a restored page to the end of the log (before
+    /// any tail). Returns its tokens.
+    pub(crate) fn reload(&mut self, text: String) -> u64 {
+        self.cause = Cause::Fetch;
+        let id = self.insert_log(SpanKind::Reload, text);
+        self.spans.iter().find(|s| s.id == id).map_or(0, |s| s.tok)
+    }
+
     /// Inserts a span at the end of the log, before any tail.
     fn insert_log(&mut self, kind: SpanKind, text: String) -> u64 {
         let at = self.tail_start();
@@ -537,6 +549,8 @@ pub(crate) struct Ledger {
     links: usize,
     /// Fold and drop operations (F-C5).
     folds: u64,
+    /// Tokens of reload spans that later left the window (F-C10).
+    pub(crate) refold_tok: u64,
     /// STREAM (deliverable 4), harness-side: every frame the engine sent,
     /// by span id, with the board rows it carries (a keyframe: the whole
     /// board; a delta: its rows); the board as the engine last built it; the
@@ -636,6 +650,12 @@ impl Ledger {
     fn depart(&mut self, span: &Span, via: Option<u32>) {
         if span.kind == SpanKind::Frame {
             self.stream.stale_view = true;
+        }
+        if span.kind == SpanKind::Reload {
+            // A reload is a copy of content its reference still holds:
+            // leaving the window loses nothing, so it is not audited.
+            self.refold_tok += span.tok;
+            return;
         }
         // The board, the keyframe and the inventory are projections of
         // typed state, not content, and the harness never lets any
@@ -1059,6 +1079,30 @@ impl Ctx<'_> {
             self.led.depart(span, Some(id));
         }
         Some(id)
+    }
+
+    /// Releases every reloaded page from the log (copies of content its
+    /// reference still holds), so a later fold never re-files a copy.
+    pub(crate) fn release_reloads(&mut self) {
+        if !self.allow(self.caps.offload, "release_reloads") {
+            return;
+        }
+        let mut released = false;
+        while let Some(i) = self
+            .win
+            .spans()
+            .iter()
+            .rposition(|s| s.kind == SpanKind::Reload)
+        {
+            if !released {
+                self.charge("release reloads");
+                self.win.cause = Cause::Fold;
+                released = true;
+            }
+            for span in self.win.take(i..i + 1) {
+                self.led.depart(&span, None);
+            }
+        }
     }
 
     /// Removes every tail render so the tail can be re-rendered.

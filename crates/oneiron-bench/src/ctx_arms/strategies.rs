@@ -840,6 +840,7 @@ impl CanonPlacement {
     fn close_epoch(&mut self, ctx: &mut Ctx<'_>, tail: u64, extra: u64) {
         self.epoch += 1;
         self.since_close = 0;
+        ctx.release_reloads();
         // Reserve only what the re-selected inventory adds over the current
         // one: its bodies plus one row per resource.
         let (resident, bodies) = self.select(ctx);
@@ -1021,7 +1022,19 @@ impl CanonPlacement {
         let metas = ctx.ref_metas();
         let mut room = ctx.budget().saturating_sub(ctx.tokens());
         let mut picked = Vec::new();
-        for id in ctx.grep_refs(key).into_iter().rev() {
+        // Newest stream turns first: a reference made only of reloaded
+        // copies carries no turn and goes last, whatever its id.
+        let mut order = ctx.grep_refs(key);
+        order.sort_by_key(|id| {
+            std::cmp::Reverse(
+                metas
+                    .iter()
+                    .find(|m| m.id == *id)
+                    .and_then(|m| m.turns)
+                    .map(|(_, last)| last),
+            )
+        });
+        for id in order {
             let tok = metas
                 .iter()
                 .find(|m| m.id == id)

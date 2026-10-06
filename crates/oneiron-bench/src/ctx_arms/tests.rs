@@ -754,7 +754,7 @@ fn canon_never_deletes_and_meets_every_arm() {
         assert!(cell_of(&r).valid(1), "{arm:?} {:?}", cell_of(&r).invalid(1));
         // Where the matching pages fit the window, every answer is exact;
         // log counts and multi-epoch aggregates need more pages than fit.
-        if matches!(arm, Arm::LogTriage | Arm::MultiEpoch) {
+        if matches!(arm, Arm::LogTriage | Arm::MultiEpoch | Arm::Obligations) {
             assert!(r.score.correct > 0, "{arm:?} {:?}", r.score);
         } else {
             assert!((r.score.value - 1.0).abs() < 1e-9, "{arm:?} {:?}", r.score);
@@ -1436,4 +1436,101 @@ fn stream_frames_append_and_never_rewrite_the_prompt() {
         );
         assert_eq!(canon.view_missing + canon.view_stale, 0);
     }
+}
+
+// ---- the "build next" arms ----
+
+#[test]
+fn kv_interleaved_asks_mid_stream_for_old_keys_and_reloads_what_it_restores() {
+    for seed in [1, 1001] {
+        let ep = Episode::generate(Arm::KvInterleaved, seed);
+        let mid: Vec<usize> = ep.ask_at.iter().flatten().copied().collect();
+        assert_eq!(mid.len(), 22, "seed {seed}");
+        for (i, q) in ep.queries.iter().enumerate() {
+            let Some(t) = ep.ask_at[i] else { continue };
+            if ep.expected[i].is_empty() {
+                continue;
+            }
+            let last = ep.turns[..=t]
+                .iter()
+                .rposition(|turn| turn.text.contains(q.key.as_str()))
+                .unwrap();
+            assert!(
+                last + super::arms_next::KVI_AGE <= t,
+                "seed {seed} query {i}"
+            );
+        }
+        if seed >= 1001 {
+            assert!(
+                mid.windows(5).any(|w| w[4] - w[0] == 4),
+                "held-out asks in bursts"
+            );
+        }
+    }
+    let ep = Episode::generate(Arm::KvInterleaved, 26);
+    let canon = run_episode(&ep, &mut CanonPlacement::new(Layout::Canon), DEFAULT_BUDGET);
+    assert!(
+        canon.reload_tok > 0,
+        "pages read inside the window land in the log"
+    );
+    assert!(canon.refold_tok > 0, "and leave it again");
+    let restore = run_episode(
+        &ep,
+        &mut RecoverableFold::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert!(restore.read_over > 0);
+    assert_eq!(
+        restore.reload_tok, 0,
+        "a read past the budget lands nothing"
+    );
+    let truncate = run_episode(
+        &ep,
+        &mut Truncate::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    assert_eq!(truncate.reload_tok, 0);
+}
+
+#[test]
+fn pending_obligations_keep_the_earliest_open_and_close_only_on_the_exact_token() {
+    for seed in [1, 1001] {
+        let ep = Episode::generate(Arm::Obligations, seed);
+        let end = ep.ask_at.iter().position(Option::is_none).unwrap();
+        let pending: Vec<&str> = ep.expected[end].split(',').collect();
+        assert_eq!(pending.len(), 16, "seed {seed}");
+        let first_open: Vec<String> = ep.turns[..12]
+            .iter()
+            .map(|t| {
+                t.text
+                    .lines()
+                    .find_map(|l| l.strip_prefix("OPEN "))
+                    .and_then(|r| r.split_whitespace().next())
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert!(
+            first_open.iter().all(|id| pending.contains(&id.as_str())),
+            "seed {seed}"
+        );
+        // Noise names near-miss ids and closes real ids with wrong tokens.
+        let all: String = ep
+            .turns
+            .iter()
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all.contains("basically done"));
+        assert_eq!(ep.queries.iter().filter(|q| q.text == "PENDING").count(), 2);
+    }
+    let ep = Episode::generate(Arm::Obligations, 27);
+    let truncate = run_episode(
+        &ep,
+        &mut Truncate::new(Box::new(OldestFirst)),
+        DEFAULT_BUDGET,
+    );
+    let end = ep.ask_at.iter().position(Option::is_none).unwrap();
+    assert!(truncate.score.correct < truncate.score.total);
+    let _ = end;
 }

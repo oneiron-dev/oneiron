@@ -36,6 +36,7 @@
 
 mod arms;
 mod arms_epoch;
+mod arms_next;
 mod audit;
 mod board;
 mod strategies;
@@ -221,6 +222,10 @@ pub(crate) struct EpisodeResult {
     pub(crate) overrides: u64,
     /// F-C18: frames of superseded epochs live at the last model call.
     pub(crate) frames_live: u64,
+    /// F-C10: restored tokens the harness appended as reload spans, and
+    /// reload tokens that later left the window.
+    pub(crate) reload_tok: u64,
+    pub(crate) refold_tok: u64,
     /// Deliverable 4: board tokens added to the prompt per call, summed
     /// (RESIDENT: the whole board, re-sent each call; STREAM: the frame
     /// appended this turn), board tokens live per call, summed; calls whose
@@ -238,6 +243,9 @@ pub(crate) struct EpisodeResult {
     pub(crate) frames: u64,
     pub(crate) keyframes: u64,
     pub(crate) stream: bool,
+    /// The answers, for tests that inspect one.
+    #[cfg(test)]
+    pub(crate) answers: Vec<String>,
 }
 
 impl EpisodeResult {
@@ -302,12 +310,18 @@ impl Run<'_> {
         ids.dedup();
         let mut chunks: Vec<&str> = Vec::new();
         let mut read = self.win.total();
+        // kv-interleaved: what a mid-stream query restores lands in the log.
+        let reload = self.ep.arm == Arm::KvInterleaved && self.ep.ask_at[i].is_some();
+        let mut reloads: Vec<String> = Vec::new();
         for id in ids {
             match self.refs.restore(id) {
                 Ok(spans) => {
                     let tok = self.refs.meta(id).map_or(0, |m| m.tok);
                     self.res.restore_tok += tok;
                     read += tok;
+                    if reload {
+                        reloads.extend(spans.iter().map(|(_, text)| (*text).to_owned()));
+                    }
                     chunks.extend(spans.into_iter().map(|(_, text)| text));
                 }
                 Err(_) => self.res.restore_fail = true,
@@ -341,6 +355,13 @@ impl Run<'_> {
         self.checks
             .on_answer(self.ep.arm, q, turn, &chunks, &answer);
         self.answers[i] = answer;
+        // A read past the budget is an invalid call (read_over) and lands
+        // nothing: appending it would only snowball copies of copies.
+        if read <= self.budget {
+            for text in reloads {
+                self.res.reload_tok += self.win.reload(text);
+            }
+        }
     }
 }
 
@@ -497,6 +518,10 @@ pub(crate) fn run_full(
     res.unbacked = checks.unbacked;
     res.audit = led.audit(&refs);
     res.restore_fail |= res.audit.broken_reference();
+    #[cfg(test)]
+    {
+        res.answers.clone_from(&answers);
+    }
     let (score, mut extra) = ep.score_full(&answers);
     let (stale_kv, overcount) = audit::diagnose(ep, &answers);
     extra.stale += stale_kv;
@@ -513,6 +538,7 @@ pub(crate) fn run_full(
     res.edit_tok = led.edit_tok;
     res.fetch_tok = led.fetch_tok;
     res.folds = led.folds();
+    res.refold_tok = led.refold_tok;
     res.violations = led.violations;
     res
 }
@@ -558,6 +584,8 @@ pub(crate) struct Cell {
     overcount: u64,
     overrides: u64,
     frames_live: u64,
+    reload_tok: u64,
+    refold_tok: u64,
     board_add: u64,
     board_live: u64,
     view_missing: u64,
@@ -619,6 +647,8 @@ impl Cell {
         self.overcount += r.overcount;
         self.overrides += r.overrides;
         self.frames_live += r.frames_live;
+        self.reload_tok += r.reload_tok;
+        self.refold_tok += r.refold_tok;
         self.board_add += r.board_add;
         self.board_live += r.board_live;
         self.view_missing += r.view_missing;
@@ -731,8 +761,8 @@ impl Cell {
 /// seed, and the loop-2 arms hold their structural invariants (every relink
 /// need post-compaction, every multi-epoch segment over budget). `cargo
 /// test -p oneiron-bench` is run separately.
-fn self_checks(seeds: &RangeInclusive<u64>) -> Result<(), String> {
-    for arm in ARMS {
+fn self_checks(seeds: &RangeInclusive<u64>, only: Option<Arm>) -> Result<(), String> {
+    for arm in ARMS.into_iter().filter(|a| only.is_none_or(|o| o == *a)) {
         let mut digests = std::collections::BTreeSet::new();
         for seed in seeds.clone() {
             let ep = Episode::generate(arm, seed);
@@ -769,7 +799,7 @@ fn self_checks(seeds: &RangeInclusive<u64>) -> Result<(), String> {
 fn report(opts: &Options) {
     let seeds = opts.split.seeds();
     let n_seeds = seeds.clone().count() as u64;
-    let checks = self_checks(&seeds);
+    let checks = self_checks(&seeds, opts.arm);
     println!(
         "CTX-ARMS OF-546 | split {} seeds {}..={} | budget {} tok | low-water {} tok",
         opts.split.name(),
@@ -1170,7 +1200,7 @@ fn stream_sweep(opts: &Options, seeds: &RangeInclusive<u64>, n_seeds: u64) {
 fn print_audit(arm: Arm, name: &str, c: &Cell, seeds: u64) {
     let why = c.invalid(seeds);
     println!(
-        "CTX2-AUDIT {} {name} | rp_tail {} rp_fold {} rp_patch {} rp_fetch {} | folds {} rp/fold {} tail_tok {} | read_over {} read_mean {} | precog {} unbacked {} foreknow {} | stale {} overcount {} override {} | frames_live {} | {}",
+        "CTX2-AUDIT {} {name} | rp_tail {} rp_fold {} rp_patch {} rp_fetch {} | folds {} rp/fold {} tail_tok {} | read_over {} read_mean {} | precog {} unbacked {} foreknow {} | stale {} overcount {} override {} | frames_live {} | reload {} refold {} thrash {:.2} | {}",
         arm.name(),
         c.per_episode(c.rp_tail),
         c.per_episode(c.rp_fold),
@@ -1189,6 +1219,9 @@ fn print_audit(arm: Arm, name: &str, c: &Cell, seeds: u64) {
         c.overcount,
         c.overrides,
         c.frames_live,
+        c.per_episode(c.reload_tok),
+        c.per_episode(c.refold_tok),
+        c.refold_tok as f64 / c.reload_tok.max(1) as f64,
         if why.is_empty() {
             "valid".to_owned()
         } else {

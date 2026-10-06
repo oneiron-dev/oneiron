@@ -14,10 +14,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::arms_epoch::{self, Env, Extra};
+use super::arms_next;
 
 /// Every arm, in report order. The last three are loop 2's
 /// (`arms_epoch.rs`).
-pub(crate) const ARMS: [Arm; 7] = [
+pub(crate) const ARMS: [Arm; 9] = [
     Arm::Needle,
     Arm::Sketchpad,
     Arm::KvOffload,
@@ -25,6 +26,8 @@ pub(crate) const ARMS: [Arm; 7] = [
     Arm::Relink,
     Arm::MultiEpoch,
     Arm::StreamFrames,
+    Arm::KvInterleaved,
+    Arm::Obligations,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -36,6 +39,8 @@ pub(crate) enum Arm {
     Relink,
     MultiEpoch,
     StreamFrames,
+    KvInterleaved,
+    Obligations,
 }
 
 impl Arm {
@@ -48,6 +53,8 @@ impl Arm {
             Self::Relink => "relink-after-compaction",
             Self::MultiEpoch => "multi-epoch",
             Self::StreamFrames => "stream-frames",
+            Self::KvInterleaved => "kv-interleaved",
+            Self::Obligations => "pending-obligations",
         }
     }
 
@@ -64,6 +71,8 @@ impl Arm {
             Self::Relink => 5,
             Self::MultiEpoch => 6,
             Self::StreamFrames => 7,
+            Self::KvInterleaved => 8,
+            Self::Obligations => 9,
         }
     }
 }
@@ -249,10 +258,16 @@ impl Episode {
             Arm::Sketchpad => gen_sketchpad(&mut rng),
             Arm::KvOffload => gen_kv(&mut rng),
             Arm::LogTriage => gen_logs(&mut rng),
-            Arm::Relink | Arm::MultiEpoch | Arm::StreamFrames => {
+            Arm::Relink
+            | Arm::MultiEpoch
+            | Arm::StreamFrames
+            | Arm::KvInterleaved
+            | Arm::Obligations => {
                 let g = match arm {
                     Arm::Relink => arms_epoch::gen_relink(&mut rng),
                     Arm::MultiEpoch => arms_epoch::gen_multi_epoch(&mut rng),
+                    Arm::KvInterleaved => arms_next::gen_kv_interleaved(&mut rng, seed >= 1001),
+                    Arm::Obligations => arms_next::gen_obligations(&mut rng),
                     _ => arms_epoch::gen_stream_frames(&mut rng, seed >= 1001),
                 };
                 return Self {
@@ -291,6 +306,9 @@ impl Episode {
     pub(crate) fn score_full(&self, answers: &[String]) -> (Score, Extra) {
         match self.arm {
             Arm::Relink | Arm::MultiEpoch | Arm::StreamFrames => arms_epoch::score(self, answers),
+            Arm::KvInterleaved | Arm::Obligations => {
+                (arms_next::score(self, answers), Extra::default())
+            }
             _ => (self.score(answers), Extra::default()),
         }
     }
@@ -684,6 +702,8 @@ pub(crate) fn read(arm: Arm, q: &Query, chunks: &[&str]) -> String {
         Arm::Relink => arms_epoch::read_resource(q, &lines.collect::<Vec<_>>()),
         Arm::MultiEpoch => arms_epoch::read_mixed(q, chunks),
         Arm::StreamFrames => arms_epoch::read_frames(&lines.collect::<Vec<_>>()),
+        Arm::KvInterleaved => read(Arm::KvOffload, q, chunks),
+        Arm::Obligations => arms_next::read_with(arm, q, &lines.collect::<Vec<_>>()).0,
     }
 }
 

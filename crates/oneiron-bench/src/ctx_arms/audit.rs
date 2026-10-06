@@ -167,7 +167,7 @@ impl AuditBase {
 
         let mut kv_latest: HashMap<String, (u64, String)> = HashMap::new();
         let mut kv_asked = Vec::new();
-        if ep.arm == Arm::KvOffload {
+        if matches!(ep.arm, Arm::KvOffload | Arm::KvInterleaved) {
             for line in backing.keys() {
                 let mut tok = line.split_whitespace();
                 if tok.next() != Some("SET") {
@@ -186,12 +186,14 @@ impl AuditBase {
                     *slot = (seq, line.clone());
                 }
             }
+            // The keys asked after the stream (mid-stream asks were seen).
             kv_asked = ep
                 .queries
                 .iter()
                 .zip(&ep.expected)
-                .filter(|(_, want)| !want.is_empty())
-                .filter_map(|(q, _)| q.text.strip_prefix("GET ").map(str::to_owned))
+                .zip(&ep.ask_at)
+                .filter(|((_, want), at)| !want.is_empty() && at.is_none())
+                .filter_map(|((q, _), _)| q.text.strip_prefix("GET ").map(str::to_owned))
                 .collect();
         }
         let max_epoch = if ep.arm == Arm::StreamFrames {
@@ -453,6 +455,8 @@ pub(crate) fn evidence(arm: Arm, q: &Query, chunks: &[&str]) -> Vec<String> {
                 .map(|(_, got)| got.values().copied().collect())
                 .unwrap_or_default())
         }
+        Arm::KvInterleaved => evidence(Arm::KvOffload, q, chunks),
+        Arm::Obligations => own(super::arms_next::read_with(arm, q, &lines).1),
         Arm::MultiEpoch => {
             let inner = if q.text.starts_with("RECALL NEEDLE") {
                 Arm::Needle
