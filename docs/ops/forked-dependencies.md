@@ -177,24 +177,49 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.10), over `362becff`:
   smallest k whose cumulative reaches alpha: 63 of Excel's 81 boundary rows agree, and the other
   18 differ in the last bit of the cumulative. The scores at `63e2ec69` are unchanged: 2,963 of
   2,967 and 811/811.
-- `63e2ec69..5b520963` (ONE-2700, stage 2 of the LibreOffice retirement, round 6, October 2026):
-  four lanes landed on `oneiron/parity`, each kept only with 811/811 pinned and nothing lost on
-  SpreadsheetBench. Linked workbooks read as Excel for Windows reads them closed (`cf3d5f5d`,
-  `7754b349`, `91599813`; the four external-link misses now match, 2,967 of 2,967); Excel's
-  financial functions with the coupon schedule and day counts (`88f30164`, `5149f170`); round 6
-  functions (`c67530db`). Caller context (`d4959b40`, `5b520963`), from eight probes on the
-  Windows VM (2026-10-06, 466 scored rows, `ops/excel-context-probe-20261006.md` in the calc
-  workspace, 451 agree): INDIRECT reads R1C1 text with `a1` FALSE (absolute, relative to the
-  formula's cell and wrapping at the grid's edge, whole rows and columns, ranges, sheets), and
-  A1 and R1C1 text take the spaces Excel accepts (trailing, after the sheet's `!`, around the `:`
-  between two cells). OFFSET's far edge is trunc(size) - 1 from the moved corner for a positive
-  size and + 1 for a negative one (`OFFSET(B2,0,0,-2,-2)` is A1:B2). RANDBETWEEN and RANDARRAY
-  read and check their arguments as Excel does (`RANDBETWEEN(1.2,1.8)` is 2; a logical bound is
-  `#VALUE!`; `RANDARRAY(0)` is `#CALC!`), every random call in a cell draws its own value
-  (`RAND()=RAND()` is FALSE), and NOW keeps hundredths of a second. TEXT reads `!` as a character
-  of its own, not an escape (`TEXT(203,"!r0c00")` is `!r2c03`), and shows a number under a text
-  section as General. At `5b520963` the fork matches 2,967 of the 2,967 SpreadsheetBench
-  workbooks and all 811 pinned goldens.
+- `63e2ec69..cf3d5f5d` (stage 2, linked workbooks, October 2026): references into a closed linked
+  workbook (`[1]Sheet!A1`) as Excel for Windows 16.0.20430 reads them from the values the link part
+  saves, from three probes on the Windows VM (2026-10-06, 192 cases,
+  `ops/excel-extlinks-probe-20261006.md` in the calc workspace; 173 agree, 94 at `63e2ec69`). On a
+  sheet Excel could not read at its last refresh (`refreshError="1"`), or one the link saves no
+  values for, every cell not saved is `#REF!`, element by element in ranges (`COUNTA` counts them,
+  the lookups skip them, `SUM` returns the error); a saved blank stays blank, and an open range
+  there keeps one `#REF!` row past the last saved cell. ROW, COLUMN, ROWS and COLUMNS give the
+  position a linked reference is written with (`ROW([1]DATI!$K$2:$K$999)` is `{2;...;999}`, it
+  read `{1;...;998}`); INDEX over a linked range selects a reference into the linked sheet; an
+  ordinary (legacy) formula intersects a linked range with its own cell; ISREF of a linked
+  reference is TRUE and ISFORMULA, FORMULATEXT, SHEET and SHEETS of one are `#N/A`; IFERROR and
+  IFNA catch the error of a one-cell range. At `cf3d5f5d` the fork matches all 2,967
+  SpreadsheetBench workbooks (the four misses were linked workbooks: 55965 twice, 59932 twice; 0 of
+  1,193,688 scored cells differ) and all 811 pinned goldens.
+- `cf3d5f5d..91599813` (stage 2, October 2026): the other stage-2 lanes landed in between, and this
+  pin carries them: `88f30164` (round 6 finance: the 23 financial functions the fork read as
+  `#NAME?`, on one coupon and day-count module, and PRICE, YIELD, ACCRINT, ACCRINTM, DDB and the
+  T-bill functions fixed against Excel probes; `ops/excel-finance-probe-20261006.md`) and `c67530db`
+  (round 6 functions: MDETERM and MINVERSE, MUNIT, PERMUTATIONA, PROB, PERCENTOF, AREAS, ISOMITTED
+  with optional LAMBDA parameters, ENCODEURL, BAHTTEXT, TRIMRANGE and the trim operators, the
+  REGEX functions on a PCRE2-compatible matcher (`regex-syntax` for its Unicode tables), and
+  FORECAST.ETS only where its fit is exact). `91599813` is the linked-workbook review: a reversed
+  linked range reads in order (`INDEX([1]Ok!A5:A1,1)` is 1, `ROWS` 5) and a large one keeps its
+  `#REF!` past the saved cells, and a saved value in a CDATA section is its text (probes 4 and 5 of
+  the linked-workbook note). At `91599813` the fork matches all 2,967 SpreadsheetBench workbooks
+  and all 811 pinned goldens.
+- `91599813..5b520963` (ONE-2700, stage 2 of the LibreOffice retirement, round 6, October 2026):
+  each kept only with 811/811 pinned and nothing lost on SpreadsheetBench. Probe 4 of the finance
+  note as tests (`5149f170`, AMORLINC and AMORDEGRC bought on the first period's end). Caller
+  context (`d4959b40`, `5b520963`), from eight probes on the Windows VM (2026-10-06, 466 scored
+  rows, `ops/excel-context-probe-20261006.md` in the calc workspace, 451 agree): INDIRECT reads R1C1
+  text with `a1` FALSE (absolute, relative to the formula's cell and wrapping at the grid's edge,
+  whole rows and columns, ranges, sheets), and A1 and R1C1 text take the spaces Excel accepts
+  (trailing, after the sheet's `!`, around the `:` between two cells). OFFSET's far edge is
+  trunc(size) - 1 from the moved corner for a positive size and + 1 for a negative one
+  (`OFFSET(B2,0,0,-2,-2)` is A1:B2). RANDBETWEEN and RANDARRAY read and check their arguments as
+  Excel does (`RANDBETWEEN(1.2,1.8)` is 2; a logical bound is `#VALUE!`; `RANDARRAY(0)` is
+  `#CALC!`), every random call in a cell draws its own value (`RAND()=RAND()` is FALSE), and NOW
+  keeps hundredths of a second. TEXT reads `!` as a character of its own, not an escape
+  (`TEXT(203,"!r0c00")` is `!r2c03`), and shows a number under a text section as General. At
+  `5b520963` the fork matches 2,967 of the 2,967 SpreadsheetBench workbooks and all 811 pinned
+  goldens.
 - `67f19c08` (review of oneiron #1295, 2026-10-07): a defined name evaluates for the formula
   that uses it, as Excel evaluates it. Relative R1C1 text, ROW() and `#This Row` in a name read
   the calling cell (`Prev = INDIRECT("RC[-1]",FALSE)` in B2 reads A2; the name was read from A1,

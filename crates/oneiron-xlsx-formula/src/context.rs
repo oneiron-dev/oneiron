@@ -50,8 +50,7 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
     if tokens.len() > MAX_FORMULA_TOKENS {
         return Err(unsupported("formula token limit"));
     }
-    let node = formualizer_parse::parse(expression.as_ref())
-        .map_err(|_| unsupported("formula parsing"))?;
+    let node = parse_bounded(&expression)?;
     let mut pending: Vec<(&ASTNode, usize)> = vec![(&node, 1)];
     let mut host_context = None;
     let mut lambda = false;
@@ -172,6 +171,17 @@ fn needs_host(name: &str, args: Option<&[ASTNode]>) -> Option<&'static str> {
         },
         _ => None,
     }
+}
+
+/// Parse a formula within the bounds `inspect_formula` proves, with the
+/// parser's mandatory leading `=`.
+pub(super) fn parse_bounded(formula: &str) -> Result<ASTNode> {
+    let expression = if formula.starts_with('=') {
+        std::borrow::Cow::Borrowed(formula)
+    } else {
+        std::borrow::Cow::Owned(format!("={formula}"))
+    };
+    formualizer_parse::parse(expression.as_ref()).map_err(|_| unsupported("formula parsing"))
 }
 
 /// A cell or range reference written without a sheet: on the formula's own

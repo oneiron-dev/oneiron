@@ -75,6 +75,51 @@ fn external_workbook() -> Vec<u8> {
     )
 }
 
+/// `workbook` whose `Result` formulas also read a closed linked workbook,
+/// listed as Excel lists it: the link part saves `Rates!A1` = 40 and keeps
+/// its path in its own relationships.
+fn linked_workbook(inputs: &str, formulas: &str) -> Vec<u8> {
+    let bytes = workbook(inputs, formulas);
+    let bytes = with_part(
+        &bytes,
+        "xl/workbook.xml",
+        part_text(&bytes, "xl/workbook.xml").replace(
+            "</sheets>",
+            r#"</sheets><externalReferences><externalReference r:id="link1"/></externalReferences>"#,
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "xl/_rels/workbook.xml.rels",
+        part_text(&bytes, "xl/_rels/workbook.xml.rels").replace(
+            "</Relationships>",
+            &format!(r#"<Relationship Id="link1" Type="{DOC_REL}/externalLink" Target="externalLinks/externalLink1.xml"/></Relationships>"#),
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "[Content_Types].xml",
+        part_text(&bytes, "[Content_Types].xml").replace(
+            "</Types>",
+            &format!(r#"<Override PartName="/xl/externalLinks/externalLink1.xml" ContentType="{SPREADSHEET}.externalLink+xml"/></Types>"#),
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "xl/externalLinks/externalLink1.xml",
+        format!(
+            r#"<externalLink xmlns="{MAIN}" xmlns:r="{DOC_REL}"><externalBook r:id="rId1"><sheetNames><sheetName val="Rates"/></sheetNames><sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>40</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>"#
+        ),
+    );
+    with_part(
+        &bytes,
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC_REL}/externalLinkPath" TargetMode="External" Target="file:///private/rates.xlsx"/></Relationships>"#
+        ),
+    )
+}
+
 /// `workbook` plus the defined name `rate` (`Input!$A$1`) and the `Prices`
 /// table on `Input!A3:B5`; `Result!A1:A2` repeat one shared formula over both.
 fn names_tables_and_shared_formulas() -> Vec<u8> {
@@ -547,6 +592,48 @@ fn a_host_without_a_calculator_still_recalculates_admitted_workbooks() {
         "workbook needs a recalc-capable precision fallback"
     );
     assert!(host.0.seen.borrow().is_empty());
+}
+
+#[test]
+fn linked_workbooks_recalculate_natively_through_the_gate() {
+    // The engine reads a closed linked workbook from the values its link
+    // saves, as Excel does; the gate's link checks pass on the native output.
+    let input = linked_workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>[1]Rates!A1+Input!A1</f><v>0</v></c>"#,
+    );
+    let host = Host {
+        edit: true,
+        ..Host::default()
+    };
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &set_input(),
+        "run:linked-native",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert!(
+        xml.contains("<f>[1]Rates!A1+Input!A1</f><v>47</v>"),
+        "{xml}"
+    );
+    for name in [
+        "xl/externalLinks/externalLink1.xml",
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+        "xl/_rels/workbook.xml.rels",
+    ] {
+        assert_eq!(
+            part_text(&proposal.new_bytes, name),
+            part_text(&input, name)
+        );
+    }
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
 }
 
 #[test]

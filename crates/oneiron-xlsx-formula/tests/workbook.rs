@@ -412,32 +412,437 @@ fn shared_formulas_defined_names_and_tables_recalculate_natively() {
     );
 }
 
-fn external_workbook() -> Vec<u8> {
-    let bytes = fixture("", r#"<c r="A1"><f>'[1]Sheet1'!A1</f><v>42</v></c>"#, false);
+/// `fixture` whose formulas link one closed workbook through `link`, the
+/// `externalLink` part's `externalBook` (or other link) element, listed in
+/// the workbook as Excel lists it.
+fn linked_workbook(link: &str, formulas: &str) -> Vec<u8> {
+    let bytes = fixture("", formulas, false);
+    let bytes = edit_part(&bytes, "xl/workbook.xml", |xml| {
+        xml.replace(
+            "</sheets>",
+            r#"</sheets><externalReferences><externalReference r:id="link1"/></externalReferences>"#,
+        )
+    });
+    let bytes = edit_part(&bytes, "xl/_rels/workbook.xml.rels", |rels| {
+        rels.replace(
+            "</Relationships>",
+            &format!(r#"<Relationship Id="link1" Type="{DOC_REL}/externalLink" Target="externalLinks/externalLink1.xml"/></Relationships>"#),
+        )
+    });
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace(
+            "</Types>",
+            &format!(r#"<Override PartName="/xl/externalLinks/externalLink1.xml" ContentType="{SPREADSHEET}.externalLink+xml"/></Types>"#),
+        )
+    });
     let bytes = with_part(
         &bytes,
         "xl/externalLinks/externalLink1.xml",
-        b"<externalLink keep='all'/>".to_vec(),
+        format!(r#"<externalLink xmlns="{MAIN}" xmlns:r="{DOC_REL}">{link}</externalLink>"#),
     );
     with_part(
         &bytes,
         "xl/externalLinks/_rels/externalLink1.xml.rels",
         format!(
-            r#"<Relationships xmlns="{REL}"><Relationship Id="link" Type="{DOC_REL}/externalLinkPath" TargetMode="External" Target="file:///private/other.xlsx"/></Relationships>"#
+            r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC_REL}/externalLinkPath" TargetMode="External" Target="file:///private/other.xlsx"/></Relationships>"#
         ),
     )
 }
 
+/// The saved values of `Rates`, a sheet Excel read at its last refresh, and
+/// `Failed`, one it could not (`refreshError`).
+const RATES: &str = r#"<externalBook r:id="rId1"><sheetNames><sheetName val="Rates"/><sheetName val="Failed"/></sheetNames><sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>42</v></cell><cell r="B1" t="str"><v>pear</v></cell></row></sheetData><sheetData sheetId="1" refreshError="1"><row r="1"><cell r="A1"><v>7</v></cell></row><row r="5"><cell r="A5"><v>5</v></cell></row></sheetData></sheetDataSet></externalBook>"#;
+
 #[test]
-fn external_link_workbook_is_refused_before_evaluation() {
-    let input = external_workbook();
-    assert_eq!(fallback(&input), "external-links-part");
-    assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
+fn closed_linked_workbooks_recalculate_from_their_saved_values() {
+    // Excel for Windows reads a closed linked workbook from the values its
+    // link saves: a saved cell is its value, an unsaved one blank, and on a
+    // sheet with a refresh error #REF!. Every link part stays byte for byte.
+    let input = linked_workbook(
+        RATES,
+        r#"<c r="A1"><f>'[1]Rates'!A1+1</f><v>0</v></c><c r="B1"><f>[1]Rates!A2+1</f><v>0</v></c><c r="C1" t="str"><f>VLOOKUP(42,[1]Rates!A:B,2,FALSE)</f><v>x</v></c><c r="D1"><f>[1]Failed!A3</f><v>0</v></c><c r="E1"><f>ROW([1]Failed!A5)</f><v>0</v></c><c r="F1"><f>MATCH(5,[1]Failed!A:A,0)</f><v>0</v></c>"#,
+    );
+    let report = recalc(&input).expect("linked workbook recalculates natively");
+    let result = part_text(&report.bytes, OUTPUT);
+    for cell in [
+        r#"<c r="A1"><f>'[1]Rates'!A1+1</f><v>43</v></c>"#,
+        r#"<c r="B1"><f>[1]Rates!A2+1</f><v>1</v></c>"#,
+        r#"<c r="C1" t="str"><f>VLOOKUP(42,[1]Rates!A:B,2,FALSE)</f><v>pear</v></c>"#,
+        r#"<v>#REF!</v>"#,
+        r#"<c r="E1"><f>ROW([1]Failed!A5)</f><v>5</v></c>"#,
+        r#"<c r="F1"><f>MATCH(5,[1]Failed!A:A,0)</f><v>5</v></c>"#,
+    ] {
+        assert!(result.contains(cell), "{cell} in {result}");
+    }
+    for name in [
+        "xl/externalLinks/externalLink1.xml",
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+        "xl/_rels/workbook.xml.rels",
+        "xl/workbook.xml",
+        "[Content_Types].xml",
+    ] {
+        assert_eq!(
+            part_bytes(&report.bytes, name),
+            part_bytes(&input, name),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        preserve_external_links(&input, &report.bytes, limits()),
+        Ok(())
+    );
+}
+
+#[test]
+fn hyperlinks_and_pivot_sources_are_no_reason_to_fall_back() {
+    let input = with_part(
+        &fixture("", r#"<c r="A1"><f>40+2</f><v>0</v></c>"#, false),
+        "xl/worksheets/_rels/result.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="h1" Type="{DOC_REL}/hyperlink" TargetMode="External" Target="https://example.invalid/a?b=c#d"/></Relationships>"#
+        ),
+    );
+    // A pivot cache's external source is read by a pivot refresh only.
+    let input = with_part(
+        &input,
+        "xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="p1" Type="{DOC_REL}/externalLinkPath" TargetMode="External" Target="file:///private/source.xlsx"/></Relationships>"#
+        ),
+    );
+    let report = recalc(&input).expect("a hyperlink does not route to the fallback");
+    assert!(part_text(&report.bytes, OUTPUT).contains("<v>42</v>"));
+    assert_eq!(
+        part_bytes(&report.bytes, "xl/worksheets/_rels/result.xml.rels"),
+        part_bytes(&input, "xl/worksheets/_rels/result.xml.rels")
+    );
+}
+
+#[test]
+fn links_excel_reads_differently_fall_back_with_their_reason() {
+    let cell = r#"<c r="A1"><f>[1]Rates!A1</f><v>0</v></c>"#;
+    assert_eq!(
+        fallback(&linked_workbook(
+            r#"<ddeLink ddeService="Excel" ddeTopic="Book1"/>"#,
+            cell
+        )),
+        "DDE link"
+    );
+    assert_eq!(
+        fallback(&linked_workbook(
+            r#"<oleLink r:id="rId1" progId="Word.Document"/>"#,
+            cell
+        )),
+        "OLE link"
+    );
+    assert_eq!(
+        fallback(&linked_workbook("<unknownLink/>", cell)),
+        "unknown external link"
+    );
+    let outside = "external reference outside the workbook's links";
+    assert_eq!(
+        fallback(&linked_workbook(
+            RATES,
+            r#"<c r="A1"><f>[2]Rates!A1</f><v>0</v></c>"#
+        )),
+        outside
+    );
+    // A reference by file name, in a cell or a defined name, names no link.
+    assert_eq!(
+        fallback(&fixture(
+            "",
+            r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>42</v></c>"#,
+            false
+        )),
+        outside
+    );
+    assert_eq!(
+        fallback(&with_names(
+            &fixture("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#, false),
+            r#"<definedName name="linked">'[linked.xlsx]S'!$A$1</definedName>"#,
+        )),
+        outside
+    );
+    assert_eq!(
+        fallback(&linked_workbook(
+            RATES,
+            r#"<c r="A1"><f>[1]!Rate*2</f><v>0</v></c>"#
+        )),
+        "external reference to a defined name of a linked workbook"
+    );
+    assert_eq!(
+        fallback(&linked_workbook(
+            RATES,
+            r#"<c r="A1"><f>[1]Rates!A1:A5 [1]Rates!A1:B1</f><v>0</v></c>"#
+        )),
+        "external reference in a reference operator"
+    );
+    // Counting the unsaved cells of a sheet with a refresh error.
+    assert_eq!(
+        fallback(&linked_workbook(
+            RATES,
+            r#"<c r="A1"><f>COUNTA([1]Failed!A:A)</f><v>0</v></c>"#
+        )),
+        "external range past the saved values of a sheet Excel could not refresh"
+    );
+    // An external target other than a hyperlink or a link's path.
+    let ole = with_part(
+        &fixture("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#, false),
+        "xl/worksheets/_rels/result.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="o1" Type="{DOC_REL}/oleObject" TargetMode="External" Target="file:///private/object.docx"/></Relationships>"#
+        ),
+    );
+    assert_eq!(fallback(&ole), "external relationship target (oleObject)");
+    // A link part the workbook does not list, or lists without its part.
+    let unlisted = edit_part(&linked_workbook(RATES, cell), "xl/workbook.xml", |xml| {
+        xml.replace(
+            r#"<externalReferences><externalReference r:id="link1"/></externalReferences>"#,
+            "",
+        )
+    });
+    assert_eq!(
+        fallback(&unlisted),
+        "external link list the edit gate cannot join"
+    );
+}
+
+/// A linked sheet `S` whose saved cells A1:A5 hold 1 to 5.
+const FIVE: &str = r#"<externalBook r:id="rId1"><sheetNames><sheetName val="S"/></sheetNames><sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>1</v></cell></row><row r="2"><cell r="A2"><v>2</v></cell></row><row r="3"><cell r="A3"><v>3</v></cell></row><row r="4"><cell r="A4"><v>4</v></cell></row><row r="5"><cell r="A5"><v>5</v></cell></row></sheetData></sheetDataSet></externalBook>"#;
+
+/// `formula` in a cell of a workbook linking `FIVE`.
+fn over_five(formula: &str) -> Vec<u8> {
+    linked_workbook(FIVE, &format!("<c r=\"A1\"><f>{formula}</f><v>0</v></c>"))
+}
+
+#[test]
+fn criteria_functions_reached_through_another_function_fall_back() {
+    // Excel's closed-book result is #VALUE!: INDEX, IF and CHOOSE hand the
+    // criteria function a linked reference, which it cannot read even for one
+    // cell. The fork computed 3 for each.
+    for formula in [
+        "SUMIF(INDEX([1]S!A1:A5,3),&quot;&gt;0&quot;)",
+        "SUMIF(IF(TRUE,[1]S!A3),&quot;&gt;0&quot;)",
+        "SUMIF(CHOOSE(1,[1]S!A3),&quot;&gt;0&quot;)",
+    ] {
+        assert_eq!(
+            fallback(&over_five(formula)),
+            "external reference reaching a criteria function through another function",
+            "{formula}"
+        );
+    }
+    // Written in the function, the linked cell is #VALUE! natively too.
+    let direct = "SUMIF([1]S!A3,&quot;&gt;0&quot;)";
+    let report = recalc(&over_five(direct)).expect("a linked cell written in SUMIF");
+    assert!(part_text(&report.bytes, OUTPUT).contains(&format!(
+        r#"<c r="A1" t="e"><f>{direct}</f><v>#VALUE!</v></c>"#
+    )));
+}
+
+#[test]
+fn names_returning_a_linked_reference_are_checked_where_they_are_used() {
+    // Excel's ROW reads the reference the name returns (3); the fork read
+    // its value and wrote #VALUE!.
+    for definition in ["IF(TRUE,[1]S!$A$3)", "CHOOSE(1,[1]S!$A$3)"] {
+        let input = with_names(
+            &over_five("ROW(Chosen)"),
+            &format!(r#"<definedName name="Chosen">{definition}</definedName>"#),
+        );
+        assert_eq!(
+            fallback(&input),
+            "external reference passed on by a function to one that reads references",
+            "{definition}"
+        );
+    }
+    // A name over that name, and a criteria function given either.
+    let names = r#"<definedName name="Chosen">IF(TRUE,[1]S!$A$3)</definedName><definedName name="Again">Chosen</definedName>"#;
+    assert_eq!(
+        fallback(&with_names(&over_five("ROW(Again)"), names)),
+        "external reference passed on by a function to one that reads references"
+    );
+    assert_eq!(
+        fallback(&with_names(
+            &over_five("SUMIF(Again,&quot;&gt;0&quot;)"),
+            names
+        )),
+        "external reference reaching a criteria function through another function"
+    );
+    // Used for its value, the name stays native.
+    let report = recalc(&with_names(&over_five("Again*2"), names)).expect("a value");
+    assert!(part_text(&report.bytes, OUTPUT).contains("<f>Again*2</f><v>6</v>"));
+}
+
+#[test]
+fn relative_linked_references_in_workbook_names_fall_back() {
+    // Excel moves a name's relative reference with the cell using it: from
+    // A2, the `$A3` written for A1 reads linked A4, so `Chosen*2` is 8. The
+    // fork reads every name's formula at A1 and wrote 6.
+    let at_a2 = |formula: &str, names: &str| {
+        with_names(
+            &linked_workbook(
+                FIVE,
+                &format!(
+                    r#"<c r="A1"><v>0</v></c></row><row r="2"><c r="A2"><f>{formula}</f><v>0</v></c>"#
+                ),
+            ),
+            names,
+        )
+    };
+    let chosen = r#"<definedName name="Chosen">IF(TRUE,[1]S!$A3)</definedName>"#;
+    let again = format!(r#"{chosen}<definedName name="Again">Chosen</definedName>"#);
+    let relative = "workbook name holding a relative or repeated linked reference";
+    assert_eq!(fallback(&at_a2("Chosen*2", chosen)), relative);
+    assert_eq!(fallback(&at_a2("Again*2", &again)), relative);
+    // Absolute, the name reads linked A3 from any cell.
+    let fixed = again.replace("$A3", "$A$3");
+    let report = recalc(&at_a2("Chosen*2+Again", &fixed)).expect("absolute linked references");
+    assert!(
+        part_text(&report.bytes, OUTPUT).contains(r#"<c r="A2"><f>Chosen*2+Again</f><v>9</v></c>"#)
+    );
+}
+
+#[test]
+fn escaped_saved_values_and_linked_sheet_names_fall_back() {
+    // Excel reads `_x0001_` as U+0001 (LEN 3) and `_x0041_` as "A" (LEN 1);
+    // the fork's link reader decodes neither and wrote 9 and 7.
+    for text in ["a_x0001_b", "_x0041_"] {
+        let book = FIVE.replace(
+            r#"<cell r="A1"><v>1</v></cell>"#,
+            &format!(r#"<cell r="A1" t="str"><v>{text}</v></cell>"#),
+        );
+        assert_eq!(
+            fallback(&linked_workbook(
+                &book,
+                r#"<c r="A1"><f>LEN([1]S!A1)</f><v>0</v></c>"#
+            )),
+            "escaped text the reader does not decode as Excel does",
+            "{text}"
+        );
+    }
+    let sheet = FIVE.replace(r#"<sheetName val="S"/>"#, r#"<sheetName val="S_x0041_"/>"#);
+    assert_eq!(
+        fallback(&linked_workbook(
+            &sheet,
+            r#"<c r="A1"><f>[1]SA!A1</f><v>0</v></c>"#
+        )),
+        "escaped text the reader does not decode as Excel does"
+    );
+    // A saved value of a type the fork reads otherwise.
+    let shared = FIVE.replace(
+        r#"<cell r="A1"><v>1</v></cell>"#,
+        r#"<cell r="A1" t="s"><v>0</v></cell>"#,
+    );
+    assert_eq!(
+        fallback(&linked_workbook(
+            &shared,
+            r#"<c r="A1"><f>[1]S!A1</f><v>0</v></c>"#
+        )),
+        "external link saved value the check cannot read"
+    );
+}
+
+#[test]
+fn link_markup_outside_its_spreadsheetml_place_falls_back() {
+    let cell = r#"<c r="A1"><f>[1]S!A1</f><v>0</v></c>"#;
+    let book = FIVE.replace("<v>1</v>", "<v>42</v>");
+    let report = recalc(&linked_workbook(&book, cell)).expect("the saved value");
+    assert!(part_text(&report.bytes, OUTPUT).contains("<f>[1]S!A1</f><v>42</v>"));
+    // Other markup stays native, such as the alternate paths Excel 2021
+    // saves (SpreadsheetBench 40234).
+    let alternate = book.replace(
+        "<sheetNames>",
+        r#"<xxl21:alternateUrls xmlns:xxl21="http://schemas.microsoft.com/office/spreadsheetml/2021/extlinks2021"><xxl21:absoluteUrl r:id="rId1"/></xxl21:alternateUrls><sheetNames>"#,
+    );
+    let report = recalc(&linked_workbook(&alternate, cell)).expect("Excel's own markup");
+    assert!(part_text(&report.bytes, OUTPUT).contains("<f>[1]S!A1</f><v>42</v>"));
+    // A vendor extension's look-alike cache: the fork read its 99 for A1.
+    let vendor = format!(
+        r#"{book}<extLst><ext uri="urn:vendor" xmlns:u="urn:vendor"><u:externalBook><u:sheetDataSet><u:sheetData sheetId="0"><u:row r="1"><u:cell r="A1"><u:v>99</u:v></u:cell></u:row></u:sheetData></u:sheetDataSet></u:externalBook></ext></extLst>"#
+    );
+    let out_of_place = "external link markup outside its SpreadsheetML place";
+    assert_eq!(fallback(&linked_workbook(&vendor, cell)), out_of_place);
+    // SpreadsheetML elements outside their place, and an attribute the fork
+    // would read from another namespace.
+    for markup in [
+        book.replace(
+            "</sheetDataSet>",
+            r#"</sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>99</v></cell></row></sheetData>"#,
+        ),
+        book.replace(
+            r#"<cell r="A2"><v>2</v></cell>"#,
+            r#"<cell r="A2"><v>2</v><cell r="A1"><v>99</v></cell></cell>"#,
+        ),
+        book.replace(
+            r#"<cell r="A1">"#,
+            r#"<cell xmlns:u="urn:vendor" u:r="A9" r="A1">"#,
+        ),
+    ] {
+        assert_eq!(
+            fallback(&linked_workbook(&markup, cell)),
+            out_of_place,
+            "{markup}"
+        );
+    }
+    // A look-alike list entry or relationship in the workbook's own parts.
+    let listed = edit_part(&linked_workbook(&book, cell), "xl/workbook.xml", |xml| {
+        xml.replace(
+            "</workbook>",
+            r#"<extLst><ext uri="urn:vendor" xmlns:u="urn:vendor"><u:externalReference r:id="link1"/></ext></extLst></workbook>"#,
+        )
+    });
+    assert_eq!(fallback(&listed), out_of_place);
+    let related = edit_part(
+        &linked_workbook(&book, cell),
+        "xl/_rels/workbook.xml.rels",
+        |rels| {
+            rels.replace(
+                "</Relationships>",
+                r#"<u:Relationship xmlns:u="urn:vendor" Id="link1" Target="externalLinks/other.xml"/></Relationships>"#,
+            )
+        },
+    );
+    assert_eq!(fallback(&related), out_of_place);
+}
+
+#[test]
+fn malformed_local_workbook_xml_is_refused_outright() {
+    // No link anywhere: the link check must not turn a malformed workbook
+    // part into a fallback reason.
+    let input = edit_part(
+        &fixture("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#, false),
+        "xl/workbook.xml",
+        |xml| xml.replace("</workbook>", ""),
+    );
+    assert_eq!(refused(recalc(&input)), "XML needs one complete root");
+}
+
+#[test]
+fn malformed_link_part_xml_is_refused_outright() {
+    // A link part that is not XML is malformed workbook content, refused
+    // outright like the workbook's own parts; the check sent it to the
+    // fallback.
+    let link = "xl/externalLinks/externalLink1.xml";
+    let input = edit_part(&over_five("[1]S!A1"), link, |xml| {
+        xml.replace("</externalLink>", "")
+    });
+    assert_eq!(refused(recalc(&input)), "XML needs one complete root");
+    // Well-formed link content the check cannot read stays the fallback's.
+    let twice = with_part(
+        &over_five("[1]S!A1"),
+        link,
+        format!(r#"<externalLink xmlns="{MAIN}" xmlns:r="{DOC_REL}">{FIVE}{FIVE}</externalLink>"#),
+    );
+    assert_eq!(fallback(&twice), "external link part the check cannot read");
 }
 
 #[test]
 fn destructive_external_link_fallback_is_refused() {
-    let input = external_workbook();
+    let input = linked_workbook(RATES, r#"<c r="A1"><f>[1]!Rate</f><v>42</v></c>"#);
+    assert_eq!(
+        fallback(&input),
+        "external reference to a defined name of a linked workbook"
+    );
+    assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
     let damaged = with_part(
         &input,
         "xl/externalLinks/externalLink1.xml",
@@ -465,12 +870,6 @@ fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
         r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>42</v></c>"#,
         false,
     );
-    assert_eq!(fallback(&input), "external-formula-reference");
-    let named = with_names(
-        &fixture("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#, false),
-        r#"<definedName name="linked">'[linked.xlsx]S'!$A$1</definedName>"#,
-    );
-    assert_eq!(fallback(&named), "external-formula-reference");
     let damaged = with_part(&input, OUTPUT, sheet(r#"<c r="A1"><v>42</v></c>"#));
     assert_eq!(
         preserve_external_links(&input, &damaged, limits()),
