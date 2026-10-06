@@ -19,6 +19,8 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+use oneiron::context_board::{AppliedStreamState, BoardStreamFrame, FrameApplyOutcome, FrameKind};
+
 use super::arms::Grid;
 use super::arms_epoch::Env;
 use super::board;
@@ -52,6 +54,10 @@ pub(crate) enum SpanKind {
     Inventory,
     /// A resource body the harness fetched from the environment (a `get`).
     Fetch,
+    /// A STREAM board frame (keyframe or delta) the engine appended inside
+    /// a tool result of a foreign harness. Content of the log like any tool
+    /// output: the foreign harness may drop or fold it.
+    Frame,
 }
 
 impl SpanKind {
@@ -97,6 +103,7 @@ impl Span {
             SpanKind::Keyframe => "keyframe".to_owned(),
             SpanKind::Inventory => "inventory".to_owned(),
             SpanKind::Fetch => format!("get s{id}"),
+            SpanKind::Frame => format!("frame s{id}"),
         };
         let head = format!("[[{label}]]\n");
         let tok = tokens(&format!("{head}{text}\n"));
@@ -530,6 +537,82 @@ pub(crate) struct Ledger {
     links: usize,
     /// Fold and drop operations (F-C5).
     folds: u64,
+    /// STREAM (deliverable 4), harness-side: every frame the engine sent,
+    /// by span id, with the board rows it carries (a keyframe: the whole
+    /// board; a delta: its rows); the board as the engine last built it; the
+    /// view a foreign model rebuilds from the frames still in its window
+    /// (the engine's own consumer law), kept incrementally and rebuilt
+    /// when a frame leaves the window.
+    pub(crate) stream: Stream,
+}
+
+#[derive(Default)]
+pub(crate) struct Stream {
+    frames: BTreeMap<u64, (BoardStreamFrame, BTreeMap<String, String>)>,
+    truth: Option<BTreeMap<String, String>>,
+    view: AppliedStreamState,
+    base: BTreeMap<String, String>,
+    stale_view: bool,
+    /// Frame tokens added to the log, frames and keyframes sent, refreshes.
+    pub(crate) added_tok: u64,
+    pub(crate) sent: u64,
+    pub(crate) keyframes: u64,
+    pub(crate) refreshes: u64,
+}
+
+impl Stream {
+    pub(crate) fn active(&self) -> bool {
+        self.truth.is_some()
+    }
+
+    pub(crate) fn truth(&self) -> Option<&BTreeMap<String, String>> {
+        self.truth.as_ref()
+    }
+
+    fn apply(&mut self, id: u64) {
+        if let Some((frame, rows)) = self.frames.get(&id)
+            && let FrameApplyOutcome::KeyframeTaken { .. } = self.view.apply(frame.clone())
+        {
+            self.base.clone_from(rows);
+        }
+    }
+
+    /// The board a foreign model holds after applying, in window order,
+    /// every frame still in its window: `None` when no keyframe is held.
+    pub(crate) fn view(&mut self, win: &Window) -> Option<BTreeMap<String, String>> {
+        if self.stale_view {
+            self.view = AppliedStreamState::default();
+            self.base.clear();
+            let live: Vec<u64> = win
+                .spans()
+                .iter()
+                .filter(|s| s.kind == SpanKind::Frame)
+                .map(|s| s.id)
+                .collect();
+            for id in live {
+                self.apply(id);
+            }
+            self.stale_view = false;
+        }
+        self.view.epoch?;
+        let mut rows = self.base.clone();
+        rows.extend(
+            self.view
+                .delta_overlay
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        Some(rows)
+    }
+
+    /// Frame tokens live in the window.
+    pub(crate) fn live_tok(&self, win: &Window) -> u64 {
+        win.spans()
+            .iter()
+            .filter(|s| s.kind == SpanKind::Frame)
+            .map(|s| s.tok)
+            .sum()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -551,6 +634,9 @@ impl Audit {
 
 impl Ledger {
     fn depart(&mut self, span: &Span, via: Option<u32>) {
+        if span.kind == SpanKind::Frame {
+            self.stream.stale_view = true;
+        }
         // The board, the keyframe and the inventory are projections of
         // typed state, not content, and the harness never lets any
         // operation but their re-render move them.
@@ -612,6 +698,8 @@ pub(crate) struct Caps {
     pub(crate) prefix: bool,
     /// Fetch a resource's current body from the environment (`get`).
     pub(crate) get: bool,
+    /// Send STREAM board frames inside tool results (deliverable 4).
+    pub(crate) stream: bool,
 }
 
 /// A strategy's handle on the window for one step. Its fields are private:
@@ -1132,6 +1220,65 @@ impl Ctx<'_> {
             .find(|s| s.id == id)
             .map_or(0, |s| s.tok);
         Some((version, id))
+    }
+}
+
+impl Ctx<'_> {
+    /// STREAM: the engine built `truth` (the board rows from typed state)
+    /// this turn and, when it differs from what it last sent, a `frame`
+    /// that rides this turn's tool result. The harness renders the frame
+    /// into the log; the strategy writes no text, so nothing is charged.
+    pub(crate) fn emit_frame(
+        &mut self,
+        truth: BTreeMap<String, String>,
+        frame: Option<BoardStreamFrame>,
+    ) {
+        if !self.allow(self.caps.stream, "emit_frame") {
+            return;
+        }
+        if let Some(frame) = frame {
+            let (kind, body, rows) = match &frame.kind {
+                FrameKind::Keyframe(text) => ("keyframe", text.clone(), truth.clone()),
+                FrameKind::Delta(rows) => (
+                    "delta",
+                    rows.iter()
+                        .map(|r| format!("{} = {}", r.key, r.line))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    rows.iter()
+                        .map(|r| (r.key.clone(), r.line.clone()))
+                        .collect(),
+                ),
+            };
+            let text = format!(
+                "<board-frame epoch=\"{}\" kind=\"{kind}\">\n{body}\n</board-frame>",
+                frame.epoch
+            );
+            let id = self.win.push_on(SpanKind::Frame, Surface::Log, text);
+            let tok = self.win.spans().last().map_or(0, |s| s.tok);
+            let s = &mut self.led.stream;
+            s.added_tok += tok;
+            s.sent += 1;
+            s.keyframes += u64::from(kind == "keyframe");
+            s.frames.insert(id, (frame, rows));
+            if !s.stale_view {
+                s.apply(id);
+            }
+        }
+        self.led.stream.truth = Some(truth);
+    }
+
+    /// The board the foreign model holds now (see `Stream::view`).
+    pub(crate) fn board_view(&mut self) -> Option<BTreeMap<String, String>> {
+        self.led.stream.view(self.win)
+    }
+
+    /// The agent calls `board.refresh` (after its harness compacted).
+    pub(crate) fn board_refresh(&mut self) {
+        if self.allow(self.caps.stream, "board_refresh") {
+            self.charge("board.refresh");
+            self.led.stream.refreshes += 1;
+        }
     }
 }
 

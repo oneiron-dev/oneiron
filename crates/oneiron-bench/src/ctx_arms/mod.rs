@@ -96,6 +96,8 @@ struct Options {
     arm: Option<Arm>,
     strategy: Option<String>,
     budget: u64,
+    /// Deliverable 4: also sweep the STREAM dials.
+    stream_sweep: bool,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
@@ -104,6 +106,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         arm: None,
         strategy: None,
         budget: DEFAULT_BUDGET,
+        stream_sweep: false,
     };
     let mut report = false;
     let mut it = args.iter();
@@ -111,6 +114,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--report" => report = true,
+            "--stream-sweep" => opts.stream_sweep = true,
             "--split" => {
                 opts.split = match value()?.as_str() {
                     "dev" => Split::Dev,
@@ -156,7 +160,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             eprintln!("ctx-arms: {e}");
             eprintln!(
                 "usage: oneiron-bench ctx-arms --report --split heldout|dev \
-                 [--arm NAME] [--strategy NAME] [--budget 32768]"
+                 [--arm NAME] [--strategy NAME] [--budget 32768] [--stream-sweep]"
             );
             ExitCode::FAILURE
         }
@@ -217,6 +221,23 @@ pub(crate) struct EpisodeResult {
     pub(crate) overrides: u64,
     /// F-C18: frames of superseded epochs live at the last model call.
     pub(crate) frames_live: u64,
+    /// Deliverable 4: board tokens added to the prompt per call, summed
+    /// (RESIDENT: the whole board, re-sent each call; STREAM: the frame
+    /// appended this turn), board tokens live per call, summed; calls whose
+    /// board, as the model holds it, is not the current board (no keyframe
+    /// held, or a row out of date); runs of such calls (breaks), their
+    /// longest and summed length; refreshes, frames and keyframes sent.
+    pub(crate) board_add: u64,
+    pub(crate) board_live: u64,
+    pub(crate) view_missing: u64,
+    pub(crate) view_stale: u64,
+    pub(crate) breaks: u64,
+    pub(crate) recovery_max: u64,
+    pub(crate) recovery_sum: u64,
+    pub(crate) refreshes: u64,
+    pub(crate) frames: u64,
+    pub(crate) keyframes: u64,
+    pub(crate) stream: bool,
 }
 
 impl EpisodeResult {
@@ -292,6 +313,16 @@ impl Run<'_> {
                 Err(_) => self.res.restore_fail = true,
             }
         }
+        // STREAM: the board the model holds rides the read like the
+        // RESIDENT tail does (it is what the frames in its window say).
+        let view_text = if self.led.stream.active() {
+            self.led
+                .stream
+                .view(&self.win)
+                .map(|rows| rows.into_values().collect::<Vec<_>>().join("\n"))
+        } else {
+            None
+        };
         self.res.read_peak = self.res.read_peak.max(read);
         self.res.reads += 1;
         self.res.read_sum += read;
@@ -299,6 +330,9 @@ impl Run<'_> {
         let restored = chunks.len();
         let only_restored = (restored > 0).then(|| arms::read(self.ep.arm, q, &chunks));
         chunks.extend(self.win.spans().iter().map(window::Span::text));
+        if let Some(text) = &view_text {
+            chunks.push(text);
+        }
         let answer = arms::read(self.ep.arm, q, &chunks);
         let want = &self.ep.expected[i];
         if only_restored.as_ref() == Some(want) && &answer != want {
@@ -352,6 +386,7 @@ pub(crate) fn run_full(
         }
     }
     let mut window_sum = 0_u64;
+    let (mut wrong_run, mut added_before) = (0_u64, 0_u64);
     for (n, turn) in ep.turns.iter().enumerate() {
         run.win.push(SpanKind::Turn(n as u32), turn.text.clone());
         {
@@ -393,6 +428,39 @@ pub(crate) fn run_full(
             .map(window::Span::tok)
             .sum::<u64>();
         run.checks.on_call(n, &run.win);
+        if run.led.stream.active() {
+            run.res.stream = true;
+            let view = run.led.stream.view(&run.win);
+            match (view.as_ref(), run.led.stream.truth()) {
+                (Some(v), Some(t)) if v == t => {
+                    run.res.recovery_max = run.res.recovery_max.max(wrong_run);
+                    wrong_run = 0;
+                }
+                (view, _) => {
+                    if view.is_none() {
+                        run.res.view_missing += 1;
+                    } else {
+                        run.res.view_stale += 1;
+                    }
+                    wrong_run += 1;
+                    run.res.recovery_sum += 1;
+                    run.res.breaks += u64::from(wrong_run == 1);
+                }
+            }
+            run.res.board_add += run.led.stream.added_tok - added_before;
+            added_before = run.led.stream.added_tok;
+            run.res.board_live += run.led.stream.live_tok(&run.win);
+        } else {
+            let board: u64 = run
+                .win
+                .spans()
+                .iter()
+                .filter(|s| s.kind() == SpanKind::Board)
+                .map(window::Span::tok)
+                .sum();
+            run.res.board_add += board;
+            run.res.board_live += board;
+        }
         let live = run.win.total();
         run.res.peak = run.res.peak.max(live);
         window_sum += live;
@@ -401,6 +469,10 @@ pub(crate) fn run_full(
             run.ask(strategy, i, n);
         }
     }
+    run.res.recovery_max = run.res.recovery_max.max(wrong_run);
+    run.res.refreshes = run.led.stream.refreshes;
+    run.res.frames = run.led.stream.sent;
+    run.res.keyframes = run.led.stream.keyframes;
     run.res.mean = window_sum as f64 / ep.turns.len().max(1) as f64;
     run.res.read_peak = run.res.read_peak.max(run.res.peak);
     run.res.foreknow = base.foreknow(&run.win);
@@ -486,6 +558,17 @@ pub(crate) struct Cell {
     overcount: u64,
     overrides: u64,
     frames_live: u64,
+    board_add: u64,
+    board_live: u64,
+    view_missing: u64,
+    view_stale: u64,
+    breaks: u64,
+    recovery_max: u64,
+    recovery_sum: u64,
+    refreshes: u64,
+    frames: u64,
+    keyframes: u64,
+    stream: bool,
 }
 
 impl Cell {
@@ -536,6 +619,37 @@ impl Cell {
         self.overcount += r.overcount;
         self.overrides += r.overrides;
         self.frames_live += r.frames_live;
+        self.board_add += r.board_add;
+        self.board_live += r.board_live;
+        self.view_missing += r.view_missing;
+        self.view_stale += r.view_stale;
+        self.breaks += r.breaks;
+        self.recovery_max = self.recovery_max.max(r.recovery_max);
+        self.recovery_sum += r.recovery_sum;
+        self.refreshes += r.refreshes;
+        self.frames += r.frames;
+        self.keyframes += r.keyframes;
+        self.stream |= r.stream;
+    }
+
+    /// Deliverable 4's board columns, one line.
+    pub(crate) fn board_line(&self) -> String {
+        format!(
+            "{} | board +{}/turn total {}/ep live {}/turn | wrong {} (missing {} stale {}) breaks {} recovery max {} mean {:.1} | refresh {} frames {} keyframes {} /ep",
+            if self.stream { "STREAM" } else { "RESIDENT" },
+            self.board_add / self.calls.max(1),
+            self.per_episode(self.board_add),
+            self.board_live / self.calls.max(1),
+            self.view_missing + self.view_stale,
+            self.view_missing,
+            self.view_stale,
+            self.breaks,
+            self.recovery_max,
+            self.recovery_sum as f64 / self.breaks.max(1) as f64,
+            self.per_episode(self.refreshes),
+            self.per_episode(self.frames),
+            self.per_episode(self.keyframes),
+        )
     }
 
     /// Tokens served from an unchanged cached prefix over all prompt
@@ -777,6 +891,18 @@ fn report(opts: &Options) {
             print_audit(*arm, name, c, n_seeds);
         }
     }
+    println!(
+        "board columns (CTX2-BOARD, deliverable 4): board +N/turn = board tokens added to the prompt per call (RESIDENT re-sends the whole board \
+         every call; STREAM appends one frame); total = per episode; live = board tokens in the window per call; wrong = calls where the board \
+         the model holds (STREAM: rebuilt from the frames left in its window by the engine's consumer law) is not the current board, split into \
+         missing (no keyframe held) and stale (a row out of date); breaks = runs of wrong calls; recovery = their length in calls; refresh, frames \
+         and keyframes per episode"
+    );
+    for (arm, name, c) in &cells {
+        if c.ran {
+            println!("CTX2-BOARD {} {name} | {}", arm.name(), c.board_line());
+        }
+    }
 
     let engine_cells = cells
         .iter()
@@ -852,13 +978,15 @@ fn report(opts: &Options) {
             .filter(|(_, s, c)| *s == name && c.ran)
             .map(|(arm, _, c)| {
                 format!(
-                    "{} {:.3} er {:.3} rp {} hit {:.3} frozen {:.3}{}",
+                    "{} {:.3} er {:.3} rp {} hit {:.3} frozen {:.3} board +{}/turn wrong {}{}",
                     arm.name(),
                     c.score(),
                     c.exact_restore(),
                     c.per_episode(c.reprefill),
                     c.hit_rate(),
                     c.frozen_rate(),
+                    c.board_add / c.calls.max(1),
+                    c.view_missing + c.view_stale,
                     if valid(c) { "" } else { " INVALID" }
                 )
             })
@@ -938,6 +1066,105 @@ fn report(opts: &Options) {
         })
         .collect();
     println!("CTX-BEST | {}", best.join(" | "));
+    if opts.stream_sweep {
+        stream_sweep(opts, &seeds, n_seeds);
+    }
+}
+
+/// Deliverable 4: the STREAM dial sweep (harness x keyframe interval x
+/// delta-fold threshold x refresh) on the arms where the board carries the
+/// answer (sketchpad), the resource state (relink) or only the turn clock
+/// (needle). Prints one line per setting and the cheapest setting per
+/// harness whose board is never wrong.
+fn stream_sweep(opts: &Options, seeds: &RangeInclusive<u64>, n_seeds: u64) {
+    use strategies::{Dials, Harness, StreamBoard};
+    let arms = [Arm::Sketchpad, Arm::Relink, Arm::Needle];
+    let mut configs = Vec::new();
+    for harness in [Harness::Truncate, Harness::FifoFold] {
+        for keyframe_every in [None, Some(25), Some(100), Some(200), Some(400)] {
+            for fold_over in [None, Some(512), Some(2048)] {
+                for refresh in [false, true] {
+                    configs.push((
+                        harness,
+                        Dials {
+                            keyframe_every,
+                            fold_over,
+                            refresh,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    println!(
+        "stream sweep: {} settings x {} arms x {n_seeds} seeds; K = keyframe every K turns (- = only when forced), F = fold deltas into a keyframe past F tokens (- = never)",
+        configs.len(),
+        arms.len()
+    );
+    let mut cells: Vec<Vec<Cell>> = configs
+        .iter()
+        .map(|_| (0..arms.len()).map(|_| Cell::default()).collect())
+        .collect();
+    for (a, &arm) in arms.iter().enumerate() {
+        for seed in seeds.clone() {
+            let ep = Episode::generate(arm, seed);
+            let base = audit::AuditBase::new(&ep);
+            for (k, (harness, dials)) in configs.iter().enumerate() {
+                let mut s = StreamBoard::new("stream-sweep", *harness, *dials);
+                let start = Instant::now();
+                let r = run_full(&ep, &base, &mut s, opts.budget, |_| {});
+                cells[k][a].add(&r, start.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+    }
+    let show = |d: Option<u64>| d.map_or_else(|| "-".to_owned(), |v| v.to_string());
+    let mut best: BTreeMap<String, (u64, String)> = BTreeMap::new();
+    for (k, (harness, dials)) in configs.iter().enumerate() {
+        let label = format!(
+            "{} K={} F={} refresh={}",
+            if *harness == Harness::Truncate {
+                "truncate"
+            } else {
+                "fifo"
+            },
+            show(dials.keyframe_every.map(u64::from)),
+            show(dials.fold_over),
+            if dials.refresh { "on" } else { "off" }
+        );
+        let mut wrong_all = 0;
+        let mut cost = 0;
+        for (a, &arm) in arms.iter().enumerate() {
+            let c = &cells[k][a];
+            wrong_all += c.view_missing + c.view_stale;
+            cost += c.per_episode(c.board_add) + c.per_episode(c.reprefill);
+            println!(
+                "CTX2-SWEEP {} {label} | score {:.3} | rp {} hit {:.3} | {} | {}",
+                arm.name(),
+                c.score(),
+                c.per_episode(c.reprefill),
+                c.hit_rate(),
+                c.board_line(),
+                if c.valid(n_seeds) { "valid" } else { "INVALID" }
+            );
+        }
+        if wrong_all == 0 {
+            let key = if *harness == Harness::Truncate {
+                "truncate"
+            } else {
+                "fifo"
+            }
+            .to_owned();
+            if best.get(&key).is_none_or(|(c, _)| cost < *c) {
+                best.insert(key, (cost, label));
+            }
+        }
+    }
+    for (harness, (cost, label)) in &best {
+        println!(
+            "CTX2-SWEEP-BEST {harness} | {label} | board never wrong on {} arms | board added + re-prefill per episode, summed over the arms: {cost}",
+            arms.len()
+        );
+    }
 }
 
 fn print_audit(arm: Arm, name: &str, c: &Cell, seeds: u64) {

@@ -9,15 +9,17 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use oneiron::context_board::{ServedLifecycle, SessionReadSet};
+use oneiron::context_board::{
+    BoardSnapshot, CarrierCoalesceBuffer, FrameKind, ServedLifecycle, SessionReadSet, SkillsSection,
+};
 
 use super::arms::{Grid, Query, Verb, snapshot_lines};
 use super::board::{CanonBoard, Held, ResRow};
 use super::window::{Caps, Ctx, Link, Place, Span, SpanKind, Surface};
 
-/// The named strategies, in report order. The last three are loop 2's
-/// placement family.
-pub(crate) const STRATEGIES: [&str; 8] = [
+/// The named strategies, in report order. Loop 2 adds the placement family
+/// (RESIDENT) and the STREAM family.
+pub(crate) const STRATEGIES: [&str; 10] = [
     "truncate",
     "fifo-fold",
     "recoverable-fold",
@@ -26,6 +28,8 @@ pub(crate) const STRATEGIES: [&str; 8] = [
     "canon-placement",
     "board-in-prefix",
     "keyframe-in-tail",
+    "stream-truncate",
+    "stream-fifo",
 ];
 
 pub(crate) trait Strategy {
@@ -61,6 +65,16 @@ pub(crate) fn build(name: &str) -> Option<Box<dyn Strategy>> {
         "canon-placement" => Some(Box::new(CanonPlacement::new(Layout::Canon))),
         "board-in-prefix" => Some(Box::new(CanonPlacement::new(Layout::BoardInPrefix))),
         "keyframe-in-tail" => Some(Box::new(CanonPlacement::new(Layout::KeyframeInTail))),
+        "stream-truncate" => Some(Box::new(StreamBoard::new(
+            "stream-truncate",
+            Harness::Truncate,
+            STREAM_DIALS,
+        ))),
+        "stream-fifo" => Some(Box::new(StreamBoard::new(
+            "stream-fifo",
+            Harness::FifoFold,
+            STREAM_DIALS,
+        ))),
         _ => None,
     }
 }
@@ -1018,5 +1032,337 @@ impl CanonPlacement {
             }
         }
         picked
+    }
+}
+
+/// The foreign harness a STREAM board rides in: it owns the window and
+/// compacts on its own schedule (deliverable 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Harness {
+    /// Drops the oldest tool results once the window crosses its budget.
+    Truncate,
+    /// Folds the oldest tool results into a fixed lossy stub.
+    FifoFold,
+}
+
+/// The STREAM dials.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Dials {
+    /// A keyframe every this many turns (`None`: only when forced).
+    pub(crate) keyframe_every: Option<u32>,
+    /// Fold the deltas sent since the last keyframe into a new keyframe once
+    /// they pass this many tokens (`None`: never).
+    pub(crate) fold_over: Option<u64>,
+    /// The agent calls `board.refresh` after each compaction of its harness;
+    /// the keyframe rides the next tool result.
+    pub(crate) refresh: bool,
+}
+
+/// Default dials, tuned on dev with `--stream-sweep`: the cheapest setting
+/// whose board was never wrong on the sketchpad, relink and needle arms, on
+/// both harnesses (a keyframe every 100 turns; no delta fold; no refresh,
+/// which that keyframe interval never needed).
+pub(crate) const STREAM_DIALS: Dials = Dials {
+    keyframe_every: Some(100),
+    fold_over: None,
+    refresh: false,
+};
+
+#[derive(Clone, Debug, Default)]
+struct StreamRes {
+    current: u32,
+    served: u32,
+    /// The newest body the agent saw, by span, with its version.
+    live: Option<(u64, u32)>,
+}
+
+/// The STREAM board family (ARCH-0067 §5, deliverable 4): a foreign harness
+/// owns the context and compacts it its own way; Oneiron never renders into
+/// it except as frames. Each turn the engine builds the board from typed
+/// state (the same state the RESIDENT board renders) and sends, inside this
+/// turn's tool result, a keyframe (`BoardSnapshot::as_keyframe`: the whole
+/// board through `render_board_block`, a new epoch) when one is due, else a
+/// delta (`BoardSnapshot::frame_since`), coalesced through the engine's
+/// `CarrierCoalesceBuffer`. A keyframe is due on the first turn, every
+/// `keyframe_every` turns, once the deltas since the last keyframe pass
+/// `fold_over` tokens, and on the turn after a refresh. The foreign model
+/// holds the board it rebuilds from the frames still in its window, by the
+/// engine's own consumer law (`AppliedStreamState`: latest epoch wins, a
+/// keyframe replaces, deltas apply inside their epoch), and acts on that.
+/// It has no Oneiron references; it can `get` a resource body.
+pub(crate) struct StreamBoard {
+    name: &'static str,
+    harness: Harness,
+    dials: Dials,
+    policy: Box<dyn Policy>,
+    sketch: Sketch,
+    res: BTreeMap<String, StreamRes>,
+    read_set: SessionReadSet,
+    epoch: u64,
+    last: Option<BoardSnapshot>,
+    since_key: u32,
+    delta_tok: u64,
+    refresh_pending: bool,
+    /// The connection's carrier: frames ride the next tool response,
+    /// deltas superseding within a key.
+    carrier: CarrierCoalesceBuffer,
+}
+
+impl StreamBoard {
+    pub(crate) fn new(name: &'static str, harness: Harness, dials: Dials) -> Self {
+        Self {
+            name,
+            harness,
+            dials,
+            policy: Box::new(OldestFirst),
+            sketch: Sketch::default(),
+            res: BTreeMap::new(),
+            read_set: SessionReadSet::default(),
+            epoch: 0,
+            last: None,
+            since_key: 0,
+            delta_tok: 0,
+            refresh_pending: false,
+            carrier: CarrierCoalesceBuffer::default(),
+        }
+    }
+
+    fn live(r: &StreamRes, ctx: &Ctx<'_>) -> Option<u32> {
+        r.live
+            .filter(|(id, _)| ctx.index_of(*id).is_some())
+            .map(|(_, v)| v)
+    }
+
+    /// The board as typed rows (one key per row) and as the engine's typed
+    /// render state; the two are projections of the same state.
+    fn board(&self, ctx: &Ctx<'_>) -> (BTreeMap<String, String>, Vec<ResRow>) {
+        let mut rows = BTreeMap::new();
+        rows.insert("a.now".to_owned(), format!("turn: {}", ctx.turn()));
+        if let Some(lines) = self.sketch.snapshot() {
+            for (i, line) in lines.into_iter().enumerate() {
+                rows.insert(format!("b.sketch.{i}"), line);
+            }
+        }
+        let mut res_rows = Vec::new();
+        for (name, r) in &self.res {
+            let held = if Self::live(r, ctx) == Some(r.current) {
+                Held::Log
+            } else {
+                Held::Get
+            };
+            let at = if held == Held::Log { "log" } else { "get" };
+            rows.insert(
+                format!("c.res.{name}"),
+                format!("{name}: v{},{at}", r.current),
+            );
+            if r.current > r.served {
+                rows.insert(
+                    format!("e.changed.{name}"),
+                    format!("{name}: superseded:v{}", r.current),
+                );
+            }
+            res_rows.push(ResRow {
+                name: name.clone(),
+                current: r.current,
+                served: r.served,
+                held,
+            });
+        }
+        let skills = SkillsSection::project(&[], &self.read_set);
+        if self.read_set.loaded_skills().next().is_some() {
+            rows.insert("d.skills".to_owned(), skills.loaded);
+        }
+        (rows, res_rows)
+    }
+
+    /// The foreign harness's own compaction: frees `must_free` tokens of the
+    /// oldest tool results. Returns whether it compacted.
+    fn compact(&mut self, ctx: &mut Ctx<'_>, must_free: u64) -> bool {
+        let before = ctx.tokens();
+        let harness = self.harness;
+        move_out(
+            ctx,
+            self.policy.as_mut(),
+            &|_| false,
+            must_free,
+            |ctx, r| {
+                if harness == Harness::Truncate {
+                    ctx.drop_spans(r);
+                } else {
+                    let stub = lossy_summary(&ctx.spans()[r.clone()]);
+                    ctx.fold_lossy(r, stub);
+                }
+            },
+        );
+        ctx.tokens() < before
+    }
+
+    fn after_compaction(&mut self, ctx: &mut Ctx<'_>) {
+        if self.dials.refresh {
+            ctx.board_refresh();
+            self.refresh_pending = true;
+        }
+    }
+
+    /// The version the agent's board says is current.
+    fn view_version(ctx: &mut Ctx<'_>, name: &str) -> Option<u32> {
+        let view = ctx.board_view()?;
+        let line = view.get(&format!("c.res.{name}"))?;
+        line.strip_prefix(name)?
+            .strip_prefix(": v")?
+            .split(',')
+            .next()?
+            .parse()
+            .ok()
+    }
+}
+
+impl Strategy for StreamBoard {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            drop: self.harness == Harness::Truncate,
+            fold_lossy: self.harness == Harness::FifoFold,
+            board: true,
+            get: true,
+            stream: true,
+            ..Caps::default()
+        }
+    }
+
+    fn on_verb(&mut self, verb: &Verb, ctx: &mut Ctx<'_>) {
+        match verb {
+            Verb::Read { res, version } => {
+                let span = ctx.spans().last().map(Span::id);
+                let r = self.res.entry(res.clone()).or_default();
+                r.current = r.current.max(*version);
+                r.served = r.served.max(*version);
+                r.live = span.map(|id| (id, *version));
+                self.read_set.served(res, ServedLifecycle::Active);
+                if res.starts_with("skill:") {
+                    self.read_set.loaded_skill(res, format!("v{version}"));
+                }
+            }
+            Verb::Changed { res, version } => {
+                let r = self.res.entry(res.clone()).or_default();
+                r.current = r.current.max(*version);
+            }
+            Verb::BoardInit(_) | Verb::SetCell { .. } => {
+                if let Some(call) = board_call(verb) {
+                    self.sketch.apply(verb);
+                    ctx.charge_verb(&call);
+                }
+            }
+        }
+    }
+
+    fn on_turn(&mut self, ctx: &mut Ctx<'_>) {
+        self.since_key += 1;
+        let (rows, res_rows) = self.board(ctx);
+        let mut due = self.last.is_none()
+            || self.refresh_pending
+            || self
+                .dials
+                .keyframe_every
+                .is_some_and(|k| self.since_key >= k)
+            || self.dials.fold_over.is_some_and(|f| self.delta_tok >= f);
+        let mut snapshot = BoardSnapshot {
+            epoch: self.epoch,
+            keyframe: String::new(),
+            rows: rows.clone(),
+        };
+        let mut frame = None;
+        if !due {
+            // A delta cannot remove a row: the engine answers that with a
+            // keyframe, which opens a new epoch here.
+            match snapshot.frame_since(self.last.as_ref()) {
+                Some(f) if matches!(f.kind, FrameKind::Keyframe(_)) => due = true,
+                other => frame = other,
+            }
+        }
+        if due {
+            self.epoch += 1;
+            let state = CanonBoard {
+                epoch: self.epoch,
+                turn: ctx.turn(),
+                sketch: self.sketch.typed(),
+                resources: &res_rows,
+                read_set: &self.read_set,
+            };
+            snapshot.epoch = self.epoch;
+            snapshot.keyframe = match super::board::render_canon(&state) {
+                Ok(text) => text,
+                Err(_) => {
+                    ctx.fail("engine board render");
+                    String::new()
+                }
+            };
+            frame = Some(snapshot.as_keyframe());
+        }
+        if let Some(frame) = frame {
+            self.carrier.push(frame);
+        }
+        let frame = self.carrier.drain();
+        match frame.as_ref().map(|f| &f.kind) {
+            Some(FrameKind::Keyframe(_)) => {
+                self.since_key = 0;
+                self.delta_tok = 0;
+            }
+            Some(FrameKind::Delta(rows)) => {
+                self.delta_tok += rows
+                    .iter()
+                    .map(|r| super::window::tokens(&format!("{} = {}\n", r.key, r.line)))
+                    .sum::<u64>();
+            }
+            None => {}
+        }
+        ctx.emit_frame(rows, frame);
+        self.last = Some(snapshot);
+        self.refresh_pending = false;
+        if ctx.tokens() > ctx.budget() {
+            let must = ctx.tokens() - ctx.low_water();
+            if self.compact(ctx, must) {
+                self.after_compaction(ctx);
+            }
+        }
+    }
+
+    /// A need is met from the body the agent's board says is current when
+    /// it is live, from whatever body is live when the agent holds no board
+    /// (it cannot tell a stale copy), else with one `get`. Nothing else is
+    /// restorable: the foreign harness keeps no references.
+    fn on_query(&mut self, query: &Query, ctx: &mut Ctx<'_>) -> Vec<u32> {
+        let Some(name) = query.key.strip_suffix('@') else {
+            return Vec::new();
+        };
+        let Some(r) = self.res.get(name).cloned() else {
+            return Vec::new();
+        };
+        let seen = Self::view_version(ctx, name);
+        let live = Self::live(&r, ctx);
+        match (seen, live) {
+            (Some(v), Some(l)) if v == l => return Vec::new(),
+            (None, Some(_)) => return Vec::new(),
+            _ => {}
+        }
+        let cost = ctx.fetch_cost(name).unwrap_or(0);
+        if ctx.tokens() + cost > ctx.budget() {
+            let must = ctx.tokens() + cost - ctx.low_water();
+            if self.compact(ctx, must) {
+                self.after_compaction(ctx);
+            }
+        }
+        if let Some((version, id)) = ctx.get(name)
+            && let Some(r) = self.res.get_mut(name)
+        {
+            r.live = Some((id, version));
+            r.served = r.served.max(version);
+            r.current = r.current.max(version);
+            self.read_set.served(name, ServedLifecycle::Active);
+        }
+        Vec::new()
     }
 }

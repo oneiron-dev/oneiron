@@ -1347,3 +1347,93 @@ fn stream_frames_carry_stale_frames_the_reader_ignores() {
     assert!((r.score.value - 1.0).abs() < 1e-9);
     assert!(r.frames_live > 0, "superseded frames ride the window");
 }
+
+// ---- deliverable 4: STREAM against RESIDENT ----
+
+use super::strategies::{Dials, Harness, StreamBoard};
+
+fn stream(k: Option<u32>, f: Option<u64>, refresh: bool) -> StreamBoard {
+    StreamBoard::new(
+        "stream-test",
+        Harness::Truncate,
+        Dials {
+            keyframe_every: k,
+            fold_over: f,
+            refresh,
+        },
+    )
+}
+
+#[test]
+fn stream_frames_rebuild_the_current_board_while_they_are_in_the_window() {
+    let ep = Episode::generate(Arm::Sketchpad, 23);
+    // A window that never compacts: every frame stays, the board is right
+    // on every call, and one frame rides each turn.
+    let r = run_episode(&ep, &mut stream(None, None, false), 1 << 40);
+    assert!(r.stream);
+    assert_eq!(r.view_missing + r.view_stale, 0);
+    assert_eq!(
+        r.frames,
+        ep.turns.len() as u64,
+        "the turn clock moves every turn"
+    );
+    assert_eq!(r.keyframes, 1);
+    assert!(
+        r.board_live > 50 * r.board_add,
+        "superseded frames stay live"
+    );
+}
+
+#[test]
+fn a_compaction_that_eats_the_keyframe_breaks_the_board_until_a_keyframe() {
+    let ep = Episode::generate(Arm::Sketchpad, 24);
+    let lost = run_episode(&ep, &mut stream(None, None, false), DEFAULT_BUDGET);
+    assert!(
+        lost.view_missing > 0,
+        "the only keyframe was compacted away"
+    );
+    assert!(
+        lost.recovery_max > 100,
+        "nothing repairs it: {}",
+        lost.recovery_max
+    );
+    let refreshed = run_episode(&ep, &mut stream(None, None, true), DEFAULT_BUDGET);
+    assert!(refreshed.refreshes > 0);
+    assert!(refreshed.breaks > 0);
+    assert_eq!(
+        refreshed.recovery_max, 1,
+        "the refresh keyframe rides the next tool result"
+    );
+    let periodic = run_episode(&ep, &mut stream(Some(25), None, false), DEFAULT_BUDGET);
+    assert_eq!(periodic.view_missing + periodic.view_stale, 0);
+    assert_eq!(periodic.refreshes, 0);
+}
+
+#[test]
+fn stream_frames_append_and_never_rewrite_the_prompt() {
+    for arm in [Arm::Needle, Arm::Sketchpad, Arm::Relink] {
+        let ep = Episode::generate(arm, 25);
+        let r = run_episode(
+            &ep,
+            build("stream-truncate").unwrap().as_mut(),
+            DEFAULT_BUDGET,
+        );
+        assert!(r.violations.is_empty(), "{arm:?} {:?}", r.violations);
+        assert_eq!(r.rp_tail, 0, "{arm:?}: no tail is re-rendered");
+        assert_eq!(r.reprefill_tok, r.rp_fold + r.rp_fetch, "{arm:?}");
+        let canon = run_episode(&ep, &mut CanonPlacement::new(Layout::Canon), DEFAULT_BUDGET);
+        assert!(
+            canon.rp_tail > 0,
+            "{arm:?}: the resident board re-renders every turn"
+        );
+        assert!(
+            r.board_add < canon.board_add,
+            "{arm:?}: a delta is smaller than a board"
+        );
+        assert!(
+            r.board_live > canon.board_live,
+            "{arm:?}: frames pile up until compaction"
+        );
+        assert_eq!(canon.view_missing + canon.view_stale, 0);
+    }
+}
