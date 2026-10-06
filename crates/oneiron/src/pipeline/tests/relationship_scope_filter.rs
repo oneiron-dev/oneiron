@@ -13,6 +13,12 @@ use crate::error::RegistryError;
 /// visibility contracts into decay arithmetic. At the fixture's own
 /// epoch every claim's age — and therefore its decay — is exactly zero.
 const RELATIONSHIP_NOW: u64 = 1;
+/// The fixture's blend scores with no optional signal enabled: `exp(z)` of
+/// each row's vector relevance over the four-row pool (ONE-2702; 1.0 before).
+const RELATIONSHIP_OTHER: f32 = 2.5029328;
+const RELATIONSHIP_ACTIVE: f32 = 2.0654743;
+const RELATIONSHIP_CORE: f32 = 0.9796359;
+const RELATIONSHIP_EVENT: f32 = 0.19745417;
 
 fn relationship_body(rel: Option<EntityId>) -> ClaimBody {
     let mut body = ClaimBody::new(
@@ -333,15 +339,16 @@ fn relationship_absent_is_exact_no_op() -> Result<()> {
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
         .with_temporal_now(RELATIONSHIP_NOW)
         .run()?;
+    // ONE-2702: relevance replaces the all-1.0 id-order tie with the vector rank and its scores.
     assert_eq!(
         relationship_results(&results),
         vec![
-            (fixture.claim_active, 1.0),
-            (fixture.claim_core, 1.0),
-            (fixture.event, 1.0),
-            (fixture.claim_other, 1.0),
+            (fixture.claim_other, RELATIONSHIP_OTHER),
+            (fixture.claim_active, RELATIONSHIP_ACTIVE),
+            (fixture.claim_core, RELATIONSHIP_CORE),
+            (fixture.event, RELATIONSHIP_EVENT),
         ],
-        "an unscoped query must retain the deterministic pre-relationship tie order and scores"
+        "an unscoped query must retain the deterministic pre-relationship order and scores"
     );
     Ok(())
 }
@@ -364,12 +371,13 @@ fn relationship_filter_matches_facet_visibility_matrix() -> Result<()> {
             },
         )
         .run()?;
+    // ONE-2702: retained rows keep their unfiltered scores, which now carry vector relevance.
     assert_eq!(
         relationship_results(&results),
         vec![
-            (fixture.claim_active, 1.0),
-            (fixture.claim_core, 1.0),
-            (fixture.event, 1.0),
+            (fixture.claim_active, RELATIONSHIP_ACTIVE),
+            (fixture.claim_core, RELATIONSHIP_CORE),
+            (fixture.event, RELATIONSHIP_EVENT),
         ],
         "filter must remove only another-relationship claim without changing retained scores"
     );

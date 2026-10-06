@@ -313,9 +313,9 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
     let backend = Arc::new(RecordingReasonBackend::new(None));
     let (_dir, server) = memory_reason_server_auth(Some(backend.clone()));
     let inside = seeded_test_entity_id(0x0207_0001);
-    // Scoped search gives these TURNs neutral pipeline scores of 1.0, not
-    // raw BM25 scores. Make the outside row win the ascending-ID tie-break
-    // so applying limit before session narrowing would lose the inside row.
+    // Scoped search ranks these TURNs by blended BM25 relevance. The outside
+    // row is the shorter exact match and the lower ID, so it ranks first and
+    // applying limit before session narrowing would lose the inside row.
     let outside = seeded_test_entity_id(0x0207_0000);
     let body = rmp_serde::to_vec_named(&json!({
         "txt": "launch", "spkr": "user", "at": 701_u64
@@ -341,12 +341,16 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
     let pinned_ref = server.vault.pinned_short_ref(&inside).unwrap();
     let scoped = scoped_read_for_legacy_api(&server).unwrap();
     let unscoped = scoped.search_text("launch", 2, None).unwrap();
+    // ONE-2702: a two-row pool z-normalizes relevance to +1 and -1, so the scores are e and 1/e.
     assert_eq!(
         unscoped
             .iter()
             .map(|hit| (hit.id, hit.score))
             .collect::<Vec<_>>(),
-        vec![(outside, 1.0), (inside, 1.0)]
+        vec![
+            (outside, 1.0_f64.exp() as f32),
+            (inside, (-1.0_f64).exp() as f32)
+        ]
     );
     assert_eq!(
         scoped.search_text("launch", 1, None).unwrap()[0].id,

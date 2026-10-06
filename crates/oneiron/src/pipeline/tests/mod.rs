@@ -21,6 +21,7 @@ mod community_quality;
 mod effort;
 mod facet_status_world;
 mod relationship_scope_filter;
+mod relevance_order;
 mod rerank_hyde_session_stale;
 mod retrieval_blend;
 mod scoring_basics;
@@ -300,12 +301,15 @@ const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 /// pins have always meant. Decay's own behavior is owned by `decay_tests`.
 const FACET_NOW: u64 = 1;
 
-/// Neutral four-signal blend score when no optional signals are enabled:
-/// all z-normalized signal columns are zero, so `exp(0) = 1`.
-const FACET_R0: f32 = 1.0;
-const FACET_R1: f32 = 1.0;
-const FACET_R2: f32 = 1.0;
-const FACET_R3: f32 = 1.0;
+/// The four-row fixture's blend scores with no optional signal enabled:
+/// the four modulator columns are zero, so each score is `exp(z)` of the
+/// row's vector-channel relevance over the pool (ONE-2702; flat 1.0 before).
+const FACET_R0: f32 = 2.9126508;
+const FACET_R1: f32 = 1.7060921;
+const FACET_R2: f32 = 1.0003916;
+const FACET_R3: f32 = 0.2011588;
+/// A one-row pool z-normalizes every column to zero, so its score is `exp(0) = 1`.
+const FACET_SOLO: f32 = 1.0;
 
 struct FacetFixture {
     facet_a: EntityId,

@@ -106,7 +106,8 @@ fn rerank_query_vector() -> [f32; 4] {
 #[test]
 fn rerank_preserves_facet_prefer_boost_with_receiving_factor_once() -> Result<()> {
     const BOOST: f32 = 3.0;
-    const FACTOR: f32 = 0.5;
+    // ONE-2702: relevance spreads the pool; a factor under R3/R0 (~0.07) keeps the claim last.
+    const FACTOR: f32 = 0.05;
 
     let (_dir, vault) = open_test_vault();
     let fixture = setup_facet_fixture(&vault)?;

@@ -281,6 +281,31 @@ fn community_pipeline_uses_fused_evidence_not_sorted_ids_and_borrows_session_usa
     Ok(())
 }
 
+/// The diversified community query, optionally reversed by a reranker.
+fn community_diversity_query<'a>(
+    vault: &'a Vault,
+    reranker: Option<&'a dyn Reranker>,
+    limit: usize,
+) -> PipelineBuilder<'a> {
+    let builder = vault
+        .query()
+        .search_text("communityseed", 1)
+        .expand_ppr(&[], 1)
+        .filter_since(2)
+        .with_temporal_now(2)
+        .limit(limit);
+    match reranker {
+        Some(reranker) => builder.rerank(
+            reranker,
+            RerankOptions {
+                top_n: 100,
+                query: None,
+            },
+        ),
+        None => builder,
+    }
+}
+
 #[test]
 fn community_pipeline_diversifies_after_fusion_filters_and_rerank_without_resurfacing_rows()
 -> Result<()> {
@@ -339,25 +364,8 @@ fn community_pipeline_diversifies_after_fusion_filters_and_rerank_without_resurf
     vault.config.ppr_community.beta = 0.2;
     let reranker = ReversingReranker;
     for rerank in [false, true] {
-        let builder = vault
-            .query()
-            .search_text("communityseed", 1)
-            .expand_ppr(&[], 1)
-            .filter_since(2)
-            .with_temporal_now(2)
-            .limit(10);
-        let builder = if rerank {
-            builder.rerank(
-                &reranker,
-                RerankOptions {
-                    top_n: 100,
-                    query: None,
-                },
-            )
-        } else {
-            builder
-        };
-        let rows = builder.run()?;
+        let reranker = rerank.then_some(&reranker as &dyn Reranker);
+        let rows = community_diversity_query(&vault, reranker, 10).run()?;
         assert_eq!(
             rows.len(),
             10,
@@ -383,9 +391,22 @@ fn community_pipeline_diversifies_after_fusion_filters_and_rerank_without_resurf
             rows.iter().any(|row| row.id >= entity_id(14)),
             "retain an unboosted alternative"
         );
+        // ONE-2702: fused scores now vary; each row keeps its pre-diversity score in a full trace.
+        let wide =
+            captured_retrieval_trace(&vault, community_diversity_query(&vault, reranker, 1000))?;
+        let stage = if rerank {
+            &wide.reranked
+        } else {
+            &wide.blended
+        };
+        let pre_diversity: HashMap<[u8; 16], u32> = stage
+            .candidates
+            .iter()
+            .map(|row| (row.result_id, row.final_score.to_bits()))
+            .collect();
         assert!(
             rows.iter()
-                .all(|row| row.score.to_bits() == 1.0_f32.to_bits()),
+                .all(|row| pre_diversity.get(row.id.as_bytes()) == Some(&row.score.to_bits())),
             "diversity must not reapply the prior to fused scores"
         );
     }

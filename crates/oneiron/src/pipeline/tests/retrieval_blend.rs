@@ -741,16 +741,18 @@ fn recency_boost_applies_to_vector_only_pipeline() -> Result<()> {
 
     put_vector_at(&vault, old, [1.0, 0.0, 0.0, 0.0], 1)?;
     put_vector_at(&vault, fresh, [0.99, 0.01, 0.0, 0.0], now)?;
+    // ONE-2702: two rows z-normalize any cosine gap to +1/-1; a distant third keeps the near tie.
+    put_vector_at(&vault, entity_id(0x30), [0.0, 1.0, 0.0, 0.0], 1)?;
 
     let baseline = vault
         .query()
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 3)
         .run()?;
     assert_eq!(baseline[0].id, old);
 
     let boosted = vault
         .query()
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 3)
         .boost_recency(0.01)
         .run()?;
     assert_eq!(boosted[0].id, fresh);
@@ -793,10 +795,12 @@ fn recency_boost_orders_non_text_scores_before_ppr_expansion_fusion() -> Result<
 
     put_vector_at(&vault, old, [1.0, 0.0, 0.0, 0.0], 1)?;
     put_vector_at(&vault, fresh, [0.99, 0.01, 0.0, 0.0], now)?;
+    // ONE-2702: two rows z-normalize any cosine gap to +1/-1; a distant third keeps the near tie.
+    put_vector_at(&vault, entity_id(0x32), [0.0, 1.0, 0.0, 0.0], 1)?;
 
     let boosted = vault
         .query()
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 3)
         .boost_recency(0.01)
         .expand_ppr(&[], 2)
         .limit(1)
