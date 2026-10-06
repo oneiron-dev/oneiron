@@ -1,6 +1,6 @@
 //! The "build next" arms of the merged designer cases (OF-546 loop 2):
 //! kv-interleaved (F-C10), pending-obligations (A-C5), late-tool-results
-//! (A-C7), commit-or-rollback (A-C2). Seeded generators,
+//! (A-C7), commit-or-rollback (A-C2), tool-loop (F-C12). Seeded generators,
 //! fixed readers; each freezes at its first commit, dev seeds 1..=20 and
 //! held-out 1001..=1020 like every other arm. Readers return the answer and
 //! the evidence lines they used (the unbacked audit reads the second).
@@ -366,6 +366,7 @@ pub(crate) fn read_with<'a>(arm: Arm, q: &Query, lines: &[&'a str]) -> (String, 
         Arm::Obligations => read_obligations(q, lines),
         Arm::LateResults => read_calls(q, lines),
         Arm::Transactions => read_transactions(q, lines),
+        Arm::ToolLoop => read_tool_loop(q, lines),
         _ => (String::new(), Vec::new()),
     }
 }
@@ -763,4 +764,313 @@ pub(crate) fn read_transactions<'a>(q: &Query, lines: &[&'a str]) -> (String, Ve
         }
     }
     value.map_or_else(|| (String::new(), Vec::new()), |v| (v.to_owned(), evidence))
+}
+
+const LOOP_TURNS: usize = 400;
+const LOOP_FILES: usize = 40;
+const LOOP_TESTS: usize = 60;
+
+struct Func {
+    name: String,
+    sig: String,
+    body: Vec<String>,
+}
+
+fn sig_line(rng: &mut Rng, name: &str) -> String {
+    let args = rng.range(0, 3);
+    let args: Vec<String> = (0..args)
+        .map(|_| {
+            format!(
+                "{}: {}",
+                rng.pick(&WORDS),
+                rng.pick(&["u32", "u64", "&str", "bool", "Vec<u8>", "Option<u32>"])
+            )
+        })
+        .collect();
+    let ret = rng.pick(&[
+        "u32",
+        "bool",
+        "String",
+        "Result<(), Error>",
+        "Option<u64>",
+        "()",
+    ]);
+    format!("fn {name}({}) -> {ret} {{", args.join(", "))
+}
+
+fn loop_body_line(rng: &mut Rng) -> String {
+    format!(
+        "    let {}_{} = {}::{}({}, {}, \"{}\");",
+        rng.pick(&WORDS),
+        rng.pick(&WORDS),
+        rng.pick(&WORDS),
+        rng.pick(&WORDS),
+        rng.range(1, 9999),
+        rng.pick(&WORDS),
+        hex(rng, 8)
+    )
+}
+
+/// tool-loop (F-C12): a coding agent's tool loop, 400 turns of about 1M
+/// tokens. READ (30%) renders a file's current state: 10-30 functions,
+/// `fn <name>(<args>) -> <ret> {` plus body lines (dev: about 2k-8k tokens a
+/// file; held-out: 4k-16k, one READ near half the budget). EDIT (25%)
+/// replaces 1-3 lines (`-old` / `+new`), 40% of them a signature (held-out:
+/// the edited signatures change 3-5 times). TEST (20%): `TEST run #n`, `ok`
+/// lines, 0-3 `FAIL <test>: <message>` lines, noise, 2k-6k tokens. SHELL
+/// (25%): 50-300 tokens. Queries at the end: SIG for 12 functions (8
+/// edited), FAILMSG for 8 tests that failed, FINALFAILS of the last run.
+pub(crate) fn gen_tool_loop(rng: &mut Rng, heldout: bool) -> Generated {
+    let (lo, hi) = if heldout { (12, 40) } else { (6, 20) };
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    let mut files: Vec<(String, Vec<Func>)> = Vec::new();
+    let mut fnames: BTreeSet<String> = BTreeSet::new();
+    while files.len() < LOOP_FILES {
+        let fname = format!("src/{}_{}.rs", rng.pick(&WORDS), rng.pick(&WORDS));
+        if !fnames.insert(fname.clone()) {
+            continue;
+        }
+        let mut funcs = Vec::new();
+        for _ in 0..rng.range(10, 30) {
+            let name = loop {
+                let n = format!(
+                    "{}_{}{}",
+                    rng.pick(&WORDS),
+                    rng.pick(&WORDS),
+                    rng.range(1, 99)
+                );
+                if names.insert(n.clone()) {
+                    break n;
+                }
+            };
+            let sig = sig_line(rng, &name);
+            let body = (0..rng.range(lo, hi))
+                .map(|_| loop_body_line(rng))
+                .collect();
+            funcs.push(Func { name, sig, body });
+        }
+        files.push((fname, funcs));
+    }
+    // Held-out: a hot set of functions whose signatures change 3-5 times.
+    let all: Vec<(usize, usize)> = files
+        .iter()
+        .enumerate()
+        .flat_map(|(f, (_, fs))| (0..fs.len()).map(move |k| (f, k)))
+        .collect();
+    let mut hot: Vec<(usize, usize)> = all.clone();
+    rng.shuffle(&mut hot);
+    hot.truncate(20);
+    let tests: Vec<String> = (0..LOOP_TESTS)
+        .map(|i| format!("test_{}_{}{i}", rng.pick(&WORDS), rng.pick(&WORDS)))
+        .collect();
+    let mut sig_history: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (_, fs) in &files {
+        for f in fs {
+            sig_history.insert(f.name.clone(), vec![f.sig.clone()]);
+        }
+    }
+    let mut last_fail: BTreeMap<usize, String> = BTreeMap::new();
+    let mut last_run: Vec<usize> = Vec::new();
+    let mut run = 0_u32;
+    let mut turns = Vec::with_capacity(LOOP_TURNS);
+    let mut sig_edits: BTreeMap<String, u32> = BTreeMap::new();
+    // Functions whose signature line the stream has shown (a READ of their
+    // file); only those can be asked about unedited.
+    let mut shown: BTreeSet<String> = BTreeSet::new();
+    for _ in 0..LOOP_TURNS {
+        let roll = rng.below(100);
+        let text = if roll < 30 {
+            let (path, fs) = &files[rng.below(files.len())];
+            shown.extend(fs.iter().map(|f| f.name.clone()));
+            let mut lines = vec![format!("READ {path}")];
+            for f in fs {
+                lines.push(f.sig.clone());
+                lines.extend(f.body.iter().cloned());
+                lines.push("}".to_owned());
+            }
+            lines.join("\n")
+        } else if roll < 55 {
+            let f = rng.below(files.len());
+            let mut lines = vec![format!("EDIT {}", files[f].0)];
+            for _ in 0..rng.range(1, 3) {
+                if rng.below(100) < 40 {
+                    let (f2, k) = if heldout {
+                        hot[rng.below(hot.len())]
+                    } else {
+                        (f, rng.below(files[f].1.len()))
+                    };
+                    let func = &mut files[f2].1[k];
+                    let new = loop {
+                        let s = sig_line(rng, &func.name);
+                        if s != func.sig {
+                            break s;
+                        }
+                    };
+                    lines.push(format!("-{}", func.sig));
+                    lines.push(format!("+{new}"));
+                    func.sig.clone_from(&new);
+                    sig_history.entry(func.name.clone()).or_default().push(new);
+                    *sig_edits.entry(func.name.clone()).or_default() += 1;
+                } else {
+                    let k = rng.below(files[f].1.len());
+                    let func = &mut files[f].1[k];
+                    let at = rng.below(func.body.len());
+                    let new = loop_body_line(rng);
+                    lines.push(format!("-{}", func.body[at]));
+                    lines.push(format!("+{new}"));
+                    func.body[at] = new;
+                }
+            }
+            lines.join("\n")
+        } else if roll < 75 {
+            run += 1;
+            let mut lines = vec![format!("TEST run #{run}")];
+            let fails: BTreeSet<usize> = (0..rng.range(0, 3))
+                .map(|_| rng.below(LOOP_TESTS))
+                .collect();
+            for (i, t) in tests.iter().enumerate() {
+                if fails.contains(&i) {
+                    let msg = format!("expected {} got {}", hex(rng, 8), hex(rng, 8));
+                    lines.push(format!("FAIL {t}: {msg}"));
+                    last_fail.insert(i, msg);
+                } else {
+                    lines.push(format!("ok {t}"));
+                }
+                if rng.below(100) < 60 {
+                    lines.push(filler_line(rng));
+                }
+            }
+            for _ in 0..rng.range(60, 300) {
+                lines.push(filler_line(rng));
+            }
+            last_run = fails.into_iter().collect();
+            lines.join("\n")
+        } else {
+            let mut lines = vec![format!("SHELL $ {} {}", rng.pick(&WORDS), rng.pick(&WORDS))];
+            for _ in 0..rng.range(3, 18) {
+                lines.push(filler_line(rng));
+            }
+            lines.join("\n")
+        };
+        turns.push(Turn { text, verb: None });
+    }
+    // SIG: 8 edited functions and 4 never edited; FAILMSG: 8 failed tests.
+    let mut edited: Vec<&String> = sig_edits.keys().collect();
+    rng.shuffle(&mut edited);
+    let mut plain: Vec<&String> = sig_history
+        .keys()
+        .filter(|n| !sig_edits.contains_key(*n) && shown.contains(*n))
+        .collect();
+    rng.shuffle(&mut plain);
+    let mut queries = Vec::new();
+    let mut expected = Vec::new();
+    let current: BTreeMap<&str, &str> = files
+        .iter()
+        .flat_map(|(_, fs)| fs.iter().map(|f| (f.name.as_str(), f.sig.as_str())))
+        .collect();
+    for name in edited.iter().take(8).chain(plain.iter().take(4)) {
+        queries.push(Query {
+            text: format!("SIG {name}"),
+            key: format!("fn {name}("),
+        });
+        expected.push(current[name.as_str()].to_owned());
+    }
+    let mut failed: Vec<usize> = last_fail.keys().copied().collect();
+    rng.shuffle(&mut failed);
+    for i in failed.into_iter().take(8) {
+        queries.push(Query {
+            text: format!("FAILMSG {}", tests[i]),
+            key: format!("FAIL {}:", tests[i]),
+        });
+        expected.push(last_fail[&i].clone());
+    }
+    let mut finals: Vec<&str> = last_run.iter().map(|&i| tests[i].as_str()).collect();
+    finals.sort_unstable();
+    queries.push(Query {
+        text: "FINALFAILS".to_owned(),
+        key: "TEST run #".to_owned(),
+    });
+    expected.push(if finals.is_empty() {
+        "none".to_owned()
+    } else {
+        finals.join(",")
+    });
+    let n = queries.len();
+    generated(
+        turns,
+        queries,
+        expected,
+        vec![false; n],
+        BTreeSet::new(),
+        vec![None; n],
+    )
+}
+
+/// The tool-loop reader. SIG: the last visible `fn <name>(` line, from a
+/// READ body or an EDIT `+` line, in stream order. FAILMSG: the message of
+/// the last visible `FAIL <test>:` line. FINALFAILS: the FAIL lines under
+/// the highest-numbered visible `TEST run #` header (`none` when it has
+/// none).
+pub(crate) fn read_tool_loop<'a>(q: &Query, lines: &[&'a str]) -> (String, Vec<&'a str>) {
+    if let Some(name) = q.text.strip_prefix("SIG ") {
+        let head = format!("fn {name}(");
+        return lines
+            .iter()
+            .rev()
+            .find(|l| l.strip_prefix('+').unwrap_or(l).starts_with(&head))
+            .map_or_else(
+                || (String::new(), Vec::new()),
+                |l| (l.strip_prefix('+').unwrap_or(l).to_owned(), vec![*l]),
+            );
+    }
+    if let Some(test) = q.text.strip_prefix("FAILMSG ") {
+        let head = format!("FAIL {test}: ");
+        return lines
+            .iter()
+            .rev()
+            .find_map(|l| l.strip_prefix(&head).map(|m| (m.to_owned(), vec![*l])))
+            .unwrap_or_default();
+    }
+    if q.text == "FINALFAILS" {
+        let mut best: Option<(u32, usize)> = None;
+        for (i, l) in lines.iter().enumerate() {
+            if let Some(n) = l
+                .strip_prefix("TEST run #")
+                .and_then(|n| n.parse::<u32>().ok())
+                && best.is_none_or(|(b, _)| n > b)
+            {
+                best = Some((n, i));
+            }
+        }
+        let Some((_, at)) = best else {
+            return (String::new(), Vec::new());
+        };
+        let mut fails = Vec::new();
+        let mut evidence = vec![lines[at]];
+        for l in &lines[at + 1..] {
+            if l.starts_with("TEST run #")
+                || l.starts_with("READ ")
+                || l.starts_with("EDIT ")
+                || l.starts_with("SHELL ")
+            {
+                break;
+            }
+            if let Some(rest) = l.strip_prefix("FAIL ")
+                && let Some((t, _)) = rest.split_once(':')
+            {
+                fails.push(t);
+                evidence.push(*l);
+            }
+        }
+        fails.sort_unstable();
+        return (
+            if fails.is_empty() {
+                "none".to_owned()
+            } else {
+                fails.join(",")
+            },
+            evidence,
+        );
+    }
+    (String::new(), Vec::new())
 }

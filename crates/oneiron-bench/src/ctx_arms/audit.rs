@@ -456,7 +456,7 @@ pub(crate) fn evidence(arm: Arm, q: &Query, chunks: &[&str]) -> Vec<String> {
                 .unwrap_or_default())
         }
         Arm::KvInterleaved => evidence(Arm::KvOffload, q, chunks),
-        Arm::Obligations | Arm::LateResults | Arm::Transactions => {
+        Arm::Obligations | Arm::LateResults | Arm::Transactions | Arm::ToolLoop => {
             own(super::arms_next::read_with(arm, q, &lines).1)
         }
         Arm::MultiEpoch => {
@@ -524,6 +524,22 @@ pub(crate) fn diagnose(ep: &Episode, answers: &[String]) -> (u32, u32) {
             && let (Ok(g), Ok(w)) = (got.parse::<u64>(), want.parse::<u64>())
         {
             overcount += u32::from(g > w);
+        } else if q.text.starts_with("SIG ") {
+            // tool-loop: a signature the function had before an edit.
+            let held = ep
+                .turns
+                .iter()
+                .flat_map(|t| trimmed_lines(&t.text))
+                .any(|l| l.trim_start_matches(['+', '-']) == got);
+            stale += u32::from(held);
+        } else if q.text == "FINALFAILS" {
+            // tool-loop: the failures of an older run.
+            let older = ep.turns.iter().any(|t| {
+                let lines: Vec<&str> = trimmed_lines(&t.text).collect();
+                lines.first().is_some_and(|h| h.starts_with("TEST run #"))
+                    && super::arms_next::read_with(Arm::ToolLoop, q, &lines).0 == got
+            });
+            stale += u32::from(older);
         }
     }
     (stale, overcount)

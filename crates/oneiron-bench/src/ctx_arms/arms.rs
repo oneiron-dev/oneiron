@@ -18,7 +18,7 @@ use super::arms_next;
 
 /// Every arm, in report order. The last three are loop 2's
 /// (`arms_epoch.rs`).
-pub(crate) const ARMS: [Arm; 11] = [
+pub(crate) const ARMS: [Arm; 12] = [
     Arm::Needle,
     Arm::Sketchpad,
     Arm::KvOffload,
@@ -30,6 +30,7 @@ pub(crate) const ARMS: [Arm; 11] = [
     Arm::Obligations,
     Arm::LateResults,
     Arm::Transactions,
+    Arm::ToolLoop,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -45,6 +46,7 @@ pub(crate) enum Arm {
     Obligations,
     LateResults,
     Transactions,
+    ToolLoop,
 }
 
 impl Arm {
@@ -61,6 +63,7 @@ impl Arm {
             Self::Obligations => "pending-obligations",
             Self::LateResults => "late-tool-results",
             Self::Transactions => "commit-or-rollback",
+            Self::ToolLoop => "tool-loop",
         }
     }
 
@@ -81,6 +84,7 @@ impl Arm {
             Self::Obligations => 9,
             Self::LateResults => 10,
             Self::Transactions => 11,
+            Self::ToolLoop => 12,
         }
     }
 }
@@ -272,7 +276,8 @@ impl Episode {
             | Arm::KvInterleaved
             | Arm::Obligations
             | Arm::LateResults
-            | Arm::Transactions => {
+            | Arm::Transactions
+            | Arm::ToolLoop => {
                 let g = match arm {
                     Arm::Relink => arms_epoch::gen_relink(&mut rng),
                     Arm::MultiEpoch => arms_epoch::gen_multi_epoch(&mut rng),
@@ -280,6 +285,7 @@ impl Episode {
                     Arm::Obligations => arms_next::gen_obligations(&mut rng),
                     Arm::LateResults => arms_next::gen_late_results(&mut rng),
                     Arm::Transactions => arms_next::gen_transactions(&mut rng),
+                    Arm::ToolLoop => arms_next::gen_tool_loop(&mut rng, seed >= 1001),
                     _ => arms_epoch::gen_stream_frames(&mut rng, seed >= 1001),
                 };
                 return Self {
@@ -318,9 +324,11 @@ impl Episode {
     pub(crate) fn score_full(&self, answers: &[String]) -> (Score, Extra) {
         match self.arm {
             Arm::Relink | Arm::MultiEpoch | Arm::StreamFrames => arms_epoch::score(self, answers),
-            Arm::KvInterleaved | Arm::Obligations | Arm::LateResults | Arm::Transactions => {
-                (arms_next::score(self, answers), Extra::default())
-            }
+            Arm::KvInterleaved
+            | Arm::Obligations
+            | Arm::LateResults
+            | Arm::Transactions
+            | Arm::ToolLoop => (arms_next::score(self, answers), Extra::default()),
             _ => (self.score(answers), Extra::default()),
         }
     }
@@ -715,7 +723,7 @@ pub(crate) fn read(arm: Arm, q: &Query, chunks: &[&str]) -> String {
         Arm::MultiEpoch => arms_epoch::read_mixed(q, chunks),
         Arm::StreamFrames => arms_epoch::read_frames(&lines.collect::<Vec<_>>()),
         Arm::KvInterleaved => read(Arm::KvOffload, q, chunks),
-        Arm::Obligations | Arm::LateResults | Arm::Transactions => {
+        Arm::Obligations | Arm::LateResults | Arm::Transactions | Arm::ToolLoop => {
             arms_next::read_with(arm, q, &lines.collect::<Vec<_>>()).0
         }
     }
