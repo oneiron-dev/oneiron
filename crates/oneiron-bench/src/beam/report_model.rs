@@ -125,6 +125,8 @@ pub(super) struct LoadedDataset {
     pub(super) report: DatasetLoadReport,
     pub(super) fixture_id: String,
     pub(super) fixture_description: String,
+    /// Vector width, embedder and map size of the vault this load filled.
+    pub(super) vault_shape: super::util::VaultShape,
     pub(super) cases: Vec<FixtureCase>,
     pub(super) contract_records: BTreeMap<String, RunContractRecord>,
     pub(super) source_id_by_entity_id: BTreeMap<String, String>,
@@ -347,7 +349,7 @@ pub(super) struct ContractPackConfig {
     pub(super) chunking: &'static str,
     pub(super) fusion: &'static str,
     pub(super) signals: Vec<&'static str>,
-    pub(super) embedder_id: &'static str,
+    pub(super) embedder_id: String,
     pub(super) vector_dimensions: usize,
     pub(super) token_budget_source: &'static str,
     pub(super) structure: &'static str,

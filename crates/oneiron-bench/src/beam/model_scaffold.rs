@@ -281,6 +281,7 @@ pub(super) fn run_with_session(
         arm_id,
         limit,
         expected_min_results,
+        ..
     } = &manifest.dataset
     else {
         return Err(refusal("measured answering requires run.jsonl corpus"));
@@ -351,10 +352,12 @@ pub(super) fn run_with_session(
             .cloned()
             .collect();
         let receipt_start = session.receipts().len();
+        let shape = super::load::contract_vault_shape(&manifest, path, &group)?;
         let (base, (loaded, group_exactness)) =
-            super::fork::BaseVault::build(corpus_identity, |vault| {
+            super::fork::BaseVault::build(corpus_identity, shape.config(), |vault| {
                 let loaded = super::load::load_jsonl_group(
                     vault,
+                    &shape,
                     &group_case_ids,
                     path,
                     group,

@@ -8,14 +8,16 @@
 //! (`std::fs::copy`, which clones on APFS and uses `copy_file_range` on
 //! Linux). Each fork is keyed by the corpus identity and the question, the
 //! same keying the RetrievalTrace fork hash uses for replay (OF-260).
-use super::{BeamResult, util::beam_vault_config};
-use oneiron::Vault;
+use super::BeamResult;
+use oneiron::{Vault, VaultConfig};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// A closed, fully ingested vault that forks copy from.
 pub(super) struct BaseVault {
     dir: tempfile::TempDir,
+    /// Forks open with exactly the base's config (width, embedder, map size).
+    config: VaultConfig,
     /// What the base holds: a shared corpus sha256 or an inline corpus digest.
     corpus_identity: String,
 }
@@ -31,16 +33,18 @@ impl BaseVault {
     /// Opens a fresh vault, runs `ingest` on it, then closes it.
     pub(super) fn build<T>(
         corpus_identity: String,
+        config: VaultConfig,
         ingest: impl FnOnce(&Vault) -> BeamResult<T>,
     ) -> BeamResult<(Self, T)> {
         let dir = tempfile::tempdir()?;
         let output = {
-            let vault = Vault::open(dir.path(), beam_vault_config())?;
+            let vault = Vault::open(dir.path(), config.clone())?;
             ingest(&vault)?
         };
         Ok((
             Self {
                 dir,
+                config,
                 corpus_identity,
             },
             output,
@@ -56,7 +60,7 @@ impl BaseVault {
     pub(super) fn fork(&self, question_id: &str) -> BeamResult<VaultFork> {
         let dir = tempfile::tempdir()?;
         copy_tree(self.dir.path(), dir.path())?;
-        let vault = Vault::open(dir.path(), beam_vault_config())?;
+        let vault = Vault::open(dir.path(), self.config.clone())?;
         Ok(VaultFork {
             vault,
             fork_key: fork_key(&self.corpus_identity, question_id),
@@ -119,8 +123,12 @@ mod tests {
 
     #[test]
     fn forks_share_the_base_and_never_see_each_others_writes() {
-        let (base, base_id) =
-            BaseVault::build("corpus-a".into(), |vault| Ok(put(vault, 1, "base turn"))).unwrap();
+        let (base, base_id) = BaseVault::build(
+            "corpus-a".into(),
+            crate::beam::util::beam_vault_config(),
+            |vault| Ok(put(vault, 1, "base turn")),
+        )
+        .unwrap();
         let a = base.fork("q-a").unwrap();
         let b = base.fork("q-b").unwrap();
         assert!(

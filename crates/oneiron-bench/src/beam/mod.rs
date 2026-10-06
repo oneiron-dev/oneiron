@@ -49,8 +49,6 @@ const VANILLA_RAG_FUSION: &str = "rrf(vector,bm25f)";
 
 const VANILLA_RAG_CHUNKING: &str = "one-run-jsonl-corpus-item-per-chunk";
 
-const VANILLA_RAG_EMBEDDER_ID: &str = "oneiron/eval-contract@v1";
-
 const DEFAULT_JSONL_RETRIEVAL_LIMIT: usize = 8;
 
 const BEAM_CONTRACT_EMBEDDING_DIMENSIONS: usize = 4;
@@ -186,6 +184,8 @@ mod tests_ppr_vad;
 mod tests_rerank_sweep;
 #[cfg(test)]
 mod tests_smoke_manifest;
+#[cfg(test)]
+mod tests_vault_shape;
 mod tiers;
 mod util;
 mod validate;

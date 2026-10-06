@@ -75,7 +75,8 @@ impl ChromaArm {
             .iter()
             .map(|c| match c.embedding.as_ref() {
                 Some(ContractEmbeddingState::Ready(vector)) => {
-                    decode_contract_vector(Path::new("chroma-corpus"), 0, vector)
+                    // Chroma holds its own index; the width is the record's.
+                    decode_contract_vector(Path::new("chroma-corpus"), 0, vector, vector.dimensions)
                 }
                 _ => Err(refusal("Chroma requires ready corpus vectors")),
             })

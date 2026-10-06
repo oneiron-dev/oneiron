@@ -10,15 +10,15 @@ use super::report_model::{
     LoadedDataset, RunContractRecord, SharedCorpus,
 };
 use super::util::{
-    dataset_not_ready, decode_base64_standard, hash_str, hex_lower, invalid_fixture,
-    invalid_manifest, invalid_run_jsonl,
+    VaultShape, dataset_not_ready, decode_base64_standard, hash_str, hex_lower, invalid_fixture,
+    invalid_manifest, invalid_run_jsonl, scaled_map_size,
 };
 use super::{
     BEAM_CONTRACT_EMBEDDING_DIMENSIONS, BENCH_CONTRACT_ENTITY_TYPE, BeamError, BeamResult,
     EVAL_CONTRACT_VERSION, EVAL_CONTRACT_VERSION_V2, JSONL_CONTRACT_SOURCE_KIND,
     ONEIRON_CONTEXT_PACK_ARM_KIND, SHARED_CORPUS_ENTITY_DOMAIN, VANILLA_RAG_CHUNKING,
     VANILLA_RAG_CONFIG_VERSION, VANILLA_RAG_CONTRACT_ARM_ID, VANILLA_RAG_CONTRACT_ARM_KIND,
-    VANILLA_RAG_EMBEDDER_ID, VANILLA_RAG_FUSION,
+    VANILLA_RAG_FUSION,
 };
 use oneiron::{EntityId, TimeRange, Vault};
 use sha2::Digest;
@@ -59,6 +59,7 @@ pub(super) fn load_dataset(
             arm_id,
             limit,
             expected_min_results,
+            ..
         } => load_run_jsonl_dataset(
             vault,
             manifest,
@@ -75,6 +76,7 @@ pub(super) fn load_dataset(
 /// Ingests one corpus group into `vault`, timed like [`load_dataset`].
 pub(super) fn load_jsonl_group(
     vault: &Vault,
+    shape: &VaultShape,
     case_ids: &[String],
     path: &Path,
     entries: Vec<RunJsonlEntry>,
@@ -82,8 +84,15 @@ pub(super) fn load_jsonl_group(
     expected_min_results: usize,
 ) -> BeamResult<LoadedDataset> {
     let started = std::time::Instant::now();
-    let mut loaded =
-        ingest_run_jsonl_entries(vault, case_ids, path, entries, limit, expected_min_results)?;
+    let mut loaded = ingest_run_jsonl_entries(
+        vault,
+        shape,
+        case_ids,
+        path,
+        entries,
+        limit,
+        expected_min_results,
+    )?;
     finish_offline_cost(&mut loaded, None, started);
     Ok(loaded)
 }
@@ -190,6 +199,7 @@ pub(super) fn load_fixture_dataset(
         },
         fixture_id: fixture.fixture_id.clone(),
         fixture_description: fixture.description.clone(),
+        vault_shape: VaultShape::default_contract(),
         cases: fixture.cases.clone(),
         contract_records: BTreeMap::new(),
         source_id_by_entity_id: BTreeMap::new(),
@@ -206,8 +216,10 @@ pub(super) fn load_run_jsonl_dataset(
 ) -> BeamResult<LoadedDataset> {
     let mut entries = select_run_jsonl_records(manifest, path, arm_id)?;
     resolve_corpus_refs(path, &mut entries)?;
+    let shape = contract_vault_shape(manifest, path, &entries)?;
     ingest_run_jsonl_entries(
         vault,
+        &shape,
         &manifest.case_ids,
         path,
         entries,
@@ -347,6 +359,93 @@ pub(super) fn resolve_corpus_refs(path: &Path, entries: &mut [RunJsonlEntry]) ->
     }
     Ok(())
 }
+/// The vault shape for resolved records: every ready vector (query and
+/// corpus) must share one width, which must match the manifest's
+/// `embeddingDimensions` when given; without vectors the 4-dim fixture width
+/// stands. The map size scales with the corpus text and vectors.
+pub(super) fn contract_vault_shape(
+    manifest: &RunManifest,
+    path: &Path,
+    entries: &[RunJsonlEntry],
+) -> BeamResult<VaultShape> {
+    let (declared, model) = match &manifest.dataset {
+        DatasetSource::Jsonl {
+            embedding_dimensions,
+            embedding_model,
+            ..
+        } => (*embedding_dimensions, embedding_model.clone()),
+        _ => (None, None),
+    };
+    // The first width seen fixes the run's; a record bringing another width
+    // is refused at its own line.
+    let mut width: Option<usize> = None;
+    let mut vectors = 0_u64;
+    let mut text_bytes = 0_u64;
+    let mut counted = BTreeSet::new();
+    let mut admit = |seen: usize, line: usize| -> BeamResult<()> {
+        match width {
+            Some(first) if first != seen => Err(invalid_run_jsonl(
+                path,
+                line,
+                format!("records mix vector widths {first} and {seen}; one run uses one embedder"),
+            )),
+            _ => {
+                width = Some(seen);
+                Ok(())
+            }
+        }
+    };
+    for entry in entries {
+        if let Some(ContractEmbeddingState::Ready(vector)) = &entry.record.query_embedding {
+            admit(vector.dimensions, entry.line)?;
+        }
+        if !counted.insert(entry.record.corpus_key()) {
+            continue;
+        }
+        for item in entry.record.corpus_items() {
+            text_bytes += item.text.len() as u64;
+            if let Some(ContractEmbeddingState::Ready(vector)) = &item.embedding {
+                admit(vector.dimensions, entry.line)?;
+                vectors += 1;
+            }
+        }
+    }
+    let found = width;
+    let dimensions = match (declared, found) {
+        (Some(declared), Some(found)) if declared != found => {
+            return Err(invalid_manifest(
+                manifest,
+                format!(
+                    "dataset.embeddingDimensions is {declared} but the records carry {found}-dim vectors"
+                ),
+            ));
+        }
+        (Some(width), _) | (None, Some(width)) => width,
+        (None, None) => BEAM_CONTRACT_EMBEDDING_DIMENSIONS,
+    };
+    if dimensions == 0 {
+        return Err(invalid_manifest(
+            manifest,
+            "embedding dimensions must be > 0",
+        ));
+    }
+    if let Some(model) = &model
+        && !model
+            .split_once('@')
+            .is_some_and(|(name, revision)| name.contains('/') && !revision.is_empty())
+    {
+        return Err(invalid_manifest(
+            manifest,
+            format!("dataset.embeddingModel `{model}` must be org/name@revision"),
+        ));
+    }
+    let default = VaultShape::default_contract();
+    Ok(VaultShape {
+        dimensions,
+        embedding_model: model.unwrap_or(default.embedding_model),
+        map_size: scaled_map_size(text_bytes, vectors.saturating_mul(dimensions as u64)),
+    })
+}
 /// Reads, validates and resolves every record of a run.jsonl.
 #[cfg(test)]
 pub(super) fn read_and_resolve_run_jsonl(path: &Path) -> BeamResult<Vec<RunJsonlEntry>> {
@@ -358,6 +457,7 @@ pub(super) fn read_and_resolve_run_jsonl(path: &Path) -> BeamResult<Vec<RunJsonl
 /// corpus is written once however many questions read it.
 pub(super) fn ingest_run_jsonl_entries(
     vault: &Vault,
+    shape: &VaultShape,
     case_ids: &[String],
     path: &Path,
     entries: Vec<RunJsonlEntry>,
@@ -385,7 +485,7 @@ pub(super) fn ingest_run_jsonl_entries(
         let mut pending_for_case = 0;
         match &record.query_embedding {
             Some(ContractEmbeddingState::Ready(vector)) => {
-                let vector = decode_contract_vector(path, line, vector)?;
+                let vector = decode_contract_vector(path, line, vector, shape.dimensions)?;
                 query_vector_by_case_id.insert(record.question_id.clone(), vector);
             }
             Some(ContractEmbeddingState::Pending { .. }) => {
@@ -424,7 +524,12 @@ pub(super) fn ingest_run_jsonl_entries(
 
             match &item.embedding {
                 Some(ContractEmbeddingState::Ready(vector)) => {
-                    staged_item.vector = Some(decode_contract_vector(path, line, vector)?);
+                    staged_item.vector = Some(decode_contract_vector(
+                        path,
+                        line,
+                        vector,
+                        shape.dimensions,
+                    )?);
                 }
                 Some(ContractEmbeddingState::Pending { .. }) => {
                     pending_for_case += 1;
@@ -548,6 +653,7 @@ pub(super) fn ingest_run_jsonl_entries(
         },
         fixture_id: dataset_id.clone(),
         fixture_description: format!("oneiron-eval run.jsonl {dataset_id}@{dataset_revision}"),
+        vault_shape: shape.clone(),
         cases,
         contract_records,
         source_id_by_entity_id,
@@ -1031,8 +1137,10 @@ pub(super) fn decode_contract_vector(
     path: &Path,
     line: usize,
     vector: &ContractVector,
+    dimensions: usize,
 ) -> BeamResult<Vec<f32>> {
-    decode_contract_vector_value(vector).map_err(|reason| invalid_run_jsonl(path, line, reason))
+    decode_contract_vector_value(vector, dimensions)
+        .map_err(|reason| invalid_run_jsonl(path, line, reason))
 }
 pub(super) fn decode_fixture_vector(
     fixture: &BeamFixture,
@@ -1046,19 +1154,22 @@ pub(super) fn decode_fixture_vector(
         ));
     };
 
-    decode_contract_vector_value(vector)
+    decode_contract_vector_value(vector, BEAM_CONTRACT_EMBEDDING_DIMENSIONS)
         .map_err(|reason| invalid_fixture(fixture, format!("{owner} {reason}")))
 }
-pub(super) fn decode_contract_vector_value(vector: &ContractVector) -> Result<Vec<f32>, String> {
+pub(super) fn decode_contract_vector_value(
+    vector: &ContractVector,
+    dimensions: usize,
+) -> Result<Vec<f32>, String> {
     if vector.encoding != "f32-le-base64" {
         return Err(format!(
             "vector encoding must be f32-le-base64, got `{}`",
             vector.encoding
         ));
     }
-    if vector.dimensions != BEAM_CONTRACT_EMBEDDING_DIMENSIONS {
+    if vector.dimensions != dimensions {
         return Err(format!(
-            "vector dimensions must be {BEAM_CONTRACT_EMBEDDING_DIMENSIONS} for this engine path, got {}",
+            "vector dimensions must be {dimensions} for this vault, got {}",
             vector.dimensions
         ));
     }
@@ -1144,7 +1255,7 @@ pub(super) fn contract_context_pack_record(
         pack: ContractPack {
             token_count: Some(context_pack.serialized_tokens),
             corpus_digest: contract_corpus_digest(record),
-            config: contract_pack_config(competitor.arm, case),
+            config: contract_pack_config(competitor.arm, case, &loaded.vault_shape),
             contexts,
         },
         gold: record.gold.clone(),
@@ -1166,7 +1277,11 @@ pub(super) fn contract_output_arm(record: &RunContractRecord, arm: ArmKind) -> C
         }
     }
 }
-pub(super) fn contract_pack_config(arm: ArmKind, case: &FixtureCase) -> Option<ContractPackConfig> {
+pub(super) fn contract_pack_config(
+    arm: ArmKind,
+    case: &FixtureCase,
+    shape: &VaultShape,
+) -> Option<ContractPackConfig> {
     match arm {
         ArmKind::VanillaRag => Some(ContractPackConfig {
             kind: VANILLA_RAG_CONTRACT_ARM_KIND,
@@ -1175,8 +1290,8 @@ pub(super) fn contract_pack_config(arm: ArmKind, case: &FixtureCase) -> Option<C
             chunking: VANILLA_RAG_CHUNKING,
             fusion: VANILLA_RAG_FUSION,
             signals: vec!["vector", "bm25f"],
-            embedder_id: VANILLA_RAG_EMBEDDER_ID,
-            vector_dimensions: BEAM_CONTRACT_EMBEDDING_DIMENSIONS,
+            embedder_id: shape.embedding_model.clone(),
+            vector_dimensions: shape.dimensions,
             token_budget_source: "run_record.budget.limit",
             structure: "flat_l0_no_claims_no_ppr_no_graph",
         }),

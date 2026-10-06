@@ -190,6 +190,7 @@ pub(super) fn census(manifest_path: &Path) -> BeamResult<ExactnessReport> {
         arm_id,
         limit,
         expected_min_results,
+        ..
     } = &manifest.dataset
     else {
         return Err(BeamError::Exactness(
@@ -204,14 +205,16 @@ pub(super) fn census(manifest_path: &Path) -> BeamResult<ExactnessReport> {
             .iter()
             .map(|entry| entry.record.question_id.clone())
             .collect();
+        let shape = super::load::contract_vault_shape(&manifest, path, &group)?;
         let dir = tempfile::tempdir()?;
-        let vault = Vault::open(dir.path(), super::util::beam_vault_config())?;
+        let vault = Vault::open(dir.path(), shape.config())?;
         let corpus_key = group
             .first()
             .map(|entry| entry.record.corpus_key())
             .unwrap_or_default();
         match load_jsonl_group(
             &vault,
+            &shape,
             &case_ids,
             path,
             group,

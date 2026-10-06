@@ -145,6 +145,14 @@ pub(super) enum DatasetSource {
         limit: usize,
         #[serde(default)]
         expected_min_results: usize,
+        /// Vector width of the run's embeddings (768 for multilingual-e5-base).
+        /// Absent: read from the records, else the 4-dim fixture width.
+        #[serde(default)]
+        embedding_dimensions: Option<usize>,
+        /// The embedder that wrote the records' vectors, carried to the
+        /// vault and the pack config.
+        #[serde(default)]
+        embedding_model: Option<String>,
     },
     Miracl {
         dataset: String,

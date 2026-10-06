@@ -8,9 +8,9 @@ use super::card::{
 use super::exactness::{ExactnessReport, verify_loaded_corpus};
 use super::fork::BaseVault;
 use super::load::{
-    RunJsonlEntry, contract_context_pack_record, contract_corpus_digest, load_dataset,
-    load_jsonl_group, resolve_corpus_refs, resolve_manifest_paths, select_run_jsonl_records,
-    write_contract_pack_rows,
+    RunJsonlEntry, contract_context_pack_record, contract_corpus_digest, contract_vault_shape,
+    load_dataset, load_jsonl_group, resolve_corpus_refs, resolve_manifest_paths,
+    select_run_jsonl_records, write_contract_pack_rows,
 };
 use super::model::{ArmKind, BeamFixture, DatasetSource, FixtureCase, RunManifest, SchemaHeader};
 use super::ppr_vad::ppr_vad_sweep_report;
@@ -179,6 +179,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         arm_id,
         limit,
         expected_min_results,
+        ..
     } = &manifest.dataset
     else {
         return Err(invalid_manifest(
@@ -208,14 +209,23 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
             .filter(|id| group_ids.contains(*id))
             .cloned()
             .collect();
-        let (base, (loaded, group_exactness)) = BaseVault::build(corpus_identity, |vault| {
-            let loaded =
-                load_jsonl_group(vault, &case_ids, path, group, *limit, *expected_min_results)?;
-            // Exactness runs on the base before any fork: a mismatch stops the
-            // run here, before a single question is answered.
-            let report = verify_loaded_corpus(vault, &loaded)?.into_result()?;
-            Ok((loaded, report))
-        })?;
+        let shape = contract_vault_shape(manifest, path, &group)?;
+        let (base, (loaded, group_exactness)) =
+            BaseVault::build(corpus_identity, shape.config(), |vault| {
+                let loaded = load_jsonl_group(
+                    vault,
+                    &shape,
+                    &case_ids,
+                    path,
+                    group,
+                    *limit,
+                    *expected_min_results,
+                )?;
+                // Exactness runs on the base before any fork: a mismatch stops the
+                // run here, before a single question is answered.
+                let report = verify_loaded_corpus(vault, &loaded)?.into_result()?;
+                Ok((loaded, report))
+            })?;
         exactness.merge(group_exactness);
         offline_runs.push(loaded.offline.clone());
 

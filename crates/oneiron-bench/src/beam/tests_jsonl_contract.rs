@@ -555,6 +555,7 @@ pub(crate) mod tests {
             },
             fixture_id: "dataset".to_owned(),
             fixture_description: "dataset".to_owned(),
+            vault_shape: crate::beam::util::VaultShape::default_contract(),
             cases: vec![case.clone()],
             contract_records: BTreeMap::from([(case.case_id.clone(), record)]),
             source_id_by_entity_id: BTreeMap::from([(entity_id.to_owned(), "turn-1".to_owned())]),

@@ -98,13 +98,53 @@ pub(super) fn dataset_not_ready(source: &DatasetSource) -> NotReadyState {
         retryable: false,
     }
 }
+pub(super) const DEFAULT_CONTRACT_EMBEDDING_MODEL: &str = "oneiron/eval-contract@v1";
+const MIB: usize = 1024 * 1024;
+const MIN_MAP_SIZE: usize = 32 * MIB;
 pub(super) fn beam_vault_config() -> VaultConfig {
-    let mut cfg = VaultConfig::device();
-    cfg.map_size = 32 * 1024 * 1024;
-    cfg.dimensions = BEAM_CONTRACT_EMBEDDING_DIMENSIONS;
-    cfg.embedding_model = Some("oneiron/eval-contract@v1".to_owned());
-    cfg.max_readers = 16;
-    cfg
+    VaultShape::default_contract().config()
+}
+/// What one contract vault holds: its vector width, the embedder those
+/// vectors came from, and a map size scaled to its corpus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct VaultShape {
+    pub(super) dimensions: usize,
+    pub(super) embedding_model: String,
+    pub(super) map_size: usize,
+}
+impl VaultShape {
+    /// The 4-dim fixture shape every bundled contract fixture uses.
+    pub(super) fn default_contract() -> Self {
+        Self {
+            dimensions: BEAM_CONTRACT_EMBEDDING_DIMENSIONS,
+            embedding_model: DEFAULT_CONTRACT_EMBEDDING_MODEL.to_owned(),
+            map_size: MIN_MAP_SIZE,
+        }
+    }
+
+    pub(super) fn config(&self) -> VaultConfig {
+        let mut cfg = VaultConfig::device();
+        cfg.map_size = self.map_size;
+        cfg.dimensions = self.dimensions;
+        cfg.embedding_model = Some(self.embedding_model.clone());
+        cfg.max_readers = 16;
+        cfg
+    }
+}
+/// LMDB map size for a corpus: room for the text with its indexes (CJK
+/// bigrams and postings run to tens of bytes per text byte) and the vectors
+/// with their graph, rounded up to 64 MiB, never under 32 MiB. The map is a
+/// reservation; the file only grows as pages are written.
+pub(super) fn scaled_map_size(text_bytes: u64, vector_floats: u64) -> usize {
+    let need = text_bytes
+        .saturating_mul(64)
+        .saturating_add(vector_floats.saturating_mul(4 * 8))
+        .saturating_add(MIN_MAP_SIZE as u64);
+    let step = 64 * MIB as u64;
+    let rounded = need.div_ceil(step).saturating_mul(step);
+    usize::try_from(rounded)
+        .unwrap_or(usize::MAX)
+        .max(MIN_MAP_SIZE)
 }
 pub(super) fn invalid_fixture(fixture: &BeamFixture, reason: impl Into<String>) -> BeamError {
     BeamError::InvalidFixture {
