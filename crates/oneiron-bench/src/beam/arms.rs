@@ -154,6 +154,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                             | "judge"
                             | "measure"
                             | "infra"
+                            | "verify-corpus"
                     )) =>
         {
             let path = rest.first().map_or(Path::new(""), |path| Path::new(path));
@@ -360,6 +361,7 @@ pub(super) fn temporal_result_ids(
 fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
     match sub {
         "rung-fixture" => Ok(serde_json::to_string_pretty(&super::rung_fixture::run()?)?),
+        "verify-corpus" => Ok(serde_json::to_string_pretty(&super::exactness::run(path)?)?),
         "infra" => Ok(serde_json::to_string_pretty(&super::infra::run(path)?)?),
         "measure" => Ok(serde_json::to_string_pretty(&super::model_scaffold::run(
             path,

@@ -111,6 +111,10 @@ fn print_help() {
           beam trace-export           export RetrievalTrace JSONL by fork hash\n\
           beam corpus-export          export finalized turn states to JSONL\n\
           beam corpus-replay          reload JSONL and replay stored packs and traces\n\
+          beam verify-corpus <manifest>\n\
+                                       ingest each run.jsonl corpus once; fail unless\n\
+                                       every item reads back byte-exact by sha256 and\n\
+                                       every gold evidence id resolves\n\
                                        (ONE-1311 BEAM deterministic-arm reader)\n\
           eval outcome-ingest         apply evaluator-supplied rewards from\n\
                                        JSONL to finalized retrieval runs\n\

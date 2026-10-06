@@ -1,6 +1,7 @@
 //! Subcommand run entry points and orchestration.
 
 use super::arms::adapter_for;
+use super::exactness::{ExactnessReport, verify_loaded_corpus};
 use super::fork::BaseVault;
 use super::load::{
     RunJsonlEntry, contract_context_pack_record, contract_corpus_digest, load_dataset,
@@ -59,7 +60,10 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                            trace-export\n\
                                     export RetrievalTrace records to JSONL by fork hash (ONE-1311)\n\
                            corpus-export / corpus-replay\n\
-                                    export turn-indexed runs and replay their packs and traces";
+                                    export turn-indexed runs and replay their packs and traces\n\
+                           verify-corpus <manifest>\n\
+                                    ingest each corpus once and fail unless every item reads\n\
+                                    back byte-exact (sha256) and every gold evidence id resolves";
 pub(crate) fn run_manifest_path(path: &Path) -> BeamResult<BeamReport> {
     let manifest_json = std::fs::read_to_string(path)?;
     let mut manifest = parse_manifest_json(&manifest_json)?;
@@ -156,6 +160,7 @@ pub(super) fn run_manifest(
         report_format,
         ppr_vad_sweep: ppr_vad_sweep_report(&cases),
         cases,
+        exactness: None,
     })
 }
 /// One base vault per corpus key, one fork per question. A shared corpus
@@ -183,6 +188,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
     let mut cases_by_id: BTreeMap<String, CaseReport> = BTreeMap::new();
     let mut rows_by_id: BTreeMap<String, Vec<ContextPackContractRecord>> = BTreeMap::new();
     let mut offline_runs = Vec::new();
+    let mut exactness = ExactnessReport::default();
 
     for (corpus_identity, mut group) in group_by_corpus(entries) {
         resolve_corpus_refs(path, &mut group)?;
@@ -196,9 +202,15 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
             .filter(|id| group_ids.contains(*id))
             .cloned()
             .collect();
-        let (base, loaded) = BaseVault::build(corpus_identity, |vault| {
-            load_jsonl_group(vault, &case_ids, path, group, *limit, *expected_min_results)
+        let (base, (loaded, group_exactness)) = BaseVault::build(corpus_identity, |vault| {
+            let loaded =
+                load_jsonl_group(vault, &case_ids, path, group, *limit, *expected_min_results)?;
+            // Exactness runs on the base before any fork: a mismatch stops the
+            // run here, before a single question is answered.
+            let report = verify_loaded_corpus(vault, &loaded)?.into_result()?;
+            Ok((loaded, report))
         })?;
+        exactness.merge(group_exactness);
         offline_runs.push(loaded.offline.clone());
 
         match &mut dataset_report {
@@ -287,6 +299,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         report_format,
         ppr_vad_sweep: ppr_vad_sweep_report(&cases),
         cases,
+        exactness: Some(exactness),
     })
 }
 /// Selected records grouped by vault unit, in first-appearance order. Each

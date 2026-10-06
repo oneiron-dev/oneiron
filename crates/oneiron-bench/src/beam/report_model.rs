@@ -97,6 +97,9 @@ pub(crate) struct BeamReport {
     pub(super) cases: Vec<CaseReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) ppr_vad_sweep: Option<PprVadSweepReport>,
+    /// Corpus round-trip receipts for run.jsonl runs; always exact when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) exactness: Option<super::exactness::ExactnessReport>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

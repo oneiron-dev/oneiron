@@ -340,14 +340,16 @@ pub(super) fn run_with_session(
             .collect();
         let receipt_start = session.receipts().len();
         let (base, loaded) = super::fork::BaseVault::build(corpus_identity, |vault| {
-            super::load::load_jsonl_group(
+            let loaded = super::load::load_jsonl_group(
                 vault,
                 &group_case_ids,
                 path,
                 group,
                 *limit,
                 *expected_min_results,
-            )
+            )?;
+            super::exactness::verify_loaded_corpus(vault, &loaded)?.into_result()?;
+            Ok(loaded)
         })?;
         offline_ingest.elapsed_us = offline_ingest.elapsed_us.saturating_add(
             loaded

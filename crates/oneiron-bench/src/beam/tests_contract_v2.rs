@@ -342,4 +342,100 @@ pub(crate) mod tests {
         assert_eq!(report.dataset.forks, 2);
         assert_eq!(report.dataset.records_loaded, 4);
     }
+
+    #[test]
+    fn exact_run_reports_items_checked_and_resolved_evidence() {
+        let fixture = V2Fixture::write(&["q-a", "q-b"]);
+        let report = run_manifest(&fixture.manifest(&["q-a", "q-b"]), None).unwrap();
+        let exactness = report.exactness.expect("jsonl runs carry exactness");
+        assert_eq!(
+            exactness.items_checked, 2,
+            "a shared corpus is checked once"
+        );
+        assert!(exactness.mismatches.is_empty());
+        assert_eq!(
+            exactness.evidence_ids_checked, 2,
+            "one evidence id per question"
+        );
+        assert!(exactness.evidence_ids_unresolved.is_empty());
+    }
+
+    #[test]
+    fn unresolved_gold_evidence_id_fails_the_run() {
+        let fixture = V2Fixture::write_with(&["q-a"], |record| {
+            record["gold"]["evidence_ids"] = serde_json::json!(["m-1", "m-404"]);
+        });
+        let error = run_manifest(&fixture.manifest(&["q-a"]), None)
+            .expect_err("an unresolved evidence id must fail the run")
+            .to_string();
+        assert!(error.contains("exactness check failed"), "{error}");
+        assert!(error.contains("m-404"), "{error}");
+        assert!(
+            !fixture.packs_jsonl.exists(),
+            "the run stops before any pack"
+        );
+    }
+
+    #[test]
+    fn read_back_bytes_that_differ_from_the_source_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_jsonl = dir.path().join("run.jsonl");
+        std::fs::write(
+            &run_jsonl,
+            super::super::tests_community_eval004::CONTRACT_RUN_JSONL,
+        )
+        .unwrap();
+        let mut raw: serde_json::Value = serde_json::from_str(CONTRACT_MANIFEST_JSON).unwrap();
+        raw["dataset"]["path"] = serde_json::json!(run_jsonl);
+        raw.as_object_mut().unwrap().remove("outputs");
+        let manifest = parse_manifest_json(&raw.to_string()).unwrap();
+        let vault_dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(vault_dir.path(), beam_vault_config()).unwrap();
+        let mut loaded = load_dataset(&vault, &manifest, None).unwrap();
+        let clean = super::super::exactness::verify_loaded_corpus(&vault, &loaded).unwrap();
+        assert!(clean.is_exact());
+        assert_eq!(clean.items_checked, 2);
+
+        // The source says one thing; the vault holds another.
+        let record = loaded.contract_records.values_mut().next().unwrap();
+        record.corpus[0].text.push_str(" (edited after ingest)");
+        // And an item the vault never received.
+        record.corpus[1].id = "never-ingested".to_owned();
+        let report = super::super::exactness::verify_loaded_corpus(&vault, &loaded).unwrap();
+        assert_eq!(report.mismatches.len(), 2);
+        assert!(report.mismatches[0].actual_sha256.is_some());
+        assert_eq!(report.mismatches[1].actual_sha256, None);
+        let error = report
+            .into_result()
+            .expect_err("mismatch fails")
+            .to_string();
+        assert!(error.contains("2 of 2 corpus items differ"), "{error}");
+    }
+
+    #[test]
+    fn verify_corpus_subcommand_checks_without_running_arms() {
+        let fixture = V2Fixture::write(&["q-a", "q-b"]);
+        let manifest_path = fixture.path().join("verify.run.json");
+        let mut raw: serde_json::Value = serde_json::from_str(CONTRACT_MANIFEST_JSON).unwrap();
+        raw["runId"] = serde_json::json!(V2_RUN_ID);
+        raw["dataset"]["path"] = serde_json::json!("run.jsonl");
+        raw["caseIds"] = serde_json::json!(["q-a", "q-b"]);
+        raw["outputs"]["packsJsonl"] = serde_json::json!("packs.jsonl");
+        std::fs::write(&manifest_path, raw.to_string()).unwrap();
+        let report = super::super::exactness::run(&manifest_path).expect("exact corpus");
+        assert_eq!(report.items_checked, 2);
+        assert_eq!(report.evidence_ids_checked, 2);
+        assert!(!fixture.packs_jsonl.exists(), "verify-corpus runs no arm");
+
+        let broken = V2Fixture::write_with(&["q-a"], |record| {
+            record["gold"]["evidence_ids"] = serde_json::json!(["m-9"]);
+        });
+        let broken_manifest = broken.path().join("verify.run.json");
+        raw["caseIds"] = serde_json::json!(["q-a"]);
+        std::fs::write(&broken_manifest, raw.to_string()).unwrap();
+        let error = super::super::exactness::run(&broken_manifest)
+            .expect_err("unresolved evidence fails verify-corpus")
+            .to_string();
+        assert!(error.contains("1 of 1 evidence ids unresolved"), "{error}");
+    }
 }

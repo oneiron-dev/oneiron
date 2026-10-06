@@ -126,6 +126,8 @@ pub(crate) enum BeamError {
     BudgetedContextPackUtf8(#[from] std::str::Utf8Error),
     #[error("temporary vault error: {0}")]
     TempVault(#[from] std::io::Error),
+    #[error("exactness check failed: {0}")]
+    Exactness(String),
 }
 
 mod ablations;
@@ -136,6 +138,7 @@ mod community;
 mod comparability;
 mod corpus_clock;
 mod edit_path;
+mod exactness;
 mod fixture_protocol;
 mod fork;
 mod infra;
