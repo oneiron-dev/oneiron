@@ -21,6 +21,7 @@ mod community_quality;
 mod effort;
 mod facet_status_world;
 mod relationship_scope_filter;
+mod relevance_order;
 mod rerank_hyde_session_stale;
 mod retrieval_blend;
 mod scoring_basics;
