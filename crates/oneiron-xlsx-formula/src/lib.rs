@@ -11,7 +11,7 @@
 //! The core's edit round trip wraps every host session in this engine unless
 //! the host opts out, so this crate does not depend on the core.
 //!
-//! The corpus rule is met at fork rev `c9d441cd` (0.9.3-oneiron.7): through
+//! The corpus rule is met at fork rev `2bdd595d` (0.9.3-oneiron.8): through
 //! the writer, 2,963 of the 2,967 scored fresh-Excel SpreadsheetBench
 //! workbooks (Excel for Windows truth) are fully Excel-identical (LibreOffice
 //! 25.8 matched 2,648 of the 2,951 it was measured on), and all 811 pinned

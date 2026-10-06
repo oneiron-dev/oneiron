@@ -598,10 +598,11 @@ fn functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
         fallback(&named),
         "function the engine does not implement: NOSUCHFUNCTION"
     );
-    // LET names and LAMBDA parameters are callable; storage prefixes resolve.
+    // LET names and LAMBDA parameters are callable; storage prefixes resolve,
+    // and so do Excel's unprefixed compatibility names.
     let input = fixture(
         "",
-        r#"<c r="A1"><f>_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.x,_xlpm.x+1),_xlpm.f(2))</f><v>0</v></c><c r="B1"><f>_xlfn.CONCAT(&quot;a&quot;,&quot;b&quot;)</f><v>0</v></c>"#,
+        r#"<c r="A1"><f>_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.x,_xlpm.x+1),_xlpm.f(2))</f><v>0</v></c><c r="B1"><f>_xlfn.CONCAT(&quot;a&quot;,&quot;b&quot;)</f><v>0</v></c><c r="C1"><f>NORMSDIST(0)</f><v>0</v></c>"#,
         false,
     );
     let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
@@ -609,6 +610,7 @@ fn functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
         xml.contains("<v>3</v>") && xml.contains("<v>ab</v>"),
         "{xml}"
     );
+    assert!(xml.contains("<f>NORMSDIST(0)</f><v>0.5</v>"), "{xml}");
 }
 
 #[test]
@@ -633,7 +635,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.7"
+        "0.1.0+formualizer.0.9.3-oneiron.8"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);

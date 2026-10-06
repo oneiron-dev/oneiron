@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `c9d441cd261ee69589cb25ca072ca48c1274efdc` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `2bdd595d0fe7ad3c7add68c97048aac6d69e310d` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,14 +51,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "c9d441cd261ee69589cb25ca072ca48c1274efdc" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "2bdd595d0fe7ad3c7add68c97048aac6d69e310d" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "2bdd595d0fe7ad3c7add68c97048aac6d69e310d" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "2bdd595d0fe7ad3c7add68c97048aac6d69e310d" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "2bdd595d0fe7ad3c7add68c97048aac6d69e310d" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "2bdd595d0fe7ad3c7add68c97048aac6d69e310d" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.7), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.8), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -151,11 +151,23 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.7), over `362becff`:
   difference: ADDRESS's sheet_text from a blank cell is the empty name, so
   `ADDRESS(1,1,1,TRUE,A1)` with A1 blank is `!$A$1`, while an empty argument is still no sheet.
   The scores at `c9d441cd` are unchanged: 2,963 of 2,967 and 811/811.
+- `c9d441cd..2bdd595d` (ONE-2700, the fifth parity loop, round 1, October 2026): Excel's
+  compatibility names for the distributions, with their legacy signatures. Twenty were unregistered
+  (`#NAME?`) and are registered now: BETADIST, BETAINV, BINOMDIST, CHIDIST, CHIINV, EXPONDIST,
+  FDIST, FINV, GAMMADIST, HYPGEOMDIST, LOGINV, LOGNORMDIST, NEGBINOMDIST, NORMDIST, NORMINV,
+  NORMSDIST, NORMSINV, POISSON, TDIST and WEIBULL (NORMSDIST(z) is NORM.S.DIST(z,TRUE),
+  LOGNORMDIST is cumulative, CHIDIST and FDIST are right-tailed, TDIST takes 1 or 2 tails). Six
+  existing aliases followed a wrong target and now match Excel: CHITEST, CRITBINOM, GAMMAINV,
+  ZTEST, TINV and CONFIDENCE. A probe on the Windows VM (2026-10-06, 445 scored cases,
+  `ops/excel-legacy-functions-probe-20261006.md` in the calc workspace) agrees on 442 rows (84 at
+  `c9d441cd`); the other 3 are Excel's own precision loss at 1E10 to 1E11 degrees of freedom, and
+  the tests assert the true quantile there. The scores at `2bdd595d` are unchanged: 2,963 of 2,967
+  and 811/811.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.7`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.8`.
 
 ## Licences and attribution
 
