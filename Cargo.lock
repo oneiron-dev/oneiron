@@ -3249,7 +3249,7 @@ dependencies = [
 [[package]]
 name = "formualizer-common"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=63e2ec69437bad2e953f74e53042a4a2653e954a#63e2ec69437bad2e953f74e53042a4a2653e954a"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=5b5209631f62a6858bf9f880806e1a064fcd3087#5b5209631f62a6858bf9f880806e1a064fcd3087"
 dependencies = [
  "chrono",
 ]
@@ -3257,7 +3257,7 @@ dependencies = [
 [[package]]
 name = "formualizer-eval"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=63e2ec69437bad2e953f74e53042a4a2653e954a#63e2ec69437bad2e953f74e53042a4a2653e954a"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=5b5209631f62a6858bf9f880806e1a064fcd3087#5b5209631f62a6858bf9f880806e1a064fcd3087"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -3276,6 +3276,7 @@ dependencies = [
  "quick-xml 0.39.4",
  "rand 0.8.8",
  "rayon",
+ "regex-syntax",
  "rustc-hash 1.1.0",
  "smallvec",
 ]
@@ -3283,7 +3284,7 @@ dependencies = [
 [[package]]
 name = "formualizer-macros"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=63e2ec69437bad2e953f74e53042a4a2653e954a#63e2ec69437bad2e953f74e53042a4a2653e954a"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=5b5209631f62a6858bf9f880806e1a064fcd3087#5b5209631f62a6858bf9f880806e1a064fcd3087"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -3294,7 +3295,7 @@ dependencies = [
 [[package]]
 name = "formualizer-parse"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=63e2ec69437bad2e953f74e53042a4a2653e954a#63e2ec69437bad2e953f74e53042a4a2653e954a"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=5b5209631f62a6858bf9f880806e1a064fcd3087#5b5209631f62a6858bf9f880806e1a064fcd3087"
 dependencies = [
  "formualizer-common",
  "once_cell",
@@ -3304,7 +3305,7 @@ dependencies = [
 [[package]]
 name = "formualizer-workbook"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=63e2ec69437bad2e953f74e53042a4a2653e954a#63e2ec69437bad2e953f74e53042a4a2653e954a"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=5b5209631f62a6858bf9f880806e1a064fcd3087#5b5209631f62a6858bf9f880806e1a064fcd3087"
 dependencies = [
  "calamine",
  "chrono",
@@ -8137,6 +8138,7 @@ dependencies = [
  "formualizer-workbook",
  "oneiron-docedit",
  "proptest",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",

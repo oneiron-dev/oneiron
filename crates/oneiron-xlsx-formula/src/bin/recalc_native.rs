@@ -1,4 +1,6 @@
 //! Measure the shipped retained XLSX adapter without a precision fallback.
+//! The recalculation reads this host's clock and local offset and a fresh
+//! random seed, as the edit round trip does without a session clock.
 //!
 //! Exit status: 0 recalculated natively; 3 the adapter refuses the workbook
 //! (`UnsupportedWorkbook`) and 4 the engine fails, both of which the edit
@@ -12,8 +14,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oneiron_docedit::retained_opc::{Limits, XmlLimits};
-use oneiron_xlsx_formula::FormulaError;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
+use oneiron_xlsx_formula::{FormulaError, RecalcClock};
 
 /// This measurement host's own ceilings. They equal the shipped document
 /// resource policy row; a vault host passes its resolved limits instead.
@@ -40,7 +42,11 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     if output.symlink_metadata().is_ok() {
         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "output already exists").into());
     }
-    let report = match FormualizerEngine::new().recalculate_xlsx(&fs::read(input)?, LIMITS) {
+    let report = match FormualizerEngine::new().recalculate_xlsx(
+        &fs::read(input)?,
+        LIMITS,
+        &RecalcClock::system(),
+    ) {
         Ok(report) => report,
         Err(error) => {
             let status = match error {

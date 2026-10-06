@@ -14,14 +14,27 @@ settings. Only formula caches, their value types, calculate-always flags and Exc
 error tags change; the package keeps every other byte. This crate depends on
 `oneiron-docedit`, never on the core.
 
+The recalculation behaves like Excel recalculating at edit time. Its caller passes a
+`RecalcClock`: the instant NOW() and TODAY() read (sampled once, so every call agrees), the
+local UTC offset their date and time use, and the seed of RAND, RANDBETWEEN and RANDARRAY. The
+core takes it from the host session (`EditSession::recalc_clock`), else samples the host's
+clock, its local offset and a fresh seed from the operating system when the recalc runs,
+which is what the host's own recalc reads. The same clock and seed recalculate the same
+bytes. OFFSET, INDIRECT (A1 and R1C1 text) and CELL's `col`, `contents`, `row` and `type`,
+and `address` of a reference written without a sheet, read the workbook alone and
+recalculate natively.
+
 The host's own recalc (LibreOffice headless in production) is the precision fallback for
 refused workbooks only. The adapter refuses, before any output:
 
 - external links: they keep their link-preserving route to the host, and
   `preserve_external_links` refuses host output that alters or drops a link;
-- a formula, in a cell or a defined name, that needs caller context or volatile reference
-  semantics (NOW, TODAY, RAND, RANDBETWEEN, RANDARRAY, CELL, INFO, OFFSET, INDIRECT), called
-  or passed by name (`_xleta.RANDBETWEEN`);
+- a formula, in a cell or a defined name, that reads what only the host knows: INFO (the
+  environment), and CELL without a reference (the active cell), with `"filename"` (the file's
+  path), with `"address"` of a reference that names a sheet or is computed (Excel writes
+  another sheet's cell as `'[Book.xlsx]Other'!$B$2`, the file's name), or with any info type
+  but `address`, `col`, `contents`, `row` and `type` given as text (`format`, `width` and the
+  others read formatting the engine does not model), or CELL passed by name (`_xleta.CELL`);
 - a function the engine does not implement, after the `_xlfn.`/`_xlws.` prefixes resolve
   as the engine resolves them, where the engine would cache `#NAME?`;
 - a workbook name used as a function: a defined name that holds a LAMBDA, a name passed where
@@ -60,32 +73,32 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 the fallback, as before: the external-link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.8): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.10): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
-`oneiron/parity` branch (ONE-2700 parts 1 and 3 and the third, fourth and fifth parity loops). `docs/ops/forked-dependencies.md` records the
+`oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops and
+round 6 of stage 2). `docs/ops/forked-dependencies.md` records the
 fork branch, the rev and the patches. Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `63e2ec69`: through the writer, 2,963 of the 2,967 scored fresh-Excel SpreadsheetBench
+rev `5b520963`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
 goldens reader resolves Excel's rich-value error caches since 2026-10-03), against
 LibreOffice's 753 (the unchanged evaluator scored 754). The comparison uses a pinned UTC
-instant. Production volatile or context-dependent formulas route to the precision fallback,
-not that clock.
+instant; the edit round trip uses the caller's clock (above).
 
-The shipped adapter on the same corpus (2026-10-06, `recalc_native` over the 5,455 saved
-originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP directory
-entries): 2,508 of the 3,040 formula workbooks (82.5%) recalculate natively, none is refused
-outright and 532 fall back: 279 for external links, 223 for caller context (132 clock or
-random functions, 82 OFFSET or INDIRECT only, 9 CELL), 21 for functions the engine lacks, 3
-for precision-as-displayed, 3 over the token bound and 3 for an unreadable defined name. All
-2,508 native workbooks match Excel (none of their 388,407 scored cells differs), and every
-native output passes the edit gate. The checks for escaped names and formulas, related tables
+The shipped adapter on the same corpus (2026-10-07, `recalc_native` over the 5,455 saved
+originals, 3,040 of them with formulas, on the host's clock): 2,723 of the 3,040 formula
+workbooks (89.6%) recalculate natively, none is refused outright and 317 fall back: 279 for
+external links, 21 for functions the engine lacks, 6 for CELL("filename"), 5 over the token
+bound, 3 for precision-as-displayed and 3 for an unreadable defined name. All 2,659 native
+workbooks with scored cells match Excel (none of their 441,828 scored cells differs); the
+other 64 hold only NOW, TODAY or RAND cells and cells that read them, which the scorer skips
+because a second Excel run differs there too. Every native output passes the edit gate. The checks for escaped names and formulas, related tables
 and malformed workbook metadata change no corpus workbook's decision or output bytes.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.8`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.10`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 

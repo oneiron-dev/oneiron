@@ -5,7 +5,7 @@ use std::io::{Cursor, Read, Write};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
-use oneiron_xlsx_formula::{FormulaError, preserve_external_links};
+use oneiron_xlsx_formula::{FormulaError, RecalcClock, preserve_external_links};
 use proptest::prelude::*;
 
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -139,8 +139,22 @@ fn part_bytes(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
 fn part_text(bytes: &[u8], name: &str) -> String {
     String::from_utf8(part_bytes(bytes, name).expect("part")).expect("UTF-8 XML")
 }
+/// 2026-10-06T20:00:00Z in Tokyo (UTC+9): Wednesday 7 October 2026, 05:00.
+fn tokyo() -> RecalcClock {
+    clock(540, 7)
+}
+fn clock(utc_offset_minutes: i16, seed: u64) -> RecalcClock {
+    let now = "2026-10-06T20:00:00Z".parse().expect("instant");
+    RecalcClock::new(now, utc_offset_minutes, seed).expect("real offset")
+}
 fn recalc(bytes: &[u8]) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
-    FormualizerEngine::new().recalculate_xlsx(bytes, limits())
+    recalc_at(bytes, &tokyo())
+}
+fn recalc_at(
+    bytes: &[u8],
+    clock: &RecalcClock,
+) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
+    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), clock)
 }
 /// The fallback reason, or a panic when the workbook was not refused to it.
 fn fallback(bytes: &[u8]) -> String {
@@ -762,7 +776,8 @@ fn every_part_the_writer_reads_or_returns_fits_the_host_xml_limits() {
         },
         ..limits()
     };
-    let under = |bytes: &[u8], limits| FormualizerEngine::new().recalculate_xlsx(bytes, limits);
+    let under =
+        |bytes: &[u8], limits| FormualizerEngine::new().recalculate_xlsx(bytes, limits, &tokyo());
     // One hundred shared strings are 201 elements.
     let strings = with_strings(
         &fixture(
@@ -922,36 +937,182 @@ proptest! {
     }
 }
 
+/// The cached value of `cell` in worksheet XML: the text of its `<v>`.
+fn cached<'x>(xml: &'x str, cell: &str) -> &'x str {
+    let at = xml
+        .find(&format!(r#"<c r="{cell}""#))
+        .unwrap_or_else(|| panic!("{cell} in {xml}"));
+    let value = &xml[at..xml[at..].find("</c>").map_or(xml.len(), |end| at + end)];
+    let start = value
+        .find("<v>")
+        .unwrap_or_else(|| panic!("{cell} cache in {value}"))
+        + 3;
+    &value[start
+        ..value[start..]
+            .find("</v>")
+            .map_or(value.len(), |end| start + end)]
+}
+fn number(xml: &str, cell: &str) -> f64 {
+    cached(xml, cell)
+        .parse()
+        .unwrap_or_else(|_| panic!("{cell} number in {xml}"))
+}
+
 #[test]
-fn contextual_formulas_are_refused_not_evaluated_on_the_corpus_clock() {
-    for formula in [
-        "NOW()",
-        "_xlfn.TODAY()",
-        "SUM(RAND(),1)",
-        "_xlfn.LAMBDA(_xlpm.x,NOW()+_xlpm.x)(2)",
-        // A function passed by name is called with the caller's context too.
-        "_xlfn.REDUCE(1,Input!A1:A1,_xleta.RANDBETWEEN)",
-        "_xlfn.MAP(Input!A1:A1,_xleta.INDIRECT)",
+fn clock_and_random_functions_recalculate_on_the_callers_clock() {
+    let input = fixture(
+        "",
+        r#"<c r="A1"><f>TODAY()</f><v>0</v></c><c r="B1"><f>NOW()</f><v>0</v></c><c r="C1"><f>A1+1</f><v>0</v></c><c r="D1"><f>RAND()</f><v>0</v></c><c r="E1"><f>RANDBETWEEN(1,6)</f><v>0</v></c><c r="F1"><f>RAND()-RAND()</f><v>0</v></c><c r="G1"><f>stamp+1</f><v>0</v></c><c r="H1"><f>_xlfn.REDUCE(0,_xlfn.SEQUENCE(3),_xleta.MAX)+_xlfn.LAMBDA(_xlpm.x,_xlpm.x+YEAR(NOW()))(0)</f><v>0</v></c>"#,
+        false,
+    );
+    let input = with_names(&input, r#"<definedName name="stamp">NOW()</definedName>"#);
+    // 2026-10-06T20:00:00Z is Wednesday 7 October, 05:00 in Tokyo.
+    let tokyo_output = recalc(&input).expect("native recalc");
+    let xml = part_text(&tokyo_output.bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "46302", "{xml}");
+    assert!(
+        (number(&xml, "B1") - (46302.0 + 5.0 / 24.0)).abs() < 1e-9,
+        "{xml}"
+    );
+    assert_eq!(cached(&xml, "C1"), "46303", "{xml}");
+    assert!(
+        (number(&xml, "G1") - (46303.0 + 5.0 / 24.0)).abs() < 1e-9,
+        "{xml}"
+    );
+    assert_eq!(cached(&xml, "H1"), "2029", "{xml}");
+    let rand = number(&xml, "D1");
+    assert!((0.0..1.0).contains(&rand), "{xml}");
+    let die = number(&xml, "E1");
+    assert!(die.fract() == 0.0 && (1.0..=6.0).contains(&die), "{xml}");
+    // Two RAND calls draw two values.
+    assert_ne!(number(&xml, "F1"), 0.0, "{xml}");
+    // The same instant read at UTC is still Tuesday 6 October.
+    let utc = part_text(&recalc_at(&input, &clock(0, 7)).expect("utc").bytes, OUTPUT);
+    assert_eq!(cached(&utc, "A1"), "46301", "{utc}");
+    assert!(
+        (number(&utc, "B1") - (46301.0 + 20.0 / 24.0)).abs() < 1e-9,
+        "{utc}"
+    );
+    // The same clock and seed recalculate the same bytes; another seed draws
+    // other values.
+    assert_eq!(recalc(&input).expect("again").bytes, tokyo_output.bytes);
+    let reseeded = part_text(
+        &recalc_at(&input, &clock(540, 8)).expect("seed").bytes,
+        OUTPUT,
+    );
+    assert_ne!(number(&reseeded, "D1"), rand, "{reseeded}");
+    assert_eq!(cached(&reseeded, "A1"), "46302", "{reseeded}");
+}
+
+#[test]
+fn offset_indirect_and_workbook_cell_info_recalculate_natively() {
+    let input = fixture(
+        r#"<c r="A1"><v>2</v></c><c r="B1"><v>5</v></c></row><row r="2"><c r="A2"><v>3</v></c><c r="B2" t="inlineStr"><is><t>tea</t></is></c>"#,
+        &[
+            ("A1", "OFFSET(Input!A1,1,0)"),
+            ("B1", "SUM(OFFSET(Input!B2,0,0,-2,-2))"),
+            ("C1", r#"SUM(INDIRECT("Input!A1:A2"))"#),
+            ("D1", r#"INDIRECT("Input!R2C1",FALSE)"#),
+            ("E1", r#"SUM(INDIRECT("Input!R1C1:R2C1 ",FALSE))"#),
+            ("F1", r#"CELL("row",Input!A2)"#),
+            ("G1", r#"CELL("address",B2:C3)"#),
+            ("H1", r#"CELL("contents",Input!B2)"#),
+            ("I1", r#"CELL("TYPE",Input!B2)"#),
+            ("J1", r#"CELL("col",INDIRECT("R1C[-8]",FALSE))"#),
+        ]
+        .map(|(cell, formula)| {
+            format!(
+                r#"<c r="{cell}"><f>{}</f><v>0</v></c>"#,
+                formula.replace('"', "&quot;")
+            )
+        })
+        .concat(),
+        false,
+    );
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    for (cell, value) in [
+        ("A1", "3"),
+        ("B1", "10"),
+        ("C1", "5"),
+        ("D1", "3"),
+        ("E1", "5"),
+        ("F1", "2"),
+        ("G1", "$B$2"),
+        ("H1", "tea"),
+        ("I1", "l"),
+        ("J1", "2"),
+    ] {
+        assert_eq!(cached(&xml, cell), value, "{cell}: {xml}");
+    }
+}
+
+#[test]
+fn what_only_the_host_knows_falls_back() {
+    for (formula, need) in [
+        (
+            r#"CELL("filename",A1)"#,
+            r#"CELL("filename") reads the file's path"#,
+        ),
+        (
+            r#"CELL("row")"#,
+            "CELL without a reference reads the active cell",
+        ),
+        (
+            r#"CELL("address",Input!B2)"#,
+            r#"CELL("address") of another sheet reads the file's name"#,
+        ),
+        (
+            r#"CELL("ADDRESS",OFFSET(B2,0,0))"#,
+            r#"CELL("address") of another sheet reads the file's name"#,
+        ),
+        (
+            r#"CELL("format",A1)"#,
+            "CELL info type the engine does not compute",
+        ),
+        (
+            r#"CELL("width",A1)"#,
+            "CELL info type the engine does not compute",
+        ),
+        (
+            r#"CELL(Input!A1,A1)"#,
+            "CELL info type the engine does not compute",
+        ),
+        (
+            r#"CELL(" row",A1)"#,
+            "CELL info type the engine does not compute",
+        ),
+        (r#"INFO("osversion")"#, "INFO reads the environment"),
+        (
+            r#"_xlfn.MAP(Input!A1:A1,_xleta.CELL)"#,
+            "CELL info type the engine does not compute",
+        ),
     ] {
         let input = fixture(
             "",
-            &format!(r#"<c r="A1"><f>{formula}</f><v>42</v></c>"#),
+            &format!(
+                r#"<c r="A1"><f>{}</f><v>42</v></c>"#,
+                formula.replace('"', "&quot;")
+            ),
             false,
         );
-        assert!(fallback(&input).contains("caller context"), "{formula}");
+        assert_eq!(
+            fallback(&input),
+            format!("formula needs host context: {need}"),
+            "{formula}"
+        );
     }
     // A defined name is evaluated too.
     let named = with_names(
-        &fixture("", r#"<c r="A1"><f>stamp+1</f><v>0</v></c>"#, false),
-        r#"<definedName name="stamp">NOW()</definedName>"#,
+        &fixture("", r#"<c r="A1"><f>book</f><v>0</v></c>"#, false),
+        r#"<definedName name="book">CELL(&quot;filename&quot;,Result!$A$1)</definedName>"#,
     );
-    assert!(fallback(&named).contains("caller context"));
+    assert!(fallback(&named).contains("file's path"));
     let input = fixture(
         "",
         r#"<c r="A1"><f>&quot;NOW()&quot;</f><v>0</v></c>"#,
         false,
     );
-    let output = recalc(&input).expect("literal is not a volatile call");
+    let output = recalc(&input).expect("literal is not a call");
     assert!(part_text(&output.bytes, OUTPUT).contains("<v>NOW()</v>"));
     assert_eq!(output.engine.engine, "oneiron-xlsx-formula");
 }
@@ -975,7 +1136,6 @@ fn filterxml_evaluates_like_excel_for_windows() {
 #[test]
 fn functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
     for (formula, function) in [
-        (r#"_xlfn.ENCODEURL("a b")"#, "_xlfn.ENCODEURL"),
         (
             r#"_xlfn.WEBSERVICE("https://example.invalid/")"#,
             "_xlfn.WEBSERVICE",
@@ -1042,7 +1202,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.8"
+        "0.1.0+formualizer.0.9.3-oneiron.10"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);
@@ -1060,8 +1220,15 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     );
     assert_eq!(std::fs::read(&output).expect("unchanged output"), result);
     std::fs::remove_file(&output).expect("owned output cleanup");
-    std::fs::write(&input, fixture("", r#"<c r="A1"><f>NOW()</f></c>"#, false))
-        .expect("context-dependent input");
+    std::fs::write(
+        &input,
+        fixture(
+            "",
+            r#"<c r="A1"><f>INFO(&quot;osversion&quot;)</f></c>"#,
+            false,
+        ),
+    )
+    .expect("host-dependent input");
     let refused = Command::new(env!("CARGO_BIN_EXE_recalc_native"))
         .args([&input, &output])
         .output()

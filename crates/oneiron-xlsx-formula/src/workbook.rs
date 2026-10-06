@@ -3,11 +3,14 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use formualizer_common::parse_a1_1based;
+use formualizer_eval::engine::DeterministicMode;
+use formualizer_eval::timezone::TimeZoneSpec;
 use formualizer_workbook::{
     IoError, XlsxRecalculateLimits, XlsxRecalculateOptions, recalculate_xlsx_bytes,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 
+use crate::clock::RecalcClock;
 use crate::engine::{EngineId, FormualizerEngine};
 use crate::xml::{DOC_REL, MAIN, REL, Xml, invalid, parse_part, unsupported};
 use crate::{FormulaError, Result, RouteDecision, route_workbook, storage_form};
@@ -43,16 +46,20 @@ impl FormualizerEngine {
     /// ordinary, shared and array formulas, defined names and table
     /// references. Only formula caches, their value types and the error tags
     /// Excel saves with them change; every other byte of the package is kept.
+    /// NOW() and TODAY() read `clock`'s instant at its local offset, and RAND,
+    /// RANDBETWEEN and RANDARRAY draw from its seed, as Excel recalculating
+    /// at that moment would; OFFSET and INDIRECT follow the workbook alone.
     /// `UnsupportedWorkbook` is returned before bytes are emitted, so the
     /// caller's precision fallback recalculates, for: external links,
-    /// formulas needing caller context or volatile reference semantics,
-    /// functions the engine does not implement, a workbook name used as a
-    /// function or holding a LAMBDA, string escapes the writer's reader does
-    /// not decode as Excel does (in strings, formulas, and sheet, defined and
-    /// table names), precision-as-displayed, anything the writer
-    /// cannot write exactly (such as a dynamic array larger than its saved
-    /// extent), a result over the host's limits and a recalculation the edit
-    /// round trip's corruption gate would refuse. Malformed content (such as
+    /// formulas needing what only the host knows (the file's path, the active
+    /// cell, the environment), functions the engine does not implement, a
+    /// workbook name used as a function or holding a LAMBDA, string escapes
+    /// the writer's reader does not decode as Excel does (in strings,
+    /// formulas, and sheet, defined and table names), precision-as-displayed,
+    /// anything the writer cannot write exactly (such as a dynamic array
+    /// larger than its saved extent), a result over the host's limits and a
+    /// recalculation the edit round trip's corruption gate would refuse.
+    /// Malformed content (such as
     /// a repeated cell, a boolean other than 0 or 1, a repeated sheet ID or a
     /// broken table part) and a part the writer reads over the host's XML
     /// limits, wherever a relationship puts it, are `InvalidWorkbook`,
@@ -60,13 +67,18 @@ impl FormualizerEngine {
     /// `limits` are the host's document ceilings (the vault's resolved
     /// `docedit_package_limits`); the writer runs under the stricter of each
     /// of them and its own, and every part it reads or changes fits them.
-    pub fn recalculate_xlsx(&self, bytes: &[u8], limits: Limits) -> Result<WorkbookRecalc> {
+    pub fn recalculate_xlsx(
+        &self,
+        bytes: &[u8],
+        limits: Limits,
+        clock: &RecalcClock,
+    ) -> Result<WorkbookRecalc> {
         let package = Package::open(bytes, limits)?;
         require_local(&package)?;
         let formulas = Formulas::read(&package)?;
         formulas.admit(limits)?;
         let result =
-            recalculate_xlsx_bytes(bytes, options(limits)).map_err(retained_writer_error)?;
+            recalculate_xlsx_bytes(bytes, options(limits, clock)).map_err(retained_writer_error)?;
         if result.bytes != bytes {
             keep_gated_bytes(&package, &result.bytes, &formulas)?;
         }
@@ -87,9 +99,11 @@ impl FormualizerEngine {
 
 /// The host's ceilings over the writer's own defaults, the stricter of each.
 /// The output is a package the host reads back, so it fits the archive limit.
-fn options(limits: Limits) -> XlsxRecalculateOptions {
+/// The writer reads the clock once, at `clock`'s instant and offset, and
+/// seeds the random functions from it.
+fn options(limits: Limits, clock: &RecalcClock) -> XlsxRecalculateOptions {
     let own = XlsxRecalculateLimits::default();
-    XlsxRecalculateOptions {
+    let mut options = XlsxRecalculateOptions {
         limits: XlsxRecalculateLimits {
             max_input_bytes: own.max_input_bytes.min(limits.archive_bytes),
             max_entries: own.max_entries.min(limits.entries),
@@ -100,7 +114,13 @@ fn options(limits: Limits) -> XlsxRecalculateOptions {
             ..own
         },
         ..XlsxRecalculateOptions::default()
-    }
+    };
+    options.eval_config.deterministic_mode = DeterministicMode::Enabled {
+        timestamp_utc: clock.now(),
+        timezone: TimeZoneSpec::FixedOffsetSeconds(i32::from(clock.utc_offset_minutes()) * 60),
+    };
+    options.eval_config.workbook_seed = clock.seed();
+    options
 }
 
 /// The writer refuses what it cannot write exactly, before any output; the
@@ -298,10 +318,8 @@ impl Formulas {
             .map(|name| (&name.formula, Some(name.name.as_str())));
         for (formula, defined) in cells.chain(names) {
             let inspection = crate::context::inspect_formula(formula)?;
-            if inspection.contextual {
-                return Err(unsupported(
-                    "formula needs caller context or volatile reference semantics",
-                ));
+            if let Some(need) = inspection.host_context {
+                return Err(unsupported(format!("formula needs host context: {need}")));
             }
             // The engine does not resolve a workbook name to its LAMBDA yet:
             // MAP over one, or a call of one, would cache #NAME?.

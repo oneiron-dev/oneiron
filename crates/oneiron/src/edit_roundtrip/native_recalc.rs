@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 
 use oneiron_docedit::retained_opc::Limits;
-use oneiron_xlsx_formula::FormulaError;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
+use oneiron_xlsx_formula::{FormulaError, RecalcClock};
 
 use super::{AppliedEdit, EditPlan, EditSession, OfficeDoc, OfficeFormat};
 use crate::blob_artifact::CalcEngineStamp;
@@ -12,7 +12,9 @@ use crate::error::{ArtifactError, Error, Result};
 
 /// The [`RecalcPolicy::NativeFirst`](super::RecalcPolicy::NativeFirst) wrap.
 /// It keeps the host's narrow editor, recalculates supported local workbooks
-/// in process, and uses the host's recalc as the precision fallback.
+/// in process on the session's clock ([`EditSession::recalc_clock`], else the
+/// host's clock at recalc time), and uses the host's recalc as the precision
+/// fallback.
 ///
 /// The host must preserve external-link parts. Every host output is checked
 /// against its input before the pipeline can propose it. A destructive
@@ -65,7 +67,11 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
         if doc.format != OfficeFormat::Xlsx {
             return Err(failed("native formula recalc requires XLSX"));
         }
-        match self.engine.recalculate_xlsx(&doc.bytes, self.limits) {
+        let clock = self.host.recalc_clock().unwrap_or_else(RecalcClock::system);
+        match self
+            .engine
+            .recalculate_xlsx(&doc.bytes, self.limits, &clock)
+        {
             Ok(report) => {
                 let stamp = CalcEngineStamp::new(report.engine.engine, report.engine.version)?;
                 *self.stamp.borrow_mut() = Some(stamp);
