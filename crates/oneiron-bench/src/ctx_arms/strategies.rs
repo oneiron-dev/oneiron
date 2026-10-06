@@ -979,6 +979,44 @@ impl Strategy for CanonPlacement {
             self.need(name, ctx);
             return Vec::new();
         }
-        ctx.grep_refs(&query.key)
+        self.read_within_budget(&query.key, ctx)
+    }
+}
+
+impl CanonPlacement {
+    /// The references holding `key`, read inside the window: all of them
+    /// when they fit beside the live window; else an epoch closes first
+    /// (the live log folds into references, byte-exact) and the matching
+    /// references are taken newest first while they fit. A model call never
+    /// reads past its window, so a query whose pages cannot all fit reads
+    /// the newest ones.
+    fn read_within_budget(&mut self, key: &str, ctx: &mut Ctx<'_>) -> Vec<u32> {
+        let size = |ctx: &Ctx<'_>, ids: &[u32]| -> u64 {
+            let metas = ctx.ref_metas();
+            ids.iter()
+                .filter_map(|id| metas.iter().find(|m| m.id == *id))
+                .map(|m| m.tok)
+                .sum()
+        };
+        let matching = ctx.grep_refs(key);
+        let need = size(ctx, &matching);
+        if ctx.tokens() + need <= ctx.budget() {
+            return matching;
+        }
+        self.close_epoch(ctx, 0, need);
+        let metas = ctx.ref_metas();
+        let mut room = ctx.budget().saturating_sub(ctx.tokens());
+        let mut picked = Vec::new();
+        for id in ctx.grep_refs(key).into_iter().rev() {
+            let tok = metas
+                .iter()
+                .find(|m| m.id == id)
+                .map_or(u64::MAX, |m| m.tok);
+            if tok <= room {
+                room -= tok;
+                picked.push(id);
+            }
+        }
+        picked
     }
 }

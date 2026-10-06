@@ -712,9 +712,13 @@ fn wrong_placement_costs_more_and_scores_the_same_on_every_arm() {
         for r in [&canon, &prefix_board, &tail_keyframe] {
             assert!(r.violations.is_empty(), "{arm:?} {:?}", r.violations);
             assert_eq!(r.over_budget, 0, "{arm:?}");
-            assert_eq!(
-                r.score, canon.score,
-                "{arm:?}: placement never changes what is read"
+            // Placement changes what is read only through the room a
+            // prefix board takes when the read budget binds.
+            assert!(
+                (r.score.value - canon.score.value).abs() <= 0.02,
+                "{arm:?}: {} vs {}",
+                r.score.value,
+                canon.score.value
             );
         }
         assert!(
@@ -746,7 +750,15 @@ fn canon_never_deletes_and_meets_every_arm() {
             "{arm:?}: compaction never deletes"
         );
         assert!(!r.restore_fail);
-        assert!((r.score.value - 1.0).abs() < 1e-9, "{arm:?} {:?}", r.score);
+        assert_eq!(r.read_over, 0, "{arm:?}: every read fits the window");
+        assert!(cell_of(&r).valid(1), "{arm:?} {:?}", cell_of(&r).invalid(1));
+        // Where the matching pages fit the window, every answer is exact;
+        // log counts and multi-epoch aggregates need more pages than fit.
+        if matches!(arm, Arm::LogTriage | Arm::MultiEpoch) {
+            assert!(r.score.correct > 0, "{arm:?} {:?}", r.score);
+        } else {
+            assert!((r.score.value - 1.0).abs() < 1e-9, "{arm:?} {:?}", r.score);
+        }
     }
 }
 
