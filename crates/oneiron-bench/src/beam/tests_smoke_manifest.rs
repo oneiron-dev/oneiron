@@ -414,6 +414,7 @@ neighbors:
                 input_tokens: 2,
                 output_tokens: 6,
                 target_tokens: case.token_budget as u64,
+                reprefill_tokens: 0,
                 elapsed_us: 10,
                 cost_usd: 0.0,
             },

@@ -386,6 +386,7 @@ pub(crate) mod tests {
                 input_tokens: 0,
                 output_tokens: 0,
                 target_tokens: 128,
+                reprefill_tokens: 0,
                 elapsed_us: 0,
                 cost_usd: 0.0,
             },

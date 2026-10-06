@@ -380,6 +380,7 @@ pub(crate) mod tests {
                 input_tokens: 4,
                 output_tokens: 0,
                 target_tokens: case.token_budget as u64,
+                reprefill_tokens: 0,
                 elapsed_us: 1,
                 cost_usd: 0.0,
             },

@@ -23,6 +23,7 @@ pub(super) fn elapsed_cost(elapsed_us: u64) -> CostComponentReport {
         input_tokens: 0,
         output_tokens: 0,
         target_tokens: 0,
+        reprefill_tokens: 0,
         elapsed_us,
         cost_usd: 0.0,
     }
@@ -110,6 +111,7 @@ fn amortize(cost: &CostComponentReport, questions: usize) -> CostComponentReport
     result.input_tokens = result.input_tokens.div_ceil(n);
     result.output_tokens = result.output_tokens.div_ceil(n);
     result.target_tokens = result.target_tokens.div_ceil(n);
+    result.reprefill_tokens = result.reprefill_tokens.div_ceil(n);
     result.elapsed_us = result.elapsed_us.div_ceil(n);
     result.cost_usd /= questions as f64;
     result

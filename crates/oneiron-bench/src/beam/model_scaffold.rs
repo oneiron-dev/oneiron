@@ -464,14 +464,21 @@ pub(super) fn run_with_session(
                             }
                             ArmKind::Agentic => {
                                 let mut context = String::new();
+                                // Routing calls share one system prompt, so one
+                                // provider cache: each new pack edits the cached
+                                // prompt and is charged as re-prefill.
+                                let mut routing_cache = super::reprefill::PrefixCache::default();
                                 for _ in 0..effort.retrieval_steps {
-                                    let (query, cost) = session.invoke(
-                                    &arm.model,
-                                    CallPurpose::ToolRouting,
-                                    &plan.routing_prompt.content,
-                                    &serde_json::json!({"question":case.query,"evidence":context})
-                                        .to_string(),
-                                )?;
+                                    let input = serde_json::json!({"question":case.query,"evidence":context})
+                                        .to_string();
+                                    let (query, mut cost) = session.invoke(
+                                        &arm.model,
+                                        CallPurpose::ToolRouting,
+                                        &plan.routing_prompt.content,
+                                        &input,
+                                    )?;
+                                    cost.reprefill_tokens = routing_cache
+                                        .call(format!("{}\n{input}", plan.routing_prompt.content));
                                     costs.push(cost);
                                     request_case.query = query;
                                     context = String::from_utf8(

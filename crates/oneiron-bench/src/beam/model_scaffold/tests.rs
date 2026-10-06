@@ -253,7 +253,26 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
     for row in &report.rows {
         assert!(row.query_cost.input_tokens > 0 && row.query_cost.cost_usd > 0.0);
         assert!(row.judge_overhead.cost_usd > 0.0);
+        let steps = plan
+            .efforts
+            .iter()
+            .find(|effort| effort.name == row.effort)
+            .unwrap()
+            .retrieval_steps;
+        if row.arm == ArmKind::Agentic && steps > 1 {
+            assert!(
+                row.query_cost.reprefill_tokens > 0,
+                "the second routing call edits the cached prompt"
+            );
+        } else {
+            assert_eq!(
+                row.query_cost.reprefill_tokens, 0,
+                "{:?} makes no edited repeat call",
+                row.arm
+            );
+        }
     }
+    assert!(wire["rows"][0]["query_cost"]["reprefillTokens"].is_u64());
     let det = report
         .points
         .iter()
@@ -648,6 +667,7 @@ fn offline_provider_receipt_prices_nonzero_usage() {
             input_tokens: 20,
             output_tokens: 0,
             target_tokens: 0,
+            reprefill_tokens: 0,
             elapsed_us: 8,
             cost_usd: 0.0,
         },

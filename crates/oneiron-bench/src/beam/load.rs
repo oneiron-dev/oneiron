@@ -117,6 +117,7 @@ fn finish_offline_cost(
         input_tokens: tokens,
         output_tokens: 0,
         target_tokens: 0,
+        reprefill_tokens: 0,
         elapsed_us: total_us,
         cost_usd: 0.0,
     };

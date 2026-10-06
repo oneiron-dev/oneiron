@@ -267,6 +267,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
     offline.input_tokens = offline.input_tokens.div_ceil(n);
     offline.output_tokens = offline.output_tokens.div_ceil(n);
     offline.target_tokens = offline.target_tokens.div_ceil(n);
+    offline.reprefill_tokens = offline.reprefill_tokens.div_ceil(n);
     offline.elapsed_us = offline.elapsed_us.div_ceil(n);
     offline.cost_usd /= n as f64;
     for case in &mut cases {
@@ -435,6 +436,7 @@ fn amortized_load(
     cost.elapsed_us = cost.elapsed_us.div_ceil(n);
     cost.output_tokens = cost.output_tokens.div_ceil(n);
     cost.target_tokens = cost.target_tokens.div_ceil(n);
+    cost.reprefill_tokens = cost.reprefill_tokens.div_ceil(n);
     cost.cost_usd /= n as f64;
     cost
 }

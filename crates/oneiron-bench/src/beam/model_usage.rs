@@ -73,6 +73,7 @@ impl PriceTable {
             input_tokens: usage.input.total,
             output_tokens: usage.output.total,
             target_tokens: 0,
+            reprefill_tokens: 0,
             elapsed_us,
             cost_usd,
         })
@@ -89,6 +90,7 @@ pub(super) fn sum_costs(costs: &[CostComponentReport]) -> BeamResult<CostCompone
         input_tokens: 0,
         output_tokens: 0,
         target_tokens: 0,
+        reprefill_tokens: 0,
         elapsed_us: 0,
         cost_usd: 0.0,
     };
@@ -112,6 +114,10 @@ pub(super) fn sum_costs(costs: &[CostComponentReport]) -> BeamResult<CostCompone
         sum.target_tokens = sum
             .target_tokens
             .checked_add(cost.target_tokens)
+            .ok_or_else(overflow)?;
+        sum.reprefill_tokens = sum
+            .reprefill_tokens
+            .checked_add(cost.reprefill_tokens)
             .ok_or_else(overflow)?;
         sum.elapsed_us = sum
             .elapsed_us

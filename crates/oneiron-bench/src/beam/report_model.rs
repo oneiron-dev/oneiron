@@ -16,7 +16,7 @@ pub(super) struct ComparatorMetadata {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum TokenAccountingSource {
+pub(crate) enum TokenAccountingSource {
     TokenizerCount,
     ProviderUsage,
     ElapsedOnly,
@@ -469,15 +469,20 @@ pub(super) struct CostBreakdownReport {
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct CostComponentReport {
-    pub(super) token_source: TokenAccountingSource,
+pub(crate) struct CostComponentReport {
+    pub(crate) token_source: TokenAccountingSource,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) tokenizer_id: Option<String>,
-    pub(super) input_tokens: u64,
-    pub(super) output_tokens: u64,
-    pub(super) target_tokens: u64,
-    pub(super) elapsed_us: u64,
-    pub(super) cost_usd: f64,
+    pub(crate) tokenizer_id: Option<String>,
+    pub(crate) input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) target_tokens: u64,
+    /// Prefix-cache loss: input tokens a model call prefills again because an
+    /// earlier call's cached prompt was edited, not extended (OF-263's missing
+    /// component). Counted by [`super::reprefill::reprefill_tokens`]; the
+    /// ctx-arms window's `checkpoint()` counts the same quantity.
+    pub(crate) reprefill_tokens: u64,
+    pub(crate) elapsed_us: u64,
+    pub(crate) cost_usd: f64,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

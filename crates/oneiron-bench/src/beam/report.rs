@@ -129,6 +129,7 @@ pub(super) fn query_cost_report(
         input_tokens: oneiron::count_context_pack_tokens(&case.query) as u64,
         output_tokens: pack.serialized_tokens,
         target_tokens: case.token_budget as u64,
+        reprefill_tokens: 0,
         elapsed_us: pack.serialized_elapsed_us,
         cost_usd: 0.0,
     }
@@ -140,6 +141,7 @@ pub(super) fn fixed_scorer_judge_cost() -> CostComponentReport {
         input_tokens: 0,
         output_tokens: 0,
         target_tokens: 0,
+        reprefill_tokens: 0,
         elapsed_us: 0,
         cost_usd: 0.0,
     }
@@ -151,6 +153,7 @@ pub(super) fn cost_component_from_input(input: &CostComponentInput) -> CostCompo
         input_tokens: input.input_tokens,
         output_tokens: input.output_tokens,
         target_tokens: input.target_tokens,
+        reprefill_tokens: 0,
         elapsed_us: input.elapsed_us,
         cost_usd: normalized_cost_usd(input.cost_usd),
     }
@@ -162,6 +165,7 @@ pub(super) fn not_applicable_cost() -> CostComponentReport {
         input_tokens: 0,
         output_tokens: 0,
         target_tokens: 0,
+        reprefill_tokens: 0,
         elapsed_us: 0,
         cost_usd: 0.0,
     }
