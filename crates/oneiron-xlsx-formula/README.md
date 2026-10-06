@@ -77,7 +77,10 @@ package, 2,508 of the 3,040 (82.5%) recalculate natively and 532 fall back: 279 
 links, 223 for caller context (132 clock or random functions, 82 OFFSET or INDIRECT only,
 9 CELL), 21 for functions the engine lacks, 3 for precision-as-displayed, 3 over the token
 bound and 3 for an unreadable defined name. All 2,508 native workbooks match Excel (none of
-their 388,407 scored cells differs), and every native output passes the edit gate.
+their 388,407 scored cells differs), and every native output passes the edit gate. At
+`63e2ec69`, with the malformed-content, LAMBDA-name, escape and XML-limit checks, a rerun
+with directory entries admitted gave the same decision and the same output bytes on every
+workbook.
 
 Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.8`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
