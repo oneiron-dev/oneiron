@@ -22,7 +22,10 @@ clock, its local offset and a fresh seed from the operating system when the reca
 which is what the host's own recalc reads. The same clock and seed recalculate the same
 bytes. OFFSET, INDIRECT (A1 and R1C1 text) and CELL's `col`, `contents`, `row` and `type`,
 and `address` of a reference written without a sheet, read the workbook alone and
-recalculate natively.
+recalculate natively. A defined name evaluates for the formula that uses it, as Excel
+evaluates it: relative R1C1 text and ROW() in a name read the calling cell
+(`Prev = INDIRECT("RC[-1]",FALSE)` in B2 reads A2), and a random call in a name is one more
+draw of the calling formula, so the same clock and seed still recalculate the same bytes.
 
 The host's own recalc (LibreOffice headless in production) is the precision fallback for
 refused workbooks only. The adapter refuses, before any output:
@@ -35,6 +38,10 @@ refused workbooks only. The adapter refuses, before any output:
   another sheet's cell as `'[Book.xlsx]Other'!$B$2`, the file's name), or with any info type
   but `address`, `col`, `contents`, `row` and `type` given as text (`format`, `width` and the
   others read formatting the engine does not model), or CELL passed by name (`_xleta.CELL`);
+- INDIRECT text that names a workbook (`'[Book.xlsx]Sheet1'!A1`, `Book.xlsx!Total`), literal
+  or computed: Excel reads it from that workbook when it is open, this one under the name it
+  was saved with, which the recalc does not know. The writer refuses the workbook as soon as
+  evaluation meets such text, whatever IFERROR makes of the closed workbook's `#REF!`;
 - a function the engine does not implement, after the `_xlfn.`/`_xlws.` prefixes resolve
   as the engine resolves them, where the engine would cache `#NAME?`;
 - a workbook name used as a function: a defined name that holds a LAMBDA, a name passed where
@@ -80,7 +87,7 @@ round 6 of stage 2). `docs/ops/forked-dependencies.md` records the
 fork branch, the rev and the patches. Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `5b520963`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
+rev `67f19c08`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the

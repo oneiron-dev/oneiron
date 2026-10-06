@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `5b5209631f62a6858bf9f880806e1a064fcd3087` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `67f19c08c340e5c576b6dba4e4a2c5d4da839f6a` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,11 +51,11 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "5b5209631f62a6858bf9f880806e1a064fcd3087" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "5b5209631f62a6858bf9f880806e1a064fcd3087" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "5b5209631f62a6858bf9f880806e1a064fcd3087" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "5b5209631f62a6858bf9f880806e1a064fcd3087" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "5b5209631f62a6858bf9f880806e1a064fcd3087" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "67f19c08c340e5c576b6dba4e4a2c5d4da839f6a" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "67f19c08c340e5c576b6dba4e4a2c5d4da839f6a" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "67f19c08c340e5c576b6dba4e4a2c5d4da839f6a" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "67f19c08c340e5c576b6dba4e4a2c5d4da839f6a" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "67f19c08c340e5c576b6dba4e4a2c5d4da839f6a" }
 ```
 
 Fork branch `oneiron/parity` (0.9.3-oneiron.10), over `362becff`:
@@ -195,6 +195,18 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.10), over `362becff`:
   of its own, not an escape (`TEXT(203,"!r0c00")` is `!r2c03`), and shows a number under a text
   section as General. At `5b520963` the fork matches 2,967 of the 2,967 SpreadsheetBench
   workbooks and all 811 pinned goldens.
+- `67f19c08` (review of oneiron #1295, 2026-10-07): a defined name evaluates for the formula
+  that uses it, as Excel evaluates it. Relative R1C1 text, ROW() and `#This Row` in a name read
+  the calling cell (`Prev = INDIRECT("RC[-1]",FALSE)` in B2 reads A2; the name was read from A1,
+  whose previous column wraps to XFD1). A random call in a name is one more draw of the calling
+  formula: resolving a name no longer restarts the cell's draws
+  (`RAND()+ROW(Anchor)-RAND()` was exactly 1), and a name's own graph vertex draws apart from
+  every cell, so the same seed gives the same caches however the cells are scheduled. INDIRECT
+  text that names a workbook (`'[Book.xlsx]Sheet1'!A1`, `Book.xlsx!Total` where no sheet has
+  that name) gives the closed workbook's `#REF!` and is recorded
+  (`Engine::text_named_workbook`); the cache writer then refuses the workbook ("INDIRECT text
+  that names a workbook"), since Excel reads such text from the open workbook of that name,
+  this one included under its saved name. Still 2,967 of 2,967 and 811/811.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build

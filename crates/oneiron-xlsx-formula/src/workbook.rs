@@ -48,11 +48,15 @@ impl FormualizerEngine {
     /// Excel saves with them change; every other byte of the package is kept.
     /// NOW() and TODAY() read `clock`'s instant at its local offset, and RAND,
     /// RANDBETWEEN and RANDARRAY draw from its seed, as Excel recalculating
-    /// at that moment would; OFFSET and INDIRECT follow the workbook alone.
+    /// at that moment would; OFFSET and INDIRECT follow the workbook alone,
+    /// and a defined name evaluates for the formula that uses it (its relative
+    /// R1C1 text reads the calling cell, its random calls are that formula's
+    /// draws).
     /// `UnsupportedWorkbook` is returned before bytes are emitted, so the
     /// caller's precision fallback recalculates, for: external links,
     /// formulas needing what only the host knows (the file's path, the active
-    /// cell, the environment), functions the engine does not implement, a
+    /// cell, the environment), INDIRECT text that names a workbook (the
+    /// writer refuses it as evaluation meets it), functions the engine does not implement, a
     /// workbook name used as a function or holding a LAMBDA, string escapes
     /// the writer's reader does not decode as Excel does (in strings,
     /// formulas, and sheet, defined and table names), precision-as-displayed,

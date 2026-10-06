@@ -1118,6 +1118,135 @@ fn what_only_the_host_knows_falls_back() {
 }
 
 #[test]
+fn relative_references_in_a_name_read_the_calling_cell() {
+    // Prev = INDIRECT("RC[-1]",FALSE) in B2 is A2, as Excel reads it (review
+    // of #1295: the name was read from A1, whose previous column wraps to
+    // XFD1, and B2 cached 0).
+    let input = with_names(
+        &fixture(
+            "",
+            r#"<c r="A1"><v>0</v></c></row><row r="2"><c r="A2"><v>10</v></c><c r="B2"><f>Prev</f><v>0</v></c><c r="C2"><f>ROW(Prev)</f><v>0</v></c><c r="D2"><f>COLUMN(Prev)</f><v>0</v></c>"#,
+            false,
+        ),
+        r#"<definedName name="Prev">INDIRECT(&quot;RC[-1]&quot;,FALSE)</definedName>"#,
+    );
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    for (cell, value) in [("B2", "10"), ("C2", "2"), ("D2", "3")] {
+        assert_eq!(cached(&xml, cell), value, "{cell}: {xml}");
+    }
+}
+
+#[test]
+fn resolving_a_name_keeps_the_cells_random_draws_apart() {
+    // RAND()+ROW(Anchor)-RAND() cached exactly 1 with seeds 7, 8 and 9:
+    // resolving Anchor restarted the cell's draws, so the second RAND
+    // repeated the first. It draws what RAND()+ROW(Input!$A$1)-RAND() draws.
+    let workbook = |formula: &str| {
+        with_names(
+            &fixture(
+                "",
+                &format!(r#"<c r="A1"><f>{formula}</f><v>0</v></c>"#),
+                false,
+            ),
+            r#"<definedName name="Anchor">OFFSET(Input!$A$1,0,0)</definedName>"#,
+        )
+    };
+    for seed in [7, 8, 9] {
+        let at = clock(540, seed);
+        let named = recalc_at(&workbook("RAND()+ROW(Anchor)-RAND()"), &at).expect("named");
+        let plain = recalc_at(&workbook("RAND()+ROW(Input!$A$1)-RAND()"), &at).expect("plain");
+        let (named, plain) = (
+            part_text(&named.bytes, OUTPUT),
+            part_text(&plain.bytes, OUTPUT),
+        );
+        assert_ne!(cached(&named, "A1"), "1", "seed {seed}: {named}");
+        assert_eq!(cached(&named, "A1"), cached(&plain, "A1"), "seed {seed}");
+    }
+}
+
+#[test]
+fn a_random_name_recalculates_the_same_for_the_same_clock_and_seed() {
+    // RandomDraw = RAND() read from many cells cached different values for
+    // the same clock and seed (review of #1295). Each reading is its cell's
+    // own next draw: B<n> = RandomDraw caches what B<n> = RAND() does, and
+    // two readings in one formula differ.
+    const ROWS: u32 = 40;
+    let workbook = |reading: &str, twice: &str| {
+        let cells: String = (1..=ROWS)
+            .map(|row| {
+                let start = if row == 1 {
+                    String::new()
+                } else {
+                    format!(r#"</row><row r="{row}">"#)
+                };
+                format!(
+                    r#"{start}<c r="A{row}"><f>RAND()+RAND()</f><v>0</v></c><c r="B{row}"><f>{reading}</f><v>0</v></c><c r="C{row}"><f>{twice}</f><v>0</v></c>"#
+                )
+            })
+            .collect();
+        with_names(
+            &fixture("", &cells, false),
+            r#"<definedName name="RandomDraw">RAND()</definedName>"#,
+        )
+    };
+    let named = workbook("RandomDraw", "RandomDraw-RandomDraw");
+    let first = recalc(&named).expect("named").bytes;
+    for _ in 0..4 {
+        assert_eq!(recalc(&named).expect("again").bytes, first);
+    }
+    let named = part_text(&first, OUTPUT);
+    let plain = part_text(
+        &recalc(&workbook("RAND()", "RAND()-RAND()"))
+            .expect("plain")
+            .bytes,
+        OUTPUT,
+    );
+    for row in 1..=ROWS {
+        for column in ["A", "B", "C"] {
+            let cell = format!("{column}{row}");
+            assert_eq!(cached(&named, &cell), cached(&plain, &cell), "{cell}");
+        }
+        assert_ne!(cached(&named, &format!("C{row}")), "0", "C{row}");
+    }
+}
+
+#[test]
+fn indirect_text_naming_a_workbook_falls_back() {
+    // Open as self-bookref.xlsx, Excel reads
+    // INDIRECT("'[self-bookref.xlsx]Input'!A1") from this workbook (42). The
+    // recalc knows neither the file's name nor which workbooks are open, so
+    // such text, literal or computed, even behind IFERROR, goes to the
+    // fallback instead of caching #REF!.
+    for formula in [
+        r#"INDIRECT("'[self-bookref.xlsx]Input'!A1")"#,
+        r#"INDIRECT(Input!B1)"#,
+        r#"IFERROR(INDIRECT("[self-bookref.xlsx]Input!"&"A1"),0)"#,
+    ] {
+        let input = fixture(
+            r#"<c r="A1"><v>42</v></c><c r="B1" t="inlineStr"><is><t>'[self-bookref.xlsx]Input'!A1</t></is></c>"#,
+            &format!(
+                r#"<c r="A1"><f>{}</f><v>0</v></c>"#,
+                formula.replace('&', "&amp;").replace('"', "&quot;")
+            ),
+            false,
+        );
+        assert_eq!(
+            fallback(&input),
+            "INDIRECT text that names a workbook (workbook)",
+            "{formula}"
+        );
+    }
+    // The same reference without the workbook is read natively.
+    let input = fixture(
+        r#"<c r="A1"><v>42</v></c>"#,
+        r#"<c r="A1"><f>INDIRECT(&quot;Input!A1&quot;)</f><v>0</v></c>"#,
+        false,
+    );
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "42", "{xml}");
+}
+
+#[test]
 fn filterxml_evaluates_like_excel_for_windows() {
     // Windows is the reference where Excel for Windows and Mac differ (ruling 2026-10-01);
     // the truth for FILTERXML cells was recorded on Excel for Windows 16.0.20430.

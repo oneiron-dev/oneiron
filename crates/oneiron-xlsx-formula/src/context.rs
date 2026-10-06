@@ -22,7 +22,8 @@ pub(super) struct Inspection {
     /// What the formula reads that only the host knows: the file's path, the
     /// active cell or the environment. The clock and the random seed come
     /// from the caller ([`crate::RecalcClock`]); OFFSET and INDIRECT read the
-    /// workbook alone.
+    /// workbook alone. INDIRECT text that names a workbook, which may be
+    /// computed, is the writer's to refuse as evaluation meets it.
     pub host_context: Option<&'static str>,
     /// A function the engine's registry does not resolve. The engine would
     /// cache `#NAME?` for it where Excel computes a value.
