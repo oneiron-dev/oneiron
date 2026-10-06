@@ -550,6 +550,8 @@ pub(crate) mod tests {
                 records_loaded: 1,
                 text_fields_indexed: 1,
                 pending_vectors: 0,
+                base_vaults: 1,
+                forks: 0,
             },
             fixture_id: "dataset".to_owned(),
             fixture_description: "dataset".to_owned(),

@@ -4,14 +4,13 @@ use super::{
     judge::AnswerPromptPin,
     llm_host::{HostConfig, ModelPin, ModelSession},
     llm_judge::{JudgeConfig, JudgeItem, score_item},
-    load::{load_dataset, resolve_manifest_paths},
+    load::resolve_manifest_paths,
     model::ArmKind,
     model_usage::sum_costs,
     nuggets::{NuggetJudgment, WedgeBucket},
     report_model::{CostComponentReport, ScoreReport, TokenAccountingSource},
     runner::parse_manifest_json,
     scorer::FixedBeamScorer,
-    util::beam_vault_config,
 };
 use oneiron::{CallPurpose, ModelId, Vault};
 use serde::{Deserialize, Serialize};
@@ -264,7 +263,13 @@ pub(super) fn run_with_session(
     let mut manifest = parse_manifest_json(&std::fs::read_to_string(&plan.retrieval_manifest)?)?;
     resolve_manifest_paths(&mut manifest, &plan.retrieval_manifest);
     manifest.outputs = None;
-    let super::model::DatasetSource::Jsonl { path, arm_id, .. } = &manifest.dataset else {
+    let super::model::DatasetSource::Jsonl {
+        path,
+        arm_id,
+        limit,
+        expected_min_results,
+    } = &manifest.dataset
+    else {
         return Err(refusal("measured answering requires run.jsonl corpus"));
     };
     // Check the complete selected dataset before any answerer or judge call.
@@ -314,13 +319,36 @@ pub(super) fn run_with_session(
     offline_ingest.tokenizer_id = Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.into());
     let mut offline_index = elapsed_cost(0);
     let mut offline_receipts = Vec::new();
-    for id in &manifest.case_ids {
-        let dir = tempfile::tempdir()?;
-        let vault = Vault::open(dir.path(), beam_vault_config())?;
-        let mut one = manifest.clone();
-        one.case_ids = vec![id.clone()];
+    // One base vault per corpus, one fork per question: a shared corpus is
+    // ingested (and its offline cost counted) once, never once per question.
+    let groups = super::runner::group_by_corpus(super::load::select_run_jsonl_records(
+        &manifest,
+        path,
+        arm_id.as_deref(),
+    )?);
+    for (corpus_identity, mut group) in groups {
+        super::load::resolve_corpus_refs(path, &mut group)?;
+        let group_ids: BTreeSet<String> = group
+            .iter()
+            .map(|entry| entry.record.question_id.clone())
+            .collect();
+        let group_case_ids: Vec<String> = manifest
+            .case_ids
+            .iter()
+            .filter(|id| group_ids.contains(*id))
+            .cloned()
+            .collect();
         let receipt_start = session.receipts().len();
-        let loaded = load_dataset(&vault, &one, None)?;
+        let (base, loaded) = super::fork::BaseVault::build(corpus_identity, |vault| {
+            super::load::load_jsonl_group(
+                vault,
+                &group_case_ids,
+                path,
+                group,
+                *limit,
+                *expected_min_results,
+            )
+        })?;
         offline_ingest.elapsed_us = offline_ingest.elapsed_us.saturating_add(
             loaded
                 .offline
@@ -330,208 +358,214 @@ pub(super) fn run_with_session(
         offline_index.elapsed_us = offline_index
             .elapsed_us
             .saturating_add(loaded.offline_index_build_us);
-        let record = loaded
-            .contract_records
-            .get(id)
-            .ok_or_else(|| refusal("measured answering requires run.jsonl corpus"))?;
-        plan.judge.validate_dataset(&record.dataset.id)?;
-        offline_ingest.input_tokens += record
-            .corpus_items()
-            .iter()
-            .map(|c| oneiron::count_context_pack_tokens(&c.text) as u64)
-            .sum::<u64>();
-        let case = loaded
-            .cases
-            .first()
-            .ok_or_else(|| refusal("missing case"))?;
-        if plan
-            .chroma
-            .as_ref()
-            .is_some_and(|config| config.retrieval_k != case.limit)
-        {
-            return Err(refusal("Chroma and deterministic retrieval_k must match"));
-        }
-        let chroma_started = Instant::now();
-        let chroma = plan
-            .chroma
-            .as_ref()
-            .map(|config| super::chroma::ChromaArm::ingest(config, record.corpus_items()))
-            .transpose()?;
-        if chroma.is_some() {
-            offline_index.elapsed_us += chroma_started
-                .elapsed()
-                .as_micros()
-                .min(u128::from(u64::MAX)) as u64;
-        }
-        // Only calls made while loading this case belong to offline work.
+        offline_ingest.input_tokens += loaded.offline.input_tokens;
+        // Only calls made while loading this corpus belong to offline work.
         // Query and judge calls below are deliberately excluded.
         offline_receipts.extend(session.receipts().into_iter().skip(receipt_start));
-        let (factor_overrides, observations) =
-            super::ablations::access_factors(&vault, plan.temporal_now)?;
-        access_factor_observations.extend(observations);
-        for effort in &plan.efforts {
-            for arm in &plan.answerers {
-                let legs: &[Option<&str>] = if arm.arm == ArmKind::Deterministic {
-                    &[
-                        None,
-                        Some("ablation-1:context-budget-off"),
-                        Some("ablation-2:access-factor-neutral"),
-                    ]
-                } else {
-                    &[None]
-                };
-                for &leg in legs {
-                    if leg == Some("ablation-2:access-factor-neutral")
-                        && factor_overrides.is_empty()
-                    {
-                        ablation_unavailable.push(AblationUnavailable {
-                            question_id: id.clone(),
-                            effort: effort.name.clone(),
-                            ablation: "ablation-2:access-factor-neutral",
-                            reason: "no_claim_rows",
-                        });
-                        continue;
-                    }
-                    let mut request_case = case.clone();
-                    request_case.token_budget = if leg == Some("ablation-1:context-budget-off") {
-                        record
-                            .corpus_items()
-                            .iter()
-                            .map(|row| oneiron::count_context_pack_tokens(&row.text))
-                            .sum::<usize>()
-                            .saturating_add(8192)
-                            .max(effort.token_budget)
+        for id in &group_case_ids {
+            let fork = base.fork(id)?;
+            let vault = &fork.vault;
+            let record = loaded
+                .contract_records
+                .get(id)
+                .ok_or_else(|| refusal("measured answering requires run.jsonl corpus"))?;
+            plan.judge.validate_dataset(&record.dataset.id)?;
+            let case = loaded
+                .cases
+                .iter()
+                .find(|case| &case.case_id == id)
+                .ok_or_else(|| refusal("missing case"))?;
+            if plan
+                .chroma
+                .as_ref()
+                .is_some_and(|config| config.retrieval_k != case.limit)
+            {
+                return Err(refusal("Chroma and deterministic retrieval_k must match"));
+            }
+            let chroma_started = Instant::now();
+            let chroma = plan
+                .chroma
+                .as_ref()
+                .map(|config| super::chroma::ChromaArm::ingest(config, record.corpus_items()))
+                .transpose()?;
+            if chroma.is_some() {
+                offline_index.elapsed_us += chroma_started
+                    .elapsed()
+                    .as_micros()
+                    .min(u128::from(u64::MAX)) as u64;
+            }
+            let (factor_overrides, observations) =
+                super::ablations::access_factors(vault, plan.temporal_now)?;
+            access_factor_observations.extend(observations);
+            for effort in &plan.efforts {
+                for arm in &plan.answerers {
+                    let legs: &[Option<&str>] = if arm.arm == ArmKind::Deterministic {
+                        &[
+                            None,
+                            Some("ablation-1:context-budget-off"),
+                            Some("ablation-2:access-factor-neutral"),
+                        ]
                     } else {
-                        effort.token_budget
+                        &[None]
                     };
-                    let started = Instant::now();
-                    let mut costs = Vec::new();
-                    let context = match arm.arm {
-                        ArmKind::Deterministic => {
-                            let pack = if leg == Some("ablation-2:access-factor-neutral") {
-                                super::arms::run_budgeted_context_pack(
-                                    || {
-                                        super::arms::configured_context_pack_builder(
-                                            &vault,
-                                            &request_case,
-                                        )
-                                        .with_temporal_now(
-                                            request_case.question_time.unwrap_or(plan.temporal_now),
-                                        )
-                                        .with_access_factor_overrides(&factor_overrides)
-                                    },
-                                    &vault,
-                                    &request_case,
-                                )?
-                            } else {
-                                measured_pack(&vault, &request_case, plan.temporal_now)?
-                            };
-                            String::from_utf8(pack.serialized)
-                                .map_err(|_| refusal("invalid pack text"))?
+                    for &leg in legs {
+                        if leg == Some("ablation-2:access-factor-neutral")
+                            && factor_overrides.is_empty()
+                        {
+                            ablation_unavailable.push(AblationUnavailable {
+                                question_id: id.clone(),
+                                effort: effort.name.clone(),
+                                ablation: "ablation-2:access-factor-neutral",
+                                reason: "no_claim_rows",
+                            });
+                            continue;
                         }
-                        ArmKind::Agentic => {
-                            let mut context = String::new();
-                            for _ in 0..effort.retrieval_steps {
-                                let (query, cost) = session.invoke(
+                        let mut request_case = case.clone();
+                        request_case.token_budget = if leg == Some("ablation-1:context-budget-off")
+                        {
+                            record
+                                .corpus_items()
+                                .iter()
+                                .map(|row| oneiron::count_context_pack_tokens(&row.text))
+                                .sum::<usize>()
+                                .saturating_add(8192)
+                                .max(effort.token_budget)
+                        } else {
+                            effort.token_budget
+                        };
+                        let started = Instant::now();
+                        let mut costs = Vec::new();
+                        let context = match arm.arm {
+                            ArmKind::Deterministic => {
+                                let pack = if leg == Some("ablation-2:access-factor-neutral") {
+                                    super::arms::run_budgeted_context_pack(
+                                        || {
+                                            super::arms::configured_context_pack_builder(
+                                                vault,
+                                                &request_case,
+                                            )
+                                            .with_temporal_now(
+                                                request_case
+                                                    .question_time
+                                                    .unwrap_or(plan.temporal_now),
+                                            )
+                                            .with_access_factor_overrides(&factor_overrides)
+                                        },
+                                        vault,
+                                        &request_case,
+                                    )?
+                                } else {
+                                    measured_pack(vault, &request_case, plan.temporal_now)?
+                                };
+                                String::from_utf8(pack.serialized)
+                                    .map_err(|_| refusal("invalid pack text"))?
+                            }
+                            ArmKind::Agentic => {
+                                let mut context = String::new();
+                                for _ in 0..effort.retrieval_steps {
+                                    let (query, cost) = session.invoke(
                                     &arm.model,
                                     CallPurpose::ToolRouting,
                                     &plan.routing_prompt.content,
                                     &serde_json::json!({"question":case.query,"evidence":context})
                                         .to_string(),
                                 )?;
-                                costs.push(cost);
-                                request_case.query = query;
-                                context = String::from_utf8(
-                                    measured_pack(&vault, &request_case, plan.temporal_now)?
-                                        .serialized,
-                                )
-                                .map_err(|_| refusal("invalid pack text"))?;
+                                    costs.push(cost);
+                                    request_case.query = query;
+                                    context = String::from_utf8(
+                                        measured_pack(vault, &request_case, plan.temporal_now)?
+                                            .serialized,
+                                    )
+                                    .map_err(|_| refusal("invalid pack text"))?;
+                                }
+                                context
                             }
-                            context
-                        }
-                        ArmKind::VanillaRag => chroma
-                            .as_ref()
-                            .ok_or_else(|| refusal("Chroma not configured"))?
-                            .retrieve(
-                                loaded
-                                    .query_vector_by_case_id
-                                    .get(id)
-                                    .ok_or_else(|| refusal("Chroma query vector missing"))?,
-                            )?,
-                        ArmKind::BackboneSolo => String::new(),
-                        ArmKind::Chat => {
-                            chat_history(record.corpus_items(), path, effort.token_budget)?
-                        }
-                        _ => return Err(refusal("arm not supported by shared model scaffold")),
-                    };
-                    let context = bounded_context(&context, request_case.token_budget);
-                    let (answer_text, cost) = answer(
-                        session,
-                        &arm.model,
-                        &plan.answer_prompt,
-                        &case.query,
-                        &context,
-                    )?;
-                    costs.push(cost);
-                    let mut query_cost = sum_costs(&costs)?;
-                    query_cost.elapsed_us =
-                        started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
-                    // Gold is first opened here, after the answer is immutable.
-                    let gold = record
-                        .gold
-                        .as_ref()
-                        .ok_or_else(|| refusal("model scoring requires gold"))?;
-                    let labels = gold
-                        .labels
-                        .as_ref()
-                        .ok_or_else(|| refusal("gold ability and wedge bucket required"))?;
-                    let ability = labels["ability"]
-                        .as_str()
-                        .ok_or_else(|| refusal("missing ability"))?
-                        .to_owned();
-                    let wedge_bucket: WedgeBucket =
-                        serde_json::from_value(labels["wedge_bucket"].clone())?;
-                    let mut best_verdict: Option<f64> = None;
-                    let mut judge_costs = Vec::new();
-                    for gold_answer in &gold.answers {
-                        let judged = score_item(
+                            ArmKind::VanillaRag => chroma
+                                .as_ref()
+                                .ok_or_else(|| refusal("Chroma not configured"))?
+                                .retrieve(
+                                    loaded
+                                        .query_vector_by_case_id
+                                        .get(id)
+                                        .ok_or_else(|| refusal("Chroma query vector missing"))?,
+                                )?,
+                            ArmKind::BackboneSolo => String::new(),
+                            ArmKind::Chat => {
+                                chat_history(record.corpus_items(), path, effort.token_budget)?
+                            }
+                            _ => return Err(refusal("arm not supported by shared model scaffold")),
+                        };
+                        let context = bounded_context(&context, request_case.token_budget);
+                        let (answer_text, cost) = answer(
                             session,
-                            &plan.judge,
+                            &arm.model,
                             &plan.answer_prompt,
-                            &JudgeItem {
-                                question: case.query.clone(),
-                                candidate_answer: answer_text.clone(),
-                                gold_answer: gold_answer.clone(),
-                                ability: ability.clone(),
-                                wedge_bucket,
-                            },
+                            &case.query,
+                            &context,
                         )?;
-                        best_verdict = Some(
-                            best_verdict.map_or(judged.verdict, |best| best.max(judged.verdict)),
-                        );
-                        judge_costs.push(judged.judge_cost);
-                    }
-                    let row = ModelRow {
-                        ablation: leg.map(str::to_owned),
-                        question_id: id.clone(),
-                        arm: arm.arm,
-                        effort: effort.name.clone(),
-                        answerer: arm.model.model_id.clone(),
-                        answer: answer_text,
-                        // These are alternative answers under one question label,
-                        // not independent factual nuggets. Bill every alias vote.
-                        scoring: FixedBeamScorer.score_nuggets(&[NuggetJudgment {
-                            ability,
-                            wedge_bucket,
-                            value: best_verdict.ok_or_else(|| refusal("gold aliases required"))?,
-                        }])?,
-                        query_cost,
-                        judge_overhead: sum_costs(&judge_costs)?,
-                    };
-                    if leg.is_some() {
-                        ablation_rows.push(row);
-                    } else {
-                        rows.push(row);
+                        costs.push(cost);
+                        let mut query_cost = sum_costs(&costs)?;
+                        query_cost.elapsed_us =
+                            started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+                        // Gold is first opened here, after the answer is immutable.
+                        let gold = record
+                            .gold
+                            .as_ref()
+                            .ok_or_else(|| refusal("model scoring requires gold"))?;
+                        let labels = gold
+                            .labels
+                            .as_ref()
+                            .ok_or_else(|| refusal("gold ability and wedge bucket required"))?;
+                        let ability = labels["ability"]
+                            .as_str()
+                            .ok_or_else(|| refusal("missing ability"))?
+                            .to_owned();
+                        let wedge_bucket: WedgeBucket =
+                            serde_json::from_value(labels["wedge_bucket"].clone())?;
+                        let mut best_verdict: Option<f64> = None;
+                        let mut judge_costs = Vec::new();
+                        for gold_answer in &gold.answers {
+                            let judged = score_item(
+                                session,
+                                &plan.judge,
+                                &plan.answer_prompt,
+                                &JudgeItem {
+                                    question: case.query.clone(),
+                                    candidate_answer: answer_text.clone(),
+                                    gold_answer: gold_answer.clone(),
+                                    ability: ability.clone(),
+                                    wedge_bucket,
+                                },
+                            )?;
+                            best_verdict = Some(
+                                best_verdict
+                                    .map_or(judged.verdict, |best| best.max(judged.verdict)),
+                            );
+                            judge_costs.push(judged.judge_cost);
+                        }
+                        let row = ModelRow {
+                            ablation: leg.map(str::to_owned),
+                            question_id: id.clone(),
+                            arm: arm.arm,
+                            effort: effort.name.clone(),
+                            answerer: arm.model.model_id.clone(),
+                            answer: answer_text,
+                            // These are alternative answers under one question label,
+                            // not independent factual nuggets. Bill every alias vote.
+                            scoring: FixedBeamScorer.score_nuggets(&[NuggetJudgment {
+                                ability,
+                                wedge_bucket,
+                                value: best_verdict
+                                    .ok_or_else(|| refusal("gold aliases required"))?,
+                            }])?,
+                            query_cost,
+                            judge_overhead: sum_costs(&judge_costs)?,
+                        };
+                        if leg.is_some() {
+                            ablation_rows.push(row);
+                        } else {
+                            rows.push(row);
+                        }
                     }
                 }
             }

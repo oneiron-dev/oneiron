@@ -137,6 +137,7 @@ mod comparability;
 mod corpus_clock;
 mod edit_path;
 mod fixture_protocol;
+mod fork;
 mod infra;
 mod judge;
 mod llm_host;

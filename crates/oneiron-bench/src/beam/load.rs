@@ -69,6 +69,29 @@ pub(super) fn load_dataset(
         ),
         source => Err(BeamError::DatasetNotReady(dataset_not_ready(source))),
     }?;
+    finish_offline_cost(&mut loaded, fixture, started);
+    Ok(loaded)
+}
+/// Ingests one corpus group into `vault`, timed like [`load_dataset`].
+pub(super) fn load_jsonl_group(
+    vault: &Vault,
+    case_ids: &[String],
+    path: &Path,
+    entries: Vec<RunJsonlEntry>,
+    limit: usize,
+    expected_min_results: usize,
+) -> BeamResult<LoadedDataset> {
+    let started = std::time::Instant::now();
+    let mut loaded =
+        ingest_run_jsonl_entries(vault, case_ids, path, entries, limit, expected_min_results)?;
+    finish_offline_cost(&mut loaded, None, started);
+    Ok(loaded)
+}
+fn finish_offline_cost(
+    loaded: &mut LoadedDataset,
+    fixture: Option<&BeamFixture>,
+    started: std::time::Instant,
+) {
     let tokens = if let Some(fixture) = fixture {
         fixture
             .records
@@ -97,7 +120,6 @@ pub(super) fn load_dataset(
         elapsed_us: total_us,
         cost_usd: 0.0,
     };
-    Ok(loaded)
 }
 
 pub(super) fn load_fixture_dataset(
@@ -162,6 +184,8 @@ pub(super) fn load_fixture_dataset(
             records_loaded: fixture.records.len(),
             text_fields_indexed,
             pending_vectors: 0,
+            base_vaults: 1,
+            forks: 0,
         },
         fixture_id: fixture.fixture_id.clone(),
         fixture_description: fixture.description.clone(),
@@ -179,24 +203,33 @@ pub(super) fn load_run_jsonl_dataset(
     limit: usize,
     expected_min_results: usize,
 ) -> BeamResult<LoadedDataset> {
+    let mut entries = select_run_jsonl_records(manifest, path, arm_id)?;
+    resolve_corpus_refs(path, &mut entries)?;
+    ingest_run_jsonl_entries(
+        vault,
+        &manifest.case_ids,
+        path,
+        entries,
+        limit,
+        expected_min_results,
+    )
+}
+/// The manifest's records in file order, after the engine-path checks. Shared
+/// corpus files are not read here; [`resolve_corpus_refs`] reads them per group.
+pub(super) fn select_run_jsonl_records(
+    manifest: &RunManifest,
+    path: &Path,
+    arm_id: Option<&str>,
+) -> BeamResult<Vec<RunJsonlEntry>> {
     let records = read_run_jsonl_records(path)?;
     let selected: BTreeSet<&str> = manifest.case_ids.iter().map(String::as_str).collect();
-    let mut contract_records = BTreeMap::new();
-    let mut source_id_by_entity_id = BTreeMap::new();
-    let mut query_vector_by_case_id = BTreeMap::new();
-    let mut seen_corpus = BTreeSet::new();
-    let mut cases = Vec::with_capacity(manifest.case_ids.len());
-    let mut case_seen = BTreeSet::new();
-    let mut batch = vault.batch();
+    let mut question_seen = BTreeSet::new();
     let mut dataset_id: Option<String> = None;
     let mut dataset_revision: Option<String> = None;
-    let mut records_loaded = 0;
-    let mut text_fields_indexed = 0;
-    let mut pending_vectors_total = 0;
-
+    let mut chosen = Vec::new();
     for entry in records {
         let line = entry.line;
-        let record = entry.record;
+        let record = &entry.record;
         if !selected.contains(record.question_id.as_str()) {
             continue;
         }
@@ -250,7 +283,7 @@ pub(super) fn load_run_jsonl_dataset(
                 ));
             }
         }
-        if contract_records.contains_key(record.question_id.as_str()) {
+        if !question_seen.insert(record.question_id.clone()) {
             let arm_detail = arm_id.map_or_else(
                 || " without dataset.armId".to_owned(),
                 |id| format!(" for armId `{id}`"),
@@ -264,7 +297,90 @@ pub(super) fn load_run_jsonl_dataset(
                 ),
             ));
         }
+        chosen.push(entry);
+    }
+    for case_id in &manifest.case_ids {
+        if !question_seen.contains(case_id) {
+            return Err(BeamError::MissingCase {
+                fixture_id: dataset_id
+                    .as_deref()
+                    .map_or_else(|| path.display().to_string(), str::to_owned),
+                case_id: case_id.clone(),
+            });
+        }
+    }
+    Ok(chosen)
+}
+/// Reads every `corpus_ref` these entries name, once per corpus id, and
+/// refuses on any sha256 mismatch. v2 records need hashed corpus items.
+pub(super) fn resolve_corpus_refs(path: &Path, entries: &mut [RunJsonlEntry]) -> BeamResult<()> {
+    let mut corpora: BTreeMap<String, Arc<SharedCorpus>> = BTreeMap::new();
+    for entry in entries.iter_mut() {
+        let Some(corpus_ref) = entry.record.corpus_ref.clone() else {
+            continue;
+        };
+        let shared = match corpora.get(&corpus_ref.corpus_id) {
+            Some(shared) => Arc::clone(shared),
+            None => {
+                let shared = Arc::new(load_shared_corpus(path, entry.line, &corpus_ref)?);
+                corpora.insert(corpus_ref.corpus_id.clone(), Arc::clone(&shared));
+                shared
+            }
+        };
+        if entry.record.is_v2()
+            && let Some(item) = shared
+                .items
+                .iter()
+                .find(|item| item.source_sha256.is_none())
+        {
+            return Err(invalid_run_jsonl(
+                path,
+                entry.line,
+                format!(
+                    "contract v2 corpus `{}` item `{}` lacks source_sha256",
+                    shared.corpus_ref.corpus_id, item.id
+                ),
+            ));
+        }
+        entry.record.shared_corpus = Some(shared);
+    }
+    Ok(())
+}
+/// Reads, validates and resolves every record of a run.jsonl.
+#[cfg(test)]
+pub(super) fn read_and_resolve_run_jsonl(path: &Path) -> BeamResult<Vec<RunJsonlEntry>> {
+    let mut entries = read_run_jsonl_records(path)?;
+    resolve_corpus_refs(path, &mut entries)?;
+    Ok(entries)
+}
+/// Ingests already selected and resolved records into one vault. A shared
+/// corpus is written once however many questions read it.
+pub(super) fn ingest_run_jsonl_entries(
+    vault: &Vault,
+    case_ids: &[String],
+    path: &Path,
+    entries: Vec<RunJsonlEntry>,
+    limit: usize,
+    expected_min_results: usize,
+) -> BeamResult<LoadedDataset> {
+    let mut contract_records = BTreeMap::new();
+    let mut source_id_by_entity_id = BTreeMap::new();
+    let mut query_vector_by_case_id = BTreeMap::new();
+    let mut seen_corpus = BTreeSet::new();
+    let mut cases = Vec::with_capacity(case_ids.len());
+    let mut case_seen = BTreeSet::new();
+    let mut batch = vault.batch();
+    let dataset_id = entries.first().map(|entry| entry.record.dataset.id.clone());
+    let dataset_revision = entries
+        .first()
+        .map(|entry| entry.record.dataset.revision.clone());
+    let mut records_loaded = 0;
+    let mut text_fields_indexed = 0;
+    let mut pending_vectors_total = 0;
 
+    for entry in entries {
+        let line = entry.line;
+        let record = entry.record;
         let mut pending_for_case = 0;
         match &record.query_embedding {
             Some(ContractEmbeddingState::Ready(vector)) => {
@@ -405,7 +521,7 @@ pub(super) fn load_run_jsonl_dataset(
         .elapsed()
         .as_micros()
         .min(u128::from(u64::MAX)) as u64;
-    for case_id in &manifest.case_ids {
+    for case_id in case_ids {
         if !case_seen.contains(case_id.as_str()) {
             return Err(BeamError::MissingCase {
                 fixture_id: dataset_id
@@ -429,6 +545,8 @@ pub(super) fn load_run_jsonl_dataset(
             records_loaded,
             text_fields_indexed,
             pending_vectors: pending_vectors_total,
+            base_vaults: 1,
+            forks: 0,
         },
         fixture_id: dataset_id.clone(),
         fixture_description: format!("oneiron-eval run.jsonl {dataset_id}@{dataset_revision}"),
@@ -464,20 +582,19 @@ pub(super) struct RunJsonlEntry {
 pub(super) fn read_run_jsonl_records(path: &Path) -> BeamResult<Vec<RunJsonlEntry>> {
     let file = File::open(path)?;
     let mut records = Vec::new();
-    let mut corpora: BTreeMap<String, Arc<SharedCorpus>> = BTreeMap::new();
+    let mut corpus_refs: BTreeMap<String, ContractCorpusRef> = BTreeMap::new();
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let line_number = index + 1;
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let mut record: RunContractRecord = serde_json::from_str(&line)
+        let record: RunContractRecord = serde_json::from_str(&line)
             .map_err(|source| invalid_run_jsonl(path, line_number, source.to_string()))?;
         validate_run_contract_record_at(path, line_number, &record)?;
         if let Some(corpus_ref) = &record.corpus_ref {
-            let shared = match corpora.get(&corpus_ref.corpus_id) {
-                Some(shared) if &shared.corpus_ref == corpus_ref => Arc::clone(shared),
-                Some(_) => {
+            match corpus_refs.get(&corpus_ref.corpus_id) {
+                Some(earlier) if earlier != corpus_ref => {
                     return Err(invalid_run_jsonl(
                         path,
                         line_number,
@@ -487,28 +604,11 @@ pub(super) fn read_run_jsonl_records(path: &Path) -> BeamResult<Vec<RunJsonlEntr
                         ),
                     ));
                 }
+                Some(_) => {}
                 None => {
-                    let shared = Arc::new(load_shared_corpus(path, line_number, corpus_ref)?);
-                    corpora.insert(corpus_ref.corpus_id.clone(), Arc::clone(&shared));
-                    shared
+                    corpus_refs.insert(corpus_ref.corpus_id.clone(), corpus_ref.clone());
                 }
-            };
-            if record.is_v2()
-                && let Some(item) = shared
-                    .items
-                    .iter()
-                    .find(|item| item.source_sha256.is_none())
-            {
-                return Err(invalid_run_jsonl(
-                    path,
-                    line_number,
-                    format!(
-                        "contract v2 corpus `{}` item `{}` lacks source_sha256",
-                        corpus_ref.corpus_id, item.id
-                    ),
-                ));
             }
-            record.shared_corpus = Some(shared);
         }
         records.push(RunJsonlEntry {
             line: line_number,

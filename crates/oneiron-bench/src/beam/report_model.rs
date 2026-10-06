@@ -106,6 +106,10 @@ pub(super) struct DatasetLoadReport {
     pub(super) records_loaded: usize,
     pub(super) text_fields_indexed: usize,
     pub(super) pending_vectors: usize,
+    /// Vaults ingested from source: one per corpus, never one per question.
+    pub(super) base_vaults: usize,
+    /// Per-question copies of a base vault (0 for single-vault runs).
+    pub(super) forks: usize,
 }
 pub(super) struct LoadedDataset {
     pub(super) offline: CostComponentReport,
@@ -350,6 +354,9 @@ pub(super) struct CaseReport {
     pub(super) token_budget: usize,
     pub(super) expected_min_results: usize,
     pub(super) fixture_class: FixtureClass,
+    /// The base-vault fork this question ran on, when the run forks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) fork_key: Option<String>,
     pub(super) offline_amortized_cost: CostComponentReport,
     pub(super) arms: Vec<ArmReport>,
     pub(super) competitors: Vec<CompetitorReport>,

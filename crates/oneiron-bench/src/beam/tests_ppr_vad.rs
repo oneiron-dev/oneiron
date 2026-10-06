@@ -587,6 +587,7 @@ pub(crate) mod tests {
             token_budget: 4096,
             expected_min_results: 0,
             fixture_class: FixtureClass::EvidenceSupported,
+            fork_key: None,
             offline_amortized_cost: not_applicable_cost(),
             competitors: Vec::new(),
             appendix: Vec::new(),

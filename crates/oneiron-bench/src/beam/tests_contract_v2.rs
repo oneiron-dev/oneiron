@@ -265,7 +265,7 @@ pub(crate) mod tests {
             run.replace(&old_sha, &sha256_hex_of(corpus.as_bytes())),
         )
         .unwrap();
-        let error = read_run_jsonl_records(&fixture.run_jsonl)
+        let error = super::super::load::read_and_resolve_run_jsonl(&fixture.run_jsonl)
             .expect_err("item hash mismatch must refuse")
             .to_string();
         assert!(
@@ -286,5 +286,60 @@ pub(crate) mod tests {
             .expect_err("conflicting corpus refs must refuse")
             .to_string();
         assert!(error.contains("different path or sha256"), "{error}");
+    }
+
+    #[test]
+    fn fork_per_question_reuses_one_base_vault_per_corpus() {
+        let fixture = V2Fixture::write(&["q-a", "q-b", "q-c"]);
+        let manifest = fixture.manifest(&["q-c", "q-a", "q-b"]);
+        let report = run_manifest(&manifest, None).expect("shared-corpus run succeeds");
+        assert_eq!(report.dataset.base_vaults, 1, "one corpus, one ingest");
+        assert_eq!(report.dataset.forks, 3, "one fork per question");
+        assert_eq!(
+            report.dataset.records_loaded, 2,
+            "the two corpus items are written once, not once per question"
+        );
+        let order: Vec<_> = report
+            .cases
+            .iter()
+            .map(|case| case.case_id.as_str())
+            .collect();
+        assert_eq!(order, ["q-c", "q-a", "q-b"], "report keeps manifest order");
+        let keys: std::collections::BTreeSet<_> = report
+            .cases
+            .iter()
+            .map(|case| case.fork_key.clone().expect("forked case carries its key"))
+            .collect();
+        assert_eq!(keys.len(), 3, "every question has its own fork key");
+        let rows = pack_rows(&fixture.packs_jsonl);
+        assert_eq!(rows.len(), 6);
+        assert!(rows.iter().all(|row| {
+            row["pack"]["contexts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|context| context["id"] == "m-1")
+        }));
+    }
+
+    #[test]
+    fn inline_corpora_keep_one_base_vault_per_question() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let run_jsonl = tempdir.path().join("run.jsonl");
+        let first: serde_json::Value =
+            serde_json::from_str(super::super::tests_community_eval004::CONTRACT_RUN_JSONL.trim())
+                .unwrap();
+        let mut second = first.clone();
+        second["question_id"] = serde_json::json!("second-question");
+        std::fs::write(&run_jsonl, format!("{first}\n{second}\n")).unwrap();
+        let mut raw: serde_json::Value = serde_json::from_str(CONTRACT_MANIFEST_JSON).unwrap();
+        raw["dataset"]["path"] = serde_json::json!(run_jsonl);
+        raw["caseIds"] = serde_json::json!([first["question_id"], "second-question"]);
+        raw.as_object_mut().unwrap().remove("outputs");
+        let manifest = parse_manifest_json(&raw.to_string()).unwrap();
+        let report = run_manifest(&manifest, None).unwrap();
+        assert_eq!(report.dataset.base_vaults, 2);
+        assert_eq!(report.dataset.forks, 2);
+        assert_eq!(report.dataset.records_loaded, 4);
     }
 }

@@ -1,8 +1,11 @@
 //! Subcommand run entry points and orchestration.
 
 use super::arms::adapter_for;
+use super::fork::BaseVault;
 use super::load::{
-    contract_context_pack_record, load_dataset, resolve_manifest_paths, write_contract_pack_rows,
+    RunJsonlEntry, contract_context_pack_record, contract_corpus_digest, load_dataset,
+    load_jsonl_group, resolve_corpus_refs, resolve_manifest_paths, select_run_jsonl_records,
+    write_contract_pack_rows,
 };
 use super::model::{ArmKind, BeamFixture, DatasetSource, FixtureCase, RunManifest, SchemaHeader};
 use super::ppr_vad::ppr_vad_sweep_report;
@@ -21,7 +24,7 @@ use super::{
     SCHEMA_VERSION,
 };
 use oneiron::Vault;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub(super) fn print_help() {
@@ -155,22 +158,47 @@ pub(super) fn run_manifest(
         cases,
     })
 }
+/// One base vault per corpus key, one fork per question. A shared corpus
+/// (`corpus_ref`) is ingested once for all its questions; an inline corpus is
+/// its own key, so v1 runs keep one ingest per question.
 pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<BeamReport> {
     let scorer = FixedBeamScorer;
     let report_format = report_format_label(manifest.report.format).to_owned();
+    let DatasetSource::Jsonl {
+        path,
+        arm_id,
+        limit,
+        expected_min_results,
+    } = &manifest.dataset
+    else {
+        return Err(invalid_manifest(
+            manifest,
+            "isolated runs need a jsonl dataset",
+        ));
+    };
+    let entries = select_run_jsonl_records(manifest, path, arm_id.as_deref())?;
     let mut dataset_report: Option<DatasetLoadReport> = None;
     let mut fixture_id: Option<String> = None;
     let mut fixture_description: Option<String> = None;
-    let mut cases = Vec::with_capacity(manifest.case_ids.len());
-    let mut pack_rows = Vec::new();
+    let mut cases_by_id: BTreeMap<String, CaseReport> = BTreeMap::new();
+    let mut rows_by_id: BTreeMap<String, Vec<ContextPackContractRecord>> = BTreeMap::new();
     let mut offline_runs = Vec::new();
 
-    for case_id in &manifest.case_ids {
-        let tempdir = tempfile::tempdir()?;
-        let vault = Vault::open(tempdir.path(), beam_vault_config())?;
-        let mut single_case_manifest = manifest.clone();
-        single_case_manifest.case_ids = vec![case_id.clone()];
-        let loaded = load_dataset(&vault, &single_case_manifest, None)?;
+    for (corpus_identity, mut group) in group_by_corpus(entries) {
+        resolve_corpus_refs(path, &mut group)?;
+        let group_ids: BTreeSet<String> = group
+            .iter()
+            .map(|entry| entry.record.question_id.clone())
+            .collect();
+        let case_ids: Vec<String> = manifest
+            .case_ids
+            .iter()
+            .filter(|id| group_ids.contains(*id))
+            .cloned()
+            .collect();
+        let (base, loaded) = BaseVault::build(corpus_identity, |vault| {
+            load_jsonl_group(vault, &case_ids, path, group, *limit, *expected_min_results)
+        })?;
         offline_runs.push(loaded.offline.clone());
 
         match &mut dataset_report {
@@ -184,6 +212,7 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
                 report.records_loaded += loaded.report.records_loaded;
                 report.text_fields_indexed += loaded.report.text_fields_indexed;
                 report.pending_vectors += loaded.report.pending_vectors;
+                report.base_vaults += 1;
             }
             None => {
                 dataset_report = Some(loaded.report.clone());
@@ -192,10 +221,33 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
             }
         }
 
-        let (mut case_reports, mut rows) =
-            run_loaded_cases(&vault, &single_case_manifest, &loaded)?;
-        cases.append(&mut case_reports);
-        pack_rows.append(&mut rows);
+        for case_id in &case_ids {
+            let fork = base.fork(case_id)?;
+            if let Some(report) = &mut dataset_report {
+                report.forks += 1;
+            }
+            let mut single_case_manifest = manifest.clone();
+            single_case_manifest.case_ids = vec![case_id.clone()];
+            let (case_reports, rows) =
+                run_loaded_cases(&fork.vault, &single_case_manifest, &loaded)?;
+            for mut case in case_reports {
+                case.fork_key = Some(fork.fork_key.clone());
+                cases_by_id.insert(case.case_id.clone(), case);
+            }
+            rows_by_id.insert(case_id.clone(), rows);
+        }
+    }
+
+    // Report and packs.jsonl keep manifest order, whatever the corpus grouping.
+    let mut cases = Vec::with_capacity(manifest.case_ids.len());
+    let mut pack_rows = Vec::new();
+    for case_id in &manifest.case_ids {
+        if let Some(case) = cases_by_id.remove(case_id) {
+            cases.push(case);
+        }
+        if let Some(mut rows) = rows_by_id.remove(case_id) {
+            pack_rows.append(&mut rows);
+        }
     }
 
     let mut offline = super::model_usage::sum_costs(&offline_runs)?;
@@ -236,6 +288,32 @@ pub(super) fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<
         ppr_vad_sweep: ppr_vad_sweep_report(&cases),
         cases,
     })
+}
+/// Selected records grouped by vault unit, in first-appearance order. Each
+/// group carries its corpus identity: the corpus_ref sha256, or the inline
+/// corpus digest for a v1-style per-question corpus.
+pub(super) fn group_by_corpus(entries: Vec<RunJsonlEntry>) -> Vec<(String, Vec<RunJsonlEntry>)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: BTreeMap<String, (String, Vec<RunJsonlEntry>)> = BTreeMap::new();
+    for entry in entries {
+        let key = entry.record.corpus_key();
+        let identity = entry.record.corpus_ref.as_ref().map_or_else(
+            || contract_corpus_digest(&entry.record),
+            |corpus_ref| format!("{}:sha256:{}", corpus_ref.corpus_id, corpus_ref.sha256),
+        );
+        groups
+            .entry(key.clone())
+            .or_insert_with(|| {
+                order.push(key.clone());
+                (identity, Vec::new())
+            })
+            .1
+            .push(entry);
+    }
+    order
+        .into_iter()
+        .filter_map(|key| groups.remove(&key))
+        .collect()
 }
 pub(super) fn run_loaded_cases(
     vault: &Vault,
@@ -303,6 +381,7 @@ pub(super) fn run_loaded_cases(
             token_budget: case.token_budget,
             expected_min_results: case.expected_min_results,
             fixture_class: case.fixture_class,
+            fork_key: None,
             offline_amortized_cost: amortized_load(loaded, manifest.case_ids.len()),
             arms,
             competitors,
