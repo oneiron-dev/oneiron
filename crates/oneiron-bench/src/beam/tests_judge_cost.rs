@@ -118,6 +118,7 @@ pub(crate) mod tests {
         let case = FixtureCase {
             ppr_vad_query: None,
             question_time: None,
+            query_vector: None,
             case_id: "elapsed_boundary".to_owned(),
             query: "BEAM deterministic context pack".to_owned(),
             limit: 1,

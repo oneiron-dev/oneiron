@@ -544,6 +544,7 @@ pub(super) fn ingest_run_jsonl_entries(
             cases.push(FixtureCase {
                 ppr_vad_query: None,
                 question_time: record.question_time,
+                query_vector: query_vector_by_case_id.get(&record.question_id).cloned(),
                 case_id: record.question_id.clone(),
                 query: record.question.clone(),
                 limit,

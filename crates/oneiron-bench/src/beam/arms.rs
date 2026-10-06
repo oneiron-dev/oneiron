@@ -300,12 +300,22 @@ pub(super) fn configured_context_pack_builder<'a>(
         Some(now) => builder.with_temporal_now(now),
         None => builder,
     };
+    // A run.jsonl record with a ready query embedding gets the engine's
+    // vector leg too, as a production query with an embedding would.
+    let builder = match &case.query_vector {
+        Some(vector) => builder.search_vector(vector, text_search_limit),
+        None => builder,
+    };
 
     match (case.fixture_class, &case.temporal_search) {
         (FixtureClass::TemporalStaleness, Some(range)) => builder
             .search_temporal(range.start, range.end, case.limit)
             .limit(case.limit),
         (FixtureClass::LowConfidence, _) => builder.limit(case.limit),
+        // dataset.limit caps the results, as it does for vanilla-rag;
+        // without it the engine's default of 20 results would bind before
+        // any budget above about 2K tokens.
+        _ if case.limit > 0 => builder.limit(case.limit),
         _ => builder,
     }
 }

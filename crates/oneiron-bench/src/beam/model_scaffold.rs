@@ -522,6 +522,9 @@ pub(super) fn run_with_session(
                                 }
                             }
                             ArmKind::Agentic => {
+                                // The routed query replaces the question, so
+                                // the question's embedding no longer applies.
+                                request_case.query_vector = None;
                                 let mut context = String::new();
                                 // Routing calls share one system prompt, so one
                                 // provider cache: each new pack edits the cached

@@ -388,6 +388,7 @@ neighbors:
         let case = FixtureCase {
             ppr_vad_query: None,
             question_time: None,
+            query_vector: None,
             case_id: "budget-accounting-regression".to_owned(),
             query: "budget accounting".to_owned(),
             limit: 1,
@@ -530,6 +531,7 @@ neighbors:
         fixture.cases.push(FixtureCase {
             ppr_vad_query: None,
             question_time: None,
+            query_vector: None,
             case_id: "beam_small_budget_smoke".to_owned(),
             query: "BEAM deterministic context pack".to_owned(),
             limit: 5,

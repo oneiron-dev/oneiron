@@ -73,6 +73,10 @@ pub(crate) struct FixtureCase {
     /// Contract v2 `question_time`: the reader's "now", Unix seconds.
     #[serde(default)]
     pub(super) question_time: Option<u64>,
+    /// The record's ready query embedding (run.jsonl path only). When set,
+    /// the deterministic arm queries the vector leg beside the text leg.
+    #[serde(skip)]
+    pub(super) query_vector: Option<Vec<f32>>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

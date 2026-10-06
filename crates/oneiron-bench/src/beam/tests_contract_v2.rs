@@ -584,4 +584,87 @@ pub(crate) mod tests {
             .to_string();
         assert!(error.contains("never overwritten"), "{error}");
     }
+
+    fn deterministic_pack(report: &BeamReport) -> &ContextPackReport {
+        report.cases[0]
+            .arms
+            .iter()
+            .find_map(|arm| match (&arm.arm, &arm.outcome) {
+                (ArmKind::Deterministic, ArmOutcome::Completed { context_pack }) => {
+                    Some(context_pack.as_ref())
+                }
+                _ => None,
+            })
+            .expect("deterministic pack")
+    }
+
+    #[test]
+    fn deterministic_arm_queries_the_vector_leg_when_the_record_carries_one() {
+        let fixture = V2Fixture::write(&["q-a"]);
+        let report = run_manifest(&fixture.manifest(&["q-a"]), None).unwrap();
+        let signals = &deterministic_pack(&report).stats.signals_used;
+        assert!(signals.iter().any(|s| s.contains("ector")), "{signals:?}");
+        assert!(signals.iter().any(|s| s.contains("ext")), "{signals:?}");
+
+        let text_only = V2Fixture::write_with(&["q-a"], |record| {
+            record.as_object_mut().unwrap().remove("query_embedding");
+        });
+        let mut raw: serde_json::Value = serde_json::from_str(CONTRACT_MANIFEST_JSON).unwrap();
+        raw["runId"] = serde_json::json!(V2_RUN_ID);
+        raw["dataset"]["path"] = serde_json::json!(text_only.run_jsonl);
+        raw["caseIds"] = serde_json::json!(["q-a"]);
+        raw["arms"] = serde_json::json!(["deterministic"]);
+        raw["competitors"] = serde_json::json!([raw["competitors"][0].clone()]);
+        raw.as_object_mut().unwrap().remove("outputs");
+        let report = run_manifest(&parse_manifest_json(&raw.to_string()).unwrap(), None).unwrap();
+        let signals = &deterministic_pack(&report).stats.signals_used;
+        assert!(!signals.iter().any(|s| s.contains("ector")), "{signals:?}");
+    }
+
+    #[test]
+    fn dataset_limit_above_twenty_lets_more_results_through() {
+        let fixture = V2Fixture::write(&["q-a"]);
+        let items: Vec<serde_json::Value> = (0..30)
+            .map(|index| {
+                let text = format!("Launch code note {index}: the contract launch code is tulip.");
+                serde_json::json!({
+                    "id": format!("n-{index:02}"),
+                    "text": text,
+                    "source_sha256": sha256_hex_of(text.as_bytes()),
+                    "metadata": {"dataset_timestamp": 1_780_000_000_u64 + index},
+                })
+            })
+            .collect();
+        let corpus = corpus_jsonl(&items);
+        std::fs::write(&fixture.corpus_path, &corpus).unwrap();
+        let rows: Vec<String> = std::fs::read_to_string(&fixture.run_jsonl)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let mut record: serde_json::Value = serde_json::from_str(line).unwrap();
+                record["corpus_ref"]["sha256"] =
+                    serde_json::json!(sha256_hex_of(corpus.as_bytes()));
+                record["gold"]["evidence_ids"] = serde_json::json!(["n-00"]);
+                record.as_object_mut().unwrap().remove("query_embedding");
+                record.to_string()
+            })
+            .collect();
+        std::fs::write(&fixture.run_jsonl, rows.join("\n") + "\n").unwrap();
+        let mut raw: serde_json::Value = serde_json::from_str(CONTRACT_MANIFEST_JSON).unwrap();
+        raw["runId"] = serde_json::json!(V2_RUN_ID);
+        raw["dataset"]["path"] = serde_json::json!(fixture.run_jsonl);
+        raw["dataset"]["limit"] = serde_json::json!(25);
+        raw["caseIds"] = serde_json::json!(["q-a"]);
+        raw["arms"] = serde_json::json!(["deterministic"]);
+        let mut competitor = raw["competitors"][0].clone();
+        competitor["card"]["axes"]["retrievalK"] = serde_json::json!(25);
+        raw["competitors"] = serde_json::json!([competitor]);
+        raw.as_object_mut().unwrap().remove("outputs");
+        let report = run_manifest(&parse_manifest_json(&raw.to_string()).unwrap(), None).unwrap();
+        assert_eq!(
+            deterministic_pack(&report).result_count,
+            25,
+            "not the engine default 20"
+        );
+    }
 }

@@ -526,6 +526,7 @@ pub(crate) mod tests {
         let case = FixtureCase {
             ppr_vad_query: None,
             question_time: None,
+            query_vector: None,
             case_id: record.question_id.clone(),
             query: record.question.clone(),
             limit: 1,
