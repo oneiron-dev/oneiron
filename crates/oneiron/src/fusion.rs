@@ -24,6 +24,14 @@ pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
 /// weight table carries a relevance row. Hashed into the trace fork hash.
 pub(crate) const RELEVANCE_LOG_WEIGHT: f64 = 1.0;
 
+/// Highest score the blend hands downstream. A pool of thousands with one
+/// extreme outlier (a PPR seed over its whole neighbourhood) z-normalizes
+/// near `sqrt(n)`, and its `exp()` would pass `f32::MAX`. The cap keeps every
+/// score finite with headroom for the post-blend multipliers (facet boosts,
+/// contiguity, the community prior); `narrow_scores_desc` keeps strict order
+/// above it. Hashed into the trace fork hash.
+pub(crate) const BLEND_SCORE_CEILING: f32 = 1.0e18;
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RetrievalBlendInput {
     pub(crate) id: EntityId,
@@ -31,7 +39,7 @@ pub(crate) struct RetrievalBlendInput {
     /// candidate's z-normalized score in that list (the list's lowest z when
     /// the channel did not return it). Scale-free across BM25F, cosine, PPR,
     /// temporal and phonetic scores.
-    pub(crate) relevance: f64,
+    relevance: f64,
     /// f64, like the whole blend; `narrow_scores_desc` says why.
     pub(crate) recency: f64,
     pub(crate) salience: f32,
@@ -145,7 +153,8 @@ pub(crate) fn linear_log_blend_scores_with_weights(
 }
 
 /// Sorts f64 blend scores descending, ties by id, and narrows them to the
-/// pipeline's f32 score without losing that order.
+/// pipeline's f32 score, at most [`BLEND_SCORE_CEILING`], without losing that
+/// order.
 ///
 /// Records written seconds apart, or of types whose recency half-lives
 /// differ by days, differ in blend score by far less than one f32 step. A
@@ -163,10 +172,11 @@ fn narrow_scores_desc(mut scores: Vec<(EntityId, f64)>) -> Vec<ScoredEntity> {
     let mut narrowed = Vec::with_capacity(scores.len());
     let mut previous: Option<(f64, f32)> = None;
     for (id, wide) in scores {
+        let capped = (wide as f32).min(BLEND_SCORE_CEILING);
         let score = match previous {
             Some((previous_wide, previous_score)) if wide == previous_wide => previous_score,
-            Some((_, previous_score)) => (wide as f32).min(previous_score.next_down()),
-            None => wide as f32,
+            Some((_, previous_score)) => capped.min(previous_score.next_down()),
+            None => capped,
         };
         previous = Some((wide, score));
         narrowed.push(ScoredEntity { id, score });

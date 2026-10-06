@@ -415,3 +415,48 @@ fn a_candidate_one_channel_missed_takes_that_channel_floor() {
     };
     assert!(relevance(both) > relevance(text_only));
 }
+
+#[test]
+fn an_extreme_relevance_outlier_keeps_a_finite_ordered_score() {
+    // One outlier over 9,999 equal rows z-normalizes near 100, and exp(100)
+    // is past f32::MAX; two near outliers both pass the ceiling.
+    let ranked: Vec<ScoredEntity> = (0..10_000_u16)
+        .map(|n| {
+            let [high, low] = n.to_be_bytes();
+            let mut id = [0_u8; 16];
+            id[14] = high;
+            id[15] = low;
+            let score = match n {
+                0 => 1.0,
+                1 => 0.999,
+                _ => 0.0,
+            };
+            scored(id, score)
+        })
+        .collect();
+    let without_second: Vec<ScoredEntity> = ranked
+        .iter()
+        .filter(|row| row.id != ranked[1].id)
+        .copied()
+        .collect();
+    let one_outlier = linear_log_blend(&retrieval_candidates_from_ranked_lists(&[without_second]));
+    assert!(one_outlier.iter().all(|row| row.score.is_finite()));
+    assert_eq!(one_outlier[0].id, ranked[0].id);
+    assert_eq!(one_outlier[0].score, BLEND_SCORE_CEILING);
+    assert!(one_outlier[0].score > one_outlier[1].score);
+
+    let two_outliers = linear_log_blend(&retrieval_candidates_from_ranked_lists(
+        std::slice::from_ref(&ranked),
+    ));
+    assert_eq!(
+        [two_outliers[0].id, two_outliers[1].id],
+        [ranked[0].id, ranked[1].id]
+    );
+    assert!(two_outliers[0].score > two_outliers[1].score);
+    assert!(two_outliers[1].score > two_outliers[2].score);
+    assert!(
+        two_outliers
+            .iter()
+            .all(|row| row.score <= BLEND_SCORE_CEILING)
+    );
+}
