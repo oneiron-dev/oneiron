@@ -710,10 +710,13 @@ fn secret_scan_new_classes_reject_before_transaction_staging() -> Result<()> {
             "gate.secret_scan.mnemonic",
         ),
         (
-            "DATABASE_PASSWORD=not-for-memory",
+            "DATABASE_PASSWORD=Xq7-not-for-memory-42",
             "gate.secret_scan.sensitive_env",
         ),
-        ("password: not-for-memory", "gate.secret_scan.sensitive_env"),
+        (
+            "password: Xq7-not-for-memory-42",
+            "gate.secret_scan.sensitive_env",
+        ),
         (
             "SERVICE_API_KEY=0123456789abcdef0123456789abcdef",
             "gate.secret_scan.sensitive_env",

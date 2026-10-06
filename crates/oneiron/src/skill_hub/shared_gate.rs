@@ -95,6 +95,7 @@ impl Vault {
     ) -> Result<SharedSkillMergeAsk> {
         question.validate()?;
         crate::batch::secret_scan::scan_staged_payload(
+            &self.store,
             &serde_json::to_vec(&question).map_err(|_| invalid("question encode failed"))?,
         )?;
         if question.id != candidate
@@ -210,7 +211,7 @@ impl Vault {
         // spend, activation, supersession, or history write.
         let encoded_receipt =
             serde_json::to_vec(&receipt).map_err(|_| invalid("merge receipt encode failed"))?;
-        crate::batch::secret_scan::scan_staged_payload(&encoded_receipt)?;
+        crate::batch::secret_scan::scan_staged_payload(&self.store, &encoded_receipt)?;
         self.with_write_txn(|txn| {
             if let Some(revision) = &judge_revision {
                 crate::skill_optimize::ensure_current_judge_in_txn(self, txn, revision)?;

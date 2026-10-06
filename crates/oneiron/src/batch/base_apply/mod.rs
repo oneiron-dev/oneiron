@@ -211,7 +211,9 @@ pub(super) fn apply_ops_with_origin(
     let mut preflight_gate_decision_ids =
         std::mem::take(&mut gate_mode.preflight_gate_decision_ids);
 
-    secret_scan::scan_batch_ops(&ops)?;
+    // The owner's `secrets` switch is read in this transaction, so a batch
+    // and the mode it was admitted under are one snapshot.
+    secret_scan::scan_batch_ops(store, &*wtxn, &ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
     // parent slot BEFORE the overlay is built, so the winner add and the stored
     // losers' deletes are one atomic strict batch — cardinality is already one
