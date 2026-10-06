@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 3,
+  "runId": "locomo-conformance",
+  "dataset": {
+    "kind": "jsonl",
+    "path": "run.jsonl",
+    "armId": "oneiron",
+    "limit": 5,
+    "expectedMinResults": 0
+  },
+  "caseIds": [
+    "locomo:conv-1:q0000",
+    "locomo:conv-1:q0001",
+    "locomo:conv-1:q0002",
+    "locomo:conv-1:q0003",
+    "locomo:conv-1:q0004",
+    "locomo:conv-1:q0005",
+    "locomo:conv-1:refined-q0003"
+  ],
+  "arms": [
+    "deterministic"
+  ],
+  "competitors": [
+    {
+      "competitorId": "deterministic-context-pack",
+      "arm": "deterministic",
+      "card": {
+        "displayName": "Deterministic context-pack",
+        "publicParityStatus": "public_parity",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Fixture-scale oneiron-eval contract smoke; no external benchmark claims."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "tokenizer_count",
+          "notes": "Local deterministic context-pack query and serialized output counted with the offline o200k_base tokenizer."
+        },
+        "axes": {
+          "tier": {
+            "row": "locomo",
+            "reference": "locomo"
+          },
+          "regime": "full",
+          "nativeScale": "adapter conformance sample; full set run required",
+          "backbone": {
+            "modelPin": "not-applicable/deterministic@v1",
+            "soloRow": "backbone-solo"
+          },
+          "judge": {
+            "identity": "beam-fixture-judge@v1",
+            "inFamily": false
+          },
+          "retrievalK": 5,
+          "provenance": {
+            "source": "fixture://contract_v2_locomo/run.jsonl",
+            "independent": true,
+            "caveat": "Synthetic conformance only; built by oneiron-eval build_locomo_run.",
+            "withdrawn": false
+          }
+        }
+      }
+    }
+  ],
+  "report": {
+    "format": "json"
+  }
+}

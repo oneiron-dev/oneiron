@@ -23,6 +23,9 @@ pub(crate) struct ExactnessReport {
     pub(super) evidence_ids_checked: usize,
     /// Must be empty: gold evidence ids that resolve to no ingested item.
     pub(super) evidence_ids_unresolved: Vec<UnresolvedEvidence>,
+    /// Must be empty: items the engine refused to ingest, with the reason.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) ingest_refused: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +45,9 @@ pub(super) struct UnresolvedEvidence {
 
 impl ExactnessReport {
     pub(super) fn is_exact(&self) -> bool {
-        self.mismatches.is_empty() && self.evidence_ids_unresolved.is_empty()
+        self.mismatches.is_empty()
+            && self.evidence_ids_unresolved.is_empty()
+            && self.ingest_refused.is_empty()
     }
 
     pub(super) fn merge(&mut self, other: Self) {
@@ -51,6 +56,7 @@ impl ExactnessReport {
         self.evidence_ids_checked += other.evidence_ids_checked;
         self.evidence_ids_unresolved
             .extend(other.evidence_ids_unresolved);
+        self.ingest_refused.extend(other.ingest_refused);
     }
 
     /// The run-failing form: `Err` unless every item and evidence id held.
@@ -73,14 +79,22 @@ impl ExactnessReport {
                 u.evidence_id, u.question_id
             )
         });
+        let refused = (!self.ingest_refused.is_empty()).then(|| {
+            format!(
+                " {} items refused at ingest by the engine, first: {}",
+                self.ingest_refused.len(),
+                self.ingest_refused[0]
+            )
+        });
         Err(BeamError::Exactness(format!(
-            "{} of {} corpus items differ from their source bytes, {} of {} evidence ids unresolved;{}{}",
+            "{} of {} corpus items differ from their source bytes, {} of {} evidence ids unresolved;{}{}{}",
             self.mismatches.len(),
             self.items_checked,
             self.evidence_ids_unresolved.len(),
             self.evidence_ids_checked,
             first_item.unwrap_or_default(),
-            first_evidence.unwrap_or_default()
+            first_evidence.unwrap_or_default(),
+            refused.unwrap_or_default()
         )))
     }
 }
@@ -159,7 +173,8 @@ fn read_back_text(vault: &Vault, id: &oneiron::EntityId) -> BeamResult<Option<St
 
 /// `oneiron-bench beam verify-corpus <manifest>`: ingests every selected
 /// corpus into a base vault, as `beam run` would, and checks it without
-/// running any arm. Fails on the first group with a mismatch.
+/// running any arm. Every corpus is checked; any mismatch, unresolved
+/// evidence id or gate-refused item fails the command.
 pub(super) fn run(manifest_path: &Path) -> BeamResult<ExactnessReport> {
     let mut manifest =
         super::runner::parse_manifest_json(&std::fs::read_to_string(manifest_path)?)?;
@@ -185,17 +200,23 @@ pub(super) fn run(manifest_path: &Path) -> BeamResult<ExactnessReport> {
             .collect();
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), super::util::beam_vault_config())?;
-        let loaded = load_jsonl_group(
+        let corpus_key = group
+            .first()
+            .map(|entry| entry.record.corpus_key())
+            .unwrap_or_default();
+        match load_jsonl_group(
             &vault,
             &case_ids,
             path,
             group,
             *limit,
             *expected_min_results,
-        )?;
-        report.merge(verify_loaded_corpus(&vault, &loaded)?);
-        if !report.is_exact() {
-            break;
+        ) {
+            Ok(loaded) => report.merge(verify_loaded_corpus(&vault, &loaded)?),
+            Err(BeamError::IngestRefused { items, .. }) => report
+                .ingest_refused
+                .extend(items.into_iter().map(|item| format!("{corpus_key} {item}"))),
+            Err(error) => return Err(error),
         }
     }
     report.into_result()

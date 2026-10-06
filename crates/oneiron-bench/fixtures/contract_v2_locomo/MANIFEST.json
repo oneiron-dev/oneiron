@@ -1,0 +1,55 @@
+{
+  "adapter": "oneiron_eval.adapters.locomo",
+  "adapter_version": "locomo-contract-v2-adapter-1",
+  "answer_key_columns": {
+    "abstention": 1,
+    "audit_corrected": 5,
+    "original": 5,
+    "refined": 4
+  },
+  "category_map": {
+    "1": "multi_hop",
+    "2": "temporal",
+    "3": "open_domain",
+    "4": "single_hop",
+    "5": "adversarial"
+  },
+  "cleaning": {
+    "manifest_id": "locomo-cleaning-v1",
+    "path": "cleaning.json",
+    "sha256": "ddd5f4ce15469aa5ffa2617ac857dc1cf51739400e8ecfc0139ca7c463672cfe"
+  },
+  "contract_version": "oneiron-eval.contract.v2",
+  "corpora": 1,
+  "dataset_id": "locomo",
+  "dataset_revision": "audit_errors#f2f08b27e2f0c57d54457d8ad3765e765931d22e97c06bb58c1eb0c6b5444034 + locomo10#1c9534534484ac5ecfaeea09cdb4349adba7a362031a88a014904fbc315cceb0 + refined#2506bdca4186d8109f0209693623ae5edf853f95a56a8f0a4db2e1bf265a1599",
+  "questions": 7,
+  "render": "'<speaker>: <text>' plus '\\n[shared image: <blip_caption>]' when a caption exists",
+  "run_jsonl_sha256": "9949ca8b59360d85ebefbb0de2ade385d5282211c695c530c6eb418d1bcfa74e",
+  "sources": [
+    {
+      "name": "audit_errors",
+      "sha256": "f2f08b27e2f0c57d54457d8ad3765e765931d22e97c06bb58c1eb0c6b5444034",
+      "upstream": "conformance fixture"
+    },
+    {
+      "name": "locomo10",
+      "sha256": "1c9534534484ac5ecfaeea09cdb4349adba7a362031a88a014904fbc315cceb0",
+      "upstream": "conformance fixture"
+    },
+    {
+      "name": "refined",
+      "sha256": "2506bdca4186d8109f0209693623ae5edf853f95a56a8f0a4db2e1bf265a1599",
+      "upstream": "conformance fixture"
+    }
+  ],
+  "split": {
+    "dev_percent": 20,
+    "questions": {
+      "heldout": 7
+    },
+    "rule_id": "oneiron-bench.split.v1",
+    "salt": "oneiron-bench/heldout-salt/2026-10-06",
+    "unit": "corpus_ref.corpus_id, else question_id"
+  }
+}

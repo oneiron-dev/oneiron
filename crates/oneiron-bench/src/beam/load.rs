@@ -370,7 +370,7 @@ pub(super) fn ingest_run_jsonl_entries(
     let mut seen_corpus = BTreeSet::new();
     let mut cases = Vec::with_capacity(case_ids.len());
     let mut case_seen = BTreeSet::new();
-    let mut batch = vault.batch();
+    let mut staged: Vec<StagedItem> = Vec::new();
     let dataset_id = entries.first().map(|entry| entry.record.dataset.id.clone());
     let dataset_revision = entries
         .first()
@@ -410,25 +410,21 @@ pub(super) fn ingest_run_jsonl_entries(
             recorded_at = recorded_at.saturating_add(1).max(occurred_at);
             let fields = contract_corpus_fields(item);
             let payload = rmp_serde::to_vec_named(&fields)?;
-            batch = batch
-                .put(
-                    &entity_id,
-                    BENCH_CONTRACT_ENTITY_TYPE,
-                    TimeRange {
-                        start: occurred_at,
-                        end: occurred_at,
-                    },
-                    recorded_at,
-                    &payload,
-                )
-                .text(&entity_id, &[("txt", item.text.as_str())]);
+            let mut staged_item = StagedItem {
+                entity_id,
+                source_id: item.id.clone(),
+                occurred_at,
+                recorded_at,
+                payload,
+                text: item.text.clone(),
+                vector: None,
+            };
             text_fields_indexed += 1;
             records_loaded += 1;
 
             match &item.embedding {
                 Some(ContractEmbeddingState::Ready(vector)) => {
-                    let vector = decode_contract_vector(path, line, vector)?;
-                    batch = batch.vector(&entity_id, &vector);
+                    staged_item.vector = Some(decode_contract_vector(path, line, vector)?);
                 }
                 Some(ContractEmbeddingState::Pending { .. }) => {
                     pending_for_case += 1;
@@ -436,6 +432,7 @@ pub(super) fn ingest_run_jsonl_entries(
                 }
                 None => {}
             }
+            staged.push(staged_item);
         }
 
         if case_seen.insert(record.question_id.clone()) {
@@ -460,7 +457,7 @@ pub(super) fn ingest_run_jsonl_entries(
     }
 
     let index_started = std::time::Instant::now();
-    batch.commit()?;
+    commit_staged(vault, &staged)?;
     // Optional corpus-authored statements are inputs, never gold or extracted
     // judge labels. Materialize through the ordinary claim door after sources.
     let mut stated_corpora = BTreeSet::new();
@@ -555,6 +552,64 @@ pub(super) fn ingest_run_jsonl_entries(
         contract_records,
         source_id_by_entity_id,
         query_vector_by_case_id,
+    })
+}
+/// One corpus item ready to write.
+pub(super) struct StagedItem {
+    entity_id: EntityId,
+    source_id: String,
+    occurred_at: u64,
+    recorded_at: u64,
+    payload: Vec<u8>,
+    text: String,
+    vector: Option<Vec<f32>>,
+}
+fn stage<'v>(mut batch: oneiron::BatchBuilder<'v>, item: &StagedItem) -> oneiron::BatchBuilder<'v> {
+    batch = batch
+        .put(
+            &item.entity_id,
+            BENCH_CONTRACT_ENTITY_TYPE,
+            TimeRange {
+                start: item.occurred_at,
+                end: item.occurred_at,
+            },
+            item.recorded_at,
+            &item.payload,
+        )
+        .text(&item.entity_id, &[("txt", item.text.as_str())]);
+    if let Some(vector) = &item.vector {
+        batch = batch.vector(&item.entity_id, vector);
+    }
+    batch
+}
+/// Writes every staged item in one batch. When the engine refuses that batch
+/// (its write gate's secret scan, an LMDB key-size limit), the items are
+/// retried one by one so the failure names every refused item and its reason;
+/// a refused item is never skipped. A batch-level error no single item
+/// reproduces is returned as it was.
+fn commit_staged(vault: &Vault, staged: &[StagedItem]) -> BeamResult<()> {
+    let batch = staged
+        .iter()
+        .fold(vault.batch(), |batch, item| stage(batch, item));
+    let Err(error) = batch.commit() else {
+        return Ok(());
+    };
+    if error.kind() == oneiron::ErrorKind::MapFull {
+        return Err(error.into());
+    }
+    let mut refused = Vec::new();
+    for item in staged {
+        if let Err(item_error) = stage(vault.batch(), item).commit() {
+            refused.push(format!("{} ({item_error})", item.source_id));
+        }
+    }
+    if refused.is_empty() {
+        return Err(error.into());
+    }
+    Err(BeamError::IngestRefused {
+        count: refused.len(),
+        of: staged.len(),
+        items: refused,
     })
 }
 pub(super) fn resolve_manifest_paths(manifest: &mut RunManifest, manifest_path: &Path) {

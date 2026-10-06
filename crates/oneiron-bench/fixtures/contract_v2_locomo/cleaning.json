@@ -1,0 +1,48 @@
+{
+  "manifest_id": "locomo-cleaning-v1",
+  "questions": [
+    {
+      "action": "kept",
+      "notes": [],
+      "question_id": "locomo:conv-1:q0000"
+    },
+    {
+      "action": "relabelled",
+      "notes": [
+        "audit TEMPORAL_ERROR: answer corrected"
+      ],
+      "question_id": "locomo:conv-1:q0001"
+    },
+    {
+      "action": "relabelled",
+      "notes": [
+        "evidence 'D2:1; D30:05' split into ['D2:1', 'D30:05']",
+        "evidence 'D30:05' normalized to 'D30:5'",
+        "evidence 'D30:05' names no turn and is dropped"
+      ],
+      "question_id": "locomo:conv-1:q0002"
+    },
+    {
+      "action": "kept",
+      "notes": [],
+      "question_id": "locomo:conv-1:q0003"
+    },
+    {
+      "action": "kept",
+      "notes": [],
+      "question_id": "locomo:conv-1:q0004"
+    },
+    {
+      "action": "kept",
+      "notes": [],
+      "question_id": "locomo:conv-1:q0005"
+    },
+    {
+      "action": "kept",
+      "notes": [
+        "question text revised by LoCoMo-Refined"
+      ],
+      "question_id": "locomo:conv-1:refined-q0003"
+    }
+  ]
+}

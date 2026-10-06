@@ -71,6 +71,9 @@ pub(super) struct ModelRow {
     pub scoring: ScoreReport,
     pub query_cost: CostComponentReport,
     pub judge_overhead: CostComponentReport,
+    /// The reader refused this question's temporal phrase; the answerer got no pack.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reader_refusal: Option<String>,
 }
 #[derive(Debug, Serialize)]
 pub(super) struct AblationUnavailable {
@@ -449,6 +452,7 @@ pub(super) fn run_with_session(
                         };
                         let started = Instant::now();
                         let mut costs = Vec::new();
+                        let mut reader_refusal: Option<String> = None;
                         let context = match arm.arm {
                             ArmKind::Deterministic => {
                                 let pack = if leg == Some("ablation-2:access-factor-neutral") {
@@ -467,12 +471,18 @@ pub(super) fn run_with_session(
                                         },
                                         vault,
                                         &request_case,
-                                    )?
+                                    )
                                 } else {
-                                    measured_pack(vault, &request_case, plan.temporal_now)?
+                                    measured_pack(vault, &request_case, plan.temporal_now)
                                 };
-                                String::from_utf8(pack.serialized)
-                                    .map_err(|_| refusal("invalid pack text"))?
+                                match pack {
+                                    Ok(pack) => String::from_utf8(pack.serialized)
+                                        .map_err(|_| refusal("invalid pack text"))?,
+                                    Err(error) => {
+                                        reader_refusal = Some(temporal_refusal_reason(error)?);
+                                        String::new()
+                                    }
+                                }
                             }
                             ArmKind::Agentic => {
                                 let mut context = String::new();
@@ -493,11 +503,18 @@ pub(super) fn run_with_session(
                                         .call(format!("{}\n{input}", plan.routing_prompt.content));
                                     costs.push(cost);
                                     request_case.query = query;
-                                    context = String::from_utf8(
-                                        measured_pack(vault, &request_case, plan.temporal_now)?
-                                            .serialized,
-                                    )
-                                    .map_err(|_| refusal("invalid pack text"))?;
+                                    context = match measured_pack(
+                                        vault,
+                                        &request_case,
+                                        plan.temporal_now,
+                                    ) {
+                                        Ok(pack) => String::from_utf8(pack.serialized)
+                                            .map_err(|_| refusal("invalid pack text"))?,
+                                        Err(error) => {
+                                            reader_refusal = Some(temporal_refusal_reason(error)?);
+                                            String::new()
+                                        }
+                                    };
                                 }
                                 context
                             }
@@ -593,6 +610,7 @@ pub(super) fn run_with_session(
                             },
                             query_cost,
                             judge_overhead: sum_costs(&judge_costs)?,
+                            reader_refusal,
                         };
                         if leg.is_some() {
                             ablation_rows.push(row);
@@ -685,32 +703,16 @@ pub(super) fn run_with_session(
         judge_instruction_sha256: Some(plan.judge.instruction.sha256.clone()),
         ..super::scorer::BeamScorer::metadata(&FixedBeamScorer)
     };
-    let mut card = super::card::build_card(super::card::CardInputs {
+    let card = measured_card(MeasuredCardInputs {
+        plan,
         manifest: &manifest,
         run_jsonl: path,
-        records: &summaries,
+        summaries: &summaries,
         scorer: &scorer,
         exactness: &exactness,
-        judges: vec![super::card::CardJudge {
-            role: "answer-judge".to_owned(),
-            judge_pin: plan.judge.model.model_id.as_str().to_owned(),
-            vote_count: plan.judge.card.vote_count,
-            prompt_sha256: Some(plan.judge.instruction.sha256.clone()),
-        }],
-        answerers: plan
-            .answerers
-            .iter()
-            .map(|arm| super::card::CardAnswerer {
-                arm: arm.arm.as_str().to_owned(),
-                model_pin: arm.model.model_id.as_str().to_owned(),
-                prompt_sha256: super::load::sha256_hex(plan.answer_prompt.as_bytes()),
-            })
-            .collect(),
-        cost: measured_arm_costs(&rows, &offline_amortized),
+        rows: &rows,
+        offline_amortized: &offline_amortized,
     })?;
-    if let Some(root) = &plan.results_root {
-        card.result_dir = Some(super::card::result_dir(root, &card));
-    }
     let report = MeasuredReport {
         exactness,
         card: Some(card),
@@ -774,6 +776,56 @@ pub(super) fn run_with_session(
     }
     Ok(report)
 }
+struct MeasuredCardInputs<'a> {
+    plan: &'a ModelRunPlan,
+    manifest: &'a super::model::RunManifest,
+    run_jsonl: &'a Path,
+    summaries: &'a [super::card::RecordSummary],
+    scorer: &'a super::report_model::ScorerReport,
+    exactness: &'a super::exactness::ExactnessReport,
+    rows: &'a [ModelRow],
+    offline_amortized: &'a CostComponentReport,
+}
+/// The measured run's card: the live judge pin and every answerer pin.
+fn measured_card(inputs: MeasuredCardInputs<'_>) -> BeamResult<super::card::RunCard> {
+    let MeasuredCardInputs {
+        plan,
+        manifest,
+        run_jsonl,
+        summaries,
+        scorer,
+        exactness,
+        rows,
+        offline_amortized,
+    } = inputs;
+    let mut card = super::card::build_card(super::card::CardInputs {
+        manifest,
+        run_jsonl,
+        records: summaries,
+        scorer,
+        exactness,
+        judges: vec![super::card::CardJudge {
+            role: "answer-judge".to_owned(),
+            judge_pin: plan.judge.model.model_id.as_str().to_owned(),
+            vote_count: plan.judge.card.vote_count,
+            prompt_sha256: Some(plan.judge.instruction.sha256.clone()),
+        }],
+        answerers: plan
+            .answerers
+            .iter()
+            .map(|arm| super::card::CardAnswerer {
+                arm: arm.arm.as_str().to_owned(),
+                model_pin: arm.model.model_id.as_str().to_owned(),
+                prompt_sha256: super::load::sha256_hex(plan.answer_prompt.as_bytes()),
+            })
+            .collect(),
+        cost: measured_arm_costs(rows, offline_amortized),
+    })?;
+    if let Some(root) = &plan.results_root {
+        card.result_dir = Some(super::card::result_dir(root, &card));
+    }
+    Ok(card)
+}
 /// Per arm and effort: the measured cost columns of the card.
 fn measured_arm_costs(
     rows: &[ModelRow],
@@ -793,6 +845,7 @@ fn measured_arm_costs(
             super::card::CardArmCost {
                 arm,
                 questions: rows.len(),
+                refused: rows.iter().filter(|r| r.reader_refusal.is_some()).count(),
                 pack_tokens: None,
                 query_input_tokens: rows.iter().map(|r| r.query_cost.input_tokens).sum(),
                 query_output_tokens: rows.iter().map(|r| r.query_cost.output_tokens).sum(),
@@ -852,6 +905,13 @@ fn bounded_context(text: &str, budget: usize) -> String {
         }
     }
     text[..boundaries[lo]].to_owned()
+}
+/// The reason of a temporal-reader refusal; every other error passes through.
+fn temporal_refusal_reason(error: BeamError) -> BeamResult<String> {
+    match super::arms::temporal_reader_refusal(ArmKind::Deterministic, error)?.outcome {
+        super::report_model::ArmOutcome::NotReady { not_ready } => Ok(not_ready.reason),
+        _ => Err(refusal("temporal refusal produced no reason")),
+    }
 }
 fn refusal(reason: &str) -> BeamError {
     BeamError::Comparability {

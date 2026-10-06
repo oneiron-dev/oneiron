@@ -144,6 +144,8 @@ pub(super) struct CardAnswerer {
 pub(super) struct CardArmCost {
     pub(super) arm: String,
     pub(super) questions: usize,
+    /// Questions this arm refused (the reader could not resolve a temporal phrase).
+    pub(super) refused: usize,
     /// Serialized context-pack tokens; absent where the arm reports no pack.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) pack_tokens: Option<u64>,
@@ -371,9 +373,23 @@ pub(super) fn report_arm_costs(report: &BeamReport) -> Vec<CardArmCost> {
         .into_iter()
         .map(|(arm, rows)| {
             let elapsed: Vec<u64> = rows.iter().map(|r| r.costs.query.elapsed_us).collect();
+            let refused = report
+                .cases
+                .iter()
+                .flat_map(|case| &case.arms)
+                .filter(|arm_report| {
+                    rows.first().is_some_and(|row| row.arm == arm_report.arm)
+                        && matches!(
+                            &arm_report.outcome,
+                            super::report_model::ArmOutcome::NotReady { not_ready }
+                                if not_ready.component == super::arms::TEMPORAL_READER_COMPONENT
+                        )
+                })
+                .count();
             CardArmCost {
                 arm,
                 questions: rows.len(),
+                refused,
                 pack_tokens: Some(rows.iter().map(|r| r.costs.query.output_tokens).sum()),
                 query_input_tokens: rows.iter().map(|r| r.costs.query.input_tokens).sum(),
                 query_output_tokens: rows.iter().map(|r| r.costs.query.output_tokens).sum(),

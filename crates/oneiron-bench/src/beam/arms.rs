@@ -37,7 +37,12 @@ impl BeamArmAdapter for DeterministicContextPackArm {
             });
         }
 
-        let pack = run_deterministic_context_pack(vault, case)?;
+        let pack = match run_deterministic_context_pack(vault, case) {
+            Ok(pack) => pack,
+            Err(error) => {
+                return temporal_reader_refusal(self.kind(), error);
+            }
+        };
         let report = context_pack_report(&pack, case);
 
         if report.result_count < case.expected_min_results {
@@ -56,6 +61,30 @@ impl BeamArmAdapter for DeterministicContextPackArm {
         })
     }
 }
+/// With a contract v2 `question_time` the reader resolves relative dates in
+/// the question, and the engine fails closed on a phrase it cannot resolve
+/// ("last weekend"). That is a per-question refusal of this arm, reported as
+/// such; every other error still fails the run.
+pub(super) fn temporal_reader_refusal(arm: ArmKind, error: BeamError) -> BeamResult<ArmReport> {
+    match error {
+        BeamError::Oneiron(engine)
+            if engine.kind() == oneiron::ErrorKind::InvalidTemporalExpression =>
+        {
+            Ok(ArmReport {
+                arm,
+                outcome: ArmOutcome::NotReady {
+                    not_ready: super::report_model::NotReadyState {
+                        component: TEMPORAL_READER_COMPONENT.to_owned(),
+                        reason: engine.to_string(),
+                        retryable: false,
+                    },
+                },
+            })
+        }
+        other => Err(other),
+    }
+}
+pub(super) const TEMPORAL_READER_COMPONENT: &str = "temporal_reader";
 pub(super) struct VanillaRagArm;
 impl BeamArmAdapter for VanillaRagArm {
     fn kind(&self) -> ArmKind {

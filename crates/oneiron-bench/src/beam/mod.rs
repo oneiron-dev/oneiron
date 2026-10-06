@@ -128,6 +128,15 @@ pub(crate) enum BeamError {
     TempVault(#[from] std::io::Error),
     #[error("exactness check failed: {0}")]
     Exactness(String),
+    #[error(
+        "the engine refused {count} of {of} corpus items, so the corpus cannot be ingested byte-exact: {}",
+        items.join("; ")
+    )]
+    IngestRefused {
+        count: usize,
+        of: usize,
+        items: Vec<String>,
+    },
 }
 
 mod ablations;
@@ -163,6 +172,8 @@ mod split;
 mod tests_community_eval004;
 #[cfg(test)]
 mod tests_contract_v2;
+#[cfg(test)]
+mod tests_contract_v2_conformance;
 #[cfg(test)]
 mod tests_gates;
 #[cfg(test)]
