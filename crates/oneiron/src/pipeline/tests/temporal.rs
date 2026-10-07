@@ -535,13 +535,30 @@ fn contiguity_boost_behavior() -> Result<()> {
 fn overlap_tiebreak_prefers_closer_midpoint() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    let anchor_start = 100;
-    let anchor_end = 200;
+    // Vault open seeds rows at the epoch, one of them under a per-vault
+    // derived id. Anchor well past the widened window around them, or a seed
+    // whose id sorts first ties this fixture after fusion and takes rank 0.
+    let anchor_start = 2_000_000;
+    let anchor_end = anchor_start + 100;
     let closer = entity_id(140);
     let farther = entity_id(141);
 
-    put_entity(&vault, closer, 1, 120, 130, 150)?;
-    put_entity(&vault, farther, 1, 180, 190, 150)?;
+    put_entity(
+        &vault,
+        closer,
+        1,
+        anchor_start + 20,
+        anchor_start + 30,
+        anchor_start + 50,
+    )?;
+    put_entity(
+        &vault,
+        farther,
+        1,
+        anchor_start + 80,
+        anchor_start + 90,
+        anchor_start + 50,
+    )?;
 
     let results = vault
         .query()
