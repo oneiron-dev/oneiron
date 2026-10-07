@@ -311,83 +311,10 @@ fn sync_protocol_errors_carry_typed_context_and_engine_source() {
     assert_eq!(rollback.kind(), rollback_kind);
 }
 
-#[test]
-fn hnsw_recall_at_10_vs_bruteforce() -> Result<()> {
-    const DIMENSIONS: usize = 128;
-    const NODE_COUNT: usize = 1_000;
-    const LIMIT: usize = 10;
-    const QUERY_COUNT: usize = 25;
-
-    let temp_dir = tempfile::tempdir()?;
-    let mut config = test_config();
-    config.dimensions = DIMENSIONS;
-    config.map_size = 128 * 1024 * 1024;
-    config.hnsw.m_max_0 = 64;
-    config.hnsw.ef_construction = 256;
-    config.hnsw.ef_search = 256;
-
-    let vault = Vault::open(temp_dir.path(), config)?;
-    let mut rng = StdRng::seed_from_u64(42);
-    let mut corpus = Vec::with_capacity(NODE_COUNT);
-
-    let insert_started = Instant::now();
-    for _ in 0..NODE_COUNT {
-        let id = EntityId::now();
-        let vector: Vec<f32> = (0..DIMENSIONS)
-            .map(|_| rng.gen_range(-1.0_f32..1.0_f32))
-            .collect();
-
-        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"recall-node")?;
-        vault.put_vector(&id, &vector)?;
-        corpus.push((id, vector));
-    }
-    let insert_elapsed = insert_started.elapsed();
-
-    let search_started = Instant::now();
-    let mut recall_sum = 0.0_f32;
-    for query_idx in 0..QUERY_COUNT {
-        let stride = NODE_COUNT / QUERY_COUNT;
-        let query_vector = &corpus[query_idx * stride].1;
-
-        let ann = vault.search_vector(query_vector, LIMIT)?;
-        let ann_ids: HashSet<EntityId> = ann.iter().map(|item| item.id).collect();
-
-        let mut brute_force: Vec<(EntityId, f32)> = corpus
-            .iter()
-            .map(|(id, vector)| (*id, crate::distance::cosine_distance(query_vector, vector)))
-            .collect();
-        brute_force.sort_by(|left, right| {
-            left.1
-                .total_cmp(&right.1)
-                .then_with(|| left.0.as_bytes().cmp(right.0.as_bytes()))
-        });
-
-        let brute_ids: HashSet<EntityId> =
-            brute_force.iter().take(LIMIT).map(|(id, _)| *id).collect();
-        let hits = brute_ids.intersection(&ann_ids).count();
-        recall_sum += hits as f32 / LIMIT as f32;
-    }
-    let search_elapsed = search_started.elapsed();
-
-    let recall_at_10 = recall_sum / QUERY_COUNT as f32;
-    eprintln!(
-        "hnsw recall@10={recall_at_10:.4}, insert_ms={}, search_ms={}",
-        insert_elapsed.as_millis(),
-        search_elapsed.as_millis()
-    );
-
-    assert!(
-        recall_at_10 > 0.95,
-        "expected recall@10 > 0.95, got {recall_at_10:.4}"
-    );
-
-    Ok(())
-}
-
 /// ONE-324 AC9: recall under refresh churn. Re-puts ≥ 10% of the vault's
 /// vectors with new values through the localized symmetric refresh path,
 /// then requires recall@10 vs brute force on the UPDATED corpus to stay
-/// above the same 0.95 gate as the build-time recall test.
+/// above the same 0.95 gate as the build-time recall test in oneiron-bench.
 #[test]
 fn hnsw_recall_at_10_after_refresh_churn() -> Result<()> {
     const DIMENSIONS: usize = 128;
