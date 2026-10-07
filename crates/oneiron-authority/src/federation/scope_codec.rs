@@ -4,31 +4,31 @@ use crate::error::{Error, Result};
 use rmpv::Value;
 use std::collections::BTreeSet;
 
-pub(crate) fn encode_scope_value(scope: &Scope) -> Result<Value> {
+pub fn encode_scope_value(scope: &Scope) -> Result<Value> {
     let bytes =
         rmp_serde::to_vec_named(scope).map_err(|_| Error::InvalidClaimBody("scope encoding"))?;
     rmpv::decode::read_value(&mut bytes.as_slice())
         .map_err(|_| Error::InvalidClaimBody("scope encoding"))
 }
-pub(crate) fn decode_scope_value(value: &Value) -> Result<Scope> {
+pub fn decode_scope_value(value: &Value) -> Result<Scope> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| Error::InvalidClaimBody("scope encoding"))?;
     rmp_serde::from_slice(&bytes).map_err(|_| Error::InvalidClaimBody("invalid six-axis scope"))
 }
-pub(crate) fn read_preset() -> Scope {
+pub fn read_preset() -> Scope {
     let mut scope = Scope::top();
     scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
     scope
 }
-pub(crate) fn effect_preset() -> Scope {
+pub fn effect_preset() -> Scope {
     let mut scope = Scope::top();
     scope.verbs = ScopeAxis::Some(BTreeSet::from(["effect".to_owned()]));
     scope
 }
 /// Explicit upgrade for old manifest selectors. This is never the decoder for
 /// a six-axis object: malformed new axes must remain bottom or an error.
-pub(crate) fn legacy_read_scope(value: Option<&Value>) -> Option<Scope> {
+pub fn legacy_read_scope(value: Option<&Value>) -> Option<Scope> {
     let mut out = read_preset();
     let entries = match value {
         None | Some(Value::Nil) => return Some(out),
@@ -39,7 +39,7 @@ pub(crate) fn legacy_read_scope(value: Option<&Value>) -> Option<Scope> {
         match k.as_str()? {
             "world" | "world_ref" | "worldRef" => {
                 let id = if v.as_str() == Some("base") || matches!(v, Value::Nil) {
-                    crate::claim::base_world_id()
+                    oneiron_contracts::claim::base_world_id()
                 } else {
                     id(v)?
                 };

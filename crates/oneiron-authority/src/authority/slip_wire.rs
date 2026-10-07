@@ -6,7 +6,7 @@ use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeili
 use rmpv::Value;
 use std::collections::BTreeSet;
 
-pub(super) fn slip_mint_value(action: &SlipMintAction) -> Value {
+pub fn slip_mint_value(action: &SlipMintAction) -> Value {
     let claims = &action.claims;
     Value::Map(vec![
         (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SLIP_MINT)),
@@ -63,7 +63,7 @@ pub(super) fn slip_mint_value(action: &SlipMintAction) -> Value {
     ])
 }
 
-pub(super) fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
+pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
     validate_keys(entries, &SLIP_MINT_KEYS)?;
     let claims = SlipClaims {
         slip_id: {

@@ -16,7 +16,7 @@ use crate::federation::{
 use super::*;
 use crate::error::RecordError;
 
-pub(super) fn decode_entry_value(value: &Value) -> Result<AuthorityLogEntry> {
+pub fn decode_entry_value(value: &Value) -> Result<AuthorityLogEntry> {
     let entries = map_entries(value)?;
     validate_keys(entries, &AUTHORITY_ENTRY_KEYS)?;
     let schema_version = required(entries, KEY_SCHEMA_VERSION)?
@@ -45,7 +45,7 @@ pub(super) fn decode_entry_value(value: &Value) -> Result<AuthorityLogEntry> {
     })
 }
 
-pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
+pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
     let entries = map_entries(value)?;
     let kind = required(entries, OP_KEY_KIND)?
         .as_str()
@@ -409,7 +409,7 @@ fn decode_device(value: &Value) -> Result<DeviceAuthority> {
     })
 }
 
-pub(super) fn decode_key(value: &Value) -> Result<AuthorityKey> {
+pub fn decode_key(value: &Value) -> Result<AuthorityKey> {
     let entries = map_entries(value)?;
     validate_keys(entries, &[KEY_SUITE, KEY_PUBLIC_KEY])?;
     let suite = required(entries, KEY_SUITE)?
@@ -446,7 +446,7 @@ fn decode_signature(value: &Value) -> Result<AuthoritySignature> {
     })
 }
 
-pub(super) fn decode_signature_array(value: &Value) -> Result<Vec<AuthoritySignature>> {
+pub fn decode_signature_array(value: &Value) -> Result<Vec<AuthoritySignature>> {
     let Value::Array(values) = value else {
         return Err(invalid_authority());
     };
@@ -465,14 +465,14 @@ fn decode_attestation(value: &Value) -> Result<AuthorityAttestation> {
     })
 }
 
-pub(super) fn decode_tier(value: &Value) -> Result<AuthorityTier> {
+pub fn decode_tier(value: &Value) -> Result<AuthorityTier> {
     value
         .as_str()
         .and_then(AuthorityTier::parse)
         .ok_or_else(invalid_authority)
 }
 
-pub(super) fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
+pub fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
     if matches!(value, Value::Nil) {
         Ok(None)
     } else {
@@ -480,14 +480,14 @@ pub(super) fn decode_optional_hash(value: &Value) -> Result<Option<[u8; 32]>> {
     }
 }
 
-pub(super) fn decode_hash_array(value: &Value) -> Result<Vec<[u8; 32]>> {
+pub fn decode_hash_array(value: &Value) -> Result<Vec<[u8; 32]>> {
     let Value::Array(values) = value else {
         return Err(invalid_authority());
     };
     values.iter().map(decode_hash).collect()
 }
 
-pub(super) fn decode_hash(value: &Value) -> Result<[u8; 32]> {
+pub fn decode_hash(value: &Value) -> Result<[u8; 32]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
@@ -495,14 +495,14 @@ fn decode_16(value: &Value) -> Result<[u8; 16]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
-pub(super) fn map_entries(value: &Value) -> Result<&[(Value, Value)]> {
+pub fn map_entries(value: &Value) -> Result<&[(Value, Value)]> {
     let Value::Map(entries) = value else {
         return Err(invalid_authority());
     };
     Ok(entries)
 }
 
-pub(super) fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
+pub fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
     let mut seen = vec![false; expected.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_authority)?;
@@ -521,7 +521,7 @@ pub(super) fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Re
     }
 }
 
-pub(super) fn required<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
+pub fn required<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
     entries
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
@@ -541,7 +541,7 @@ fn bytes(value: &Value) -> Result<&[u8]> {
     }
 }
 
-pub(super) fn invalid_authority() -> Error {
+pub fn invalid_authority() -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(
         "body failed validation",
     ))
@@ -551,8 +551,8 @@ pub(super) fn invalid_authority() -> Error {
 ///
 /// A cheap shape test on the appended entry, not a transition verdict — whether
 /// the op actually applied is the fold's call, and
-/// [`crate::federation::apply_federation_stale_stamps`] asks the fold.
-pub(super) fn is_terminal_federation_lifecycle(entry: &AuthorityLogEntry) -> bool {
+/// `oneiron::federation::apply_federation_stale_stamps` asks the fold.
+pub fn is_terminal_federation_lifecycle(entry: &AuthorityLogEntry) -> bool {
     matches!(
         &entry.op,
         AuthorityOp::FederationLifecycle(action)

@@ -26,15 +26,18 @@ impl GenesisRecoveryStep {
             Self::Dismissed(commitment)
         })
     }
-    pub(super) fn commitment(&self) -> [u8; 32] {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn commitment(&self) -> [u8; 32] {
         match self {
             Self::Saved(c) | Self::Dismissed(c) => *c,
         }
     }
-    pub(super) fn dismissed(&self) -> bool {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn dismissed(&self) -> bool {
         matches!(self, Self::Dismissed(_))
     }
-    pub(super) fn validate(&self) -> Result<()> {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn validate(&self) -> Result<()> {
         if self.commitment() == [0; 32] {
             Err(invalid_authority())
         } else {

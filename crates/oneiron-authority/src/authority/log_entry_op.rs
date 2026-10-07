@@ -78,7 +78,7 @@ pub enum AuthorityOp {
     CriticalWriteConfirm(CriticalWriteConfirmAction),
     /// Legacy owner veto of a pending software-tier widen. Kept so existing
     /// signed logs still decode and hash identically; the fold always rejects
-    /// it as [`AuthorityFoldIssue::InvalidEntry`] because no widen is ever
+    /// it as `oneiron::authority::AuthorityFoldIssue::InvalidEntry` because no widen is ever
     /// pending (the delayed-broadcast-veto ceremony died 2026-08-05, ARCH-0040
     /// ONE-AUTHLOG-F6). Nothing in this crate produces it.
     VetoPendingWiden {
@@ -147,7 +147,8 @@ pub struct AuthorityLogEntry {
 }
 
 impl AuthorityLogEntry {
-    pub(super) fn validate_shape(&self) -> Result<()> {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn validate_shape(&self) -> Result<()> {
         if self.schema_version != AUTHORITY_LOG_SCHEMA_VERSION
             || self.parent_hashes.len() > MAX_PARENTS
             || self.cosigns.len() > MAX_COSIGNS
@@ -188,7 +189,8 @@ impl AuthorityLogEntry {
         Ok(())
     }
 
-    pub(super) fn signer_key(&self) -> &AuthorityKey {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn signer_key(&self) -> &AuthorityKey {
         &self.signer.public_key
     }
 }
@@ -271,7 +273,7 @@ pub fn authority_transcript(entry: &AuthorityLogEntry) -> Result<Vec<u8>> {
     authority_transcript_with_genesis_delay(entry, true)
 }
 
-pub(super) fn authority_transcript_with_genesis_delay(
+pub fn authority_transcript_with_genesis_delay(
     entry: &AuthorityLogEntry,
     include_genesis_delay: bool,
 ) -> Result<Vec<u8>> {
@@ -285,7 +287,7 @@ pub(super) fn authority_transcript_with_genesis_delay(
     Ok(transcript)
 }
 
-pub(super) fn transcript_value_with_genesis_delay(
+pub fn transcript_value_with_genesis_delay(
     entry: &AuthorityLogEntry,
     include_genesis_delay: bool,
 ) -> Value {
@@ -308,7 +310,7 @@ pub(super) fn transcript_value_with_genesis_delay(
     ])
 }
 
-pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
+pub fn validate_op(op: &AuthorityOp) -> Result<()> {
     match op {
         AuthorityOp::SlipMint(action) => action.validate(),
         AuthorityOp::SlipRevoke { slip_id } | AuthorityOp::SlipConsume { slip_id } => {

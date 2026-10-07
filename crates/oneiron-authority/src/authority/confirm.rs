@@ -18,7 +18,8 @@ pub enum AuthorityConfirmKind {
 }
 
 impl AuthorityConfirmKind {
-    pub(super) fn as_str(self) -> &'static str {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Accept => CONFIRM_KIND_ACCEPT,
             Self::Rescope => CONFIRM_KIND_RESCOPE,
@@ -27,7 +28,8 @@ impl AuthorityConfirmKind {
         }
     }
 
-    pub(super) fn parse(value: &str) -> Option<Self> {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             CONFIRM_KIND_ACCEPT => Some(Self::Accept),
             CONFIRM_KIND_RESCOPE => Some(Self::Rescope),
@@ -62,13 +64,13 @@ pub enum CriticalWriteConfirmDisposition {
     Decline,
 }
 impl CriticalWriteConfirmDisposition {
-    pub(super) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Clear => "clear",
             Self::Decline => "decline",
         }
     }
-    pub(super) fn parse(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "clear" => Some(Self::Clear),
             "decline" => Some(Self::Decline),
@@ -82,13 +84,13 @@ pub enum CriticalWriteConfirmMethod {
     PassphraseReentry,
 }
 impl CriticalWriteConfirmMethod {
-    pub(super) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::TokenReauth => "token_reauth",
             Self::PassphraseReentry => "passphrase_reentry",
         }
     }
-    pub(super) fn parse(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "token_reauth" => Some(Self::TokenReauth),
             "passphrase_reentry" => Some(Self::PassphraseReentry),

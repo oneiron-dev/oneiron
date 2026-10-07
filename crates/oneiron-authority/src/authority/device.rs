@@ -5,6 +5,19 @@ use std::collections::BTreeMap;
 
 use super::*;
 
+/// Folded roster entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldedDevice {
+    /// Authority key.
+    pub key: AuthorityKey,
+    /// Assurance tier.
+    pub tier: AuthorityTier,
+    /// Role bits after most-restrictive conflict folding.
+    pub roles: u16,
+    /// Whether any valid revocation tombstone removed this key.
+    pub revoked: bool,
+}
+
 /// Device authority material carried by genesis/enroll/rotate/recovery ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceAuthority {
@@ -21,7 +34,8 @@ pub struct DeviceAuthority {
 }
 
 impl DeviceAuthority {
-    pub(super) fn validate(&self) -> Result<()> {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn validate(&self) -> Result<()> {
         if self.roles == 0 {
             return Err(invalid_authority());
         }
@@ -34,12 +48,13 @@ impl DeviceAuthority {
 
     // Structural owner-capable shape only. Posture-specific authorization is
     // decided by FoldContext, never by the replay codec.
-    pub(super) fn can_authority_consent(&self) -> bool {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn can_authority_consent(&self) -> bool {
         (self.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
     }
 }
 
-pub(super) fn roster_has_live_owner(
+pub fn roster_has_live_owner(
     roster: &BTreeMap<AuthorityKey, FoldedDevice>,
     key: &AuthorityKey,
 ) -> bool {
@@ -48,7 +63,7 @@ pub(super) fn roster_has_live_owner(
         .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
 }
 
-pub(super) fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool {
+pub fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool {
     !device.revoked
         && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
         && (device.roles & ROLE_CLOUD) == 0
@@ -65,16 +80,16 @@ pub(super) fn folded_device_can_authority_consent(device: &FoldedDevice) -> bool
 /// predicate that selects peer consent keys by EXCLUDING host/cloud markings
 /// would admit every user device the peer enrolled while excluding exactly the
 /// key host-root makes the root.
-pub(crate) fn folded_peer_device_is_consent_root(device: &FoldedDevice) -> bool {
+pub fn folded_peer_device_is_consent_root(device: &FoldedDevice) -> bool {
     !device.revoked && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
 }
 
 /// Managed hosts are owner roots; this arm is never used by self-host folds.
-pub(super) fn folded_host_device_can_consent(device: &FoldedDevice) -> bool {
+pub fn folded_host_device_can_consent(device: &FoldedDevice) -> bool {
     !device.revoked && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
 }
 
-pub(super) fn tier_meets_floor(tier: AuthorityTier, floor: AuthorityTier) -> bool {
+pub fn tier_meets_floor(tier: AuthorityTier, floor: AuthorityTier) -> bool {
     match floor {
         AuthorityTier::Software => true,
         AuthorityTier::Hardware => tier == AuthorityTier::Hardware,

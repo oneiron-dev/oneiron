@@ -89,7 +89,7 @@ impl Position {
     /// A position can only be checked against a permission ceiling.
     ///
     /// ```compile_fail
-    /// use oneiron::federation::{Ceiling, FederationDirectionScope, Position, ScopeAxis};
+    /// use oneiron_authority::federation::{Ceiling, FederationDirectionScope, Position, ScopeAxis};
     /// let scope = FederationDirectionScope { worlds: ScopeAxis::All,
     ///     facets: ScopeAxis::All, bands: ScopeAxis::All };
     /// let position = Position::new(scope.clone());
@@ -188,8 +188,10 @@ const BANDS: AxisSpelling<SelectorRange> = AxisSpelling {
 
 /// The world axis naming base reality alone, spelled `base` on the wire.
 #[must_use]
-pub(crate) fn base_world_axis() -> ScopeAxis<ScopeId> {
-    ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::base_world_id())]))
+pub fn base_world_axis() -> ScopeAxis<ScopeId> {
+    ScopeAxis::Some(BTreeSet::from([ScopeId(
+        oneiron_contracts::claim::base_world_id(),
+    )]))
 }
 
 impl FederationDirectionScope {
@@ -247,7 +249,7 @@ pub fn decode_federation_pact_scope(bytes: &[u8]) -> Result<FederationPactScope>
 }
 
 /// Canonical MessagePack value for a pact scope (authority-log op payloads).
-pub(crate) fn federation_pact_scope_value(scope: &FederationPactScope) -> Value {
+pub fn federation_pact_scope_value(scope: &FederationPactScope) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_PACT_SCOPE_SCHEMA_VERSION),
@@ -265,7 +267,7 @@ pub(crate) fn federation_pact_scope_value(scope: &FederationPactScope) -> Value 
 }
 
 /// Fail-closed value-level pact scope decoder (authority-log op payloads).
-pub(crate) fn decode_federation_pact_scope_value(value: &Value) -> Result<FederationPactScope> {
+pub fn decode_federation_pact_scope_value(value: &Value) -> Result<FederationPactScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_pact_scope());
     };
@@ -290,7 +292,7 @@ pub(crate) fn decode_federation_pact_scope_value(value: &Value) -> Result<Federa
 }
 
 /// Canonical MessagePack value for one direction scope (Rescope-narrow payloads).
-pub(crate) fn federation_direction_scope_value(scope: &FederationDirectionScope) -> Value {
+pub fn federation_direction_scope_value(scope: &FederationDirectionScope) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_DIRECTION_WORLDS),
@@ -308,9 +310,7 @@ pub(crate) fn federation_direction_scope_value(scope: &FederationDirectionScope)
 }
 
 /// Fail-closed value-level direction scope decoder (Rescope-narrow payloads).
-pub(crate) fn decode_federation_direction_scope_value(
-    value: &Value,
-) -> Result<FederationDirectionScope> {
+pub fn decode_federation_direction_scope_value(value: &Value) -> Result<FederationDirectionScope> {
     decode_direction_scope_value(value)
 }
 

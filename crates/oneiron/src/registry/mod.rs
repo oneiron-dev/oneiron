@@ -5,7 +5,6 @@
 
 pub mod pack_byte_map;
 
-pub(crate) use oneiron_contracts::registry::family_matches;
 pub use oneiron_contracts::registry::{
     ArtifactFamilyId, ArtifactFamilyKindId, artifact_family_kind_of,
 };

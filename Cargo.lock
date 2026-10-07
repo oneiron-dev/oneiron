@@ -7685,6 +7685,7 @@ dependencies = [
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-authority",
  "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-guest",
@@ -7745,6 +7746,20 @@ dependencies = [
  "jni 0.21.1",
  "oneiron",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-authority"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek 2.2.0",
+ "oneiron-contracts",
+ "p256",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

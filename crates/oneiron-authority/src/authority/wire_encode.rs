@@ -13,11 +13,11 @@ use crate::federation::{federation_direction_scope_value, federation_pact_scope_
 
 use super::*;
 
-pub(super) fn entry_value(entry: &AuthorityLogEntry, include_signatures: bool) -> Value {
+pub fn entry_value(entry: &AuthorityLogEntry, include_signatures: bool) -> Value {
     entry_value_with_genesis_delay(entry, include_signatures, true)
 }
 
-pub(super) fn entry_value_with_genesis_delay(
+pub fn entry_value_with_genesis_delay(
     entry: &AuthorityLogEntry,
     include_signatures: bool,
     include_genesis_delay: bool,
@@ -54,7 +54,7 @@ pub(super) fn entry_value_with_genesis_delay(
     Value::Map(fields)
 }
 
-pub(super) fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) -> Value {
+pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) -> Value {
     match op {
         AuthorityOp::SlipMint(action) => super::slip_wire::slip_mint_value(action),
         AuthorityOp::SlipRevoke { slip_id } => Value::Map(vec![
@@ -319,7 +319,7 @@ fn gesture_value(gesture: &FederationPactGesture) -> Value {
     ])
 }
 
-pub(super) fn legacy_genesis_encoding_candidate(entry: &AuthorityLogEntry) -> bool {
+pub fn legacy_genesis_encoding_candidate(entry: &AuthorityLogEntry) -> bool {
     matches!(
         &entry.op,
         AuthorityOp::Genesis {
@@ -329,9 +329,7 @@ pub(super) fn legacy_genesis_encoding_candidate(entry: &AuthorityLogEntry) -> bo
     )
 }
 
-pub(super) fn legacy_genesis_signed_entry_bytes(
-    entry: &AuthorityLogEntry,
-) -> Result<Option<Vec<u8>>> {
+pub fn legacy_genesis_signed_entry_bytes(entry: &AuthorityLogEntry) -> Result<Option<Vec<u8>>> {
     if legacy_genesis_encoding_candidate(entry) {
         encode_value(&entry_value_with_genesis_delay(entry, true, false)).map(Some)
     } else {
@@ -355,7 +353,7 @@ fn device_value(device: &DeviceAuthority) -> Value {
     ])
 }
 
-pub(super) fn key_value(key: &AuthorityKey) -> Value {
+pub fn key_value(key: &AuthorityKey) -> Value {
     match key {
         AuthorityKey::Ed25519(bytes) => Value::Map(vec![
             (Value::from(KEY_SUITE), Value::from("ed25519")),
@@ -368,7 +366,7 @@ pub(super) fn key_value(key: &AuthorityKey) -> Value {
     }
 }
 
-pub(super) fn signature_value(signature: &AuthoritySignature) -> Value {
+pub fn signature_value(signature: &AuthoritySignature) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SUITE),
@@ -409,11 +407,11 @@ fn option_hash_value(value: Option<[u8; 32]>) -> Value {
     value.map_or(Value::Nil, binary_value)
 }
 
-pub(super) fn binary_value(value: [u8; 32]) -> Value {
+pub fn binary_value(value: [u8; 32]) -> Value {
     Value::Binary(value.to_vec())
 }
 
-pub(super) fn binary_value_16(value: [u8; 16]) -> Value {
+pub fn binary_value_16(value: [u8; 16]) -> Value {
     Value::Binary(value.to_vec())
 }
 
@@ -423,7 +421,7 @@ fn sorted_hashes(values: &[[u8; 32]]) -> Vec<[u8; 32]> {
     out
 }
 
-pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
+pub fn encode_value(value: &Value) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, value)
         .map_err(|_| Error::InvariantViolation("authority log body MessagePack encode failed"))?;

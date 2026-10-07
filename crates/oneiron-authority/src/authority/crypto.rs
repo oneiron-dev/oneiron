@@ -20,14 +20,16 @@ pub enum AuthoritySignatureSuite {
 }
 
 impl AuthoritySignatureSuite {
-    pub(super) fn as_str(self) -> &'static str {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Ed25519 => "ed25519",
             Self::P256 => "p256",
         }
     }
 
-    pub(super) fn parse(value: &str) -> Option<Self> {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "ed25519" => Some(Self::Ed25519),
             "p256" => Some(Self::P256),
@@ -55,7 +57,8 @@ impl AuthorityKey {
         }
     }
 
-    pub(super) fn validate(&self) -> Result<()> {
+    /// Public so `oneiron`'s authority code calls it across the crate line.
+    pub fn validate(&self) -> Result<()> {
         match self {
             Self::Ed25519(bytes) => VerifyingKey::from_bytes(bytes)
                 .map(|_| ())
@@ -80,7 +83,7 @@ pub struct AuthorityAttestation {
 }
 
 impl AuthorityAttestation {
-    pub(super) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.kind.is_empty()
             || self.kind.len() > 64
             || self.evidence.len() > MAX_ATTESTATION_EVIDENCE_BYTES
@@ -103,7 +106,7 @@ pub enum AuthorityTier {
 }
 
 impl AuthorityTier {
-    pub(super) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Software => "software",
             Self::Hardware => "hardware",
@@ -111,7 +114,7 @@ impl AuthorityTier {
         }
     }
 
-    pub(super) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "software" => Some(Self::Software),
             "hardware" => Some(Self::Hardware),
@@ -133,7 +136,7 @@ pub struct AuthoritySignature {
 }
 
 impl AuthoritySignature {
-    pub(super) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.suite != self.public_key.suite() {
             return Err(invalid_authority());
         }
@@ -154,7 +157,7 @@ impl AuthoritySignature {
     }
 }
 
-pub(super) fn canonical_p256_key_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
+pub fn canonical_p256_key_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     let key = P256VerifyingKey::from_sec1_bytes(bytes).map_err(|_| invalid_authority())?;
     Ok(key.to_encoded_point(true).as_bytes().to_vec())
 }
@@ -189,7 +192,7 @@ pub fn verify_authority_signature(signature: &AuthoritySignature, transcript: &[
     }
 }
 
-pub(super) fn verify_entry_signatures(entry: &AuthorityLogEntry) -> Result<()> {
+pub fn verify_entry_signatures(entry: &AuthorityLogEntry) -> Result<()> {
     if verify_entry_signatures_current(entry).is_ok()
         || verify_entry_signatures_legacy_genesis(entry).is_ok()
     {
@@ -198,7 +201,7 @@ pub(super) fn verify_entry_signatures(entry: &AuthorityLogEntry) -> Result<()> {
     Err(invalid_authority())
 }
 
-pub(super) fn verify_entry_signatures_current(entry: &AuthorityLogEntry) -> Result<()> {
+pub fn verify_entry_signatures_current(entry: &AuthorityLogEntry) -> Result<()> {
     let transcript = authority_transcript(entry)?;
     if verify_entry_signatures_with_transcript(entry, &transcript) {
         Ok(())
@@ -207,7 +210,7 @@ pub(super) fn verify_entry_signatures_current(entry: &AuthorityLogEntry) -> Resu
     }
 }
 
-pub(super) fn verify_entry_signatures_legacy_genesis(entry: &AuthorityLogEntry) -> Result<()> {
+pub fn verify_entry_signatures_legacy_genesis(entry: &AuthorityLogEntry) -> Result<()> {
     if !legacy_genesis_encoding_candidate(entry) {
         return Err(invalid_authority());
     }
