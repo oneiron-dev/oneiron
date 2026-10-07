@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome};
 use crate::edge::EdgeActorClass;
+use crate::error::ErrorKind;
 use crate::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::ports::ManualClock;
@@ -561,6 +562,43 @@ fn a_crash_right_after_the_commit_resumes_with_no_lost_and_no_doubled_turn() {
     assert_eq!(count(&vault, AttemptState::Failed), 1);
     assert_eq!(count(&vault, AttemptState::Queued), 0);
     assert_eq!(count(&vault, AttemptState::Leased), 0);
+}
+
+/// A claimed marker whose settlement fails on storage stays this worker's:
+/// the same reconciler hands it back and settles it on its next pass, with no
+/// restart and no lease sweep. Both settling writes are covered, the one that
+/// completes an answer and the one that schedules a failed call's retry.
+#[test]
+fn a_settlement_that_fails_after_the_claim_is_settled_by_the_same_worker() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    for (call, text) in [
+        (Answer::Good, "Ada sailed north"),
+        (Answer::Fail, "Grace stayed behind"),
+    ] {
+        let turn = witness(&vault, text);
+        tagger.set(call);
+        vault.test_hooks().arm_fail_next_tagging_settlement();
+        let error = reconciler
+            .drain_once()
+            .expect_err("the settling write fails");
+        assert_eq!(error.kind(), ErrorKind::MapFull);
+        assert_eq!(count(&vault, AttemptState::Leased), 1);
+        // Storage is back.
+        tagger.set(Answer::Good);
+        let pass = reconciler.drain_once().expect("drain");
+        assert_eq!(pass.traces.len(), 1);
+        assert_eq!(pass.traces[0].turn, Some(turn));
+        assert!(matches!(
+            pass.traces[0].outcome,
+            TaggingOutcome::Shadowed { .. }
+        ));
+        assert_eq!(count(&vault, AttemptState::Leased), 0);
+        assert!(reconciler.drain_once().expect("drain").traces.is_empty());
+    }
+    assert_eq!(count(&vault, AttemptState::Completed), 2);
 }
 
 #[test]

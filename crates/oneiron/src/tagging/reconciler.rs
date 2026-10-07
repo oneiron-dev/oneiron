@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use super::input::{TurnInput, turn_input_in_txn};
@@ -78,8 +78,10 @@ impl TaggingPass {
 /// Drains tagging markers through one host-served tagger.
 ///
 /// Every claimed marker settles inside the pass: completed, retried with
-/// backoff, or (for a payload this build cannot read) failed. No marker ever
-/// fails the write that committed it.
+/// backoff, or (for a payload this build cannot read) failed. A marker whose
+/// settling write fails stays this reconciler's, and its next pass hands it
+/// back before claiming anything. No marker ever fails the write that
+/// committed it.
 pub struct TaggingReconciler {
     vault: Arc<Vault>,
     encoder: Arc<dyn ExtractionEncoder>,
@@ -88,6 +90,9 @@ pub struct TaggingReconciler {
     batch_size: usize,
     backoff: TaggingBackoff,
     label_kinds: BTreeMap<String, u8>,
+    /// Claimed markers whose settling write failed. Each is still leased
+    /// under this owner, where no claim, witness or publication reaches it.
+    unsettled: Mutex<Vec<AttemptRecord>>,
 }
 
 impl TaggingReconciler {
@@ -118,6 +123,7 @@ impl TaggingReconciler {
             batch_size: DEFAULT_BATCH_SIZE,
             backoff: TaggingBackoff::default(),
             label_kinds: BTreeMap::new(),
+            unsettled: Mutex::new(Vec::new()),
         })
     }
 
@@ -204,7 +210,11 @@ impl TaggingReconciler {
 
     /// [`Self::drain_once`], handing each trace to `on_trace` the moment its
     /// marker settles.
+    ///
+    /// An error after a claim leaves that marker leased: the pass keeps it
+    /// and returns the error, and the next pass hands it back first.
     pub fn drain_once_with(&self, mut on_trace: impl FnMut(&TaggingTrace)) -> Result<TaggingPass> {
+        self.return_unsettled()?;
         let queue = AttemptQueue::new(&self.vault);
         let mut pass = TaggingPass::default();
         for _ in 0..self.batch_size {
@@ -218,7 +228,16 @@ impl TaggingReconciler {
             let ClaimOutcome::Claimed(record) = claimed else {
                 break;
             };
-            let trace = self.attempt(&queue, &record, &mut pass)?;
+            let trace = match self.attempt(&queue, &record, &mut pass) {
+                Ok(trace) => trace,
+                Err(error) => {
+                    self.unsettled
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(record);
+                    return Err(error);
+                }
+            };
             let failed = matches!(trace.outcome, TaggingOutcome::Failed { .. });
             on_trace(&trace);
             pass.traces.push(trace);
@@ -227,6 +246,50 @@ impl TaggingReconciler {
             }
         }
         Ok(pass)
+    }
+
+    /// Hands back each marker a pass claimed and could not settle, as an
+    /// immediate retry. One that is no longer leased under this owner at the
+    /// claimed lease generation was settled after all, and is let go. A
+    /// failed hand-back keeps the rest and fails the pass, so the next one
+    /// tries again.
+    fn return_unsettled(&self) -> Result<()> {
+        let mut unsettled = self
+            .unsettled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        while let Some(record) = unsettled.last() {
+            self.vault.try_with_write_txn(|txn| -> Result<()> {
+                let queue = AttemptQueue::from_store(&self.vault.store);
+                let current = self
+                    .vault
+                    .store
+                    .attempt_records
+                    .get(txn, record.id.as_bytes())?
+                    .and_then(|raw| decode_record(&raw, record.id).ok());
+                let still_held = current.is_some_and(|current| {
+                    current.state == AttemptState::Leased
+                        && current.lease_owner == record.lease_owner
+                        && current.attempt_count == record.attempt_count
+                });
+                if still_held {
+                    queue.retry_in_txn(
+                        txn,
+                        RetryAttempt {
+                            id: record.id,
+                            lease_owner: self.lease_owner.clone(),
+                            attempt_count: record.attempt_count,
+                            backoff_until: 0,
+                            last_error: Some("settlement_failed".to_owned()),
+                            now: 0,
+                        },
+                    )?;
+                }
+                Ok(())
+            })?;
+            unsettled.pop();
+        }
+        Ok(())
     }
 
     fn attempt(
@@ -380,6 +443,10 @@ impl TaggingReconciler {
     }
 
     fn complete_in_txn(&self, txn: &mut heed::RwTxn<'_>, record: &AttemptRecord) -> Result<()> {
+        #[cfg(test)]
+        if self.vault.test_hooks().take_fail_next_tagging_settlement() {
+            return Err(Error::MapFull);
+        }
         AttemptQueue::from_store(&self.vault.store).complete_in_txn(
             txn,
             CompleteAttempt {
@@ -419,6 +486,10 @@ impl TaggingReconciler {
         reason: &str,
     ) -> Result<u64> {
         let retry_at = self.vault.now_recorded_at().saturating_add(delay_secs);
+        #[cfg(test)]
+        if self.vault.test_hooks().take_fail_next_tagging_settlement() {
+            return Err(Error::MapFull);
+        }
         queue.retry(RetryAttempt {
             id: record.id,
             lease_owner: self.lease_owner.clone(),
