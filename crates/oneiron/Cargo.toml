@@ -19,6 +19,9 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+# Lower engine crates split out of this one. This crate re-exports each moved
+# module at its old `oneiron::<module>` path.
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
 # Native DOCX revisions: organ crate remains independent of the vault engine.

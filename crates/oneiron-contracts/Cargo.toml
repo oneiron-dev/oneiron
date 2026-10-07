@@ -1,0 +1,19 @@
+[package]
+name = "oneiron-contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared value vocabulary below every oneiron engine crate"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+# No doc-comment code fences in this crate yet; skip the doctest compile pass.
+doctest = false
+
+[dependencies]
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

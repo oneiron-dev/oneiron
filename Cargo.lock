@@ -7690,6 +7690,7 @@ dependencies = [
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-guest",
  "oneiron-sandbox-contract",
@@ -7779,6 +7780,13 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+]
+
+[[package]]
+name = "oneiron-contracts"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
 ]
 
 [[package]]
