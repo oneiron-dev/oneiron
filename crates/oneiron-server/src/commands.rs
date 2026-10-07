@@ -559,13 +559,15 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         tokio::task::spawn_blocking(move || crate::embedder::build_slot(embedder_config.as_ref()))
             .await
             .map_err(|e| anyhow::anyhow!("embedder slot task failed: {e}"))??;
+    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
     let sync_server = Arc::new(
         SyncServer::new(Arc::new(vault), server_config)
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
-            .with_embedder(embedder),
+            .with_embedder(embedder)
+            .with_tagger(tagger),
     );
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!(%addr, "listening");
@@ -586,7 +588,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
-    let embedding_handle = sync_server.spawn_embedding_worker();
+    let workers = sync_server.spawn_slot_workers();
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     let result = axum::serve(
@@ -601,7 +603,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         handle.abort();
         let _ = handle.await;
     }
-    if let Some(handle) = embedding_handle {
+    for handle in workers {
         handle.abort();
         let _ = handle.await;
     }
