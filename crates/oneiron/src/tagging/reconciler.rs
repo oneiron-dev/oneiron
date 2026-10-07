@@ -274,6 +274,8 @@ impl TaggingReconciler {
     /// while the clock runs and the queue is empty. The lease is stamped once
     /// the write lock is held, so waiting for another writer does not age it.
     fn claim(&self) -> Result<Option<AttemptRecord>> {
+        #[cfg(test)]
+        self.vault.test_hooks().signal_before_tagging_claim_writer();
         let mut txn = self.vault.store.env.write_txn()?;
         let now = self.vault.now_recorded_at();
         let claimed = AttemptQueue::from_store(&self.vault.store).claim_kind_storage_in_txn(
