@@ -16426,7 +16426,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 2,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -16440,7 +16440,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/native_recalc_tests.rs",
@@ -49412,9 +49412,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RecalcClock"
+     ],
+     "path": "src/clock.rs",
+     "purpose": "What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset…",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/context.rs",
-     "purpose": "Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine…",
+     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the functions the…",
      "surface": {
       "crate-vis": 3
      }
@@ -49457,7 +49470,7 @@
      "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
      "surface": {
       "mod": 6,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -49555,12 +49568,19 @@
      "layout": "file",
      "purpose": "Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock"
     },
+    "clock": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset…"
+    },
     "context": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Bound formula AST evaluation, keep ambient context out of native recalc and find the functions the engine…"
+     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the functions the…"
     },
     "engine": {
      "files": 1,
@@ -49614,7 +49634,7 @@
    },
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 12,
+   "source_files": 13,
    "test_files": 3
   }
  }

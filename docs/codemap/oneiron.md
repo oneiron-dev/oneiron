@@ -1324,9 +1324,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/judgment.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | SheetAnswerBundle, SheetCellAnswer | Typed sheet answers: one ask over a bounded range becomes one retained edit |
 | `src/edit_roundtrip/judgment_cells.rs` | src | m | 1 crate-vis | — | Independent OOXML reads for typed sheet answers |
 | `src/edit_roundtrip/manifest.rs` | src | s | 2 struct · 2 enum · 5 fn · 1 const | EditManifest, EditWarning, MutationMode, WarningCode | Edit manifest and warnings |
-| `src/edit_roundtrip/mod.rs` | src | s | 2 mod · 8 re-export · 2 crate-vis | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
+| `src/edit_roundtrip/mod.rs` | src | s | 2 mod · 9 re-export · 2 crate-vis | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `src/edit_roundtrip/native_recalc.rs` | src | s | 2 crate-vis | — | Stage-3 default: in-process xlsx recalculation over the host session |
-| `src/edit_roundtrip/native_recalc_tests.rs` | test | m | — | — | The default stage-3 route ([`RecalcPolicy::NativeFirst`]) on real XLSX |
+| `src/edit_roundtrip/native_recalc_tests.rs` | test | L | — | — | The default stage-3 route ([`RecalcPolicy::NativeFirst`]) on real XLSX |
 | `src/edit_roundtrip/opc.rs` | src | m | 14 crate-vis | — | Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline |
 | `src/edit_roundtrip/opc/tests.rs` | test | m | — | — | — |
 | `src/edit_roundtrip/ops.rs` | src | m | 2 struct · 3 enum · 5 fn | AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift | Edit operation vocabulary and anchor effects |
