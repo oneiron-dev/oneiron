@@ -12,13 +12,13 @@ use crate::entity_id::EntityId;
 use super::ErrorKind;
 
 /// Per-axis reason the compaction handoff door refused a
-/// [`crate::compaction::CompactionPacket`] (DREAM-008, ONE-1250).
+/// `oneiron::compaction::CompactionPacket` (DREAM-008, ONE-1250).
 ///
 /// Each variant is ONE validation axis, so a caller (and a fixture) can
 /// match the exact refusal instead of reading a message. Admission is
 /// fail-closed on every axis: nothing is written, nothing is partially
 /// admitted, and a packet that trips any axis never yields a
-/// [`crate::compaction::ValidatedCompactionPacket`].
+/// `oneiron::compaction::ValidatedCompactionPacket`.
 ///
 /// [`Self::SessionMembershipNotRecorded`] is deliberately DISTINCT from
 /// [`Self::TurnFromOtherSession`]: a turn witnessed before membership
@@ -28,7 +28,7 @@ use super::ErrorKind;
 #[non_exhaustive]
 pub enum CompactionPacketError {
     /// The packet's `schema_version` is not
-    /// [`crate::compaction::COMPACTION_PACKET_SCHEMA_VERSION`]. There is no
+    /// `oneiron::compaction::COMPACTION_PACKET_SCHEMA_VERSION`. There is no
     /// silent migration: an older or newer wire shape is refused outright.
     SchemaMismatch { expected: u16, got: u16 },
     /// The packet carries no turn ids. A handoff that compacts nothing has
@@ -55,7 +55,7 @@ pub enum CompactionPacketError {
     /// this axis is reachable only through that caller-supplied ref.
     SnapshotMismatch { field: &'static str },
     /// The packet's payload-kind byte is outside the closed
-    /// [`crate::compaction::CompactionPayloadKind`] set.
+    /// `oneiron::compaction::CompactionPayloadKind` set.
     PayloadKindUnknown { byte: u8 },
     /// The payload fields violate the shape pinned for the packet's kind.
     PayloadShapeViolation(&'static str),
@@ -109,10 +109,10 @@ pub enum MaintenanceError {
     /// A compaction handoff packet was refused at the admission door
     /// (DREAM-008, ONE-1250). Fail-closed on every axis: the carried
     /// [`CompactionPacketError`] names the exact axis, and no
-    /// [`crate::compaction::ValidatedCompactionPacket`] is minted.
+    /// `oneiron::compaction::ValidatedCompactionPacket` is minted.
     #[error("compaction packet rejected: {0}")]
     CompactionPacketRejected(CompactionPacketError),
-    /// [`crate::Vault::restore_archived`] was called on an entity that
+    /// `oneiron::Vault::restore_archived` was called on an entity that
     /// carries no `archived_by_cleanup` marker (ONE-1931).
     ///
     /// The restore door is scoped to cleanup archives ALONE, and this is the

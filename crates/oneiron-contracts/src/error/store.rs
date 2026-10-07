@@ -19,7 +19,9 @@ pub enum VaultRootEntry {
 }
 
 impl VaultRootEntry {
-    pub(crate) fn file_name(self) -> &'static str {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn file_name(self) -> &'static str {
         match self {
             Self::Data => "data.mdb",
             Self::Lock => "lock.mdb",
@@ -62,7 +64,7 @@ pub enum VaultRootProblem {
     /// This platform cannot report stable file identity and hard-link counts
     /// for existing LMDB environment files.
     UnsupportedPlatform { entry: VaultRootEntry },
-    /// [`crate::Vault::open_existing`] refused this root. Either it was not
+    /// `oneiron::Vault::open_existing` refused this root. Either it was not
     /// already a complete vault root when the door bound it as a descriptor
     /// capability — that door never creates one, so an absent, empty, or
     /// pairless root has nothing to open — or the root it bound stopped being
@@ -151,14 +153,12 @@ pub enum StoreError {
     ///
     /// # Recovery
     ///
-    /// Reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
-    /// `true`, call [`MaintenanceBuilder::clear_text_index`] to drop the
+    /// Reopen with `VaultConfig::skip_text_index_manifest_check` set to
+    /// `true`, call `MaintenanceBuilder::clear_text_index` to drop the
     /// stale postings, reopen with the default `false` value so the empty
     /// index seeds a fresh manifest, then reindex documents to restore
     /// search results.
     ///
-    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
-    /// [`MaintenanceBuilder::clear_text_index`]: crate::maintain::MaintenanceBuilder::clear_text_index
     #[error(
         "text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
@@ -168,18 +168,16 @@ pub enum StoreError {
         current_mode: &'static str,
     },
     /// BM25F field schema on disk does not match the current build. Channels
-    /// in [`crate::analyzer::AnalyzerChannel`] were added, removed, or
+    /// in `oneiron::analyzer::AnalyzerChannel` were added, removed, or
     /// renumbered between index time and open time.
     ///
     /// # Recovery
     ///
     /// Same as [`StoreError::IncompatibleAnalyzer`]: reopen with
-    /// [`VaultConfig::skip_text_index_manifest_check`] set to `true`, run
-    /// [`MaintenanceBuilder::clear_text_index`], reopen normally, then
+    /// `VaultConfig::skip_text_index_manifest_check` set to `true`, run
+    /// `MaintenanceBuilder::clear_text_index`, reopen normally, then
     /// reindex documents.
     ///
-    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
-    /// [`MaintenanceBuilder::clear_text_index`]: crate::maintain::MaintenanceBuilder::clear_text_index
     #[error(
         "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
@@ -196,12 +194,10 @@ pub enum StoreError {
     /// A dict asset declared in the stored manifest is missing from disk
     /// (e.g., `system.dic` was deleted after indexing). Restore the file or
     /// use the same recovery path as [`StoreError::IncompatibleAnalyzer`]:
-    /// reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
-    /// `true`, run [`MaintenanceBuilder::clear_text_index`], reopen
+    /// reopen with `VaultConfig::skip_text_index_manifest_check` set to
+    /// `true`, run `MaintenanceBuilder::clear_text_index`, reopen
     /// normally, and reindex documents.
     ///
-    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
-    /// [`MaintenanceBuilder::clear_text_index`]: crate::maintain::MaintenanceBuilder::clear_text_index
     #[error("analyzer asset missing: {0}")]
     AnalyzerAssetMissing(String),
     /// Generic analyzer error (dict load failure, manifest encode failure,

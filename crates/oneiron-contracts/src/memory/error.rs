@@ -58,9 +58,9 @@ pub const MEMORY_CODE_OWNER_BINDING_REQUIRED: &str = "OWNER_BINDING_REQUIRED";
 /// re-read and write again.
 ///
 /// Emitted by the SDK's embedded constructor when
-/// [`crate::VaultWriterLease::acquire`] refuses, and only when the refusal is
+/// `oneiron::VaultWriterLease::acquire` refuses, and only when the refusal is
 /// lease contention (`Error::ConcurrentWrite` carrying
-/// [`crate::VAULT_WRITER_LEASE_HELD`]). The central `From<Error>` impl below is
+/// `oneiron::VAULT_WRITER_LEASE_HELD`). The central `From<Error>` impl below is
 /// deliberately NOT amended: every other `ConcurrentWrite` keeps its
 /// `INVALID_STATE` mapping.
 pub const MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER: &str = "VAULT_LOCKED_SINGLE_WRITER";
@@ -145,7 +145,9 @@ pub struct MemoryPolicyExceptionProposal {
 }
 
 impl MemoryError {
-    pub(super) fn new(code: &str, message: impl Into<String>, suggestions: &[&str]) -> Self {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn new(code: &str, message: impl Into<String>, suggestions: &[&str]) -> Self {
         Self {
             code: code.to_owned(),
             message: message.into(),
@@ -159,7 +161,9 @@ impl MemoryError {
 
     /// The same refusal carrying the receipt of the read that produced it.
     #[must_use]
-    pub(crate) fn with_read_receipt(mut self, receipt: crate::claim::ScopedReadReceipt) -> Self {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn with_read_receipt(mut self, receipt: crate::claim::ScopedReadReceipt) -> Self {
         self.read_receipt = Some(Box::new(receipt));
         self
     }
@@ -185,7 +189,9 @@ impl MemoryError {
         }))
     }
 
-    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(
             MEMORY_CODE_BAD_REQUEST,
             message,
@@ -193,11 +199,15 @@ impl MemoryError {
         )
     }
 
-    pub(crate) fn bad_request_with(message: impl Into<String>, suggestions: &[&str]) -> Self {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn bad_request_with(message: impl Into<String>, suggestions: &[&str]) -> Self {
         Self::new(MEMORY_CODE_BAD_REQUEST, message, suggestions)
     }
 
-    pub(crate) fn not_found(message: impl Into<String>) -> Self {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(
             MEMORY_CODE_NOT_FOUND,
             message,

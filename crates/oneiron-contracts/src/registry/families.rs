@@ -152,7 +152,9 @@ impl TypeByteFamily {
             .expect("every family has an allocation row")
     }
 
-    pub(crate) fn code(self) -> u8 {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn code(self) -> u8 {
         u8::try_from(
             TYPE_BYTE_FAMILIES
                 .iter()
@@ -163,7 +165,9 @@ impl TypeByteFamily {
         .expect("fifteen family codes")
     }
 
-    pub(crate) fn from_code(code: u8) -> Option<Self> {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn from_code(code: u8) -> Option<Self> {
         TYPE_BYTE_FAMILIES
             .get(usize::from(code).checked_sub(1)?)
             .map(|entry| entry.family)
@@ -229,7 +233,9 @@ pub fn allocate_type_byte(family: TypeByteFamily, occupied: &[u8]) -> Option<u8>
 }
 
 /// Checks the declared family and classification, never the byte position.
-pub(crate) fn family_matches(entry: &EntityTypeRegistryEntry, family: TypeByteFamily) -> bool {
+/// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+#[doc(hidden)]
+pub fn family_matches(entry: &EntityTypeRegistryEntry, family: TypeByteFamily) -> bool {
     entry.family == Some(family) && entry.classification == family.classification()
 }
 

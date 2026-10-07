@@ -40,9 +40,16 @@ fn validate_query_seeds(
 
 // The accepted field names the context-pack validator reports, kept beside
 // their only production consumer.
-impl CoreContextPackRequest {
+/// Accepted field names for the context-pack depth controls. A crate-local trait because
+/// `CoreContextPackRequest` is defined in `oneiron-contracts`.
+pub(super) trait ContextPackFieldNames {
+    fn edge_hop_field(&self) -> &'static str;
+    fn max_neighbors_field(&self) -> &'static str;
+}
+
+impl ContextPackFieldNames for CoreContextPackRequest {
     /// Accepted field name reported when the resolved `edge_hop` is rejected.
-    pub(super) const fn edge_hop_field(&self) -> &'static str {
+    fn edge_hop_field(&self) -> &'static str {
         match &self.depth {
             Some(depth) if depth.edge_hop.is_some() => "depth.edge_hop",
             _ => "edge_hop",
@@ -51,7 +58,7 @@ impl CoreContextPackRequest {
 
     /// Accepted field name reported when the resolved `max_neighbors` is
     /// rejected.
-    pub(super) const fn max_neighbors_field(&self) -> &'static str {
+    fn max_neighbors_field(&self) -> &'static str {
         match &self.depth {
             Some(depth) if depth.max_neighbors.is_some() => "depth.max_neighbors",
             _ => "max_neighbors",

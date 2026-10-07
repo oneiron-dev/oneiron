@@ -500,7 +500,9 @@ impl Error {
         }
     }
 
-    pub(crate) fn invalid_vector_component(vector: &[f32]) -> Option<Self> {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn invalid_vector_component(vector: &[f32]) -> Option<Self> {
         vector
             .iter()
             .copied()

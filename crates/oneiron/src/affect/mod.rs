@@ -4,7 +4,6 @@ mod consolidation;
 pub mod coping;
 pub mod state_index;
 mod trigger;
-mod vad;
 
 pub(crate) use self::annotation::VadAnnotationCleanup;
 use self::annotation::{
@@ -29,4 +28,4 @@ pub use self::trigger::{
 };
 pub(crate) use self::trigger::{decode_entity_ref, validate_affect_trigger_claim_structure};
 use self::trigger::{decode_vad_delta, reject_duplicate, vad_delta_value};
-pub use self::vad::{Vad, VadAnnotation, VadAnnotationSource, VadComponent};
+pub use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource, VadComponent};

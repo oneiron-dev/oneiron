@@ -194,6 +194,7 @@ microvm-firecracker = []
 # ever hand it to a release build when this feature is explicitly on.
 microvm-dev = []
 sync = [
+    "oneiron-contracts/sync",
     "tokio/net",
     "tokio/time",
     "tokio/rt",
@@ -213,7 +214,8 @@ test-hooks = []
 # it). Enabled only via the self dev-dependency below. Even under
 # `--all-features` the production `Vault::open` path always seeds; the unseeded
 # opener is an explicit test-named function, not a silent config field.
-test-support = []
+# Also turns on the lower crates' test-only constructors this crate's tests use.
+test-support = ["oneiron-contracts/test-support"]
 
 [dev-dependencies]
 wat = "1"

@@ -23,7 +23,9 @@ impl ClaimApprovalStatus {
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "auto" => Some(Self::Auto),
             "proposed" => Some(Self::Proposed),
@@ -53,7 +55,9 @@ impl ClaimLifecycleStatus {
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "active" => Some(Self::Active),
             "superseded" => Some(Self::Superseded),
@@ -96,7 +100,9 @@ impl ClaimSource {
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "user_stated" => Some(Self::UserStated),
             "observed" => Some(Self::Observed),
@@ -108,7 +114,9 @@ impl ClaimSource {
         }
     }
 
-    pub(crate) const fn requires_explicit_auto_permit(self) -> bool {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub const fn requires_explicit_auto_permit(self) -> bool {
         matches!(self, Self::Imported | Self::ToolOutput | Self::Generated)
     }
 }

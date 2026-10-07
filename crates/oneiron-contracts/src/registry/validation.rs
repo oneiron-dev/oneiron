@@ -19,10 +19,9 @@ use super::zones::{EntityClassification, TypeByteZone, zone_of};
 /// * `126–127` and `248–254` are the two experimental zones: admitted only
 ///   under `dev`.
 /// * `255` is the sentinel and fails in BOTH modes.
-pub(crate) fn validate_entity_type_for_mode(
-    entity_type: u8,
-    dev: bool,
-) -> crate::error::Result<()> {
+/// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+#[doc(hidden)]
+pub fn validate_entity_type_for_mode(entity_type: u8, dev: bool) -> crate::error::Result<()> {
     let invalid = || crate::error::Error::InvalidEntityType(entity_type);
     match zone_of(entity_type) {
         TypeByteZone::Semantic
@@ -42,7 +41,9 @@ pub(crate) fn validate_entity_type_for_mode(
     }
 }
 
-pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> {
+/// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+#[doc(hidden)]
+pub fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> {
     validate_entity_type_for_mode(entity_type, cfg!(debug_assertions))
 }
 
@@ -71,7 +72,9 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 ///
 /// [`Error::InvalidEntityType`]: crate::error::Error::InvalidEntityType
 /// [`RegistryError::MaintenanceKindNotWritable`]: crate::error::RegistryError::MaintenanceKindNotWritable
-pub(crate) fn validate_public_entity_type(entity_type: u8) -> crate::error::Result<()> {
+/// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+#[doc(hidden)]
+pub fn validate_public_entity_type(entity_type: u8) -> crate::error::Result<()> {
     let entry = entity_type_registry_entry(entity_type)
         .ok_or(crate::error::Error::InvalidEntityType(entity_type))?;
     if entry.classification == EntityClassification::Maintenance {

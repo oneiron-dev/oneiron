@@ -7786,7 +7786,15 @@ dependencies = [
 name = "oneiron-contracts"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "heed",
+ "loro",
+ "rand_core 0.6.4",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]

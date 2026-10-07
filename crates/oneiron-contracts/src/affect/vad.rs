@@ -37,7 +37,9 @@ impl Vad {
         Ok(())
     }
 
-    pub(crate) fn invalid_component(&self) -> Option<(VadComponent, f32)> {
+    /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+    #[doc(hidden)]
+    pub fn invalid_component(&self) -> Option<(VadComponent, f32)> {
         self.non_finite_component()
             .or_else(|| self.out_of_range_component())
     }

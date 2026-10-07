@@ -572,7 +572,9 @@ pub fn is_structural_kind(type_byte: u8) -> bool {
 /// registry predicate instead of naming the protected kinds itself, so the protected
 /// set stays owned by the registry and cannot drift between delete doors.
 #[must_use]
-pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
+/// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+#[doc(hidden)]
+pub fn is_delete_protected_engine_record(entity_type: u8) -> bool {
     matches!(
         entity_type,
         ENTITY_TYPE_POLICY_MANIFEST
@@ -601,7 +603,9 @@ pub fn short_id_prefix(entity_type: u8) -> crate::error::Result<&'static str> {
 /// namespace. All three tables answer here so a caller cannot consult one and
 /// miss the others.
 #[must_use]
-pub(crate) fn static_short_id_prefix_collision(short_id_prefix: &str) -> bool {
+/// Engine seam: `pub` only so `oneiron` can call it across the crate split.
+#[doc(hidden)]
+pub fn static_short_id_prefix_collision(short_id_prefix: &str) -> bool {
     ENTITY_TYPE_REGISTRY
         .iter()
         .any(|entry| entry.answers_to_prefix(short_id_prefix))

@@ -124,7 +124,7 @@ pub enum CodeError {
     CodeMemoryBlocksCycle { from: EntityId, to: EntityId },
     /// The `blocks` door refused the write actor (ONE-1608): the actor entity
     /// did not resolve, its stored entity type does not admit the asserted
-    /// [`crate::edge::EdgeActorClass`] (D13, `provenance::validate_actor_class`),
+    /// `oneiron::edge::EdgeActorClass` (D13, `provenance::validate_actor_class`),
     /// or the validated class is `System`. Readiness dependencies are a
     /// Human/Agent judgement; a caller-asserted class is never trusted alone.
     #[error("blocks edge door denied the write actor: {0}")]

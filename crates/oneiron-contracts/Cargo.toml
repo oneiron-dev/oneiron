@@ -9,11 +9,30 @@ repository.workspace = true
 homepage.workspace = true
 
 [lib]
-# No doc-comment code fences in this crate yet; skip the doctest compile pass.
+# No doc-comment code fences in this crate. The ForeignWorldId `compile_fail`
+# doctest names `oneiron`'s sync selector, so it lives in `oneiron::entity_id`.
 doctest = false
 
 [dependencies]
+blake3 = { workspace = true }
+# `Error::Storage` carries the LMDB error. Same vendored heed as `oneiron`.
+heed = { workspace = true }
+rand_core = { workspace = true }
+loro = { version = "1.10", optional = true }
+schemars = "=0.8.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+
+[features]
+# The CRDT/window/protocol error variants. `oneiron`'s `sync` feature turns this on.
+sync = ["dep:loro"]
+# Test-only constructors that `oneiron`'s own tests use (e.g. unchecked EntityId
+# bytes). Enabled through `oneiron`'s `test-support` feature; never in production.
+test-support = []
 
 [lints]
 workspace = true
