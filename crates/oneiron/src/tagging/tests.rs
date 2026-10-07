@@ -11,6 +11,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::off_record::{FloorWrites, OffRecordBackendClass};
 use crate::ports::ManualClock;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
@@ -599,6 +600,73 @@ fn a_settlement_that_fails_after_the_claim_is_settled_by_the_same_worker() {
         assert!(reconciler.drain_once().expect("drain").traces.is_empty());
     }
     assert_eq!(count(&vault, AttemptState::Completed), 2);
+}
+
+/// Promoting an off-record turn into base is a turn admission: the marker
+/// commits with the promotion, an aborted promotion leaves none, and a retried
+/// promotion, answered from its receipt, owes nothing more.
+#[test]
+fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
+    const SESSION: &str = "sess-tagging-promote";
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let session = vault
+        .off_record_session_vault()
+        .enter(SESSION, OffRecordBackendClass::Local)
+        .expect("enter session");
+    let receipt = vault
+        .memory(speaker(&vault), EdgeActorClass::Human)
+        .witness_into_session(
+            &session,
+            &WitnessTurn {
+                // The room's own shell is the conversation.
+                conversation_ref: String::new(),
+                ..turn(None, vec![message(0, "Ada sailed north off the record")])
+            },
+            None,
+        )
+        .expect("session witness");
+    let promoted = receipt_turn(&receipt);
+    assert!(
+        markers(&vault).is_empty(),
+        "an off-record turn owes nothing"
+    );
+
+    let plan = session
+        .overlay()
+        .snapshot()
+        .expect("overlay snapshot")
+        .plan_promotion(promoted)
+        .expect("promotion plan");
+    let aborted = vault.with_write_txn(|wtxn| {
+        FloorWrites::new(&vault.store).promote(&vault, wtxn, SESSION, &plan, NOW)?;
+        Err::<(), _>(crate::Error::InvalidConfig("fixture abort".into()))
+    });
+    assert!(aborted.is_err());
+    assert!(
+        markers(&vault).is_empty(),
+        "an aborted promotion owes nothing"
+    );
+
+    session.promote_turn(&promoted).expect("promote");
+    let owed = markers(&vault);
+    assert_eq!(owed.len(), 1);
+    assert_eq!(owed[0].state, AttemptState::Queued);
+    assert_eq!(
+        owed[0].dedupe_key.as_deref(),
+        Some(format!("{}@{CHECKPOINT}", promoted.to_hex()).as_str())
+    );
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert_eq!(pass.traces[0].turn, Some(promoted));
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    session.promote_turn(&promoted).expect("promote retry");
+    assert_eq!(markers(&vault).len(), 1, "a retried promotion owes nothing");
+    session.close().expect("close session");
 }
 
 #[test]

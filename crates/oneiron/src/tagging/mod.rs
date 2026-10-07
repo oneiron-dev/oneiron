@@ -1,12 +1,13 @@
 //! The tagging marker and its drain: the write path's outbox rule applied to
 //! the Oneironer slot (ARCH-0036, serving the tagger; the write-path hub).
 //!
-//! A base witness commits one marker per touched turn inside its own write
-//! transaction, when the vault is armed ([`crate::VaultConfig::tagging`]). The
-//! marker is an ordinary row of the job tables (`job_records`, `job_ready`,
-//! `job_dedupe`) of kind [`TAGGING_MARKER_KIND`], deduplicated by the turn and
-//! the tagger checkpoint. An edit that moves a turn's indexed frontier marks
-//! the turn again. A host worker drains the markers through
+//! A base witness, and the promotion of an off-record turn into base, commit
+//! one marker per touched turn inside their own write transaction, when the
+//! vault is armed ([`crate::VaultConfig::tagging`]). The marker is an ordinary
+//! row of the job tables (`job_records`, `job_ready`, `job_dedupe`) of kind
+//! [`TAGGING_MARKER_KIND`], deduplicated by the turn and the tagger
+//! checkpoint. An edit that moves a turn's indexed frontier marks the turn
+//! again. A host worker drains the markers through
 //! [`TaggingReconciler`]: it reads the turn's MESSAGE rows, calls the
 //! host-served tagger outside any write transaction, checks the answer and
 //! settles the marker. A failed call or a refused answer is a trace and a retry

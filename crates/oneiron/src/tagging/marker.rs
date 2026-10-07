@@ -153,8 +153,9 @@ pub(super) fn enqueue_marker_in_txn(
     )
 }
 
-/// The witness door's half of the outbox rule: an armed vault owes the turn a
-/// tag pass, committed with the turn or not at all.
+/// The turn doors' half of the outbox rule (a base witness, an off-record
+/// promotion): an armed vault owes the turn a tag pass, committed with the
+/// turn or not at all.
 pub(crate) fn mark_turn_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
