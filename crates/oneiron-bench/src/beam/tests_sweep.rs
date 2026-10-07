@@ -3,9 +3,9 @@
 #[cfg(test)]
 mod tests {
     use super::super::sweep::{BudgetLabel, PriceConfig, SweepOptions, parse_budgets, wilson};
-    use oneiron::policy_model::SecretScanMode;
     use super::super::tests_contract_v2::tests::V2Fixture;
     use super::super::*;
+    use oneiron::policy_model::SecretScanMode;
     use std::path::Path;
 
     #[test]
@@ -224,7 +224,10 @@ mod tests {
         )
         .expect("--secret-scan off ingests every item");
         let exactness = report.exactness.as_ref().unwrap();
-        assert_eq!(exactness.items_checked, 2, "both items read back byte-exact");
+        assert_eq!(
+            exactness.items_checked, 2,
+            "both items read back byte-exact"
+        );
         assert!(exactness.mismatches.is_empty());
     }
 
@@ -238,7 +241,11 @@ mod tests {
         )
         .unwrap();
         let fork = base.fork("q-a").unwrap();
-        assert_eq!(fork.secrets, SecretScanMode::Off, "the copy carries the switch");
+        assert_eq!(
+            fork.secrets,
+            SecretScanMode::Off,
+            "the copy carries the switch"
+        );
         assert_eq!(fork.vault.secret_scan_mode().unwrap(), SecretScanMode::Off);
 
         let fixture = fixture_with_token();

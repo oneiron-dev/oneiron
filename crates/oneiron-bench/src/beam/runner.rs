@@ -22,8 +22,8 @@ use super::report_model::{
 use super::scorer::{BeamScorer, FixedBeamScorer};
 use super::sweep::{
     BudgetLabel, CONTEXT_ROT, FULL_BUDGET_TOKENS, Observation, PriceConfig, PriceStamp, RowContext,
-    SweepOptions, aggregate, evidence_metrics, full_context_observation, groups_for,
-    secrets_pins, write_rows,
+    SweepOptions, aggregate, evidence_metrics, full_context_observation, groups_for, secrets_pins,
+    write_rows,
 };
 use super::util::{beam_vault_config, invalid_manifest, report_format_label};
 use super::validate::{
@@ -309,15 +309,10 @@ pub(super) fn run_jsonl_manifest_isolated(
                     case.budget_label = budget.map(BudgetLabel::label);
                     let label =
                         budget.map_or_else(|| BudgetLabel::Tokens(case.token_budget), |b| b);
-                    let question_observations = retrieval_observations(
-                        &case,
-                        record,
-                        &loaded,
-                        label,
-                        price.as_ref(),
-                    )
-                    .into_iter()
-                    .chain([full_context_observation(record, label, price.as_ref())]);
+                    let question_observations =
+                        retrieval_observations(&case, record, &loaded, label, price.as_ref())
+                            .into_iter()
+                            .chain([full_context_observation(record, label, price.as_ref())]);
                     observations.extend(question_observations.map(|mut observation| {
                         observation.secrets = Some(fork.secrets);
                         observation
