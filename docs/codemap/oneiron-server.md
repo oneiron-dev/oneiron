@@ -120,7 +120,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/deep_admission/tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
-| `src/api/memory_reason/render_tests.rs` | test | s | — | — | — |
 | `src/api/mod.rs` | src | m | 27 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/openapi/booking_schemas.rs` | src | s | 5 crate-vis | — | Booking schema blocks for the OpenAPI doc |
 | `src/api/openapi/descriptions.rs` | src | m | 1 crate-vis | — | Schema description-gap filler |
