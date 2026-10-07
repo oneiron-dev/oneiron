@@ -332,13 +332,14 @@ fn a_failed_call_carries_its_class_and_never_the_turn_text() {
     }
 }
 
-/// A model card comes from a tagger that has read vault text: a checkpoint
-/// that is not a checkpoint's shape is refused without naming it, and the
+/// A model card comes from a tagger that has read vault text: no refusal
+/// names the checkpoint it reports, even one in a checkpoint's shape, and the
 /// card keeps no other string the tagger reports, so none reaches a log.
 #[test]
 fn a_model_card_echoing_turn_text_is_refused_without_carrying_it() {
     const SECRET: &str = "the harbour code is 4471";
     const SHORT_SECRET: &str = "alice@example.com";
+    const HEX_SECRET: &str = "4471447144714471";
     let stub = StubTagger::start(Answer::Good);
     let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
     let mut echoed = card(CHECKPOINT);
@@ -353,6 +354,16 @@ fn a_model_card_echoing_turn_text_is_refused_without_carrying_it() {
     assert_eq!(error, ProbeError::MalformedCheckpoint);
     let shown = format!("{error} {error:?}");
     assert!(!shown.contains("4471"), "{shown}");
+    stub.set_card(card(HEX_SECRET));
+    let error = tagger.probe().expect_err("another checkpoint is refused");
+    assert_eq!(
+        error,
+        ProbeError::WrongCheckpoint {
+            expected: CHECKPOINT.to_owned()
+        }
+    );
+    let shown = format!("{error} {error:?}");
+    assert!(!shown.contains(HEX_SECRET), "{shown}");
 }
 
 const PROXY_CHILD: &str = "ONEIRON_TEST_TAGGER_PROXY_CHILD";

@@ -57,8 +57,10 @@ pub(crate) enum ProbeOutcome {
 /// A reachable tagger that is not the configured one: a configuration error.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum ProbeError {
-    #[error("the tagger serves checkpoint {got}, configured checkpoint_sha16 is {expected}")]
-    WrongCheckpoint { expected: String, got: String },
+    /// Names only the configured checkpoint: the one the tagger reports could
+    /// be text it has read, even in a checkpoint's shape.
+    #[error("the tagger serves another checkpoint than the configured checkpoint_sha16 {expected}")]
+    WrongCheckpoint { expected: String },
     #[error("the tagger reports a checkpoint that is not 16 lowercase hex digits")]
     MalformedCheckpoint,
     #[error("the tagger speaks contract version {got}, this server speaks {expected}")]
@@ -176,15 +178,13 @@ impl HttpTagger {
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .ok_or(ProbeError::NoModelCard)?;
         // The card comes from a server that has read vault text, and a
-        // refusal is logged: a checkpoint is named only in a checkpoint's
-        // shape.
+        // refusal is logged: no refusal names what the tagger reported.
         if oneiron::tagging::TaggingMarkerConfig::new(card.checkpoint_sha16.as_str()).is_err() {
             return Err(ProbeError::MalformedCheckpoint);
         }
         if card.checkpoint_sha16 != self.expected_checkpoint {
             return Err(ProbeError::WrongCheckpoint {
                 expected: self.expected_checkpoint.clone(),
-                got: card.checkpoint_sha16,
             });
         }
         if card.contract_version != CONTRACT_VERSION {
