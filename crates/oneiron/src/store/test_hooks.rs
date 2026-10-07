@@ -59,9 +59,9 @@ pub(crate) struct TestHooks {
     /// One-shot storage failure in the next transaction that settles a
     /// tagging marker the worker already claimed.
     fail_next_tagging_settlement: AtomicBool,
-    /// One-shot signal from a tagging claim, right before it opens its write
-    /// transaction.
-    before_tagging_claim_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot boundary in a tagging claim, the moment its write transaction
+    /// is open and before it stamps the lease.
+    after_tagging_claim_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One-shot Dreamer boundary after a fallback passed read-side policy but
     /// before the PERSON writer opens its transaction.
     before_dreamer_person_mint: Mutex<Option<BeforeDreamerPersonMintHook>>,
@@ -139,16 +139,16 @@ impl TestHooks {
             .swap(false, Ordering::AcqRel)
     }
 
-    pub(crate) fn install_before_tagging_claim_writer(&self, hook: impl FnOnce() + Send + 'static) {
+    pub(crate) fn install_after_tagging_claim_writer(&self, hook: impl FnOnce() + Send + 'static) {
         *self
-            .before_tagging_claim_writer
+            .after_tagging_claim_writer
             .lock()
             .expect("tagging claim hook lock") = Some(Box::new(hook));
     }
 
-    pub(crate) fn signal_before_tagging_claim_writer(&self) {
+    pub(crate) fn run_after_tagging_claim_writer(&self) {
         let hook = self
-            .before_tagging_claim_writer
+            .after_tagging_claim_writer
             .lock()
             .expect("tagging claim hook lock")
             .take();

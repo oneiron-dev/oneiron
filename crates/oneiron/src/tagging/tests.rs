@@ -1274,11 +1274,13 @@ fn held_tags_complete_a_marker_writing_only_the_job_tables() {
     assert_only_job_tables_differ(&tagged, &plain);
 }
 
-/// A claim stamps its lease once it holds the write lock: waiting for another
-/// writer does not age the lease, so a lease sweep at the second the claim
-/// lands leaves the marker with its worker, and the answer settles.
+/// A claim stamps its lease once it holds the write lock: time that passes
+/// while it waits for the lock is not charged to the lease. A seam moves the
+/// clock the moment the claim's write transaction is open, so a lease sweep
+/// at that second, during the call, finds the lease fresh, and the answer
+/// settles; a stamp taken before the transaction opened would be stale.
 #[test]
-fn a_claim_that_waits_for_another_writer_stamps_its_lease_after_the_wait() {
+fn a_claim_stamps_its_lease_once_it_holds_the_write_lock() {
     let dir = tempfile::tempdir().expect("dir");
     let clock = ManualClock::new(NOW);
     let vault = {
@@ -1304,29 +1306,13 @@ fn a_claim_that_waits_for_another_writer_stamps_its_lease_after_the_wait() {
     }
     let reconciler = reconciler(&vault, &tagger);
     assert_eq!(reconciler.release_stale_leases().expect("release"), 0);
-    let (locked, held_lock) = std::sync::mpsc::channel();
-    let (reached, claim_waits) = std::sync::mpsc::channel();
-    let writer = {
-        let vault = Arc::clone(&vault);
+    {
         let clock = Arc::clone(&clock);
-        std::thread::spawn(move || {
-            let txn = vault.store.env.write_txn().expect("writer");
-            locked.send(()).expect("signal");
-            // The claim is at its write lock, behind this writer; the clock
-            // moves on before the writer lets it through.
-            claim_waits
-                .recv()
-                .expect("the claim reached its write lock");
-            clock.set(NOW + 10);
-            drop(txn);
-        })
-    };
-    held_lock.recv().expect("the other writer holds the lock");
-    vault
-        .test_hooks()
-        .install_before_tagging_claim_writer(move || reached.send(()).expect("signal"));
+        vault
+            .test_hooks()
+            .install_after_tagging_claim_writer(move || clock.set(NOW + 10));
+    }
     let pass = reconciler.drain_once().expect("drain");
-    writer.join().expect("writer thread");
     assert_eq!(
         requeued.load(Ordering::SeqCst),
         0,
