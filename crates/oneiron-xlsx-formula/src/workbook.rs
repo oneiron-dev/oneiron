@@ -410,37 +410,73 @@ impl Formulas {
 /// Whether `name`, as the file spells it, is one of Excel's functions: a bare
 /// name of the Excel 2007 file format, one written `_xlfn.` or `_xlws.`, one
 /// passed by name (Excel writes `_xleta.` only for its own functions), or an
-/// Excel 4.0 macro function that returns a value, which a defined name may
-/// call (`GET.CELL(38,Sheet1!A1)`, `EVALUATE(...)`; Excel runs them as
-/// macros, the engine does not have them).
+/// Excel 4.0 macro function, which a defined name may call
+/// (`GET.WORKBOOK(1)`, `EVALUATE(...)`; Excel runs them as macros).
 fn excel_function(name: &str) -> bool {
-    const MACRO: [&str; 20] = [
-        "ABSREF",
-        "ACTIVE.CELL",
-        "CALL",
-        "CALLER",
-        "DEREF",
-        "DIRECTORY",
-        "DOCUMENTS",
-        "EVALUATE",
-        "FILES",
-        "FORMULA.CONVERT",
-        "LAST.ERROR",
-        "LINKS",
-        "NAMES",
-        "REFTEXT",
-        "REGISTER",
-        "REGISTER.ID",
-        "RELREF",
-        "SELECTION",
-        "TEXTREF",
-        "WINDOWS",
-    ];
     formualizer_workbook::is_excel_function(name)
         || prefixed(name, "_xleta.")
         || prefixed(name, "GET.")
-        || MACRO.iter().any(|known| known.eq_ignore_ascii_case(name))
+        || EXCEL_BARE
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(name))
 }
+
+/// Excel's functions a file names without a prefix that the fork's Excel 2007
+/// list (`is_excel_function`) lacks, from the BIFF function tables of
+/// LibreOffice's OOXML filter and Apache POI: DBCS (the stored name of JIS),
+/// USDOLLAR and YEN (older names of DOLLAR), DATESTRING and NUMBERSTRING, the
+/// Thai functions and the Euro tool's EUROCONVERT, then the Excel 4.0 macro
+/// functions besides the `GET.` ones.
+const EXCEL_BARE: &[&str] = &[
+    "DATESTRING",
+    "DBCS",
+    "EUROCONVERT",
+    "ISTHAIDIGIT",
+    "NUMBERSTRING",
+    "ROUNDBAHTDOWN",
+    "ROUNDBAHTUP",
+    "THAIDAYOFWEEK",
+    "THAIDIGIT",
+    "THAIMONTHOFYEAR",
+    "THAINUMSOUND",
+    "THAINUMSTRING",
+    "THAISTRINGLENGTH",
+    "THAIYEAR",
+    "USDOLLAR",
+    "YEN",
+    "ABSREF",
+    "ACTIVE.CELL",
+    "APP.TITLE",
+    "ARGUMENT",
+    "CALL",
+    "CALLER",
+    "DEREF",
+    "DIRECTORY",
+    "DOCUMENTS",
+    "ENABLE.TOOL",
+    "END.IF",
+    "ERROR",
+    "EVALUATE",
+    "EXEC",
+    "FILES",
+    "FORMULA.CONVERT",
+    "GOTO",
+    "LAST.ERROR",
+    "LINKS",
+    "NAMES",
+    "PRESS.TOOL",
+    "REFTEXT",
+    "REGISTER",
+    "REGISTER.ID",
+    "RELREF",
+    "RETURN",
+    "SAVE.TOOLBAR",
+    "SELECTION",
+    "STEP",
+    "TEXTREF",
+    "WINDOW.TITLE",
+    "WINDOWS",
+];
 
 fn prefixed(name: &str, prefix: &str) -> bool {
     crate::context::strip_prefix(name, prefix).is_some()

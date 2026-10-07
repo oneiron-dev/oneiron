@@ -1728,6 +1728,11 @@ fn excel_functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
             "IFERROR(EOM(Input!A1,0),0)+_xlfn.ANCHORARRAY(Input!A1)",
             "_xlfn.ANCHORARRAY",
         ),
+        // Excel's, written bare, though the fork's Excel 2007 list lacks them:
+        // DBCS is the name a file gives JIS.
+        (r#"ISERROR(DBCS("ABC"))"#, "DBCS"),
+        ("NUMBERSTRING(12,1)", "NUMBERSTRING"),
+        ("THAIYEAR(Input!A1)", "THAIYEAR"),
         // Passed by name: Excel writes `_xleta.` for its own functions only.
         (
             "_xlfn.BYROW(Input!A1:A2,_xleta.WEBSERVICE)",
@@ -1856,6 +1861,14 @@ fn names_excel_does_not_know_recalculate_natively_to_name_errors() {
             "{cell} in {xml}"
         );
     }
+    // Excel saves `ca="1"` on such a formula only when it evaluated the call;
+    // the writer flags every formula holding one, as it flags a volatile call
+    // in a branch not taken. The flag makes Excel recalculate
+    // the cell on load; the cached value is Excel's.
+    assert!(
+        xml.contains(r#"<c r="L1"><f ca="1">IF(TRUE,1,EOM(1))</f><v>1</v></c>"#),
+        "{xml}"
+    );
     assert_eq!(
         recalc(&report.bytes).expect("idempotent").bytes,
         report.bytes

@@ -45,17 +45,23 @@ refused workbooks only. The adapter refuses, before any output:
   evaluation meets such text, whatever IFERROR makes of the closed workbook's `#REF!`;
 - an Excel function the engine does not implement, after the `_xlfn.`/`_xlws.` prefixes
   resolve as the engine resolves them, where the engine would cache `#NAME?`: a bare name of
-  the Excel 2007 file format's functions, one written `_xlfn.` or `_xlws.`, one passed by
-  name (`_xleta.`), or an Excel 4.0 macro function a defined name may call (`GET.CELL`,
-  `EVALUATE` and the other macro functions that return a value);
+  the Excel 2007 file format's functions (with the bare names the fork's list lacks, from
+  LibreOffice's and Apache POI's function tables: DBCS, the name a file gives JIS, USDOLLAR,
+  YEN, DATESTRING, NUMBERSTRING, the Thai functions and EUROCONVERT), one written `_xlfn.` or
+  `_xlws.`, one passed by name (`_xleta.`), or an Excel 4.0 macro function a defined name may
+  call (any `GET.` name, `EVALUATE`, `FILES` and the others);
 - a call that Excel may resolve through code the file does not carry: an XLL add-in's
   function (`_xll.Foo`), and, in a package holding a VBA project (`xl/vbaProject.bin`, or any
   part typed `application/vnd.ms-office.vbaProject`), any called name the engine does not
   resolve, which Excel with macros enabled would call. Every other called name is outside
   Excel's function list as the file spells it (`IMAGE` without `_xlfn.`, `EOM`, a VBA
   function saved in an `.xlsx`, Google Sheets' `__xludf.DUMMYFUNCTION` and `arrayformula`):
-  Excel for Windows reads it as an undefined name, `#NAME?`, which IFERROR and the criteria
-  functions see, and the engine does the same natively, in a cell or a defined name;
+  Excel for Windows reads it as an undefined name, `#NAME?`, whatever the call's arguments
+  hold, which IFERROR and the criteria functions see, and the engine does the same natively,
+  in a cell or a defined name. Excel saves `ca="1"` on such a formula only when it evaluated
+  the call; the writer flags every formula holding one, so a call in an IF branch Excel does
+  not take is saved calculate-always where Excel saves no flag, as a volatile call there is
+  (the cached values agree);
 - a workbook name used as a function: a defined name that holds a LAMBDA, a name passed where
   MAP, REDUCE, SCAN, BYROW, BYCOL, MAKEARRAY, GROUPBY or PIVOTBY take their LAMBDA, a
   defined name called like a function, or a linked workbook's name called as one
