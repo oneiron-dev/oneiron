@@ -36,7 +36,12 @@ pub(super) enum Answer {
     BadOffsets,
     /// HTTP 200 whose body is not the contract and echoes the request.
     NotTheContract,
+    /// A status line no registry names, as a number the stub picked.
+    NonstandardStatus,
 }
+
+/// The unregistered status the stub answers with.
+pub(super) const NONSTANDARD_STATUS: u16 = 447;
 
 pub(super) struct StubState {
     answer: Mutex<Answer>,
@@ -45,6 +50,8 @@ pub(super) struct StubState {
     /// The extract, counted from one, at which the stub starts serving this
     /// card: that call is the first one the other model answers.
     swap: Mutex<Option<(usize, Value)>>,
+    /// A status `GET /v1/model` answers with instead of the card.
+    card_status: Mutex<Option<u16>>,
 }
 
 pub(super) struct StubTagger {
@@ -78,6 +85,7 @@ impl StubTagger {
             card: Mutex::new(card(CHECKPOINT)),
             extracts: Mutex::new(Vec::new()),
             swap: Mutex::new(None),
+            card_status: Mutex::new(None),
         });
         let app = Router::new()
             .route("/v1/model", get(stub_model))
@@ -110,6 +118,11 @@ impl StubTagger {
         *self.state.card.lock().expect("card lock") = card;
     }
 
+    /// `GET /v1/model` answers with this status and no card.
+    pub(super) fn set_card_status(&self, status: u16) {
+        *self.state.card_status.lock().expect("card status lock") = Some(status);
+    }
+
     /// From its `nth` extract on, the stub is another model serving `card`.
     pub(super) fn swap_card_at_extract(&self, nth: usize, card: Value) {
         *self.state.swap.lock().expect("swap lock") = Some((nth, card));
@@ -125,8 +138,15 @@ impl StubTagger {
     }
 }
 
-async fn stub_model(State(state): State<Arc<StubState>>) -> axum::Json<Value> {
-    axum::Json(state.card.lock().expect("card lock").clone())
+async fn stub_model(State(state): State<Arc<StubState>>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let status = *state.card_status.lock().expect("card status lock");
+    if let Some(status) = status {
+        return StatusCode::from_u16(status)
+            .expect("stub status")
+            .into_response();
+    }
+    axum::Json(state.card.lock().expect("card lock").clone()).into_response()
 }
 
 async fn stub_extract(
@@ -169,6 +189,9 @@ async fn stub_extract(
         )
             .into_response()),
         Answer::NotTheContract => Ok(format!("{{\"echo\": \"{first}\"").into_response()),
+        Answer::NonstandardStatus => Ok(StatusCode::from_u16(NONSTANDARD_STATUS)
+            .expect("stub status")
+            .into_response()),
     }
 }
 

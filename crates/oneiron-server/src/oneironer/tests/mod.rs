@@ -19,7 +19,9 @@ use crate::config::{
     EnvConfig, OneironerConfig, OneironerMode, OneironerProvider, ServeArgs,
     resolve_serve_config_with_sources,
 };
-use support::{Answer, CHECKPOINT, LABEL_COUNT, StubTagger, card, endpoint_config};
+use support::{
+    Answer, CHECKPOINT, LABEL_COUNT, NONSTANDARD_STATUS, StubTagger, card, endpoint_config,
+};
 
 fn input(text: &str) -> EncoderInput {
     EncoderInput {
@@ -387,6 +389,31 @@ fn a_model_card_echoing_turn_text_is_refused_without_carrying_it() {
         let shown = format!("{error} {error:?}");
         assert!(!shown.contains("447144"), "{shown}");
     }
+}
+
+/// A tagger picks its own status line: a status no registry names, a number
+/// that could be one it has read, is named only as a class, on the extract
+/// and on the probe.
+#[test]
+fn a_nonstandard_http_status_is_named_only_as_a_class() {
+    let stub = StubTagger::start(Answer::NonstandardStatus);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    let error = tagger
+        .infer(&input("the code is 447"))
+        .expect_err("a failed call");
+    assert!(matches!(
+        &error,
+        oneiron::Error::UpstreamToolFailure { code, .. }
+            if code == "tagger extract returned a nonstandard HTTP status"
+    ));
+    stub.set_card_status(NONSTANDARD_STATUS);
+    let Ok(ProbeOutcome::Unreachable(reason)) = tagger.probe() else {
+        panic!("a probe answered with no card is unreachable");
+    };
+    assert!(
+        !reason.contains(&NONSTANDARD_STATUS.to_string()),
+        "{reason}"
+    );
 }
 
 const PROXY_CHILD: &str = "ONEIRON_TEST_TAGGER_PROXY_CHILD";

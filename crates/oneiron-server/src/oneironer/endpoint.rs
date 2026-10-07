@@ -165,8 +165,8 @@ impl HttpTagger {
             Ok(response) if response.status().is_success() => response,
             Ok(response) => {
                 return Ok(ProbeOutcome::Unreachable(format!(
-                    "GET /v1/model returned HTTP {}",
-                    response.status().as_u16()
+                    "GET /v1/model returned {}",
+                    status_class(response.status())
                 )));
             }
             Err(error) => {
@@ -219,8 +219,8 @@ impl HttpTagger {
         let status = response.status();
         if !status.is_success() {
             return Err(failure(format!(
-                "tagger extract returned HTTP {}",
-                status.as_u16()
+                "tagger extract returned {}",
+                status_class(status)
             )));
         }
         // A parse error names the failure only: serde's message can quote the
@@ -255,6 +255,17 @@ impl ExtractionEncoder for HttpTagger {
                 "tagger is not the configured checkpoint after extract".to_owned(),
             )),
         }
+    }
+}
+
+/// A failure names a registered HTTP status by its number, and any other
+/// only as a class: a tagger picks its own status line, and a number it made
+/// up could be text it has read.
+fn status_class(status: reqwest::StatusCode) -> String {
+    if status.canonical_reason().is_some() {
+        format!("HTTP {}", status.as_u16())
+    } else {
+        "a nonstandard HTTP status".to_owned()
     }
 }
 
