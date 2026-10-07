@@ -120,6 +120,8 @@ pub(crate) enum BeamError {
     MessagePackEncode(#[from] rmp_serde::encode::Error),
     #[error("oneiron engine error: {0}")]
     Oneiron(#[from] oneiron::Error),
+    #[error("oneiron memory error: {0}")]
+    Memory(#[from] oneiron::MemoryError),
     #[error("budgeted deterministic context pack serialization was not UTF-8: {0}")]
     BudgetedContextPackUtf8(#[from] std::str::Utf8Error),
     #[error("temporary vault error: {0}")]

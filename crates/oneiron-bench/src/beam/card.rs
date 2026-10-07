@@ -126,6 +126,8 @@ pub(super) struct CardPins {
     pub(super) pack_budgets: Vec<usize>,
     /// The budget sweep: labels, `full`, or `record` (each record's own).
     pub(super) budget_sweep: Vec<String>,
+    /// Every `secrets` setting the run's vaults read back (`on`, `off`).
+    pub(super) secrets: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -328,6 +330,7 @@ pub(super) fn build_card(inputs: CardInputs<'_>) -> BeamResult<RunCard> {
             tokenizer: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
             pack_budgets: pack_budgets.into_iter().collect(),
             budget_sweep: budgets,
+            secrets: Vec::new(),
         },
         cost,
         exactness: CardExactness {

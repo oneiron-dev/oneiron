@@ -5,8 +5,11 @@
 //! reader runs at every budget too, even where the whole history fits: the
 //! context-rot row (Hong, Troynikov and Huber, Chroma 2025). The row schema is
 //! fixed in /Users/olety/Desktop/temp/ctx-bench-20261006/results-row-schema.md.
+//! Every row also states the `secrets` setting its vaults ran with (ARCH-0042,
+//! secret scan on bench vaults).
 use super::report_model::{RunContractRecord, ScoreReport};
 use super::{BeamError, BeamResult};
+use oneiron::policy_model::SecretScanMode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -84,6 +87,26 @@ pub(super) fn parse_budgets(spec: &str) -> BeamResult<Vec<BudgetLabel>> {
         return Err(sweep_error("--budget needs at least one budget".into()));
     }
     Ok(budgets)
+}
+
+/// `--secret-scan on|off`: the `secrets` switch every base vault gets before
+/// ingest.
+pub(super) fn parse_secret_scan(spec: &str) -> BeamResult<SecretScanMode> {
+    match spec {
+        "on" => Ok(SecretScanMode::On),
+        "off" => Ok(SecretScanMode::Off),
+        other => Err(sweep_error(format!(
+            "--secret-scan `{other}` is not `on` or `off`"
+        ))),
+    }
+}
+
+/// The row label of a `secrets` setting.
+pub(super) fn secrets_label(mode: SecretScanMode) -> &'static str {
+    match mode {
+        SecretScanMode::On => "on",
+        SecretScanMode::Off => "off",
+    }
 }
 
 /// A stated price table: model prices and the date they were read.
@@ -168,6 +191,8 @@ pub(super) struct SweepOptions {
     pub(super) budgets: Vec<BudgetLabel>,
     pub(super) prices: Option<PriceConfig>,
     pub(super) results_path: Option<PathBuf>,
+    /// None: the vault's own setting (on unless switched).
+    pub(super) secrets: Option<SecretScanMode>,
 }
 
 /// One question, one approach, one budget.
@@ -190,6 +215,8 @@ pub(super) struct Observation {
     pub(super) usd: Option<f64>,
     pub(super) price: Option<PriceStamp>,
     pub(super) latency_ms: Option<f64>,
+    /// The `secrets` setting the question's vault read back.
+    pub(super) secrets: Option<SecretScanMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -223,6 +250,8 @@ pub(crate) struct ResultsRow {
     pub(super) price_table: Option<PriceStamp>,
     pub(super) latency_ms_p50: Option<f64>,
     pub(super) latency_ms_p95: Option<f64>,
+    /// `on` or `off`: the `secrets` setting of every vault behind the row.
+    pub(super) secrets: Option<SecretScanMode>,
 }
 
 /// The run-level fields every row repeats.
@@ -329,6 +358,7 @@ pub(super) fn full_context_observation(
         usd: price.map(|stamp| stamp.usd(prompt, 0.0)),
         price: price.cloned(),
         latency_ms: None,
+        secrets: None,
     }
 }
 
@@ -364,9 +394,11 @@ type RowKey = (
     bool,
     String,
     String,
+    Option<&'static str>,
 );
 
-/// Folds observations into rows: one per approach x budget x group x metric.
+/// Folds observations into rows: one per approach x budget x group x metric
+/// (and `secrets` setting, so vaults that ran differently never share a row).
 pub(super) fn aggregate(context: &RowContext, observations: &[Observation]) -> Vec<ResultsRow> {
     let mut buckets: BTreeMap<RowKey, Vec<(&Observation, f64, bool)>> = BTreeMap::new();
     for observation in observations {
@@ -382,6 +414,7 @@ pub(super) fn aggregate(context: &RowContext, observations: &[Observation]) -> V
                         observation.rot,
                         group.clone(),
                         metric.clone(),
+                        observation.secrets.map(secrets_label),
                     ))
                     .or_default()
                     .push((observation, *value, *binary));
@@ -392,7 +425,7 @@ pub(super) fn aggregate(context: &RowContext, observations: &[Observation]) -> V
     let mut rows: Vec<ResultsRow> = buckets
         .into_iter()
         .map(
-            |((approach, kind, reader, budget, label, rot, group, metric), items)| {
+            |((approach, kind, reader, budget, label, rot, group, metric, _), items)| {
                 let n = items.len();
                 let mean = |f: &dyn Fn(&Observation) -> f64| {
                     items.iter().map(|(o, _, _)| f(o)).sum::<f64>() / n as f64
@@ -441,6 +474,7 @@ pub(super) fn aggregate(context: &RowContext, observations: &[Observation]) -> V
                     price_table: items.first().and_then(|(o, _, _)| o.price.clone()),
                     latency_ms_p50: nearest_rank(&latency, 50),
                     latency_ms_p95: nearest_rank(&latency, 95),
+                    secrets: items.first().and_then(|(o, _, _)| o.secrets),
                 }
             },
         )

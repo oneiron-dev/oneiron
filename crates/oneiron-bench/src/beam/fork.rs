@@ -8,7 +8,13 @@
 //! (`std::fs::copy`, which clones on APFS and uses `copy_file_range` on
 //! Linux). Each fork is keyed by the corpus identity and the question, the
 //! same keying the RetrievalTrace fork hash uses for replay (OF-260).
+//!
+//! A run may set the base's `secrets` switch before ingest (ARCH-0042,
+//! secret scan on bench vaults). The switch is a vault row, so every fork
+//! copy carries it; each fork reads it back for the rows to state.
 use super::BeamResult;
+use oneiron::policy_model::SecretScanMode;
+use oneiron::store::GateDecisionId;
 use oneiron::{Vault, VaultConfig};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -26,19 +32,26 @@ pub(super) struct BaseVault {
 pub(super) struct VaultFork {
     pub(super) vault: Vault,
     pub(super) fork_key: String,
+    /// The `secrets` setting this fork's vault reads back.
+    pub(super) secrets: SecretScanMode,
     _dir: tempfile::TempDir,
 }
 
 impl BaseVault {
-    /// Opens a fresh vault, runs `ingest` on it, then closes it.
+    /// Opens a fresh vault, sets its `secrets` switch when the run names a
+    /// mode, runs `ingest` on it, then closes it.
     pub(super) fn build<T>(
         corpus_identity: String,
         config: VaultConfig,
+        secrets: Option<SecretScanMode>,
         ingest: impl FnOnce(&Vault) -> BeamResult<T>,
     ) -> BeamResult<(Self, T)> {
         let dir = tempfile::tempdir()?;
         let output = {
             let vault = Vault::open(dir.path(), config.clone())?;
+            if let Some(mode) = secrets {
+                set_secret_scan(&vault, mode)?;
+            }
             ingest(&vault)?
         };
         Ok((
@@ -61,12 +74,27 @@ impl BaseVault {
         let dir = tempfile::tempdir()?;
         copy_tree(self.dir.path(), dir.path())?;
         let vault = Vault::open(dir.path(), self.config.clone())?;
+        let secrets = vault.secret_scan_mode()?;
         Ok(VaultFork {
             vault,
             fork_key: fork_key(&self.corpus_identity, question_id),
+            secrets,
             _dir: dir,
         })
     }
+}
+
+/// The owner's `secrets` switch: the embedded owner authenticates and sets
+/// the mode, which the engine receipts.
+fn set_secret_scan(vault: &Vault, mode: SecretScanMode) -> BeamResult<()> {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let authenticated =
+        vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    vault.set_secret_scan_mode(&authenticated, mode, now)?;
+    Ok(())
 }
 
 /// `sha256:` over the base corpus identity and the question id.
@@ -126,6 +154,7 @@ mod tests {
         let (base, base_id) = BaseVault::build(
             "corpus-a".into(),
             crate::beam::util::beam_vault_config(),
+            None,
             |vault| Ok(put(vault, 1, "base turn")),
         )
         .unwrap();

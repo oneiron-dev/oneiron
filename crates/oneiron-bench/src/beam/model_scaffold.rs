@@ -281,7 +281,7 @@ pub(super) fn run_with(
         },
     );
     let session = ModelSession::connect(host, &models)?;
-    let report = run_with_session(&plan, &session)?;
+    let report = run_with_session_secrets(&plan, &session, sweep.secrets)?;
     if let Some(results) = &sweep.results_path {
         super::sweep::write_rows(results, &report.results)?;
     }
@@ -301,6 +301,15 @@ fn answer(
 pub(super) fn run_with_session(
     plan: &ModelRunPlan,
     session: &ModelSession,
+) -> BeamResult<MeasuredReport> {
+    run_with_session_secrets(plan, session, None)
+}
+/// [`run_with_session`] with the `secrets` switch each base vault gets
+/// before ingest (None: the vault's own setting).
+fn run_with_session_secrets(
+    plan: &ModelRunPlan,
+    session: &ModelSession,
+    secrets: Option<oneiron::policy_model::SecretScanMode>,
 ) -> BeamResult<MeasuredReport> {
     plan.validate()?;
     let mut manifest = parse_manifest_json(&std::fs::read_to_string(&plan.retrieval_manifest)?)?;
@@ -356,6 +365,8 @@ pub(super) fn run_with_session(
     });
     let mut ablation_rows = Vec::new();
     let mut groups_by_question: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut secrets_by_question: BTreeMap<String, oneiron::policy_model::SecretScanMode> =
+        BTreeMap::new();
     let mut ablation_unavailable = Vec::new();
     let mut access_factor_observations = Vec::new();
     let mut rows = Vec::new();
@@ -385,7 +396,7 @@ pub(super) fn run_with_session(
         let receipt_start = session.receipts().len();
         let shape = super::load::contract_vault_shape(&manifest, path, &group)?;
         let (base, (loaded, group_exactness)) =
-            super::fork::BaseVault::build(corpus_identity, shape.config(), |vault| {
+            super::fork::BaseVault::build(corpus_identity, shape.config(), secrets, |vault| {
                 let loaded = super::load::load_jsonl_group(
                     vault,
                     &shape,
@@ -418,6 +429,7 @@ pub(super) fn run_with_session(
         }
         for id in &group_case_ids {
             let fork = base.fork(id)?;
+            secrets_by_question.insert(id.clone(), fork.secrets);
             let vault = &fork.vault;
             let record = loaded
                 .contract_records
@@ -724,7 +736,7 @@ pub(super) fn run_with_session(
         judge_instruction_sha256: Some(plan.judge.instruction.sha256.clone()),
         ..super::scorer::BeamScorer::metadata(&FixedBeamScorer)
     };
-    let card = measured_card(MeasuredCardInputs {
+    let mut card = measured_card(MeasuredCardInputs {
         plan,
         manifest: &manifest,
         run_jsonl: path,
@@ -734,11 +746,18 @@ pub(super) fn run_with_session(
         rows: &rows,
         offline_amortized: &offline_amortized,
     })?;
+    card.pins.secrets = secrets_by_question
+        .values()
+        .map(|mode| super::sweep::secrets_label(*mode).to_owned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let results = measured_results(
         plan,
         session,
         &rows,
         &groups_by_question,
+        &secrets_by_question,
         &card,
         &manifest.run_id,
     );
@@ -881,6 +900,7 @@ fn measured_results(
     session: &ModelSession,
     rows: &[ModelRow],
     groups_by_question: &BTreeMap<String, Vec<String>>,
+    secrets_by_question: &BTreeMap<String, oneiron::policy_model::SecretScanMode>,
     card: &super::card::RunCard,
     run_id: &str,
 ) -> Vec<super::sweep::ResultsRow> {
@@ -933,6 +953,7 @@ fn measured_results(
                 usd: Some(row.query_cost.cost_usd),
                 price,
                 latency_ms: Some(row.query_cost.elapsed_us as f64 / 1000.0),
+                secrets: secrets_by_question.get(&row.question_id).copied(),
             }
         })
         .collect();

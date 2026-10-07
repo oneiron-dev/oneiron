@@ -457,8 +457,9 @@ fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
         _ => Ok(serde_json::to_string_pretty(&run_manifest_path(path)?)?),
     }
 }
-/// `--budget 4096,8192,full`, `--prices <file>`, `--results <file>`.
-fn parse_sweep_flags(flags: &[String]) -> BeamResult<super::sweep::SweepOptions> {
+/// `--budget 4096,8192,full`, `--prices <file>`, `--results <file>`,
+/// `--secret-scan on|off`.
+pub(super) fn parse_sweep_flags(flags: &[String]) -> BeamResult<super::sweep::SweepOptions> {
     let mut sweep = super::sweep::SweepOptions::default();
     let mut index = 0;
     while index < flags.len() {
@@ -473,10 +474,11 @@ fn parse_sweep_flags(flags: &[String]) -> BeamResult<super::sweep::SweepOptions>
                 sweep.prices = Some(super::sweep::PriceConfig::load(Path::new(value))?);
             }
             "--results" => sweep.results_path = Some(value.into()),
+            "--secret-scan" => sweep.secrets = Some(super::sweep::parse_secret_scan(value)?),
             other => {
                 return Err(BeamError::Comparability {
                     reason: format!(
-                        "unknown flag {other}; expected --budget, --prices or --results"
+                        "unknown flag {other}; expected --budget, --prices, --results or --secret-scan"
                     ),
                 });
             }

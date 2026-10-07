@@ -22,7 +22,8 @@ use super::report_model::{
 use super::scorer::{BeamScorer, FixedBeamScorer};
 use super::sweep::{
     BudgetLabel, CONTEXT_ROT, FULL_BUDGET_TOKENS, Observation, PriceConfig, PriceStamp, RowContext,
-    SweepOptions, aggregate, evidence_metrics, full_context_observation, groups_for, write_rows,
+    SweepOptions, aggregate, evidence_metrics, full_context_observation, groups_for,
+    secrets_label, write_rows,
 };
 use super::util::{beam_vault_config, invalid_manifest, report_format_label};
 use super::validate::{
@@ -63,10 +64,13 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                            edit-path-pack <dir>   materialize five edit-task sandboxes\n\
                            edit-path <attempts.json>   score tests and contracts per arm\n\
                            run <manifest> [--budget 4096,8192,...,full] [--prices <file>] [--results <file>]\n\
+                               [--secret-scan on|off]\n\
                                     run a BEAM manifest; fixture datasets load dataset.path JSON\n\
                                     relative to the manifest; emit declared packs.jsonl outputs;\n\
                                     a budget sweep runs every arm at every budget and writes\n\
-                                    results rows (oneiron-bench.results-row.v1)\n\
+                                    results rows (oneiron-bench.results-row.v1); --secret-scan\n\
+                                    sets each base vault's secrets switch before ingest, and\n\
+                                    every row states the setting its vault read back\n\
                            trace-export\n\
                                     export RetrievalTrace records to JSONL by fork hash (ONE-1311)\n\
                            corpus-export / corpus-replay\n\
@@ -230,6 +234,7 @@ pub(super) fn run_jsonl_manifest_isolated(
     };
     let price = sweep.prices.as_ref().map(PriceConfig::stamp);
     let mut observations = Vec::new();
+    let mut secrets_seen = BTreeSet::new();
 
     for (corpus_identity, mut group) in group_by_corpus(entries) {
         resolve_corpus_refs(path, &mut group)?;
@@ -245,7 +250,7 @@ pub(super) fn run_jsonl_manifest_isolated(
             .collect();
         let shape = contract_vault_shape(manifest, path, &group)?;
         let (base, (loaded, group_exactness)) =
-            BaseVault::build(corpus_identity, shape.config(), |vault| {
+            BaseVault::build(corpus_identity, shape.config(), sweep.secrets, |vault| {
                 let loaded = load_jsonl_group(
                     vault,
                     &shape,
@@ -285,6 +290,7 @@ pub(super) fn run_jsonl_manifest_isolated(
 
         for case_id in &case_ids {
             let fork = base.fork(case_id)?;
+            secrets_seen.insert(secrets_label(fork.secrets));
             if let Some(report) = &mut dataset_report {
                 report.forks += 1;
             }
@@ -303,14 +309,19 @@ pub(super) fn run_jsonl_manifest_isolated(
                     case.budget_label = budget.map(BudgetLabel::label);
                     let label =
                         budget.map_or_else(|| BudgetLabel::Tokens(case.token_budget), |b| b);
-                    observations.extend(retrieval_observations(
+                    let question_observations = retrieval_observations(
                         &case,
                         record,
                         &loaded,
                         label,
                         price.as_ref(),
-                    ));
-                    observations.push(full_context_observation(record, label, price.as_ref()));
+                    )
+                    .into_iter()
+                    .chain([full_context_observation(record, label, price.as_ref())]);
+                    observations.extend(question_observations.map(|mut observation| {
+                        observation.secrets = Some(fork.secrets);
+                        observation
+                    }));
                     cases_by_id
                         .entry(case.case_id.clone())
                         .or_default()
@@ -390,6 +401,7 @@ pub(super) fn run_jsonl_manifest_isolated(
             .collect(),
         references: vec![CONTEXT_ROT],
     })?;
+    card.pins.secrets = secrets_seen.into_iter().map(str::to_owned).collect();
     let results_root = manifest
         .outputs
         .as_ref()
@@ -641,6 +653,7 @@ fn retrieval_observations(
                 usd: price.map(|stamp| stamp.usd(prompt, 0.0)),
                 price: price.cloned(),
                 latency_ms: latency,
+                secrets: None,
             })
         })
         .collect()
