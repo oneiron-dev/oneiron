@@ -1,8 +1,13 @@
-# CodeRabbit: manual-summon-only precision reviewer (fair-usage ladder de-rates continuous
-# coverage to 1 review/hr). Summon with `@coderabbitai review` at merge candidates —
-# manual triggers work on any base branch, which also covers stacked PRs.
+# CodeRabbit: reviews automatically when a PR is marked ready for review; drafts are skipped.
+# Flow: Sol reviews the branch first, the PR opens as a draft, and it is marked ready once,
+# after the gates pass. So each PR gets one CodeRabbit review, not one per push.
+# Every base branch counts, so stacked PRs get their review too.
 reviews:
   auto_review:
-    enabled: false
+    enabled: true
+    drafts: false
+    auto_incremental_review: false
+    base_branches:
+      - ".*"
   path_filters:
     - "!crates/*/vendor/**"
