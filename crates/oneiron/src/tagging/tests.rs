@@ -932,6 +932,106 @@ fn a_stream_continuation_marks_its_turn_again() {
     );
 }
 
+/// Settling a fork that changes a MESSAGE's text marks its turn, and the
+/// marker moves no clock floor: given the same writes and the same ticks, the
+/// tagged vault persists the untagged vault's clock floor.
+#[cfg(feature = "sync")]
+#[test]
+fn a_settled_message_fork_marks_its_turn_and_moves_no_clock_floor() {
+    use crate::entity_doc::{
+        AnchoredEdit, DocAuthorization, EditVerb, ForkRequest, SettleVerb, TextField,
+    };
+    use crate::write_envelope::WriteActor;
+
+    const PROPOSAL: [u8; 16] = [0x6b; 16];
+    let arms = Arms::new();
+    let (tagged, plain) = arms.open();
+    let mut first = message(0, "Ada sailed north");
+    first.id = Some("69696969696969696969696969696969".into());
+    let message = EntityId::from_hex(first.id.as_deref().expect("id")).expect("message id");
+    let writer = speaker(&tagged);
+    let actor = WriteActor::new(writer, EdgeActorClass::Human);
+    let mut owners = Vec::new();
+    for vault in [&tagged, &plain] {
+        vault
+            .memory(writer, EdgeActorClass::Human)
+            .witness(&turn(None, vec![first.clone()]))
+            .expect("witness");
+        let owner = vault
+            .authenticate_owner(
+                writer,
+                "principal:tagging-test",
+                true,
+                crate::store::GateDecisionId::now(),
+            )
+            .expect("owner");
+        vault
+            .migrate_entity_text(
+                &message,
+                &TextField::MapField("content".into()),
+                actor,
+                &DocAuthorization::Owner(&owner),
+            )
+            .expect("migrate");
+        let end = vault.entity_text(&message).expect("text").chars().count();
+        let request = ForkRequest {
+            entity: message,
+            base: vault.entity_text_frontier(&message).expect("frontier"),
+            actor,
+            edits: vec![AnchoredEdit {
+                actor: Some(actor),
+                verb: EditVerb::InsertAfterAnchor {
+                    anchor: vault
+                        .entity_text_anchor(&message, end, end)
+                        .expect("anchor"),
+                    text: " and Grace followed".into(),
+                },
+            }],
+            rewrite: None,
+        };
+        vault
+            .open_text_proposal(
+                &EntityId::from_bytes(PROPOSAL).expect("proposal id"),
+                &[request],
+                &DocAuthorization::ProposeOnly,
+                NOW,
+            )
+            .expect("proposal");
+        owners.push(owner);
+    }
+    let tagger = Scripted::new(Answer::Good);
+    assert_eq!(
+        reconciler(&tagged, &tagger)
+            .drain_once()
+            .expect("drain")
+            .traces
+            .len(),
+        1
+    );
+    arms.tick(NOW + 30);
+    for (vault, owner) in [&tagged, &plain].into_iter().zip(&owners) {
+        vault
+            .settle_text_proposal(
+                &EntityId::from_bytes(PROPOSAL).expect("proposal id"),
+                SettleVerb::Merge,
+                &DocAuthorization::Owner(owner),
+                actor,
+                NOW + 30,
+            )
+            .expect("merge");
+        assert_eq!(
+            vault.entity_text(&message).expect("text"),
+            "Ada sailed north and Grace followed"
+        );
+    }
+    assert_eq!(count(&tagged, AttemptState::Queued), 1);
+    let floor = |vault: &Vault| {
+        let txn = vault.store.env.read_txn().expect("read");
+        crate::ports::authorization_floor_in_txn(&vault.store, &txn).expect("clock floor")
+    };
+    assert_eq!(floor(&tagged), floor(&plain));
+}
+
 /// Promoting an off-record turn into base is a turn admission: the marker
 /// commits with the promotion, an aborted promotion leaves none, and a retried
 /// promotion, answered from its receipt, owes nothing more.
