@@ -1646,6 +1646,60 @@ fn indirect_text_naming_a_workbook_falls_back() {
 }
 
 #[test]
+fn a_circular_reference_through_a_name_keeps_its_last_value() {
+    // Loop = INDIRECT("RC",FALSE)+1 used in B2 reads B2 (re-check of #1295):
+    // a circular reference, which Excel with iteration off leaves
+    // uncalculated with its last value, the file's 17, as it leaves C2's
+    // =INDIRECT("RC",FALSE)+1 at 5. The read through the name was no
+    // dependency of B2, which cached 1.
+    let input = with_names(
+        &fixture(
+            "",
+            r#"<c r="A1"><v>0</v></c></row><row r="2"><c r="B2"><f>Loop</f><v>17</v></c><c r="C2"><f>INDIRECT(&quot;RC&quot;,FALSE)+1</f><v>5</v></c>"#,
+            false,
+        ),
+        r#"<definedName name="Loop">INDIRECT(&quot;RC&quot;,FALSE)+1</definedName>"#,
+    );
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    for (cell, value) in [("B2", "17"), ("C2", "5")] {
+        assert_eq!(cached(&xml, cell), value, "{cell}: {xml}");
+    }
+}
+
+#[test]
+fn a_reference_name_draws_what_the_formula_in_its_place_draws() {
+    // Pick+0 with Pick = OFFSET(Result!$C$1,RANDBETWEEN(0,1),0) resolved Pick
+    // as a reference (one draw), dropped the single cell it gave and
+    // evaluated Pick again (another draw), so it could cache the other row
+    // than OFFSET(Result!$C$1,RANDBETWEEN(0,1),0)+0 for the same clock and
+    // seed (re-check of #1295). Seed 7 draws row 2 for both.
+    const INLINE: &str = "OFFSET(Result!$C$1,RANDBETWEEN(0,1),0)+0";
+    let b1 = |formula: &str, seed: u64| {
+        let input = with_names(
+            &fixture(
+                "",
+                &format!(
+                    r#"<c r="B1"><f>{formula}</f><v>0</v></c><c r="C1"><v>10</v></c></row><row r="2"><c r="C2"><v>20</v></c>"#
+                ),
+                false,
+            ),
+            r#"<definedName name="Pick">OFFSET(Result!$C$1,RANDBETWEEN(0,1),0)</definedName>"#,
+        );
+        let out = recalc_at(&input, &clock(540, seed)).expect("native recalc");
+        cached(&part_text(&out.bytes, OUTPUT), "B1").to_owned()
+    };
+    assert_eq!(b1("Pick+0", 7), "20");
+    assert_eq!(b1(INLINE, 7), "20");
+    let mut picked = std::collections::BTreeSet::new();
+    for seed in 1..=12 {
+        let named = b1("Pick+0", seed);
+        assert_eq!(named, b1(INLINE, seed), "seed {seed}");
+        picked.insert(named);
+    }
+    assert_eq!(picked, ["10", "20"].map(String::from).into());
+}
+
+#[test]
 fn filterxml_evaluates_like_excel_for_windows() {
     // Windows is the reference where Excel for Windows and Mac differ (ruling 2026-10-01);
     // the truth for FILTERXML cells was recorded on Excel for Windows 16.0.20430.

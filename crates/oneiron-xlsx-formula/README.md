@@ -134,7 +134,7 @@ stage 2's linked workbooks and caller-context functions). `docs/ops/forked-depen
 fork branch, the rev and the patches. Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `67f19c08`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
+rev `562f4863`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
