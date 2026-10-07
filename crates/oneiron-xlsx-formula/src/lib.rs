@@ -8,24 +8,31 @@
 //! arrays inside their saved extent, defined names, tables and structured
 //! references. Only formula caches, their value types, calculate-always flags
 //! and Excel's rich error tags change; the package keeps every other byte.
+//! The caller's [`RecalcClock`] gives NOW() and TODAY() their instant and
+//! local offset and RAND, RANDBETWEEN and RANDARRAY their seed, as Excel
+//! recalculating at edit time; OFFSET, INDIRECT and the workbook's CELL info
+//! types read the workbook alone, and a defined name evaluates for the formula
+//! that uses it.
 //! The core's edit round trip wraps every host session in this engine unless
 //! the host opts out, so this crate does not depend on the core.
 //!
-//! The corpus rule is met at fork rev `91599813` (0.9.3-oneiron.9): through
-//! the writer, all 2,967 scored fresh-Excel SpreadsheetBench
-//! workbooks (Excel for Windows truth) are fully Excel-identical (LibreOffice
-//! 25.8 matched 2,648 of the 2,951 it was measured on), and all 811 pinned
-//! goldens (Excel for Windows 16.0.20430, rich-value error caches resolved)
-//! against LibreOffice's 753. Through this adapter, 2,705 of the corpus's
-//! 3,040 formula workbooks recalculate natively as saved, ZIP directory
-//! entries and closed linked workbooks included (see the README), and all
-//! 2,705 match Excel. The
+//! The corpus rule is met at fork rev `562f4863` (0.9.3-oneiron.10): through
+//! the writer, all 2,967 scored fresh-Excel SpreadsheetBench workbooks (Excel
+//! for Windows truth) are fully Excel-identical (LibreOffice 25.8 matched
+//! 2,648 of the 2,951 it was measured on), and all 811 pinned goldens (Excel
+//! for Windows 16.0.20430, rich-value error caches resolved) against
+//! LibreOffice's 753. Through this adapter, 2,959 of the corpus's 3,040
+//! formula workbooks recalculate natively as saved, ZIP directory entries and
+//! closed linked workbooks included (see the README), and all of them match
+//! Excel on their scored cells. The
 //! host's LibreOffice recalc stays the precision fallback for refused
 //! workbooks only: the external links the engine cannot read as Excel does
 //! with the linked workbook closed (the others recalculate here from the
 //! values their links save; [`routing`] checks that the fallback keeps every
-//! link), formulas needing caller context (the corpus clock is never
-//! substituted for production time), functions the engine does not implement,
+//! link), formulas needing what only the host knows (INFO, and CELL's file
+//! path, active cell and formatting), INDIRECT text that names a workbook
+//! (the writer refuses it as evaluation meets it), functions the engine does
+//! not implement,
 //! workbook names used as functions (LAMBDA names), string escapes the
 //! writer's reader decodes differently from Excel, precision-as-displayed,
 //! what the writer cannot write exactly, a result over the host's limits, and
@@ -33,6 +40,7 @@
 //! Malformed content is refused outright, as before the writer.
 
 pub mod calc;
+mod clock;
 mod context;
 pub mod engine;
 pub mod error;
@@ -42,6 +50,7 @@ pub mod routing;
 pub mod workbook;
 mod xml;
 
+pub use clock::RecalcClock;
 pub use engine::{CellValue, EngineId, RecalcEngine, RecalcReport};
 pub use error::{FormulaError, Result};
 pub use measure::{CaseResult, CorpusReport, MeasureOptions, evaluate_case, read_corpus_cases};

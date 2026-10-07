@@ -1,7 +1,8 @@
-//! Bound formula AST evaluation, keep ambient context out of native recalc and
-//! find the functions the engine does not implement.
+//! Bound formula AST evaluation, keep what only the host knows out of native
+//! recalc and find the functions the engine does not implement.
 use std::collections::BTreeSet;
 
+use formualizer_common::LiteralValue;
 use formualizer_parse::TokenStream;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -18,8 +19,12 @@ const MAX_EVALUATION_DEPTH: usize = 32;
 
 /// What one bounded formula needs from its caller and from the engine.
 pub(super) struct Inspection {
-    /// The formula needs caller-owned context or volatile reference semantics.
-    pub contextual: bool,
+    /// What the formula reads that only the host knows: the file's path, the
+    /// active cell or the environment. The clock and the random seed come
+    /// from the caller ([`crate::RecalcClock`]); OFFSET and INDIRECT read the
+    /// workbook alone. INDIRECT text that names a workbook, which may be
+    /// computed, is the writer's to refuse as evaluation meets it.
+    pub host_context: Option<&'static str>,
     /// A function the engine's registry does not resolve. The engine would
     /// cache `#NAME?` for it where Excel computes a value.
     pub unknown_function: Option<String>,
@@ -32,8 +37,6 @@ pub(super) struct Inspection {
 }
 
 /// Prove bounded evaluation and report what the formula needs.
-/// The compatibility harness may supply deterministic context; production falls
-/// back rather than substitute its corpus clock for the caller's time or seed.
 pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
     if formula.len() > MAX_FORMULA_BYTES {
         return Err(unsupported("formula byte limit"));
@@ -49,7 +52,7 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
     }
     let node = parse_bounded(&expression)?;
     let mut pending: Vec<(&ASTNode, usize)> = vec![(&node, 1)];
-    let mut contextual = false;
+    let mut host_context = None;
     let mut lambda = false;
     // Called names, names in a callable position, and the LET names and
     // LAMBDA parameters either may name.
@@ -67,7 +70,7 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
                 if let ReferenceType::NamedRange(name) = reference
                     && let Some(function) = strip_prefix(name, "_xleta.")
                 {
-                    contextual |= needs_context(function);
+                    host_context = host_context.or_else(|| needs_host(function, None));
                     called.push(function);
                 }
             }
@@ -78,7 +81,7 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
             }
             ASTNodeType::Function { name, args } => {
                 let bare = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
-                contextual |= needs_context(&bare);
+                host_context = host_context.or_else(|| needs_host(&bare, Some(args)));
                 lambda |= bare == "LAMBDA";
                 // LET binds every other argument before its body; LAMBDA
                 // binds each argument before its body.
@@ -124,11 +127,50 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
         .find(|name| !local.contains(&name.to_ascii_uppercase()))
         .map(str::to_owned);
     Ok(Inspection {
-        contextual,
+        host_context,
         unknown_function,
         callable_name,
         lambda,
     })
+}
+
+/// What a call of `name` (after any storage prefix) with `args` (`None` when
+/// the function is passed by name) needs from the host, if anything. INFO
+/// reads the environment. CELL reads the workbook only for the info types
+/// the engine computes as Excel does, named by a text literal, with a
+/// reference: without one it reports on the active cell, `"filename"` reads
+/// the file's path, `"address"` names the file for a cell on another sheet
+/// (`'[Book.xlsx]Other'!$B$2`), so it stays native only for a reference
+/// written without a sheet, and the other info types read formatting the
+/// engine does not model.
+fn needs_host(name: &str, args: Option<&[ASTNode]>) -> Option<&'static str> {
+    let bare = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
+    match bare.as_str() {
+        "INFO" => Some("INFO reads the environment"),
+        "CELL" => match args {
+            Some([info, reference]) => match &info.node_type {
+                ASTNodeType::Literal(LiteralValue::Text(info))
+                    if info.eq_ignore_ascii_case("address") && !unqualified(reference) =>
+                {
+                    Some("CELL(\"address\") of another sheet reads the file's name")
+                }
+                ASTNodeType::Literal(LiteralValue::Text(info))
+                    if CELL_WORKBOOK_INFO.contains(&info.to_ascii_lowercase().as_str()) =>
+                {
+                    None
+                }
+                ASTNodeType::Literal(LiteralValue::Text(info))
+                    if info.eq_ignore_ascii_case("filename") =>
+                {
+                    Some("CELL(\"filename\") reads the file's path")
+                }
+                _ => Some("CELL info type the engine does not compute"),
+            },
+            Some([_]) => Some("CELL without a reference reads the active cell"),
+            _ => Some("CELL info type the engine does not compute"),
+        },
+        _ => None,
+    }
 }
 
 /// Parse a formula within the bounds `inspect_formula` proves, with the
@@ -142,23 +184,22 @@ pub(super) fn parse_bounded(formula: &str) -> Result<ASTNode> {
     formualizer_parse::parse(expression.as_ref()).map_err(|_| unsupported("formula parsing"))
 }
 
-/// Functions that read the caller's clock, seed, cell or environment, or
-/// whose references are volatile, after any storage prefix.
-fn needs_context(name: &str) -> bool {
-    let bare = name.rsplit('.').next().unwrap_or(name);
+/// A cell or range reference written without a sheet: on the formula's own
+/// sheet.
+fn unqualified(node: &ASTNode) -> bool {
     matches!(
-        bare.to_ascii_uppercase().as_str(),
-        "NOW"
-            | "TODAY"
-            | "RAND"
-            | "RANDBETWEEN"
-            | "RANDARRAY"
-            | "CELL"
-            | "INFO"
-            | "OFFSET"
-            | "INDIRECT"
+        &node.node_type,
+        ASTNodeType::Reference {
+            reference: ReferenceType::Cell { sheet: None, .. }
+                | ReferenceType::Range { sheet: None, .. },
+            ..
+        }
     )
 }
+
+/// CELL info types that read only the workbook and that the engine computes
+/// as Excel for Windows does (probe ops/excel-context-probe-20261006.md).
+const CELL_WORKBOOK_INFO: [&str; 5] = ["address", "col", "contents", "row", "type"];
 
 /// The argument a LAMBDA helper calls, by position among `count` arguments.
 fn lambda_slot(bare: &str, count: usize) -> Option<usize> {
