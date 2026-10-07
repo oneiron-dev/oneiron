@@ -140,3 +140,38 @@ fn gate_failure_rolls_back_all_candidates_and_preserves_bulk_act() -> Result<()>
     }
     Ok(())
 }
+
+#[test]
+fn one_approve_call_admits_the_whole_batch_and_cannot_repeat() -> Result<()> {
+    let (_dir, vault, owner, batch) = fixture()?;
+    let receipt = vault.approve_imported_claim_batch(&owner, &batch)?;
+    assert_eq!(receipt.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(
+        receipt.approval_digest,
+        vault
+            .imported_claim_batch_effect(&owner, &batch)?
+            .digest()
+            .to_hex()
+    );
+    for id in &receipt.claim_ids {
+        let claim = vault.get_claim(id)?.expect("approved imported claim");
+        assert_eq!(claim.approval, ClaimApprovalStatus::Approved);
+    }
+    assert!(vault.approve_imported_claim_batch(&owner, &batch).is_err());
+    Ok(())
+}
+
+#[test]
+fn failed_approve_call_leaves_neither_claims_nor_an_approval() -> Result<()> {
+    let (_dir, vault, owner, mut batch) = fixture()?;
+    let missing = EntityId::now();
+    batch.entries[1].subject = missing;
+    assert!(vault.approve_imported_claim_batch(&owner, &batch).is_err());
+    for entry in &batch.entries {
+        assert!(vault.get_raw(&entry.claim_id)?.is_none());
+    }
+    // The approval rolled back with the admission: the same digest is still unapproved.
+    let digest = vault.imported_claim_batch_effect(&owner, &batch)?.digest();
+    vault.approve_once(&owner, digest)?;
+    Ok(())
+}

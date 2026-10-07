@@ -8,6 +8,7 @@ use crate::authority::VerifiedSlip;
 use crate::context_pack::PackFormat;
 use crate::edge::EdgeActorClass;
 use crate::memory::verify_actor_binding_in_txn;
+use crate::side_table::{self, Named, SideTable};
 
 /// Format for the full-vault export; absence uses the model-injection default.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -15,6 +16,24 @@ pub struct ExportOptions {
     #[serde(default)]
     pub format: Option<String>,
 }
+
+/// One whole-vault export, written in the same call that renders it, so every
+/// owner can see that the vault left and in what shape. Never the bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportReceipt {
+    /// Vault clock seconds.
+    pub at: u64,
+    pub format: String,
+    pub bytes: u64,
+    /// BLAKE3 of the rendered document, lowercase hex.
+    pub digest: String,
+    /// The exporting actor as hex, or `host` for a host-root export.
+    pub by: String,
+}
+
+const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
+    SideTable::new(&side_table::EXPORT_RECEIPT);
 
 /// Rendered full-vault document in the chosen OF-096 format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +64,7 @@ impl Memory<'_> {
         opts: &ExportOptions,
         proof: Option<&VerifiedSlip>,
     ) -> MemoryResult<MemoryExport> {
-        render_export(self.vault, opts, |txn| {
+        render_export(self.vault, opts, &self.actor.to_hex(), |txn| {
             verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
             if self.actor_class != EdgeActorClass::Human {
                 return Err(export_forbidden());
@@ -99,13 +118,23 @@ impl Vault {
         opts: &ExportOptions,
         proof: &VerifiedSlip,
     ) -> MemoryResult<MemoryExport> {
-        render_export(self, opts, |txn| {
+        render_export(self, opts, "host", |txn| {
             validate_verified_owner(self, txn, proof)?;
             if proof.claims().holder_ref != "host" {
                 return Err(export_forbidden());
             }
             Ok(())
         })
+    }
+
+    /// Every whole-vault export receipt, oldest first.
+    pub fn export_receipts(&self) -> crate::Result<Vec<ExportReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(EXPORT_RECEIPTS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, receipt)| receipt)
+            .collect())
     }
 }
 
@@ -123,6 +152,7 @@ fn validate_verified_owner(
 fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
+    by: &str,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<MemoryExport> {
     let name = opts.format.as_deref().unwrap_or("toon");
@@ -142,6 +172,26 @@ fn render_export(
     let document = vault.export_whole_vault_with_admission(format, admit)?;
     let rendered = String::from_utf8(document.bytes().to_vec())
         .map_err(|_| MemoryError::bad_request("export serializer emitted non-UTF-8 text"))?;
+    let receipt = ExportReceipt {
+        at: vault.store.clock.now_recorded_at(),
+        format: name.to_owned(),
+        bytes: rendered.len() as u64,
+        digest: blake3::hash(rendered.as_bytes()).to_hex().to_string(),
+        by: by.to_owned(),
+    };
+    vault.with_write_txn(|txn| {
+        let sequence = match EXPORT_RECEIPTS
+            .iter_rev_from(&vault.store, txn, &[])?
+            .next()
+        {
+            None => 0,
+            Some(row) => row?
+                .0
+                .checked_add(1)
+                .ok_or(crate::Error::IndexOverflow("export receipt sequence"))?,
+        };
+        EXPORT_RECEIPTS.put(&vault.store, txn, &sequence, &receipt)
+    })?;
     Ok(MemoryExport {
         format: name.to_owned(),
         rendered,

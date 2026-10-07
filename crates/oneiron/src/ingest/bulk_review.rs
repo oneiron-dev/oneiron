@@ -104,76 +104,105 @@ impl Vault {
         batch: &ImportedClaimBatch,
     ) -> Result<ImportedClaimBatchReceipt> {
         let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
+        self.with_write_txn(|txn| self.admit_imported_claim_batch_in_txn(txn, owner, batch, digest))
+    }
+
+    /// The owner's one act for the whole batch: the approve-once receipt and
+    /// the Approved admission of every candidate commit in ONE write
+    /// transaction, or neither does.
+    ///
+    /// # Errors
+    /// As [`Vault::admit_imported_claim_batch`], plus
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when this exact batch was already approved.
+    pub fn approve_imported_claim_batch(
+        &self,
+        owner: &AuthenticatedOwner,
+        batch: &ImportedClaimBatch,
+    ) -> Result<ImportedClaimBatchReceipt> {
+        let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            let authorization =
-                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?;
-            let approval = if authorization.is_some() {
-                ClaimApprovalStatus::Approved
-            } else {
+            self.approve_once_in_txn(txn, owner, digest)?;
+            self.admit_imported_claim_batch_in_txn(txn, owner, batch, digest)
+        })
+    }
+
+    fn admit_imported_claim_batch_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        batch: &ImportedClaimBatch,
+        digest: crate::consent::EffectDigest,
+    ) -> Result<ImportedClaimBatchReceipt> {
+        owner.revalidate_in_txn(self, txn)?;
+        let authorization =
+            crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?;
+        let approval = if authorization.is_some() {
+            ClaimApprovalStatus::Approved
+        } else {
+            ClaimApprovalStatus::Proposed
+        };
+        let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
+        // A fresh id is required. Consent names one immutable candidate set;
+        // it must not authorize replacing an earlier import or another kind.
+        for entry in &batch.entries {
+            if self.local_hard_delete_marker_exists_in_txn(txn, &entry.claim_id)?
+                || self.get_raw_in(txn, &entry.claim_id)?.is_some()
+            {
+                return Err(Error::InvalidClaimBody("import claim id is not fresh"));
+            }
+        }
+        // Proposed is the ordinary Gate admission path. With owner consent,
+        // resolve these same candidates against the attached Gate bindings
+        // before committing anything, in this same writer transaction.
+        for phase in 0..if authorization.is_some() { 2 } else { 1 } {
+            let phase_approval = if phase == 0 {
                 ClaimApprovalStatus::Proposed
-            };
-            let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
-            // A fresh id is required. Consent names one immutable candidate set;
-            // it must not authorize replacing an earlier import or another kind.
-            for entry in &batch.entries {
-                if self.local_hard_delete_marker_exists_in_txn(txn, &entry.claim_id)?
-                    || self.get_raw_in(txn, &entry.claim_id)?.is_some()
-                {
-                    return Err(Error::InvalidClaimBody("import claim id is not fresh"));
-                }
-            }
-            // Proposed is the ordinary Gate admission path. With owner consent,
-            // resolve these same candidates against the attached Gate bindings
-            // before committing anything, in this same writer transaction.
-            for phase in 0..if authorization.is_some() { 2 } else { 1 } {
-                let phase_approval = if phase == 0 {
-                    ClaimApprovalStatus::Proposed
-                } else {
-                    ClaimApprovalStatus::Approved
-                };
-                let mut builder = self.batch_in();
-                for entry in &batch.entries {
-                    let admission = ImportedEvidenceAdmission::proposed(
-                        &batch.source_id,
-                        entry.claim_id,
-                        ImportedEvidenceEntityResolution::subject(entry.subject),
-                        actor,
-                        entry.occurred,
-                        entry.learned_at,
-                    )
-                    .with_approval(phase_approval);
-                    let (candidate, envelope) = imported_candidate(
-                        &entry.predicate,
-                        json_to_msgpack_value(&entry.value),
-                        &entry.source_record_id,
-                        &admission,
-                    )?;
-                    builder = builder.claim_candidate(
-                        &entry.claim_id,
-                        candidate,
-                        &envelope,
-                        entry.occurred,
-                        entry.learned_at,
-                    );
-                }
-                builder.apply(txn)?;
-            }
-            if let Some(authorization) = &authorization {
-                crate::consent::spend_approve_once_in_txn(&self.store, txn, authorization)?;
             } else {
-                // No per-claim review tray: an unconsented import stays Proposed
-                // until a new exact batch is explicitly consented at import time.
-                for entry in &batch.entries {
-                    self.store
-                        .delete_pending_gate_consent_in_txn(txn, &entry.claim_id)?;
-                }
+                ClaimApprovalStatus::Approved
+            };
+            let mut builder = self.batch_in();
+            for entry in &batch.entries {
+                let admission = ImportedEvidenceAdmission::proposed(
+                    &batch.source_id,
+                    entry.claim_id,
+                    ImportedEvidenceEntityResolution::subject(entry.subject),
+                    actor,
+                    entry.occurred,
+                    entry.learned_at,
+                )
+                .with_approval(phase_approval);
+                let (candidate, envelope) = imported_candidate(
+                    &entry.predicate,
+                    json_to_msgpack_value(&entry.value),
+                    &entry.source_record_id,
+                    &admission,
+                )?;
+                builder = builder.claim_candidate(
+                    &entry.claim_id,
+                    candidate,
+                    &envelope,
+                    entry.occurred,
+                    entry.learned_at,
+                );
             }
-            Ok(ImportedClaimBatchReceipt {
-                approval_digest: digest.to_hex(),
-                approval,
-                claim_ids: batch.entries.iter().map(|entry| entry.claim_id).collect(),
-            })
+            builder.apply(txn)?;
+        }
+        if let Some(authorization) = &authorization {
+            crate::consent::spend_approve_once_in_txn(&self.store, txn, authorization)?;
+        } else {
+            // No per-claim review tray: an unconsented import stays Proposed
+            // until a new exact batch is explicitly consented at import time.
+            for entry in &batch.entries {
+                self.store
+                    .delete_pending_gate_consent_in_txn(txn, &entry.claim_id)?;
+            }
+        }
+        Ok(ImportedClaimBatchReceipt {
+            approval_digest: digest.to_hex(),
+            approval,
+            claim_ids: batch.entries.iter().map(|entry| entry.claim_id).collect(),
         })
     }
 }

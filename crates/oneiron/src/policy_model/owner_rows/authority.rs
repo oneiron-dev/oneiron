@@ -144,6 +144,17 @@ fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Op
     Ok(Some(LiveMembers { grants, owners }))
 }
 
+impl Vault {
+    /// Whether `owner` is a live owner of this vault right now: the embedded
+    /// owner of a personal vault, or a live Owner-role member of a shared one.
+    /// An authenticated human is not by that alone an owner.
+    pub fn is_live_vault_owner(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        Ok(owners_in_txn(self, &txn)?.contains(&owner.actor()))
+    }
+}
+
 /// The vault's live owners: the embedded owner of a personal vault, or every
 /// live Owner-role member of a shared one. An Admin or Delegate is no owner,
 /// whatever action grants it holds.
