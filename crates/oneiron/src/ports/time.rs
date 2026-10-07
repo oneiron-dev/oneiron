@@ -142,6 +142,16 @@ impl crate::Vault {
     }
 }
 
+/// The stamp a job row takes in a write transaction: the clock floor the
+/// vault has committed (another handle on it may have raised it) or this
+/// store's clock if later, read without moving either floor.
+pub(crate) fn job_recorded_at_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<u64> {
+    Ok(authorization_floor_in_txn(store, txn)?.max(store.clock().peek_recorded_at()))
+}
+
 /// Read the already committed floor within the authorization snapshot.
 /// Callers must commit `Store::authorization_now` before opening that snapshot.
 pub(crate) fn authorization_floor_in_txn(

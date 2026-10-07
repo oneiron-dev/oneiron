@@ -92,7 +92,7 @@ impl Vault {
             };
             // Stamped from the store clock without persisting its floor, as
             // the worker's settlements are: shadow writes only the job tables.
-            let now = self.store.clock.peek_recorded_at();
+            let now = crate::ports::job_recorded_at_in_txn(&self.store, txn)?;
             let claimed = queue.claim_id_storage_in_txn(
                 txn,
                 record.id,

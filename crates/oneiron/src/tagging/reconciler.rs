@@ -141,13 +141,21 @@ impl TaggingReconciler {
         })
     }
 
-    /// The store clock as this worker reads it: every job row it writes is
-    /// stamped from it, and reading it moves no clock floor of the vault, in
-    /// memory or on disk, so a shadow worker leaves every later write's
-    /// clock as a vault with no tagger leaves it.
+    /// The store clock as this worker reads it, for scheduling its waits:
+    /// reading it moves no clock floor of the vault, in memory or on disk, so
+    /// a shadow worker leaves every later write's clock as a vault with no
+    /// tagger leaves it. A job row is stamped inside its write transaction,
+    /// from this or the vault's committed clock floor, whichever is later.
     #[must_use]
     pub fn now(&self) -> u64 {
         self.vault.store.clock.peek_recorded_at()
+    }
+
+    /// The stamp a job row this reconciler writes takes, inside its write
+    /// transaction: [`Self::now`], or the clock floor the vault has committed
+    /// if later. Neither floor moves.
+    fn stamp_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        crate::ports::job_recorded_at_in_txn(&self.vault.store, txn)
     }
 
     /// Markers claimed per pass, at least one.
@@ -286,7 +294,7 @@ impl TaggingReconciler {
         let mut txn = self.vault.store.env.write_txn()?;
         #[cfg(test)]
         self.vault.test_hooks().run_after_tagging_claim_writer();
-        let now = self.now();
+        let now = self.stamp_in_txn(&txn)?;
         let claimed = AttemptQueue::from_store(&self.vault.store).claim_kind_storage_in_txn(
             &mut txn,
             Some(TAGGING_MARKER_KIND),
@@ -363,7 +371,7 @@ impl TaggingReconciler {
         if payload.checkpoint != self.checkpoint {
             // Owed by another checkpoint: the active tagger owes the turn now.
             self.vault.try_with_write_txn(|txn| -> Result<()> {
-                let now = self.now();
+                let now = self.stamp_in_txn(txn)?;
                 enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
                 self.complete_in_txn(txn, record)
             })?;
@@ -486,7 +494,7 @@ impl TaggingReconciler {
                 id: record.id,
                 lease_owner: self.lease_owner.clone(),
                 attempt_count: record.attempt_count,
-                now: self.now(),
+                now: self.stamp_in_txn(txn)?,
             },
         )?;
         Ok(())
@@ -505,7 +513,7 @@ impl TaggingReconciler {
                 lease_owner: self.lease_owner.clone(),
                 attempt_count: record.attempt_count,
                 reason: UNREADABLE_MARKER.to_owned(),
-                now: self.now(),
+                now: self.stamp_in_txn(txn)?,
             },
         )?;
         Ok(())
@@ -530,10 +538,11 @@ impl TaggingReconciler {
     }
 
     fn retry_at(&self, record: &AttemptRecord, delay_secs: u64, reason: &str) -> Result<u64> {
-        let retry_at = self.now().saturating_add(delay_secs);
-        self.vault
-            .try_with_write_txn(|txn| self.retry_in_txn(txn, record, retry_at, reason))?;
-        Ok(retry_at)
+        self.vault.try_with_write_txn(|txn| {
+            let retry_at = self.stamp_in_txn(txn)?.saturating_add(delay_secs);
+            self.retry_in_txn(txn, record, retry_at, reason)?;
+            Ok(retry_at)
+        })
     }
 
     /// Retries a marker this owner holds, in the caller's transaction, with
@@ -565,7 +574,7 @@ impl TaggingReconciler {
                 attempt_count: record.attempt_count,
                 backoff_until: retry_at,
                 last_error: Some(reason.to_owned()),
-                now: self.now(),
+                now: self.stamp_in_txn(txn)?,
             },
         )
     }

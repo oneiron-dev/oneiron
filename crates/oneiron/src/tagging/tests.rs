@@ -1402,6 +1402,61 @@ fn a_claim_stamps_its_lease_once_it_holds_the_write_lock() {
     ));
 }
 
+/// A lease is stamped no lower than the clock floor the vault has committed,
+/// even one another handle on the vault committed while this store's clock
+/// never saw it and its source has fallen behind: a lease sweep at that
+/// floor, during the call, finds the lease fresh, and the answer settles.
+#[test]
+fn a_lease_is_stamped_at_least_at_the_committed_clock_floor() {
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = {
+        let mut config = config(true);
+        config.store_clock = clock.bundle();
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turn = witness(&vault, "Ada sailed north");
+    // Another handle on the vault commits a later floor.
+    vault
+        .with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                crate::ports::CLOCK_FLOOR,
+                &(NOW + 30).to_be_bytes(),
+            )?;
+            Ok(())
+        })
+        .expect("a later committed floor");
+    clock.set(NOW + 10);
+    let requeued = Arc::new(AtomicU64::new(u64::MAX));
+    let tagger = Scripted::new(Answer::Good);
+    {
+        let vault = Arc::clone(&vault);
+        let requeued = Arc::clone(&requeued);
+        *tagger.during_call.lock().expect("hook") = Some(Box::new(move || {
+            let swept = AttemptQueue::new(&vault)
+                .cleanup_leases(CleanupAttemptLeases {
+                    now: NOW + 30,
+                    lease_timeout_secs: 5,
+                })
+                .expect("sweep");
+            requeued.store(swept.stale_requeued, Ordering::SeqCst);
+        }));
+    }
+    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert_eq!(
+        requeued.load(Ordering::SeqCst),
+        0,
+        "the fresh lease is not stale"
+    );
+    assert_eq!(pass.traces.len(), 1);
+    assert_eq!(pass.traces[0].turn, Some(turn));
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+}
+
 #[test]
 fn an_importer_completes_a_marker_with_held_tags_and_no_call() {
     let dir = tempfile::tempdir().expect("dir");
