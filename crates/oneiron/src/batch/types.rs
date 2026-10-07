@@ -11,12 +11,10 @@ use crate::error::Result;
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
 
-pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
-pub(crate) const ENTITY_OCCURRED_START_OFFSET: usize = 1;
-pub(crate) const ENTITY_OCCURRED_END_OFFSET: usize = 9;
-pub(crate) const ENTITY_LEARNED_AT_OFFSET: usize = 17;
-pub(crate) const ENTITY_BODY_OFFSET: usize = 25;
-pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = ENTITY_BODY_OFFSET;
+pub(crate) use oneiron_contracts::record_layout::{
+    ENTITY_BODY_OFFSET, ENTITY_LEARNED_AT_OFFSET, ENTITY_METADATA_HEADER_LEN,
+    ENTITY_OCCURRED_END_OFFSET, ENTITY_OCCURRED_START_OFFSET, ENTITY_TYPE_OFFSET,
+};
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 pub(super) const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
 pub(super) const ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE: &str = "raw NOTE put requires author_take";

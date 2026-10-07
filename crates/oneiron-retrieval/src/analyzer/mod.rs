@@ -6,7 +6,7 @@
 //! dispatches each script run to the right backend per plan §7.
 //!
 //! Dict discovery happens once at [`MultilingualAnalyzer::discover`] time;
-//! each per-lang backend probes [`crate::VaultConfig::dict_search_paths`] (plan
+//! each per-lang backend probes `oneiron`'s `VaultConfig::dict_search_paths` (plan
 //! §2.3) and caches its loaded dict. The resulting [`AnalyzerManifest`]
 //! reports the per-lang mode (Morphological / Portable) and — when a dict
 //! was loaded — the dict's license + version. The manifest is what gates

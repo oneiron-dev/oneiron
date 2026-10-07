@@ -19,6 +19,13 @@ others=()
 for p in $packages; do
   case "$p" in oneiron) ;; *) others+=(-p "$p") ;; esac
 done
+# Lower engine crates split out of the core crate: each library keeps a featureless lane of its
+# own, like `oneiron`'s. `lower` selects all of them; `lower_touched` the ones this change touched.
+lower=(); lower_touched=()
+for p in oneiron-contracts oneiron-retrieval; do
+  lower+=(-p "$p")
+  case " $packages " in *" $p "*) lower_touched+=(-p "$p") ;; esac
+done
 # nextest filter for the touched top-level modules of the core crate.
 filter=""
 if [ "$modules" != ALL ] && [ -n "$modules" ]; then
@@ -39,7 +46,7 @@ case "$mode" in
 clippy)
   if [ "$full" = true ]; then
     run cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-    run cargo clippy --locked -p oneiron --all-targets --no-default-features -- -D warnings
+    run cargo clippy --locked -p oneiron "${lower[@]}" --all-targets --no-default-features -- -D warnings
     run cargo clippy --locked -p oneiron-server --all-features -- -D warnings
     run env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
     exit 0
@@ -47,6 +54,7 @@ clippy)
   pk=(); for p in $packages $dependents; do pk+=(-p "$p"); done
   [ ${#pk[@]} -gt 0 ] && run cargo clippy --locked "${pk[@]}" --all-targets --all-features -- -D warnings
   [ "$oneiron" = true ] && run cargo clippy --locked -p oneiron --all-targets --no-default-features -- -D warnings
+  [ ${#lower_touched[@]} -gt 0 ] && run cargo clippy --locked "${lower_touched[@]}" --all-targets --no-default-features -- -D warnings
   [ ${#pk[@]} -gt 0 ] || [ "$oneiron" = true ] || echo "no Rust package changed: nothing to lint"
   ;;
 test)
@@ -69,10 +77,11 @@ test)
 featureless)
   if [ "$full" = true ]; then
     # Both process models (W8-T41): libtest threads in one process, then nextest one process per test.
-    run cargo test --locked -p oneiron --lib --no-default-features
-    run cargo nextest run --locked -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
+    run cargo test --locked -p oneiron "${lower[@]}" --lib --no-default-features
+    run cargo nextest run --locked -p oneiron "${lower[@]}" --lib --no-default-features --profile featureless --no-fail-fast --retries 0
     exit 0
   fi
+  [ ${#lower_touched[@]} -gt 0 ] && run cargo test --locked "${lower_touched[@]}" --lib --no-default-features
   if [ "$oneiron" = true ]; then
     # The shared-process lane for the touched modules: libtest runs every test whose path contains a filter.
     if [ "$modules" = ALL ] || [ -z "$modules" ]; then
@@ -81,7 +90,7 @@ featureless)
       args=(); for m in $modules; do args+=("$m::"); done
       run cargo test --locked -p oneiron --lib --no-default-features -- "${args[@]}"
     fi
-  else
+  elif [ ${#lower_touched[@]} -eq 0 ]; then
     echo "oneiron unchanged: no featureless tests to run"
   fi
   ;;

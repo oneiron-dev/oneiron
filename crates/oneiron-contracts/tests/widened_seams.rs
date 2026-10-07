@@ -16,6 +16,9 @@ use oneiron_contracts::registry::{
     static_short_id_prefix_collision, validate_entity_type, validate_entity_type_for_mode,
     validate_public_entity_type,
 };
+use oneiron_contracts::retrieval_telemetry::{
+    RetrievalBlendWeights, validate_retrieval_blend_weights,
+};
 
 #[test]
 fn derive_refuses_an_empty_or_non_utf8_domain() {
@@ -224,4 +227,28 @@ fn the_entity_type_wrapper_and_prefix_check_refuse_reserved_and_taken_names() {
     assert!(static_short_id_prefix_collision(person));
     assert!(static_short_id_prefix_collision(VAULT_ID_NAMESPACE_PREFIX));
     assert!(!static_short_id_prefix_collision("unregistered-prefix"));
+}
+
+#[test]
+fn blend_weights_refuse_non_finite_negative_and_massless_tables() {
+    for weights in [
+        RetrievalBlendWeights::new(f32::NAN, 0.3, 0.2, 0.1),
+        RetrievalBlendWeights::new(0.4, f32::INFINITY, 0.2, 0.1),
+        RetrievalBlendWeights::new(0.4, 0.3, -0.2, 0.1),
+        RetrievalBlendWeights::new(0.0, 0.0, 0.0, 0.0),
+    ] {
+        assert!(
+            validate_retrieval_blend_weights(weights).is_err(),
+            "{weights:?}"
+        );
+        let refused = weights.normalized();
+        assert!(
+            matches!(refused, Err(Error::InvalidConfig(_))),
+            "{refused:?}"
+        );
+    }
+    let normalized = RetrievalBlendWeights::new(2.0, 1.0, 1.0, 0.0)
+        .normalized()
+        .unwrap();
+    assert_eq!(normalized, RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0));
 }

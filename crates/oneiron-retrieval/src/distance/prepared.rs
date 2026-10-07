@@ -63,7 +63,7 @@ impl Kernel {
 /// tests pin that equality across the SIMD block/tail boundaries and the
 /// degenerate contract; `hnsw/tests.rs` pins the graph-level consequence
 /// (identical linkage decisions and result ordering).
-pub(crate) struct PreparedCosine<'a> {
+pub struct PreparedCosine<'a> {
     query: &'a [f32],
     kernel: Kernel,
     /// Sum of squares of `query`, accumulated in `kernel`'s exact order.
@@ -73,7 +73,8 @@ pub(crate) struct PreparedCosine<'a> {
 }
 
 impl<'a> PreparedCosine<'a> {
-    pub(crate) fn new(query: &'a [f32]) -> Self {
+    /// Selects the kernel for `query`'s length and caches its norm.
+    pub fn new(query: &'a [f32]) -> Self {
         let kernel = Kernel::select(query.len());
         let norm = match kernel {
             Kernel::Scalar => query_norm_scalar(query),
@@ -97,7 +98,7 @@ impl<'a> PreparedCosine<'a> {
     }
 
     /// Bit-for-bit equal to `cosine_distance(query, candidate)`.
-    pub(crate) fn distance(&self, candidate: &[f32]) -> f32 {
+    pub fn distance(&self, candidate: &[f32]) -> f32 {
         1.0 - self.similarity(candidate)
     }
 
