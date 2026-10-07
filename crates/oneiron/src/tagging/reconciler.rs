@@ -271,10 +271,11 @@ impl TaggingReconciler {
     /// Every job row this reconciler writes is stamped from the store clock
     /// without persisting its floor, and a claim that finds nothing commits
     /// nothing: a shadow worker writes nothing outside the job tables, even
-    /// while the clock runs and the queue is empty.
+    /// while the clock runs and the queue is empty. The lease is stamped once
+    /// the write lock is held, so waiting for another writer does not age it.
     fn claim(&self) -> Result<Option<AttemptRecord>> {
-        let now = self.vault.now_recorded_at();
         let mut txn = self.vault.store.env.write_txn()?;
+        let now = self.vault.now_recorded_at();
         let claimed = AttemptQueue::from_store(&self.vault.store).claim_kind_storage_in_txn(
             &mut txn,
             Some(TAGGING_MARKER_KIND),

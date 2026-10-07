@@ -2,11 +2,13 @@
 //! the traces and the vault's stored rows.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome};
+use crate::attempt_queue::{
+    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
+};
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
@@ -1103,6 +1105,65 @@ fn a_marker_for_another_checkpoint_moves_onto_the_active_one() {
     assert_eq!(pass.traces[1].checkpoint, CHECKPOINT);
     assert_eq!(pass.traces[1].turn, Some(turn));
     assert_eq!(tagger.calls(), 1);
+}
+
+/// A claim stamps its lease once it holds the write lock: waiting for another
+/// writer does not age the lease, so a lease sweep at the second the claim
+/// lands leaves the marker with its worker, and the answer settles.
+#[test]
+fn a_claim_that_waits_for_another_writer_stamps_its_lease_after_the_wait() {
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = {
+        let mut config = config(true);
+        config.store_clock = clock.bundle();
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turn = witness(&vault, "Ada sailed north");
+    let requeued = Arc::new(AtomicU64::new(u64::MAX));
+    let tagger = Scripted::new(Answer::Good);
+    {
+        let vault = Arc::clone(&vault);
+        let requeued = Arc::clone(&requeued);
+        *tagger.during_call.lock().expect("hook") = Some(Box::new(move || {
+            let swept = AttemptQueue::new(&vault)
+                .cleanup_leases(CleanupAttemptLeases {
+                    now: NOW + 10,
+                    lease_timeout_secs: 5,
+                })
+                .expect("sweep");
+            requeued.store(swept.stale_requeued, Ordering::SeqCst);
+        }));
+    }
+    let reconciler = reconciler(&vault, &tagger);
+    assert_eq!(reconciler.release_stale_leases().expect("release"), 0);
+    let (locked, held_lock) = std::sync::mpsc::channel();
+    let writer = {
+        let vault = Arc::clone(&vault);
+        let clock = Arc::clone(&clock);
+        std::thread::spawn(move || {
+            let txn = vault.store.env.write_txn().expect("writer");
+            locked.send(()).expect("signal");
+            // The claim queues behind this writer while the clock moves on.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            clock.set(NOW + 10);
+            drop(txn);
+        })
+    };
+    held_lock.recv().expect("the other writer holds the lock");
+    let pass = reconciler.drain_once().expect("drain");
+    writer.join().expect("writer thread");
+    assert_eq!(
+        requeued.load(Ordering::SeqCst),
+        0,
+        "the fresh lease is not stale"
+    );
+    assert_eq!(pass.traces.len(), 1);
+    assert_eq!(pass.traces[0].turn, Some(turn));
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
 }
 
 #[test]
