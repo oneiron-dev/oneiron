@@ -12,6 +12,7 @@ use super::{
     runner::parse_manifest_json,
     scorer::FixedBeamScorer,
 };
+use oneiron::policy_model::SecretScanMode;
 use oneiron::{CallPurpose, ModelId, Vault};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -298,6 +299,7 @@ fn answer(
     let input = serde_json::to_string(&serde_json::json!({"question":question,"context":context}))?;
     session.invoke(pin, CallPurpose::AnswerGen, prompt, &input)
 }
+#[cfg(test)]
 pub(super) fn run_with_session(
     plan: &ModelRunPlan,
     session: &ModelSession,
@@ -309,7 +311,7 @@ pub(super) fn run_with_session(
 fn run_with_session_secrets(
     plan: &ModelRunPlan,
     session: &ModelSession,
-    secrets: Option<oneiron::policy_model::SecretScanMode>,
+    secrets: Option<SecretScanMode>,
 ) -> BeamResult<MeasuredReport> {
     plan.validate()?;
     let mut manifest = parse_manifest_json(&std::fs::read_to_string(&plan.retrieval_manifest)?)?;
@@ -365,8 +367,7 @@ fn run_with_session_secrets(
     });
     let mut ablation_rows = Vec::new();
     let mut groups_by_question: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut secrets_by_question: BTreeMap<String, oneiron::policy_model::SecretScanMode> =
-        BTreeMap::new();
+    let mut secrets_by_question: BTreeMap<String, SecretScanMode> = BTreeMap::new();
     let mut ablation_unavailable = Vec::new();
     let mut access_factor_observations = Vec::new();
     let mut rows = Vec::new();
@@ -379,9 +380,8 @@ fn run_with_session_secrets(
     // ingested (and its offline cost counted) once, never once per question.
     let selected = super::load::select_run_jsonl_records(&manifest, path, arm_id.as_deref())?;
     let summaries = super::card::RecordSummary::of(&selected);
-    let groups = super::runner::group_by_corpus(selected);
     let mut exactness = super::exactness::ExactnessReport::default();
-    for (corpus_identity, mut group) in groups {
+    for (corpus_identity, mut group) in super::runner::group_by_corpus(selected) {
         super::load::resolve_corpus_refs(path, &mut group)?;
         let group_ids: BTreeSet<String> = group
             .iter()
@@ -746,12 +746,7 @@ fn run_with_session_secrets(
         rows: &rows,
         offline_amortized: &offline_amortized,
     })?;
-    card.pins.secrets = secrets_by_question
-        .values()
-        .map(|mode| super::sweep::secrets_label(*mode).to_owned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    card.pins.secrets = super::sweep::secrets_pins(secrets_by_question.values().copied());
     let results = measured_results(
         plan,
         session,
@@ -900,7 +895,7 @@ fn measured_results(
     session: &ModelSession,
     rows: &[ModelRow],
     groups_by_question: &BTreeMap<String, Vec<String>>,
-    secrets_by_question: &BTreeMap<String, oneiron::policy_model::SecretScanMode>,
+    secrets_by_question: &BTreeMap<String, SecretScanMode>,
     card: &super::card::RunCard,
     run_id: &str,
 ) -> Vec<super::sweep::ResultsRow> {

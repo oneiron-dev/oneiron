@@ -109,6 +109,12 @@ pub(super) fn secrets_label(mode: SecretScanMode) -> &'static str {
     }
 }
 
+/// The card pin: every distinct setting the run's forks read back.
+pub(super) fn secrets_pins(modes: impl IntoIterator<Item = SecretScanMode>) -> Vec<String> {
+    let labels: std::collections::BTreeSet<&str> = modes.into_iter().map(secrets_label).collect();
+    labels.into_iter().map(str::to_owned).collect()
+}
+
 /// A stated price table: model prices and the date they were read.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

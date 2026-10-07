@@ -23,7 +23,7 @@ use super::scorer::{BeamScorer, FixedBeamScorer};
 use super::sweep::{
     BudgetLabel, CONTEXT_ROT, FULL_BUDGET_TOKENS, Observation, PriceConfig, PriceStamp, RowContext,
     SweepOptions, aggregate, evidence_metrics, full_context_observation, groups_for,
-    secrets_label, write_rows,
+    secrets_pins, write_rows,
 };
 use super::util::{beam_vault_config, invalid_manifest, report_format_label};
 use super::validate::{
@@ -234,7 +234,7 @@ pub(super) fn run_jsonl_manifest_isolated(
     };
     let price = sweep.prices.as_ref().map(PriceConfig::stamp);
     let mut observations = Vec::new();
-    let mut secrets_seen = BTreeSet::new();
+    let mut secrets_seen = Vec::new();
 
     for (corpus_identity, mut group) in group_by_corpus(entries) {
         resolve_corpus_refs(path, &mut group)?;
@@ -290,7 +290,7 @@ pub(super) fn run_jsonl_manifest_isolated(
 
         for case_id in &case_ids {
             let fork = base.fork(case_id)?;
-            secrets_seen.insert(secrets_label(fork.secrets));
+            secrets_seen.push(fork.secrets);
             if let Some(report) = &mut dataset_report {
                 report.forks += 1;
             }
@@ -401,7 +401,7 @@ pub(super) fn run_jsonl_manifest_isolated(
             .collect(),
         references: vec![CONTEXT_ROT],
     })?;
-    card.pins.secrets = secrets_seen.into_iter().map(str::to_owned).collect();
+    card.pins.secrets = secrets_pins(secrets_seen);
     let results_root = manifest
         .outputs
         .as_ref()
