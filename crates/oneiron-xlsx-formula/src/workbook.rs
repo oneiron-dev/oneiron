@@ -29,9 +29,14 @@ pub struct WorkbookRecalc {
 struct Formulas {
     sheets: BTreeMap<String, Vec<String>>,
     names: Vec<DefinedName>,
+    /// Table names, lowercase.
+    tables: BTreeSet<String>,
     /// Valid content the writer cannot reproduce exactly, noted while the
     /// rest of the workbook is still checked for malformed content.
     refusal: Option<Cow<'static, str>>,
+    /// The package holds a VBA project, whose functions Excel calls once
+    /// macros are enabled.
+    vba_project: bool,
 }
 
 struct DefinedName {
@@ -52,14 +57,17 @@ impl FormualizerEngine {
     /// at that moment would; OFFSET and INDIRECT follow the workbook alone,
     /// and a defined name evaluates for the formula that uses it (its relative
     /// R1C1 text reads the calling cell, its random calls are that formula's
-    /// draws).
+    /// draws). A call of a name outside Excel's function list as the file
+    /// spells it is `#NAME?`, as in Excel.
     /// `UnsupportedWorkbook` is returned before bytes are emitted, so the
     /// caller's precision fallback recalculates, for: the external links the
     /// engine cannot read as Excel does with the linked workbook closed (see
     /// `links.rs`), formulas needing what only the host knows (the file's
     /// path, the active cell, the environment), INDIRECT text that names a
-    /// workbook (the writer refuses it as evaluation meets it), functions the
-    /// engine does not implement, a workbook name used as a function or
+    /// workbook (the writer refuses it as evaluation meets it), Excel
+    /// functions the engine does not implement, a call Excel may resolve
+    /// through an XLL add-in or the workbook's VBA project, a workbook or
+    /// linked-workbook name used as a function or a workbook name
     /// holding a LAMBDA, string escapes the writer's reader does not decode as
     /// Excel does (in strings, formulas, and sheet, defined and table names),
     /// precision-as-displayed, anything the writer cannot write exactly (such
@@ -292,14 +300,18 @@ impl Formulas {
         Ok(Self {
             sheets,
             names,
+            tables,
             refusal,
+            vba_project: vba_project(package)?,
         })
     }
 
+    /// Whether the workbook names `name`: a defined name or a table.
     fn defines(&self, name: &str) -> bool {
         self.names
             .iter()
             .any(|defined| defined.name.eq_ignore_ascii_case(name))
+            || self.tables.contains(&name.to_lowercase())
     }
 
     /// Refuse what the engine must not evaluate natively, before it runs.
@@ -328,16 +340,38 @@ impl Formulas {
             {
                 return Err(unsupported(format!("defined name holds a LAMBDA: {name}")));
             }
-            let called_name = inspection
-                .unknown_function
+            // The engine evaluates a call it does not resolve to #NAME?, and
+            // so does Excel for a name outside its function list as the file
+            // spells it (IMAGE without `_xlfn.`, EOM, a Google Sheets export's
+            // __xludf.DUMMYFUNCTION): an undefined name. Such a call stays
+            // native unless something Excel would call defines the name: the
+            // workbook (a defined name or a table) or a linked workbook
+            // (`[1]!Fn`), Excel itself, an XLL add-in or the workbook's VBA
+            // project.
+            let unknown = &inspection.unknown_functions;
+            let defined = unknown
+                .iter()
+                .find(|function| self.defines(function) || function.contains('!'));
+            if let Some(name) = inspection
+                .callable_name
                 .as_deref()
-                .filter(|function| self.defines(function));
-            if let Some(name) = inspection.callable_name.as_deref().or(called_name) {
+                .or(defined.map(String::as_str))
+            {
                 return Err(unsupported(format!("name used as a function: {name}")));
             }
-            if let Some(name) = inspection.unknown_function {
+            if let Some(name) = unknown.iter().find(|function| excel_function(function)) {
                 return Err(unsupported(format!(
                     "function the engine does not implement: {name}"
+                )));
+            }
+            if let Some(name) = unknown.iter().find(|function| prefixed(function, "_xll.")) {
+                return Err(unsupported(format!("XLL add-in function: {name}")));
+            }
+            if self.vba_project
+                && let Some(name) = unknown.first()
+            {
+                return Err(unsupported(format!(
+                    "function the workbook's VBA project may define: {name}"
                 )));
             }
         }
@@ -371,6 +405,125 @@ impl Formulas {
         }
         Ok(())
     }
+}
+
+/// Whether `name`, as the file spells it, is one of Excel's functions: a bare
+/// name of the Excel 2007 file format, one written `_xlfn.` or `_xlws.`, one
+/// passed by name (Excel writes `_xleta.` only for its own functions), or an
+/// Excel 4.0 macro function, which a defined name may call
+/// (`GET.WORKBOOK(1)`, `EVALUATE(...)`; Excel runs them as macros).
+fn excel_function(name: &str) -> bool {
+    formualizer_workbook::is_excel_function(name)
+        || prefixed(name, "_xleta.")
+        || prefixed(name, "GET.")
+        || EXCEL_BARE
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(name))
+}
+
+/// Excel's functions a file names without a prefix that the fork's Excel 2007
+/// list (`is_excel_function`) lacks, from the BIFF function tables of
+/// LibreOffice's OOXML filter and Apache POI: DBCS (the stored name of JIS),
+/// USDOLLAR and YEN (older names of DOLLAR), DATESTRING and NUMBERSTRING, the
+/// Thai functions and the Euro tool's EUROCONVERT, then the Excel 4.0 macro
+/// functions besides the `GET.` ones.
+const EXCEL_BARE: &[&str] = &[
+    "DATESTRING",
+    "DBCS",
+    "EUROCONVERT",
+    "ISTHAIDIGIT",
+    "NUMBERSTRING",
+    "ROUNDBAHTDOWN",
+    "ROUNDBAHTUP",
+    "THAIDAYOFWEEK",
+    "THAIDIGIT",
+    "THAIMONTHOFYEAR",
+    "THAINUMSOUND",
+    "THAINUMSTRING",
+    "THAISTRINGLENGTH",
+    "THAIYEAR",
+    "USDOLLAR",
+    "YEN",
+    "ABSREF",
+    "ACTIVE.CELL",
+    "APP.TITLE",
+    "ARGUMENT",
+    "CALL",
+    "CALLER",
+    "DEREF",
+    "DIRECTORY",
+    "DOCUMENTS",
+    "ENABLE.TOOL",
+    "END.IF",
+    "ERROR",
+    "EVALUATE",
+    "EXEC",
+    "FILES",
+    "FORMULA.CONVERT",
+    "GOTO",
+    "LAST.ERROR",
+    "LINKS",
+    "NAMES",
+    "PRESS.TOOL",
+    "REFTEXT",
+    "REGISTER",
+    "REGISTER.ID",
+    "RELREF",
+    "RETURN",
+    "SAVE.TOOLBAR",
+    "SELECTION",
+    "STEP",
+    "TEXTREF",
+    "WINDOW.TITLE",
+    "WINDOWS",
+];
+
+fn prefixed(name: &str, prefix: &str) -> bool {
+    crate::context::strip_prefix(name, prefix).is_some()
+}
+
+/// Whether the package holds a VBA project, whose functions Excel calls once
+/// macros are enabled: `xl/vbaProject.bin`, or any part whose content type
+/// (its `Override`, else its extension's `Default`) is a VBA project's.
+fn vba_project(package: &Package) -> Result<bool> {
+    const VBA_PROJECT: &str = "application/vnd.ms-office.vbaProject";
+    // Part names and content types compare without case, as OPC compares them.
+    let parts: Vec<String> = package
+        .names()
+        .map(|name| format!("/{}", name.to_ascii_lowercase()))
+        .collect();
+    if parts.iter().any(|part| part == "/xl/vbaproject.bin") {
+        return Ok(true);
+    }
+    if !package.names().any(|name| name == "[Content_Types].xml") {
+        return Ok(false);
+    }
+    let types = parse_part(package, "[Content_Types].xml")?;
+    let mut overrides = BTreeMap::new();
+    let mut defaults = BTreeMap::new();
+    for node in &types.nodes {
+        let kind = node.attr("ContentType").unwrap_or_default();
+        if node.name == "Override"
+            && let Some(part) = node.attr("PartName")
+        {
+            overrides.insert(part.to_ascii_lowercase(), kind);
+        } else if node.name == "Default"
+            && let Some(extension) = node.attr("Extension")
+        {
+            defaults.insert(extension.to_ascii_lowercase(), kind);
+        }
+    }
+    Ok(parts.iter().any(|part| {
+        let extension = part
+            .rsplit('/')
+            .next()
+            .and_then(|file| file.rsplit_once('.'))
+            .map(|(_, extension)| extension);
+        overrides
+            .get(part)
+            .or_else(|| extension.and_then(|extension| defaults.get(extension)))
+            .is_some_and(|kind| kind.eq_ignore_ascii_case(VBA_PROJECT))
+    }))
 }
 
 /// The relationships of part `source` (the package's own for `""`) by id: the
