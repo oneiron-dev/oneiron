@@ -49427,9 +49427,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/context.rs",
-     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the functions the…",
+     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -49580,7 +49580,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the functions the…"
+     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…"
     },
     "engine": {
      "files": 1,
