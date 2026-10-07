@@ -332,6 +332,28 @@ fn a_failed_call_carries_its_class_and_never_the_turn_text() {
     }
 }
 
+/// A model card comes from a tagger that has read vault text: a checkpoint
+/// that is not a checkpoint's shape is refused without naming it, and an
+/// engine that is not a short token is dropped, so neither reaches a log.
+#[test]
+fn a_model_card_echoing_turn_text_is_refused_without_carrying_it() {
+    const SECRET: &str = "the harbour code is 4471";
+    let stub = StubTagger::start(Answer::Good);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    let mut echoed = card(CHECKPOINT);
+    echoed["engine"] = json!(SECRET);
+    stub.set_card(echoed);
+    let Ok(ProbeOutcome::Ready(ready)) = tagger.probe() else {
+        panic!("the configured checkpoint is still ready");
+    };
+    assert_eq!(ready.engine, None);
+    stub.set_card(card(SECRET));
+    let error = tagger.probe().expect_err("an echoed checkpoint is refused");
+    assert_eq!(error, ProbeError::MalformedCheckpoint);
+    let shown = format!("{error} {error:?}");
+    assert!(!shown.contains("4471"), "{shown}");
+}
+
 const PROXY_CHILD: &str = "ONEIRON_TEST_TAGGER_PROXY_CHILD";
 const PROXY_CHECKED: &str = "tagger proxy isolation checked";
 
