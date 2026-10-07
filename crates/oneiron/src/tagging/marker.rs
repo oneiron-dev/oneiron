@@ -181,9 +181,35 @@ pub(crate) fn mark_turn_in_txn(
     enqueue_marker_in_txn(vault, wtxn, turn, &tagging.checkpoint).map(|_| ())
 }
 
+/// The type of an entity whose document text a turn's tag pass reads, on an
+/// armed vault: a MESSAGE or a TURN. `None` for any other entity, and on a
+/// vault with no tagger, so a document write there compares no text.
+/// Entity documents exist only on a sync build.
+#[cfg(feature = "sync")]
+pub(crate) fn text_entity_type_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<u8>> {
+    if vault.config.tagging.is_none() {
+        return Ok(None);
+    }
+    Ok(
+        match crate::vault::live_entity_row_in_txn(&vault.store, txn, entity)? {
+            crate::vault::LiveEntityRow::Live { entity_type, .. }
+                if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) =>
+            {
+                Some(entity_type)
+            }
+            _ => None,
+        },
+    )
+}
+
 /// The indexer's half: a publication that moved the indexed frontier of a
 /// TURN, or of a MESSAGE inside one, marks that turn again in the same
-/// transaction.
+/// transaction. Both publishers call it: an entity revision published at
+/// idle, and an entity document whose text a write changed.
 pub(crate) fn mark_on_publication_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

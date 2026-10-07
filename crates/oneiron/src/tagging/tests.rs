@@ -686,6 +686,178 @@ fn a_stale_lease_release_that_fails_is_finished_by_the_same_worker() {
     assert_eq!(count(&vault, AttemptState::Completed), 1);
 }
 
+/// A MESSAGE whose text lives in an entity document marks its turn again when
+/// an edit changes the text, in the edit's transaction. Moving the text into
+/// the document changes no text and owes nothing, nor does an edit set that
+/// rolls back.
+#[cfg(feature = "sync")]
+#[test]
+fn an_edit_that_changes_a_message_document_marks_its_turn_again() {
+    use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
+    use crate::write_envelope::WriteActor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let writer = speaker(&vault);
+    let mut first = message(0, "Ada sailed north");
+    first.id = Some("66666666666666666666666666666666".into());
+    let receipt = vault
+        .memory(writer, EdgeActorClass::Human)
+        .witness(&turn(None, vec![first.clone()]))
+        .expect("witness");
+    let tagged = receipt_turn(&receipt);
+    let message = EntityId::from_hex(first.id.as_deref().expect("id")).expect("message id");
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    let read = reconciler.drain_once().expect("drain");
+    assert_eq!(read.traces.len(), 1);
+
+    let actor = WriteActor::new(writer, EdgeActorClass::Human);
+    let owner = vault
+        .authenticate_owner(
+            writer,
+            "principal:tagging-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    let authorization = DocAuthorization::Owner(&owner);
+    vault
+        .migrate_entity_text(
+            &message,
+            &TextField::MapField("content".into()),
+            actor,
+            &authorization,
+        )
+        .expect("migrate");
+    assert_eq!(
+        count(&vault, AttemptState::Queued),
+        0,
+        "moving the text into a document changes no text"
+    );
+    let end = vault.entity_text(&message).expect("text").chars().count();
+    let append = AnchoredEdit {
+        actor: Some(actor),
+        verb: EditVerb::AppendToSection {
+            section: vault
+                .entity_text_anchor(&message, end, end)
+                .expect("anchor"),
+            text: " and Grace followed".into(),
+        },
+    };
+    let mut unattributed = append.clone();
+    unattributed.actor = None;
+    assert!(
+        vault
+            .edit_entity_text(
+                &message,
+                &[append.clone(), unattributed],
+                &authorization,
+                NOW
+            )
+            .is_err()
+    );
+    assert_eq!(count(&vault, AttemptState::Queued), 0);
+
+    vault
+        .edit_entity_text(&message, &[append], &authorization, NOW)
+        .expect("edit");
+    let owed: Vec<_> = markers(&vault)
+        .into_iter()
+        .filter(|record| record.state == AttemptState::Queued)
+        .collect();
+    assert_eq!(owed.len(), 1);
+    assert_eq!(
+        owed[0].dedupe_key.as_deref(),
+        Some(format!("{}@{CHECKPOINT}", tagged.to_hex()).as_str())
+    );
+    let pass = reconciler.drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert_ne!(
+        pass.traces[0].input_hash, read.traces[0].input_hash,
+        "the pass reads the edited text"
+    );
+}
+
+/// A stream continuation appends to a MESSAGE whose turn was already tagged:
+/// the appended text owes the turn a pass, committed with it, and an append
+/// whose transaction rolls back owes nothing.
+#[cfg(feature = "sync")]
+#[test]
+fn a_stream_continuation_marks_its_turn_again() {
+    use crate::memory::MessageWriteMode;
+    use crate::write_envelope::WriteActor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let writer = speaker(&vault);
+    let memory = vault.memory(writer, EdgeActorClass::Human);
+    let mut streamed = message(0, "");
+    streamed.id = Some("67676767676767676767676767676767".into());
+    let input = turn(
+        Some("68686868686868686868686868686868".into()),
+        vec![streamed],
+    );
+    let first = memory
+        .begin_message_stream(&input, Some(MessageWriteMode::Atomic))
+        .expect("begin");
+    memory
+        .append_to_stream(first, "Ada sailed north")
+        .expect("append");
+    memory.finalize_stream(first).expect("finalize");
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    let read = reconciler.drain_once().expect("drain");
+    assert_eq!(read.traces.len(), 1);
+    let tagged = read.traces[0].turn.expect("turn");
+
+    let message = first.message_id();
+    let aborted = vault.with_write_txn(|txn| {
+        crate::entity_doc::append_message_stream_in_txn(
+            &vault,
+            txn,
+            &message,
+            " rolled back",
+            WriteActor::new(writer, EdgeActorClass::Human),
+            NOW,
+        )?;
+        Err::<(), _>(crate::Error::InvalidConfig("fixture abort".into()))
+    });
+    assert!(aborted.is_err());
+    assert_eq!(count(&vault, AttemptState::Queued), 0);
+
+    let second = memory
+        .begin_message_stream(&input, Some(MessageWriteMode::Atomic))
+        .expect("continue");
+    memory
+        .append_to_stream(second, " and Grace followed")
+        .expect("append");
+    memory.finalize_stream(second).expect("finalize");
+    let owed: Vec<_> = markers(&vault)
+        .into_iter()
+        .filter(|record| record.state == AttemptState::Queued)
+        .collect();
+    assert_eq!(owed.len(), 1);
+    assert_eq!(
+        owed[0].dedupe_key.as_deref(),
+        Some(format!("{}@{CHECKPOINT}", tagged.to_hex()).as_str())
+    );
+    let pass = reconciler.drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert_ne!(
+        pass.traces[0].input_hash, read.traces[0].input_hash,
+        "the pass reads the continued text"
+    );
+}
+
 /// Promoting an off-record turn into base is a turn admission: the marker
 /// commits with the promotion, an aborted promotion leaves none, and a retried
 /// promotion, answered from its receipt, owes nothing more.

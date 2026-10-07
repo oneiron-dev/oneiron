@@ -7,7 +7,8 @@
 //! row of the job tables (`job_records`, `job_ready`, `job_dedupe`) of kind
 //! [`TAGGING_MARKER_KIND`], deduplicated by the turn and the tagger
 //! checkpoint. An edit that moves a turn's indexed frontier marks the turn
-//! again. A host worker drains the markers through
+//! again, whether its text is published at idle or written through an entity
+//! document. A host worker drains the markers through
 //! [`TaggingReconciler`]: it reads the turn's MESSAGE rows, calls the
 //! host-served tagger outside any write transaction, checks the answer and
 //! settles the marker. A failed call or a refused answer is a trace and a retry
@@ -31,6 +32,8 @@ pub use output::{OutputRefusal, spans_only_answers_admitted};
 pub use reconciler::{TaggingBackoff, TaggingPass, TaggingReconciler};
 pub use trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 
+#[cfg(feature = "sync")]
+pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn};
 
 #[cfg(test)]
