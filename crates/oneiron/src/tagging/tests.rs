@@ -935,6 +935,75 @@ fn a_stream_continuation_marks_its_turn_again() {
     );
 }
 
+/// Restoring a MESSAGE's document over a lost head makes readable text that
+/// could not be read without it, so the restore owes the turn a pass.
+#[cfg(feature = "sync")]
+#[test]
+fn restoring_a_lost_message_document_marks_its_turn_again() {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    use crate::write_envelope::WriteActor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let writer = speaker(&vault);
+    let mut first = message(0, "Ada sailed north");
+    first.id = Some("6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c".into());
+    let receipt = vault
+        .memory(writer, EdgeActorClass::Human)
+        .witness(&turn(None, vec![first.clone()]))
+        .expect("witness");
+    let tagged = receipt_turn(&receipt);
+    let message = EntityId::from_hex(first.id.as_deref().expect("id")).expect("message id");
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 1);
+    let owner = vault
+        .authenticate_owner(
+            writer,
+            "principal:tagging-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    vault
+        .migrate_entity_text(
+            &message,
+            &TextField::MapField("content".into()),
+            WriteActor::new(writer, EdgeActorClass::Human),
+            &DocAuthorization::Owner(&owner),
+        )
+        .expect("migrate");
+    let row = {
+        let txn = vault.store.env.read_txn().expect("read");
+        crate::entity_doc::capture_canonical(&vault, &txn, *message.as_bytes())
+            .expect("capture")
+            .expect("a document to capture")
+    };
+    vault
+        .with_write_txn(|txn| crate::entity_doc::erase_in_txn(&vault.store, txn, &message))
+        .expect("lose the document head");
+    assert_eq!(count(&vault, AttemptState::Queued), 0);
+
+    vault
+        .with_write_txn(|txn| crate::entity_doc::restore_canonical(&vault, txn, &row))
+        .expect("restore");
+    let owed: Vec<_> = markers(&vault)
+        .into_iter()
+        .filter(|record| record.state == AttemptState::Queued)
+        .collect();
+    assert_eq!(owed.len(), 1);
+    assert_eq!(
+        owed[0].dedupe_key.as_deref(),
+        Some(format!("{}@{CHECKPOINT}", tagged.to_hex()).as_str())
+    );
+    let pass = reconciler.drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+}
+
 /// Settling a fork that changes a MESSAGE's text marks its turn, and the
 /// marker moves no clock floor: given the same writes and the same ticks, the
 /// tagged vault persists the untagged vault's clock floor.

@@ -78,7 +78,8 @@ pub(crate) fn restore(
     // An existing head keeps its updates until `persist` below replaces them
     // with the recovered snapshot: it reads the intact document first, so
     // recovering the same text owes the turn no tag pass.
-    if let Some(old) = storage::ENTITY_DOC_HEAD.get(&vault.store, txn, &HexId(entity))?
+    let existing = storage::ENTITY_DOC_HEAD.get(&vault.store, txn, &HexId(entity))?;
+    if let Some(old) = &existing
         && old.document != document
     {
         return Err(invalid(
@@ -102,5 +103,13 @@ pub(crate) fn restore(
         generation: 0,
         pending: 0,
     };
-    storage::persist(vault, txn, &entity, &mut head, &doc, None)
+    storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
+    // With no head the text could not be read, so a MESSAGE or TURN whose
+    // text this restores owes its turn a tag pass (ARCH-0036).
+    if existing.is_none()
+        && let Some(entity_type) = crate::tagging::text_entity_type_in_txn(vault, txn, &entity)?
+    {
+        crate::tagging::mark_on_publication_in_txn(vault, txn, &entity, entity_type)?;
+    }
+    Ok(())
 }
