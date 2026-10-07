@@ -644,6 +644,48 @@ fn a_settlement_that_fails_after_the_claim_is_settled_by_the_same_worker() {
     assert_eq!(count(&vault, AttemptState::Completed), 2);
 }
 
+/// A stale-lease release at worker start that fails on storage stays owed:
+/// the same reconciler releases the marker a stopped worker left on its next
+/// pass and settles it, with no second restart.
+#[test]
+fn a_stale_lease_release_that_fails_is_finished_by_the_same_worker() {
+    let dir = tempfile::tempdir().expect("dir");
+    let turn = {
+        let vault = open(dir.path(), true);
+        let turn = witness(&vault, "Ada sailed north");
+        let leased = AttemptQueue::new(&vault)
+            .claim_kind(
+                TAGGING_MARKER_KIND,
+                ClaimAttempt {
+                    lease_owner: "oneironer-tagging".into(),
+                    now: u64::MAX,
+                },
+            )
+            .expect("claim");
+        assert!(matches!(leased, ClaimOutcome::Claimed(_)));
+        turn
+    };
+    let vault = open(dir.path(), true);
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    vault.test_hooks().arm_fail_next_tagging_settlement();
+    let error = reconciler
+        .release_stale_leases()
+        .expect_err("the release write fails");
+    assert_eq!(error.kind(), ErrorKind::MapFull);
+    assert_eq!(count(&vault, AttemptState::Leased), 1);
+    // Storage is back.
+    let pass = reconciler.drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert_eq!(pass.traces[0].turn, Some(turn));
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert_eq!(count(&vault, AttemptState::Leased), 0);
+    assert_eq!(count(&vault, AttemptState::Completed), 1);
+}
+
 /// Promoting an off-record turn into base is a turn admission: the marker
 /// commits with the promotion, an aborted promotion leaves none, and a retried
 /// promotion, answered from its receipt, owes nothing more.

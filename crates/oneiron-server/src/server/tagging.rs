@@ -164,10 +164,11 @@ impl SyncServer {
                     released,
                     "tagging markers left leased by a stopped worker resume"
                 ),
-                // Only those markers wait; every other marker is still served.
+                // The reconciler keeps them and its next pass releases them;
+                // every other marker is served meanwhile.
                 Err(error) => tracing::warn!(
                     ?error,
-                    "tagging markers left leased by a stopped worker were not released"
+                    "tagging markers left leased by a stopped worker are released on the next pass"
                 ),
             }
             Ok::<_, oneiron::Error>(reconciler)

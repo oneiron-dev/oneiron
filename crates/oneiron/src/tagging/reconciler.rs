@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -26,6 +27,9 @@ const DEFAULT_LEASE_OWNER: &str = "oneironer-tagging";
 const DEFAULT_BATCH_SIZE: usize = 16;
 /// Failure reason of a marker whose payload this build cannot read.
 const UNREADABLE_MARKER: &str = "unreadable_tagging_marker";
+/// Retry reasons of the markers a reconciler hands back.
+const WORKER_RESTARTED: &str = "worker_restarted";
+const SETTLEMENT_FAILED: &str = "settlement_failed";
 
 /// Retry backoff for a failed attempt, in store-clock seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,9 +87,9 @@ impl TaggingPass {
 ///
 /// Every claimed marker settles inside the pass: completed, retried with
 /// backoff, or (for a payload this build cannot read) failed. A marker whose
-/// settling write fails stays this reconciler's, and its next pass hands it
-/// back before claiming anything. No marker ever fails the write that
-/// committed it.
+/// settling write fails stays this reconciler's, as does one a stopped worker
+/// left leased, and its next pass hands it back before claiming anything. No
+/// marker ever fails the write that committed it.
 pub struct TaggingReconciler {
     vault: Arc<Vault>,
     encoder: Arc<dyn ExtractionEncoder>,
@@ -94,9 +98,14 @@ pub struct TaggingReconciler {
     batch_size: usize,
     backoff: TaggingBackoff,
     label_kinds: BTreeMap<String, u8>,
-    /// Claimed markers whose settling write failed. Each is still leased
-    /// under this owner, where no claim, witness or publication reaches it.
-    unsettled: Mutex<Vec<AttemptRecord>>,
+    /// Markers leased under this owner that no pass is settling, each with
+    /// the reason it is handed back: a claim whose settling write failed, or
+    /// a lease a stopped worker left. No claim, witness or publication
+    /// reaches a leased marker, so only this reconciler can return it.
+    unsettled: Mutex<Vec<(AttemptRecord, &'static str)>>,
+    /// Whether the scan for stale leases has run; until it has, every pass
+    /// starts by running it.
+    stale_scanned: AtomicBool,
 }
 
 impl TaggingReconciler {
@@ -128,6 +137,7 @@ impl TaggingReconciler {
             backoff: TaggingBackoff::default(),
             label_kinds: BTreeMap::new(),
             unsettled: Mutex::new(Vec::new()),
+            stale_scanned: AtomicBool::new(false),
         })
     }
 
@@ -159,11 +169,15 @@ impl TaggingReconciler {
         self
     }
 
-    /// Returns every marker this lease owner still holds to the ready index.
+    /// Returns every marker this lease owner still holds to the ready index,
+    /// and reports how many it found.
     ///
-    /// Run once at worker start: one worker serves a vault, so a lease under
-    /// its own name outlived the process that took it. Each returns as an
-    /// immediate retry, so the turn is tagged once more and settled once.
+    /// Run at worker start: one worker serves a vault, so a lease under its
+    /// own name outlived the process that took it. Each returns as an
+    /// immediate retry, so the turn is tagged once more and settled once. A
+    /// release that fails is not dropped: what the scan found stays this
+    /// reconciler's to hand back, and a scan that failed runs again, both at
+    /// the start of its next pass.
     ///
     /// One pass over the job records keeps only this owner's leased markers;
     /// a row of any kind this build cannot decode is passed over, so no other
@@ -189,11 +203,21 @@ impl TaggingReconciler {
             }
             stale
         };
-        for record in &stale {
-            self.vault
-                .try_with_write_txn(|txn| self.retry_in_txn(txn, record, 0, "worker_restarted"))?;
+        let found = stale.len();
+        {
+            let mut unsettled = self
+                .unsettled
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for record in stale {
+                if !unsettled.iter().any(|(held, _)| held.id == record.id) {
+                    unsettled.push((record, WORKER_RESTARTED));
+                }
+            }
         }
-        Ok(stale.len())
+        self.stale_scanned.store(true, Ordering::Release);
+        self.return_unsettled()?;
+        Ok(found)
     }
 
     /// Claims and settles up to the batch size of ready markers.
@@ -211,7 +235,11 @@ impl TaggingReconciler {
     /// An error after a claim leaves that marker leased: the pass keeps it
     /// and returns the error, and the next pass hands it back first.
     pub fn drain_once_with(&self, mut on_trace: impl FnMut(&TaggingTrace)) -> Result<TaggingPass> {
-        self.return_unsettled()?;
+        if self.stale_scanned.load(Ordering::Acquire) {
+            self.return_unsettled()?;
+        } else {
+            self.release_stale_leases()?;
+        }
         let queue = AttemptQueue::new(&self.vault);
         let mut pass = TaggingPass::default();
         for _ in 0..self.batch_size {
@@ -231,7 +259,7 @@ impl TaggingReconciler {
                     self.unsettled
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
-                        .push(record);
+                        .push((record, SETTLEMENT_FAILED));
                     return Err(error);
                 }
             };
@@ -245,17 +273,16 @@ impl TaggingReconciler {
         Ok(pass)
     }
 
-    /// Hands back each marker a pass claimed and could not settle, as an
-    /// immediate retry. One that is no longer leased under this owner at the
-    /// claimed lease generation was settled after all, and is let go. A
-    /// failed hand-back keeps the rest and fails the pass, so the next one
-    /// tries again.
+    /// Hands back each marker this reconciler holds, as an immediate retry.
+    /// One that is no longer leased under this owner at the held lease
+    /// generation was settled after all, and is let go. A failed hand-back
+    /// keeps the rest and fails the pass, so the next one tries again.
     fn return_unsettled(&self) -> Result<()> {
         let mut unsettled = self
             .unsettled
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        while let Some(record) = unsettled.last() {
+        while let Some((record, reason)) = unsettled.last() {
             self.vault.try_with_write_txn(|txn| -> Result<()> {
                 let current = self
                     .vault
@@ -269,7 +296,7 @@ impl TaggingReconciler {
                         && current.attempt_count == record.attempt_count
                 });
                 if still_held {
-                    self.retry_in_txn(txn, record, 0, "settlement_failed")?;
+                    self.retry_in_txn(txn, record, 0, reason)?;
                 }
                 Ok(())
             })?;
