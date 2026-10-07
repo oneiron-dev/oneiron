@@ -141,7 +141,6 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
                 url = slot.tagger.base(),
                 label_count = card.label_count,
                 links = card.returns.links,
-                engine = card.engine.as_deref().unwrap_or("unreported"),
                 "tagger probe succeeded"
             );
             slot.accept_card(card);

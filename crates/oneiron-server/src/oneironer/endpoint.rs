@@ -22,22 +22,18 @@ use crate::config::OneironerConfig;
 pub(crate) const CONTRACT_VERSION: u32 = 1;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
-/// The longest engine name a card may report and have kept.
-const MAX_ENGINE_LEN: usize = 64;
 /// Tool name on every upstream failure this provider reports.
 const TAGGER_TOOL: &str = "oneironer-endpoint";
 
-/// What a tagger says it is and what it returns.
+/// What a tagger says it is and what it returns. A card may carry more
+/// (which runtime serves the model, say); this server keeps none of it, since
+/// any string the tagger reports could hold text it has read.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub(crate) struct ModelCard {
     pub(crate) checkpoint_sha16: String,
     pub(crate) contract_version: u32,
     pub(crate) label_count: u32,
     pub(crate) returns: Returns,
-    /// Which runtime serves the model; reported, never checked. Kept only
-    /// when it is a short token, since a probe logs it.
-    #[serde(default)]
-    pub(crate) engine: Option<String>,
 }
 
 /// The outputs a model declares.
@@ -175,17 +171,16 @@ impl HttpTagger {
                 ));
             }
         };
-        let mut card: ModelCard = bounded_body(response)
+        let card: ModelCard = bounded_body(response)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .ok_or(ProbeError::NoModelCard)?;
-        // The card's strings come from a server that has read vault text,
-        // and a refusal is logged: a checkpoint is named only in the shape a
-        // checkpoint has, and an engine is kept only as a short token.
+        // The card comes from a server that has read vault text, and a
+        // refusal is logged: a checkpoint is named only in a checkpoint's
+        // shape.
         if oneiron::tagging::TaggingMarkerConfig::new(card.checkpoint_sha16.as_str()).is_err() {
             return Err(ProbeError::MalformedCheckpoint);
         }
-        card.engine = card.engine.filter(|engine| is_engine_token(engine));
         if card.checkpoint_sha16 != self.expected_checkpoint {
             return Err(ProbeError::WrongCheckpoint {
                 expected: self.expected_checkpoint.clone(),
@@ -261,14 +256,6 @@ impl ExtractionEncoder for HttpTagger {
             )),
         }
     }
-}
-
-fn is_engine_token(engine: &str) -> bool {
-    !engine.is_empty()
-        && engine.len() <= MAX_ENGINE_LEN
-        && engine
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._+-/@:".contains(&byte))
 }
 
 fn failure(code: String) -> oneiron::Error {
