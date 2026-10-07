@@ -3,6 +3,9 @@
 use crate::affect::Vad;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 
+/// Defined in `oneiron-contracts`: the write actor names it.
+pub use oneiron_contracts::edge::EdgeActorClass;
+
 pub(crate) const EDGE_KEY_LEN: usize = 33;
 
 pub(crate) const EDGE_VALUE_STRUCTURAL_LEN: usize = 12;
@@ -123,36 +126,6 @@ impl EdgeConfirmationStatus {
             2 => Some(Self::Disputed),
             3 => Some(Self::Retracted),
             _ => None,
-        }
-    }
-}
-
-/// Hot actor-class flag cached on a 26-byte semantic-provenanced edge.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EdgeActorClass {
-    Human = 0,
-    Agent = 1,
-    System = 2,
-}
-
-impl EdgeActorClass {
-    pub(crate) fn try_from_u8(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::Human),
-            1 => Some(Self::Agent),
-            2 => Some(Self::System),
-            _ => None,
-        }
-    }
-
-    /// Actor-class key used by Gate `actor_ceilings` policy rows.
-    #[must_use]
-    pub const fn gate_actor_class(self) -> &'static str {
-        match self {
-            Self::Human => "human",
-            Self::Agent => "agent",
-            Self::System => "system",
         }
     }
 }

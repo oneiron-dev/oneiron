@@ -6,6 +6,7 @@ use oneiron_contracts::affect::{Vad, VadComponent};
 use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ReadScope, ScopedReadReceipt,
 };
+use oneiron_contracts::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::{EntityId, derived_domains, parse_entity_id, serde_hex};
 use oneiron_contracts::error::{Error, RegistryError};
 use oneiron_contracts::registry::{
@@ -251,4 +252,13 @@ fn blend_weights_refuse_non_finite_negative_and_massless_tables() {
         .normalized()
         .unwrap();
     assert_eq!(normalized, RetrievalBlendWeights::new(0.5, 0.25, 0.25, 0.0));
+}
+
+#[test]
+fn actor_class_decoder_refuses_bytes_outside_the_three_classes() {
+    for byte in [3_u8, 0x7F, 0xFF] {
+        assert_eq!(EdgeActorClass::try_from_u8(byte), None, "{byte}");
+    }
+    assert_eq!(EdgeActorClass::try_from_u8(0), Some(EdgeActorClass::Human));
+    assert_eq!(EdgeActorClass::try_from_u8(2), Some(EdgeActorClass::System));
 }

@@ -18,6 +18,9 @@ blake3 = { workspace = true }
 # `Error::Storage` carries the LMDB error. Same vendored heed as `oneiron`.
 heed = { workspace = true }
 rand_core = { workspace = true }
+# The Beta posterior seam (`posterior`) samples with these; same versions as `oneiron`.
+rand = "0.8"
+rand_distr = "0.4"
 loro = { version = "1.10", optional = true }
 schemars = "=0.8.22"
 serde = { workspace = true }
@@ -25,6 +28,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# The moved retrieval-quality tests pin the msgpack wire form.
+rmp-serde = { workspace = true }
 uuid = { workspace = true }
 
 [features]

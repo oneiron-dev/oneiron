@@ -9,8 +9,9 @@ pub const AUTHORITY_LOG_SCHEMA_VERSION: u64 = 1;
 /// Domain-separated signature transcript for authority-log self-mutations.
 pub const AUTHORITY_TRANSCRIPT_DOMAIN: &[u8] = b"oneiron/authority/v1";
 
-/// BLAKE3 authority entry hash length.
-pub const AUTHORITY_HASH_LEN: usize = 32;
+/// The entry hash length and type are defined in `oneiron-contracts`: the write actor
+/// names them.
+pub use oneiron_contracts::authority::{AUTHORITY_HASH_LEN, AuthorityEntryHash};
 
 /// Owner role bit.
 pub const ROLE_OWNER: u16 = 0x0001;
@@ -24,9 +25,6 @@ pub const ROLE_CLOUD: u16 = 0x0008;
 pub const ROLE_RECOVERY: u16 = 0x0010;
 pub(super) const ROLE_DEFINED_MASK: u16 =
     ROLE_OWNER | ROLE_ADMIN | ROLE_AGENT | ROLE_CLOUD | ROLE_RECOVERY;
-
-/// Content hash of a canonical authority entry.
-pub type AuthorityEntryHash = [u8; AUTHORITY_HASH_LEN];
 
 /// The DURABLE vault identity: 32 BLAKE3 bytes derived from the canonical
 /// signed genesis entry (see [`super::genesis_vault_id`]).
