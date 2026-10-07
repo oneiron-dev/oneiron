@@ -105,6 +105,10 @@ impl Vault {
             let ClaimOutcome::Claimed(leased) = claimed else {
                 return Ok(HeldTagsOutcome::WorkerOwned);
             };
+            // A retry the worker scheduled, or a lease it lost, is a later try.
+            let try_number = queue
+                .retry_chain_depth_in_txn(txn, leased.id)?
+                .saturating_add(1);
             queue.complete_storage_in_txn(
                 txn,
                 CompleteAttempt {
@@ -120,7 +124,7 @@ impl Vault {
                 checkpoint: checkpoint.clone(),
                 model: None,
                 input_hash,
-                try_number: 1,
+                try_number,
                 call_micros: None,
                 outcome,
             }))

@@ -95,8 +95,17 @@ impl AttemptQueue<'_> {
     /// chains.
     pub fn retry_chain_depth(&self, id: AttemptId) -> Result<u32> {
         let rtxn = self.store.env.read_txn()?;
+        self.retry_chain_depth_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::retry_chain_depth`] inside the caller's transaction.
+    pub(crate) fn retry_chain_depth_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<u32> {
         let mut visited = HashSet::from([id]);
-        let mut child = self.retry_chain_record_in_txn(&rtxn, id)?;
+        let mut child = self.retry_chain_record_in_txn(rtxn, id)?;
         let mut depth = 0_u32;
         while let Some(parent_id) = child.retry_of {
             // A revisit is a CYCLE before it is anything else: a row already on
@@ -107,7 +116,7 @@ impl AttemptQueue<'_> {
                     ERR_RETRY_CHAIN_CYCLE,
                 )));
             }
-            let parent = self.retry_chain_record_in_txn(&rtxn, parent_id)?;
+            let parent = self.retry_chain_record_in_txn(rtxn, parent_id)?;
             if !retries_the_same_attempt(&child, &parent) {
                 return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                     ERR_RETRY_CHAIN_MISMATCH,

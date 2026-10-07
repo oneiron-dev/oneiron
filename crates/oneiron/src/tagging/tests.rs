@@ -1359,6 +1359,7 @@ fn an_importer_completes_a_marker_with_held_tags_and_no_call() {
             mood: true
         }
     ));
+    assert_eq!(trace.try_number, 1);
     assert_eq!(count(&vault, AttemptState::Completed), 1);
     assert_eq!(
         vault
@@ -1375,6 +1376,46 @@ fn an_importer_completes_a_marker_with_held_tags_and_no_call() {
             .is_empty()
     );
     assert_eq!(tagger.calls(), 0);
+}
+
+/// Held tags that complete a retried marker report its place in the retry
+/// chain: here the worker's call failed, and the retry it then claimed lost
+/// its lease to a sweep before an importer completed it, as the second try.
+#[test]
+fn held_tags_completing_a_retried_marker_report_its_try() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let turn = witness(&vault, "Ada sailed north");
+    let tagger = Scripted::new(Answer::Fail);
+    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Failed { .. }
+    ));
+    let claimed = AttemptQueue::new(&vault)
+        .claim_kind(
+            TAGGING_MARKER_KIND,
+            ClaimAttempt {
+                lease_owner: "oneironer-tagging".into(),
+                now: u64::MAX,
+            },
+        )
+        .expect("claim the retry");
+    assert!(matches!(claimed, ClaimOutcome::Claimed(_)));
+    let swept = AttemptQueue::new(&vault)
+        .cleanup_leases(CleanupAttemptLeases {
+            now: NOW + 100,
+            lease_timeout_secs: 1,
+        })
+        .expect("sweep");
+    assert_eq!(swept.stale_requeued, 1);
+    let HeldTagsOutcome::Completed(trace) = vault
+        .complete_tagging_with_held_tags(&turn, &held(3))
+        .expect("held tags")
+    else {
+        panic!("held tags complete the requeued retry");
+    };
+    assert_eq!(trace.try_number, 2);
 }
 
 #[test]
