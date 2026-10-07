@@ -28,7 +28,9 @@ pub struct TaggingTrace {
     pub model: Option<String>,
     /// The input digest, when the turn had text to read.
     pub input_hash: Option<String>,
-    /// 1 for a marker's first attempt, n for its (n-1)th retry.
+    /// 1 for a marker's first attempt, n for its (n-1)th retry. The retry
+    /// chain is walked to a bounded depth, so from the 1,025th try on this
+    /// reads 1,025.
     pub try_number: u32,
     /// Wall time of the tagger call in microseconds, when one was made.
     pub call_micros: Option<u64>,
