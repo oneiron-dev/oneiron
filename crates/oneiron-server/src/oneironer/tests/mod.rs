@@ -277,7 +277,7 @@ fn the_probe_accepts_the_configured_tagger_and_refuses_another() {
     stub.set_card(wrong);
     assert!(matches!(
         tagger.probe(),
-        Err(ProbeError::WrongContract { got: 99, .. })
+        Err(ProbeError::WrongContract { .. })
     ));
     let mut wrong = card(CHECKPOINT);
     wrong["label_count"] = json!(LABEL_COUNT + 1);
@@ -340,6 +340,7 @@ fn a_model_card_echoing_turn_text_is_refused_without_carrying_it() {
     const SECRET: &str = "the harbour code is 4471";
     const SHORT_SECRET: &str = "alice@example.com";
     const HEX_SECRET: &str = "4471447144714471";
+    const NUMBER_SECRET: u32 = 447_144;
     let stub = StubTagger::start(Answer::Good);
     let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
     let mut echoed = card(CHECKPOINT);
@@ -364,6 +365,28 @@ fn a_model_card_echoing_turn_text_is_refused_without_carrying_it() {
     );
     let shown = format!("{error} {error:?}");
     assert!(!shown.contains(HEX_SECRET), "{shown}");
+    for (field, expected) in [
+        (
+            "contract_version",
+            ProbeError::WrongContract {
+                expected: crate::oneironer::endpoint::CONTRACT_VERSION,
+            },
+        ),
+        (
+            "label_count",
+            ProbeError::WrongLabelCount {
+                expected: LABEL_COUNT,
+            },
+        ),
+    ] {
+        let mut echoed = card(CHECKPOINT);
+        echoed[field] = json!(NUMBER_SECRET);
+        stub.set_card(echoed);
+        let error = tagger.probe().expect_err("an echoed number is refused");
+        assert_eq!(error, expected);
+        let shown = format!("{error} {error:?}");
+        assert!(!shown.contains("447144"), "{shown}");
+    }
 }
 
 const PROXY_CHILD: &str = "ONEIRON_TEST_TAGGER_PROXY_CHILD";

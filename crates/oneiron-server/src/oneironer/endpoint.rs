@@ -55,18 +55,20 @@ pub(crate) enum ProbeOutcome {
 }
 
 /// A reachable tagger that is not the configured one: a configuration error.
+///
+/// A refusal names only what this server expected, never what the tagger
+/// reported: any value in its card, a checkpoint-shaped string or a number,
+/// could be text it has read, and a refusal is logged.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum ProbeError {
-    /// Names only the configured checkpoint: the one the tagger reports could
-    /// be text it has read, even in a checkpoint's shape.
     #[error("the tagger serves another checkpoint than the configured checkpoint_sha16 {expected}")]
     WrongCheckpoint { expected: String },
     #[error("the tagger reports a checkpoint that is not 16 lowercase hex digits")]
     MalformedCheckpoint,
-    #[error("the tagger speaks contract version {got}, this server speaks {expected}")]
-    WrongContract { expected: u32, got: u32 },
-    #[error("the tagger reports {got} labels, configured label_count is {expected}")]
-    WrongLabelCount { expected: u32, got: u32 },
+    #[error("the tagger speaks another contract version than this server's {expected}")]
+    WrongContract { expected: u32 },
+    #[error("the tagger reports another label count than the configured label_count {expected}")]
+    WrongLabelCount { expected: u32 },
     #[error("the tagger declares no spans")]
     NoSpans,
     #[error(
@@ -190,13 +192,11 @@ impl HttpTagger {
         if card.contract_version != CONTRACT_VERSION {
             return Err(ProbeError::WrongContract {
                 expected: CONTRACT_VERSION,
-                got: card.contract_version,
             });
         }
         if card.label_count != self.expected_label_count {
             return Err(ProbeError::WrongLabelCount {
                 expected: self.expected_label_count,
-                got: card.label_count,
             });
         }
         if !card.returns.spans {
