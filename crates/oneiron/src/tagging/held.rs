@@ -90,24 +90,28 @@ impl Vault {
                     )
                 }
             };
-            let claimed = queue.claim_id_in_txn(
+            // Stamped from the store clock without persisting its floor, as
+            // the worker's settlements are: shadow writes only the job tables.
+            let now = self.now_recorded_at();
+            let claimed = queue.claim_id_storage_in_txn(
                 txn,
                 record.id,
                 ClaimAttempt {
                     lease_owner: IMPORT_LEASE_OWNER.to_owned(),
-                    now: u64::MAX,
+                    now,
                 },
+                now,
             )?;
             let ClaimOutcome::Claimed(leased) = claimed else {
                 return Ok(HeldTagsOutcome::WorkerOwned);
             };
-            queue.complete_in_txn(
+            queue.complete_storage_in_txn(
                 txn,
                 CompleteAttempt {
                     id: leased.id,
                     lease_owner: IMPORT_LEASE_OWNER.to_owned(),
                     attempt_count: leased.attempt_count,
-                    now: 0,
+                    now,
                 },
             )?;
             Ok(HeldTagsOutcome::Completed(TaggingTrace {

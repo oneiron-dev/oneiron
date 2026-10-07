@@ -247,6 +247,75 @@ fn content_digests(vault: &Vault) -> Vec<(&'static str, [u8; 32])> {
         .collect()
 }
 
+/// Two vaults from byte copies of one closed seed, each on its own manual
+/// clock. An open seeds some rows under fresh random ids, so the arms share
+/// their starting bytes, then take the same writes and the same ticks. The
+/// tagged arm is armed, the plain arm is not.
+struct Arms {
+    tagged_dir: tempfile::TempDir,
+    plain_dir: tempfile::TempDir,
+    tagged_clock: Arc<ManualClock>,
+    plain_clock: Arc<ManualClock>,
+}
+
+impl Arms {
+    fn new() -> Self {
+        let tagged_dir = tempfile::tempdir().expect("dir");
+        let plain_dir = tempfile::tempdir().expect("dir");
+        {
+            let seed = open(tagged_dir.path(), false);
+            speaker(&seed);
+        }
+        copy_dir(tagged_dir.path(), plain_dir.path());
+        Self {
+            tagged_dir,
+            plain_dir,
+            tagged_clock: ManualClock::new(NOW),
+            plain_clock: ManualClock::new(NOW),
+        }
+    }
+
+    /// Opens both arms: tagged, then plain.
+    fn open(&self) -> (Arc<Vault>, Arc<Vault>) {
+        let on = |path: &std::path::Path, armed: bool, clock: &Arc<ManualClock>| {
+            let mut config = config(armed);
+            config.store_clock = clock.bundle();
+            Arc::new(Vault::open(path, config).expect("open vault"))
+        };
+        (
+            on(self.tagged_dir.path(), true, &self.tagged_clock),
+            on(self.plain_dir.path(), false, &self.plain_clock),
+        )
+    }
+
+    fn tick(&self, at: u64) {
+        self.tagged_clock.set(at);
+        self.plain_clock.set(at);
+    }
+}
+
+/// Witnesses `text` in both arms; both mint the same turn id.
+fn witness_both(tagged: &Vault, plain: &Vault, text: &str) -> EntityId {
+    let turn = witness(tagged, text);
+    assert_eq!(
+        turn,
+        witness(plain, text),
+        "both arms mint the same turn id"
+    );
+    turn
+}
+
+/// Every content database matches; the job tables, left out by name, are
+/// where the tagged run differs.
+fn assert_only_job_tables_differ(tagged: &Vault, plain: &Vault) {
+    let differing = differing_content(tagged, plain);
+    assert!(
+        differing.is_empty(),
+        "content databases differ: {differing:?}"
+    );
+    assert_ne!(job_digests(tagged), job_digests(plain));
+}
+
 #[test]
 fn an_armed_witness_commits_one_marker_and_an_unarmed_one_commits_none() {
     for armed in [true, false] {
@@ -397,37 +466,10 @@ fn a_message_frontier_marks_the_turn_it_is_part_of() {
 /// from the vault's id source, and no pass moved the vault's clock floor.
 #[test]
 fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
-    // An open seeds some rows under fresh random ids, so the two arms start
-    // from byte copies of one closed vault, then take the same writes.
-    let tagged_dir = tempfile::tempdir().expect("dir");
-    let plain_dir = tempfile::tempdir().expect("dir");
-    {
-        let seed = open(tagged_dir.path(), false);
-        speaker(&seed);
-    }
-    copy_dir(tagged_dir.path(), plain_dir.path());
-    let tagged_clock = ManualClock::new(NOW);
-    let plain_clock = ManualClock::new(NOW);
-    let tick = |at: u64| {
-        tagged_clock.set(at);
-        plain_clock.set(at);
-    };
-    let open_on = |path: &std::path::Path, armed: bool, clock: &Arc<ManualClock>| {
-        let mut config = config(armed);
-        config.store_clock = clock.bundle();
-        Arc::new(Vault::open(path, config).expect("open vault"))
-    };
-    let witness_both = |tagged: &Vault, plain: &Vault, text: &str| {
-        assert_eq!(
-            witness(tagged, text),
-            witness(plain, text),
-            "both arms mint the same turn id"
-        );
-    };
+    let arms = Arms::new();
     let tagger = Scripted::new(Answer::Fail);
     {
-        let tagged = open_on(tagged_dir.path(), true, &tagged_clock);
-        let plain = open_on(plain_dir.path(), false, &plain_clock);
+        let (tagged, plain) = arms.open();
         assert_eq!(content_digests(&tagged), content_digests(&plain));
         for text in [
             "Ada sailed north",
@@ -454,7 +496,7 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             )
             .expect("claim");
         assert!(matches!(leased, ClaimOutcome::Claimed(_)));
-        tick(NOW + 30);
+        arms.tick(NOW + 30);
         tagger.set(Answer::BadOffsets);
         let pass = reconciler.drain_once().expect("drain");
         assert_eq!(pass.traces.len(), 1);
@@ -462,14 +504,13 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             pass.traces[0].outcome,
             TaggingOutcome::Failed { .. }
         ));
-        tick(NOW + 60);
+        arms.tick(NOW + 60);
     }
     // Both arms restart, so the reopen is no difference between them.
-    let tagged = open_on(tagged_dir.path(), true, &tagged_clock);
-    let plain = open_on(plain_dir.path(), false, &plain_clock);
+    let (tagged, plain) = arms.open();
     let reconciler = reconciler(&tagged, &tagger);
     assert_eq!(reconciler.release_stale_leases().expect("release"), 1);
-    tick(NOW + 90);
+    arms.tick(NOW + 90);
     tagger.set(Answer::Good);
     let pass = reconciler.drain_once().expect("drain");
     assert_eq!(pass.traces.len(), 3);
@@ -485,18 +526,12 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     // Two retried tries and the restarted lease; every turn settled once.
     assert_eq!(count(&tagged, AttemptState::Failed), 3);
     assert_eq!(count(&tagged, AttemptState::Completed), 3);
-    tick(NOW + 120);
+    arms.tick(NOW + 120);
     assert!(reconciler.drain_once().expect("drain").traces.is_empty());
     witness_both(&tagged, &plain, "the harbour froze that winter");
-    tick(NOW + 150);
+    arms.tick(NOW + 150);
     assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 1);
-    let differing = differing_content(&tagged, &plain);
-    assert!(
-        differing.is_empty(),
-        "content databases differ: {differing:?}"
-    );
-    // The job tables, left out by name, are where the run differs.
-    assert_ne!(job_digests(&tagged), job_digests(&plain));
+    assert_only_job_tables_differ(&tagged, &plain);
 }
 
 #[test]
@@ -1105,6 +1140,23 @@ fn a_marker_for_another_checkpoint_moves_onto_the_active_one() {
     assert_eq!(pass.traces[1].checkpoint, CHECKPOINT);
     assert_eq!(pass.traces[1].turn, Some(turn));
     assert_eq!(tagger.calls(), 1);
+}
+
+/// An importer's held tags complete a marker in shadow, while the store
+/// clock runs, without writing outside the job tables.
+#[test]
+fn held_tags_complete_a_marker_writing_only_the_job_tables() {
+    let arms = Arms::new();
+    let (tagged, plain) = arms.open();
+    let turn = witness_both(&tagged, &plain, "Ada sailed north");
+    arms.tick(NOW + 30);
+    assert!(matches!(
+        tagged
+            .complete_tagging_with_held_tags(&turn, &held(3))
+            .expect("held tags"),
+        HeldTagsOutcome::Completed(_)
+    ));
+    assert_only_job_tables_differ(&tagged, &plain);
 }
 
 /// A claim stamps its lease once it holds the write lock: waiting for another
