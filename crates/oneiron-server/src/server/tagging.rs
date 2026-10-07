@@ -59,7 +59,7 @@ impl SyncServer {
             // Level-triggered: the pass reads what is ready, so every wake
             // queued before it is already answered by it.
             while wake.try_recv().is_ok() {}
-            let started = self.vault().now_recorded_at();
+            let started = reconciler.now();
             let pass = Arc::clone(&reconciler);
             let server = Arc::clone(&self);
             let outcome = tokio::task::spawn_blocking(move || {
@@ -85,7 +85,7 @@ impl SyncServer {
                     } else {
                         backoff = FIRST_BACKOFF;
                         if pass.traces.is_empty() {
-                            let wait = self.until_ready(next_retry, idle);
+                            let wait = until_ready(reconciler.now(), next_retry, idle);
                             tokio::select! {
                                 _ = wake.recv() => {}
                                 () = tokio::time::sleep(wait) => {}
@@ -110,16 +110,6 @@ impl SyncServer {
                 return;
             }
         }
-    }
-
-    /// How long to wait for the earliest scheduled retry, bounded by the idle
-    /// interval.
-    fn until_ready(&self, next_retry: Option<u64>, idle: Duration) -> Duration {
-        let Some(at) = next_retry else {
-            return idle;
-        };
-        let now = self.vault().now_recorded_at();
-        Duration::from_secs(at.saturating_sub(now)).clamp(MIN_IDLE, idle)
     }
 
     /// Waits until the tagger answers as the configured one, then builds the
@@ -213,4 +203,13 @@ impl SyncServer {
             Ok(None) | Err(_) => false,
         }
     }
+}
+
+/// How long to wait for the earliest scheduled retry, bounded by the idle
+/// interval. `now` is the reconciler's clock, which no read moves.
+fn until_ready(now: u64, next_retry: Option<u64>, idle: Duration) -> Duration {
+    let Some(at) = next_retry else {
+        return idle;
+    };
+    Duration::from_secs(at.saturating_sub(now)).clamp(MIN_IDLE, idle)
 }

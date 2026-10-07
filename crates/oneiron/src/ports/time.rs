@@ -72,6 +72,16 @@ impl StoreClock {
         *floor = (*floor).max(persisted).max(self.source.now_recorded_at());
         Ok(*floor)
     }
+    /// [`Self::now_recorded_at`] without observing it: the floor stays where
+    /// the vault's writes put it, so a stamp read this way (a job row's) moves
+    /// no later write's clock, even after the source rolls back.
+    pub(crate) fn peek_recorded_at(&self) -> u64 {
+        let floor = *self
+            .floor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        floor.max(self.source.now_recorded_at())
+    }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
     pub fn now_recorded_at(&self) -> u64 {

@@ -462,8 +462,9 @@ fn a_message_frontier_marks_the_turn_it_is_part_of() {
 /// Shadow writes nothing outside the three job tables, through the paths that
 /// retry a marker too (a failed call, a refused answer, a lease a stopped
 /// worker left) and while the store clock runs, an empty pass included. A
-/// write after them allocates the same entity ids in both arms: no retry drew
-/// from the vault's id source, and no pass moved the vault's clock floor.
+/// write after them allocates the same entity ids in both arms, even after
+/// the clock rolls back: no retry drew from the vault's id source, and no
+/// pass moved the vault's clock floor, on disk or in memory.
 #[test]
 fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     let arms = Arms::new();
@@ -531,6 +532,8 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     witness_both(&tagged, &plain, "the harbour froze that winter");
     arms.tick(NOW + 150);
     assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 1);
+    arms.tick(NOW + 130);
+    witness_both(&tagged, &plain, "spring came late");
     assert_only_job_tables_differ(&tagged, &plain);
 }
 
@@ -1258,7 +1261,8 @@ fn a_marker_for_another_checkpoint_moves_onto_the_active_one() {
 }
 
 /// An importer's held tags complete a marker in shadow, while the store
-/// clock runs, without writing outside the job tables.
+/// clock runs, without writing outside the job tables, and a write after the
+/// clock rolls back is the same in both arms.
 #[test]
 fn held_tags_complete_a_marker_writing_only_the_job_tables() {
     let arms = Arms::new();
@@ -1271,6 +1275,9 @@ fn held_tags_complete_a_marker_writing_only_the_job_tables() {
             .expect("held tags"),
         HeldTagsOutcome::Completed(_)
     ));
+    assert_only_job_tables_differ(&tagged, &plain);
+    arms.tick(NOW + 10);
+    witness_both(&tagged, &plain, "Grace stayed behind");
     assert_only_job_tables_differ(&tagged, &plain);
 }
 

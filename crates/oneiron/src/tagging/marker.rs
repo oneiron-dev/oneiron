@@ -182,7 +182,7 @@ pub(crate) fn mark_turn_in_txn(
     // Stamped from the store clock without persisting its floor, at every
     // door: the marker writes only the job tables, and the turn's own write
     // keeps its clock policy whether the vault is armed or not.
-    let recorded_at = vault.now_recorded_at();
+    let recorded_at = vault.store.clock.peek_recorded_at();
     enqueue_marker_in_txn(vault, wtxn, turn, &tagging.checkpoint, recorded_at).map(|_| ())
 }
 
