@@ -243,14 +243,7 @@ impl TaggingReconciler {
         let queue = AttemptQueue::new(&self.vault);
         let mut pass = TaggingPass::default();
         for _ in 0..self.batch_size {
-            let claimed = queue.claim_kind(
-                TAGGING_MARKER_KIND,
-                ClaimAttempt {
-                    lease_owner: self.lease_owner.clone(),
-                    now: self.vault.now_recorded_at(),
-                },
-            )?;
-            let ClaimOutcome::Claimed(record) = claimed else {
+            let Some(record) = self.claim()? else {
                 break;
             };
             let trace = match self.attempt(&queue, &record, &mut pass) {
@@ -271,6 +264,32 @@ impl TaggingReconciler {
             }
         }
         Ok(pass)
+    }
+
+    /// Leases the next ready marker.
+    ///
+    /// Every job row this reconciler writes is stamped from the store clock
+    /// without persisting its floor, and a claim that finds nothing commits
+    /// nothing: a shadow worker writes nothing outside the job tables, even
+    /// while the clock runs and the queue is empty.
+    fn claim(&self) -> Result<Option<AttemptRecord>> {
+        let now = self.vault.now_recorded_at();
+        let mut txn = self.vault.store.env.write_txn()?;
+        let claimed = AttemptQueue::from_store(&self.vault.store).claim_kind_storage_in_txn(
+            &mut txn,
+            Some(TAGGING_MARKER_KIND),
+            ClaimAttempt {
+                lease_owner: self.lease_owner.clone(),
+                now,
+            },
+            now,
+        )?;
+        let ClaimOutcome::Claimed(record) = claimed else {
+            return Ok(None);
+        };
+        txn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(Some(record))
     }
 
     /// Hands back each marker this reconciler holds, as an immediate retry.
@@ -323,13 +342,8 @@ impl TaggingReconciler {
             outcome: TaggingOutcome::Unreadable,
         };
         let Some(payload) = MarkerPayload::decode(&record.payload) else {
-            queue.fail(FailAttempt {
-                id: record.id,
-                lease_owner: self.lease_owner.clone(),
-                attempt_count: record.attempt_count,
-                reason: UNREADABLE_MARKER.to_owned(),
-                now: 0,
-            })?;
+            self.vault
+                .try_with_write_txn(|txn| self.fail_unreadable_in_txn(txn, record))?;
             return Ok(trace);
         };
         trace.turn = Some(payload.turn);
@@ -337,7 +351,8 @@ impl TaggingReconciler {
         if payload.checkpoint != self.checkpoint {
             // Owed by another checkpoint: the active tagger owes the turn now.
             self.vault.try_with_write_txn(|txn| -> Result<()> {
-                enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint)?;
+                let now = self.vault.now_recorded_at();
+                enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
                 self.complete_in_txn(txn, record)
             })?;
             trace.outcome = TaggingOutcome::Rekeyed;
@@ -453,13 +468,32 @@ impl TaggingReconciler {
         if self.vault.test_hooks().take_fail_next_tagging_settlement() {
             return Err(Error::MapFull);
         }
-        AttemptQueue::from_store(&self.vault.store).complete_in_txn(
+        AttemptQueue::from_store(&self.vault.store).complete_storage_in_txn(
             txn,
             CompleteAttempt {
                 id: record.id,
                 lease_owner: self.lease_owner.clone(),
                 attempt_count: record.attempt_count,
-                now: 0,
+                now: self.vault.now_recorded_at(),
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Fails a marker whose payload this build cannot read: no pass ever can.
+    fn fail_unreadable_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+    ) -> Result<()> {
+        AttemptQueue::from_store(&self.vault.store).fail_storage_in_txn(
+            txn,
+            FailAttempt {
+                id: record.id,
+                lease_owner: self.lease_owner.clone(),
+                attempt_count: record.attempt_count,
+                reason: UNREADABLE_MARKER.to_owned(),
+                now: self.vault.now_recorded_at(),
             },
         )?;
         Ok(())
@@ -507,17 +541,7 @@ impl TaggingReconciler {
             return Err(Error::MapFull);
         }
         let Some(payload) = MarkerPayload::decode(&record.payload) else {
-            AttemptQueue::from_store(&self.vault.store).fail_in_txn(
-                txn,
-                FailAttempt {
-                    id: record.id,
-                    lease_owner: self.lease_owner.clone(),
-                    attempt_count: record.attempt_count,
-                    reason: UNREADABLE_MARKER.to_owned(),
-                    now: 0,
-                },
-            )?;
-            return Ok(());
+            return self.fail_unreadable_in_txn(txn, record);
         };
         retry_marker_in_txn(
             &self.vault,
@@ -529,7 +553,7 @@ impl TaggingReconciler {
                 attempt_count: record.attempt_count,
                 backoff_until: retry_at,
                 last_error: Some(reason.to_owned()),
-                now: 0,
+                now: self.vault.now_recorded_at(),
             },
         )
     }

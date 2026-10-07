@@ -50,17 +50,22 @@ impl AttemptQueue<'_> {
     pub(crate) fn retry_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        input: RetryAttempt,
+        mut input: RetryAttempt,
     ) -> Result<RetryOutcome> {
-        self.retry_storage_in_txn(wtxn, input, None)
+        input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
+        let outcome = self.retry_storage_in_txn(wtxn, input, None)?;
+        // The minted successor's id joins the persisted id floor.
+        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
+        Ok(outcome)
     }
 
     /// [`Self::retry_in_txn`] under a successor id the caller derived from the
-    /// work's own identity.
+    /// work's own identity, stamped at the caller's `input.now`.
     ///
-    /// It draws nothing from the vault's id source, so a write after the retry
-    /// allocates exactly the entity ids it would allocate without it. The
-    /// source's lease is fenced and every index moves as for a minted
+    /// It draws nothing from the vault's id source and persists no clock
+    /// floor, so the retry writes nothing outside the job tables and a write
+    /// after it allocates exactly the entity ids it would allocate without
+    /// it. The source's lease is fenced and every index moves as for a minted
     /// successor; a taken id is refused as a collision, never overwritten.
     pub(crate) fn retry_with_id_in_txn(
         &self,
@@ -74,10 +79,9 @@ impl AttemptQueue<'_> {
     fn retry_storage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        mut input: RetryAttempt,
+        input: RetryAttempt,
         id: Option<AttemptId>,
     ) -> Result<RetryOutcome> {
-        input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
@@ -168,7 +172,6 @@ impl AttemptQueue<'_> {
         {
             return Err(Error::InvariantViolation("attempt id collision"));
         }
-        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let encoded_source = encode_record(&source)?;
         self.store
             .attempt_records

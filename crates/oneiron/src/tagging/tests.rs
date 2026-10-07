@@ -389,9 +389,10 @@ fn a_message_frontier_marks_the_turn_it_is_part_of() {
 }
 
 /// Shadow writes nothing outside the three job tables, through the paths that
-/// retry a marker too: a failed call, a refused answer and a lease a stopped
-/// worker left behind. A write after them allocates the same entity ids in
-/// both arms, so no retry drew from the vault's id source.
+/// retry a marker too (a failed call, a refused answer, a lease a stopped
+/// worker left) and while the store clock runs, an empty pass included. A
+/// write after them allocates the same entity ids in both arms: no retry drew
+/// from the vault's id source, and no pass moved the vault's clock floor.
 #[test]
 fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     // An open seeds some rows under fresh random ids, so the two arms start
@@ -403,6 +404,17 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
         speaker(&seed);
     }
     copy_dir(tagged_dir.path(), plain_dir.path());
+    let tagged_clock = ManualClock::new(NOW);
+    let plain_clock = ManualClock::new(NOW);
+    let tick = |at: u64| {
+        tagged_clock.set(at);
+        plain_clock.set(at);
+    };
+    let open_on = |path: &std::path::Path, armed: bool, clock: &Arc<ManualClock>| {
+        let mut config = config(armed);
+        config.store_clock = clock.bundle();
+        Arc::new(Vault::open(path, config).expect("open vault"))
+    };
     let witness_both = |tagged: &Vault, plain: &Vault, text: &str| {
         assert_eq!(
             witness(tagged, text),
@@ -412,8 +424,8 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     };
     let tagger = Scripted::new(Answer::Fail);
     {
-        let tagged = open(tagged_dir.path(), true);
-        let plain = open(plain_dir.path(), false);
+        let tagged = open_on(tagged_dir.path(), true, &tagged_clock);
+        let plain = open_on(plain_dir.path(), false, &plain_clock);
         assert_eq!(content_digests(&tagged), content_digests(&plain));
         for text in [
             "Ada sailed north",
@@ -423,15 +435,12 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             witness_both(&tagged, &plain, text);
         }
         let reconciler = reconciler(&tagged, &tagger);
-        for answer in [Answer::Fail, Answer::BadOffsets] {
-            tagger.set(answer);
-            let pass = reconciler.drain_once().expect("drain");
-            assert_eq!(pass.traces.len(), 1);
-            assert!(matches!(
-                pass.traces[0].outcome,
-                TaggingOutcome::Failed { .. }
-            ));
-        }
+        let pass = reconciler.drain_once().expect("drain");
+        assert_eq!(pass.traces.len(), 1);
+        assert!(matches!(
+            pass.traces[0].outcome,
+            TaggingOutcome::Failed { .. }
+        ));
         // The worker stops mid-call: its marker is still leased at restart.
         let leased = AttemptQueue::new(&tagged)
             .claim_kind(
@@ -443,12 +452,22 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             )
             .expect("claim");
         assert!(matches!(leased, ClaimOutcome::Claimed(_)));
+        tick(NOW + 30);
+        tagger.set(Answer::BadOffsets);
+        let pass = reconciler.drain_once().expect("drain");
+        assert_eq!(pass.traces.len(), 1);
+        assert!(matches!(
+            pass.traces[0].outcome,
+            TaggingOutcome::Failed { .. }
+        ));
+        tick(NOW + 60);
     }
     // Both arms restart, so the reopen is no difference between them.
-    let tagged = open(tagged_dir.path(), true);
-    let plain = open(plain_dir.path(), false);
+    let tagged = open_on(tagged_dir.path(), true, &tagged_clock);
+    let plain = open_on(plain_dir.path(), false, &plain_clock);
     let reconciler = reconciler(&tagged, &tagger);
     assert_eq!(reconciler.release_stale_leases().expect("release"), 1);
+    tick(NOW + 90);
     tagger.set(Answer::Good);
     let pass = reconciler.drain_once().expect("drain");
     assert_eq!(pass.traces.len(), 3);
@@ -464,7 +483,10 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     // Two retried tries and the restarted lease; every turn settled once.
     assert_eq!(count(&tagged, AttemptState::Failed), 3);
     assert_eq!(count(&tagged, AttemptState::Completed), 3);
+    tick(NOW + 120);
+    assert!(reconciler.drain_once().expect("drain").traces.is_empty());
     witness_both(&tagged, &plain, "the harbour froze that winter");
+    tick(NOW + 150);
     assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 1);
     let differing = differing_content(&tagged, &plain);
     assert!(

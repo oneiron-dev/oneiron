@@ -133,18 +133,18 @@ impl<'a> AttemptQueue<'a> {
     }
 
     /// Transaction-composable, actorless enqueue under an id the caller derived
-    /// from the work's own identity.
+    /// from the work's own identity, stamped at the caller's `input.now`.
     ///
-    /// It draws nothing from the vault's id source, so a write that also owes
-    /// this attempt allocates exactly the entity ids it would allocate without
-    /// it. A taken id is refused as a collision, never overwritten.
+    /// It draws nothing from the vault's id source and persists no clock
+    /// floor, so a write that also owes this attempt allocates exactly the
+    /// entity ids it would allocate without it. A taken id is refused as a
+    /// collision, never overwritten.
     pub(crate) fn enqueue_with_id_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: AttemptId,
-        mut input: EnqueueAttempt,
+        input: EnqueueAttempt,
     ) -> Result<EnqueueOutcome> {
-        input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         self.enqueue_storage_in_txn(wtxn, input, None, None, Some(id))
     }
 

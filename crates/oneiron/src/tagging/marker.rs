@@ -108,11 +108,11 @@ fn derived_id(
 
 fn free_marker_id(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
+    wtxn: &heed::RwTxn<'_>,
     turn: &EntityId,
     checkpoint: &str,
+    recorded_at: u64,
 ) -> Result<AttemptId> {
-    let recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     for generation in 0..MAX_MARKER_GENERATIONS {
         let id = derived_id(turn, checkpoint, recorded_at, generation)?;
         if vault
@@ -128,14 +128,16 @@ fn free_marker_id(
 }
 
 /// Commits a marker for `turn` under `checkpoint` in the caller's write
-/// transaction. A live marker for the same pair absorbs the call.
+/// transaction, stamped at `recorded_at`. A live marker for the same pair
+/// absorbs the call.
 pub(super) fn enqueue_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     turn: EntityId,
     checkpoint: &str,
+    recorded_at: u64,
 ) -> Result<EnqueueOutcome> {
-    let id = free_marker_id(vault, wtxn, &turn, checkpoint)?;
+    let id = free_marker_id(vault, wtxn, &turn, checkpoint, recorded_at)?;
     let payload = MarkerPayload {
         turn,
         checkpoint: checkpoint.to_owned(),
@@ -148,21 +150,20 @@ pub(super) fn enqueue_marker_in_txn(
             payload: payload.encode()?,
             dedupe_key: Some(dedupe_key(&turn, checkpoint)),
             run_id: None,
-            // The door stamps the store clock.
-            now: 0,
+            now: recorded_at,
         },
     )
 }
 
 /// Retries a leased marker in the caller's write transaction, under a
-/// successor id derived as a new marker's is.
+/// successor id derived as a new marker's is, stamped at `input.now`.
 pub(super) fn retry_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     payload: &MarkerPayload,
     input: RetryAttempt,
 ) -> Result<()> {
-    let id = free_marker_id(vault, wtxn, &payload.turn, &payload.checkpoint)?;
+    let id = free_marker_id(vault, wtxn, &payload.turn, &payload.checkpoint, input.now)?;
     AttemptQueue::from_store(&vault.store).retry_with_id_in_txn(wtxn, input, id)?;
     Ok(())
 }
@@ -178,7 +179,9 @@ pub(crate) fn mark_turn_in_txn(
     let Some(tagging) = vault.config.tagging.as_ref() else {
         return Ok(());
     };
-    enqueue_marker_in_txn(vault, wtxn, turn, &tagging.checkpoint).map(|_| ())
+    // The turn's own write persists the store clock with it.
+    let recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    enqueue_marker_in_txn(vault, wtxn, turn, &tagging.checkpoint, recorded_at).map(|_| ())
 }
 
 /// The type of an entity whose document text a turn's tag pass reads, on an
