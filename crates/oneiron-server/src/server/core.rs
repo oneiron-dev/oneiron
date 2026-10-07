@@ -109,6 +109,9 @@ pub struct SyncServer {
     pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
+    /// The vault's path, backup plan and schedule, set by `serve`. `None`
+    /// on a server built without a known vault path.
+    pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -249,6 +252,7 @@ impl SyncServer {
             embedder: None,
             llm: None,
             extraction_egress: None,
+            owner_host: None,
             #[cfg(test)]
             booking_test_now_secs: None,
         })
@@ -354,6 +358,11 @@ impl SyncServer {
     /// which is what every deployment did before this ticket.
     pub(crate) fn with_embedder(mut self, embedder: Option<EmbedderSlot>) -> Self {
         self.embedder = embedder;
+        self
+    }
+
+    pub(crate) fn with_owner_host(mut self, host: crate::owner::schedule::OwnerHost) -> Self {
+        self.owner_host = Some(Arc::new(host));
         self
     }
 
