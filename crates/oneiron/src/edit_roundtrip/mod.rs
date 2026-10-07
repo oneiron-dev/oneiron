@@ -34,13 +34,15 @@
 //!    corpus rule is met at fork rev `57a7f6cb`: 2,700 of the 2,951
 //!    formula-bearing fresh-Excel SpreadsheetBench workbooks are fully
 //!    Excel-identical, against 2,648 for LibreOffice 25.8, and 809 of the 811
-//!    pinned goldens against LibreOffice's 753. [`EditSession::recalc`] —
+//!    pinned goldens against LibreOffice's 753. NOW(), TODAY() and the random
+//!    functions read the session's clock ([`EditSession::recalc_clock`]),
+//!    else the host's clock at recalc time. [`EditSession::recalc`] —
 //!    LibreOffice headless in production, a session-image dependency — stays
 //!    the precision fallback for refused workbooks only (unsupported
-//!    features, formulas needing caller context) and keeps the link-preserving
-//!    route for the external-link workbooks the engine cannot read as Excel
-//!    does with the linked workbook closed. A session opts out explicitly with
-//!    [`RecalcPolicy::SessionOnly`].
+//!    features, formulas needing what only the host knows) and keeps the
+//!    link-preserving route for the external-link workbooks the engine cannot
+//!    read as Excel does with the linked workbook closed. A session opts out
+//!    explicitly with [`RecalcPolicy::SessionOnly`].
 //! 4. **Corruption-check validation** — the `validate` stage runs an automated
 //!    open/verify plus a passthrough diff. A failed check yields
 //!    [`EditOutcome::Rejected`] and never reaches the proposal stage.
@@ -94,6 +96,9 @@ pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_round
 pub use self::session_validate::{
     AppliedEdit, EditPlan, EditSession, OfficeDoc, RecalcPolicy, ValidationCheck, ValidationReport,
 };
+/// The clock and seed a session gives the in-process recalc
+/// ([`EditSession::recalc_clock`]).
+pub use oneiron_xlsx_formula::RecalcClock;
 
 #[cfg(test)]
 mod docx_tests;

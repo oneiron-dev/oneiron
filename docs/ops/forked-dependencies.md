@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `91599813bda5f4b4a085a20a4add6b023e0fc70c` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `562f4863bf970f650a209ff92f42b4fef699ca99` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,14 +51,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "91599813bda5f4b4a085a20a4add6b023e0fc70c" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.9), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.10), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -204,11 +204,50 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.9), over `362becff`:
   `#REF!` past the saved cells, and a saved value in a CDATA section is its text (probes 4 and 5 of
   the linked-workbook note). At `91599813` the fork matches all 2,967 SpreadsheetBench workbooks
   and all 811 pinned goldens.
+- `91599813..5b520963` (ONE-2700, stage 2 of the LibreOffice retirement, round 6, October 2026):
+  each kept only with 811/811 pinned and nothing lost on SpreadsheetBench. Probe 4 of the finance
+  note as tests (`5149f170`, AMORLINC and AMORDEGRC bought on the first period's end). Caller
+  context (`d4959b40`, `5b520963`), from eight probes on the Windows VM (2026-10-06, 466 scored
+  rows, `ops/excel-context-probe-20261006.md` in the calc workspace, 451 agree): INDIRECT reads R1C1
+  text with `a1` FALSE (absolute, relative to the formula's cell and wrapping at the grid's edge,
+  whole rows and columns, ranges, sheets), and A1 and R1C1 text take the spaces Excel accepts
+  (trailing, after the sheet's `!`, around the `:` between two cells). OFFSET's far edge is
+  trunc(size) - 1 from the moved corner for a positive size and + 1 for a negative one
+  (`OFFSET(B2,0,0,-2,-2)` is A1:B2). RANDBETWEEN and RANDARRAY read and check their arguments as
+  Excel does (`RANDBETWEEN(1.2,1.8)` is 2; a logical bound is `#VALUE!`; `RANDARRAY(0)` is
+  `#CALC!`), every random call in a cell draws its own value (`RAND()=RAND()` is FALSE), and NOW
+  keeps hundredths of a second. TEXT reads `!` as a character of its own, not an escape
+  (`TEXT(203,"!r0c00")` is `!r2c03`), and shows a number under a text section as General. At
+  `5b520963` the fork matches 2,967 of the 2,967 SpreadsheetBench workbooks and all 811 pinned
+  goldens.
+- `67f19c08` (review of oneiron #1295, 2026-10-07): a defined name evaluates for the formula
+  that uses it, as Excel evaluates it. Relative R1C1 text, ROW() and `#This Row` in a name read
+  the calling cell (`Prev = INDIRECT("RC[-1]",FALSE)` in B2 reads A2; the name was read from A1,
+  whose previous column wraps to XFD1). A random call in a name is one more draw of the calling
+  formula: resolving a name no longer restarts the cell's draws
+  (`RAND()+ROW(Anchor)-RAND()` was exactly 1), and a name's own graph vertex draws apart from
+  every cell, so the same seed gives the same caches however the cells are scheduled. INDIRECT
+  text that names a workbook (`'[Book.xlsx]Sheet1'!A1`, `Book.xlsx!Total` where no sheet has
+  that name) gives the closed workbook's `#REF!` and is recorded
+  (`Engine::text_named_workbook`); the cache writer then refuses the workbook ("INDIRECT text
+  that names a workbook"), since Excel reads such text from the open workbook of that name,
+  this one included under its saved name. Still 2,967 of 2,967 and 811/811.
+- `67f19c08..562f4863` (re-check of oneiron #1295, 2026-10-07): what a defined name reads, the
+  formula that uses it reads. Dependency and circular-reference discovery evaluate a name for its
+  calling formula, through the context that records that formula's reads:
+  `Loop = INDIRECT("RC",FALSE)+1` used in B2 is circular like `=INDIRECT("RC",FALSE)+1` written in
+  B2 (with iteration off B2 keeps its last value; it cached 1), a formula reading a cell through a name
+  calculates after that cell, and a formula using a name whose formula holds INDIRECT or OFFSET,
+  itself or through another name, is dynamic like one holding the call. Resolving a name as a
+  reference only to see whether it is one no longer spends the calling formula's random draws
+  when the result is dropped, so `Pick+0` with `Pick = OFFSET(Sheet1!$C$1,RANDBETWEEN(0,1),0)`
+  draws what `OFFSET(Sheet1!$C$1,RANDBETWEEN(0,1),0)+0` draws (20 for seed 7; it gave 10). Still
+  2,967 of 2,967 and 811/811.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.9`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.10`.
 
 ## Licences and attribution
 

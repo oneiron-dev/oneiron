@@ -19,7 +19,7 @@ const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.9";
+const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.10";
 
 fn build(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
     opc::write(&OpcPackage::from_parts(
@@ -366,11 +366,11 @@ fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
 fn refused_workbooks_reach_the_host_recalc_untouched() {
     let deep_chain = format!("<f>{}</f>", ["1"; 40].join("+"));
     let cases = [
-        "<f>NOW()</f>",
-        "<f>_xlfn.TODAY()</f>",
-        "<f>SUM(RAND(),1)</f>",
-        "<f>LAMBDA(x,NOW()+x)(2)</f>",
-        "<f>_xlfn.REDUCE(1,Input!A1:A1,_xleta.RANDBETWEEN)</f>",
+        // What only the host knows: the environment, the file's path, the
+        // active cell.
+        "<f>INFO(&quot;osversion&quot;)</f>",
+        "<f>CELL(&quot;filename&quot;,A1)</f>",
+        "<f>LAMBDA(x,CELL(&quot;row&quot;)+x)(2)</f>",
         deep_chain.as_str(),
         // The engine would cache #NAME? where Excel computes a value.
         "<f>NOSUCHFUNCTION(1)</f>",
@@ -446,6 +446,83 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
     }
 }
 
+/// [`Host`] with its own clock: 2026-10-06T20:00:00Z in Tokyo (UTC+9).
+struct Clocked(Host);
+impl EditSession for Clocked {
+    fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+        self.0.apply_edits(doc, plan)
+    }
+    fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+        self.0.recalc(doc)
+    }
+    fn recalc_engine(&self) -> Option<CalcEngineStamp> {
+        self.0.recalc_engine()
+    }
+    fn recalc_clock(&self) -> Option<RecalcClock> {
+        let now = "2026-10-06T20:00:00Z".parse().expect("instant");
+        RecalcClock::new(now, 540, 7)
+    }
+}
+
+/// The cached value of `cell` in worksheet XML.
+fn cached(xml: &str, cell: &str) -> String {
+    let at = xml.find(&format!(r#"<c r="{cell}""#)).expect("cell");
+    let start = at + xml[at..].find("<v>").expect("cache") + 3;
+    xml[start..start + xml[start..].find("</v>").expect("cache end")].to_owned()
+}
+
+#[test]
+fn clock_functions_recalculate_natively_on_the_session_clock_or_the_hosts() {
+    let input = workbook(
+        "",
+        r#"<c r="A1"><f>TODAY()</f><v>0</v></c><c r="B1"><f>NOW()</f><v>0</v></c><c r="C1"><f>A1+1</f><v>0</v></c><c r="D1"><f>RANDBETWEEN(1,6)</f><v>0</v></c><c r="E1"><f>OFFSET(A1,0,2)</f><v>0</v></c>"#,
+    );
+    // The session's clock: Wednesday 7 October 2026, 05:00 in Tokyo.
+    let host = Clocked(Host::default());
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:session-clock",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "46302", "{xml}");
+    let now: f64 = cached(&xml, "B1").parse().expect("serial");
+    assert!((now - (46302.0 + 5.0 / 24.0)).abs() < 1e-9, "{xml}");
+    assert_eq!(cached(&xml, "C1"), "46303", "{xml}");
+    assert_eq!(cached(&xml, "E1"), "46303", "{xml}");
+    let die: f64 = cached(&xml, "D1").parse().expect("draw");
+    assert!(die.fract() == 0.0 && (1.0..=6.0).contains(&die), "{xml}");
+    assert!(
+        host.0.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+    // Without a session clock, the host's clock at recalc time.
+    let host = Host::default();
+    let before = RecalcClock::system();
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:host-clock",
+    ));
+    let today: f64 = cached(&part_text(&proposal.new_bytes, OUTPUT), "A1")
+        .parse()
+        .expect("serial");
+    let local = before.now().timestamp() + i64::from(before.utc_offset_minutes()) * 60;
+    // Days from 1899-12-30, Excel's serial epoch, to the local date.
+    let expected = (local.div_euclid(86_400) + 25_569) as f64;
+    assert!((today - expected).abs() <= 1.0, "{today} vs {expected}");
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+}
+
 #[test]
 fn malformed_workbooks_fail_outright_without_the_host_recalc() {
     // Two sheets with one sheet ID (the fixture's are 1 and 2).
@@ -500,7 +577,10 @@ fn a_host_without_a_calculator_still_recalculates_admitted_workbooks() {
     ));
     assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
     assert!(part_text(&proposal.new_bytes, OUTPUT).contains("<v>42</v>"));
-    let refused = workbook("", r#"<c r="A1"><f>NOW()</f><v>0</v></c>"#);
+    let refused = workbook(
+        "",
+        r#"<c r="A1"><f>INFO(&quot;osversion&quot;)</f><v>0</v></c>"#,
+    );
     assert_eq!(
         refusal(run_edit_roundtrip(
             &host,
