@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome, RetryAttempt};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::EdgeDirection;
@@ -85,9 +85,10 @@ pub(super) fn dedupe_key(turn: &EntityId, checkpoint: &str) -> String {
 }
 
 /// The marker id is the store-clock second it was committed at, then a digest
-/// of what it names. Committing one draws nothing from the vault's id source,
-/// so a write allocates the same entity ids with or without a tagger, and the
-/// readiness index still drains markers in commit order across seconds.
+/// of what it names. Committing one, or a retry of one, draws nothing from the
+/// vault's id source, so a write allocates the same entity ids with or without
+/// a tagger, and the readiness index still drains markers in commit order
+/// across seconds.
 fn derived_id(
     turn: &EntityId,
     checkpoint: &str,
@@ -151,6 +152,19 @@ pub(super) fn enqueue_marker_in_txn(
             now: 0,
         },
     )
+}
+
+/// Retries a leased marker in the caller's write transaction, under a
+/// successor id derived as a new marker's is.
+pub(super) fn retry_marker_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    payload: &MarkerPayload,
+    input: RetryAttempt,
+) -> Result<()> {
+    let id = free_marker_id(vault, wtxn, &payload.turn, &payload.checkpoint)?;
+    AttemptQueue::from_store(&vault.store).retry_with_id_in_txn(wtxn, input, id)?;
+    Ok(())
 }
 
 /// The turn doors' half of the outbox rule (a base witness, an off-record

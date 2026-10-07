@@ -50,7 +50,32 @@ impl AttemptQueue<'_> {
     pub(crate) fn retry_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
+        input: RetryAttempt,
+    ) -> Result<RetryOutcome> {
+        self.retry_storage_in_txn(wtxn, input, None)
+    }
+
+    /// [`Self::retry_in_txn`] under a successor id the caller derived from the
+    /// work's own identity.
+    ///
+    /// It draws nothing from the vault's id source, so a write after the retry
+    /// allocates exactly the entity ids it would allocate without it. The
+    /// source's lease is fenced and every index moves as for a minted
+    /// successor; a taken id is refused as a collision, never overwritten.
+    pub(crate) fn retry_with_id_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RetryAttempt,
+        id: AttemptId,
+    ) -> Result<RetryOutcome> {
+        self.retry_storage_in_txn(wtxn, input, Some(id))
+    }
+
+    fn retry_storage_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
         mut input: RetryAttempt,
+        id: Option<AttemptId>,
     ) -> Result<RetryOutcome> {
         input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
@@ -65,7 +90,10 @@ impl AttemptQueue<'_> {
         validate_optional_failure_reason(input.last_error.as_deref())?;
 
         let next = AttemptRecord {
-            id: AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+            id: match id {
+                Some(id) => id,
+                None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+            },
             kind: source.kind.clone(),
             payload: source.payload.clone(),
             state: AttemptState::Scheduled,

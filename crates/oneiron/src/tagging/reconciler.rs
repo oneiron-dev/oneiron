@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use super::input::{TurnInput, turn_input_in_txn};
-use super::marker::{MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn};
+use super::marker::{
+    MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn, retry_marker_in_txn,
+};
 use super::output::{AnswerMood, check_output};
 use super::trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex};
 use crate::EntityId;
@@ -22,6 +24,8 @@ use crate::memory::extraction::{EncoderOutput, ExtractionEncoder};
 
 const DEFAULT_LEASE_OWNER: &str = "oneironer-tagging";
 const DEFAULT_BATCH_SIZE: usize = 16;
+/// Failure reason of a marker whose payload this build cannot read.
+const UNREADABLE_MARKER: &str = "unreadable_tagging_marker";
 
 /// Retry backoff for a failed attempt, in store-clock seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,16 +189,9 @@ impl TaggingReconciler {
             }
             stale
         };
-        let queue = AttemptQueue::new(&self.vault);
         for record in &stale {
-            queue.retry(RetryAttempt {
-                id: record.id,
-                lease_owner: self.lease_owner.clone(),
-                attempt_count: record.attempt_count,
-                backoff_until: 0,
-                last_error: Some("worker_restarted".to_owned()),
-                now: 0,
-            })?;
+            self.vault
+                .try_with_write_txn(|txn| self.retry_in_txn(txn, record, 0, "worker_restarted"))?;
         }
         Ok(stale.len())
     }
@@ -260,7 +257,6 @@ impl TaggingReconciler {
             .unwrap_or_else(PoisonError::into_inner);
         while let Some(record) = unsettled.last() {
             self.vault.try_with_write_txn(|txn| -> Result<()> {
-                let queue = AttemptQueue::from_store(&self.vault.store);
                 let current = self
                     .vault
                     .store
@@ -273,17 +269,7 @@ impl TaggingReconciler {
                         && current.attempt_count == record.attempt_count
                 });
                 if still_held {
-                    queue.retry_in_txn(
-                        txn,
-                        RetryAttempt {
-                            id: record.id,
-                            lease_owner: self.lease_owner.clone(),
-                            attempt_count: record.attempt_count,
-                            backoff_until: 0,
-                            last_error: Some("settlement_failed".to_owned()),
-                            now: 0,
-                        },
-                    )?;
+                    self.retry_in_txn(txn, record, 0, "settlement_failed")?;
                 }
                 Ok(())
             })?;
@@ -314,7 +300,7 @@ impl TaggingReconciler {
                 id: record.id,
                 lease_owner: self.lease_owner.clone(),
                 attempt_count: record.attempt_count,
-                reason: "unreadable_tagging_marker".to_owned(),
+                reason: UNREADABLE_MARKER.to_owned(),
                 now: 0,
             })?;
             return Ok(trace);
@@ -338,10 +324,10 @@ impl TaggingReconciler {
         run_after_turn_read_hook();
         let (input, hash) = match read {
             TurnInput::Gone => {
-                return self.skip(queue, record, &payload.turn, SkipReason::TurnGone, trace);
+                return self.skip(record, &payload.turn, SkipReason::TurnGone, trace);
             }
             TurnInput::Empty => {
-                return self.skip(queue, record, &payload.turn, SkipReason::NoText, trace);
+                return self.skip(record, &payload.turn, SkipReason::NoText, trace);
             }
             TurnInput::Ready { input, hash } => (input, hash),
         };
@@ -358,22 +344,16 @@ impl TaggingReconciler {
                 let failure = TaggingFailure::Call {
                     code: failure_code(&error),
                 };
-                return self.retry(queue, record, prior_retries, failure, trace);
+                return self.retry(record, prior_retries, failure, trace);
             }
             Err(_) => {
                 pass.failed_calls += 1;
-                return self.retry(
-                    queue,
-                    record,
-                    prior_retries,
-                    TaggingFailure::Panicked,
-                    trace,
-                );
+                return self.retry(record, prior_retries, TaggingFailure::Panicked, trace);
             }
         };
         if let Err(refusal) = check_output(&input, &output) {
             let failure = TaggingFailure::Refused { refusal };
-            return self.retry(queue, record, prior_retries, failure, trace);
+            return self.retry(record, prior_retries, failure, trace);
         }
         // The answer stands only for the text it read: settle against the turn
         // as the settling transaction sees it.
@@ -391,7 +371,7 @@ impl TaggingReconciler {
             trace.outcome = self.shadowed(&output);
             return Ok(trace);
         }
-        let retry_at = self.retry_at(queue, record, 0, "superseded")?;
+        let retry_at = self.retry_at(record, 0, "superseded")?;
         trace.outcome = TaggingOutcome::Superseded { retry_at };
         Ok(trace)
     }
@@ -404,7 +384,6 @@ impl TaggingReconciler {
     /// is retried at once on it.
     fn skip(
         &self,
-        queue: &AttemptQueue<'_>,
         record: &AttemptRecord,
         turn: &EntityId,
         reason: SkipReason,
@@ -424,7 +403,7 @@ impl TaggingReconciler {
             trace.outcome = TaggingOutcome::Skipped { reason };
             return Ok(trace);
         }
-        let retry_at = self.retry_at(queue, record, 0, "superseded")?;
+        let retry_at = self.retry_at(record, 0, "superseded")?;
         trace.outcome = TaggingOutcome::Superseded { retry_at };
         Ok(trace)
     }
@@ -461,7 +440,6 @@ impl TaggingReconciler {
 
     fn retry(
         &self,
-        queue: &AttemptQueue<'_>,
         record: &AttemptRecord,
         prior_retries: u32,
         failure: TaggingFailure,
@@ -473,32 +451,60 @@ impl TaggingReconciler {
             TaggingFailure::Panicked => "tagger_panicked",
         };
         let delay = self.backoff.delay_secs(prior_retries);
-        let retry_at = self.retry_at(queue, record, delay, reason)?;
+        let retry_at = self.retry_at(record, delay, reason)?;
         trace.outcome = TaggingOutcome::Failed { failure, retry_at };
         Ok(trace)
     }
 
-    fn retry_at(
-        &self,
-        queue: &AttemptQueue<'_>,
-        record: &AttemptRecord,
-        delay_secs: u64,
-        reason: &str,
-    ) -> Result<u64> {
+    fn retry_at(&self, record: &AttemptRecord, delay_secs: u64, reason: &str) -> Result<u64> {
         let retry_at = self.vault.now_recorded_at().saturating_add(delay_secs);
+        self.vault
+            .try_with_write_txn(|txn| self.retry_in_txn(txn, record, retry_at, reason))?;
+        Ok(retry_at)
+    }
+
+    /// Retries a marker this owner holds, in the caller's transaction, with
+    /// its successor ready at `retry_at`. The successor's id is derived like
+    /// a new marker's, so no retry draws from the vault's id source and shadow
+    /// leaves every later write's entity ids as a run with no tagger leaves
+    /// them. A payload this build cannot read is failed, as a pass fails it.
+    fn retry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        retry_at: u64,
+        reason: &str,
+    ) -> Result<()> {
         #[cfg(test)]
         if self.vault.test_hooks().take_fail_next_tagging_settlement() {
             return Err(Error::MapFull);
         }
-        queue.retry(RetryAttempt {
-            id: record.id,
-            lease_owner: self.lease_owner.clone(),
-            attempt_count: record.attempt_count,
-            backoff_until: retry_at,
-            last_error: Some(reason.to_owned()),
-            now: 0,
-        })?;
-        Ok(retry_at)
+        let Some(payload) = MarkerPayload::decode(&record.payload) else {
+            AttemptQueue::from_store(&self.vault.store).fail_in_txn(
+                txn,
+                FailAttempt {
+                    id: record.id,
+                    lease_owner: self.lease_owner.clone(),
+                    attempt_count: record.attempt_count,
+                    reason: UNREADABLE_MARKER.to_owned(),
+                    now: 0,
+                },
+            )?;
+            return Ok(());
+        };
+        retry_marker_in_txn(
+            &self.vault,
+            txn,
+            &payload,
+            RetryAttempt {
+                id: record.id,
+                lease_owner: self.lease_owner.clone(),
+                attempt_count: record.attempt_count,
+                backoff_until: retry_at,
+                last_error: Some(reason.to_owned()),
+                now: 0,
+            },
+        )
     }
 }
 

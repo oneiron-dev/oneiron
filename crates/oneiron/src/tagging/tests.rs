@@ -388,6 +388,10 @@ fn a_message_frontier_marks_the_turn_it_is_part_of() {
     );
 }
 
+/// Shadow writes nothing outside the three job tables, through the paths that
+/// retry a marker too: a failed call, a refused answer and a lease a stopped
+/// worker left behind. A write after them allocates the same entity ids in
+/// both arms, so no retry drew from the vault's id source.
 #[test]
 fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     // An open seeds some rows under fresh random ids, so the two arms start
@@ -399,20 +403,54 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
         speaker(&seed);
     }
     copy_dir(tagged_dir.path(), plain_dir.path());
-    let tagged = open(tagged_dir.path(), true);
-    let plain = open(plain_dir.path(), false);
-    assert_eq!(content_digests(&tagged), content_digests(&plain));
-    let tagger = Scripted::new(Answer::Good);
-    for vault in [&tagged, &plain] {
+    let witness_both = |tagged: &Vault, plain: &Vault, text: &str| {
+        assert_eq!(
+            witness(tagged, text),
+            witness(plain, text),
+            "both arms mint the same turn id"
+        );
+    };
+    let tagger = Scripted::new(Answer::Fail);
+    {
+        let tagged = open(tagged_dir.path(), true);
+        let plain = open(plain_dir.path(), false);
+        assert_eq!(content_digests(&tagged), content_digests(&plain));
         for text in [
             "Ada sailed north",
             "Grace stayed behind",
             "they wrote letters",
         ] {
-            witness(vault, text);
+            witness_both(&tagged, &plain, text);
         }
+        let reconciler = reconciler(&tagged, &tagger);
+        for answer in [Answer::Fail, Answer::BadOffsets] {
+            tagger.set(answer);
+            let pass = reconciler.drain_once().expect("drain");
+            assert_eq!(pass.traces.len(), 1);
+            assert!(matches!(
+                pass.traces[0].outcome,
+                TaggingOutcome::Failed { .. }
+            ));
+        }
+        // The worker stops mid-call: its marker is still leased at restart.
+        let leased = AttemptQueue::new(&tagged)
+            .claim_kind(
+                TAGGING_MARKER_KIND,
+                ClaimAttempt {
+                    lease_owner: "oneironer-tagging".into(),
+                    now: u64::MAX,
+                },
+            )
+            .expect("claim");
+        assert!(matches!(leased, ClaimOutcome::Claimed(_)));
     }
-    let pass = reconciler(&tagged, &tagger).drain_once().expect("drain");
+    // Both arms restart, so the reopen is no difference between them.
+    let tagged = open(tagged_dir.path(), true);
+    let plain = open(plain_dir.path(), false);
+    let reconciler = reconciler(&tagged, &tagger);
+    assert_eq!(reconciler.release_stale_leases().expect("release"), 1);
+    tagger.set(Answer::Good);
+    let pass = reconciler.drain_once().expect("drain");
     assert_eq!(pass.traces.len(), 3);
     assert!(pass.traces.iter().all(|trace| matches!(
         trace.outcome,
@@ -423,7 +461,11 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             mapped_spans: 1
         }
     )));
+    // Two retried tries and the restarted lease; every turn settled once.
+    assert_eq!(count(&tagged, AttemptState::Failed), 3);
     assert_eq!(count(&tagged, AttemptState::Completed), 3);
+    witness_both(&tagged, &plain, "the harbour froze that winter");
+    assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 1);
     let differing = differing_content(&tagged, &plain);
     assert!(
         differing.is_empty(),
