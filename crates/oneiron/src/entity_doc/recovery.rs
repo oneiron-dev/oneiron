@@ -2,7 +2,6 @@
 
 use super::{EntityDoc, storage};
 use crate::error::ArtifactError;
-use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::recovery::CanonicalEntityDocument;
 use crate::side_table::HexId;
 fn invalid(reason: &'static str) -> crate::Error {
@@ -76,15 +75,15 @@ pub(crate) fn restore(
     guard(vault, txn, &entity)?;
     let document_id = EntityId::from_bytes(row.document_id)?;
     let document = document_id.to_hex();
-    if let Some(old) = storage::ENTITY_DOC_HEAD.get(&vault.store, txn, &HexId(entity))? {
-        if old.document != document {
-            return Err(invalid(
-                "entity document recovery conflicts with existing head",
-            ));
-        }
-        vault
-            .store
-            .port_document_updates_delete(txn, DocumentSlot::of(document_id))?;
+    // An existing head keeps its updates until `persist` below replaces them
+    // with the recovered snapshot: it reads the intact document first, so
+    // recovering the same text owes the turn no tag pass.
+    if let Some(old) = storage::ENTITY_DOC_HEAD.get(&vault.store, txn, &HexId(entity))?
+        && old.document != document
+    {
+        return Err(invalid(
+            "entity document recovery conflicts with existing head",
+        ));
     }
     let doc = EntityDoc::rebuild_value(
         entity,

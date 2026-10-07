@@ -843,8 +843,8 @@ fn an_edit_that_changes_a_message_document_marks_its_turn_again() {
 }
 
 /// A stream continuation appends to a MESSAGE whose turn was already tagged:
-/// the appended text owes the turn a pass, committed with it, and an append
-/// whose transaction rolls back owes nothing.
+/// the appended text owes the turn a pass, committed with it. An append whose
+/// transaction rolls back owes nothing, nor does recovering the same text.
 #[cfg(feature = "sync")]
 #[test]
 fn a_stream_continuation_marks_its_turn_again() {
@@ -914,6 +914,21 @@ fn a_stream_continuation_marks_its_turn_again() {
     assert_ne!(
         pass.traces[0].input_hash, read.traces[0].input_hash,
         "the pass reads the continued text"
+    );
+
+    // Recovering the same text from a canonical snapshot replaces the
+    // document's pending update and changes no text: nothing more is owed.
+    vault
+        .with_write_txn(|txn| {
+            let row = crate::entity_doc::capture_canonical(&vault, txn, *message.as_bytes())?
+                .expect("a document to capture");
+            crate::entity_doc::restore_canonical(&vault, txn, &row)
+        })
+        .expect("recover");
+    assert_eq!(
+        count(&vault, AttemptState::Queued),
+        0,
+        "recovering the same text owes nothing"
     );
 }
 
