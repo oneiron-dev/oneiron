@@ -6,6 +6,7 @@
 //! answers with an `EncoderOutput`. The client follows the embedder endpoint's
 //! rules: a loopback host is on-device, one attempt per call, no redirects, a
 //! bounded body, and errors that carry the failure class and never vault text.
+//! It takes no proxy.
 
 use std::io::Read;
 use std::time::Duration;
@@ -125,7 +126,11 @@ impl HttpTagger {
             .map_err(|_| invalid("oneironer.checkpoint_sha16 does not form a model id"))?;
         // One attempt, no redirects, bounded body: the worker loop is the
         // retry, and a retry here would hide a dead tagger behind a stall.
+        // No proxy either: the loopback check above is the egress boundary,
+        // and a proxy from the environment or the system would carry every
+        // turn's text off the device past it.
         let client = reqwest::blocking::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(Duration::from_millis(config.timeout_ms))

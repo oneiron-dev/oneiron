@@ -4,6 +4,12 @@
 mod support;
 mod worker;
 
+use std::io::{Read, Write};
+use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder};
 use serde_json::json;
 
@@ -324,6 +330,82 @@ fn a_failed_call_carries_its_class_and_never_the_turn_text() {
             oneiron::Error::UpstreamToolFailure { code, .. } if code == class
         ));
     }
+}
+
+const PROXY_CHILD: &str = "ONEIRON_TEST_TAGGER_PROXY_CHILD";
+const PROXY_CHECKED: &str = "tagger proxy isolation checked";
+
+/// The tagger client takes no proxy from the environment or the system: with
+/// every proxy variable naming a listener and no exclusion, the probe and the
+/// extract both reach the local tagger and the listener sees no connection.
+/// Only a child process carries the variables, so no sibling test sees them.
+#[test]
+fn the_tagger_client_never_routes_through_an_inherited_proxy() {
+    if std::env::var_os(PROXY_CHILD).is_some() {
+        let stub = StubTagger::start(Answer::Good);
+        let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+        assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Ready(_))));
+        tagger.infer(&input("Ada sailed north")).expect("answer");
+        assert_eq!(stub.extracts().len(), 1);
+        println!("{PROXY_CHECKED}");
+        return;
+    }
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").expect("proxy listener");
+    let proxy_url = format!("http://{}", proxy.local_addr().expect("proxy addr"));
+    let connections = Arc::new(AtomicUsize::new(0));
+    {
+        let connections = Arc::clone(&connections);
+        std::thread::spawn(move || {
+            for stream in proxy.incoming() {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                connections.fetch_add(1, Ordering::SeqCst);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                let mut head = [0_u8; 1024];
+                let _ = stream.read(&mut head);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+            }
+        });
+    }
+    let mut child = Command::new(std::env::current_exe().expect("test binary"));
+    child.args([
+        "--exact",
+        "oneironer::tests::the_tagger_client_never_routes_through_an_inherited_proxy",
+        "--nocapture",
+        "--test-threads=1",
+    ]);
+    for name in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        child.env(name, &proxy_url);
+    }
+    // No exclusion, and no CGI marker that would switch the proxy off.
+    for name in ["NO_PROXY", "no_proxy", "REQUEST_METHOD"] {
+        child.env_remove(name);
+    }
+    child.env(PROXY_CHILD, "1");
+    let output = child.output().expect("child test process");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // A mistyped --exact filter exits successfully having run nothing.
+    assert!(stdout.contains(PROXY_CHECKED), "{stdout}");
+    assert_eq!(
+        connections.load(Ordering::SeqCst),
+        0,
+        "a tagger request went to the proxy"
+    );
 }
 
 // ─── the slot ───────────────────────────────────────────────────────────
