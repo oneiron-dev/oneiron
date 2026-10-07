@@ -1251,7 +1251,12 @@ pub(super) fn contract_context_pack_record(
         question_id: record.question_id.clone(),
         dataset: record.dataset.clone(),
         arm: contract_output_arm(record, competitor.arm),
-        budget: record.budget.clone(),
+        // The budget the pack was built under: the record's own, or the
+        // sweep point that replaced it.
+        budget: super::report_model::ContractBudget {
+            currency: record.budget.currency.clone(),
+            limit: case.token_budget,
+        },
         question: record.question.clone(),
         pack: ContractPack {
             token_count: Some(context_pack.serialized_tokens),

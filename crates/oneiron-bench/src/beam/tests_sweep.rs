@@ -63,6 +63,19 @@ mod tests {
         let report = super::super::runner::run_manifest_with(&manifest, None, &sweep).unwrap();
         assert_eq!(report.cases.len(), 4, "2 questions x 2 budgets");
         assert_eq!(report.dataset.forks, 2, "budgets share the question's fork");
+        let pack_budgets: Vec<u64> = std::fs::read_to_string(&fixture.packs_jsonl)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["budget"]["limit"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect();
+        assert!(
+            pack_budgets.contains(&25) && pack_budgets.contains(&(1 << 30)),
+            "each pack row states the sweep point it was built under: {pack_budgets:?}"
+        );
 
         let row = |approach: &str, label: &str, metric: &str| {
             report
