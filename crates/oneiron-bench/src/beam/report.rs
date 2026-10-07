@@ -567,14 +567,75 @@ pub(super) fn budgeted_text_by_entity_id(
         })
         .collect()
 }
+/// One scalar of the engine's serialized YAML pack, decoded back to the stored text.
+///
+/// The engine writes a plain scalar or a double-quoted one escaped with libyaml's table
+/// (`oneiron::serialize` `yaml_escape_quoted`); this is its inverse, so a pack text keeps
+/// the corpus bytes: a stored newline comes back as a newline, not as `\` `n`.
 pub(super) fn generated_yaml_scalar(raw: &str) -> String {
     let trimmed = raw.trim();
-    trimmed
+    let Some(quoted) = trimmed
         .strip_prefix('"')
         .and_then(|quoted| quoted.strip_suffix('"'))
-        .unwrap_or(trimmed)
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
+    else {
+        return trimmed.to_owned();
+    };
+    let mut out = String::with_capacity(quoted.len());
+    let mut chars = quoted.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(escape) = chars.next() else {
+            out.push('\\');
+            break;
+        };
+        let simple = match escape {
+            '\\' => Some('\\'),
+            '"' => Some('"'),
+            't' => Some('\t'),
+            'n' => Some('\n'),
+            'r' => Some('\r'),
+            '0' => Some('\0'),
+            'a' => Some('\x07'),
+            'b' => Some('\x08'),
+            'v' => Some('\x0B'),
+            'f' => Some('\x0C'),
+            'e' => Some('\x1B'),
+            _ => None,
+        };
+        if let Some(decoded) = simple {
+            out.push(decoded);
+            continue;
+        }
+        let width = match escape {
+            'x' => 2,
+            'u' => 4,
+            'U' => 8,
+            _ => 0,
+        };
+        let hex: String = chars.clone().take(width).collect();
+        let decoded =
+            (width > 0 && hex.len() == width && hex.chars().all(|digit| digit.is_ascii_hexdigit()))
+                .then(|| u32::from_str_radix(&hex, 16).ok())
+                .flatten()
+                .and_then(char::from_u32);
+        match decoded {
+            Some(decoded) => {
+                out.push(decoded);
+                for _ in 0..width {
+                    chars.next();
+                }
+            }
+            // Not an escape the engine writes: keep it as written.
+            None => {
+                out.push('\\');
+                out.push(escape);
+            }
+        }
+    }
+    out
 }
 pub(super) fn serialized_context_entity_id(entity: &oneiron::ContextEntity) -> String {
     let short_id = if entity.short_id.is_empty() {

@@ -3,7 +3,8 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use super::super::tests_community_eval004::tests::{
-        budget_score, completed_context_pack, empty_pack_stats_report, find_arm,
+        budget_score, completed_context_pack, empty_pack_stats_report, eval004_fixture,
+        eval004_record_json, find_arm, manifest_for_fixture_case,
     };
     use super::super::*;
     use oneiron::Vault;
@@ -340,6 +341,56 @@ neighbors:
         assert_eq!(
             ids.text_by_id.get("neighbor:03").map(String::as_str),
             Some("Budgeted neighbor text")
+        );
+    }
+
+    #[test]
+    fn generated_yaml_scalar_inverts_every_engine_escape() {
+        assert_eq!(
+            generated_yaml_scalar(r#""a\\b \"q\" \t \n \r \0 \a \b \v \f \e \x01 \x85 \u2028""#),
+            "a\\b \"q\" \t \n \r \0 \x07 \x08 \x0B \x0C \x1B \x01 \u{85} \u{2028}"
+        );
+        assert_eq!(
+            generated_yaml_scalar(r#""line one\nline two""#),
+            "line one\nline two"
+        );
+        assert_eq!(
+            generated_yaml_scalar(r#""\\n stays two characters""#),
+            "\\n stays two characters"
+        );
+        assert_eq!(
+            generated_yaml_scalar(r#""\q \x4 \xZZ end\""#),
+            "\\q \\x4 \\xZZ end\\"
+        );
+        assert_eq!(
+            generated_yaml_scalar("  plain text: kept \\n  "),
+            "plain text: kept \\n"
+        );
+    }
+
+    #[test]
+    fn deterministic_pack_text_keeps_newlines_tabs_quotes_and_backslashes() {
+        let text = "Caroline: Look at the crowd!\n[shared image: a \"pride\" parade]\tC:\\photos";
+        let fixture = eval004_fixture(
+            "pack-text-escapes",
+            "What did Caroline share from the pride parade crowd?",
+            FixtureClass::EvidenceSupported,
+            vec![eval004_record_json(
+                "50505050505050505050505050505050",
+                12,
+                text,
+            )],
+        );
+        let manifest = manifest_for_fixture_case(&fixture, "pack-text-escapes");
+        let report = run_fixture_manifest(&manifest, &fixture).expect("fixture runs");
+        let pack = completed_context_pack(&report, ArmKind::Deterministic);
+
+        assert!(
+            pack.budgeted_text_by_entity_id
+                .values()
+                .any(|budgeted| budgeted == text),
+            "pack texts: {:?}",
+            pack.budgeted_text_by_entity_id
         );
     }
 
