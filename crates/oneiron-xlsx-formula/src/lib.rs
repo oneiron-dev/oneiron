@@ -21,7 +21,7 @@
 //! for Windows truth) are fully Excel-identical (LibreOffice 25.8 matched
 //! 2,648 of the 2,951 it was measured on), and all 811 pinned goldens (Excel
 //! for Windows 16.0.20430, rich-value error caches resolved) against
-//! LibreOffice's 753. Through this adapter, 2,705 of the corpus's 3,040
+//! LibreOffice's 753. Through this adapter, 2,959 of the corpus's 3,040
 //! formula workbooks recalculate natively as saved, ZIP directory entries and
 //! closed linked workbooks included (see the README), and all of them match
 //! Excel on their scored cells. The

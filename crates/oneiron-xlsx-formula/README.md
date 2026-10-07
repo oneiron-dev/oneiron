@@ -144,17 +144,21 @@ instant; the edit round trip uses the caller's clock (above).
 
 The shipped adapter on the same corpus (2026-10-07, `recalc_native` over the 5,455 saved
 originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP directory
-entries): 2,705 of the 3,040 formula workbooks (89.0%) recalculate natively, none is refused
-outright and 335 fall back: 274 for caller context, 32 for functions the engine lacks, 15 for
-precision-as-displayed, 8 for linked-workbook forms the engine does not read as Excel does (5
+entries): 2,959 of the 3,040 formula workbooks (97.3%) recalculate natively, none is refused
+outright and 81 fall back: 32 for functions the engine lacks, 15 for precision-as-displayed, 12
+for CELL("filename"), 8 for linked-workbook forms the engine does not read as Excel does (5
 linked ranges INDEX selects at a computed row, 3 approximate VLOOKUPs over open linked ranges),
-3 over the token bound and 3 for an unreadable defined name. All 2,705 native workbooks match
-Excel (none of their 537,893 scored cells differs), and every native output passes the edit
-gate. Of the 279 formula workbooks with external links or external relationship targets, which
-all fell back before, 197 recalculate natively (none of their 149,486 scored cells differs from
-Excel), 74 now meet another reason (51 caller context, 12 precision-as-displayed, 11 unknown
-functions) and 8 a linked-workbook form. The checks for escaped names and formulas, related tables
-and malformed workbook metadata change no corpus workbook's decision or output bytes.
+6 for a reference to the workbook itself (`[0]`), 5 over the token bound and 3 for an unreadable
+defined name. The 2,886 native workbooks with scored cells match Excel (none of their 922,058
+scored cells differs); the other 73 hold only cells downstream of NOW, TODAY and RAND, which the
+comparison skips. Of the 279 formula workbooks with external links or external relationship
+targets, which all fell back before, 236 recalculate natively (none of their 480,230 scored
+cells differs from Excel), 35 now meet another reason (12 precision-as-displayed, 11 unknown
+functions, 6 CELL("filename"), 6 the workbook itself) and 8 a linked-workbook form. Of the 274
+that fell back for caller context, 254 recalculate natively (none of their 384,165 scored cells
+differs); 12 read CELL("filename"), 6 the workbook itself and 2 pass the token bound. The checks
+for escaped names and formulas, related tables and malformed workbook metadata change no corpus
+workbook's decision or output bytes.
 
 Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.10`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
